@@ -307,6 +307,9 @@ mod tests {
     use super::*;
 
     #[test]
+    // Const-vs-boundary guards are deliberate (clippy: assertions_on_constants
+    // fires because both sides are const) — they pin the limits against drift.
+    #[allow(clippy::assertions_on_constants)]
     fn max_files_and_size_guards_are_sane() {
         // Smoke: constants shouldn't drift to absurd values accidentally.
         assert!(MAX_FILES >= 10 && MAX_FILES <= 200);

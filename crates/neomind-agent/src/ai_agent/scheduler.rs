@@ -174,8 +174,10 @@ impl SchedulerConfig {
     /// Tuning knob for resource-constrained edge devices (e.g. RK3576 with
     /// 4-8 GB RAM): the defaults (global 10 / per-backend 2) can OOM small
     /// devices when many agents fire at once.
+    ///
     /// - `NEOMIND_MAX_CONCURRENT` (global execution limit, default 10)
     /// - `NEOMIND_MAX_CONCURRENT_PER_BACKEND` (per-LLM-backend, default 2)
+    ///
     /// Unset or invalid values keep the defaults.
     pub fn with_env_concurrency(mut self) -> Self {
         if let Some(n) = parse_concurrency_env("NEOMIND_MAX_CONCURRENT") {

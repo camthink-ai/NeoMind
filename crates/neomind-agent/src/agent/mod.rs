@@ -3229,8 +3229,10 @@ mod tests {
         registry.register(std::sync::Arc::new(ConfirmActionTool::new()));
         registry.register(std::sync::Arc::new(ClarifyIntentTool::new()));
 
-        let mut config = AgentConfig::default();
-        config.allowed_tools = vec!["shell".to_string()];
+        let config = AgentConfig {
+            allowed_tools: vec!["shell".to_string()],
+            ..Default::default()
+        };
         let agent = Agent::with_tools(
             config,
             "allowlist-test".to_string(),

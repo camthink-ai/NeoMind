@@ -102,7 +102,7 @@ async fn test_convert_binary_to_url_non_binary_values() {
 
     let test_cases = vec![
         MetricValue::Integer(42),
-        MetricValue::Float(3.14),
+        MetricValue::Float(3.5),
         MetricValue::String("test_string".to_string()),
         MetricValue::Boolean(true),
         MetricValue::Null,

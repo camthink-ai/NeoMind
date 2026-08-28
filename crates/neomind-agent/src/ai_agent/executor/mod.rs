@@ -1447,7 +1447,7 @@ impl AgentExecutor {
                     "[TOOL-CALLING] Returning direct results — skipped Focused JSON post-processing"
                 );
 
-                Ok((decision_process, execution_result))
+                Ok((*decision_process, *execution_result))
             }
 
             // ── Focused path ───────────────────────────────────────────────

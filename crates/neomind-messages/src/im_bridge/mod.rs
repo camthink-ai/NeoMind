@@ -110,6 +110,16 @@ impl ImBridgeRegistry {
     }
 }
 
+/// 解耦 ImRouter 与 SessionManager 的可测试性抽象（见设计调整 B）。
+/// 生产实现把调用转发到 SessionManager::process_message_events_with_backend_and_skills。
+#[async_trait]
+pub trait AgentRunner: Send + Sync {
+    /// 创建一个新的底层 chat session，返回其 id（生产实现调 SessionManager::create_session_with_options）。
+    async fn create_session(&self) -> anyhow::Result<String>;
+    /// 处理一条消息，返回最终聚合回复文本（session 必须已由 create_session 建好）。
+    async fn run(&self, session_id: &str, text: &str) -> anyhow::Result<String>;
+}
+
 #[cfg(test)]
 mod registry_tests {
     use super::*;
@@ -162,14 +172,4 @@ mod registry_tests {
         reg.register(MockBridge::new(ImPlatform::Telegram)).await;
         assert_eq!(reg.list().await.len(), 1);
     }
-}
-
-/// 解耦 ImRouter 与 SessionManager 的可测试性抽象（见设计调整 B）。
-/// 生产实现把调用转发到 SessionManager::process_message_events_with_backend_and_skills。
-#[async_trait]
-pub trait AgentRunner: Send + Sync {
-    /// 创建一个新的底层 chat session，返回其 id（生产实现调 SessionManager::create_session_with_options）。
-    async fn create_session(&self) -> anyhow::Result<String>;
-    /// 处理一条消息，返回最终聚合回复文本（session 必须已由 create_session 建好）。
-    async fn run(&self, session_id: &str, text: &str) -> anyhow::Result<String>;
 }

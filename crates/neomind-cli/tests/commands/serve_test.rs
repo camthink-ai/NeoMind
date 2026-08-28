@@ -27,6 +27,11 @@ fn serve_lock() -> MutexGuard<'static, ()> {
 /// `assert()` (it waits for exit). Instead we spawn, sleep, check the process
 /// is still running, then kill it. A startup failure (e.g. port already in
 /// use) would have exited nonzero before the check.
+// Clippy: never_loop — every arm of the first check exits (panic/break), so
+// this is effectively "give serve 500ms to fail fast, then consider it
+// started". Kept as a loop for the 15s deadline readability; behavior is
+// intentional.
+#[allow(clippy::never_loop)]
 fn assert_serve_starts(args: &[&str]) {
     let _lock = serve_lock();
     let bin = assert_cmd::cargo::cargo_bin("neomind");

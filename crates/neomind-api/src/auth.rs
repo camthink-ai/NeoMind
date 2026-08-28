@@ -360,8 +360,7 @@ impl AuthState {
     /// (scanners probing an exposed edge device) and each reload opens the
     /// DB — capped so invalid-key spray can't become per-request DB load.
     fn reload_keys_from_db(&self) {
-        static LAST_RELOAD_MS: std::sync::atomic::AtomicU64 =
-            std::sync::atomic::AtomicU64::new(0);
+        static LAST_RELOAD_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
@@ -387,8 +386,7 @@ impl AuthState {
                 // Insert-then-retain, never clear: the map stays populated
                 // throughout, so a valid key validated mid-reload cannot
                 // transiently 401 (clear-then-insert had that window).
-                let fresh: std::collections::HashSet<String> =
-                    keys.keys().cloned().collect();
+                let fresh: std::collections::HashSet<String> = keys.keys().cloned().collect();
                 for (k, v) in keys {
                     self.api_keys.insert(k, v);
                 }

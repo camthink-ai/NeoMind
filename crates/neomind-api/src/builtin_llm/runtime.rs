@@ -136,7 +136,7 @@ async fn ensure_runtime_variant(
     let result = download_runtime(
         &url,
         &cache_dir,
-        llama_asset_is_zip(&asset),
+        llama_asset_is_zip(asset),
         true,
         expected_sha,
     )

@@ -168,8 +168,10 @@ mod tests {
     #[test]
     fn test_scheduler_creation() {
         let temp = TempDir::new().unwrap();
-        let mut config = MemoryConfig::default();
-        config.storage_path = temp.path().to_string_lossy().to_string();
+        let config = MemoryConfig {
+            storage_path: temp.path().to_string_lossy().to_string(),
+            ..Default::default()
+        };
 
         let store = Arc::new(RwLock::new(MarkdownMemoryStore::new(temp.path())));
         let scheduler = MemoryScheduler::new(store, config);
@@ -180,8 +182,10 @@ mod tests {
     #[tokio::test]
     async fn test_scheduler_start_stop() {
         let temp = TempDir::new().unwrap();
-        let mut config = MemoryConfig::default();
-        config.storage_path = temp.path().to_string_lossy().to_string();
+        let config = MemoryConfig {
+            storage_path: temp.path().to_string_lossy().to_string(),
+            ..Default::default()
+        };
 
         let store = Arc::new(RwLock::new(MarkdownMemoryStore::new(temp.path())));
         let mut scheduler = MemoryScheduler::new(store, config);
@@ -196,9 +200,11 @@ mod tests {
     #[test]
     fn test_disabled_scheduler() {
         let temp = TempDir::new().unwrap();
-        let mut config = MemoryConfig::default();
-        config.storage_path = temp.path().to_string_lossy().to_string();
-        config.enabled = false;
+        let config = MemoryConfig {
+            storage_path: temp.path().to_string_lossy().to_string(),
+            enabled: false,
+            ..Default::default()
+        };
 
         let store = Arc::new(RwLock::new(MarkdownMemoryStore::new(temp.path())));
         let mut scheduler = MemoryScheduler::new(store, config);

@@ -1511,7 +1511,7 @@ mod tests {
         for name in ["1234567890000.png", "1234567890001.jpg"] {
             let p = image_dir.join(name);
             let mut data = std::fs::read(&p).expect("fixture image");
-            data.extend(std::iter::repeat(0u8).take(1024));
+            data.extend(std::iter::repeat_n(0u8, 1024));
             std::fs::write(&p, data).expect("pad fixture");
         }
 

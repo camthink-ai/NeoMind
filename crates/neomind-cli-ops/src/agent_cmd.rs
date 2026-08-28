@@ -271,7 +271,7 @@ pub async fn create_agent(
         // follow-up command is the difference between a finished workflow
         // and a "created it but nothing happened" failure mode (a top eval
         // failure class), so the receipt teaches it explicitly.
-        &format!(
+        format!(
             "Agent created (status: paused — it will NOT run until activated). \
              Next: neomind agent control {} active",
             agent_id

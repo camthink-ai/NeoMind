@@ -750,7 +750,12 @@ pub async fn start_server() -> anyhow::Result<()> {
 /// byte-for-byte to the plaintext listener at `target` (loopback). Same
 /// TCP_NODELAY-on-listener trick as the main listener — WS push latency
 /// depends on it.
-async fn run_tls_proxy(cert_pem: &str, key_pem: &str, port: u16, target: &str) -> anyhow::Result<()> {
+async fn run_tls_proxy(
+    cert_pem: &str,
+    key_pem: &str,
+    port: u16,
+    target: &str,
+) -> anyhow::Result<()> {
     let certs: Vec<rustls::pki_types::CertificateDer<'static>> = {
         let f = std::fs::File::open(cert_pem)?;
         let mut r = std::io::BufReader::new(f);
@@ -759,7 +764,8 @@ async fn run_tls_proxy(cert_pem: &str, key_pem: &str, port: u16, target: &str) -
     let key = {
         let f = std::fs::File::open(key_pem)?;
         let mut r = std::io::BufReader::new(f);
-        rustls_pemfile::private_key(&mut r)?.ok_or_else(|| anyhow::anyhow!("no private key in {key_pem}"))?
+        rustls_pemfile::private_key(&mut r)?
+            .ok_or_else(|| anyhow::anyhow!("no private key in {key_pem}"))?
     };
     let config = rustls::ServerConfig::builder()
         .with_no_client_auth()

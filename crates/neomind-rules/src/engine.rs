@@ -892,9 +892,7 @@ impl RuleEngine {
     ) -> Option<chrono::DateTime<Utc>> {
         let (result, rule_snapshot) = {
             let mut rules = self.rules.write();
-            let Some(rule) = rules.get_mut(rule_id) else {
-                return None;
-            };
+            let rule = rules.get_mut(rule_id)?;
             if condition_met {
                 if rule.state.condition_since.is_none() {
                     rule.state.condition_since = Some(Utc::now());

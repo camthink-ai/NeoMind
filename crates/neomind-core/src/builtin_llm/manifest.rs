@@ -215,7 +215,11 @@ mod tests {
     #[test]
     fn builtin_models_carry_sampling_points() {
         for def in BUILTIN_MODELS.iter() {
-            assert!(def.temperature.is_some(), "{} missing temperature", def.manifest.id);
+            assert!(
+                def.temperature.is_some(),
+                "{} missing temperature",
+                def.manifest.id
+            );
             assert!(def.top_p.is_some(), "{} missing top_p", def.manifest.id);
             assert!(def.top_k.is_some(), "{} missing top_k", def.manifest.id);
         }
@@ -232,13 +236,25 @@ mod tests {
                 .unwrap_or_else(|| panic!("{id} missing from registry"))
         };
         let lfm = by_id("lfm25-2.6b");
-        assert_eq!((lfm.temperature, lfm.top_p, lfm.top_k), (Some(0.6), Some(0.85), Some(20)));
+        assert_eq!(
+            (lfm.temperature, lfm.top_p, lfm.top_k),
+            (Some(0.6), Some(0.85), Some(20))
+        );
         let qwen = by_id("qwen3.5-4b");
-        assert_eq!((qwen.temperature, qwen.top_p, qwen.top_k), (Some(0.7), Some(0.8), Some(20)));
+        assert_eq!(
+            (qwen.temperature, qwen.top_p, qwen.top_k),
+            (Some(0.7), Some(0.8), Some(20))
+        );
         let gemma = by_id("gemma4-e2b");
-        assert_eq!((gemma.temperature, gemma.top_p, gemma.top_k), (Some(1.0), Some(0.95), Some(64)));
+        assert_eq!(
+            (gemma.temperature, gemma.top_p, gemma.top_k),
+            (Some(1.0), Some(0.95), Some(64))
+        );
         let ling = by_id("ling30-tiny");
-        assert_eq!((ling.temperature, ling.top_p, ling.top_k), (Some(1.0), Some(0.95), Some(20)));
+        assert_eq!(
+            (ling.temperature, ling.top_p, ling.top_k),
+            (Some(1.0), Some(0.95), Some(20))
+        );
     }
 
     #[test]

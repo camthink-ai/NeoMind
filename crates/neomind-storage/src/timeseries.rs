@@ -1243,11 +1243,11 @@ impl TimeSeriesStore {
         // [fake-async fix] see query_range.
         let db = self.db.clone();
         let (src, met) = (source_id.to_string(), metric.to_string());
-        return tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             Self::query_range_rev_impl(&db, &src, &met, start, end, limit)
         })
         .await
-        .map_err(|e| Error::Storage(format!("query_range_rev join error: {}", e)))?;
+        .map_err(|e| Error::Storage(format!("query_range_rev join error: {}", e)))?
     }
 
     fn query_range_rev_impl(
@@ -1337,11 +1337,9 @@ impl TimeSeriesStore {
         // blocking a tokio worker per call.
         let db = self.db.clone();
         let (src, met) = (source_id.to_string(), metric.to_string());
-        return tokio::task::spawn_blocking(move || {
-            Self::aggregate_range_impl(&db, &src, &met, start, end)
-        })
-        .await
-        .map_err(|e| Error::Storage(format!("aggregate_range join error: {}", e)))?;
+        tokio::task::spawn_blocking(move || Self::aggregate_range_impl(&db, &src, &met, start, end))
+            .await
+            .map_err(|e| Error::Storage(format!("aggregate_range join error: {}", e)))?
     }
 
     fn aggregate_range_impl(
@@ -1660,11 +1658,9 @@ impl TimeSeriesStore {
         // [fake-async fix] see query_range.
         let db = self.db.clone();
         let (src, met) = (source_id.to_string(), metric.to_string());
-        return tokio::task::spawn_blocking(move || {
-            Self::query_latest_uncached_impl(&db, &src, &met)
-        })
-        .await
-        .map_err(|e| Error::Storage(format!("query_latest_uncached join error: {}", e)))?;
+        tokio::task::spawn_blocking(move || Self::query_latest_uncached_impl(&db, &src, &met))
+            .await
+            .map_err(|e| Error::Storage(format!("query_latest_uncached join error: {}", e)))?
     }
 
     fn query_latest_uncached_impl(
@@ -2334,11 +2330,11 @@ impl TimeSeriesStore {
         // [fake-async fix] see query_range.
         let db = self.db.clone();
         let (src, met) = (source_id.to_string(), metric.to_string());
-        return tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             Self::query_range_bucketed_impl(&db, &src, &met, start, end, target_count)
         })
         .await
-        .map_err(|e| Error::Storage(format!("query_range_bucketed join error: {}", e)))?;
+        .map_err(|e| Error::Storage(format!("query_range_bucketed join error: {}", e)))?
     }
 
     fn query_range_bucketed_impl(

@@ -1771,7 +1771,7 @@ impl TransformEngine {
                 device_id: device_id.to_string(),
                 transform_id: None,
                 metric: rendered_output,
-                value: value,
+                value,
                 timestamp,
                 quality: Some(1.0),
             });
@@ -1832,7 +1832,7 @@ impl TransformEngine {
             device_id: device_id.to_string(),
             transform_id: None,
             metric: output.to_string(),
-            value: value,
+            value,
             timestamp,
             quality: Some(1.0),
         })
@@ -2563,7 +2563,7 @@ impl TransformEngine {
             device_id: device_id.to_string(),
             transform_id: None,
             metric: output.to_string(),
-            value: value,
+            value,
             timestamp,
             quality: Some(1.0),
         }])
@@ -2610,7 +2610,7 @@ impl TransformEngine {
             device_id: device_id.to_string(),
             transform_id: None,
             metric: output.to_string(),
-            value: value,
+            value,
             timestamp,
             quality: Some(1.0),
         }])
@@ -3531,8 +3531,9 @@ mod tests {
         let base64_data = json!({ "image": large_base64 });
         let result = resolve_image_data(&base64_data);
 
-        // Should return the base64 string (or empty if it doesn't pass validation)
-        assert!(result.len() > 0 || result.is_empty()); // Either way, no panic
+        // Either a non-empty extraction or a clean empty return is acceptable
+        // — the contract under test is "no panic" on malformed input.
+        let _ = result;
     }
 
     #[test]

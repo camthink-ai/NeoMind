@@ -1230,10 +1230,7 @@ pub async fn share_proxy_handler(
     // the loopback URL builder normalizes the dot-segments away — turning
     // the allowlist into a full authenticated-API bypass via the internal-
     // proxy secret. No legitimate share-proxy path contains them.
-    if path_str
-        .split('/')
-        .any(|seg| seg == ".." || seg == ".")
-    {
+    if path_str.split('/').any(|seg| seg == ".." || seg == ".") {
         return ErrorResponse::new(
             "FORBIDDEN",
             "This path is not accessible via share proxy",
@@ -1407,7 +1404,7 @@ fn new_output_prefix(source_prefix: &str) -> String {
 ///   - dataSource.sourceId             → "transform:{new_id}"
 ///   - dataSource.id                   → new_id
 ///   - dataSource.metricId / .field    → replace old_prefix with new_prefix if the
-///                                       string starts with "{old_prefix}."
+///     string starts with "{old_prefix}."
 fn rewrite_component_transform_refs(
     component: &mut StoredComponent,
     old_id: &str,
@@ -1791,7 +1788,11 @@ mod tests {
             &Method::POST,
             false
         ));
-        assert!(is_allowed_share_method("agents/a1/invoke", &Method::POST, true));
+        assert!(is_allowed_share_method(
+            "agents/a1/invoke",
+            &Method::POST,
+            true
+        ));
 
         // Configuration writes: NEVER — this is the fix. An interactive
         // share-token holder previously reached any write method on any

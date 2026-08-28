@@ -330,7 +330,6 @@ pub struct BulkAcknowledgeRequest {
     pub message_ids: Vec<String>,
 }
 
-
 /// Parse a bulk-request's message id strings into MessageIds. Shared by the
 /// bulk acknowledge/resolve/delete handlers (was triplicated verbatim).
 fn parse_message_ids(raw: &[String]) -> Result<Vec<MessageId>, ErrorResponse> {

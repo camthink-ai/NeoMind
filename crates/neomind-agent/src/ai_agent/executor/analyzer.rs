@@ -16,9 +16,12 @@ pub(crate) enum AnalysisResult {
         decisions: Vec<Decision>,
         conclusion: String,
     },
+    // Boxed: DecisionProcess + ExecutionResult dwarf the Focused fields, and
+    // every Focused construction paid their size on the stack (clippy:
+    // large_enum_variant).
     Free {
-        decision_process: DecisionProcess,
-        execution_result: neomind_storage::ExecutionResult,
+        decision_process: Box<DecisionProcess>,
+        execution_result: Box<neomind_storage::ExecutionResult>,
     },
 }
 
@@ -67,8 +70,8 @@ impl AgentExecutor {
                                 "Tool-based analysis completed successfully"
                             );
                             AnalysisResult::Free {
-                                decision_process: dp,
-                                execution_result: exec_result,
+                                decision_process: Box::new(dp),
+                                execution_result: Box::new(exec_result),
                             }
                         })
                         .map_err(|e| {

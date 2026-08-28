@@ -1079,8 +1079,10 @@ mod tests {
     async fn test_message_filtering_by_source_type() {
         use crate::channels::ChannelFilter;
 
-        let mut filter = ChannelFilter::default();
-        filter.source_types = vec!["device".to_string()];
+        let filter = ChannelFilter {
+            source_types: vec!["device".to_string()],
+            ..Default::default()
+        };
 
         let device_msg = Message::device(
             MessageSeverity::Warning,

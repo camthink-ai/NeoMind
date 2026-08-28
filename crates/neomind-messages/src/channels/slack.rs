@@ -231,7 +231,7 @@ mod tests {
         let msg = make_test_message();
         let body = channel.format_message(&msg);
 
-        assert_eq!(body["text"].as_str().unwrap().contains("Warning"), true);
+        assert!(body["text"].as_str().unwrap().contains("Warning"));
         let blocks = body["blocks"].as_array().unwrap();
         assert!(!blocks.is_empty());
     }

@@ -100,8 +100,10 @@ mod tests {
 
     #[test]
     fn test_filter_by_source_type() {
-        let mut filter = ChannelFilter::default();
-        filter.source_types = vec!["device".to_string(), "rule".to_string()];
+        let filter = ChannelFilter {
+            source_types: vec!["device".to_string(), "rule".to_string()],
+            ..Default::default()
+        };
 
         let device_msg = make_test_message("device", MessageSeverity::Info);
         let rule_msg = make_test_message("rule", MessageSeverity::Info);
@@ -114,8 +116,10 @@ mod tests {
 
     #[test]
     fn test_filter_by_min_severity() {
-        let mut filter = ChannelFilter::default();
-        filter.min_severity = Some(MessageSeverity::Warning);
+        let filter = ChannelFilter {
+            min_severity: Some(MessageSeverity::Warning),
+            ..Default::default()
+        };
 
         let info = make_test_message("system", MessageSeverity::Info);
         let warning = make_test_message("system", MessageSeverity::Warning);
@@ -128,9 +132,11 @@ mod tests {
 
     #[test]
     fn test_filter_combined() {
-        let mut filter = ChannelFilter::default();
-        filter.source_types = vec!["device".to_string()];
-        filter.min_severity = Some(MessageSeverity::Warning);
+        let filter = ChannelFilter {
+            source_types: vec!["device".to_string()],
+            min_severity: Some(MessageSeverity::Warning),
+            ..Default::default()
+        };
 
         let matching = make_test_message("device", MessageSeverity::Critical);
         assert!(filter.matches(&matching));

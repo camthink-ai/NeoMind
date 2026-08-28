@@ -480,11 +480,7 @@ pub async fn upload_model_handler(
             .and_then(|s| s.to_str())
             .unwrap_or("upload.gguf")
             .to_string();
-        let dest = uploads_dir.join(format!(
-            "{}-{}",
-            uuid::Uuid::new_v4().simple(),
-            safe_name
-        ));
+        let dest = uploads_dir.join(format!("{}-{}", uuid::Uuid::new_v4().simple(), safe_name));
         let mut file = tokio::io::BufWriter::new(
             tokio::fs::File::create(&dest)
                 .await
@@ -508,9 +504,8 @@ pub async fn upload_model_handler(
         tmp_path = Some(dest);
         break; // single-file upload
     }
-    let tmp = tmp_path.ok_or_else(|| {
-        ErrorResponse::bad_request("multipart field 'file' required")
-    })?;
+    let tmp =
+        tmp_path.ok_or_else(|| ErrorResponse::bad_request("multipart field 'file' required"))?;
 
     // Import from the temp path; always clean it up (the import copies).
     let result = import_gguf_from_path(&state, &tmp).await;
@@ -1097,7 +1092,7 @@ async fn run_builtin_download(
             // only when nothing else is active). Failures here are logged, not
             // fatal — the model is downloaded and restart/status can recover.
             if let Ok(manager) = get_instance_manager() {
-                match spawn_builtin_server(&state.data_dir, &cfg, &manager, None).await {
+                match spawn_builtin_server(&state.data_dir, cfg, &manager, None).await {
                     Ok(endpoint) => {
                         tracing::info!(endpoint = %endpoint, "builtin llm: server started after download")
                     }
@@ -1119,7 +1114,11 @@ async fn run_builtin_download(
                     } else {
                         None
                     },
-                    status: if cancelled { "cancelled".to_string() } else { "error".to_string() },
+                    status: if cancelled {
+                        "cancelled".to_string()
+                    } else {
+                        "error".to_string()
+                    },
                     error: Some(if cancelled {
                         "cancelled by user".to_string()
                     } else {
@@ -1548,6 +1547,10 @@ fn get_manager() -> Result<Arc<LlmBackendInstanceManager>, ErrorResponse> {
 }
 
 #[cfg(test)]
+// Several tests hold the `test_serial()` std guard and the tokio download
+// lock across the whole test body ON PURPOSE — that serialization (and, for
+// the download tests, holding the lock while awaiting) is the point.
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
     use crate::server::ServerState;

@@ -143,13 +143,7 @@ impl TransformEventService {
                                     .collect();
                                 ts_map.retain(|k, _| !drop.contains(k));
                                 device_raw_data.lock().retain(|k, _| !drop.contains(k));
-                                device_timers.lock().retain(|k, _| {
-                                    if drop.contains(k) {
-                                        false
-                                    } else {
-                                        true
-                                    }
-                                });
+                                device_timers.lock().retain(|k, _| !drop.contains(k));
                             }
                             ts_map.insert(device_id.clone(), timestamp);
                         }

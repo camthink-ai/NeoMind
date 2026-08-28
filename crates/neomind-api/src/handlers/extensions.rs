@@ -3795,7 +3795,7 @@ pub async fn serve_extension_asset_handler(
     if asset_path.contains("..")
         || asset_path.starts_with('/')
         || asset_path.starts_with('\\')
-        || asset_path.split('/').any(|seg| seg == "." || seg.is_empty() && false)
+        || asset_path.split('/').any(|seg| seg == ".")
     {
         return Err(ErrorResponse::bad_request("Invalid asset path"));
     }

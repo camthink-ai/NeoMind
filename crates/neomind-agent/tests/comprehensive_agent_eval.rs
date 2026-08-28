@@ -1052,8 +1052,10 @@ async fn comprehensive_20round_evaluation() -> anyhow::Result<()> {
         println!("{}", "─".repeat(60));
 
         let (sm, sid) = new_session().await;
-        let mut round_metrics = Metrics::default();
-        round_metrics.total_rounds = 1;
+        let mut round_metrics = Metrics {
+            total_rounds: 1,
+            ..Default::default()
+        };
 
         let notes = run_scenario(idx, &sm, &sid, &mut round_metrics).await;
 

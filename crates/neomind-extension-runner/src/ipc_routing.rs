@@ -817,7 +817,7 @@ mod tests {
                 healthy,
             } => {
                 assert_eq!(request_id, 40);
-                assert_eq!(healthy, true);
+                assert!(healthy);
             }
             _ => panic!("Expected Health"),
         }

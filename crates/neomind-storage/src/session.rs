@@ -1845,7 +1845,7 @@ mod tests {
 
         // Elapsed time should be small
         let elapsed = state.elapsed_secs();
-        assert!(elapsed >= 0 && elapsed < 2);
+        assert!((0..2).contains(&elapsed));
 
         // Should not be stale
         assert!(!state.is_stale());

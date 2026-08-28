@@ -134,7 +134,7 @@ pub async fn create_transform(
         data,
         // Transforms only run when data flows — teach where to look instead
         // of leaving the workflow at "created, now what".
-        &format!(
+        format!(
             "Transform created. It runs on new data points; check results with: neomind transform executions {}",
             transform_id
         ),

@@ -103,6 +103,58 @@ jobs:
       - name: Run skill tests
         run: "cargo test -p neomind-agent --lib skills::"
 
+  rust-lint:
+    name: Rust fmt / clippy (deny warnings)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            target/
+          key: lint-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            lint-${{ runner.os }}-
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  rust-tests:
+    name: Rust workspace tests (full)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            target/
+          key: tests-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            tests-${{ runner.os }}-
+
+      - name: Run all workspace tests
+        # `--skip commands::serve_test`: the three serve tests spawn a real
+        # `neomind serve` (needs ports 9375/1883 free + a clean data dir).
+        # Real-server startup is already smoke-tested in build.yml
+        # (capability IPC tests) and docker.yml (health-gated image push);
+        # run them locally with a stopped dev server when touching `serve`.
+        run: cargo test --workspace --locked -- --skip commands::serve_test
+
   cargo-audit:
     name: Security advisory scan (cargo audit)
     runs-on: ubuntu-latest

@@ -1130,8 +1130,7 @@ impl SessionManager {
         // the limits for (Settings → Preferences), silently destroying memory.
         let mem_cfg = neomind_storage::MemoryConfig::load();
         let store = neomind_storage::MarkdownMemoryStore::new(&mem_cfg.storage_path);
-        let (user_limit, knowledge_limit) =
-            (mem_cfg.user_char_limit, mem_cfg.knowledge_char_limit);
+        let (user_limit, knowledge_limit) = (mem_cfg.user_char_limit, mem_cfg.knowledge_char_limit);
         let snapshots = self.memory_snapshots.clone();
         let session_id = session_id.to_string();
 

@@ -2626,6 +2626,9 @@ mod tests {
     }
 
     #[tokio::test]
+    // The guard is held across the whole test ON PURPOSE: it serializes tests
+    // that swap the process-global instance manager (test_global_manager_serial).
+    #[allow(clippy::await_holding_lock)]
     async fn thinking_override_ignored_when_integral() {
         let _serial = test_global_manager_serial().lock().unwrap();
         // Active (GLOBAL) instance is an integral-thinking BUILTIN model
@@ -2663,6 +2666,8 @@ mod tests {
     }
 
     #[tokio::test]
+    // Deliberate serialization guard (see the test above).
+    #[allow(clippy::await_holding_lock)]
     async fn thinking_override_honored_when_not_integral() {
         let _serial = test_global_manager_serial().lock().unwrap();
         // Non-integral models keep existing behavior: the per-call override wins

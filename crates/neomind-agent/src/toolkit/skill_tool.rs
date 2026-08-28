@@ -239,7 +239,7 @@ When to load: ONLY complex/unfamiliar workflows (multi-entity, unit conversion, 
                 // signals so rare-term hits rank correctly in production.
                 let all: Vec<&skills::Skill> = registry_guard.list();
                 let corpus: Vec<String> =
-                    all.iter().copied().map(|s| skills::matcher::searchable_text(s)).collect();
+                    all.iter().copied().map(skills::matcher::searchable_text).collect();
                 let index = skills::bm25::Bm25Index::build(corpus);
                 let query_tokens = skills::bm25::tokenize(query);
 
@@ -313,7 +313,7 @@ When to load: ONLY complex/unfamiliar workflows (multi-entity, unit conversion, 
                         // a plain-text "Did you mean" hint.
                         let all: Vec<&skills::Skill> = registry_guard.list();
                         let corpus: Vec<String> =
-                            all.iter().copied().map(|s| skills::matcher::searchable_text(s)).collect();
+                            all.iter().copied().map(skills::matcher::searchable_text).collect();
                         let index = skills::bm25::Bm25Index::build(corpus);
                         let query_tokens = skills::bm25::tokenize(id);
                         let mut candidates: Vec<(&skills::Skill, f32)> = all
@@ -504,7 +504,7 @@ mod tests {
         let corpus: Vec<String> = all
             .iter()
             .copied()
-            .map(|s| crate::skills::matcher::searchable_text(s))
+            .map(crate::skills::matcher::searchable_text)
             .collect();
         let index = crate::skills::bm25::Bm25Index::build(corpus);
 

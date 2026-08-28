@@ -93,10 +93,10 @@ impl AgentExecutor {
         let mut round: usize = 0;
 
         loop {
-        // Agent defaults: read ONCE — AgentDefaults::get() opens the
-        // settings DB on every call and this loop used to do that twice
-        // per round (60 DB opens on a 30-round execution).
-        let agent_defaults = neomind_storage::AgentDefaults::get();
+            // Agent defaults: read ONCE — AgentDefaults::get() opens the
+            // settings DB on every call and this loop used to do that twice
+            // per round (60 DB opens on a 30-round execution).
+            let agent_defaults = neomind_storage::AgentDefaults::get();
             if round >= max_rounds {
                 tracing::info!(
                     agent_id = %agent.id,

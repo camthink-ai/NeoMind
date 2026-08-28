@@ -2420,6 +2420,6 @@ mod tests {
         let result = replace_section_in_content(content, "NewSection", "NewContent");
         let lines: Vec<&str> = result.lines().collect();
         assert_eq!(lines[0], "## NewSection");
-        assert!(lines.iter().any(|l| *l == "NewContent"));
+        assert!(lines.contains(&"NewContent"));
     }
 }

@@ -73,12 +73,14 @@ fn catalog_url() -> String {
 const CATALOG_TTL: Duration = Duration::from_secs(60);
 const FETCH_TIMEOUT: Duration = Duration::from_secs(3);
 
-/// In-process cache: (fetched_at, Option<models>). `Some(list)` = last fetch
-/// succeeded; `None` = last fetch failed (kept so an offline period doesn't
-/// hammer the network on every /models call, and so callers correctly fall
-/// back to the compiled-in curated set instead of an empty catalog).
-static CACHE: OnceLock<Arc<RwLock<Option<(Instant, Option<Vec<CatalogModel>>)>>>> = OnceLock::new();
-fn cache() -> &'static Arc<RwLock<Option<(Instant, Option<Vec<CatalogModel>>)>>> {
+/// In-process cache state: `(fetched_at, Option<models>)`. `Some(list)` = last
+/// fetch succeeded; `None` = last fetch failed (kept so an offline period
+/// doesn't hammer the network on every /models call, and so callers correctly
+/// fall back to the compiled-in curated set instead of an empty catalog).
+type CatalogCacheState = Option<(Instant, Option<Vec<CatalogModel>>)>;
+
+static CACHE: OnceLock<Arc<RwLock<CatalogCacheState>>> = OnceLock::new();
+fn cache() -> &'static Arc<RwLock<CatalogCacheState>> {
     CACHE.get_or_init(|| Arc::new(RwLock::new(None)))
 }
 
