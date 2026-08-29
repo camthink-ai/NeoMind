@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [0.9.21] - 2026-08-29 — security hardening, backups, observability
+
+### Wrap-up
+- **Crash alerts reach the user.** A circuit-broken extension (restart attempts exhausted) now sends a system message through the notification channels instead of only logging — previously a repeatedly-crashing extension just quietly stopped working.
+- **The Crashed state is visible in the UI.** Extension cards show an error-tinted "Crashed" chip with the crash reason and consecutive count on hover.
+- **The serve startup tests run in CI.** A test-only `NEOMIND_EXIT_AFTER_READY_MS` lets `neomind serve` exit gracefully after startup, so the three spawn-a-real-server tests assert a full boot (bind → stores → services → ready → clean exit) instead of "alive after 500ms", run with per-test temp data dirs, and no longer need the CI skip.
 
 ### Extension system — hang detection and honest crash state
 - **Hung extensions are now detected.** A deadlock without exit never closes stdout, so the death monitor saw nothing and every subsequent command just burned its full timeout (produce_metrics didn't even kill). Each process now runs a liveness probe (Ping every 30s, 5s timeout, configurable: `health_check_*` on `IsolatedExtensionConfig`); after repeated failures the process is killed through the same path a command timeout takes, handing it to the existing crash/restart machinery. Wiring this up exposed a real protocol bug: **`Pong` carried no `request_id`**, so the host's receiver thread classified it as unroutable and silently dropped it — Ping/Pong now carry one like every other request/response.
