@@ -208,6 +208,16 @@ pub struct IsolatedExtensionConfig {
     /// it should protect. Set this only for extensions with known-bounded
     /// allocators (pure-Rust CLI-style extensions).
     pub rlimit_memory_mb: Option<u64>,
+    /// Periodic liveness probe interval in seconds (0 = disabled). A hung
+    /// extension (deadlock without exit) never closes stdout, so the death
+    /// monitor can't see it; the probe Pings the runner and kills it after
+    /// repeated failures, converting hangs into crashes the existing
+    /// restart machinery already handles.
+    pub health_check_interval_secs: u64,
+    /// Per-probe timeout in seconds.
+    pub health_check_timeout_secs: u64,
+    /// Consecutive probe failures before the process is killed.
+    pub health_check_max_failures: u32,
     /// Restart on crash
     pub restart_on_crash: bool,
     /// Maximum restart attempts
@@ -240,6 +250,9 @@ impl Default for IsolatedExtensionConfig {
             // - Headroom: ~918MB
             max_memory_mb: 2048, // Increased from 1024MB for YOLO stability
             rlimit_memory_mb: None,
+            health_check_interval_secs: 30,
+            health_check_timeout_secs: 5,
+            health_check_max_failures: 2,
             restart_on_crash: true,
             max_restart_attempts: 3,
             restart_cooldown_secs: 5,
@@ -378,6 +391,9 @@ pub struct IsolatedExtension {
         Arc<std::sync::RwLock<Option<Arc<dyn super::super::context::ExtensionCapabilityProvider>>>>,
     /// Crash loop detection: consecutive crash count
     consecutive_crashes: AtomicU32,
+    /// Human-readable reason for the most recent crash (exited/signal/IPC
+    /// failure) — surfaced through the API so "Stopped" can become "Crashed".
+    last_crash_reason: tokio::sync::Mutex<Option<String>>,
     /// Crash loop detection: timestamp of last crash
     last_crash_time: Mutex<Option<Instant>>,
     /// Ring buffer capturing stderr output as structured log entries
@@ -417,6 +433,7 @@ impl IsolatedExtension {
             start_time: Mutex::new(None),
             // Crash loop detection
             consecutive_crashes: AtomicU32::new(0),
+            last_crash_reason: tokio::sync::Mutex::new(None),
             last_crash_time: Mutex::new(None),
             log_buffer: Arc::new(LogBuffer::new()),
         }
@@ -2453,7 +2470,8 @@ impl IsolatedExtension {
                         self.kill_internal(&mut process_guard).await;
                         drop(process_guard);
                         // Record crash for crash loop detection
-                        self.record_crash().await;
+                        self.record_crash(format!("process exited with status: {:?}", status))
+                            .await;
                         return Err(IsolatedExtensionError::Crashed(format!(
                             "Process exited with status: {:?}",
                             status
@@ -2483,7 +2501,8 @@ impl IsolatedExtension {
                         self.kill_internal(&mut *process_guard).await;
                         drop(process_guard);
                         // Record crash for crash loop detection
-                        self.record_crash().await;
+                        self.record_crash(format!("process exited with code: {:?}", status.code()))
+                            .await;
                         return Err(IsolatedExtensionError::Crashed(format!(
                             "Process exited with code: {:?}",
                             status.code()
@@ -2518,7 +2537,8 @@ impl IsolatedExtension {
                     drop(process_guard);
 
                     // Record crash for crash loop detection
-                    self.record_crash().await;
+                    self.record_crash("IPC failure while starting extension")
+                        .await;
 
                     // Attempt restart with crash loop detection
                     if self.config.restart_on_crash {
@@ -2566,7 +2586,7 @@ impl IsolatedExtension {
                     drop(process_guard);
 
                     // Record crash for crash loop detection
-                    self.record_crash().await;
+                    self.record_crash("IPC failure during health check").await;
 
                     // Attempt restart with crash loop detection
                     if self.config.restart_on_crash {
@@ -2727,15 +2747,119 @@ impl IsolatedExtension {
     }
 
     /// Record a crash for crash loop detection
-    pub async fn record_crash(&self) {
+    pub async fn record_crash(&self, reason: impl Into<String>) {
         let consecutive = self.consecutive_crashes.fetch_add(1, Ordering::SeqCst);
+        let reason = reason.into();
+        *self.last_crash_reason.lock().await = Some(reason.clone());
         let mut last_crash = self.last_crash_time.lock().await;
         *last_crash = Some(Instant::now());
         warn!(
             extension_id = %self.extension_id,
             consecutive_crashes = consecutive + 1,
+            reason = %reason,
             "Extension crash recorded for crash loop detection"
         );
+    }
+
+    /// Current crash-loop status: (consecutive crashes, last crash reason).
+    pub async fn crash_info(&self) -> (u32, Option<String>) {
+        (
+            self.consecutive_crashes.load(Ordering::SeqCst),
+            self.last_crash_reason.lock().await.clone(),
+        )
+    }
+
+    /// Round-trip liveness probe. The runner answers `Ping` with `Pong`
+    /// without touching the extension; a timeout means the runner itself is
+    /// wedged (deadlock, unbounded loop in the message pump) — see
+    /// `spawn_health_monitor`.
+    pub async fn ping(&self) -> IsolatedResult<()> {
+        if !self.running.load(Ordering::SeqCst) {
+            return Err(IsolatedExtensionError::NotRunning);
+        }
+        let (request_id, rx) = self.in_flight.register();
+        self.send_message_with_retry(&IpcMessage::Ping {
+            request_id,
+            timestamp: chrono::Utc::now().timestamp_millis(),
+        })
+        .await?;
+        match self
+            .in_flight
+            .wait_with_timeout(
+                request_id,
+                rx,
+                Duration::from_secs(self.config.health_check_timeout_secs.max(1)),
+            )
+            .await
+        {
+            Ok(IpcResponse::Pong { .. }) => Ok(()),
+            Ok(other) => Err(IsolatedExtensionError::InvalidResponse(format!(
+                "expected Pong, got {other:?}"
+            ))),
+            Err(super::in_flight::InFlightError::Timeout(ms)) => {
+                Err(IsolatedExtensionError::Timeout(ms))
+            }
+            Err(super::in_flight::InFlightError::ChannelClosed) => Err(
+                IsolatedExtensionError::IpcError("response channel closed".to_string()),
+            ),
+        }
+    }
+
+    /// Spawn the periodic liveness probe (see `health_check_interval_secs`).
+    /// Exits when the process stops running — the death monitor owns restarts;
+    /// this task's only job is to convert "hung but alive" into "dead" by
+    /// killing the process after repeated Ping failures.
+    pub fn spawn_health_monitor(self: &std::sync::Arc<Self>) {
+        let interval = self.config.health_check_interval_secs;
+        if interval == 0 {
+            return;
+        }
+        let max_failures = self.config.health_check_max_failures.max(1);
+        let this = std::sync::Arc::clone(self);
+        tokio::spawn(async move {
+            let mut consecutive_failures: u32 = 0;
+            loop {
+                tokio::time::sleep(Duration::from_secs(interval)).await;
+                if !this.running.load(Ordering::SeqCst) {
+                    debug!(
+                        extension_id = %this.extension_id,
+                        "Health monitor exiting: process no longer running"
+                    );
+                    return;
+                }
+                match this.ping().await {
+                    Ok(()) => consecutive_failures = 0,
+                    Err(e) => {
+                        consecutive_failures += 1;
+                        warn!(
+                            extension_id = %this.extension_id,
+                            error = %e,
+                            consecutive_failures,
+                            max_failures,
+                            "Extension liveness probe failed"
+                        );
+                        if consecutive_failures >= max_failures {
+                            // Same kill path a command timeout takes: EOF on
+                            // stdout fires the death notification and the
+                            // manager's crash machinery restarts or
+                            // circuit-breaks the extension.
+                            warn!(
+                                extension_id = %this.extension_id,
+                                consecutive_failures,
+                                "Extension unresponsive to liveness probes — killing hung process"
+                            );
+                            this.record_crash("unresponsive to liveness probes (hang)")
+                                .await;
+                            let mut process_guard = this.process.lock().await;
+                            if process_guard.is_some() {
+                                this.kill_internal(&mut process_guard).await;
+                            }
+                            return;
+                        }
+                    }
+                }
+            }
+        });
     }
 
     /// Record successful start - reset crash counter after stable period

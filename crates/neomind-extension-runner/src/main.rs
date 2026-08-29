@@ -2728,8 +2728,14 @@ impl Runner {
                 self.send_response(result);
             }
 
-            IpcMessage::Ping { timestamp } => {
-                self.send_response(IpcResponse::Pong { timestamp });
+            IpcMessage::Ping {
+                request_id,
+                timestamp,
+            } => {
+                self.send_response(IpcResponse::Pong {
+                    request_id,
+                    timestamp,
+                });
             }
 
             // Streaming support

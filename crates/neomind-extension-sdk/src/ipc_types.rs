@@ -713,6 +713,15 @@ pub struct ExtensionRuntimeState {
     pub error_count: u64,
     /// Last error message
     pub last_error: Option<String>,
+    /// Consecutive crashes as counted by crash-loop detection (reset on a
+    /// stable start). Non-zero while the extension is stopped means it did
+    /// not stop on purpose — it crashed.
+    #[serde(default)]
+    pub consecutive_crashes: u32,
+    /// Why the last crash happened (exit status / signal / IPC failure /
+    /// hang). Surfaced so the UI can say "Crashed: <reason>".
+    #[serde(default)]
+    pub last_crash_reason: Option<String>,
 }
 
 impl ExtensionRuntimeState {
@@ -1139,8 +1148,13 @@ pub enum IpcMessage {
     /// Graceful shutdown
     Shutdown,
 
-    /// Ping (keep-alive)
+    /// Ping (keep-alive / liveness probe)
     Ping {
+        /// Request ID for routing the Pong back to the probing caller.
+        /// `#[serde(default)]`: the host is the only Ping sender and always
+        /// sets it; the default keeps deserialization tolerant.
+        #[serde(default)]
+        request_id: u64,
         /// Timestamp
         timestamp: i64,
     },
@@ -1385,6 +1399,10 @@ pub enum IpcResponse {
 
     /// Pong response
     Pong {
+        /// Request ID of the Ping this answers (routes through the host's
+        /// in-flight tracker like every other response).
+        #[serde(default)]
+        request_id: u64,
         /// Original timestamp
         timestamp: i64,
     },
@@ -1633,7 +1651,7 @@ impl IpcResponse {
             Self::Health { request_id, .. } => Some(*request_id),
             Self::Metadata { request_id, .. } => Some(*request_id),
             Self::EventSubscriptions { request_id, .. } => Some(*request_id),
-            Self::Pong { .. } => None,
+            Self::Pong { request_id, .. } => Some(*request_id),
             Self::StreamSessionInit { request_id, .. } => Some(*request_id),
             Self::StreamSessionClosed { request_id, .. } => Some(*request_id),
             Self::StreamChunkResult { request_id, .. } => Some(*request_id),

@@ -426,13 +426,14 @@ mod tests {
         let mut rx = create_event_channel();
 
         let msg = IpcMessage::Ping {
+            request_id: 0,
             timestamp: 1234567890,
         };
         push_event(msg.clone());
 
         let received = rx.blocking_recv().unwrap();
         match received {
-            IpcMessage::Ping { timestamp } => {
+            IpcMessage::Ping { timestamp, .. } => {
                 assert_eq!(timestamp, 1234567890);
             }
             _ => panic!("Expected Ping message"),
@@ -554,6 +555,7 @@ mod tests {
     #[test]
     fn test_ipc_message_ping_roundtrip() {
         let msg = IpcMessage::Ping {
+            request_id: 0,
             timestamp: 9876543210,
         };
 
@@ -561,7 +563,7 @@ mod tests {
         let parsed = IpcMessage::from_bytes(&bytes).unwrap();
 
         match parsed {
-            IpcMessage::Ping { timestamp } => {
+            IpcMessage::Ping { timestamp, .. } => {
                 assert_eq!(timestamp, 9876543210);
             }
             _ => panic!("Expected Ping"),
@@ -826,6 +828,7 @@ mod tests {
     #[test]
     fn test_ipc_response_pong_roundtrip() {
         let resp = IpcResponse::Pong {
+            request_id: 0,
             timestamp: 1111111111,
         };
 
@@ -833,7 +836,7 @@ mod tests {
         let parsed = IpcResponse::from_bytes(&bytes).unwrap();
 
         match parsed {
-            IpcResponse::Pong { timestamp } => {
+            IpcResponse::Pong { timestamp, .. } => {
                 assert_eq!(timestamp, 1111111111);
             }
             _ => panic!("Expected Pong"),
@@ -1158,7 +1161,13 @@ mod tests {
                 },
                 Some(300),
             ),
-            (IpcResponse::Pong { timestamp: 123 }, None),
+            (
+                IpcResponse::Pong {
+                    request_id: 0,
+                    timestamp: 123,
+                },
+                Some(0),
+            ),
             (IpcResponse::ShutdownAck, None),
         ];
 
@@ -1193,7 +1202,10 @@ mod tests {
         };
         assert!(cap_req.is_capability_request());
 
-        let other = IpcResponse::Pong { timestamp: 123 };
+        let other = IpcResponse::Pong {
+            request_id: 0,
+            timestamp: 123,
+        };
         assert!(!other.is_capability_request());
     }
 

@@ -236,13 +236,22 @@ mod tests {
         let (request_id, rx) = tracker.register();
 
         // Complete the request (sync call)
-        let response = IpcResponse::Pong { timestamp: 123 };
+        let response = IpcResponse::Pong {
+            request_id: 0,
+            timestamp: 123,
+        };
         let found = tracker.complete(request_id, response.clone());
         assert!(found);
 
         // Receive the response
         let received = rx.await.unwrap();
-        assert!(matches!(received, IpcResponse::Pong { timestamp: 123 }));
+        assert!(matches!(
+            received,
+            IpcResponse::Pong {
+                request_id: 0,
+                timestamp: 123
+            }
+        ));
     }
 
     #[tokio::test]
@@ -264,7 +273,10 @@ mod tests {
         let tracker = InFlightRequests::new(Duration::from_secs(5));
 
         // Try to complete a request that was never registered
-        let response = IpcResponse::Pong { timestamp: 123 };
+        let response = IpcResponse::Pong {
+            request_id: 0,
+            timestamp: 123,
+        };
         let found = tracker.complete(999, response);
         assert!(!found);
     }
@@ -281,18 +293,54 @@ mod tests {
         assert_eq!(tracker.pending_count(), 3);
 
         // Complete them in different order (sync calls)
-        tracker.complete(id2, IpcResponse::Pong { timestamp: 2 });
-        tracker.complete(id1, IpcResponse::Pong { timestamp: 1 });
-        tracker.complete(id3, IpcResponse::Pong { timestamp: 3 });
+        tracker.complete(
+            id2,
+            IpcResponse::Pong {
+                request_id: 0,
+                timestamp: 2,
+            },
+        );
+        tracker.complete(
+            id1,
+            IpcResponse::Pong {
+                request_id: 0,
+                timestamp: 1,
+            },
+        );
+        tracker.complete(
+            id3,
+            IpcResponse::Pong {
+                request_id: 0,
+                timestamp: 3,
+            },
+        );
 
         // Each receiver should get the correct response
         let r1 = rx1.await.unwrap();
         let r2 = rx2.await.unwrap();
         let r3 = rx3.await.unwrap();
 
-        assert!(matches!(r1, IpcResponse::Pong { timestamp: 1 }));
-        assert!(matches!(r2, IpcResponse::Pong { timestamp: 2 }));
-        assert!(matches!(r3, IpcResponse::Pong { timestamp: 3 }));
+        assert!(matches!(
+            r1,
+            IpcResponse::Pong {
+                request_id: 0,
+                timestamp: 1
+            }
+        ));
+        assert!(matches!(
+            r2,
+            IpcResponse::Pong {
+                request_id: 0,
+                timestamp: 2
+            }
+        ));
+        assert!(matches!(
+            r3,
+            IpcResponse::Pong {
+                request_id: 0,
+                timestamp: 3
+            }
+        ));
     }
 
     #[tokio::test]
@@ -304,10 +352,22 @@ mod tests {
         let (id1, rx1) = tracker.register();
 
         // Complete with clone (sync call)
-        tracker_clone.complete(id1, IpcResponse::Pong { timestamp: 42 });
+        tracker_clone.complete(
+            id1,
+            IpcResponse::Pong {
+                request_id: 0,
+                timestamp: 42,
+            },
+        );
 
         // Should receive the response
         let r1 = rx1.await.unwrap();
-        assert!(matches!(r1, IpcResponse::Pong { timestamp: 42 }));
+        assert!(matches!(
+            r1,
+            IpcResponse::Pong {
+                request_id: 0,
+                timestamp: 42
+            }
+        ));
     }
 }

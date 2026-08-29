@@ -46,8 +46,14 @@ mod tests {
         }
     }
 
+    /// Serializes tests that rewrite the process PATH: running concurrently,
+    /// one test's "/nonexistent..." PATH wipes another's just-set fake-bin
+    /// dir (flaked under the full-test CI gate).
+    static PATH_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn finds_in_path() {
+        let _lock = PATH_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         static TMP: OnceLock<std::path::PathBuf> = OnceLock::new();
         let dir = TMP.get_or_init(|| {
             let d = std::env::temp_dir().join(format!("builtin-find-{}", std::process::id()));
@@ -77,6 +83,7 @@ mod tests {
 
     #[test]
     fn missing_returns_error() {
+        let _lock = PATH_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let old = std::env::var("PATH").ok();
         std::env::set_var("PATH", "/nonexistent-dir-for-builtin-find");
         let found = find_llama_server();

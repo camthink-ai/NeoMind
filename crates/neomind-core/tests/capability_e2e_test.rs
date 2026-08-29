@@ -473,6 +473,12 @@ async fn test_native_isolated_capability_ipc() {
         .expect("failed to load smoke extension");
     assert_eq!(metadata.id, "smoke-test");
 
+    // Liveness probe must round-trip on a healthy process, and a fresh
+    // process has no crash history (the health monitor's Ping path).
+    let ext = manager.get("smoke-test").await.expect("extension handle");
+    ext.ping().await.expect("liveness probe should round-trip");
+    assert_eq!(ext.crash_info().await, (0, None));
+
     let response = manager
         .execute_command(
             "smoke-test",

@@ -405,6 +405,23 @@ impl IsolatedExtensionManager {
                             .collect();
                         drop(extensions);
 
+                        // Snapshot crash counters from the dead process
+                        // handles into the info cache before any restart
+                        // decision — this is what lets the API report
+                        // "Crashed: <reason>" instead of "Stopped".
+                        for ext_id in &dead_extensions {
+                            let (crashes, reason) = match self.extensions.read().await.get(ext_id) {
+                                Some(ext) => ext.crash_info().await,
+                                None => (0, None),
+                            };
+                            let mut cache = self.info_cache.write();
+                            if let Some(info) = cache.get_mut(ext_id) {
+                                info.runtime.consecutive_crashes = crashes;
+                                info.runtime.last_crash_reason = reason;
+                                info.runtime.is_running = false;
+                            }
+                        }
+
                         for ext_id in dead_extensions {
                             // 🔧 Phase 1: Check restart policy before attempting restart
                             let should_restart = {
@@ -748,6 +765,10 @@ impl IsolatedExtensionManager {
             .await
             .insert(id.clone(), loaded.clone());
 
+        // Liveness probe: converts hung-but-alive processes into crashes the
+        // death monitor below already knows how to handle.
+        loaded.spawn_health_monitor();
+
         // Set capability provider if configured
         if let Some(provider) = self.capability_provider.read().await.as_ref() {
             loaded.set_capability_provider(provider.clone());
@@ -771,7 +792,12 @@ impl IsolatedExtensionManager {
         // has no prior entry and correctly starts at 0).
         let preserved = self.info_cache.read().get(&id).and_then(|prev| {
             if prev.path == path {
-                Some((prev.runtime.restart_count, prev.runtime.last_restart_at))
+                Some((
+                    prev.runtime.restart_count,
+                    prev.runtime.last_restart_at,
+                    prev.runtime.consecutive_crashes,
+                    prev.runtime.last_crash_reason.clone(),
+                ))
             } else {
                 None
             }
@@ -779,9 +805,11 @@ impl IsolatedExtensionManager {
         let mut runtime = crate::extension::system::ExtensionRuntimeState::isolated();
         runtime.is_running = loaded.is_alive();
         runtime.loaded_at = Some(chrono::Utc::now().timestamp());
-        if let Some((restart_count, last_restart_at)) = preserved {
+        if let Some((restart_count, last_restart_at, crashes, crash_reason)) = preserved {
             runtime.restart_count = restart_count;
             runtime.last_restart_at = last_restart_at;
+            runtime.consecutive_crashes = crashes;
+            runtime.last_crash_reason = crash_reason;
         }
 
         // Store info

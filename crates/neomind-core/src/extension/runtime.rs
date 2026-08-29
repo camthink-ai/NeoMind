@@ -41,6 +41,12 @@ pub struct ExtensionRuntimeInfo {
     pub metrics: Vec<super::system::MetricDescriptor>,
     /// Commands provided by this extension.
     pub commands: Vec<super::system::ExtensionCommand>,
+    /// Consecutive crashes (crash-loop counter, reset on a stable start).
+    /// Non-zero while stopped ⇒ the extension crashed rather than being
+    /// stopped on purpose.
+    pub consecutive_crashes: u32,
+    /// Human-readable reason for the last crash.
+    pub last_crash_reason: Option<String>,
 }
 
 /// Single-path extension runtime.
@@ -270,6 +276,8 @@ impl ExtensionRuntime {
                 path: Some(info.path),
                 metrics: info.descriptor.metrics,
                 commands: info.descriptor.commands,
+                consecutive_crashes: info.runtime.consecutive_crashes,
+                last_crash_reason: info.runtime.last_crash_reason.clone(),
             })
     }
 
@@ -286,6 +294,8 @@ impl ExtensionRuntime {
                 path: Some(info.path),
                 metrics: info.descriptor.metrics,
                 commands: info.descriptor.commands,
+                consecutive_crashes: info.runtime.consecutive_crashes,
+                last_crash_reason: info.runtime.last_crash_reason.clone(),
             })
             .collect()
     }

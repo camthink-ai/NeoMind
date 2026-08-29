@@ -76,6 +76,13 @@ pub struct ExtensionDto {
     /// Last error timestamp if any
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error_at: Option<i64>,
+    /// Consecutive crashes (0 = healthy / stopped on purpose). Non-zero
+    /// while stopped means the extension crashed.
+    #[serde(default)]
+    pub consecutive_crashes: u32,
+    /// Reason for the most recent crash, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_crash_reason: Option<String>,
     /// Commands provided by this extension
     #[serde(default)]
     pub commands: Vec<CommandDescriptorDto>,
@@ -275,6 +282,8 @@ pub async fn list_extensions_handler(
             health_status: record.health_status,
             last_error: record.last_error,
             last_error_at: record.last_error_at,
+            consecutive_crashes: 0,
+            last_crash_reason: None,
             commands: Vec::new(),
             metrics: Vec::new(),
             config_parameters: None,
@@ -383,8 +392,12 @@ fn extension_info_to_dto(
         None => ("unknown".to_string(), None, None),
     };
 
-    // Determine state based on is_running and health_status
-    let state_str = if !info.is_running {
+    // Determine state based on is_running and health_status. A stopped
+    // extension with crash-loop counters did not stop on purpose — it
+    // crashed; the old derivation hid that behind "Stopped".
+    let state_str = if !info.is_running && info.consecutive_crashes > 0 {
+        "Crashed"
+    } else if !info.is_running {
         "Stopped"
     } else if health_status == "error" {
         "Error"
@@ -408,6 +421,8 @@ fn extension_info_to_dto(
         health_status,
         last_error,
         last_error_at,
+        consecutive_crashes: info.consecutive_crashes,
+        last_crash_reason: info.last_crash_reason.clone(),
         commands,
         metrics,
         config_parameters,

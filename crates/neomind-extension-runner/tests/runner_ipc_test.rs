@@ -225,6 +225,7 @@ fn test_ipc_message_shutdown() {
 #[test]
 fn test_ipc_message_ping() {
     let msg = IpcMessage::Ping {
+        request_id: 0,
         timestamp: 1234567890,
     };
 
@@ -232,7 +233,7 @@ fn test_ipc_message_ping() {
     let parsed: IpcMessage = serde_json::from_str(&json).unwrap();
 
     match parsed {
-        IpcMessage::Ping { timestamp } => {
+        IpcMessage::Ping { timestamp, .. } => {
             assert_eq!(timestamp, 1234567890);
         }
         _ => panic!("Expected Ping"),
@@ -410,6 +411,7 @@ fn test_ipc_response_stats() {
 #[test]
 fn test_ipc_response_pong() {
     let resp = IpcResponse::Pong {
+        request_id: 0,
         timestamp: 1234567890,
     };
 
@@ -417,7 +419,7 @@ fn test_ipc_response_pong() {
     let parsed: IpcResponse = serde_json::from_str(&json).unwrap();
 
     match parsed {
-        IpcResponse::Pong { timestamp } => {
+        IpcResponse::Pong { timestamp, .. } => {
             assert_eq!(timestamp, 1234567890);
         }
         _ => panic!("Expected Pong"),
