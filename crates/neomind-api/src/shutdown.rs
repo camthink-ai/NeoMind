@@ -9,6 +9,34 @@ use crate::server::ServerState;
 /// Shutdown timeout in seconds.
 const SHUTDOWN_TIMEOUT: u64 = 30;
 
+/// `shutdown_signal`, plus a test-only deadline: when
+/// `NEOMIND_EXIT_AFTER_READY_MS` is set, the server exits gracefully that
+/// many milliseconds after it starts serving. Lets the CLI integration
+/// tests assert a FULL startup (bind → stores → services → ready) by simply
+/// waiting for exit code 0 instead of "did it stay alive", which is what
+/// made those tests environment-sensitive (they needed free ports for a
+/// server that never exits).
+pub async fn shutdown_signal_or_test_deadline() {
+    let exit_after_ms = std::env::var("NEOMIND_EXIT_AFTER_READY_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok());
+    tokio::select! {
+        _ = shutdown_signal() => {}
+        _ = async {
+            match exit_after_ms {
+                Some(ms) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+                    tracing::info!(
+                        exit_after_ms = ms,
+                        "NEOMIND_EXIT_AFTER_READY_MS elapsed — graceful exit (test mode)"
+                    );
+                }
+                None => std::future::pending::<()>().await,
+            }
+        } => {}
+    }
+}
+
 /// Wait for shutdown signal (Ctrl+C or SIGTERM).
 pub async fn shutdown_signal() {
     let ctrl_c = async {

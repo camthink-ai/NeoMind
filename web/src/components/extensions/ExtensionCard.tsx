@@ -86,16 +86,28 @@ export function ExtensionCard({
   const toolsEnabled = extension.enabled !== false
 
   const hasError = extension.state === "Error"
+  // Crashed = stopped by crash-loop, not on purpose — error-tinted, with the
+  // crash reason on hover (backend: consecutive_crashes/last_crash_reason).
+  const hasCrashed =
+    extension.state === "Crashed" || (extension.consecutive_crashes ?? 0) > 0
   const hasWarning = extension.state === "Warning"
   const isFailed = extension.state === "Failed" || extension.state === "Stopped"
 
   const displayState = hasError
     ? t('error', { defaultValue: 'Error' })
-    : hasWarning
-      ? t('warning', { defaultValue: 'Warning' })
-      : isFailed
-        ? extension.state
-        : t('active', { defaultValue: 'Active' })
+    : hasCrashed
+      ? t('crashed', { defaultValue: 'Crashed' })
+      : hasWarning
+        ? t('warning', { defaultValue: 'Warning' })
+        : isFailed
+          ? extension.state
+          : t('active', { defaultValue: 'Active' })
+
+  const crashTitle = hasCrashed
+    ? extension.last_crash_reason
+      ? `${t('crashed', { defaultValue: 'Crashed' })} ×${extension.consecutive_crashes}: ${extension.last_crash_reason}`
+      : t('crashedTooltip', { defaultValue: 'Stopped after repeated crashes' })
+    : undefined
 
   return (
     <Card
@@ -116,7 +128,7 @@ export function ExtensionCard({
             {/* Icon with status-tinted background (mirrors AgentCard) */}
             <div className={cn(
               "relative w-11 h-11 rounded-xl flex items-center justify-center shrink-0 transition-colors",
-              hasError ? "bg-error-light text-error" :
+              hasError || hasCrashed ? "bg-error-light text-error" :
               hasWarning ? "bg-warning-light text-warning" :
               isFailed ? "bg-muted text-muted-foreground" :
               "bg-success-light text-success",
@@ -125,7 +137,7 @@ export function ExtensionCard({
               {/* Status indicator dot */}
               <div className={cn(
                 "absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-background",
-                hasError ? "bg-error" : hasWarning ? "bg-warning" : isFailed ? "bg-muted-foreground" : "bg-success"
+                hasError || hasCrashed ? "bg-error" : hasWarning ? "bg-warning" : isFailed ? "bg-muted-foreground" : "bg-success"
               )} />
             </div>
             <div className="min-w-0">
@@ -133,11 +145,11 @@ export function ExtensionCard({
                 <h3 className="font-semibold text-sm truncate" title={extension.name}>{extension.name}</h3>
                 <span className={cn(
                   textNano, "px-1.5 py-0.5 rounded-full shrink-0",
-                  hasError ? "bg-error-light text-error" :
+                  hasError || hasCrashed ? "bg-error-light text-error" :
                   hasWarning ? "bg-warning-light text-warning" :
                   isFailed ? "bg-muted-30 text-muted-foreground" :
                   "bg-success-light text-success"
-                )}>
+                )} title={crashTitle}>
                   {displayState}
                 </span>
               </div>

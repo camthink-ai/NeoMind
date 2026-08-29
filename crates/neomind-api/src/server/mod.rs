@@ -512,19 +512,44 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                 ));
             }
 
-            // Record error in storage when crash recovery restart fails
+            // Record error in storage when crash recovery restart fails, and
+            // surface it through the notification channels — without the
+            // message, a circuit-broken extension just quietly stops working
+            // ("feature silently gone" from the extension-system review).
+            let crash_notify_state = bg_state.clone();
             bg_state
                 .extensions
                 .runtime
-                .set_on_crash_recovery_failed(Arc::new(move |extension_id: &str, error: &str| {
-                    let ext_id = extension_id.to_string();
-                    let err_msg = error.to_string();
-                    tokio::spawn(async move {
-                        if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
-                            let _ = store.update_error_status(&ext_id, &err_msg);
-                        }
-                    });
-                }));
+                .set_on_crash_recovery_failed(Arc::new(
+                    move |extension_id: &str, error: &str| {
+                        let ext_id = extension_id.to_string();
+                        let err_msg = error.to_string();
+                        let notify = crash_notify_state.clone();
+                        tokio::spawn(async move {
+                            if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
+                                let _ = store.update_error_status(&ext_id, &err_msg);
+                            }
+                            let title = format!("Extension '{ext_id}' stopped auto-restarting");
+                            let body = format!(
+                                "Extension '{ext_id}' crashed repeatedly and auto-restart has been \
+                                 disabled ({err_msg}). It will not recover on its own — check \
+                                 Settings → Extensions to view the crash reason or restart it manually."
+                            );
+                            if let Err(e) = notify
+                                .core
+                                .message_manager
+                                .system_message(title, body)
+                                .await
+                            {
+                                tracing::warn!(
+                                    extension_id = %ext_id,
+                                    error = %e,
+                                    "Failed to send crash-recovery notification"
+                                );
+                            }
+                        });
+                    },
+                ));
 
             bg_state.extensions.runtime.clone().start_death_monitoring();
 
@@ -722,7 +747,7 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
         listener,
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
-    .with_graceful_shutdown(crate::shutdown::shutdown_signal())
+    .with_graceful_shutdown(crate::shutdown::shutdown_signal_or_test_deadline())
     .await?;
 
     // Clean up resources after server shuts down

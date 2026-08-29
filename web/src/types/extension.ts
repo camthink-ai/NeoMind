@@ -219,6 +219,10 @@ export interface Extension {
   description?: string
   author?: string
   state: string
+  /** Consecutive crashes (0 = healthy / stopped on purpose). */
+  consecutive_crashes?: number
+  /** Reason for the most recent crash, when known. */
+  last_crash_reason?: string | null
   commands: ExtensionCommandDescriptor[]
   metrics: ExtensionMetricDto[]
   file_path?: string

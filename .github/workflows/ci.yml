@@ -148,12 +148,10 @@ jobs:
             tests-${{ runner.os }}-
 
       - name: Run all workspace tests
-        # `--skip commands::serve_test`: the three serve tests spawn a real
-        # `neomind serve` (needs ports 9375/1883 free + a clean data dir).
-        # Real-server startup is already smoke-tested in build.yml
-        # (capability IPC tests) and docker.yml (health-gated image push);
-        # run them locally with a stopped dev server when touching `serve`.
-        run: cargo test --workspace --locked -- --skip commands::serve_test
+        # The serve tests run the real binary with NEOMIND_EXIT_AFTER_READY_MS
+        # (graceful exit after startup) + a per-test temp data dir, so they
+        # need no special environment beyond free ports on a fresh runner.
+        run: cargo test --workspace --locked
 
   cargo-audit:
     name: Security advisory scan (cargo audit)

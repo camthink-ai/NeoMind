@@ -20,59 +20,61 @@ fn serve_lock() -> MutexGuard<'static, ()> {
     SERVE_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Spawn `neomind serve` with the given args, wait briefly, and assert it
-/// stayed alive (i.e. it started and bound its port). Kills it afterwards.
+/// Spawn `neomind serve` and assert a FULL startup: the server must stay up
+/// long enough to get past binding, store init and services, then exit
+/// gracefully with code 0 via the test-only `NEOMIND_EXIT_AFTER_READY_MS`
+/// deadline. This replaced "spawn, hope it's still alive after 500ms, kill"
+/// — which couldn't tell a healthy server from one still wedged in init,
+/// and left junk data dirs behind.
 ///
-/// `serve` has no graceful-exit flag, so we can't use `assert_cmd`'s
-/// `assert()` (it waits for exit). Instead we spawn, sleep, check the process
-/// is still running, then kill it. A startup failure (e.g. port already in
-/// use) would have exited nonzero before the check.
-// Clippy: never_loop — every arm of the first check exits (panic/break), so
-// this is effectively "give serve 500ms to fail fast, then consider it
-// started". Kept as a loop for the 15s deadline readability; behavior is
-// intentional.
-#[allow(clippy::never_loop)]
+/// Each run gets its own NEOMIND_DATA_DIR so tests never touch the repo's
+/// data/ (the ":memory:" file litter in the repo root came from exactly
+/// that). Still serialized: the embedded MQTT broker's port comes from
+/// config.toml with no CLI override.
 fn assert_serve_starts(args: &[&str]) {
     let _lock = serve_lock();
     let bin = assert_cmd::cargo::cargo_bin("neomind");
+    let data_dir = std::env::temp_dir().join(format!("neomind-serve-test-{}", std::process::id()));
+    std::fs::create_dir_all(&data_dir).expect("create temp data dir");
+
     let mut child = std::process::Command::new(bin)
         .args(["serve"])
         .args(args)
+        .env("NEOMIND_DATA_DIR", &data_dir)
+        .env("NEOMIND_EXIT_AFTER_READY_MS", "4000")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
         .expect("failed to spawn neomind serve");
 
-    let deadline = Instant::now() + Duration::from_secs(15);
-    let mut started = false;
-    while Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(500));
-        // If the child exited before the window elapsed, startup failed.
+    // 4s deadline to exit + generous startup allowance on slow runners.
+    let deadline = Instant::now() + Duration::from_secs(90);
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(status)) => {
-                panic!(
-                    "`neomind serve {:?}` exited early with {status} — expected it to keep running",
-                    args
-                );
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(250));
             }
             Ok(None) => {
-                started = true;
-                break;
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!(
+                    "`neomind serve {:?}` did not exit within 90s (test deadline not honored)",
+                    args
+                );
             }
             Err(e) => {
                 let _ = child.kill();
                 panic!("failed to check serve child: {e}");
             }
         }
-    }
-    if !started {
-        let _ = child.kill();
-        panic!("`neomind serve {:?}` did not stay alive within 15s", args);
-    }
-
-    // Clean up.
-    let _ = child.kill();
-    let _ = child.wait();
+    };
+    let _ = std::fs::remove_dir_all(&data_dir);
+    assert!(
+        status.success(),
+        "`neomind serve {:?}` exited with {status} — startup failed",
+        args
+    );
 }
 
 /// Test that serve command accepts default values.
