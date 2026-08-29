@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Extension system — per-call fixed costs removed
+- **The SDK no longer builds a fresh multi-thread tokio Runtime for every FFI call.** Extension commands run on FFI threads with no tokio context, and each `execute_command`/`produce_metrics` used to construct AND tear down a full CPU-count worker runtime — milliseconds of setup per call, the single biggest fixed tax on extension invocations. One 2-worker runtime is now cached per process.
+- **Binary IPC payloads travel as base64 instead of decimal number arrays.** `StreamDataChunk`/`StreamChunkResult`/`ChunkResult`/`PushOutput` carried `Vec<u8>` fields that serde_json encoded as `[104,116,116,112,…]` — ~4× wire size and an order of magnitude slower parsing, on the path that carries video frames (the push pipeline additionally transcoded base64→bytes→numbers). The existing `base64_vec` helper (which still deserializes the legacy number-array form) is now applied to all five fields. Host and runner ship in the same package, so the wire change is release-coupled on both ends by construction.
+
 ### Extension system — security hardening (from the design review)
 - **The async package-extraction path now has the same zip-bomb/symlink defenses as the sync path.** `ExtensionPackage::install()` (used by `/api/extensions/upload`) had NO size/count caps while the sync installer did — same crate, two extract implementations, asymmetric defenses. Caps are now one shared set of constants, and both paths explicitly reject symlink entries.
 - **`file_path` request fields are confined to the data directory.** register/upload/validate used to accept any host path, making them a read-and-try-load primitive over arbitrary files for anyone holding credentials. Paths now resolve against (and must stay inside) the data dir, after canonicalization.

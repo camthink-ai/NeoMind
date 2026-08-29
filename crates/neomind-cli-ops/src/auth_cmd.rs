@@ -220,8 +220,15 @@ mod tests {
         assert_eq!(dir, "/tmp/explicit-test");
     }
 
+    /// Serializes tests that touch the process-global NEOMIND_DATA_DIR env:
+    /// the env and not-found tests set/remove the same variable, and running
+    /// them concurrently lets one delete what the other just set (a flake
+    /// that surfaced under the new full-test CI gate).
+    static DATA_DIR_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_resolve_login_data_dir_env() {
+        let _lock = DATA_DIR_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("NEOMIND_DATA_DIR", "/tmp/env-data-dir-test");
         // Explicit takes priority
         let dir = resolve_login_data_dir(Some("/tmp/explicit".to_string())).unwrap();
@@ -234,6 +241,7 @@ mod tests {
 
     #[test]
     fn test_resolve_login_data_dir_not_found() {
+        let _lock = DATA_DIR_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Clear all sources so resolution fails.
         std::env::remove_var("NEOMIND_DATA_DIR");
         // This test may pass or fail depending on whether ./data or platform
