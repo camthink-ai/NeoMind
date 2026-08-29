@@ -1006,6 +1006,10 @@ pub struct StreamClientInfo {
 pub struct StreamDataChunk {
     pub sequence: u64,
     pub data_type: String,
+    /// Base64 on the wire: a raw Vec<u8> serializes as a decimal number
+    /// array (~4x size, an order of magnitude slower to parse) — this chunk
+    /// type carries video frames.
+    #[serde(with = "base64_vec")]
     pub data: Vec<u8>,
     pub timestamp: i64,
     pub is_last: bool,
@@ -1422,7 +1426,8 @@ pub enum IpcResponse {
         input_sequence: u64,
         /// Output sequence
         output_sequence: u64,
-        /// Result data
+        /// Result data (base64 on the wire — see base64_vec)
+        #[serde(with = "base64_vec")]
         data: Vec<u8>,
         /// Data type MIME
         data_type: String,
@@ -1449,7 +1454,8 @@ pub enum IpcResponse {
         input_sequence: u64,
         /// Output sequence
         output_sequence: u64,
-        /// Result data
+        /// Result data (base64 on the wire — see base64_vec)
+        #[serde(with = "base64_vec")]
         data: Vec<u8>,
         /// Data type MIME
         data_type: String,
@@ -1493,7 +1499,8 @@ pub enum IpcResponse {
         session_id: String,
         /// Output sequence
         sequence: u64,
-        /// Data
+        /// Data (base64 on the wire — see base64_vec)
+        #[serde(with = "base64_vec")]
         data: Vec<u8>,
         /// Data type MIME
         data_type: String,
@@ -1656,7 +1663,8 @@ pub struct PushOutputData {
     pub session_id: String,
     /// Output sequence
     pub sequence: u64,
-    /// Data
+    /// Data (base64 on the wire — see base64_vec)
+    #[serde(with = "base64_vec")]
     pub data: Vec<u8>,
     /// Data type MIME
     pub data_type: String,
@@ -1876,5 +1884,76 @@ mod tests {
         let err = ExtensionError::Timeout("timeout".to_string());
         let kind: ErrorKind = err.into();
         assert_eq!(kind, ErrorKind::Timeout);
+    }
+
+    /// Binary payloads must serialize as base64 (not decimal number arrays)
+    /// and must still DESERIALIZE the legacy number-array form.
+    #[test]
+    fn test_binary_payloads_use_base64_and_accept_legacy_arrays() {
+        let payload: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+
+        let resp = IpcResponse::PushOutput {
+            metadata: None,
+            session_id: "s".into(),
+            sequence: 1,
+            data: payload.clone(),
+            data_type: "image/jpeg".into(),
+            timestamp: 0,
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        let data = json
+            .get("PushOutput")
+            .and_then(|v| v.get("data"))
+            .expect("externally-tagged variant payload");
+        assert!(
+            data.is_string(),
+            "PushOutput.data must serialize as base64 string, got: {data}"
+        );
+        // ~5.5 KB base64 vs ~19 KB number array for a 4 KB frame.
+        let encoded_len = data.as_str().unwrap().len();
+        assert!(
+            encoded_len < payload.len() * 2,
+            "base64 should be ~4/3x, got {encoded_len} for {} bytes",
+            payload.len()
+        );
+
+        // Legacy number-array form (written by pre-base64 builds) must load.
+        let legacy = serde_json::json!({ "PushOutput": {
+            "session_id": "s",
+            "sequence": 1,
+            "data": [1, 2, 3, 250],
+            "data_type": "image/jpeg",
+            "timestamp": 0,
+        }});
+        let parsed: IpcResponse = serde_json::from_value(legacy)
+            .expect("legacy number-array data must still deserialize");
+        match parsed {
+            IpcResponse::PushOutput { data, .. } => assert_eq!(data, vec![1, 2, 3, 250]),
+            other => panic!("wrong variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_stream_chunk_base64_roundtrip() {
+        let chunk = IpcMessage::ProcessStreamChunk {
+            request_id: 7,
+            session_id: "s".into(),
+            chunk: StreamDataChunk {
+                sequence: 2,
+                data: vec![200, 201, 202],
+                data_type: "video/frame".into(),
+                timestamp: 42,
+                is_last: false,
+            },
+        };
+        let json = serde_json::to_string(&chunk).unwrap();
+        assert!(json.contains("yMnK"), "expected base64 payload in: {json}");
+        let back: IpcMessage = serde_json::from_str(&json).unwrap();
+        match back {
+            IpcMessage::ProcessStreamChunk { chunk, .. } => {
+                assert_eq!(chunk.data, vec![200, 201, 202])
+            }
+            other => panic!("wrong variant: {other:?}"),
+        }
     }
 }
