@@ -678,3 +678,77 @@ pub async fn update_backup_config(
         "keep": config.keep,
     }))
 }
+
+/// GET /api/settings/market (admin): effective extension-marketplace source.
+pub async fn get_market_source_handler(
+    State(_state): State<ServerState>,
+    axum::extract::Extension(admin): axum::extract::Extension<crate::auth_users::SessionInfo>,
+) -> HandlerResult<serde_json::Value> {
+    if admin.role != crate::auth_users::UserRole::Admin {
+        return Err(ErrorResponse::bad_request("Admin access required"));
+    }
+
+    use neomind_storage::SettingsStore;
+    let saved = SettingsStore::open("data/settings.redb")
+        .ok()
+        .and_then(|s| s.load("extension_market_url").ok().flatten());
+
+    ok(json!({
+        "market_url": crate::handlers::extensions::extension_market_base_url(),
+        "saved_url": saved,
+        "default_url": "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions",
+    }))
+}
+
+/// PUT /api/settings/market (admin): set or reset the marketplace source.
+///
+/// An empty body value resets to the default chain (env > built-in). Mirror
+/// URLs follow the component-market shape, e.g.
+/// `https://ghfast.top/https://raw.githubusercontent.com/camthink-ai/...`.
+/// NOTE the trust boundary: after switching, sha256 verification checks the
+/// MIRROR's artifacts, not the upstream ones.
+#[derive(Debug, serde::Deserialize)]
+pub struct MarketSourceRequest {
+    /// Empty string = reset to default.
+    pub market_url: String,
+}
+
+pub async fn update_market_source_handler(
+    State(_state): State<ServerState>,
+    axum::extract::Extension(admin): axum::extract::Extension<crate::auth_users::SessionInfo>,
+    Json(req): Json<MarketSourceRequest>,
+) -> HandlerResult<serde_json::Value> {
+    if admin.role != crate::auth_users::UserRole::Admin {
+        return Err(ErrorResponse::bad_request("Admin access required"));
+    }
+
+    use neomind_storage::SettingsStore;
+    let store = SettingsStore::open("data/settings.redb")
+        .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;
+
+    let trimmed = req.market_url.trim().trim_end_matches('/').to_string();
+    if trimmed.is_empty() {
+        // Reset: drop the saved override entirely.
+        let _ = store.save("extension_market_url", "");
+        tracing::info!(admin = %admin.username, "Extension marketplace source reset to default");
+        return ok(json!({
+            "market_url": crate::handlers::extensions::extension_market_base_url(),
+            "saved_url": serde_json::Value::Null,
+        }));
+    }
+    if !trimmed.starts_with("https://") && !trimmed.starts_with("http://") {
+        return Err(ErrorResponse::bad_request(
+            "market_url must be an http(s) URL",
+        ));
+    }
+
+    store
+        .save("extension_market_url", &trimmed)
+        .map_err(|e| ErrorResponse::internal(format!("Failed to save market source: {}", e)))?;
+    tracing::info!(admin = %admin.username, url = %trimmed, "Extension marketplace source updated");
+
+    ok(json!({
+        "market_url": trimmed,
+        "saved_url": trimmed,
+    }))
+}

@@ -6,6 +6,7 @@ import { SettingsRow } from "./SettingsRow"
 import { MemorySettingsSection } from "./MemorySettingsSection"
 import { AutoOnboardSettings } from "./AutoOnboardSettings"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
@@ -278,6 +279,9 @@ export function PreferencesTab() {
 
       {/* Backup schedule */}
       <BackupSettingsSection />
+
+      {/* Extension marketplace source */}
+      <MarketSourceSection />
 
       {/* Diagnostic Data — log archive download */}
       <DiagnosticDataSection />
@@ -851,6 +855,99 @@ function BackupSettingsSection() {
               {t("settings:backupNow")}
             </Button>
           )}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function MarketSourceSection() {
+  const { t } = useTranslation(["common", "settings"])
+  const { toast } = useToast()
+  const isAdmin = useStore((s) => s.user?.role === "admin")
+  const [config, setConfig] = useState<{
+    market_url: string
+    saved_url: string | null
+    default_url: string
+  } | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [draft, setDraft] = useState("")
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    api
+      .get("/settings/market")
+      .then((data: any) => {
+        setConfig(data)
+        setDraft(data.market_url ?? "")
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [])
+
+  if (!isAdmin) return null
+  if (loading || !config) {
+    return <div className="h-32 w-full animate-pulse rounded-md bg-muted" />
+  }
+
+  const save = async (url: string) => {
+    setSaving(true)
+    try {
+      const data: any = await api.put("/settings/market", { market_url: url })
+      setConfig((c) => (c ? { ...c, market_url: data.market_url, saved_url: data.saved_url } : c))
+      setDraft(data.market_url ?? "")
+      toast({ title: t("settings:marketSourceSaved") })
+    } catch {
+      toast({ title: t("common:failed"), variant: "destructive" })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const isDefault = !config.saved_url
+
+  return (
+    <section>
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+        {t("settings:marketSource")}
+      </h3>
+      <div className="rounded-lg bg-card border border-border shadow-sm p-5 space-y-4">
+        <SettingsRow
+          label={t("settings:marketSourceUrl")}
+          description={t("settings:marketSourceDesc")}
+        >
+          <Input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder={config.default_url}
+            className="w-full sm:w-[420px] font-mono text-xs"
+            spellCheck={false}
+          />
+        </SettingsRow>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+          <span className="text-xs text-muted-foreground">
+            {isDefault ? t("settings:marketSourceDefault") : t("settings:marketSourceCustom")}
+          </span>
+          <div className="flex gap-2">
+            {!isDefault && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => save("")}
+                disabled={saving}
+              >
+                {t("settings:marketSourceReset")}
+              </Button>
+            )}
+            <Button
+              size="sm"
+              onClick={() => save(draft)}
+              disabled={saving || draft.trim() === config.market_url}
+            >
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {t("common:save")}
+            </Button>
+          </div>
         </div>
       </div>
     </section>

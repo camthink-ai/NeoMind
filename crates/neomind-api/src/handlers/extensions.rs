@@ -1732,7 +1732,47 @@ pub async fn list_extension_capabilities_handler(
 
 /// Configuration for cloud extension marketplace
 const MARKET_BRANCH: &str = "main";
-const MARKET_BASE_URL: &str = "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions";
+const DEFAULT_EXTENSION_MARKET_BASE_URL: &str =
+    "https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions";
+
+/// Effective extension-marketplace base URL.
+///
+/// Precedence: saved value (Settings → Preferences, admin) >
+/// `NEOMIND_EXTENSION_MARKET_URL` env > built-in default. The default host
+/// (`raw.githubusercontent.com`) is often unreachable from CN networks —
+/// before this existed the source was hardcoded with NO override at all,
+/// while the component market and LLM catalog both had env overrides.
+/// Mirrors follow the component-market shape:
+/// `https://ghfast.top/https://raw.githubusercontent.com/camthink-ai/...`
+pub(crate) fn extension_market_base_url() -> String {
+    let saved = neomind_storage::SettingsStore::open("data/settings.redb")
+        .ok()
+        .and_then(|s| s.load("extension_market_url").ok().flatten());
+    if let Some(url) = saved {
+        if let Some(clean) = normalize_market_url(&url) {
+            return clean;
+        }
+    }
+    if let Ok(url) = std::env::var("NEOMIND_EXTENSION_MARKET_URL") {
+        if let Some(clean) = normalize_market_url(&url) {
+            return clean;
+        }
+    }
+    DEFAULT_EXTENSION_MARKET_BASE_URL.to_string()
+}
+
+/// Accept an http(s) URL, trimmed of trailing slashes. Empty or non-URL
+/// values fall back to `None` (→ the built-in default).
+fn normalize_market_url(raw: &str) -> Option<String> {
+    let trimmed = raw.trim().trim_end_matches('/');
+    if (trimmed.starts_with("https://") || trimmed.starts_with("http://"))
+        && trimmed.len() > "https://".len()
+    {
+        Some(trimmed.to_string())
+    } else {
+        None
+    }
+}
 
 /// Cloud extension metadata from index
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2058,7 +2098,9 @@ pub async fn list_marketplace_extensions_handler(
         .unwrap_or(0);
     let index_url = format!(
         "{}/{}/extensions/index.json?t={}",
-        MARKET_BASE_URL, MARKET_BRANCH, cache_buster
+        extension_market_base_url().as_str(),
+        MARKET_BRANCH,
+        cache_buster
     );
 
     let client = reqwest::Client::builder()
@@ -2129,7 +2171,9 @@ pub async fn get_marketplace_extension_handler(
 ) -> HandlerResult<MarketplaceExtensionMetadata> {
     let metadata_url = format!(
         "{}/{}/extensions/{}/metadata.json",
-        MARKET_BASE_URL, MARKET_BRANCH, id
+        extension_market_base_url().as_str(),
+        MARKET_BRANCH,
+        id
     );
 
     let client = reqwest::Client::builder()
@@ -2178,7 +2222,9 @@ pub async fn get_marketplace_extension_readme_handler(
 ) -> HandlerResult<ExtensionReadmeResponse> {
     let readme_url = format!(
         "{}/{}/extensions/{}/README.md",
-        MARKET_BASE_URL, MARKET_BRANCH, id
+        extension_market_base_url().as_str(),
+        MARKET_BRANCH,
+        id
     );
 
     let client = reqwest::Client::builder()
@@ -2393,7 +2439,10 @@ pub async fn install_marketplace_extension_handler(
         .unwrap_or(0);
     let metadata_url = format!(
         "{}/{}/extensions/{}/metadata.json?t={}",
-        MARKET_BASE_URL, MARKET_BRANCH, req.id, cache_buster
+        extension_market_base_url().as_str(),
+        MARKET_BRANCH,
+        req.id,
+        cache_buster
     );
 
     let client = reqwest::Client::builder()
@@ -3063,7 +3112,9 @@ pub async fn check_marketplace_updates_handler(
         // Fetch metadata from marketplace
         let metadata_url = format!(
             "{}/{}/extensions/{}/metadata.json",
-            MARKET_BASE_URL, MARKET_BRANCH, ext_id
+            extension_market_base_url().as_str(),
+            MARKET_BRANCH,
+            ext_id
         );
 
         let client = reqwest::Client::builder()

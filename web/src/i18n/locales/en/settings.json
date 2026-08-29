@@ -353,5 +353,12 @@
   "backupLast": "Last backup",
   "backupLastNone": "None yet",
   "backupNow": "Back up now",
-  "backupNowDone": "Backup created"
+  "backupNowDone": "Backup created",
+  "marketSource": "Extension Marketplace",
+  "marketSourceUrl": "Marketplace source URL",
+  "marketSourceDesc": "Base URL of the extension marketplace. Change it to a mirror if the default host (raw.githubusercontent.com) is unreachable, e.g. https://ghfast.top/https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions. Note: after switching, package integrity is verified against the mirror's artifacts.",
+  "marketSourceDefault": "Using default source",
+  "marketSourceCustom": "Using custom source",
+  "marketSourceReset": "Reset to default",
+  "marketSourceSaved": "Marketplace source updated"
 }

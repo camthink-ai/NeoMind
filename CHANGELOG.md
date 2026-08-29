@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.9.21] - 2026-08-29 — security hardening, backups, observability
 
 ### Wrap-up
+- **The extension marketplace source is switchable.** It was hardcoded to `raw.githubusercontent.com` with NO override — unreachable from CN networks, while the component market and LLM catalog both had env overrides. Settings → Preferences (admin) now has an Extension Marketplace source field; precedence is saved value > `NEOMIND_EXTENSION_MARKET_URL` env > default, effective on the next marketplace request (no restart). The field warns that after switching, package integrity verifies against the mirror's artifacts.
 - **Crash alerts reach the user.** A circuit-broken extension (restart attempts exhausted) now sends a system message through the notification channels instead of only logging — previously a repeatedly-crashing extension just quietly stopped working.
 - **The Crashed state is visible in the UI.** Extension cards show an error-tinted "Crashed" chip with the crash reason and consecutive count on hover.
 - **The serve startup tests run in CI.** A test-only `NEOMIND_EXIT_AFTER_READY_MS` lets `neomind serve` exit gracefully after startup, so the three spawn-a-real-server tests assert a full boot (bind → stores → services → ready → clean exit) instead of "alive after 500ms", run with per-test temp data dirs, and no longer need the CI skip.

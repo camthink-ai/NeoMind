@@ -1218,6 +1218,16 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             post(settings::create_backup_handler),
         )
         .route("/api/settings/backups", get(settings::list_backups_handler))
+        // Extension marketplace source (admin): default host is unreachable
+        // from some networks; admins can point it at a mirror.
+        .route(
+            "/api/settings/market",
+            get(settings::get_market_source_handler),
+        )
+        .route(
+            "/api/settings/market",
+            put(settings::update_market_source_handler),
+        )
         // Apply JWT authentication middleware
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
