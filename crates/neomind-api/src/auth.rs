@@ -71,16 +71,17 @@ impl AuthState {
     /// Create a new auth state with persistent storage.
     /// Loads existing keys from database, or creates a default key if none exist.
     pub fn new() -> Self {
-        let db_path = "data/api_keys.redb";
+        let db_path = neomind_core::paths::store_path("api_keys.redb");
+        let db_path_str = db_path.to_string_lossy().to_string();
         let crypto = Arc::new(CryptoService::from_env_or_generate());
 
         // Ensure data directory exists
-        if let Some(parent) = std::path::Path::new(db_path).parent() {
+        if let Some(parent) = db_path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
 
         // Try to load from database first
-        let keys = Self::load_from_db(db_path, &crypto).unwrap_or_else(|e| {
+        let keys = Self::load_from_db(&db_path_str, &crypto).unwrap_or_else(|e| {
             warn!(category = "auth", error = %e, "Failed to load API keys from database, using defaults");
             Self::load_default_keys(&crypto)
         });
@@ -98,12 +99,12 @@ impl AuthState {
 
         let state = Self {
             api_keys: Arc::new(DashMap::from_iter(keys)),
-            db_path: db_path.to_string(),
+            db_path: db_path_str.clone(),
             crypto,
         };
 
         // Persist keys to database (ensures newly generated keys are saved)
-        if let Err(e) = state.save_to_db(db_path) {
+        if let Err(e) = state.save_to_db(&db_path_str) {
             warn!(category = "auth", error = %e, "Failed to persist API keys to database");
         }
 
@@ -400,8 +401,18 @@ impl AuthState {
 
     /// Validate an API key and return its info.
     /// Returns `None` if the key is invalid or inactive.
+    ///
+    /// Same miss-reload as [`validate_key`]: this is the entry point the
+    /// `hybrid_auth_middleware` uses (i.e. the main API surface), so without
+    /// it every key created after boot 401'd until restart — the reload fix
+    /// initially landed on validate_key only, which serves SSE/stream edges.
     pub fn validate_key_info(&self, key: &str) -> Option<ApiKeyInfo> {
         let hash = self.crypto.hash_api_key(key);
+        if let Some(item) = self.api_keys.get(&hash) {
+            let info = item.value().1.clone();
+            return if info.active { Some(info) } else { None };
+        }
+        self.reload_keys_from_db();
         self.api_keys
             .get(&hash)
             .map(|item| item.value().1.clone())

@@ -355,5 +355,7 @@
   "extensionInstalled": "扩展已安装",
   "confirmReload": "确认重新加载",
   "confirmReloadDescription": "重新加载将中断正在执行的指令，确定要继续吗？",
-  "reload": "重新加载"
+  "reload": "重新加载",
+  "crashed": "已崩溃",
+  "crashedTooltip": "反复崩溃后已停止"
 }

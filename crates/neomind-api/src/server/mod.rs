@@ -478,7 +478,7 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                         let ext_id = extension_id.to_string();
                         let rt = runtime.clone();
                         tokio::spawn(async move {
-                            if let Ok(store) = ExtensionStore::open(crate::server::paths::extension_store_path()) {
+                            if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
                                 // Clear error status after successful crash recovery
                                 if let Ok(Some(mut record)) = store.load(&ext_id) {
                                     record.health_status = "ok".to_string();
@@ -526,7 +526,7 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                         let err_msg = error.to_string();
                         let notify = crash_notify_state.clone();
                         tokio::spawn(async move {
-                            if let Ok(store) = ExtensionStore::open(crate::server::paths::extension_store_path()) {
+                            if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
                                 let _ = store.update_error_status(&ext_id, &err_msg);
                             }
                             let title = format!("Extension '{ext_id}' stopped auto-restarting");
@@ -906,6 +906,12 @@ async fn run_tls_proxy(
     socket.set_nodelay(true)?;
     socket.bind(&addr.into())?;
     socket.listen(1024)?;
+    // std/socket2 sockets are blocking by default; tokio requires a
+    // non-blocking fd or registration panics INSIDE the spawned task —
+    // the server keeps running, the proxy dies silently with no log. Same
+    // bug as the main listener (fixed there in a474ef03); this second
+    // call site was missed and left the whole TLS front non-functional.
+    socket.set_nonblocking(true)?;
     let listener = tokio::net::TcpListener::from_std(socket.into())?;
 
     tracing::info!(port, %target, "TLS proxy listening (secure-context front)");

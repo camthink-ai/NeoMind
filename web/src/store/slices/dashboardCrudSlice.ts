@@ -161,14 +161,22 @@ export const createDashboardCrudSlice: StateCreator<
       syncDebounceTimer = null
       // Only sync if no newer schedule call has been made
       if (version !== syncVersion) return
-      // Clear before syncing: while the sync is in flight this marks "sync
-      // pending" for hasUnflushedLocalEdits(); a newer schedule re-sets it.
-      pendingSyncDashboard = null
       recordSelfSync(dashboard.id)
       try {
         const result = await storage.sync(dashboard)
+        // Clear AFTER the sync resolves: while the request is in flight
+        // hasUnflushedLocalEdits() must stay true, or a server refresh
+        // during a slow sync could flash the dashboard back to the
+        // pre-sync state (the old code cleared before sending — the exact
+        // window the guard existed to close).
+        if (version === syncVersion) {
+          pendingSyncDashboard = null
+        }
         handleIdChange(dashboard, result)
       } catch (err) {
+        // Keep pending set on failure so the guard still protects the
+        // unsynced edits; the failure-window retry in the persistence
+        // layer takes it from here.
         console.warn('[DashboardCrudSlice] sync failed:', err)
       }
     }, 500)
@@ -421,6 +429,14 @@ export const createDashboardCrudSlice: StateCreator<
     clearDashboards: () => {
       const { dashboards } = get()
       dashboards.forEach((d: Dashboard) => (d.components as DashboardComponent[]).forEach(cleanupAgentForComponent))
+      // Cancel any pending debounced sync: firing ~500ms after logout it
+      // would re-persist the previous account's dashboard into localStorage,
+      // and the next login's local-only merge would adopt it as its own.
+      if (syncDebounceTimer !== null) {
+        clearTimeout(syncDebounceTimer)
+        syncDebounceTimer = null
+      }
+      pendingSyncDashboard = null
       storage.clear()
       set({
         dashboards: [],

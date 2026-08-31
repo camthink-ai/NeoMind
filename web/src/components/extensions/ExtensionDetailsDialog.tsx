@@ -560,7 +560,7 @@ export function ExtensionDetailsDialog({
           <div>
             <Label className="text-muted-foreground text-xs">{t("extensions:info.state", { defaultValue: "State" })}</Label>
             <div className="mt-1">
-              <Badge variant={extension?.state === "Error" || extension?.state === "Warning" ? "destructive" : "default"}>
+              <Badge variant={extension?.state === "Error" || extension?.state === "Warning" || extension?.state === "Crashed" ? "destructive" : "default"}>
                 {extension?.state}
               </Badge>
             </div>

@@ -90,9 +90,14 @@ export function ExtensionGrid({
 
     // In V2 system, extensions are always active once registered
     // Error/Warning/Stopped indicate problems
-    const activeCount = exts.filter((ext) => ext.state !== "Error" && ext.state !== "Warning" && ext.state !== "Stopped" && ext.state !== "Failed").length
-    const errorCount = exts.filter((ext) => ext.state === "Error" || ext.state === "Warning").length
-    const stoppedCount = exts.filter((ext) => ext.state === "Stopped" || ext.state === "Failed").length
+    // Crashed = stopped by crash-loop — error-class: it must NOT count as
+    // active, and must be findable in the error filter (it was missing from
+    // both sides, making crashed extensions invisible except in "all").
+    const isErrorState = (s: string) => s === "Error" || s === "Warning" || s === "Crashed"
+    const isStoppedState = (s: string) => s === "Stopped" || s === "Failed"
+    const activeCount = exts.filter((ext) => !isErrorState(ext.state) && !isStoppedState(ext.state)).length
+    const errorCount = exts.filter((ext) => isErrorState(ext.state)).length
+    const stoppedCount = exts.filter((ext) => isStoppedState(ext.state)).length
 
     // Build status options (only show categories that have items)
     const options: StatusOption[] = [
@@ -124,9 +129,9 @@ export function ExtensionGrid({
       filtered = filtered.filter((ext) => {
         switch (statusFilter) {
           case "active":
-            return ext.state !== "Error" && ext.state !== "Warning" && ext.state !== "Stopped" && ext.state !== "Failed"
+            return !isErrorState(ext.state) && !isStoppedState(ext.state)
           case "error":
-            return ext.state === "Error" || ext.state === "Warning"
+            return isErrorState(ext.state)
           case "stopped":
             return ext.state === "Stopped" || ext.state === "Failed"
           default:

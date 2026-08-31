@@ -108,7 +108,21 @@ pub async fn download_with_resume(
     let body = resp.bytes_stream();
     use futures::StreamExt;
     let mut stream = std::pin::pin!(body);
-    while let Some(chunk) = stream.next().await {
+    // Per-chunk stall timeout: the client has NO total timeout (a multi-GB
+    // model legitimately streams for hours), but without any bound a wedged
+    // connection parked stream.next() forever — the cancel flag (polled only
+    // between chunks) never got a chance and the single-flight lock was held
+    // indefinitely.
+    const STALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+    loop {
+        let chunk = match tokio::time::timeout(STALL_TIMEOUT, stream.next()).await {
+            Ok(c) => c,
+            Err(_) => {
+                let _ = file.flush();
+                anyhow::bail!("download stalled: no data for 60s");
+            }
+        };
+        let Some(chunk) = chunk else { break };
         if download_cancel_requested() {
             // Keep the partial file — resume on next attempt.
             let _ = file.flush();

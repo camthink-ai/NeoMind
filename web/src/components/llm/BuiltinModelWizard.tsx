@@ -527,7 +527,6 @@ export function BuiltinModelWizard({
                           )}
                           {m.custom && (
                             <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                              {t('plugins:llm.importLocalBadge')}
                             </span>
                           )}
                         </div>

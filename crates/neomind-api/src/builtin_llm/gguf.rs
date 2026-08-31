@@ -65,6 +65,19 @@ fn read_u64(buf: &[u8], cur: &mut usize) -> Option<u64> {
 /// Skip a value of the given GGUF type, advancing the cursor. Returns the
 /// value's data only for the scalar/string types callers care about.
 fn read_value(buf: &[u8], cur: &mut usize, ty: u32) -> Option<Option<Vec<u8>>> {
+    read_value_bounded(buf, cur, ty, 0)
+}
+
+/// GGUF arrays may nest arrays. Without a depth bound, a crafted header
+/// (~12 bytes per level) drives unbounded recursion → stack overflow →
+/// SIGSEGV kills the whole server process (not a catchable panic).
+/// Real GGUF metadata nests at most a couple of levels.
+const MAX_GGUF_NESTING_DEPTH: u32 = 16;
+
+fn read_value_bounded(buf: &[u8], cur: &mut usize, ty: u32, depth: u32) -> Option<Option<Vec<u8>>> {
+    if depth > MAX_GGUF_NESTING_DEPTH {
+        return None;
+    }
     match ty {
         T_UINT32 | T_INT32 | T_FLOAT32 | T_BOOL => {
             if *cur + 4 > buf.len() {
@@ -87,7 +100,7 @@ fn read_value(buf: &[u8], cur: &mut usize, ty: u32) -> Option<Option<Vec<u8>>> {
             let elem_ty = read_u32(buf, cur)?;
             let count = read_u64(buf, cur)? as usize;
             for _ in 0..count {
-                read_value(buf, cur, elem_ty)?;
+                read_value_bounded(buf, cur, elem_ty, depth + 1)?;
             }
             Some(None)
         }

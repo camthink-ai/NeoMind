@@ -511,9 +511,20 @@ pub async fn upload_model_handler(
     let result = import_gguf_from_path(&state, &tmp).await;
     let _ = tokio::fs::remove_file(&tmp).await;
     // Also sweep any leftovers from failed older uploads (best-effort).
+    // Expire only STALE leftovers (>24h by mtime). Sweeping every file in
+    // the directory unlinked the temp copy of any CONCURRENT upload, whose
+    // import then failed on a missing file.
+    let cutoff = std::time::SystemTime::now() - std::time::Duration::from_secs(24 * 60 * 60);
     let _ = std::fs::read_dir(&uploads_dir).map(|rd| {
         for e in rd.flatten() {
-            let _ = std::fs::remove_file(e.path());
+            let stale = e
+                .metadata()
+                .and_then(|m| m.modified())
+                .map(|t| t < cutoff)
+                .unwrap_or(false);
+            if stale {
+                let _ = std::fs::remove_file(e.path());
+            }
         }
     });
     result

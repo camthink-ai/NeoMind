@@ -355,5 +355,7 @@
   "extensionInstalled": "Extension Installed",
   "confirmReload": "Confirm Reload",
   "confirmReloadDescription": "Confirm Reload Description",
-  "reload": "Reload"
+  "reload": "Reload",
+  "crashed": "Crashed",
+  "crashedTooltip": "Stopped after repeated crashes"
 }
