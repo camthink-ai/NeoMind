@@ -440,6 +440,10 @@ export class HybridDashboardStorage implements DashboardStorage {
   // Track in-flight sync operations for local dashboards to prevent duplicate creation.
   // Key: local UUID, Value: the Promise resolving to the server dashboard (or null).
   private pendingSync: Map<string, Promise<StorageResult<Dashboard>>> = new Map()
+  /// Bumped by clear() (logout). In-flight syncs capture it before their
+  /// awaits; a post-clear localStorage write would resurrect the previous
+  /// account's dashboard into the next account's local-only merge.
+  private epoch = 0
   // Map local UUID -> server ID so subsequent syncs use the server ID.
   private localToServerId: Map<string, string> = new Map()
 
@@ -588,8 +592,15 @@ export class HybridDashboardStorage implements DashboardStorage {
       const syncPromise = this.apiStorage.sync(dashboard)
       this.pendingSync.set(dashboard.id, syncPromise)
 
+      const entryEpoch = this.epoch
       try {
         const apiResult = await syncPromise
+        if (this.epoch !== entryEpoch) {
+          // A clear() (logout) raced this sync: persisting now would write
+          // the previous account's dashboard back into local storage after
+          // it was wiped.
+          return apiResult
+        }
         if (apiResult.data && apiResult.data.id !== dashboard.id) {
           // Server assigned a new ID - map it
           this.localToServerId.set(dashboard.id, apiResult.data.id)
@@ -712,6 +723,7 @@ export class HybridDashboardStorage implements DashboardStorage {
   }
 
   clear(): void {
+    this.epoch++
     this.localStorage.clear()
     this.localToServerId.clear()
     this.pendingSync.clear()

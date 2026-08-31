@@ -132,6 +132,10 @@ export const createDashboardCrudSlice: StateCreator<
 
   // Debounced sync — captured in closure
   let syncDebounceTimer: ReturnType<typeof setTimeout> | null = null
+  // Bumped by clearDashboards (logout): in-flight syncs/flushes compare it
+  // after their awaits and skip handleIdChange — a late set() would
+  // resurrect the previous account's dashboard into the cleared store.
+  let dashboardEpoch = 0
   function handleIdChange(dash: Dashboard, result: { data: Dashboard | null }): void {
     if (result.data && result.data.id !== dash.id) {
       // Also record the server-assigned ID so the SSE echo is suppressed
@@ -162,8 +166,10 @@ export const createDashboardCrudSlice: StateCreator<
       // Only sync if no newer schedule call has been made
       if (version !== syncVersion) return
       recordSelfSync(dashboard.id)
+      const entryEpoch = dashboardEpoch
       try {
         const result = await storage.sync(dashboard)
+        if (entryEpoch !== dashboardEpoch) return // logged out mid-sync
         // Clear AFTER the sync resolves: while the request is in flight
         // hasUnflushedLocalEdits() must stay true, or a server refresh
         // during a slow sync could flash the dashboard back to the
@@ -202,9 +208,11 @@ export const createDashboardCrudSlice: StateCreator<
       const dashboard = pendingSyncDashboard
       if (dashboard) {
         const flushVersion = ++syncVersion
+        const entryEpoch = dashboardEpoch
         recordSelfSync(dashboard.id)
         try {
           const result = await storage.sync(dashboard)
+          if (entryEpoch !== dashboardEpoch) return // logged out mid-flush
           if (flushVersion === syncVersion) {
             pendingSyncDashboard = null
           }
@@ -451,6 +459,7 @@ export const createDashboardCrudSlice: StateCreator<
         syncDebounceTimer = null
       }
       pendingSyncDashboard = null
+      dashboardEpoch++
       storage.clear()
       set({
         dashboards: [],

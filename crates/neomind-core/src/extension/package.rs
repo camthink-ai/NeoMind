@@ -728,7 +728,8 @@ impl ExtensionPackage {
 
         // Extract manifest.json
         let manifest_path = ext_dir.join("manifest.json");
-        Self::extract_file_sync(archive, "manifest.json", &manifest_path)?;
+        let mut budget = InstallBudget::new();
+        Self::extract_file_sync(archive, "manifest.json", &manifest_path, &mut budget)?;
 
         // Get binary path for current platform
         let platform = detect_platform();
@@ -759,7 +760,7 @@ impl ExtensionPackage {
         // (the async install path uses `file_name()` to flatten; this path
         // preserves subdirs for shared libraries, so we must guard instead).
         let binary_file = Self::safe_join_within(&ext_dir, &binary_rel_path)?;
-        Self::extract_file_sync(archive, &binary_rel_path, &binary_file)?;
+        Self::extract_file_sync(archive, &binary_rel_path, &binary_file, &mut budget)?;
         tracing::info!("install: binary extracted");
 
         // Extract all sibling files in the same directory as the binary
@@ -772,19 +773,7 @@ impl ExtensionPackage {
             };
             let dest_dir = ext_dir.join(binary_dir);
 
-            // Zip-bomb caps for the bundled-library sweep — this third
-            // extraction loop initially slipped the caps the sync/async
-            // directory extractions got (only per-file + symlink were added),
-            // leaving a disk-fill path via the 512MB upload endpoint.
-            let mut bundled_total: u64 = 0;
-            let mut bundled_count: usize = 0;
             for i in 0..archive.len() {
-                if i + 1 > Self::MAX_EXTRACT_FILE_COUNT {
-                    return Err(PackageError::Zip(format!(
-                        "Archive contains more than {} files (zip-bomb suspected)",
-                        Self::MAX_EXTRACT_FILE_COUNT
-                    )));
-                }
                 if let Ok(mut file) = archive.by_index(i) {
                     let name = file.name().to_string();
                     // Same directory, not the binary itself, not a directory entry
@@ -807,16 +796,7 @@ impl ExtensionPackage {
                                 file.size()
                             )));
                         }
-                        bundled_total += file.size();
-                        bundled_count += 1;
-                        if bundled_count > Self::MAX_EXTRACT_FILE_COUNT
-                            || bundled_total > Self::MAX_EXTRACT_TOTAL_SIZE
-                        {
-                            return Err(PackageError::Zip(format!(
-                                "Bundled libraries exceed extraction caps ({} files, {} bytes)",
-                                bundled_count, bundled_total
-                            )));
-                        }
+                        budget.charge(file.size())?;
                         let dest = Self::safe_join_within(
                             &dest_dir,
                             name.trim_start_matches(&dir_prefix),
@@ -848,7 +828,7 @@ impl ExtensionPackage {
         // Extract frontend directory if exists
         let frontend_dir = if manifest.frontend.is_some() {
             let frontend_path = ext_dir.join("frontend");
-            Self::extract_directory_sync(archive, "frontend/", &frontend_path)?;
+            Self::extract_directory_sync(archive, "frontend/", &frontend_path, &mut budget)?;
             Some(frontend_path)
         } else {
             None
@@ -856,15 +836,15 @@ impl ExtensionPackage {
 
         // Extract models directory if exists (for AI/ML extensions)
         let models_path = ext_dir.join("models");
-        Self::extract_directory_sync(archive, "models/", &models_path)?;
+        Self::extract_directory_sync(archive, "models/", &models_path, &mut budget)?;
 
         // Extract assets directory if exists (for static assets)
         let assets_path = ext_dir.join("assets");
-        Self::extract_directory_sync(archive, "assets/", &assets_path)?;
+        Self::extract_directory_sync(archive, "assets/", &assets_path, &mut budget)?;
 
         // Extract config directory if exists (for configuration files)
         let config_path = ext_dir.join("config");
-        Self::extract_directory_sync(archive, "config/", &config_path)?;
+        Self::extract_directory_sync(archive, "config/", &config_path, &mut budget)?;
         tracing::info!("install: resource dirs done");
 
         // 🔧 macOS: Re-sign all extracted dylibs after installation.
@@ -993,6 +973,7 @@ impl ExtensionPackage {
         archive: &mut ZipArchive<R>,
         src_path: &str,
         dst_path: &Path,
+        budget: &mut InstallBudget,
     ) -> Result<(), PackageError> {
         let mut file = archive
             .by_name(src_path)
@@ -1013,6 +994,7 @@ impl ExtensionPackage {
                 Self::MAX_EXTRACT_FILE_SIZE
             )));
         }
+        budget.charge(file.size())?;
 
         // Create parent directory
         if let Some(parent) = dst_path.parent() {
@@ -1078,19 +1060,13 @@ impl ExtensionPackage {
         archive: &mut ZipArchive<R>,
         src_prefix: &str,
         dst_dir: &Path,
+        budget: &mut InstallBudget,
     ) -> Result<(), PackageError> {
         // Zip-bomb defense caps (shared with the async path).
 
         std::fs::create_dir_all(dst_dir)?;
-        let mut total_bytes: u64 = 0;
 
         for i in 0..archive.len() {
-            if i + 1 > Self::MAX_EXTRACT_FILE_COUNT {
-                return Err(PackageError::Zip(format!(
-                    "Archive contains more than {} files (zip-bomb suspected)",
-                    Self::MAX_EXTRACT_FILE_COUNT
-                )));
-            }
             let mut file = archive
                 .by_index(i)
                 .map_err(|e| PackageError::Zip(format!("Failed to access file {}: {}", i, e)))?;
@@ -1119,13 +1095,7 @@ impl ExtensionPackage {
                         Self::MAX_EXTRACT_FILE_SIZE
                     )));
                 }
-                total_bytes += entry_size;
-                if total_bytes > Self::MAX_EXTRACT_TOTAL_SIZE {
-                    return Err(PackageError::Zip(format!(
-                        "Total extracted size exceeds {} bytes (zip-bomb suspected)",
-                        Self::MAX_EXTRACT_TOTAL_SIZE
-                    )));
-                }
+                budget.charge(entry_size)?;
 
                 // Create parent directory
                 if let Some(parent) = dst_path.parent() {
@@ -1549,6 +1519,79 @@ pub fn convert_platform_format(platform: &str, target_format: PlatformFormat) ->
     match target_format {
         PlatformFormat::Hyphen => format!("{}-{}", os, normalized_arch.0),
         PlatformFormat::Underscore => format!("{}_{}", os, normalized_arch.1),
+    }
+}
+
+/// Per-INSTALL extraction budget, shared across every phase (manifest,
+/// binary, bundled libs, frontend/models/assets/config directories).
+/// Each phase used to carry its own 500MB budget — a crafted package
+/// could legally extract ~2.7GB total. One budget, charged by all.
+#[derive(Debug)]
+pub(crate) struct InstallBudget {
+    total_bytes: u64,
+    file_count: usize,
+}
+
+impl InstallBudget {
+    pub(crate) fn new() -> Self {
+        Self {
+            total_bytes: 0,
+            file_count: 0,
+        }
+    }
+
+    /// Charge one extracted file; error when cumulative caps blow.
+    pub(crate) fn charge(&mut self, bytes: u64) -> Result<(), PackageError> {
+        self.total_bytes = self.total_bytes.saturating_add(bytes);
+        self.file_count += 1;
+        if self.total_bytes > ExtensionPackage::MAX_EXTRACT_TOTAL_SIZE {
+            return Err(PackageError::Zip(format!(
+                "Total extracted size exceeds {} bytes across the whole install (zip-bomb suspected)",
+                ExtensionPackage::MAX_EXTRACT_TOTAL_SIZE
+            )));
+        }
+        if self.file_count > ExtensionPackage::MAX_EXTRACT_FILE_COUNT {
+            return Err(PackageError::Zip(format!(
+                "More than {} files extracted across the whole install (zip-bomb suspected)",
+                ExtensionPackage::MAX_EXTRACT_FILE_COUNT
+            )));
+        }
+        Ok(())
+    }
+}
+
+impl Default for InstallBudget {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod install_budget_tests {
+    use super::*;
+
+    #[test]
+    fn budget_is_cumulative_across_phases() {
+        // Each phase used to carry its own 500MB budget; the shared budget
+        // must trip on the CUMULATIVE total, which is the whole point.
+        let mut b = InstallBudget::new();
+        let per = 200 * 1024 * 1024 + 1; // exceeds nothing alone? 200MB+1 each
+                                         // 500MB cap / (200MB+1) → third charge must blow the total.
+        assert!(b.charge(200 * 1024 * 1024).is_ok());
+        assert!(b.charge(200 * 1024 * 1024).is_ok());
+        let err = b.charge(per).unwrap_err().to_string();
+        assert!(err.contains("Total extracted size"), "got: {err}");
+        let _ = per;
+    }
+
+    #[test]
+    fn budget_counts_files_cumulatively() {
+        let mut b = InstallBudget::new();
+        for _ in 0..ExtensionPackage::MAX_EXTRACT_FILE_COUNT {
+            b.charge(1).unwrap();
+        }
+        let err = b.charge(1).unwrap_err().to_string();
+        assert!(err.contains("files"), "got: {err}");
     }
 }
 
