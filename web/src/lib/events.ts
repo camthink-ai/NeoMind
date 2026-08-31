@@ -35,6 +35,7 @@ export type EventType =
   | 'DashboardUpdated'
   | 'DataChanged'
   | 'ModelDownloadProgress'
+  | 'SystemUpgradeProgress'
   | 'Custom'
 
 export interface DataChangedEvent extends NeoMindEvent {
@@ -116,6 +117,23 @@ export interface ModelDownloadProgressEvent extends NeoMindEvent {
     downloaded: number
     total: number | null
     status: 'downloading' | 'complete' | 'error' | 'cancelled'
+    error?: string | null
+  }
+}
+
+// Web-triggered server self-upgrade progress (About page dialog). Like
+// ModelDownloadProgress it belongs to no `is_*_event()` category on the
+// backend — subscribe on the unfiltered 'all' stream. Optional fields
+// (`skip_serializing_if` on the backend) may be absent or null.
+export interface SystemUpgradeProgressEvent extends NeoMindEvent {
+  type: 'SystemUpgradeProgress'
+  data: {
+    phase: 'checking' | 'downloading' | 'verifying' | 'staged' | 'applying' | 'restarting' | 'done' | 'error'
+    current_version: string
+    target_version?: string | null
+    downloaded?: number | null
+    total?: number | null
+    message?: string | null
     error?: string | null
   }
 }

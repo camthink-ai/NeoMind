@@ -311,6 +311,27 @@ fn extract_event_data(event: &NeoMindEvent) -> Value {
                 "error": error,
             })
         }
+        // SystemUpgradeProgress: web-triggered server self-upgrade progress
+        // (About page dialog). Same shape as the event struct minus `type`.
+        NeoMindEvent::SystemUpgradeProgress {
+            phase,
+            current_version,
+            target_version,
+            downloaded,
+            total,
+            message,
+            error,
+        } => {
+            serde_json::json!({
+                "phase": phase,
+                "current_version": current_version,
+                "target_version": target_version,
+                "downloaded": downloaded,
+                "total": total,
+                "message": message,
+                "error": error,
+            })
+        }
         // Custom events: flatten the custom event_type alongside the payload data
         // so the frontend can filter by custom_type and inspect the inner event_type
         NeoMindEvent::Custom { event_type, data } => {

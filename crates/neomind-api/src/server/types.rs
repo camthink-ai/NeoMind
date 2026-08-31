@@ -213,10 +213,15 @@ pub struct ServerState {
 
     /// IM bridge router (lazy-initialized by `start_im_router` at startup).
     /// Mirrors `agents.agent_manager`'s `Arc<RwLock<Option<…>>>` lazy-init
-    /// pattern, but lives on `ServerState` directly because the IM bridge is a
-    /// cross-cutting concern (events + agents + messages), not agent-only.
+    /// pattern, but lives on `ServerState` directly because the IM bridge is
+    /// a cross-cutting concern (events + agents + messages), not agent-only.
     pub im_router:
         Arc<tokio::sync::RwLock<Option<Arc<neomind_messages::im_bridge::router::ImRouter>>>>,
+
+    /// Web-triggered self-upgrade coordinator (About page →
+    /// `/api/system/upgrade*`, see `handlers::system`). Holds the
+    /// single-flight lock, task status and the release-check cache.
+    pub upgrade: Arc<crate::upgrade::service::UpgradeState>,
 }
 
 // Backward compatibility: Provide direct field access as before
@@ -1238,6 +1243,7 @@ impl ServerState {
             credential_cache: Arc::new(std::sync::RwLock::new(CredentialCache::default())),
             internal_proxy_secret: Arc::new(generate_internal_proxy_secret()),
             im_router: Arc::new(tokio::sync::RwLock::new(None)),
+            upgrade: Arc::new(crate::upgrade::service::UpgradeState::new()),
         }
     }
 
@@ -1420,6 +1426,7 @@ impl ServerState {
             credential_cache: Arc::new(std::sync::RwLock::new(CredentialCache::default())),
             internal_proxy_secret: Arc::new(generate_internal_proxy_secret()),
             im_router: Arc::new(tokio::sync::RwLock::new(None)),
+            upgrade: Arc::new(crate::upgrade::service::UpgradeState::new()),
         }
     }
 

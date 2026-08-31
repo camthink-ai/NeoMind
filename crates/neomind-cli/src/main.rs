@@ -135,7 +135,17 @@ async fn main() -> Result<()> {
         } => run_logs(tail, follow, level, since).await,
         Command::Extension { extension_cmd } => run_extension_cmd(extension_cmd).await,
         Command::CheckUpdate => run_check_update().await,
-        Command::Upgrade { version, yes } => self_update::run_upgrade(version, yes).await,
+        Command::Upgrade {
+            version,
+            yes,
+            apply_staged,
+        } => {
+            if apply_staged {
+                self_update::run_apply_staged()
+            } else {
+                self_update::run_upgrade(version, yes).await
+            }
+        }
         Command::Uninstall { purge, yes } => self_update::run_uninstall(purge, yes).await,
         Command::ApiKey { key_cmd } => run_api_key_cmd(key_cmd).await,
         Command::Llm { llm_cmd } => {

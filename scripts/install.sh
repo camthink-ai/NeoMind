@@ -232,6 +232,45 @@ EOF
         $SUDO systemctl daemon-reload
         $SUDO systemctl enable neomind
         success "Systemd service installed"
+
+        # Web-triggered upgrade helper: a root oneshot + a path unit that
+        # starts it when the API writes ${DATA_DIR}/upgrade/apply.trigger.
+        # The API's own unit sets NoNewPrivileges=true + ProtectSystem=full,
+        # so it can neither write the install dir nor sudo — the path-unit
+        # hand-off needs neither (inotify on a data-dir file it can write).
+        status "Installing web-upgrade helper units..."
+        $SUDO mkdir -p "${DATA_DIR}/upgrade"
+        $SUDO chown neomind:neomind "${DATA_DIR}/upgrade"
+        $SUDO tee /etc/systemd/system/neomind-upgrade-apply.service >/dev/null <<EOF
+[Unit]
+Description=NeoMind web-triggered upgrade apply helper
+Documentation=https://github.com/camthink-ai/NeoMind
+
+[Service]
+Type=oneshot
+User=root
+# No sandboxing on purpose: this unit must write the install dir and swap
+# the web dir, which the main service's ProtectSystem makes read-only.
+WorkingDirectory=${DATA_DIR}
+Environment=NEOMIND_DATA_DIR=${DATA_DIR}
+Environment=NEOMIND_WEB_DIR=${WEB_DIR}
+ExecStart=${INSTALL_DIR}/neomind upgrade --apply-staged --yes
+TimeoutStartSec=600
+EOF
+        $SUDO tee /etc/systemd/system/neomind-upgrade-apply.path >/dev/null <<EOF
+[Unit]
+Description=Watch for the NeoMind web-upgrade apply trigger
+
+[Path]
+PathExists=${DATA_DIR}/upgrade/apply.trigger
+Unit=neomind-upgrade-apply.service
+
+[Install]
+WantedBy=multi-user.target
+EOF
+        $SUDO systemctl daemon-reload
+        $SUDO systemctl enable --now neomind-upgrade-apply.path
+        success "Web-upgrade helper installed (in-app upgrades enabled)"
     fi
 
     # Configure nginx (optional, for frontend-backend separation)
@@ -490,6 +529,9 @@ print_post_install() {
             echo "  Stop:    sudo systemctl stop neomind"
             echo "  Restart: sudo systemctl restart neomind"
             echo "  Logs:    sudo journalctl -u neomind -f"
+            echo ""
+            echo "Upgrades: Settings -> About -> Check for updates (web UI),"
+            echo "          or: sudo neomind upgrade"
             echo ""
             echo "Access the application:"
             if [ "$USE_NGINX" = "true" ] && available nginx; then

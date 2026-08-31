@@ -110,6 +110,11 @@ pub enum Command {
         /// Skip the confirmation prompt.
         #[arg(long)]
         yes: bool,
+        /// Apply an already-staged upgrade instead of downloading one. Used
+        /// internally by the `neomind-upgrade-apply.service` root helper that
+        /// the web-triggered upgrade starts — not meant for interactive use.
+        #[arg(long, hide = true)]
+        apply_staged: bool,
     },
     /// Uninstall NeoMind: stop + disable the systemd service and remove the
     /// binary + service unit. `--purge` also deletes the data and web dirs.

@@ -410,6 +410,47 @@ export interface ImSession {
   created_at: number
 }
 
+// ========== Server self-upgrade (admin, browser/server deployments) ==========
+/** GET /api/system/upgrade/check */
+export interface ServerUpgradeCheck {
+  /** Whether web-triggered upgrade can run on this server. */
+  supported: boolean
+  /** "docker" | "systemd" | "unsupported" */
+  deployment: string
+  /** Whether the root helper units are installed (install.sh). */
+  helper_available: boolean
+  current_version: string
+  latest_version?: string | null
+  /** Release-notes markdown for `latest_version`. */
+  release_notes?: string | null
+  /** `latest_version` is strictly newer than `current_version`. */
+  available: boolean
+  /** Operator hint when upgrade cannot proceed (both languages, \n-separated). */
+  notes?: string | null
+}
+
+/** Upgrade phases — mirrors `upgrade::service::phase` on the backend. */
+export type ServerUpgradePhase =
+  | 'idle'
+  | 'checking'
+  | 'downloading'
+  | 'verifying'
+  | 'staged'
+  | 'applying'
+  | 'restarting'
+  | 'done'
+  | 'error'
+
+/** GET /api/system/upgrade/status */
+export interface ServerUpgradeStatus {
+  running: boolean
+  phase: ServerUpgradePhase
+  target_version?: string | null
+  downloaded: number
+  total: number
+  error?: string | null
+}
+
 // ============================================================================
 // API Methods
 // ============================================================================
@@ -1263,6 +1304,27 @@ export const api = {
   // ========== Stats API ==========
   getSystemStats: () => fetchAPI<{ version: string; uptime: number; platform: string; arch: string; cpu_count: number; total_memory: number; used_memory: number; free_memory: number; available_memory: number; cpu_usage: number; gpus: Array<{ name: string; vendor: string; total_memory_mb: number | null; driver_version: string | null }>; disks: Array<{ name: string; mount: string; total: number; used: number; available: number }>; networks: Array<{ name: string; ip: string; mac: string; rx_bytes: number; tx_bytes: number }> }>('/stats/system'),
   getRuleStats: () => fetchAPI<{ stats: { total_rules: number; enabled_rules: number; disabled_rules: number; by_type: Record<string, number> } }>('/stats/rules'),
+
+  // ========== Server self-upgrade API (admin, browser/server deployments) ==========
+  /**
+   * Release check for the web-triggered server upgrade (About page).
+   * `supported=false` with a `notes` hint for Docker/unsupported installs.
+   * GET /api/system/upgrade/check
+   */
+  checkServerUpgrade: (force = false) =>
+    fetchAPI<ServerUpgradeCheck>(`/system/upgrade/check${force ? '?force=true' : ''}`),
+  /**
+   * Kick off the staged server upgrade (single-flight on the server).
+   * Progress flows via `SystemUpgradeProgress` WS events + status polling.
+   * POST /api/system/upgrade
+   */
+  startServerUpgrade: (version?: string) =>
+    fetchAPI<{ started: boolean; already_running: boolean }>('/system/upgrade', {
+      method: 'POST',
+      body: version ? JSON.stringify({ version }) : undefined,
+    }),
+  /** GET /api/system/upgrade/status — snapshot of the in-flight upgrade. */
+  getServerUpgradeStatus: () => fetchAPI<ServerUpgradeStatus>('/system/upgrade/status'),
 
   /**
    * Download a ZIP archive of `neomind.log.*` files for diagnostic / support

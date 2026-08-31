@@ -34,6 +34,7 @@ pub mod skills;
 pub mod stats;
 pub mod suggestions;
 pub mod summarization;
+pub mod system;
 pub mod tools;
 pub mod ws;
 

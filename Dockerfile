@@ -211,6 +211,10 @@ RUN set -eu; \
 
 # Environment defaults
 ENV NEOMIND_WEB_DIR=/var/www/neomind
+# Marker for the self-upgrade feature: containers upgrade by replacing the
+# image (docker compose pull && up -d), never in-place — the About page
+# shows that hint instead of an upgrade button.
+ENV NEOMIND_IN_DOCKER=1
 ENV RUST_LOG=neomind=info
 ENV RUST_BACKTRACE=1
 

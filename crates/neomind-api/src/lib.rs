@@ -19,6 +19,7 @@ pub mod rate_limit;
 pub mod server;
 pub mod shutdown;
 pub mod startup;
+pub mod upgrade;
 pub mod validator;
 
 // Re-export server entry points for binary crates (neomind-cli, neomind-tauri)

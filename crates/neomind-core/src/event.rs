@@ -101,6 +101,27 @@ pub enum NeoMindEvent {
         error: Option<String>,
     },
 
+    // ========== System Upgrade Events ==========
+    /// Server self-upgrade progress (web-triggered from the About page).
+    /// Not part of any `is_*_event()` category — subscribe on the unfiltered
+    /// stream (`category=all`), like `ModelDownloadProgress`.
+    SystemUpgradeProgress {
+        /// "checking" | "downloading" | "verifying" | "staged"
+        /// | "applying" | "restarting" | "done" | "error"
+        phase: String,
+        current_version: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        target_version: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        downloaded: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        total: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+
     // ========== Rule Events ==========
     /// Rule condition was evaluated
     RuleEvaluated {
@@ -511,6 +532,7 @@ impl NeoMindEvent {
             Self::DeviceCommandResult { .. } => "DeviceCommandResult",
             Self::DeviceDiscovered { .. } => "DeviceDiscovered",
             Self::ModelDownloadProgress { .. } => "ModelDownloadProgress",
+            Self::SystemUpgradeProgress { .. } => "SystemUpgradeProgress",
             Self::RuleEvaluated { .. } => "RuleEvaluated",
             Self::RuleTriggered { .. } => "RuleTriggered",
             Self::RuleExecuted { .. } => "RuleExecuted",
@@ -605,6 +627,10 @@ impl NeoMindEvent {
             }
             Self::ModelDownloadProgress { .. } => {
                 // Model download progress has no timestamp field, use current time
+                chrono::Utc::now().timestamp()
+            }
+            Self::SystemUpgradeProgress { .. } => {
+                // Upgrade progress has no timestamp field, use current time
                 chrono::Utc::now().timestamp()
             }
         }

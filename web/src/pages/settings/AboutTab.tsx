@@ -24,6 +24,7 @@ import {
 import { api, isTauriEnv } from "@/lib/api"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { useUpdateCheck } from "@/hooks/useUpdateCheck"
+import { ServerUpgradeDialog } from "@/components/update/ServerUpgradeDialog"
 import { useAppStore } from "@/store"
 
 interface GpuInfo {
@@ -225,6 +226,9 @@ export function AboutTab() {
   const [appVersion, setAppVersion] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [checkingUpdate, setCheckingUpdate] = useState(false)
+  // Browser (server deployment) upgrade dialog — the Tauri OTA dialog stays
+  // driven by the store's updateDialogOpen.
+  const [serverDialogOpen, setServerDialogOpen] = useState(false)
 
   const handleUpToDate = useCallback(() => {
     showSuccess(t("settings:alreadyUpToDate"))
@@ -334,30 +338,35 @@ export function AboutTab() {
             <div className="font-mono text-2xl md:text-3xl font-semibold text-foreground leading-none">
               [{heroVersion}]
             </div>
-            {isTauriEnv() && (
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                aria-label={updateTitle}
-                title={updateTitle}
-                onClick={() =>
-                  updateInfo?.available
-                    ? setUpdateDialogOpen(true)
-                    : handleCheckForUpdates()
+            {/* Update entry point in BOTH environments: Tauri opens the
+                desktop OTA dialog; a browser session (server deployment)
+                opens the server self-upgrade dialog. */}
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label={updateTitle}
+              title={updateTitle}
+              onClick={() => {
+                if (!updateInfo?.available) {
+                  handleCheckForUpdates()
+                } else if (isTauriEnv()) {
+                  setUpdateDialogOpen(true)
+                } else {
+                  setServerDialogOpen(true)
                 }
-                disabled={checkingUpdate}
-              >
-                {checkingUpdate ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : updateInfo?.available ? (
-                  <ArrowUpCircle className="h-4 w-4 text-info" />
-                ) : updateInfo ? (
-                  <CheckCircle2 className="h-4 w-4 text-success" />
-                ) : (
-                  <RefreshCw className="h-4 w-4 text-muted-foreground" />
-                )}
-              </Button>
-            )}
+              }}
+              disabled={checkingUpdate}
+            >
+              {checkingUpdate ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : updateInfo?.available ? (
+                <ArrowUpCircle className="h-4 w-4 text-info" />
+              ) : updateInfo ? (
+                <CheckCircle2 className="h-4 w-4 text-success" />
+              ) : (
+                <RefreshCw className="h-4 w-4 text-muted-foreground" />
+              )}
+            </Button>
           </div>
         </div>
       </div>
@@ -541,10 +550,17 @@ export function AboutTab() {
                 <Badge variant="secondary" className="font-mono">
                   {versionTag || "---"}
                 </Badge>
-                {isTauriEnv() &&
-                  updateInfo?.available &&
+                {updateInfo?.available &&
                   updateInfo.version !== systemInfo?.version && (
-                    <Badge variant="default" className="text-xs gap-1">
+                    <Badge
+                      variant="default"
+                      className="text-xs gap-1 cursor-pointer"
+                      onClick={() =>
+                        isTauriEnv()
+                          ? setUpdateDialogOpen(true)
+                          : setServerDialogOpen(true)
+                      }
+                    >
                       <Download className="h-3 w-3" />
                       v{updateInfo.version} {t("settings:update")}
                     </Badge>
@@ -581,6 +597,9 @@ export function AboutTab() {
       >
         © 2025–2026 CamThink · NeoMind
       </div>
+
+      {/* Server self-upgrade (browser access to a server deployment) */}
+      <ServerUpgradeDialog open={serverDialogOpen} onClose={() => setServerDialogOpen(false)} />
     </div>
   )
 }

@@ -28,7 +28,7 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         dashboards, data, data_push, devices, events, extension_stream, extensions,
         frontend_components, im_bridges, images, instances, llm_backends, logs, memory,
         message_channels, messages, mqtt, onboarding, rules, sessions, settings, setup, skills,
-        stats, suggestions, tools,
+        stats, suggestions, system, tools,
     };
 
     // Public routes (no authentication required)
@@ -1227,6 +1227,18 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         .route(
             "/api/settings/market",
             put(settings::update_market_source_handler),
+        )
+        // Server self-upgrade (admin only): release check + staged trigger +
+        // progress. Replaces the running binary — the most sensitive write
+        // the API offers, hence JWT-only (no API keys), like backup above.
+        .route(
+            "/api/system/upgrade/check",
+            get(system::upgrade_check_handler),
+        )
+        .route("/api/system/upgrade", post(system::start_upgrade_handler))
+        .route(
+            "/api/system/upgrade/status",
+            get(system::upgrade_status_handler),
         )
         // Apply JWT authentication middleware
         .route_layer(axum::middleware::from_fn_with_state(

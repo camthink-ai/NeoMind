@@ -12,6 +12,7 @@ import { listen } from '@tauri-apps/api/event'
 import { useTranslation } from 'react-i18next'
 import { useAppStore } from '@/store'
 import { notifySuccess } from '@/lib/notify'
+import { api } from '@/lib/api'
 import type { UpdateInfo, UpdateProgress } from '@/store/slices/updateSlice'
 
 /** Normalize version strings for reliable comparison */
@@ -116,8 +117,51 @@ export function useUpdateCheck(options: UpdateCheckOptions = {}): UseUpdateCheck
    * Check for available updates
    */
   const checkUpdate = useCallback(async () => {
-    // Skip update checks when not running in Tauri desktop (e.g. browser dev mode)
+    // Browser (non-Tauri) = server deployment: check the server's release
+    // state via the admin API instead of the desktop OTA plugin. Populates
+    // the same updateInfo slice that drives the About badge; no auto-open
+    // dialog — the About page's server-upgrade dialog opens on demand.
     if (!(window as any).__TAURI_INTERNALS__) {
+      try {
+        setUpdateStatus('checking')
+        setError(null)
+
+        // Post-upgrade marker (written by ServerUpgradeDialog right before
+        // its reload): toast once, skip the immediate re-check.
+        const pendingVersion = localStorage.getItem('neomind_installed_version')
+        if (pendingVersion) {
+          localStorage.removeItem('neomind_installed_version')
+          notifySuccess(t('settings:updateApplied'), t('settings:newVersionAvailable'))
+          setUpdateStatus('up-to-date')
+          onUpToDateRef.current?.()
+          return
+        }
+
+        const check = await api.checkServerUpgrade()
+        if (check.available && check.latest_version) {
+          setUpdateInfo({
+            available: true,
+            version: check.latest_version,
+            body: check.release_notes ?? undefined,
+          })
+          setUpdateStatus('available')
+          onUpdateAvailableRef.current?.({
+            available: true,
+            version: check.latest_version,
+            body: check.release_notes ?? undefined,
+          })
+        } else {
+          setUpdateInfo({ available: false })
+          setUpdateStatus('up-to-date')
+          onUpToDateRef.current?.()
+        }
+      } catch (error) {
+        console.error('Failed to check server upgrades:', error)
+        const errorMessage = error instanceof Error ? error.message : String(error)
+        setError(errorMessage)
+        setUpdateStatus('error')
+        onErrorRef.current?.(errorMessage)
+      }
       return
     }
 

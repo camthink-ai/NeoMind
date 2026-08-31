@@ -4,36 +4,42 @@
 //! `upgrade`: check latest release → download the host-arch server tarball →
 //! verify the new binary's version → back up the current binary → swap in →
 //! restart the systemd service if one is running. Best-effort web-frontend
-//! swap when `/var/www/neomind` exists.
+//! swap when the web dir exists.
+//!
+//! `upgrade --apply-staged`: root-side apply step of the web-triggered
+//! upgrade. Reads the manifest the API staged under the data dir, applies it
+//! (same backup/swap/web-swap/restart sequence), and cleans up. Invoked by
+//! the `neomind-upgrade-apply.service` helper unit — not interactive.
 //!
 //! `uninstall`: stop + disable the service, remove the binary + service unit;
 //! `--purge` also deletes the data + web dirs.
 //!
 //! On non-Linux hosts these print a hint to re-run `install.sh` (the installer
 //! handles macOS launchd etc.).
+//!
+//! Release/semver/download/apply primitives live in
+//! `neomind_api::upgrade::common` so the web-triggered path (API staging) and
+//! this CLI share one implementation.
 
 use anyhow::{anyhow, Context, Result};
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::PathBuf;
 
-const REPO: &str = "camthink-ai/NeoMind";
-const DEFAULT_INSTALL_DIR: &str = "/usr/local/bin";
+use neomind_api::upgrade::common as up;
+use neomind_core::brand::APP_VERSION;
+
 const DATA_DIR: &str = "/var/lib/neomind";
-const WEB_DIR: &str = "/var/www/neomind";
 
 pub async fn run_upgrade(version: Option<String>, yes: bool) -> Result<()> {
-    use neomind_core::brand::APP_VERSION;
-
     if !cfg!(target_os = "linux") {
         eprintln!("`neomind upgrade` targets Linux (systemd) deployments.");
         eprintln!(
             "On other OS, re-run the installer:\n  curl -fsSL https://raw.githubusercontent.com/{}/main/scripts/install.sh | sh",
-            REPO
+            up::REPO
         );
         return Ok(());
     }
 
-    println!("NeoMind {} — checking for updates...", APP_VERSION);
+    println!("NeoMind {APP_VERSION} — checking for updates...");
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -43,30 +49,15 @@ pub async fn run_upgrade(version: Option<String>, yes: bool) -> Result<()> {
     // 1. Resolve target version (explicit pin, else latest release tag).
     let target = match &version {
         Some(v) => v.trim_start_matches('v').to_string(),
-        None => {
-            let resp: serde_json::Value = client
-                .get(format!(
-                    "https://api.github.com/repos/{}/releases/latest",
-                    REPO
-                ))
-                .send()
-                .await?
-                .json()
-                .await?;
-            resp["tag_name"]
-                .as_str()
-                .ok_or_else(|| anyhow!("release has no tag_name"))?
-                .trim_start_matches('v')
-                .to_string()
-        }
+        None => up::github_latest_version(&client).await?,
     };
 
     // 2. Skip if already on the latest (unless an explicit --version was given).
-    if version.is_none() && !is_newer(&target, APP_VERSION) {
-        println!("Already up to date ({}).", APP_VERSION);
+    if version.is_none() && !up::is_newer(&target, APP_VERSION) {
+        println!("Already up to date ({APP_VERSION}).");
         return Ok(());
     }
-    println!("Upgrade available: {} → v{}", APP_VERSION, target);
+    println!("Upgrade available: {APP_VERSION} → v{target}");
 
     if !yes {
         println!("\nProceed with upgrade? [y/N] ");
@@ -78,11 +69,7 @@ pub async fn run_upgrade(version: Option<String>, yes: bool) -> Result<()> {
         }
     }
 
-    let arch = if cfg!(target_arch = "aarch64") {
-        "arm64"
-    } else {
-        "amd64"
-    };
+    let arch = up::host_arch();
 
     // 3. Download + extract the server tarball into a temp dir.
     let tmp =
@@ -92,24 +79,13 @@ pub async fn run_upgrade(version: Option<String>, yes: bool) -> Result<()> {
     }
     std::fs::create_dir_all(&tmp)?;
 
-    let url = format!(
-        "https://github.com/{}/releases/download/v{}/neomind-server-linux-{}.tar.gz",
-        REPO, target, arch
-    );
-    println!("Downloading {}", url);
-    let bytes = client
-        .get(&url)
-        .send()
-        .await?
-        .error_for_status()
-        .context("download failed")?
-        .bytes()
-        .await?;
+    let url = up::server_tarball_url(&target, arch);
+    println!("Downloading {url}");
     let tarball = tmp.join("neomind.tar.gz");
-    std::fs::write(&tarball, &bytes)?;
+    up::download_to_file(&client, &url, &tarball, None).await?;
 
     println!("Extracting...");
-    run(Command::new("tar").args(["xzf", tarball_str(&tarball)?, "-C", path_str(&tmp)?]))?;
+    up::extract_tar_gz(&tarball, &tmp)?;
 
     let new_bin = tmp.join("neomind");
     let new_runner = tmp.join("neomind-extension-runner");
@@ -121,111 +97,43 @@ pub async fn run_upgrade(version: Option<String>, yes: bool) -> Result<()> {
 
     // 4. Verify the downloaded binary reports the target version before touching
     //    anything (safety: never swap in a wrong/older/foreign binary).
-    let vout = Command::new(new_bin.as_os_str())
-        .arg("--version")
-        .output()
-        .context("could not run the downloaded binary")?;
-    let vstr = String::from_utf8_lossy(&vout.stdout).trim().to_string();
-    if !vstr.ends_with(&target) && !vstr.contains(&format!(" {}", target)) {
-        return Err(anyhow!(
-            "downloaded binary version mismatch: got {:?}, expected v{} — aborting",
-            vstr,
-            target
-        ));
-    }
-    println!("Verified downloaded binary: {}", vstr);
+    let vstr = up::verify_binary_version(&new_bin, &target)?;
+    println!("Verified downloaded binary: {vstr}");
 
     // 5. Locate the running binary + detect a systemd service.
-    let cur_bin = std::env::current_exe()
-        .context("cannot resolve current binary path")?
-        .canonicalize()
-        .unwrap_or_else(|_| PathBuf::from(DEFAULT_INSTALL_DIR).join("neomind"));
-    let install_dir = cur_bin
-        .parent()
-        .context("binary has no parent dir")?
-        .to_path_buf();
-    let cur_runner = install_dir.join("neomind-extension-runner");
-    let svc_active = Command::new("systemctl")
-        .args(["is-active", "--quiet", "neomind"])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
+    let install_dir = up::install_dir_from_exe();
+    let svc_active = systemctl_is_active();
 
-    let sudo = sudo_prefix();
+    let sudo = up::sudo_prefix();
 
     // 6. Stop the service (if running) before swapping.
     if svc_active {
         println!("Stopping neomind service...");
-        let _ = sh(sudo.as_deref(), &["systemctl", "stop", "neomind"]);
+        let _ = up::run_shell(sudo.as_deref(), &["systemctl", "stop", "neomind"]);
     }
 
-    // 7. Back up the current binaries for rollback.
-    let bak_bin = install_dir.join(format!("neomind.{}.bak", APP_VERSION));
-    let bak_runner = install_dir.join(format!("neomind-extension-runner.{}.bak", APP_VERSION));
-    if cur_bin.exists() {
-        println!("Backup → {}", bak_bin.display());
-        let _ = sh(
-            sudo.as_deref(),
-            &["cp", "-a", path_str(&cur_bin)?, path_str(&bak_bin)?],
-        );
-    }
-    if cur_runner.exists() {
-        let _ = sh(
-            sudo.as_deref(),
-            &["cp", "-a", path_str(&cur_runner)?, path_str(&bak_runner)?],
-        );
-    }
-
-    // 8. Install (atomic, mode 755).
-    println!("Installing → {}", cur_bin.display());
-    sh(
+    // 7+8. Back up + atomically install (shared with the staged path).
+    let runner_arg = new_runner.exists().then_some(new_runner.as_path());
+    println!("Installing → {}", install_dir.join("neomind").display());
+    let outcome = up::apply_binaries(
         sudo.as_deref(),
-        &[
-            "install",
-            "-m",
-            "755",
-            path_str(&new_bin)?,
-            path_str(&cur_bin)?,
-        ],
+        &install_dir,
+        &new_bin,
+        runner_arg,
+        APP_VERSION,
     )?;
-    if new_runner.exists() && cur_runner.exists() {
-        sh(
-            sudo.as_deref(),
-            &[
-                "install",
-                "-m",
-                "755",
-                path_str(&new_runner)?,
-                path_str(&cur_runner)?,
-            ],
-        )?;
-    }
 
     // 9. Best-effort web-frontend swap (only if the web dir + a web tarball exist).
-    if Path::new(WEB_DIR).is_dir() {
-        let web_url = format!(
-            "https://github.com/{}/releases/download/v{}/neomind-web.tar.gz",
-            REPO, target
-        );
+    if up::web_dir().is_dir() {
+        let web_url = up::web_tarball_url(&target);
         if let Ok(resp) = client.get(&web_url).send().await {
             if resp.status().is_success() {
                 if let Ok(bytes) = resp.bytes().await {
                     let web_tgz = tmp.join("neomind-web.tar.gz");
-                    if std::fs::write(&web_tgz, &bytes).is_ok() {
-                        let stage = format!("{}.new.{}", WEB_DIR, std::process::id());
-                        let _ = sh(sudo.as_deref(), &["rm", "-rf", &stage]);
-                        let _ = sh(sudo.as_deref(), &["mkdir", "-p", &stage]);
-                        let _ = sh(
-                            sudo.as_deref(),
-                            &["tar", "xzf", path_str(&web_tgz)?, "-C", &stage],
-                        );
-                        let _ = sh(sudo.as_deref(), &["chown", "-R", "neomind:neomind", &stage]);
-                        let old = format!("{}.old.{}", WEB_DIR, std::process::id());
-                        let _ = sh(sudo.as_deref(), &["rm", "-rf", &old]);
-                        let _ = sh(sudo.as_deref(), &["mv", WEB_DIR, &old]);
-                        let _ = sh(sudo.as_deref(), &["mv", &stage, WEB_DIR]);
-                        let _ = sh(sudo.as_deref(), &["rm", "-rf", &old]);
-                        println!("Frontend updated → {}", WEB_DIR);
+                    if std::fs::write(&web_tgz, &bytes).is_ok()
+                        && up::apply_web_dir(sudo.as_deref(), &web_tgz).is_ok()
+                    {
+                        println!("Frontend updated → {}", up::web_dir().display());
                     }
                 }
             }
@@ -235,7 +143,7 @@ pub async fn run_upgrade(version: Option<String>, yes: bool) -> Result<()> {
     // 10. Restart the service (if it was running).
     if svc_active {
         println!("Starting neomind service...");
-        let _ = sh(sudo.as_deref(), &["systemctl", "start", "neomind"]);
+        let _ = up::run_shell(sudo.as_deref(), &["systemctl", "start", "neomind"]);
     }
 
     // 11. Clean up temp + verify.
@@ -243,30 +151,131 @@ pub async fn run_upgrade(version: Option<String>, yes: bool) -> Result<()> {
 
     println!("\nVerifying...");
     if svc_active {
-        let active = Command::new("systemctl")
-            .args(["is-active", "--quiet", "neomind"])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if active {
-            println!("✅ neomind upgraded to v{} (service active)", target);
+        if systemctl_is_active() {
+            println!("✅ neomind upgraded to v{target} (service active)");
         } else {
             eprintln!("⚠️ service did not come back up — check: sudo systemctl status neomind");
         }
     } else {
-        println!(
-            "✅ neomind upgraded to v{} (no systemd service detected — restart manually)",
-            target
-        );
+        println!("✅ neomind upgraded to v{target} (no systemd service detected — restart manually)");
     }
-    println!(
-        "Rollback: sudo cp -a {} {} && sudo cp -a {} {} && sudo systemctl restart neomind",
-        bak_bin.display(),
-        cur_bin.display(),
-        bak_runner.display(),
-        cur_runner.display()
-    );
+    print_rollback_hint(&install_dir, &outcome);
     Ok(())
+}
+
+/// `neomind upgrade --apply-staged` — apply what the API staged.
+///
+/// Runs as root via `neomind-upgrade-apply.service` (started by its `.path`
+/// unit when the API writes the trigger file). The staging dir follows the
+/// same data-dir resolution as the API (`NEOMIND_DATA_DIR` else `data/`, set
+/// as WorkingDirectory/Environment by the installer's units), so both sides
+/// agree without configuration.
+pub fn run_apply_staged() -> Result<()> {
+    if !cfg!(target_os = "linux") {
+        return Err(anyhow!("--apply-staged targets Linux systemd deployments"));
+    }
+
+    let staging_root = up::staging_root(&neomind_core::paths::data_dir());
+
+    // Consume the trigger FIRST: the path unit fires on the nonexistent →
+    // existent transition, so the file must be gone before this run ends
+    // (however it ends) for the next upgrade to re-arm. Doing it before any
+    // fallible step guarantees that even a failed apply leaves it consumed.
+    let _ = std::fs::remove_file(staging_root.join(up::APPLY_TRIGGER_FILE));
+    let manifest_path = find_latest_staged_manifest(&staging_root)?;
+    let manifest: up::StagingManifest = serde_json::from_str(&std::fs::read_to_string(
+        &manifest_path,
+    )?)
+    .context("staging manifest is not valid JSON")?;
+    let staging = manifest_path
+        .parent()
+        .ok_or_else(|| anyhow!("staging manifest has no parent dir"))?
+        .to_path_buf();
+    println!(
+        "Applying staged upgrade v{} (staged {}s ago, arch {})",
+        manifest.version,
+        chrono_now_millis().saturating_sub(manifest.staged_at) / 1000,
+        manifest.arch
+    );
+
+    // Re-verify before touching anything — the manifest is on disk, the
+    // staging dir could have been tampered with or truncated.
+    let new_bin = staging.join(&manifest.server_binary);
+    if !new_bin.exists() {
+        return Err(anyhow!(
+            "staged binary missing: {} — aborting (service untouched)",
+            new_bin.display()
+        ));
+    }
+    let vstr = up::verify_binary_version(&new_bin, &manifest.version)?;
+    println!("Verified staged binary: {vstr}");
+
+    let new_runner = manifest
+        .extension_runner
+        .as_ref()
+        .map(|r| staging.join(r))
+        .filter(|p| p.exists());
+    let web_tarball = manifest
+        .web_tarball
+        .as_ref()
+        .map(|w| staging.join(w))
+        .filter(|p| p.exists());
+
+    let install_dir = up::install_dir_from_exe();
+    let sudo = up::sudo_prefix();
+
+    let outcome = up::apply_binaries(
+        sudo.as_deref(),
+        &install_dir,
+        &new_bin,
+        new_runner.as_deref(),
+        APP_VERSION,
+    )?;
+    println!("Installed → {}", install_dir.join("neomind").display());
+
+    if let Some(web_tgz) = web_tarball.as_ref() {
+        match up::apply_web_dir(sudo.as_deref(), web_tgz) {
+            Ok(_) => println!("Frontend updated → {}", up::web_dir().display()),
+            Err(e) => eprintln!("⚠️ frontend swap failed (binary upgrade still applied): {e}"),
+        }
+    }
+
+    // Restart the service it was triggered from (unit exists on disk even if
+    // the API stopped it mid-shutdown).
+    if systemctl_is_active() || std::path::Path::new("/etc/systemd/system/neomind.service").exists()
+    {
+        println!("Restarting neomind service...");
+        up::run_shell(sudo.as_deref(), &["systemctl", "restart", "neomind"])?;
+    }
+
+    // Clean the staging dir this manifest came from (keep others — an older
+    // staged version might still be wanted for a manual rollback-by-retry).
+    let _ = std::fs::remove_dir_all(&staging);
+
+    println!("✅ staged upgrade to v{} applied", manifest.version);
+    print_rollback_hint(&install_dir, &outcome);
+    Ok(())
+}
+
+/// Newest `upgrade/v*/manifest.json` under `root` (by `staged_at`).
+fn find_latest_staged_manifest(root: &std::path::Path) -> Result<PathBuf> {
+    let mut best: Option<(i64, PathBuf)> = None;
+    let entries = std::fs::read_dir(root)
+        .with_context(|| format!("no staging dir at {} — nothing to apply", root.display()))?;
+    for entry in entries.flatten() {
+        let manifest = entry.path().join("manifest.json");
+        let Ok(content) = std::fs::read_to_string(&manifest) else {
+            continue;
+        };
+        let Ok(m) = serde_json::from_str::<up::StagingManifest>(&content) else {
+            continue;
+        };
+        if best.as_ref().map(|(t, _)| m.staged_at > *t).unwrap_or(true) {
+            best = Some((m.staged_at, manifest));
+        }
+    }
+    best.map(|(_, p)| p)
+        .ok_or_else(|| anyhow!("no staged upgrade manifest under {}", root.display()))
 }
 
 pub async fn run_uninstall(purge: bool, yes: bool) -> Result<()> {
@@ -279,7 +288,8 @@ pub async fn run_uninstall(purge: bool, yes: bool) -> Result<()> {
     if purge {
         println!(
             "⚠️ --purge will ALSO DELETE {} and {} (irreversible).",
-            DATA_DIR, WEB_DIR
+            DATA_DIR,
+            up::web_dir().display()
         );
     }
     if !yes {
@@ -292,32 +302,46 @@ pub async fn run_uninstall(purge: bool, yes: bool) -> Result<()> {
         }
     }
 
-    let sudo = sudo_prefix();
+    let sudo = up::sudo_prefix();
 
     // 1. Stop + disable the systemd service (best-effort).
     println!("Stopping + disabling neomind service...");
-    let _ = sh(sudo.as_deref(), &["systemctl", "stop", "neomind"]);
-    let _ = sh(sudo.as_deref(), &["systemctl", "disable", "neomind"]);
+    let _ = up::run_shell(sudo.as_deref(), &["systemctl", "stop", "neomind"]);
+    let _ = up::run_shell(sudo.as_deref(), &["systemctl", "disable", "neomind"]);
 
-    // 2. Remove the service unit + reload.
-    let _ = sh(
+    // 2. Remove the service units + reload (main unit + the upgrade helper
+    //    service/path pair).
+    let _ = up::run_shell(
+        sudo.as_deref(),
+        &["systemctl", "disable", "--now", up::APPLY_PATH_UNIT_NAME],
+    );
+    let _ = up::run_shell(
         sudo.as_deref(),
         &["rm", "-f", "/etc/systemd/system/neomind.service"],
     );
-    let _ = sh(sudo.as_deref(), &["systemctl", "daemon-reload"]);
+    let _ = up::run_shell(
+        sudo.as_deref(),
+        &[
+            "rm",
+            "-f",
+            &format!("/etc/systemd/system/{}", up::APPLY_UNIT_NAME),
+        ],
+    );
+    let _ = up::run_shell(
+        sudo.as_deref(),
+        &[
+            "rm",
+            "-f",
+            &format!("/etc/systemd/system/{}", up::APPLY_PATH_UNIT_NAME),
+        ],
+    );
+    let _ = up::run_shell(sudo.as_deref(), &["systemctl", "daemon-reload"]);
 
     // 3. Remove the binaries (current + .bak rollback copies) from the install dir.
-    let cur_bin = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.canonicalize().ok())
-        .unwrap_or_else(|| PathBuf::from(format!("{}/neomind", DEFAULT_INSTALL_DIR)));
-    let dir = cur_bin
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_INSTALL_DIR));
+    let dir = up::install_dir_from_exe();
     println!("Removing binaries from {}", dir.display());
-    let _ = sh(sudo.as_deref(), &["rm", "-f", path_str(&cur_bin)?]);
-    let _ = sh(
+    let _ = up::run_shell(sudo.as_deref(), &["rm", "-f", &dir.join("neomind").to_string_lossy()]);
+    let _ = up::run_shell(
         sudo.as_deref(),
         &[
             "rm",
@@ -325,27 +349,25 @@ pub async fn run_uninstall(purge: bool, yes: bool) -> Result<()> {
             &dir.join("neomind-extension-runner").to_string_lossy(),
         ],
     );
-    let _ = sh(
+    let _ = up::run_shell(
         sudo.as_deref(),
-        &[
-            "sh",
-            "-c",
-            &format!("rm -f {}/neomind*.bak*", dir.display()),
-        ],
+        &["sh", "-c", &format!("rm -f {}/neomind*.bak*", dir.display())],
     );
 
     // 4. Optional purge of data + web.
     if purge {
-        println!("Removing data dir {} (--purge)", DATA_DIR);
-        let _ = sh(sudo.as_deref(), &["rm", "-rf", DATA_DIR]);
-        let _ = sh(sudo.as_deref(), &["rm", "-rf", WEB_DIR]);
+        println!("Removing data dir {DATA_DIR} (--purge)");
+        let _ = up::run_shell(sudo.as_deref(), &["rm", "-rf", DATA_DIR]);
+        let _ = up::run_shell(
+            sudo.as_deref(),
+            &["rm", "-rf", &up::web_dir().to_string_lossy()],
+        );
     }
 
     println!("✅ NeoMind uninstalled.");
     if !purge {
         println!(
-            "(data dir {} retained — remove manually or re-run with --purge)",
-            DATA_DIR
+            "(data dir {DATA_DIR} retained — remove manually or re-run with --purge)"
         );
     }
     Ok(())
@@ -353,91 +375,33 @@ pub async fn run_uninstall(purge: bool, yes: bool) -> Result<()> {
 
 // ---- helpers ----
 
-fn sudo_prefix() -> Option<String> {
-    // Need sudo unless already root.
-    let is_root = Command::new("id")
-        .arg("-u")
-        .output()
-        .ok()
-        .and_then(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .trim()
-                .parse::<u32>()
-                .ok()
-        })
-        .map(|u| u == 0)
-        .unwrap_or(false);
-    if is_root {
-        None
-    } else if which("sudo") {
-        Some("sudo".to_string())
-    } else {
-        eprintln!(
-            "⚠️ this operation needs root (run as root or with sudo); continuing best-effort"
-        );
-        None
-    }
-}
-
-fn which(bin: &str) -> bool {
-    Command::new("which")
-        .arg(bin)
-        .output()
-        .map(|o| o.status.success())
+fn systemctl_is_active() -> bool {
+    std::process::Command::new("systemctl")
+        .args(["is-active", "--quiet", "neomind"])
+        .status()
+        .map(|s| s.success())
         .unwrap_or(false)
 }
 
-/// Run a command, optionally prefixing with sudo; error on non-zero exit.
-fn sh(sudo: Option<&str>, args: &[&str]) -> Result<()> {
-    let mut cmd = match sudo {
-        Some(s) => {
-            let mut c = Command::new(s);
-            c.args(args);
-            c
-        }
-        None => {
-            let (first, rest) = args.split_first().ok_or_else(|| anyhow!("empty command"))?;
-            let mut c = Command::new(first);
-            c.args(rest);
-            c
-        }
-    };
-    let status = cmd
-        .status()
-        .with_context(|| format!("failed to run: {:?}", args))?;
-    if !status.success() {
-        return Err(anyhow!("command failed ({:?}): {}", args, status));
+fn print_rollback_hint(install_dir: &std::path::Path, outcome: &up::ApplyOutcome) {
+    let cur_bin = install_dir.join("neomind");
+    let cur_runner = install_dir.join("neomind-extension-runner");
+    match &outcome.backup_runner {
+        Some(bak_runner) => println!(
+            "Rollback: sudo cp -a {} {} && sudo cp -a {} {} && sudo systemctl restart neomind",
+            outcome.backup_binary.display(),
+            cur_bin.display(),
+            bak_runner.display(),
+            cur_runner.display(),
+        ),
+        None => println!(
+            "Rollback: sudo cp -a {} {} && sudo systemctl restart neomind",
+            outcome.backup_binary.display(),
+            cur_bin.display(),
+        ),
     }
-    Ok(())
 }
 
-fn run(cmd: &mut Command) -> Result<()> {
-    let status = cmd.status().context("command failed to start")?;
-    if !status.success() {
-        return Err(anyhow!("command exited {}", status));
-    }
-    Ok(())
-}
-
-fn path_str(p: &Path) -> Result<&str> {
-    p.to_str().ok_or_else(|| anyhow!("non-UTF-8 path: {:?}", p))
-}
-
-fn tarball_str(p: &Path) -> Result<&str> {
-    path_str(p)
-}
-
-fn semver(v: &str) -> [u64; 3] {
-    let v = v.trim_start_matches('v');
-    let mut parts = v.split(|c: char| !c.is_ascii_digit());
-    let major = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-    let minor = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-    let patch = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-    [major, minor, patch]
-}
-
-fn is_newer(target: &str, current: &str) -> bool {
-    let t = semver(target);
-    let c = semver(current);
-    t[0] > c[0] || (t[0] == c[0] && t[1] > c[1]) || (t[0] == c[0] && t[1] == c[1] && t[2] > c[2])
+fn chrono_now_millis() -> i64 {
+    chrono::Utc::now().timestamp_millis()
 }
