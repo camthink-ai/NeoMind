@@ -372,7 +372,10 @@ export function ServerUpgradeDialog({ open, onClose }: ServerUpgradeDialogProps)
       // section while the settings overlay stays mounted — the default z-50
       // would leave the confirm button covered by the settings page.
       className="z-[110]"
-      preventCloseOnSubmit={false}
+      // Keep the default preventCloseOnSubmit=true: while an upgrade is in
+      // flight, UnifiedFormDialog's own guards disable the X / Esc / overlay
+      // / cancel paths (defense in depth on top of the canClose check in
+      // onOpenChange below, which stays the authoritative gate).
       isSubmitting={busy}
       footer={footerContent}
     >
