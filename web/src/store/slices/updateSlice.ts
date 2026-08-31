@@ -30,6 +30,10 @@ export interface UpdateState {
   lastCheckTime: number | null
   error: string | null
   updateDialogOpen: boolean
+  /** Server self-upgrade dialog (browser/server deployments). Mounted
+   * globally like updateDialogOpen so the top-right indicator and the
+   * About page can both open it. */
+  serverUpgradeDialogOpen: boolean
 
   // Actions
   setUpdateStatus: (status: UpdateStatus) => void
@@ -38,6 +42,7 @@ export interface UpdateState {
   setError: (error: string | null) => void
   setLastCheckTime: (time: number) => void
   setUpdateDialogOpen: (open: boolean) => void
+  setServerUpgradeDialogOpen: (open: boolean) => void
   resetUpdate: () => void
 }
 
@@ -54,6 +59,7 @@ export const createUpdateSlice: StateCreator<
   lastCheckTime: null,
   error: null,
   updateDialogOpen: false,
+  serverUpgradeDialogOpen: false,
 
   // Actions
   setUpdateStatus: (status) =>
@@ -74,6 +80,9 @@ export const createUpdateSlice: StateCreator<
   setUpdateDialogOpen: (open) =>
     set({ updateDialogOpen: open }),
 
+  setServerUpgradeDialogOpen: (open) =>
+    set({ serverUpgradeDialogOpen: open }),
+
   resetUpdate: () =>
     set({
       updateStatus: 'idle',
@@ -91,5 +100,6 @@ export interface UpdateSlice extends UpdateState {
   setError: (error: string | null) => void
   setLastCheckTime: (time: number) => void
   setUpdateDialogOpen: (open: boolean) => void
+  setServerUpgradeDialogOpen: (open: boolean) => void
   resetUpdate: () => void
 }

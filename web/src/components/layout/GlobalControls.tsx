@@ -9,6 +9,7 @@ import { Languages } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ThemeToggle } from "./ThemeToggle"
 import { BuiltinDownloadIndicator } from "@/components/llm/BuiltinDownloadIndicator"
+import { UpdateAvailableButton } from "@/components/update/UpdateAvailableButton"
 import { AlertsMenu } from "./AlertsMenu"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import {
@@ -29,6 +30,7 @@ export function GlobalControlsFloating() {
       <div className="pointer-events-auto rounded-full bg-background/60 px-1 py-0.5 backdrop-blur-sm">
     <TooltipProvider delayDuration={500}>
       <div className="flex shrink-0 items-center gap-1.5">
+        <UpdateAvailableButton />
         <BuiltinDownloadIndicator />
         <ThemeToggle />
         <DropdownMenu>

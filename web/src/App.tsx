@@ -20,7 +20,7 @@ import { StartupLoading } from "@/components/StartupLoading"
 import { LoadingState } from "@/components/shared/LoadingState"
 import { forceViewportReset } from "@/hooks/useVisualViewport"
 import { useExtensionComponents } from "@/hooks/useExtensionComponents"
-import { UpdateDialog } from '@/components/update'
+import { UpdateDialog, ServerUpgradeDialog } from '@/components/update'
 import { InstanceSwitchOverlay } from '@/components/layout/InstanceSwitchOverlay'
 import { GlobalChatFab } from '@/components/chat/GlobalChatFab'
 import { SettingsDialog } from "@/components/settings/SettingsDialog"
@@ -283,11 +283,12 @@ function App() {
       delete (window as any).NeoMindStream
     }
   }, [])
-  const { isAuthenticated, checkAuthStatus, setWsConnected, updateDialogOpen } = useStore((s) => ({
+  const { isAuthenticated, checkAuthStatus, setWsConnected, updateDialogOpen, serverUpgradeDialogOpen } = useStore((s) => ({
     isAuthenticated: s.isAuthenticated,
     checkAuthStatus: s.checkAuthStatus,
     setWsConnected: s.setWsConnected,
     updateDialogOpen: s.updateDialogOpen,
+    serverUpgradeDialogOpen: s.serverUpgradeDialogOpen,
   }), shallow)
   
   // Global auto-update check with system notification
@@ -663,6 +664,13 @@ function App() {
       <UpdateDialog
         open={updateDialogOpen}
         onClose={() => useStore.setState({ updateDialogOpen: false })}
+      />
+      {/* Global Server Upgrade Dialog (browser/server deployments) — driven
+          by the shared flag so the top-right indicator and the About page
+          open the same instance. */}
+      <ServerUpgradeDialog
+        open={serverUpgradeDialogOpen}
+        onClose={() => useStore.setState({ serverUpgradeDialogOpen: false })}
       />
       {/* Global Instance Switch Overlay */}
       <InstanceSwitchOverlay />

@@ -24,7 +24,6 @@ import {
 import { api, isTauriEnv } from "@/lib/api"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { useUpdateCheck } from "@/hooks/useUpdateCheck"
-import { ServerUpgradeDialog } from "@/components/update/ServerUpgradeDialog"
 import { useAppStore } from "@/store"
 
 interface GpuInfo {
@@ -221,14 +220,11 @@ function TelemetrySkeleton() {
 export function AboutTab() {
   const { t } = useTranslation(["common", "settings"])
   const { handleError, showSuccess } = useErrorHandler()
-  const { updateInfo, setUpdateDialogOpen } = useAppStore()
+  const { updateInfo, setUpdateDialogOpen, setServerUpgradeDialogOpen } = useAppStore()
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null)
   const [appVersion, setAppVersion] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [checkingUpdate, setCheckingUpdate] = useState(false)
-  // Browser (server deployment) upgrade dialog — the Tauri OTA dialog stays
-  // driven by the store's updateDialogOpen.
-  const [serverDialogOpen, setServerDialogOpen] = useState(false)
 
   const handleUpToDate = useCallback(() => {
     showSuccess(t("settings:alreadyUpToDate"))
@@ -352,7 +348,7 @@ export function AboutTab() {
                 } else if (isTauriEnv()) {
                   setUpdateDialogOpen(true)
                 } else {
-                  setServerDialogOpen(true)
+                  setServerUpgradeDialogOpen(true)
                 }
               }}
               disabled={checkingUpdate}
@@ -558,7 +554,7 @@ export function AboutTab() {
                       onClick={() =>
                         isTauriEnv()
                           ? setUpdateDialogOpen(true)
-                          : setServerDialogOpen(true)
+                          : setServerUpgradeDialogOpen(true)
                       }
                     >
                       <Download className="h-3 w-3" />
@@ -598,8 +594,8 @@ export function AboutTab() {
         © 2025–2026 CamThink · NeoMind
       </div>
 
-      {/* Server self-upgrade (browser access to a server deployment) */}
-      <ServerUpgradeDialog open={serverDialogOpen} onClose={() => setServerDialogOpen(false)} />
+      {/* ServerUpgradeDialog is mounted globally in App (shared with the
+          top-right UpdateAvailableButton) — only the open flag is set here. */}
     </div>
   )
 }
