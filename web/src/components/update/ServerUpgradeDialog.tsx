@@ -313,6 +313,14 @@ export function ServerUpgradeDialog({ open, onClose }: ServerUpgradeDialogProps)
         <Loader2 className="w-4 h-4 mr-2 animate-spin" />
         {t('settings:updating')}
       </Button>
+    ) : stage === 'done' ? (
+      // The reload fires ~1.5s after the version flip; without this branch
+      // that window fell through to the idle footer and briefly flashed
+      // "Remind Me Later / Update Now" on an already-completed upgrade.
+      <Button disabled variant="secondary">
+        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+        {t('settings:serverUpgradeCompleteDesc')}
+      </Button>
     ) : stage === 'error' ? (
       <>
         <Button variant="outline" onClick={onClose}>
