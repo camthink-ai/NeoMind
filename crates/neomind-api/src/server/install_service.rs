@@ -118,23 +118,48 @@ impl ExtensionInstallService {
     pub async fn sync_nep_cache(
         &self,
     ) -> Result<SyncReport, Box<dyn std::error::Error + Send + Sync>> {
-        info!(
-            "Scanning {} for .nep packages",
-            self.nep_cache_dir.display()
-        );
-
-        if !self.nep_cache_dir.exists() {
-            return Ok(SyncReport::default());
+        // Scan BOTH cache locations: .nep files dropped at the top of the
+        // extensions dir AND the legacy `packages/` subdirectory the startup
+        // scan used exclusively. The two entry points (startup task vs manual
+        // POST /api/extensions/sync) each saw only one of them — a file in
+        // the other location was invisible to whichever trigger ran.
+        let mut scan_dirs: Vec<PathBuf> = vec![self.nep_cache_dir.clone()];
+        let packages_dir = self.nep_cache_dir.join("packages");
+        if packages_dir != self.nep_cache_dir && packages_dir.is_dir() {
+            scan_dirs.push(packages_dir);
         }
 
         let mut report = SyncReport::default();
-        let mut entries = fs::read_dir(&self.nep_cache_dir).await?;
+        let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+
+        for scan_dir in scan_dirs {
+            self.sync_one_dir(&scan_dir, &mut report, &mut seen).await?;
+        }
+        Ok(report)
+    }
+
+    async fn sync_one_dir(
+        &self,
+        scan_dir: &Path,
+        report: &mut SyncReport,
+        seen: &mut std::collections::HashSet<PathBuf>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if !scan_dir.exists() {
+            return Ok(());
+        }
+        let mut entries = fs::read_dir(scan_dir).await?;
 
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
 
             // Only process .nep files
             if path.extension().and_then(|s| s.to_str()) != Some("nep") {
+                continue;
+            }
+            // Dedupe across the scanned dirs (a canonicalized identity, so
+            // the same file can't be installed twice in one pass).
+            let identity = path.canonicalize().unwrap_or_else(|_| path.clone());
+            if !seen.insert(identity) {
                 continue;
             }
             // Marketplace download cache uses temp_*.nep for in-flight writes.
@@ -178,7 +203,7 @@ impl ExtensionInstallService {
             }
         }
 
-        Ok(report)
+        Ok(())
     }
 
     /// Whether an on-disk extension is older than `new_version`.

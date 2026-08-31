@@ -559,6 +559,10 @@ pub async fn register_extension_handler(
 ) -> HandlerResult<serde_json::Value> {
     let runtime = &state.extensions.runtime;
 
+    // Store the resolved canonical path: load_from_storage replays
+    // record.file_path verbatim on every boot, so persisting the raw
+    // request string would keep an outside-data-dir path loadable forever
+    // (the confinement would only ever check the write side).
     let path = resolve_confined_package_path(&req.file_path)?;
 
     let metadata = runtime.load(&path).await.map_err(|e| {
@@ -586,7 +590,9 @@ pub async fn register_extension_handler(
         let record = neomind_storage::ExtensionRecord::new(
             ext_id.clone(),
             ext_name.clone(),
-            req.file_path.clone(),
+            // Canonical, data-dir-confined path (NOT the raw request value) —
+            // replayed verbatim by load_from_storage on every boot.
+            path.display().to_string(),
             String::new(), // V2: No extension_type, use empty string
             ext_version.clone(),
         )
@@ -2169,6 +2175,7 @@ pub async fn get_marketplace_extension_handler(
     State(_state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<MarketplaceExtensionMetadata> {
+    validate_extension_id(&id)?;
     let metadata_url = format!(
         "{}/{}/extensions/{}/metadata.json",
         extension_market_base_url().as_str(),
@@ -2220,6 +2227,7 @@ pub async fn get_marketplace_extension_readme_handler(
     State(_state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<ExtensionReadmeResponse> {
+    validate_extension_id(&id)?;
     let readme_url = format!(
         "{}/{}/extensions/{}/README.md",
         extension_market_base_url().as_str(),
@@ -2429,6 +2437,11 @@ pub async fn install_marketplace_extension_handler(
     let install_start = std::time::Instant::now();
     let runtime = &state.extensions.runtime;
 
+    // Same id grammar as the local endpoints: req.id is interpolated into
+    // a URL path — `../..` would turn the marketplace client into a
+    // limited arbitrary-GET gadget against whatever host the (admin-set)
+    // market base points at.
+    validate_extension_id(&req.id)?;
     tracing::info!(extension_id = %req.id, "Starting marketplace extension install");
 
     // First fetch metadata to get download URL

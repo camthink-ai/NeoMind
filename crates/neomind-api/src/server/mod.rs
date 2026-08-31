@@ -478,7 +478,7 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                         let ext_id = extension_id.to_string();
                         let rt = runtime.clone();
                         tokio::spawn(async move {
-                            if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
+                            if let Ok(store) = ExtensionStore::open(crate::server::paths::extension_store_path()) {
                                 // Clear error status after successful crash recovery
                                 if let Ok(Some(mut record)) = store.load(&ext_id) {
                                     record.health_status = "ok".to_string();
@@ -526,7 +526,7 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                         let err_msg = error.to_string();
                         let notify = crash_notify_state.clone();
                         tokio::spawn(async move {
-                            if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
+                            if let Ok(store) = ExtensionStore::open(crate::server::paths::extension_store_path()) {
                                 let _ = store.update_error_status(&ext_id, &err_msg);
                             }
                             let title = format!("Extension '{ext_id}' stopped auto-restarting");
@@ -767,11 +767,17 @@ fn spawn_backup_scheduler(data_dir: std::path::PathBuf) {
     tracing::info!(category = "backup", "Periodic backup scheduler started");
 
     tokio::spawn(async move {
-        // Read the schedule off the (blocking) settings store.
-        let read_config = || {
-            tokio::task::spawn_blocking(|| {
+        // Read the schedule off the (blocking) settings store. The settings
+        // path derives from the SAME data_dir being backed up — the store
+        // path used to be hardcoded "data/settings.redb", so a deployment
+        // with NEOMIND_DATA_DIR pointing elsewhere read one directory's
+        // config while backing up another (found by the pre-release audit).
+        let settings_dir = data_dir.clone();
+        let read_config = move || {
+            let settings_path = settings_dir.join("settings.redb");
+            tokio::task::spawn_blocking(move || {
                 use neomind_storage::settings::BackupConfig;
-                neomind_storage::SettingsStore::open("data/settings.redb")
+                neomind_storage::SettingsStore::open(settings_path)
                     .ok()
                     .and_then(|s| s.load_backup_config().ok().flatten())
                     .unwrap_or_else(BackupConfig::from_env_or_default)

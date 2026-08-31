@@ -553,7 +553,10 @@ pub async fn create_backup_handler(
 
     let data_dir = state.data_dir.clone();
     // Retention from the saved schedule config (UI); env seeds the default.
-    let keep: usize = neomind_storage::SettingsStore::open("data/settings.redb")
+    // Settings path follows the SAME data dir being backed up (the
+    // hardcoded "data/settings.redb" split config-read from backup-target
+    // when NEOMIND_DATA_DIR points elsewhere — pre-release audit finding).
+    let keep: usize = neomind_storage::SettingsStore::open(state.data_dir.join("settings.redb"))
         .ok()
         .and_then(|s| s.load_backup_config().ok().flatten())
         .unwrap_or_else(neomind_storage::settings::BackupConfig::from_env_or_default)
