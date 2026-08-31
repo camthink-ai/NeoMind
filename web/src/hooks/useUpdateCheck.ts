@@ -12,7 +12,7 @@ import { listen } from '@tauri-apps/api/event'
 import { useTranslation } from 'react-i18next'
 import { useAppStore } from '@/store'
 import { notifySuccess } from '@/lib/notify'
-import { api } from '@/lib/api'
+import { api, tokenManager } from '@/lib/api'
 import type { UpdateInfo, UpdateProgress } from '@/store/slices/updateSlice'
 
 /** Normalize version strings for reliable comparison */
@@ -122,6 +122,13 @@ export function useUpdateCheck(options: UpdateCheckOptions = {}): UseUpdateCheck
     // the same updateInfo slice that drives the About badge; no auto-open
     // dialog — the About page's server-upgrade dialog opens on demand.
     if (!(window as any).__TAURI_INTERNALS__) {
+      // Skip silently when not logged in yet: the 24h auto-check fires on
+      // app mount, and on the login page an unauthenticated call would 401
+      // and surface a "Missing Authorization header" toast (observed in
+      // browser-driven testing). Manual checks from About only happen
+      // post-login, so this guard costs nothing there.
+      if (!tokenManager.getToken()) return
+
       try {
         setUpdateStatus('checking')
         setError(null)
