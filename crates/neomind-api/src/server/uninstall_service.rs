@@ -57,7 +57,7 @@ impl ExtensionUninstallService {
         }
 
         // 2. Delete from database
-        if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
+        if let Ok(store) = ExtensionStore::open(crate::server::paths::extension_store_path()) {
             if store.delete(ext_id)? {
                 report.database_removed = true;
                 info!("Removed database record for: {}", ext_id);

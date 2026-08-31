@@ -18,10 +18,9 @@ fn metric_value_to_json(
 pub(crate) fn get_time_context() -> String {
     use neomind_storage::SettingsStore;
 
-    const SETTINGS_DB_PATH: &str = "data/settings.redb";
 
     // Try to load timezone from settings
-    let timezone = SettingsStore::open(SETTINGS_DB_PATH)
+    let timezone = SettingsStore::open_default()
         .ok()
         .map(|store| store.get_global_timezone())
         .unwrap_or_else(|| "Asia/Shanghai".to_string());

@@ -281,7 +281,7 @@ pub struct SessionManager {
 impl SessionManager {
     /// Create a new session manager with persistent storage.
     pub fn new() -> Result<Self> {
-        Self::with_path("data/sessions.redb")
+        Self::with_path(neomind_core::paths::store_path("sessions.redb"))
     }
 
     /// Create a new session manager with in-memory storage.
@@ -317,7 +317,7 @@ impl SessionManager {
         let store = SessionStore::open(path)
             .map_err(|e| NeoMindError::Storage(format!("Failed to open session store: {}", e)))?;
 
-        let data_dir = std::path::Path::new("data");
+        let data_dir = &neomind_core::paths::data_dir();
         let manager = Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             session_messages: Arc::new(RwLock::new(HashMap::new())),
@@ -1331,7 +1331,7 @@ Assistant: {ar}\n"
                 return;
             }
         }
-        let memory_store = neomind_storage::MarkdownMemoryStore::new("data/memory");
+        let memory_store = neomind_storage::MarkdownMemoryStore::new(neomind_core::paths::data_dir().join("memory"));
         let snapshot = crate::memory::MemorySnapshot::load(&memory_store);
         if !snapshot.is_empty() {
             tracing::info!(

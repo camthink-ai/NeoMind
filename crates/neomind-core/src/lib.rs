@@ -16,6 +16,7 @@ pub mod extension;
 pub mod llm;
 pub mod message;
 pub mod net;
+pub mod paths;
 pub mod tools;
 
 pub use llm::LlmError;

@@ -8,6 +8,7 @@ pub mod extension_metrics;
 pub mod image_cleanup;
 pub mod install_service;
 pub mod middleware;
+pub mod paths;
 pub mod router;
 pub mod state;
 pub mod system_context;
@@ -238,14 +239,12 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
             // Wait for server to initialize
             tokio::time::sleep(Duration::from_secs(10)).await;
 
-            const SETTINGS_DB_PATH: &str = "data/settings.redb";
-            const TELEMETRY_DB_PATH: &str = "data/telemetry.redb";
 
             loop {
                 // Load config on each cycle so runtime changes take effect.
                 // [observability] Both reopen failures used to be silent —
                 // retention could no-op forever with no trace of why.
-                let config = SettingsStore::open(SETTINGS_DB_PATH)
+                let config = SettingsStore::open_default()
                     .map(|s| s.get_retention_config())
                     .unwrap_or_else(|e| {
                         tracing::warn!(
@@ -260,7 +259,7 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
 
                 if config.enabled {
                     let policy = config.to_retention_policy();
-                    let ts_store = match TimeSeriesStore::open(TELEMETRY_DB_PATH) {
+                    let ts_store = match TimeSeriesStore::open(neomind_core::paths::store_path("telemetry.redb")) {
                         Ok(store) => store,
                         Err(e) => {
                             tracing::warn!(
@@ -478,7 +477,7 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                         let ext_id = extension_id.to_string();
                         let rt = runtime.clone();
                         tokio::spawn(async move {
-                            if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
+                            if let Ok(store) = ExtensionStore::open(crate::server::paths::extension_store_path()) {
                                 // Clear error status after successful crash recovery
                                 if let Ok(Some(mut record)) = store.load(&ext_id) {
                                     record.health_status = "ok".to_string();
@@ -526,7 +525,7 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                         let err_msg = error.to_string();
                         let notify = crash_notify_state.clone();
                         tokio::spawn(async move {
-                            if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
+                            if let Ok(store) = ExtensionStore::open(crate::server::paths::extension_store_path()) {
                                 let _ = store.update_error_status(&ext_id, &err_msg);
                             }
                             let title = format!("Extension '{ext_id}' stopped auto-restarting");

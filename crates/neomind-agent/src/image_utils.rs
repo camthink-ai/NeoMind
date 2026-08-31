@@ -245,7 +245,7 @@ pub async fn resolve_image(
         // helper centralizes path construction + traversal guard + MIME.
         use neomind_devices::image_storage::{read_internal_image_url, ImageStorageError};
 
-        let data_dir = std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "data".to_string());
+        let data_dir = neomind_core::paths::data_dir().to_string_lossy().to_string();
 
         let (bytes, mime) = read_internal_image_url(input, std::path::Path::new(&data_dir))
             .map_err(|e| match e {

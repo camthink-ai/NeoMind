@@ -17,13 +17,12 @@ use tracing::{info, warn};
 // Re-export types for convenience
 pub use neomind_devices::EmbeddedBrokerConfig;
 
-/// Path to the settings database.
-const SETTINGS_DB_PATH: &str = "data/settings.redb";
+use crate::server::paths::store_path;
 
 /// Get or create the global settings store (cached).
 fn get_settings_store() -> Result<Arc<neomind_storage::SettingsStore>, Box<dyn std::error::Error>> {
     // SettingsStore::open already has internal caching via SETTINGS_STORE_SINGLETON
-    Ok(neomind_storage::SettingsStore::open(SETTINGS_DB_PATH)?)
+    Ok(neomind_storage::SettingsStore::open_default()?)
 }
 
 /// Configuration sources in priority order.
@@ -43,7 +42,7 @@ impl ConfigSource {
             if store.get_llm_settings().model != "default" {
                 info!(
                     category = "config",
-                    "Loading config from: {} (redb database)", SETTINGS_DB_PATH
+                    "Loading config from settings store (canonical data dir)"
                 );
                 return ConfigSource::Database;
             }
@@ -308,7 +307,7 @@ pub fn load_llm_config() -> Option<LlmBackend> {
 
 /// Save LLM settings to the database (called from Web UI).
 pub async fn save_llm_settings(settings: &LlmSettings) -> Result<(), Box<dyn std::error::Error>> {
-    let store = neomind_storage::SettingsStore::open(SETTINGS_DB_PATH)?;
+    let store = neomind_storage::SettingsStore::open_default()?;
     store.save_llm_settings(settings)?;
     info!(category = "ai", backend = format_args!("{:?}", settings.backend), model = %settings.model, "Saved LLM settings to database");
     Ok(())

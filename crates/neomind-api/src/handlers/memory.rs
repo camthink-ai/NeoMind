@@ -85,7 +85,7 @@ pub struct AddMemoryRequest {
 
 /// Get the memory store
 fn get_memory_store(_state: &ServerState) -> MarkdownMemoryStore {
-    MarkdownMemoryStore::new("data/memory")
+    MarkdownMemoryStore::new(neomind_core::paths::data_dir().join("memory"))
 }
 
 /// Create error response

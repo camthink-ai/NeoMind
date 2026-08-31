@@ -1385,7 +1385,7 @@ pub fn get_instance_manager() -> Result<Arc<LlmBackendInstanceManager>, LlmError
 
     // Use a separate database file to avoid conflicts with settings store
     // The settings store uses data/settings.redb, so we use data/llm_backends.redb
-    let backend_store = LlmBackendStore::open("data/llm_backends.redb")
+    let backend_store = LlmBackendStore::open(neomind_core::paths::store_path("llm_backends.redb"))
         .map_err(|e| LlmError::InvalidInput(format!("Failed to open backend store: {}", e)))?;
 
     let manager = Arc::new(LlmBackendInstanceManager::new(backend_store));

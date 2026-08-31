@@ -1912,7 +1912,7 @@ impl MarkdownMemoryStore {
 
 impl Default for MarkdownMemoryStore {
     fn default() -> Self {
-        Self::new("data/memory")
+        Self::new(neomind_core::paths::data_dir().join("memory"))
     }
 }
 

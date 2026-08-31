@@ -185,9 +185,8 @@ pub struct TimezoneResponse {
 pub async fn get_timezone(State(_state): State<ServerState>) -> HandlerResult<TimezoneResponse> {
     use neomind_storage::SettingsStore;
 
-    const SETTINGS_DB_PATH: &str = "data/settings.redb";
 
-    let settings_store = SettingsStore::open(SETTINGS_DB_PATH)
+    let settings_store = SettingsStore::open_default()
         .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;
 
     let timezone = settings_store.get_global_timezone();
@@ -206,7 +205,6 @@ pub async fn update_timezone(
 ) -> HandlerResult<serde_json::Value> {
     use neomind_storage::SettingsStore;
 
-    const SETTINGS_DB_PATH: &str = "data/settings.redb";
 
     // Validate timezone using chrono-tz
     if req.timezone.parse::<chrono_tz::Tz>().is_err() {
@@ -216,7 +214,7 @@ pub async fn update_timezone(
         )));
     }
 
-    let settings_store = SettingsStore::open(SETTINGS_DB_PATH)
+    let settings_store = SettingsStore::open_default()
         .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;
 
     settings_store
@@ -274,9 +272,8 @@ pub async fn get_retention_config(
 ) -> HandlerResult<serde_json::Value> {
     use neomind_storage::SettingsStore;
 
-    const SETTINGS_DB_PATH: &str = "data/settings.redb";
 
-    let settings_store = SettingsStore::open(SETTINGS_DB_PATH)
+    let settings_store = SettingsStore::open_default()
         .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;
 
     let config = settings_store.get_retention_config();
@@ -296,7 +293,6 @@ pub async fn update_retention_config(
 ) -> HandlerResult<serde_json::Value> {
     use neomind_storage::SettingsStore;
 
-    const SETTINGS_DB_PATH: &str = "data/settings.redb";
 
     // Validate interval
     if req.interval_hours == 0 {
@@ -305,7 +301,7 @@ pub async fn update_retention_config(
         ));
     }
 
-    let settings_store = SettingsStore::open(SETTINGS_DB_PATH)
+    let settings_store = SettingsStore::open_default()
         .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;
 
     let config = neomind_storage::settings::RetentionConfig {
@@ -358,8 +354,7 @@ pub async fn get_agent_defaults(
 ) -> HandlerResult<serde_json::Value> {
     use neomind_storage::SettingsStore;
 
-    const SETTINGS_DB_PATH: &str = "data/settings.redb";
-    let settings_store = SettingsStore::open(SETTINGS_DB_PATH)
+    let settings_store = SettingsStore::open_default()
         .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;
     let config = settings_store.get_agent_defaults();
 
@@ -381,7 +376,6 @@ pub async fn update_agent_defaults(
 ) -> HandlerResult<serde_json::Value> {
     use neomind_storage::SettingsStore;
 
-    const SETTINGS_DB_PATH: &str = "data/settings.redb";
 
     let config = neomind_storage::AgentDefaults {
         max_rounds: req.max_rounds.clamp(1, 50),
@@ -392,7 +386,7 @@ pub async fn update_agent_defaults(
         default_thinking_enabled: req.default_thinking_enabled,
     };
 
-    let settings_store = SettingsStore::open(SETTINGS_DB_PATH)
+    let settings_store = SettingsStore::open_default()
         .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;
     settings_store
         .save_agent_defaults(&config)
@@ -433,8 +427,7 @@ pub async fn get_device_defaults(
 ) -> HandlerResult<serde_json::Value> {
     use neomind_storage::SettingsStore;
 
-    const SETTINGS_DB_PATH: &str = "data/settings.redb";
-    let settings_store = SettingsStore::open(SETTINGS_DB_PATH)
+    let settings_store = SettingsStore::open_default()
         .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;
     let config = settings_store.get_device_defaults();
 
@@ -451,14 +444,13 @@ pub async fn update_device_defaults(
 ) -> HandlerResult<serde_json::Value> {
     use neomind_storage::SettingsStore;
 
-    const SETTINGS_DB_PATH: &str = "data/settings.redb";
 
     let config = neomind_storage::DeviceDefaults {
         default_offline_timeout_secs: req.default_offline_timeout_secs.max(10),
         auto_onboard_enabled: req.auto_onboard_enabled,
     };
 
-    let settings_store = SettingsStore::open(SETTINGS_DB_PATH)
+    let settings_store = SettingsStore::open_default()
         .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;
     settings_store
         .save_device_defaults(&config)
@@ -483,16 +475,14 @@ pub async fn trigger_retention_cleanup(
 ) -> HandlerResult<serde_json::Value> {
     use neomind_storage::{SettingsStore, TimeSeriesStore};
 
-    const SETTINGS_DB_PATH: &str = "data/settings.redb";
-    const TELEMETRY_DB_PATH: &str = "data/telemetry.redb";
 
-    let settings_store = SettingsStore::open(SETTINGS_DB_PATH)
+    let settings_store = SettingsStore::open_default()
         .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;
 
     let config = settings_store.get_retention_config();
     let policy = config.to_retention_policy();
 
-    let ts_store = TimeSeriesStore::open(TELEMETRY_DB_PATH)
+    let ts_store = TimeSeriesStore::open(neomind_core::paths::store_path("telemetry.redb"))
         .map_err(|e| ErrorResponse::internal(format!("Failed to open telemetry store: {}", e)))?;
 
     // Apply the policy synchronously (cheap) so the config is live before
@@ -621,9 +611,8 @@ pub async fn get_backup_config(
 ) -> HandlerResult<serde_json::Value> {
     use neomind_storage::SettingsStore;
 
-    const SETTINGS_DB_PATH: &str = "data/settings.redb";
 
-    let settings_store = SettingsStore::open(SETTINGS_DB_PATH)
+    let settings_store = SettingsStore::open_default()
         .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;
     let config = settings_store
         .load_backup_config()
@@ -646,7 +635,6 @@ pub async fn update_backup_config(
 ) -> HandlerResult<serde_json::Value> {
     use neomind_storage::SettingsStore;
 
-    const SETTINGS_DB_PATH: &str = "data/settings.redb";
 
     if req.interval_secs < 300 {
         return Err(ErrorResponse::bad_request(
@@ -657,7 +645,7 @@ pub async fn update_backup_config(
         return Err(ErrorResponse::bad_request("keep must be between 1 and 50"));
     }
 
-    let settings_store = SettingsStore::open(SETTINGS_DB_PATH)
+    let settings_store = SettingsStore::open_default()
         .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;
     let config = neomind_storage::settings::BackupConfig {
         enabled: req.enabled,
@@ -692,7 +680,7 @@ pub async fn get_market_source_handler(
     }
 
     use neomind_storage::SettingsStore;
-    let saved = SettingsStore::open("data/settings.redb")
+    let saved = SettingsStore::open_default()
         .ok()
         .and_then(|s| s.load("extension_market_url").ok().flatten());
 
@@ -726,7 +714,7 @@ pub async fn update_market_source_handler(
     }
 
     use neomind_storage::SettingsStore;
-    let store = SettingsStore::open("data/settings.redb")
+    let store = SettingsStore::open_default()
         .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;
 
     let trimmed = req.market_url.trim().trim_end_matches('/').to_string();

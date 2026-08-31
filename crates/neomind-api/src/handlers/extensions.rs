@@ -529,7 +529,7 @@ async fn fetch_release_checksum(
 /// against the data dir; absolute paths must land inside it (after
 /// canonicalization, so `..` and symlinks can't escape).
 fn resolve_confined_package_path(raw: &str) -> Result<PathBuf, ErrorResponse> {
-    let data_dir = std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "data".to_string());
+    let data_dir = neomind_core::paths::data_dir().to_string_lossy().to_string();
     let data_root = std::path::PathBuf::from(&data_dir)
         .canonicalize()
         .unwrap_or_else(|_| std::path::PathBuf::from(&data_dir));
@@ -1751,7 +1751,7 @@ const DEFAULT_EXTENSION_MARKET_BASE_URL: &str =
 /// Mirrors follow the component-market shape:
 /// `https://ghfast.top/https://raw.githubusercontent.com/camthink-ai/...`
 pub(crate) fn extension_market_base_url() -> String {
-    let saved = neomind_storage::SettingsStore::open("data/settings.redb")
+    let saved = neomind_storage::SettingsStore::open_default()
         .ok()
         .and_then(|s| s.load("extension_market_url").ok().flatten());
     if let Some(url) = saved {
@@ -2706,7 +2706,7 @@ pub async fn install_marketplace_extension_handler(
         }
 
         // Prepare target directory
-        let data_dir = std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "data".to_string());
+        let data_dir = neomind_core::paths::data_dir().to_string_lossy().to_string();
         let target_dir = PathBuf::from(data_dir).join("extensions");
 
         // Install from the temp file — streams the ZIP from disk, not memory.
@@ -2965,7 +2965,7 @@ pub async fn install_marketplace_extension_handler(
         };
 
         // Create extensions directory using NEOMIND_DATA_DIR for consistency
-        let data_dir = std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "data".to_string());
+        let data_dir = neomind_core::paths::data_dir().to_string_lossy().to_string();
         let extensions_dir = PathBuf::from(data_dir).join("extensions");
 
         std::fs::create_dir_all(&extensions_dir).map_err(|e| {
@@ -3801,7 +3801,7 @@ pub(crate) fn load_extension_components(
     file_path: Option<&std::path::PathBuf>,
 ) -> Option<Vec<DashboardComponentDto>> {
     // Log path configuration for debugging
-    let data_dir = std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "data".to_string());
+    let data_dir = neomind_core::paths::data_dir().to_string_lossy().to_string();
     tracing::debug!(
         extension_id = %extension_id,
         data_dir = %data_dir,
@@ -3813,7 +3813,7 @@ pub(crate) fn load_extension_components(
         fp.clone()
     } else {
         // Try to find extension in data/extensions directory
-        let data_dir = std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "data".to_string());
+        let data_dir = neomind_core::paths::data_dir().to_string_lossy().to_string();
         std::path::PathBuf::from(data_dir)
             .join("extensions")
             .join(extension_id)
@@ -4001,7 +4001,7 @@ pub async fn serve_extension_asset_handler(
     }
 
     // Extension directory is always data/extensions/{id}
-    let data_dir = std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "data".to_string());
+    let data_dir = neomind_core::paths::data_dir().to_string_lossy().to_string();
     let ext_dir = std::path::PathBuf::from(data_dir)
         .join("extensions")
         .join(&id);
@@ -4132,7 +4132,7 @@ pub async fn upload_extension_package_handler(
     }
 
     // Install the package
-    let data_dir = std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "data".to_string());
+    let data_dir = neomind_core::paths::data_dir().to_string_lossy().to_string();
     let target_dir = PathBuf::from(data_dir).join("extensions");
 
     let install_result = package
@@ -4296,7 +4296,7 @@ pub async fn uninstall_extension_handler(
     }
 
     // Clean up extension directory
-    let data_dir = std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "data".to_string());
+    let data_dir = neomind_core::paths::data_dir().to_string_lossy().to_string();
     let extensions_dir = PathBuf::from(data_dir).join("extensions");
     let ext_dir = extensions_dir.join(&id);
 
@@ -4399,7 +4399,7 @@ pub async fn upload_extension_file_handler(
     }
 
     // Prepare target directory
-    let data_dir = std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "data".to_string());
+    let data_dir = neomind_core::paths::data_dir().to_string_lossy().to_string();
     let target_dir = PathBuf::from(data_dir).join("extensions");
 
     // Step 1: Parse the package to get extension ID (validation only, no install yet)
@@ -4626,7 +4626,7 @@ pub async fn sync_extensions_handler(
 ) -> HandlerResult<serde_json::Value> {
     use crate::server::ExtensionInstallService;
 
-    let data_dir = std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "data".to_string());
+    let data_dir = neomind_core::paths::data_dir().to_string_lossy().to_string();
     let extensions_dir = std::path::PathBuf::from(&data_dir).join("extensions");
     // The cache IS the extensions dir: the marketplace download path already
     // drops .nep files there. (This used to scan a CWD-relative "extensions/"
@@ -4671,7 +4671,7 @@ pub async fn get_sync_status_handler(
     use neomind_core::extension::package::ExtensionPackage;
 
     let nep_cache_dir = std::path::PathBuf::from("extensions");
-    let data_dir = std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "data".to_string());
+    let data_dir = neomind_core::paths::data_dir().to_string_lossy().to_string();
     let install_dir = std::path::PathBuf::from(data_dir).join("extensions");
 
     let mut nep_packages = Vec::new();

@@ -415,7 +415,7 @@ impl ServerState {
                             discovery_prefix: "device".to_string(),
                             auto_discovery: true,
                             device_id_field: old_cfg.device_id_field.clone(),
-                            storage_dir: Some("data".to_string()),
+                            storage_dir: Some(neomind_core::paths::data_dir().to_string_lossy().to_string()),
                         };
                         if let Some(event_bus) = self.core.event_bus.as_ref() {
                             if let Ok(val) = serde_json::to_value(&rollback_mqtt_config) {
@@ -494,7 +494,7 @@ impl ServerState {
             discovery_prefix: "device".to_string(),
             auto_discovery: true,
             device_id_field: broker_config.device_id_field.clone(),
-            storage_dir: Some("data".to_string()),
+            storage_dir: Some(neomind_core::paths::data_dir().to_string_lossy().to_string()),
         };
 
         let Some(event_bus) = self.core.event_bus.as_ref() else {
@@ -606,7 +606,7 @@ impl ServerState {
         let value_provider = Arc::new(UnifiedValueProvider::new());
 
         // Ensure data directory exists
-        if let Err(e) = std::fs::create_dir_all("data") {
+        if let Err(e) = std::fs::create_dir_all(neomind_core::paths::data_dir()) {
             tracing::warn!(category = "storage", error = %e, "Failed to create data directory");
         }
 
@@ -616,7 +616,7 @@ impl ServerState {
         let t_stores = std::time::Instant::now();
 
         let rule_store_h = tokio::task::spawn_blocking(|| {
-            match RuleStore::open("data/rules.redb") {
+            match RuleStore::open(neomind_core::paths::store_path("rules.redb")) {
                 Ok(store) => {
                     tracing::info!("Rule store initialized at data/rules.redb");
                     Some(store)
@@ -629,7 +629,7 @@ impl ServerState {
         });
 
         let agent_store_h = tokio::task::spawn_blocking(
-            || match neomind_storage::AgentStore::open("data/agents.redb") {
+            || match neomind_storage::AgentStore::open(neomind_core::paths::store_path("agents.redb")) {
                 Ok(store) => {
                     tracing::info!("AI Agent store initialized at data/agents.redb");
                     store
@@ -645,7 +645,7 @@ impl ServerState {
         );
 
         let dashboard_store_h = tokio::task::spawn_blocking(|| {
-            match DashboardStore::open("data/dashboards.redb") {
+            match DashboardStore::open(neomind_core::paths::store_path("dashboards.redb")) {
                 Ok(store) => store,
                 Err(_e) => {
                     DashboardStore::memory().unwrap_or_else(|e| {
@@ -657,7 +657,7 @@ impl ServerState {
         });
 
         let instance_store_h = tokio::task::spawn_blocking(|| {
-            match InstanceStore::open("data/instances.redb") {
+            match InstanceStore::open(neomind_core::paths::store_path("instances.redb")) {
                 Ok(store) => store,
                 Err(e) => {
                     tracing::error!(category = "storage", error = %e, "Failed to open instance store");
@@ -677,7 +677,7 @@ impl ServerState {
         });
 
         let data_dir = std::path::PathBuf::from(
-            std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "data".to_string()),
+            neomind_core::paths::data_dir().to_string_lossy().to_string(),
         );
         let frontend_component_store_h = tokio::task::spawn_blocking({
             let dir = data_dir.join("frontend-components");
@@ -691,7 +691,7 @@ impl ServerState {
         let event_bus = Some(Arc::new(EventBus::new()));
 
         // Create message manager with persistent storage
-        let message_manager = match MessageManager::with_storage("data") {
+        let message_manager = match MessageManager::with_storage(neomind_core::paths::data_dir()) {
             Ok(manager) => {
                 tracing::info!("Message store initialized at data/messages.redb");
                 Arc::new(manager)
@@ -709,7 +709,7 @@ impl ServerState {
 
         // ========== Build DEVICE STATE ==========
         // Create device registry with persistent storage
-        let device_registry = match DeviceRegistry::with_persistence("data/devices.redb").await {
+        let device_registry = match DeviceRegistry::with_persistence(neomind_core::paths::store_path("devices.redb")).await {
             Ok(registry) => {
                 tracing::info!(
                     "Device registry initialized with persistent storage at data/devices.redb"
@@ -728,7 +728,7 @@ impl ServerState {
         let time_series_storage =
             Arc::new(TimeSeriesStorage::memory().expect("in-memory telemetry storage"));
         let telemetry_for_bg = time_series_storage.clone();
-        let telemetry_path = std::path::Path::new("data").join("telemetry.redb");
+        let telemetry_path = neomind_core::paths::store_path("telemetry.redb");
         tokio::spawn(async move {
             let t = tokio::task::spawn_blocking(move || {
                 let start = std::time::Instant::now();
@@ -810,7 +810,7 @@ impl ServerState {
         let extensions_dir = if let Ok(data_dir) = std::env::var("NEOMIND_DATA_DIR") {
             std::path::PathBuf::from(data_dir).join("extensions")
         } else {
-            std::path::PathBuf::from("data/extensions")
+            crate::server::paths::data_dir().join("extensions")
         };
 
         let default_ext_dirs = vec![extensions_dir];
@@ -834,7 +834,7 @@ impl ServerState {
         ));
 
         // Open extension store (singleton-cached internally)
-        let extension_store = ExtensionStore::open("data/extensions.redb")
+        let extension_store = ExtensionStore::open(crate::server::paths::extension_store_path())
             .expect("Failed to open extension store — ensure data/ directory exists");
 
         // Create the extension state with registry, storage, and persistent store
@@ -996,7 +996,7 @@ impl ServerState {
         }
 
         // Create automation store
-        let automation_store = match SharedAutomationStore::open("data/automations.redb").await {
+        let automation_store = match SharedAutomationStore::open(neomind_core::paths::store_path("automations.redb")).await {
             Ok(store) => {
                 tracing::info!("Automation store initialized at data/automations.redb");
                 Some(Arc::new(store))
@@ -1058,7 +1058,7 @@ impl ServerState {
 
         // Initialize system memory store (Markdown-based persistent memory)
         let system_memory_store =
-            Arc::new(neomind_storage::MarkdownMemoryStore::new("data/memory"));
+            Arc::new(neomind_storage::MarkdownMemoryStore::new(neomind_core::paths::data_dir().join("memory")));
         if let Err(e) = system_memory_store.init() {
             tracing::warn!(category = "storage", error = %e, "Failed to initialize system memory store");
         }
@@ -1196,7 +1196,7 @@ impl ServerState {
             data_dir,
             data_push: {
                 let push_manager = match PushManager::new_with_telemetry(
-                    std::path::Path::new("data"),
+                    neomind_core::paths::data_dir().as_path(),
                     event_bus.clone(),
                     data_push_telemetry,
                 ) {
@@ -1388,7 +1388,7 @@ impl ServerState {
             )),
             extension_event_subscription_service: Arc::new(tokio::sync::Mutex::new(None)),
             telemetry_query_semaphore: Arc::new(tokio::sync::Semaphore::new(16)),
-            data_dir: std::path::PathBuf::from("data"),
+            data_dir: neomind_core::paths::data_dir(),
             data_push: {
                 let push_manager = PushManager::memory_with_telemetry(data_push_telemetry).ok();
                 Arc::new(tokio::sync::RwLock::new(push_manager))
@@ -1494,7 +1494,7 @@ impl ServerState {
         //
         // This ensures all extension data is in the app data directory, avoiding
         // path inconsistencies between development and production modes.
-        let data_dir = std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "data".to_string());
+        let data_dir = neomind_core::paths::data_dir().to_string_lossy().to_string();
         let install_dir = std::path::PathBuf::from(data_dir.clone()).join("extensions");
         let nep_cache_dir = std::path::PathBuf::from(data_dir)
             .join("extensions")
@@ -1748,7 +1748,7 @@ impl ServerState {
             discovery_prefix: "device".to_string(),
             auto_discovery: true,
             device_id_field: broker_config.device_id_field.clone(),
-            storage_dir: Some("data".to_string()),
+            storage_dir: Some(neomind_core::paths::data_dir().to_string_lossy().to_string()),
         };
 
         // Create the MQTT adapter
@@ -2959,7 +2959,7 @@ impl ServerState {
         let has_time_series = time_series_store.is_some();
 
         // Open LLM backend store for per-agent backend lookup
-        let llm_backend_store = match LlmBackendStore::open("data/llm_backends.redb") {
+        let llm_backend_store = match LlmBackendStore::open(neomind_core::paths::store_path("llm_backends.redb")) {
             Ok(store) => Some(store),
             Err(e) => {
                 tracing::warn!(category = "storage", error = %e, "Failed to open LlmBackendStore");
@@ -3342,16 +3342,17 @@ async fn apply_persisted_tool_disabled_state(
 ) {
     use std::collections::HashSet;
 
-    let records = match neomind_storage::ExtensionStore::open("data/extensions.redb") {
-        Ok(store) => store.load_all().unwrap_or_default(),
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                "Failed to open extension store for tool-disable bootstrap; all tools enabled"
-            );
-            return;
-        }
-    };
+    let records =
+        match neomind_storage::ExtensionStore::open(crate::server::paths::extension_store_path()) {
+            Ok(store) => store.load_all().unwrap_or_default(),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Failed to open extension store for tool-disable bootstrap; all tools enabled"
+                );
+                return;
+            }
+        };
 
     let mut disabled: HashSet<String> = HashSet::new();
     for r in records {

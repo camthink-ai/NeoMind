@@ -462,9 +462,8 @@ impl LlmInterface {
     pub async fn load_global_timezone(&self) -> AgentResult<String> {
         use neomind_storage::SettingsStore;
 
-        const SETTINGS_DB_PATH: &str = "data/settings.redb";
-
-        let settings_store = SettingsStore::open(SETTINGS_DB_PATH)
+    
+        let settings_store = SettingsStore::open_default()
             .map_err(|e| NeoMindError::Llm(format!("Failed to open settings store: {}", e)))?;
 
         let timezone = settings_store.get_global_timezone();

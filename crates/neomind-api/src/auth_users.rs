@@ -335,7 +335,7 @@ impl AuthUserState {
             return Self::new_with_memory_store();
         }
 
-        let data_dir = std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "data".to_string());
+        let data_dir = neomind_core::paths::data_dir().to_string_lossy().to_string();
         let db_path: &'static str = Box::leak(format!("{}/users.redb", data_dir).into_boxed_str());
         let jwt_secret = std::env::var("NEOMIND_JWT_SECRET").unwrap_or_else(|_| {
             // No env var: load or create a persisted secret so JWTs survive

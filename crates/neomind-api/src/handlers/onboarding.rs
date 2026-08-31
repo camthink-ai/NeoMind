@@ -49,7 +49,7 @@ pub async fn get_onboarding_status_handler(
     State(state): State<ServerState>,
 ) -> Result<Json<OnboardingStatusResponse>, StatusCode> {
     // Check dismissed state
-    let dismissed = SettingsStore::open("data/settings.redb")
+    let dismissed = SettingsStore::open_default()
         .ok()
         .and_then(|s| s.load(KEY_ONBOARDING_DISMISSED).ok())
         .flatten()
@@ -89,7 +89,7 @@ pub async fn dismiss_onboarding_handler(
     State(_state): State<ServerState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let store =
-        SettingsStore::open("data/settings.redb").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        SettingsStore::open_default().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     store
         .save(KEY_ONBOARDING_DISMISSED, "true")
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -101,7 +101,7 @@ pub async fn reset_onboarding_handler(
     State(_state): State<ServerState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let store =
-        SettingsStore::open("data/settings.redb").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        SettingsStore::open_default().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     store
         .save(KEY_ONBOARDING_DISMISSED, "false")
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;

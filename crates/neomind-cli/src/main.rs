@@ -63,7 +63,7 @@ async fn main() -> Result<()> {
     let file_logging = matches!(args.command, Command::Serve { .. });
 
     if file_logging {
-        let log_dir = Path::new("data/logs");
+        let log_dir = neomind_core::paths::data_dir().join("logs");
         let file_appender = tracing_appender::rolling::daily(log_dir, "neomind.log");
 
         let stdout_layer = if json_logging {
@@ -625,7 +625,7 @@ async fn run_server(host: String, port: u16) -> Result<()> {
 fn cleanup_old_logs() {
     use std::fs;
 
-    let log_dir = Path::new("data/logs");
+    let log_dir = neomind_core::paths::data_dir().join("logs");
     if !log_dir.exists() {
         return;
     }

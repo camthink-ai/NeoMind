@@ -458,8 +458,7 @@ impl AgentDefaults {
     /// Load from the settings store (singleton), or defaults if unset/unavailable.
     /// Mirrors the inline read pattern in `data_collector::get_time_context`.
     pub fn get() -> Self {
-        const SETTINGS_DB_PATH: &str = "data/settings.redb";
-        SettingsStore::open(SETTINGS_DB_PATH)
+            SettingsStore::open_default()
             .ok()
             .map(|s| s.get_agent_defaults())
             .unwrap_or_default()
@@ -495,8 +494,7 @@ impl Default for DeviceDefaults {
 
 impl DeviceDefaults {
     pub fn get() -> Self {
-        const SETTINGS_DB_PATH: &str = "data/settings.redb";
-        SettingsStore::open(SETTINGS_DB_PATH)
+            SettingsStore::open_default()
             .ok()
             .map(|s| s.get_device_defaults())
             .unwrap_or_default()
@@ -822,6 +820,14 @@ pub struct SettingsStore {
 }
 
 impl SettingsStore {
+    /// Open the settings store at its canonical location
+    /// (`$NEOMIND_DATA_DIR/settings.redb`, legacy-compat fallback — see
+    /// `neomind_core::paths`). Callers that used the old
+    /// `SettingsStore::open("data/settings.redb")` literal should use this.
+    pub fn open_default() -> Result<Arc<Self>, Error> {
+        Self::open(neomind_core::paths::store_path("settings.redb"))
+    }
+
     /// Get or create the settings store singleton for the given path.
     /// This keeps the database open across all calls to avoid redb lock conflicts.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Arc<Self>, Error> {

@@ -220,7 +220,7 @@ impl ExtensionState {
         ))?);
 
         // Open extension store (singleton-cached internally)
-        let store = ExtensionStore::open("data/extensions.redb")
+        let store = ExtensionStore::open(crate::server::paths::extension_store_path())
             .map_err(|e| format!("Failed to open extension store: {}", e))?;
 
         let config = ExtensionRuntimeConfig::default();
@@ -287,10 +287,13 @@ impl ExtensionState {
 
             // Check if file still exists before spawning
             if !file_path.exists() {
-                tracing::warn!(
+                // Error, not warn: a registered extension whose binary is
+                // gone silently orphans dashboard widgets rendering its
+                // components ("Component Load Failed / Module not found").
+                tracing::error!(
                     extension_id = %record.id,
                     file_path = %record.file_path,
-                    "Extension file not found, skipping"
+                    "Extension file not found, skipping auto-start — the record                      stays registered; reinstall the extension or remove stale                      dashboard widgets referencing it"
                 );
                 continue;
             }

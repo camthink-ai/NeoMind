@@ -293,7 +293,9 @@ tar xzf neomind-server-linux-amd64.tar.gz
 # Start service
 ./neomind serve
 
-# Or specify the port (data dir comes from NEOMIND_DATA_DIR, not a flag)
+# Or specify the port (data dir comes from NEOMIND_DATA_DIR, not a flag;
+# see "Data directory rules" below — the service's working directory must
+# also be stable, because the redb stores default to a cwd-relative data/)
 ./neomind serve --port 9375
 ```
 
@@ -381,6 +383,8 @@ After=network.target
 Type=simple
 User=neomind
 Group=neomind
+# IMPORTANT: keep WorkingDirectory at the directory that contains data/ —
+# the redb stores resolve relative to the cwd unless NEOMIND_DATA_DIR is set.
 WorkingDirectory=/opt/neomind
 ExecStart=/opt/neomind/neomind serve
 Restart=on-failure
