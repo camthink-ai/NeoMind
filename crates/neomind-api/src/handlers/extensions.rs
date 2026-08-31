@@ -4318,10 +4318,34 @@ pub async fn uninstall_extension_handler(
 
     let mut removed_files = Vec::new();
     if ext_dir.exists() {
-        tracing::info!("Removing extension directory: {}", ext_dir.display());
-        tokio::fs::remove_dir_all(&ext_dir).await.map_err(|e| {
-            ErrorResponse::internal(format!("Failed to remove extension directory: {}", e))
+        tracing::info!(
+            "Removing extension directory (data/ preserved): {}",
+            ext_dir.display()
+        );
+        // Preserve the platform-guaranteed private `data/` subdir — it holds
+        // user state (pipelines, face libraries, licenses) that must survive
+        // uninstall; everything else (package files) goes.
+        let preserved_data_dir = ext_dir.join("data");
+        let mut entries = tokio::fs::read_dir(&ext_dir).await.map_err(|e| {
+            ErrorResponse::internal(format!("Failed to read extension directory: {}", e))
         })?;
+        while let Some(entry) = entries.next_entry().await.map_err(|e| {
+            ErrorResponse::internal(format!("Failed to read extension directory: {}", e))
+        })? {
+            let path = entry.path();
+            if path == preserved_data_dir {
+                continue;
+            }
+            if path.is_dir() {
+                tokio::fs::remove_dir_all(&path).await.map_err(|e| {
+                    ErrorResponse::internal(format!("Failed to remove extension directory: {}", e))
+                })?;
+            } else {
+                tokio::fs::remove_file(&path).await.map_err(|e| {
+                    ErrorResponse::internal(format!("Failed to remove extension file: {}", e))
+                })?;
+            }
+        }
         removed_files.push(ext_dir.to_string_lossy().to_string());
     }
 

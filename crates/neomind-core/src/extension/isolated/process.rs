@@ -614,9 +614,21 @@ impl IsolatedExtension {
         if let Some(mb) = self.config.rlimit_memory_mb {
             cmd.arg("--memory-limit").arg(mb.to_string());
         }
+        // Extension-private data dir: platform-guaranteed to survive
+        // upgrades AND uninstall. Created here so extensions can rely on
+        // it existing without any bootstrap of their own.
+        let extension_data_dir = extension_dir_absolute.join("data");
+        if let Err(e) = std::fs::create_dir_all(&extension_data_dir) {
+            tracing::warn!(
+                extension_id = %self.extension_id,
+                error = %e,
+                "Could not create extension data dir"
+            );
+        }
         cmd.arg("--extension-path")
             .arg(&extension_path_absolute)
             .env("NEOMIND_EXTENSION_DIR", &extension_dir_absolute)
+            .env("NEOMIND_EXTENSION_DATA_DIR", &extension_data_dir)
             .current_dir(&extension_dir_absolute) // Set working directory to extension root
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

@@ -780,6 +780,9 @@ impl ExtensionPackage {
                     if name.starts_with(&dir_prefix)
                         && !name.ends_with('/')
                         && name != binary_rel_path
+                        // data/ is extension-private runtime state — packages
+                        // must never write there (upgrade-preservation contract)
+                        && !name.starts_with("data/")
                         && !name[name.len() - 1..].starts_with('/')
                         && name.matches('/').count() == binary_rel_path.matches('/').count()
                     {
@@ -1427,12 +1430,32 @@ impl ExtensionPackage {
         Ok(())
     }
 
-    /// Uninstall an extension (remove its directory)
+    /// Uninstall an extension — removes its directory EXCEPT the
+    /// extension-private `data/` subdir, which the platform contract
+    /// guarantees survives upgrades AND uninstall (pipelines, face
+    /// libraries, licenses, capture history live there). Operators wipe
+    /// it explicitly if they truly want a clean removal.
     pub async fn uninstall(install_dir: &Path, extension_id: &str) -> Result<(), PackageError> {
         let ext_dir = install_dir.join(extension_id);
 
         if ext_dir.exists() {
-            tokio::fs::remove_dir_all(&ext_dir).await?;
+            let data_dir = ext_dir.join("data");
+            let mut entries = tokio::fs::read_dir(&ext_dir).await?;
+            while let Some(entry) = entries.next_entry().await? {
+                let path = entry.path();
+                if path == data_dir {
+                    tracing::info!(
+                        "uninstall: preserving extension data dir: {}",
+                        data_dir.display()
+                    );
+                    continue;
+                }
+                if path.is_dir() {
+                    tokio::fs::remove_dir_all(&path).await?;
+                } else {
+                    tokio::fs::remove_file(&path).await?;
+                }
+            }
         }
 
         Ok(())
@@ -1566,7 +1589,41 @@ impl Default for InstallBudget {
     }
 }
 
+
 #[cfg(test)]
+mod data_dir_tests {
+    use super::*;
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("nep-datadir-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[tokio::test]
+    async fn uninstall_preserves_extension_data_dir() {
+        let install_dir = scratch("un");
+        let ext_dir = install_dir.join("vision-hub");
+        std::fs::create_dir_all(ext_dir.join("data")).unwrap();
+        std::fs::write(ext_dir.join("data/pipelines.json"), r#"[{"id":"gate"}]"#).unwrap();
+        std::fs::write(ext_dir.join("data/license.key"), "NP1.x.y").unwrap();
+        std::fs::write(ext_dir.join("manifest.json"), "{}").unwrap();
+        std::fs::create_dir_all(ext_dir.join("binaries")).unwrap();
+        std::fs::write(ext_dir.join("binaries/extension.dylib"), b"bin").unwrap();
+
+        ExtensionPackage::uninstall(&install_dir, "vision-hub").await.unwrap();
+
+        // Package files gone…
+        assert!(!ext_dir.join("manifest.json").exists());
+        assert!(!ext_dir.join("binaries").exists());
+        // …private data survives
+        assert!(ext_dir.join("data/pipelines.json").exists());
+        assert!(ext_dir.join("data/license.key").exists());
+        let _ = std::fs::remove_dir_all(&install_dir);
+    }
+}
+
 mod install_budget_tests {
     use super::*;
 

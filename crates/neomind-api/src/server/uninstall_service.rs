@@ -48,12 +48,27 @@ impl ExtensionUninstallService {
 
         let mut report = UninstallReport::default();
 
-        // 1. Delete extension directory
+        // 1. Delete extension directory — EXCEPT the platform-guaranteed
+        // private `data/` subdir (pipelines/face libraries/licenses survive
+        // uninstall; operators wipe it explicitly for a clean removal).
         let ext_dir = self.install_dir.join(ext_id);
         if ext_dir.exists() {
-            fs::remove_dir_all(&ext_dir).await?;
+            let data_dir = ext_dir.join("data");
+            let mut entries = fs::read_dir(&ext_dir).await?;
+            while let Some(entry) = entries.next_entry().await? {
+                let path = entry.path();
+                if path == data_dir {
+                    info!("Preserved extension data dir: {}", data_dir.display());
+                    continue;
+                }
+                if path.is_dir() {
+                    fs::remove_dir_all(&path).await?;
+                } else {
+                    fs::remove_file(&path).await?;
+                }
+            }
             report.directory_removed = true;
-            info!("Removed extension directory: {}", ext_dir.display());
+            info!("Removed extension directory (data/ preserved): {}", ext_dir.display());
         }
 
         // 2. Delete from database
