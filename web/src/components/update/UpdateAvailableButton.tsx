@@ -10,7 +10,7 @@
  */
 
 import { useTranslation } from 'react-i18next'
-import { ArrowUpCircle } from 'lucide-react'
+import { Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { isTauriEnv } from '@/lib/api'
 import { useAppStore } from '@/store'
@@ -31,13 +31,13 @@ export function UpdateAvailableButton() {
       size="icon-sm"
       aria-label={title}
       title={title}
-      className="shrink-0 rounded-full bg-success text-white hover:bg-success hover:opacity-90 no-press-scale"
+      className="shrink-0 text-success hover:text-success no-press-scale"
       onClick={() => {
         if (isTauriEnv()) setUpdateDialogOpen(true)
         else setServerUpgradeDialogOpen(true)
       }}
     >
-      <ArrowUpCircle className="h-4 w-4" />
+      <Download className="h-4 w-4" />
     </Button>
   )
 }
