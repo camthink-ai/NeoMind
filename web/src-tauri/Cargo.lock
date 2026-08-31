@@ -4153,7 +4153,7 @@ dependencies = [
 
 [[package]]
 name = "neomind-agent"
-version = "0.9.20"
+version = "0.9.21"
 dependencies = [
  "ab_glyph",
  "anyhow",
@@ -4195,7 +4195,7 @@ dependencies = [
 
 [[package]]
 name = "neomind-api"
-version = "0.9.20"
+version = "0.9.21"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -4233,6 +4233,7 @@ dependencies = [
  "redb",
  "reqwest 0.12.28",
  "rustls",
+ "rustls-pemfile",
  "semver 1.0.28",
  "serde",
  "serde_json",
@@ -4244,6 +4245,7 @@ dependencies = [
  "thiserror 2.0.18",
  "time",
  "tokio",
+ "tokio-rustls",
  "toml 0.8.2",
  "tower-http",
  "tracing",
@@ -4255,7 +4257,7 @@ dependencies = [
 
 [[package]]
 name = "neomind-cli-ops"
-version = "0.9.20"
+version = "0.9.21"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -4277,17 +4279,21 @@ dependencies = [
 
 [[package]]
 name = "neomind-core"
-version = "0.9.20"
+version = "0.9.21"
 dependencies = [
+ "aes-gcm",
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "futures",
+ "hex",
  "libc",
  "libloading 0.8.9",
  "neomind-extension-sdk",
  "once_cell",
  "parking_lot",
+ "pbkdf2",
  "scopeguard",
  "semver 1.0.28",
  "serde",
@@ -4303,7 +4309,7 @@ dependencies = [
 
 [[package]]
 name = "neomind-data-push"
-version = "0.9.20"
+version = "0.9.21"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4326,7 +4332,7 @@ dependencies = [
 
 [[package]]
 name = "neomind-devices"
-version = "0.9.20"
+version = "0.9.21"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -4358,7 +4364,7 @@ dependencies = [
 
 [[package]]
 name = "neomind-extension-sdk"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -4374,7 +4380,7 @@ dependencies = [
 
 [[package]]
 name = "neomind-messages"
-version = "0.9.20"
+version = "0.9.21"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4401,7 +4407,7 @@ dependencies = [
 
 [[package]]
 name = "neomind-rules"
-version = "0.9.20"
+version = "0.9.21"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4424,7 +4430,7 @@ dependencies = [
 
 [[package]]
 name = "neomind-storage"
-version = "0.9.20"
+version = "0.9.21"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4448,7 +4454,7 @@ dependencies = [
 
 [[package]]
 name = "neomind-tauri"
-version = "0.9.20"
+version = "0.9.21"
 dependencies = [
  "anyhow",
  "chrono",
