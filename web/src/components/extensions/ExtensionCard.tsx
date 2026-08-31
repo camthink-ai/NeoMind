@@ -88,8 +88,10 @@ export function ExtensionCard({
   const hasError = extension.state === "Error"
   // Crashed = stopped by crash-loop, not on purpose — error-tinted, with the
   // crash reason on hover (backend: consecutive_crashes/last_crash_reason).
-  const hasCrashed =
-    extension.state === "Crashed" || (extension.consecutive_crashes ?? 0) > 0
+  // Only when the backend says Crashed (stopped by crash-loop). A RUNNING
+  // extension with crash history must not show as Crashed — the old OR on
+  // consecutive_crashes tinted healthy restarted extensions red.
+  const hasCrashed = extension.state === "Crashed"
   const hasWarning = extension.state === "Warning"
   const isFailed = extension.state === "Failed" || extension.state === "Stopped"
 

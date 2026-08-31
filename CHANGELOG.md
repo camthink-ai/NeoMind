@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.9.21] - 2026-08-29 — security hardening, backups, observability
 
 ### Wrap-up
+- **Pre-release review fixes** (all found by the pre-release audit of this very iteration):
+  - the liveness probe skipped counting failures while commands are in flight — a busy runner (single-task message pump, sync FFI command) legitimately can't answer Ping for the command's full duration (300s budget), and the probe used to kill healthy extensions mid-command, feeding a false crash → restart → circuit-break → alert chain;
+  - the bundled-library extraction loop got the same zip-bomb caps (count/total) as the other two extraction paths — it had slipped the caps during the unification, leaving a disk-fill path via the 512MB upload endpoint;
+  - backup creation is now process-serialized (scheduler + manual trigger) with millisecond-granularity ids, and a failure during the finalize phase (manifest write/rename) cleans the tmp dir — a manifest-less tmp leak was invisible to prune and sat forever;
+  - the extension card no longer shows "Crashed" for a RUNNING extension that merely has crash history.
+- **`neomind user set-role` (offline).**
 - **`neomind user set-role` (offline).** Recovers installations whose "admin" account was created through the old always-User self-registration (username ≠ role): promote/demote admin|user|viewer with shell access, e.g. `neomind user set-role admin admin`.
 - **The extension marketplace source is switchable.** It was hardcoded to `raw.githubusercontent.com` with NO override — unreachable from CN networks, while the component market and LLM catalog both had env overrides. Settings → Preferences (admin) now has an Extension Marketplace source field; precedence is saved value > `NEOMIND_EXTENSION_MARKET_URL` env > default, effective on the next marketplace request (no restart). The field warns that after switching, package integrity verifies against the mirror's artifacts.
 - **Crash alerts reach the user.** A circuit-broken extension (restart attempts exhausted) now sends a system message through the notification channels instead of only logging — previously a repeatedly-crashing extension just quietly stopped working.

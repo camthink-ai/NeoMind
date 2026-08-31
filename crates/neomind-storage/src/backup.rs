@@ -22,6 +22,14 @@ use redb::Database;
 /// Subdirectory of the data dir holding timestamped backup folders.
 pub const BACKUP_DIR_NAME: &str = "backups";
 
+/// Serializes backup creation process-wide. The scheduler and the manual
+/// admin trigger both call `create_backup` (each on the blocking pool);
+/// without this, a same-second collision had both writing the same
+/// `backup-<second>` tmp dir — interleaved copies, one rename winning,
+/// the loser leaking its tmp dir forever (prune only recognizes completed
+/// backups).
+static CREATE_BACKUP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// One file inside a backup.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackupFileEntry {
@@ -101,8 +109,14 @@ const SECRET_FILES: &[&str] = &["encryption_key", ".jwt_secret"];
 /// Builds into a `…​.tmp` sibling first and renames on success, so a crashed
 /// backup never looks complete. Returns the manifest of the finished backup.
 pub fn create_backup(data_dir: &Path, app_version: &str) -> Result<BackupManifest, BackupError> {
+    // Hold for the whole create: copies + verify + manifest + rename. The
+    // scheduler and manual trigger both funnel through here.
+    let _create_guard = CREATE_BACKUP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let started = std::time::Instant::now();
-    let id = format!("backup-{}", chrono::Utc::now().format("%Y%m%d-%H%M%S"));
+    // Millisecond precision: even serialized, two backups started within the
+    // same second (manual right after a scheduled one) would collide on the
+    // second-granular id and fail the final rename.
+    let id = format!("backup-{}", chrono::Utc::now().format("%Y%m%d-%H%M%S%3f"));
     let backup_root = data_dir.join(BACKUP_DIR_NAME);
     let final_dir = backup_root.join(&id);
     let tmp_dir = backup_root.join(format!("{id}.tmp"));
@@ -187,8 +201,25 @@ pub fn create_backup(data_dir: &Path, app_version: &str) -> Result<BackupManifes
                     reason: e.to_string(),
                 }
             })?;
-            std::fs::write(tmp_dir.join("manifest.json"), manifest_bytes)?;
-            std::fs::rename(&tmp_dir, &final_dir)?;
+            let finish = (|| -> Result<(), BackupError> {
+                std::fs::write(tmp_dir.join("manifest.json"), manifest_bytes)?;
+                std::fs::rename(&tmp_dir, &final_dir)?;
+                Ok(())
+            })();
+            if let Err(e) = finish {
+                // Same rule as the copy phase: a failed finalize (manifest
+                // write / rename — e.g. the disk filled right after copying)
+                // must not leave a manifest-less tmp dir. Prune only
+                // recognizes completed backups; a leaked tmp would sit
+                // there forever.
+                let _ = std::fs::remove_dir_all(&tmp_dir);
+                tracing::error!(
+                    category = "backup",
+                    error = %e,
+                    "Backup failed during finalize, discarded partial copy"
+                );
+                return Err(e);
+            }
             tracing::info!(
                 category = "backup",
                 id = %id,

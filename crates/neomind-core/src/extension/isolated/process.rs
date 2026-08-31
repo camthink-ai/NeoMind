@@ -2827,6 +2827,21 @@ impl IsolatedExtension {
                     );
                     return;
                 }
+                // Busy runner ≠ hung runner. The runner's message pump handles
+                // one message at a time and native commands run as a single
+                // sync FFI call, so a legitimate long command (model load,
+                // batch inference — command_timeout_secs is 300s by default)
+                // blocks Ping for its whole duration. Probing during a command
+                // would kill healthy extensions mid-command; the command's own
+                // timeout already owns the hang path while one is executing.
+                if this.in_flight.pending_count() > 0 {
+                    debug!(
+                        extension_id = %this.extension_id,
+                        "Health probe skipped: command(s) in flight"
+                    );
+                    consecutive_failures = 0;
+                    continue;
+                }
                 match this.ping().await {
                     Ok(()) => consecutive_failures = 0,
                     Err(e) => {

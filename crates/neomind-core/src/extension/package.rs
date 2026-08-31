@@ -762,7 +762,19 @@ impl ExtensionPackage {
             };
             let dest_dir = ext_dir.join(binary_dir);
 
+            // Zip-bomb caps for the bundled-library sweep — this third
+            // extraction loop initially slipped the caps the sync/async
+            // directory extractions got (only per-file + symlink were added),
+            // leaving a disk-fill path via the 512MB upload endpoint.
+            let mut bundled_total: u64 = 0;
+            let mut bundled_count: usize = 0;
             for i in 0..archive.len() {
+                if i + 1 > Self::MAX_EXTRACT_FILE_COUNT {
+                    return Err(PackageError::Zip(format!(
+                        "Archive contains more than {} files (zip-bomb suspected)",
+                        Self::MAX_EXTRACT_FILE_COUNT
+                    )));
+                }
                 if let Ok(mut file) = archive.by_index(i) {
                     let name = file.name().to_string();
                     // Same directory, not the binary itself, not a directory entry
@@ -783,6 +795,16 @@ impl ExtensionPackage {
                                 "Bundled library '{}' is {} bytes (exceeds limit)",
                                 name,
                                 file.size()
+                            )));
+                        }
+                        bundled_total += file.size();
+                        bundled_count += 1;
+                        if bundled_count > Self::MAX_EXTRACT_FILE_COUNT
+                            || bundled_total > Self::MAX_EXTRACT_TOTAL_SIZE
+                        {
+                            return Err(PackageError::Zip(format!(
+                                "Bundled libraries exceed extraction caps ({} files, {} bytes)",
+                                bundled_count, bundled_total
                             )));
                         }
                         let dest = Self::safe_join_within(
