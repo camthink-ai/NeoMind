@@ -31,19 +31,13 @@ export function UpdateAvailableButton() {
       size="icon-sm"
       aria-label={title}
       title={title}
-      className="relative shrink-0 text-info hover:text-info no-press-scale"
+      className="shrink-0 rounded-full bg-success text-white hover:bg-success hover:opacity-90 no-press-scale"
       onClick={() => {
         if (isTauriEnv()) setUpdateDialogOpen(true)
         else setServerUpgradeDialogOpen(true)
       }}
     >
       <ArrowUpCircle className="h-4 w-4" />
-      {/* Pulse dot — the icon itself is subtle; the dot carries the "new"
-          signal at a glance without a full badge's visual weight. */}
-      <span className="absolute -right-0.5 -top-0.5 flex h-2 w-2">
-        <span className="absolute inline-flex h-full w-full rounded-full bg-info opacity-75 animate-ping" />
-        <span className="relative inline-flex h-2 w-2 rounded-full bg-info" />
-      </span>
     </Button>
   )
 }
