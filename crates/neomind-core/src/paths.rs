@@ -117,6 +117,9 @@ mod tests {
 
     #[test]
     fn join_semantics() {
-        assert_eq!(Path::new("data").join("a.redb"), PathBuf::from("data/a.redb"));
+        assert_eq!(
+            Path::new("data").join("a.redb"),
+            PathBuf::from("data/a.redb")
+        );
     }
 }

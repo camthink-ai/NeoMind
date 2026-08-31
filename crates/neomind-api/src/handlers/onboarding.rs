@@ -88,8 +88,7 @@ pub async fn get_onboarding_status_handler(
 pub async fn dismiss_onboarding_handler(
     State(_state): State<ServerState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let store =
-        SettingsStore::open_default().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let store = SettingsStore::open_default().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     store
         .save(KEY_ONBOARDING_DISMISSED, "true")
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -100,8 +99,7 @@ pub async fn dismiss_onboarding_handler(
 pub async fn reset_onboarding_handler(
     State(_state): State<ServerState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let store =
-        SettingsStore::open_default().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let store = SettingsStore::open_default().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     store
         .save(KEY_ONBOARDING_DISMISSED, "false")
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;

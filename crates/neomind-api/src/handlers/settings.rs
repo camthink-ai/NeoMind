@@ -185,7 +185,6 @@ pub struct TimezoneResponse {
 pub async fn get_timezone(State(_state): State<ServerState>) -> HandlerResult<TimezoneResponse> {
     use neomind_storage::SettingsStore;
 
-
     let settings_store = SettingsStore::open_default()
         .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;
 
@@ -204,7 +203,6 @@ pub async fn update_timezone(
     Json(req): Json<TimezoneRequest>,
 ) -> HandlerResult<serde_json::Value> {
     use neomind_storage::SettingsStore;
-
 
     // Validate timezone using chrono-tz
     if req.timezone.parse::<chrono_tz::Tz>().is_err() {
@@ -272,7 +270,6 @@ pub async fn get_retention_config(
 ) -> HandlerResult<serde_json::Value> {
     use neomind_storage::SettingsStore;
 
-
     let settings_store = SettingsStore::open_default()
         .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;
 
@@ -292,7 +289,6 @@ pub async fn update_retention_config(
     Json(req): Json<RetentionConfigRequest>,
 ) -> HandlerResult<serde_json::Value> {
     use neomind_storage::SettingsStore;
-
 
     // Validate interval
     if req.interval_hours == 0 {
@@ -376,7 +372,6 @@ pub async fn update_agent_defaults(
 ) -> HandlerResult<serde_json::Value> {
     use neomind_storage::SettingsStore;
 
-
     let config = neomind_storage::AgentDefaults {
         max_rounds: req.max_rounds.clamp(1, 50),
         execution_timeout_secs: req.execution_timeout_secs.clamp(30, 1800),
@@ -444,7 +439,6 @@ pub async fn update_device_defaults(
 ) -> HandlerResult<serde_json::Value> {
     use neomind_storage::SettingsStore;
 
-
     let config = neomind_storage::DeviceDefaults {
         default_offline_timeout_secs: req.default_offline_timeout_secs.max(10),
         auto_onboard_enabled: req.auto_onboard_enabled,
@@ -474,7 +468,6 @@ pub async fn trigger_retention_cleanup(
     State(_state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
     use neomind_storage::{SettingsStore, TimeSeriesStore};
-
 
     let settings_store = SettingsStore::open_default()
         .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;
@@ -611,7 +604,6 @@ pub async fn get_backup_config(
 ) -> HandlerResult<serde_json::Value> {
     use neomind_storage::SettingsStore;
 
-
     let settings_store = SettingsStore::open_default()
         .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;
     let config = settings_store
@@ -634,7 +626,6 @@ pub async fn update_backup_config(
     Json(req): Json<BackupConfigRequest>,
 ) -> HandlerResult<serde_json::Value> {
     use neomind_storage::SettingsStore;
-
 
     if req.interval_secs < 300 {
         return Err(ErrorResponse::bad_request(

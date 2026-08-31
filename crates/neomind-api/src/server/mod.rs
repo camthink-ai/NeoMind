@@ -239,7 +239,6 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
             // Wait for server to initialize
             tokio::time::sleep(Duration::from_secs(10)).await;
 
-
             loop {
                 // Load config on each cycle so runtime changes take effect.
                 // [observability] Both reopen failures used to be silent —
@@ -259,7 +258,9 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
 
                 if config.enabled {
                     let policy = config.to_retention_policy();
-                    let ts_store = match TimeSeriesStore::open(neomind_core::paths::store_path("telemetry.redb")) {
+                    let ts_store = match TimeSeriesStore::open(neomind_core::paths::store_path(
+                        "telemetry.redb",
+                    )) {
                         Ok(store) => store,
                         Err(e) => {
                             tracing::warn!(

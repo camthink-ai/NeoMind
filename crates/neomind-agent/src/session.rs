@@ -1331,7 +1331,9 @@ Assistant: {ar}\n"
                 return;
             }
         }
-        let memory_store = neomind_storage::MarkdownMemoryStore::new(neomind_core::paths::data_dir().join("memory"));
+        let memory_store = neomind_storage::MarkdownMemoryStore::new(
+            neomind_core::paths::data_dir().join("memory"),
+        );
         let snapshot = crate::memory::MemorySnapshot::load(&memory_store);
         if !snapshot.is_empty() {
             tracing::info!(

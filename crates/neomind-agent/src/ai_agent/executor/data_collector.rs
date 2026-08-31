@@ -18,7 +18,6 @@ fn metric_value_to_json(
 pub(crate) fn get_time_context() -> String {
     use neomind_storage::SettingsStore;
 
-
     // Try to load timezone from settings
     let timezone = SettingsStore::open_default()
         .ok()

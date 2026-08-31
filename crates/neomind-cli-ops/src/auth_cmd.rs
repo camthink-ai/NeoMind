@@ -33,7 +33,10 @@ pub fn resolve_login_data_dir(explicit: Option<String>) -> Result<String> {
             return Ok(dir);
         }
     }
-    if neomind_core::paths::store_path("api_keys.redb").as_path().exists() {
+    if neomind_core::paths::store_path("api_keys.redb")
+        .as_path()
+        .exists()
+    {
         return Ok("data".to_string());
     }
     if let Some(local) = dirs::data_local_dir() {

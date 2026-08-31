@@ -462,7 +462,6 @@ impl LlmInterface {
     pub async fn load_global_timezone(&self) -> AgentResult<String> {
         use neomind_storage::SettingsStore;
 
-    
         let settings_store = SettingsStore::open_default()
             .map_err(|e| NeoMindError::Llm(format!("Failed to open settings store: {}", e)))?;
 

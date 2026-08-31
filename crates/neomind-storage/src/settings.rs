@@ -458,7 +458,7 @@ impl AgentDefaults {
     /// Load from the settings store (singleton), or defaults if unset/unavailable.
     /// Mirrors the inline read pattern in `data_collector::get_time_context`.
     pub fn get() -> Self {
-            SettingsStore::open_default()
+        SettingsStore::open_default()
             .ok()
             .map(|s| s.get_agent_defaults())
             .unwrap_or_default()
@@ -494,7 +494,7 @@ impl Default for DeviceDefaults {
 
 impl DeviceDefaults {
     pub fn get() -> Self {
-            SettingsStore::open_default()
+        SettingsStore::open_default()
             .ok()
             .map(|s| s.get_device_defaults())
             .unwrap_or_default()

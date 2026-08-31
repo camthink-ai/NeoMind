@@ -43,7 +43,10 @@ fn default_enabled() -> bool {
     true
 }
 fn default_storage_path() -> String {
-    neomind_core::paths::data_dir().join("memory").to_string_lossy().to_string()
+    neomind_core::paths::data_dir()
+        .join("memory")
+        .to_string_lossy()
+        .to_string()
 }
 fn default_user_limit() -> usize {
     2000
