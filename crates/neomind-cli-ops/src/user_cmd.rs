@@ -37,7 +37,7 @@ struct User {
 /// Mirrors `UserRole` in `neomind-api/src/auth_users.rs`. Variant order is
 /// significant for bincode (encoded by discriminant index).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-enum UserRole {
+pub(crate) enum UserRole {
     Admin,
     User,
     Viewer,
@@ -147,6 +147,47 @@ pub fn prompt_new_password(username: &str) -> anyhow::Result<String> {
 
 /// `neomind user reset-password` — resolve the data dir, prompt for a new
 /// password, and rewrite the user's bcrypt hash offline.
+/// Change a user's role offline (e.g. promote the first admin on a fresh
+/// install, or recover one whose account was created through the old
+/// always-User self-registration). Requires shell/filesystem access.
+pub(crate) fn set_user_role(data_dir: &str, username: &str, role: UserRole) -> anyhow::Result<()> {
+    let path = users_db_path(data_dir);
+    let mut user = read_user_from_db(&path, username)?
+        .ok_or_else(|| anyhow::anyhow!("user '{}' not found in {}", username, path))?;
+    user.role = role;
+    write_user_to_db(&path, &user)
+}
+
+/// Parse a role name for the CLI.
+pub(crate) fn parse_role(name: &str) -> anyhow::Result<UserRole> {
+    match name.to_ascii_lowercase().as_str() {
+        "admin" => Ok(UserRole::Admin),
+        "user" => Ok(UserRole::User),
+        "viewer" => Ok(UserRole::Viewer),
+        _ => Err(anyhow::anyhow!(
+            "unknown role '{}': expected admin|user|viewer",
+            name
+        )),
+    }
+}
+
+pub async fn run_set_role(
+    data_dir: Option<String>,
+    username: &str,
+    role: &str,
+) -> anyhow::Result<CliResponse> {
+    let resolved_dir = crate::auth_cmd::resolve_login_data_dir(data_dir)?;
+    let role = parse_role(role)?;
+    set_user_role(&resolved_dir, username, role.clone())?;
+    Ok(CliResponse::success(
+        serde_json::json!({ "username": username, "role": role }),
+        format!(
+            "Role of '{}' set to {:?}. Restart the server if it is running.",
+            username, role
+        ),
+    ))
+}
+
 pub async fn run_reset_password(
     data_dir: Option<String>,
     username: &str,

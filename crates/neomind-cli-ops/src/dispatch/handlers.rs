@@ -1259,6 +1259,11 @@ pub async fn run_user_cmd(user_cmd: UserCommand) -> Result<(CliResponse, OutputF
         UserCommand::ResetPassword { username, data_dir } => {
             crate::user_cmd::run_reset_password(data_dir, &username).await?
         }
+        UserCommand::SetRole {
+            username,
+            role,
+            data_dir,
+        } => crate::user_cmd::run_set_role(data_dir, &username, &role).await?,
     };
     Ok((resp, fmt))
 }

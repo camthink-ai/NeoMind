@@ -260,6 +260,19 @@ pub enum UserCommand {
         #[arg(long)]
         data_dir: Option<String>,
     },
+    /// Set a user's role (offline) — e.g. promote the first admin.
+    ///
+    /// Example: `neomind user set-role admin admin`
+    SetRole {
+        /// Username whose role to change.
+        username: String,
+        /// Role: admin | user | viewer.
+        #[arg(required = true)]
+        role: String,
+        /// Server data directory (auto-detected if omitted).
+        #[arg(long)]
+        data_dir: Option<String>,
+    },
 }
 
 /// API key subcommands.
