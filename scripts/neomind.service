@@ -30,8 +30,9 @@ Environment="NEOMIND_DATA_DIR=/var/lib/neomind"
 # Security settings
 # Note: web-triggered upgrades (About 页 → check for updates) do NOT relax
 # these — the sandboxed service can't swap its own binary, so it stages the
-# release under /var/lib/neomind/upgrade/ and writes apply.trigger, which
-# the root neomind-upgrade-apply.path unit (written by install.sh) watches.
+# release under /var/lib/neomind/data/upgrade/ and writes apply.trigger,
+# which the root neomind-upgrade-apply.path unit (written by install.sh)
+# watches.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

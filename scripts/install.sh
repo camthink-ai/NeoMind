@@ -234,13 +234,18 @@ EOF
         success "Systemd service installed"
 
         # Web-triggered upgrade helper: a root oneshot + a path unit that
-        # starts it when the API writes ${DATA_DIR}/upgrade/apply.trigger.
+        # starts it when the API writes ${DATA_DIR}/data/upgrade/apply.trigger.
         # The API's own unit sets NoNewPrivileges=true + ProtectSystem=full,
         # so it can neither write the install dir nor sudo — the path-unit
         # hand-off needs neither (inotify on a data-dir file it can write).
+        # NOTE the /data nesting: the main unit sets NO NEOMIND_DATA_DIR, so
+        # paths::data_dir() resolves cwd-relative "data" under its
+        # WorkingDirectory=${DATA_DIR} — the apply unit must resolve the
+        # same way (WorkingDirectory only, no env override), or the trigger
+        # file and the staging dir land in different trees.
         status "Installing web-upgrade helper units..."
-        $SUDO mkdir -p "${DATA_DIR}/upgrade"
-        $SUDO chown neomind:neomind "${DATA_DIR}/upgrade"
+        $SUDO mkdir -p "${DATA_DIR}/data/upgrade"
+        $SUDO chown neomind:neomind "${DATA_DIR}/data/upgrade"
         $SUDO tee /etc/systemd/system/neomind-upgrade-apply.service >/dev/null <<EOF
 [Unit]
 Description=NeoMind web-triggered upgrade apply helper
@@ -252,7 +257,6 @@ User=root
 # No sandboxing on purpose: this unit must write the install dir and swap
 # the web dir, which the main service's ProtectSystem makes read-only.
 WorkingDirectory=${DATA_DIR}
-Environment=NEOMIND_DATA_DIR=${DATA_DIR}
 Environment=NEOMIND_WEB_DIR=${WEB_DIR}
 ExecStart=${INSTALL_DIR}/neomind upgrade --apply-staged --yes
 TimeoutStartSec=600
@@ -262,7 +266,7 @@ EOF
 Description=Watch for the NeoMind web-upgrade apply trigger
 
 [Path]
-PathExists=${DATA_DIR}/upgrade/apply.trigger
+PathExists=${DATA_DIR}/data/upgrade/apply.trigger
 Unit=neomind-upgrade-apply.service
 
 [Install]
