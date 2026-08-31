@@ -17,8 +17,6 @@ use tracing::{info, warn};
 // Re-export types for convenience
 pub use neomind_devices::EmbeddedBrokerConfig;
 
-use crate::server::paths::store_path;
-
 /// Get or create the global settings store (cached).
 fn get_settings_store() -> Result<Arc<neomind_storage::SettingsStore>, Box<dyn std::error::Error>> {
     // SettingsStore::open already has internal caching via SETTINGS_STORE_SINGLETON

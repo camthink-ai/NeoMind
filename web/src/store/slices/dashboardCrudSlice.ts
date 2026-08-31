@@ -174,10 +174,19 @@ export const createDashboardCrudSlice: StateCreator<
         }
         handleIdChange(dashboard, result)
       } catch (err) {
-        // Keep pending set on failure so the guard still protects the
-        // unsynced edits; the failure-window retry in the persistence
-        // layer takes it from here.
+        // Keep pending set so the guard still protects the unsynced edits,
+        // but BOUNDED: if even the next schedule/flush can't clear it (e.g.
+        // localStorage quota full — common on embedded devices), release
+        // the guard after 30s so server refreshes aren't blocked forever
+        // (the old failure-window semantics in the persistence layer).
         console.warn('[DashboardCrudSlice] sync failed:', err)
+        const failVersion = version
+        setTimeout(() => {
+          if (pendingSyncDashboard?.id === dashboard.id && failVersion === syncVersion - 0) {
+            // Only release if nothing newer was scheduled meanwhile.
+            if (!syncDebounceTimer) pendingSyncDashboard = null
+          }
+        }, 30_000)
       }
     }, 500)
   }
@@ -186,14 +195,19 @@ export const createDashboardCrudSlice: StateCreator<
     if (syncDebounceTimer) {
       clearTimeout(syncDebounceTimer)
       syncDebounceTimer = null
-      // Execute the pending sync immediately instead of discarding it
+      // Execute the pending sync immediately instead of discarding it.
+      // pending stays set until the flush resolves — clearing before the
+      // await leaves the same unguarded in-flight window the debounce path
+      // used to have.
       const dashboard = pendingSyncDashboard
-      pendingSyncDashboard = null
       if (dashboard) {
-        syncVersion++
+        const flushVersion = ++syncVersion
         recordSelfSync(dashboard.id)
         try {
           const result = await storage.sync(dashboard)
+          if (flushVersion === syncVersion) {
+            pendingSyncDashboard = null
+          }
           handleIdChange(dashboard, result)
         } catch (err) {
           console.warn('[DashboardCrudSlice] flush sync failed:', err)

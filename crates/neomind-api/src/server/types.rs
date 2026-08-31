@@ -415,7 +415,11 @@ impl ServerState {
                             discovery_prefix: "device".to_string(),
                             auto_discovery: true,
                             device_id_field: old_cfg.device_id_field.clone(),
-                            storage_dir: Some(neomind_core::paths::data_dir().to_string_lossy().to_string()),
+                            storage_dir: Some(
+                                neomind_core::paths::data_dir()
+                                    .to_string_lossy()
+                                    .to_string(),
+                            ),
                         };
                         if let Some(event_bus) = self.core.event_bus.as_ref() {
                             if let Ok(val) = serde_json::to_value(&rollback_mqtt_config) {
@@ -494,7 +498,11 @@ impl ServerState {
             discovery_prefix: "device".to_string(),
             auto_discovery: true,
             device_id_field: broker_config.device_id_field.clone(),
-            storage_dir: Some(neomind_core::paths::data_dir().to_string_lossy().to_string()),
+            storage_dir: Some(
+                neomind_core::paths::data_dir()
+                    .to_string_lossy()
+                    .to_string(),
+            ),
         };
 
         let Some(event_bus) = self.core.event_bus.as_ref() else {
@@ -629,7 +637,9 @@ impl ServerState {
         });
 
         let agent_store_h = tokio::task::spawn_blocking(
-            || match neomind_storage::AgentStore::open(neomind_core::paths::store_path("agents.redb")) {
+            || match neomind_storage::AgentStore::open(neomind_core::paths::store_path(
+                "agents.redb",
+            )) {
                 Ok(store) => {
                     tracing::info!("AI Agent store initialized at data/agents.redb");
                     store
@@ -677,7 +687,9 @@ impl ServerState {
         });
 
         let data_dir = std::path::PathBuf::from(
-            neomind_core::paths::data_dir().to_string_lossy().to_string(),
+            neomind_core::paths::data_dir()
+                .to_string_lossy()
+                .to_string(),
         );
         let frontend_component_store_h = tokio::task::spawn_blocking({
             let dir = data_dir.join("frontend-components");
@@ -709,7 +721,11 @@ impl ServerState {
 
         // ========== Build DEVICE STATE ==========
         // Create device registry with persistent storage
-        let device_registry = match DeviceRegistry::with_persistence(neomind_core::paths::store_path("devices.redb")).await {
+        let device_registry = match DeviceRegistry::with_persistence(
+            neomind_core::paths::store_path("devices.redb"),
+        )
+        .await
+        {
             Ok(registry) => {
                 tracing::info!(
                     "Device registry initialized with persistent storage at data/devices.redb"
@@ -996,7 +1012,11 @@ impl ServerState {
         }
 
         // Create automation store
-        let automation_store = match SharedAutomationStore::open(neomind_core::paths::store_path("automations.redb")).await {
+        let automation_store = match SharedAutomationStore::open(neomind_core::paths::store_path(
+            "automations.redb",
+        ))
+        .await
+        {
             Ok(store) => {
                 tracing::info!("Automation store initialized at data/automations.redb");
                 Some(Arc::new(store))
@@ -1057,8 +1077,9 @@ impl ServerState {
         let agent_store = agent_store_h.await.expect("agent_store task panicked");
 
         // Initialize system memory store (Markdown-based persistent memory)
-        let system_memory_store =
-            Arc::new(neomind_storage::MarkdownMemoryStore::new(neomind_core::paths::data_dir().join("memory")));
+        let system_memory_store = Arc::new(neomind_storage::MarkdownMemoryStore::new(
+            neomind_core::paths::data_dir().join("memory"),
+        ));
         if let Err(e) = system_memory_store.init() {
             tracing::warn!(category = "storage", error = %e, "Failed to initialize system memory store");
         }
@@ -1490,15 +1511,16 @@ impl ServerState {
         //
         // Path strategy:
         // - install_dir: $NEOMIND_DATA_DIR/extensions/ (where extensions are unpacked)
-        // - nep_cache_dir: $NEOMIND_DATA_DIR/extensions/packages/ (where .nep files are cached)
+        // - nep_cache_dir: $NEOMIND_DATA_DIR/extensions (sync_nep_cache scans both
+        //   this dir and its packages/ subdir, matching the manual trigger)
         //
         // This ensures all extension data is in the app data directory, avoiding
         // path inconsistencies between development and production modes.
-        let data_dir = neomind_core::paths::data_dir().to_string_lossy().to_string();
+        let data_dir = neomind_core::paths::data_dir()
+            .to_string_lossy()
+            .to_string();
         let install_dir = std::path::PathBuf::from(data_dir.clone()).join("extensions");
-        let nep_cache_dir = std::path::PathBuf::from(data_dir)
-            .join("extensions")
-            .join("packages");
+        let nep_cache_dir = std::path::PathBuf::from(data_dir).join("extensions");
 
         tracing::info!(
             install_dir = %install_dir.display(),
@@ -1748,7 +1770,11 @@ impl ServerState {
             discovery_prefix: "device".to_string(),
             auto_discovery: true,
             device_id_field: broker_config.device_id_field.clone(),
-            storage_dir: Some(neomind_core::paths::data_dir().to_string_lossy().to_string()),
+            storage_dir: Some(
+                neomind_core::paths::data_dir()
+                    .to_string_lossy()
+                    .to_string(),
+            ),
         };
 
         // Create the MQTT adapter
@@ -2959,7 +2985,9 @@ impl ServerState {
         let has_time_series = time_series_store.is_some();
 
         // Open LLM backend store for per-agent backend lookup
-        let llm_backend_store = match LlmBackendStore::open(neomind_core::paths::store_path("llm_backends.redb")) {
+        let llm_backend_store = match LlmBackendStore::open(neomind_core::paths::store_path(
+            "llm_backends.redb",
+        )) {
             Ok(store) => Some(store),
             Err(e) => {
                 tracing::warn!(category = "storage", error = %e, "Failed to open LlmBackendStore");

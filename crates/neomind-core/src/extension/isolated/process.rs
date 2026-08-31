@@ -2794,11 +2794,19 @@ impl IsolatedExtension {
             return Err(IsolatedExtensionError::NotRunning);
         }
         let (request_id, rx) = self.in_flight.register();
-        self.send_message_with_retry(&IpcMessage::Ping {
-            request_id,
-            timestamp: chrono::Utc::now().timestamp_millis(),
-        })
-        .await?;
+        if let Err(e) = self
+            .send_message_with_retry(&IpcMessage::Ping {
+                request_id,
+                timestamp: chrono::Utc::now().timestamp_millis(),
+            })
+            .await
+        {
+            // Cancel our own entry on send failure: a leaked pending entry
+            // pins pending_count() ≥ 1 forever, which makes the health
+            // monitor skip every future probe (hang detection silently dead).
+            self.in_flight.cancel(request_id);
+            return Err(e);
+        }
         match self
             .in_flight
             .wait_with_timeout(
