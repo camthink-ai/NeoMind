@@ -177,12 +177,20 @@ pub fn run_apply_staged() -> Result<()> {
 
     let staging_root = up::staging_root(&neomind_core::paths::data_dir());
 
-    // Consume the trigger FIRST: the path unit fires on the nonexistent →
-    // existent transition, so the file must be gone before this run ends
-    // (however it ends) for the next upgrade to re-arm. Doing it before any
-    // fallible step guarantees that even a failed apply leaves it consumed.
-    let _ = std::fs::remove_file(staging_root.join(up::APPLY_TRIGGER_FILE));
-    let manifest_path = find_latest_staged_manifest(&staging_root)?;
+    // Consume the trigger FIRST (re-arm even on failure), but keep its
+    // content: the API writes "<version> <staged_at-ms>" into it, and that
+    // named version — not "whichever staging dir has the newest timestamp" —
+    // is the one to apply. Selecting by timestamp alone lets a stale or
+    // junk staging dir with a bogus future staged_at hijack the apply.
+    let trigger_path = staging_root.join(up::APPLY_TRIGGER_FILE);
+    let trigger_content = std::fs::read_to_string(&trigger_path).ok();
+    let _ = std::fs::remove_file(&trigger_path);
+    let wanted_version = trigger_content
+        .as_deref()
+        .and_then(|s| s.split_whitespace().next())
+        .map(str::to_string);
+
+    let manifest_path = find_staged_manifest(&staging_root, wanted_version.as_deref())?;
     let manifest: up::StagingManifest = serde_json::from_str(&std::fs::read_to_string(
         &manifest_path,
     )?)
@@ -192,10 +200,14 @@ pub fn run_apply_staged() -> Result<()> {
         .ok_or_else(|| anyhow!("staging manifest has no parent dir"))?
         .to_path_buf();
     println!(
-        "Applying staged upgrade v{} (staged {}s ago, arch {})",
+        "Applying staged upgrade v{} (staged {}s ago, arch {}{})",
         manifest.version,
         chrono_now_millis().saturating_sub(manifest.staged_at) / 1000,
-        manifest.arch
+        manifest.arch,
+        wanted_version
+            .as_ref()
+            .map(|v| format!(", requested by trigger: v{v}"))
+            .unwrap_or_default()
     );
 
     // Re-verify before touching anything — the manifest is on disk, the
@@ -257,11 +269,14 @@ pub fn run_apply_staged() -> Result<()> {
     Ok(())
 }
 
-/// Newest `upgrade/v*/manifest.json` under `root` (by `staged_at`).
-fn find_latest_staged_manifest(root: &std::path::Path) -> Result<PathBuf> {
-    let mut best: Option<(i64, PathBuf)> = None;
+/// The manifest the trigger asked for (`upgrade/v<version>/manifest.json`);
+/// when the trigger carried no version, fall back to the newest `staged_at`.
+/// Stale/junk staging dirs can never hijack a named apply.
+fn find_staged_manifest(root: &std::path::Path, wanted: Option<&str>) -> Result<PathBuf> {
     let entries = std::fs::read_dir(root)
         .with_context(|| format!("no staging dir at {} — nothing to apply", root.display()))?;
+
+    let mut newest: Option<(i64, PathBuf)> = None;
     for entry in entries.flatten() {
         let manifest = entry.path().join("manifest.json");
         let Ok(content) = std::fs::read_to_string(&manifest) else {
@@ -270,11 +285,23 @@ fn find_latest_staged_manifest(root: &std::path::Path) -> Result<PathBuf> {
         let Ok(m) = serde_json::from_str::<up::StagingManifest>(&content) else {
             continue;
         };
-        if best.as_ref().map(|(t, _)| m.staged_at > *t).unwrap_or(true) {
-            best = Some((m.staged_at, manifest));
+        if let Some(v) = wanted {
+            if m.version == v {
+                return Ok(manifest);
+            }
+        }
+        if newest.as_ref().map(|(t, _)| m.staged_at > *t).unwrap_or(true) {
+            newest = Some((m.staged_at, manifest));
         }
     }
-    best.map(|(_, p)| p)
+    if let Some(v) = wanted {
+        return Err(anyhow!(
+            "trigger requested v{v} but no such staging exists under {}",
+            root.display()
+        ));
+    }
+    newest
+        .map(|(_, p)| p)
         .ok_or_else(|| anyhow!("no staged upgrade manifest under {}", root.display()))
 }
 
@@ -404,4 +431,63 @@ fn print_rollback_hint(install_dir: &std::path::Path, outcome: &up::ApplyOutcome
 
 fn chrono_now_millis() -> i64 {
     chrono::Utc::now().timestamp_millis()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_manifest(dir: &std::path::Path, version: &str, staged_at: i64) {
+        let d = dir.join(format!("v{version}"));
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(
+            d.join("manifest.json"),
+            serde_json::json!({
+                "version": version,
+                "arch": "arm64",
+                "staged_at": staged_at,
+                "server_binary": "neomind",
+            })
+            .to_string(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn named_trigger_selects_its_version_not_the_newest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("upgrade");
+        std::fs::create_dir_all(&root).unwrap();
+        // Junk staging with a bogus future timestamp + the real target.
+        write_manifest(&root, "9.9.9", i64::MAX);
+        write_manifest(&root, "0.9.20", 1000);
+
+        let picked =
+            find_staged_manifest(&root, Some("0.9.20")).expect("named manifest must be found");
+        assert!(picked.ends_with("v0.9.20/manifest.json"));
+
+        let err = find_staged_manifest(&root, Some("8.8.8")).unwrap_err();
+        assert!(err.to_string().contains("no such staging"));
+    }
+
+    #[test]
+    fn without_trigger_version_falls_back_to_newest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("upgrade");
+        std::fs::create_dir_all(&root).unwrap();
+        write_manifest(&root, "0.9.19", 1000);
+        write_manifest(&root, "0.9.20", 2000);
+
+        let picked = find_staged_manifest(&root, None).expect("fallback must find newest");
+        assert!(picked.ends_with("v0.9.20/manifest.json"));
+    }
+
+    #[test]
+    fn empty_staging_is_an_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("upgrade");
+        std::fs::create_dir_all(&root).unwrap();
+        assert!(find_staged_manifest(&root, None).is_err());
+        assert!(find_staged_manifest(&root, Some("0.9.20")).is_err());
+    }
 }
