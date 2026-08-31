@@ -1447,6 +1447,19 @@ impl ChatStreamCapabilityProvider {
                 CapabilityError::InvalidParameters("Missing 'message' string field".to_string())
             })?;
 
+        // Multimodal turns: optional `images` array of data-URLs. Routes
+        // through the same multimodal stream the chat UI uses; backends
+        // without vision degrade to text-only. Absent/empty ⇒ legacy path.
+        let images: Vec<String> = params
+            .get("images")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|i| i.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let existing_session_id = params.get("session_id").and_then(|v| v.as_str());
 
         // Resolve SessionManager via late-binding holder.
@@ -1480,9 +1493,16 @@ impl ChatStreamCapabilityProvider {
         let bus = self.event_bus.clone();
         let sid = session_id.clone();
         let msg = message.to_string();
+        let imgs = images;
         tokio::spawn(async move {
             let result = async {
-                let stream = match mgr.process_message_events(&sid, &msg).await {
+                let stream_result = if imgs.is_empty() {
+                    mgr.process_message_events(&sid, &msg).await
+                } else {
+                    mgr.process_message_multimodal_with_backend_stream(&sid, &msg, imgs, None)
+                        .await
+                };
+                let stream = match stream_result {
                     Ok(s) => s,
                     Err(e) => {
                         tracing::warn!(
