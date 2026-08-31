@@ -368,6 +368,10 @@ export function ServerUpgradeDialog({ open, onClose }: ServerUpgradeDialogProps)
       description={getDescription()}
       icon={dialogIcon}
       width="sm"
+      // Above SettingsDialog (z-[100]): this dialog opens FROM the About
+      // section while the settings overlay stays mounted — the default z-50
+      // would leave the confirm button covered by the settings page.
+      className="z-[110]"
       preventCloseOnSubmit={false}
       isSubmitting={busy}
       footer={footerContent}
