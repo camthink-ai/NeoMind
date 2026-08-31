@@ -617,7 +617,7 @@ impl IsolatedExtension {
         cmd.arg("--extension-path")
             .arg(&extension_path_absolute)
             .env("NEOMIND_EXTENSION_DIR", &extension_dir_absolute)
-            .current_dir(extension_dir_absolute) // Set working directory to extension root
+            .current_dir(&extension_dir_absolute) // Set working directory to extension root
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -658,6 +658,22 @@ impl IsolatedExtension {
                     },
                 );
             }
+
+            // Manifest-declared env hints (generic, opt-in). Extensions that
+            // need runtime-specific env vars (ORT_DYLIB_PATH for
+            // load-dynamic ONNX Runtime, RKNN/TensorRT lib paths, …)
+            // declare them in their .nep manifest instead of the platform
+            // special-casing each runtime:
+            //
+            //   "env_hints": { "ORT_DYLIB_PATH": "{binaries}/libonnxruntime.dylib" }
+            //
+            // Mutating DYLD_* at runtime inside the child is unreliable on
+            // macOS (SIP), which is why exact-file env vars belong here at
+            // spawn. A hint only applies when the variable is not already
+            // set and the resolved file exists — no-ops otherwise, so
+            // extensions with other (or no) acceleration runtimes are
+            // untouched.
+            apply_manifest_env_hints(&mut cmd, &extension_dir_absolute, binary_dir);
 
             tracing::debug!(
                 extension_id = %self.extension_id,
@@ -3067,9 +3083,152 @@ impl Drop for IsolatedExtension {
     }
 }
 
+/// Apply manifest-declared env hints to a runner command.
+///
+/// Reads `<extension_dir>/manifest.json` → optional `"env_hints"` map of
+/// `{VAR: path_template}`. Templates may contain `{binaries}` (the
+/// platform binaries dir of this spawn) and `{extension_dir}`. A hint is
+/// applied only when the env var is not already set AND the resolved file
+/// exists; anything else is silently skipped (declared-but-absent files are
+/// a normal state, e.g. runtime libs only bundled in jetson/cuda variants).
+fn apply_manifest_env_hints(
+    cmd: &mut Command,
+    extension_dir: &std::path::Path,
+    binaries_dir: &std::path::Path,
+) {
+    let manifest_path = extension_dir.join("manifest.json");
+    let Ok(raw) = std::fs::read_to_string(&manifest_path) else {
+        return;
+    };
+    let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        tracing::debug!(
+            manifest = %manifest_path.display(),
+            "env_hints: manifest.json unreadable, skipping"
+        );
+        return;
+    };
+    let Some(hints) = manifest.get("env_hints").and_then(|h| h.as_object()) else {
+        return;
+    };
+    for (var, template) in hints {
+        let Some(template) = template.as_str() else {
+            continue;
+        };
+        if std::env::var_os(var).is_some() {
+            continue;
+        }
+        let resolved = template
+            .replace("{binaries}", &binaries_dir.to_string_lossy())
+            .replace("{extension_dir}", &extension_dir.to_string_lossy());
+        let path = std::path::Path::new(&resolved);
+        if path.is_file() {
+            tracing::debug!(
+                var,
+                value = %resolved,
+                "Applying manifest env hint"
+            );
+            cmd.env(var, &resolved);
+        } else {
+            tracing::debug!(
+                var,
+                value = %resolved,
+                "Manifest env hint target missing, skipping"
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scratch_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "neomind-env-hints-test-{tag}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn env_hints_resolve_placeholders_and_apply() {
+        let tmp = scratch_dir("apply");
+        let bin_dir = tmp.join("binaries/darwin_aarch64");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        std::fs::write(bin_dir.join("libonnxruntime.dylib"), b"fake").unwrap();
+        std::fs::write(
+            tmp.join("manifest.json"),
+            r#"{"id":"t","env_hints":{"ORT_DYLIB_PATH":"{binaries}/libonnxruntime.dylib"}}"#,
+        )
+        .unwrap();
+
+        let mut cmd = Command::new("true");
+        apply_manifest_env_hints(&mut cmd, &tmp, &bin_dir);
+        assert_eq!(
+            cmd.get_envs()
+                .find(|(k, _)| *k == std::ffi::OsStr::new("ORT_DYLIB_PATH"))
+                .and_then(|(_, v)| v)
+                .map(|v| v.to_string_lossy().to_string()),
+            Some(
+                bin_dir
+                    .join("libonnxruntime.dylib")
+                    .to_string_lossy()
+                    .to_string()
+            )
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn env_hints_skipped_when_target_missing() {
+        let tmp = scratch_dir("missing");
+        std::fs::create_dir_all(tmp.join("binaries/darwin_aarch64")).unwrap();
+        std::fs::write(
+            tmp.join("manifest.json"),
+            r#"{"id":"t","env_hints":{"ORT_DYLIB_PATH":"{binaries}/libonnxruntime.dylib"}}"#,
+        )
+        .unwrap();
+
+        let mut cmd = Command::new("true");
+        apply_manifest_env_hints(&mut cmd, &tmp, &tmp.join("binaries/darwin_aarch64"));
+        assert!(!cmd.get_envs().any(|(k, _)| k == "ORT_DYLIB_PATH"));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn env_hints_noop_without_manifest_or_field() {
+        let tmp = scratch_dir("noop");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut cmd = Command::new("true");
+        // no manifest.json at all
+        apply_manifest_env_hints(&mut cmd, &tmp, &tmp);
+        // manifest without env_hints
+        std::fs::write(tmp.join("manifest.json"), r#"{"id":"t"}"#).unwrap();
+        apply_manifest_env_hints(&mut cmd, &tmp, &tmp);
+        assert!(cmd.get_envs().next().is_none());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn env_hints_extension_dir_placeholder() {
+        let tmp = scratch_dir("extdir");
+        std::fs::create_dir_all(tmp.join("rknn")).unwrap();
+        std::fs::write(tmp.join("rknn/librknnrt.so"), b"fake").unwrap();
+        std::fs::write(
+            tmp.join("manifest.json"),
+            r#"{"id":"t","env_hints":{"RKNN_LIB_PATH":"{extension_dir}/rknn/librknnrt.so"}}"#,
+        )
+        .unwrap();
+
+        let mut cmd = Command::new("true");
+        apply_manifest_env_hints(&mut cmd, &tmp, &tmp);
+        assert!(cmd
+            .get_envs()
+            .any(|(k, _)| k == std::ffi::OsStr::new("RKNN_LIB_PATH")));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 
     #[test]
     fn stderr_capture_survives_non_utf8_byte() {

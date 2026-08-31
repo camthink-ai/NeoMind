@@ -123,6 +123,7 @@
 // ============================================================================
 
 pub mod dynamic_metrics;
+pub mod events;
 mod ipc_types;
 
 /// Stable IPC boundary types for extension communication.

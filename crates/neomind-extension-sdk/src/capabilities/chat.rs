@@ -12,6 +12,8 @@
 //! # Parameters
 //!
 //! - `message` (required): user message text
+//! - `images` (optional): array of data-URL strings — multimodal turn; the
+//!   host routes it to a vision-capable backend (text-only otherwise)
 //! - `session_id` (optional): existing session to continue; omit to let the
 //!   host create a new ad-hoc session.
 //!
@@ -59,6 +61,31 @@ pub async fn invoke(
     session_id: Option<&str>,
 ) -> Result<Value, CapabilityError> {
     let mut params = json!({ "message": message });
+    if let Some(sid) = session_id {
+        params["session_id"] = json!(sid);
+    }
+    context
+        .invoke_capability(ExtensionCapability::ChatStream, &params)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Multimodal variant: attach images to the chat turn.
+///
+/// `images` are data-URL strings (`data:image/jpeg;base64,…`). The platform
+/// routes them to a multimodal-capable LLM backend (the same path the chat
+/// UI's image upload takes); backends without vision degrade to text-only.
+///
+/// Mind the runner's capability-input cap (~1 MB): downscale frames first —
+/// roughly ≤ 1024px JPEG keeps the base64 comfortably under it.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn invoke_with_images(
+    context: &Context,
+    message: &str,
+    images: &[String],
+    session_id: Option<&str>,
+) -> Result<Value, CapabilityError> {
+    let mut params = json!({ "message": message, "images": images });
     if let Some(sid) = session_id {
         params["session_id"] = json!(sid);
     }

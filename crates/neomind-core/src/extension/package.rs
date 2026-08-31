@@ -120,6 +120,16 @@ pub struct ExtensionPackageManifest {
     #[serde(default = "default_extension_type")]
     #[serde(rename = "type")]
     pub extension_type: String,
+
+    /// Opt-in env vars the runner injects at spawn, for extensions that
+    /// need runtime-specific library paths (e.g. `ORT_DYLIB_PATH` for
+    /// load-dynamic ONNX Runtime). Value is a path template with
+    /// `{binaries}` (this spawn's platform binaries dir) and
+    /// `{extension_dir}` placeholders. A hint applies only when the env var
+    /// is unset and the resolved file exists — absent entries are skipped,
+    /// so variant builds (jetson/cuda) can ship conditional libraries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_hints: Option<HashMap<String, String>>,
 }
 
 fn default_abi_version() -> u32 {
