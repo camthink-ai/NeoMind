@@ -259,6 +259,6 @@ fn get_frontend_manifest() -> FrontendManifest {
 
 See the following extensions for complete examples:
 
-- `extensions/weather-forecast-v2/frontend/` - Weather card component
-- `extensions/image-analyzer-v2/frontend/` - Image analysis widget
-- `extensions/yolo-video-v2/frontend/` - Video stream panel
+- `extensions/weather-forecast/frontend/` - Weather card component
+- `extensions/image-analyzer/frontend/` - Image analysis widget
+- `extensions/yolo-video/frontend/` - Video stream panel

@@ -288,9 +288,9 @@ lto = "thin"
 扩展 ID: {category}-{name}-v{major}
 
 示例:
-- weather-forecast-v2
-- image-analyzer-v2
-- yolo-video-v2
+- weather-forecast
+- image-analyzer
+- yolo-video
 
 库文件: libneomind_extension_{name}_v{major}.{ext}
 ```
@@ -301,9 +301,9 @@ lto = "thin"
 
 | 扩展 | 类型 | 说明 |
 |------|------|------|
-| weather-forecast-v2 | Native | 天气预报 API |
-| image-analyzer-v2 | Native | YOLOv8 图像分析 |
-| yolo-video-v2 | Native | 实时视频处理 |
+| weather-forecast | Native | 天气预报 API |
+| image-analyzer | Native | YOLOv8 图像分析 |
+| yolo-video | Native | 实时视频处理 |
 
 ## WASM 扩展开发
 

@@ -197,8 +197,8 @@ def main():
 
     ext_tests = [
         TestItem("extension", "list", "列出所有扩展", "extension", ["扩展", "extension"]),
-        TestItem("extension", "get", "查看 yolo-video-v2 的详细信息", "extension", ["yolo", "video"]),
-        TestItem("extension", "status", "查看 yolo-video-v2 的运行状态", "extension", []),
+        TestItem("extension", "get", "查看 yolo-video 的详细信息", "extension", ["yolo", "video"]),
+        TestItem("extension", "status", "查看 yolo-video 的运行状态", "extension", []),
     ]
     for t in ext_tests:
         results.append(run_test(token, sid, t))

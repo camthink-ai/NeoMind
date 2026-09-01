@@ -1243,7 +1243,7 @@ ws.isConnected()
 ```tsx
 import { ExtensionStreamClient } from '@/lib/extension-stream'
 
-const client = new ExtensionStreamClient('weather-forecast-v2')
+const client = new ExtensionStreamClient('weather-forecast')
 client.connect({ /* config */ })
 client.onResult((data, dataType, sequence) => { /* handle binary data */ })
 client.onSessionClosed((stats) => { /* session ended */ })

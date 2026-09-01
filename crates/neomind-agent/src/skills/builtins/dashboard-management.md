@@ -78,7 +78,7 @@ neomind device get sensor-001
 neomind device get sensor-002
 
 # If using extension data, discover extension metrics
-neomind extension get weather-forecast-v2
+neomind extension get weather-forecast
 ```
 
 **Record the exact metric names** — you will use them in data_source binding. NEVER guess metric names.
@@ -394,7 +394,7 @@ neomind dashboard add-components <ID> --components '[
 ```bash
 # Discover both device and extension metrics
 neomind device get sensor-001
-neomind extension get weather-forecast-v2
+neomind extension get weather-forecast
 
 # Create dashboard with mixed sources
 neomind dashboard create --name 'Weather Comparison'
@@ -405,13 +405,13 @@ neomind dashboard add-components <ID> --components '[
    "display":{"unit":"°C"}},
   {"id":"outdoor","type":"value-card","title":"Outdoor Temp",
    "position":{"x":4,"y":0,"w":4,"h":2},
-   "data_source":{"type":"extension-metric","source":"extension","id":"weather-forecast-v2","field":"get_weather:temperature_c","mode":"timeseries","extensionId":"weather-forecast-v2","extensionMetric":"get_weather:temperature_c"},
+   "data_source":{"type":"extension-metric","source":"extension","id":"weather-forecast","field":"get_weather:temperature_c","mode":"timeseries","extensionId":"weather-forecast","extensionMetric":"get_weather:temperature_c"},
    "display":{"unit":"°C"}},
   {"id":"compare","type":"line-chart","title":"Temperature Comparison",
    "position":{"x":0,"y":2,"w":12,"h":4},
    "data_source":[
      {"type":"telemetry","source":"device","id":"sensor-001","field":"temperature","mode":"timeseries","sourceId":"sensor-001","metricId":"temperature","timeRange":1,"limit":50,"timeWindow":{"type":"last_24hours"}},
-     {"type":"extension-metric","source":"extension","id":"weather-forecast-v2","field":"get_weather:temperature_c","mode":"timeseries","extensionId":"weather-forecast-v2","extensionMetric":"get_weather:temperature_c","timeWindow":{"type":"last_24hours"}}
+     {"type":"extension-metric","source":"extension","id":"weather-forecast","field":"get_weather:temperature_c","mode":"timeseries","extensionId":"weather-forecast","extensionMetric":"get_weather:temperature_c","timeWindow":{"type":"last_24hours"}}
    ],
    "display":{"showLegend":true}}
 ]'

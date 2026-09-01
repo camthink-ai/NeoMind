@@ -558,7 +558,7 @@ impl IsolatedExtension {
                 dir
             } else {
                 // Legacy format: parent directory IS the extension root
-                // e.g., /path/to/extensions/yolo-video-v2/extension.dylib -> /path/to/extensions/yolo-video-v2/
+                // e.g., /path/to/extensions/yolo-video/extension.dylib -> /path/to/extensions/yolo-video/
                 let dir = self.extension_path.parent().ok_or_else(|| {
                     IsolatedExtensionError::SpawnFailed(
                         "Invalid extension path - expected extension root directory".to_string(),

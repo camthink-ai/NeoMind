@@ -31,7 +31,7 @@ use neomind_storage::{ExtensionRecord, ExtensionStore};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Validate an extension ID to prevent path traversal in filesystem operations.
-/// Extension IDs are kebab-case identifiers (e.g. "weather-forecast-v2").
+/// Extension IDs are kebab-case identifiers (e.g. "weather-forecast").
 /// Rejects empty, too-long, or characters outside [a-zA-Z0-9-_].
 fn validate_extension_id(id: &str) -> Result<(), ErrorResponse> {
     if id.is_empty()
