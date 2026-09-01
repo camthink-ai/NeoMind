@@ -2526,7 +2526,7 @@ impl IsolatedExtension {
                             exit_code = status.code(),
                             "Extension process exited unexpectedly"
                         );
-                        self.kill_internal(&mut *process_guard).await;
+                        self.kill_internal(&mut process_guard).await;
                         drop(process_guard);
                         // Record crash for crash loop detection
                         self.record_crash(format!("process exited with code: {:?}", status.code()))
@@ -2561,7 +2561,7 @@ impl IsolatedExtension {
                     );
 
                     let mut process_guard = self.process.lock().await;
-                    self.kill_internal(&mut *process_guard).await;
+                    self.kill_internal(&mut process_guard).await;
                     drop(process_guard);
 
                     // Record crash for crash loop detection
