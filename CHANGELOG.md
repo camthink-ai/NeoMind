@@ -90,6 +90,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Eval case library reorg verified + regression gate extended to 33 cases**: the bilingual suite is perfectly synced post-reorg (160 ids × en/zh after this change, zero dupes/parse failures, `validate-all` 320 cases 0 failed, skill-cli drift green). Three new `surface-micro` cases (micro-rule-create / micro-channel-create / micro-device-control, en+zh) isolate single-command surface accuracy from multi-step planning noise and join the regression set; cases absent from the committed baseline run without affecting the gate verdict until `--update-baseline`. Full 33-case gate ran clean end-to-end (4 improvements / 3 flagged, all three flagged cases re-verified PASS on rerun — single-round noise floor, consistent with the gate's own ~7pp guidance to use `--rounds 2`).
 - Also: `install_budget_tests` in neomind-core gained the missing `#[cfg(test)]` gate (its `use super::*` was warning-clean only in the test target, breaking the clippy hard gate for everyone downstream).
 
+### Release-blocker repairs (found by the first green-CI push since 2026-08-29)
+- **wasmtime 36.0.13 → 36.0.14** in the lock: fixes RUSTSEC-2026-0269 (filesystem sandbox escape via trailing slashes, high severity 8.8) that started failing cargo-audit the day the advisory published. The lock had also drifted from committed manifests (sdk 0.6.6 vs lock 0.6.5), making every `--locked` invocation on the committed tree fail before running a single test.
+- **rustfmt debt repaid**: ~35 sites in the upgrade/self-update/testkit files that landed after the last green fmt run; formatted with the repo-pinned toolchain (a Homebrew toolchain shadows rustup on PATH here and formats differently — use `~/.cargo/bin/cargo +1.92.0` for local gates).
+- **linux-only clippy fix**: two `&mut *process_guard` explicit derefs in the extension kill paths trip `explicit_auto_deref` only on the linux build (cfg-dependent code), invisible to every macOS check since the hang-detection commit.
+- **Docs sweep**: extension-ID examples drop the `-v2` suffix across skill guide, SDK readmes, verification script, DESIGN_SPEC.
+
 ## [0.9.20] - 2026-08-26 — agent capability, open model catalog, Jetson
 
 ### Agent execution core — the version's reliability spine
