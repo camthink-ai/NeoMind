@@ -126,6 +126,11 @@ pub mod dynamic_metrics;
 pub mod events;
 mod ipc_types;
 
+/// Protocol-level test kit for extension development.
+/// Enable via `features = ["testkit"]` in dev-dependencies.
+#[cfg(feature = "testkit")]
+pub mod testkit;
+
 /// Stable IPC boundary types for extension communication.
 pub mod ipc {
     pub use crate::ipc_types::*;
