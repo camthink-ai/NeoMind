@@ -1,0 +1,24 @@
+{
+  "id": "micro-device-control",
+  "lang": "en",
+  "category": "surface",
+  "workflow": "surface-micro",
+  "scenario_type": "single_turn",
+  "description": "Surface micro-test: single device command, validates the device-control surface (positionals + --param k=v / --params JSON).",
+  "setup": {"fixture": "scenario-agriculture-solution"},
+  "turns": [
+    {"user": "Immediately send the set_valve command to tomato-field-valve with valve_open set to true to open the irrigation valve."}
+  ],
+  "applies": ["tool_accuracy"],
+  "expectations": {
+    "per_turn": ["Turn 1: set_valve delivered to tomato-field-valve"],
+    "overall": "Valve command sent"
+  },
+  "expect": {
+    "tools": ["shell"],
+    "commands": ["neomind device control tomato-field-valve set_valve"]
+  },
+  "state_queries": [
+    {"type": "device_command_sent", "params": {"id": "tomato-field-valve", "command": "set_valve"}, "expected": true}
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "id": "micro-channel-create",
+  "lang": "en",
+  "category": "surface",
+  "workflow": "surface-micro",
+  "scenario_type": "single_turn",
+  "description": "Surface micro-test: single channel creation, validates the channel-create command surface (--param k=v and --config JSON).",
+  "setup": {"fixture": "scenario-agriculture-solution"},
+  "turns": [
+    {"user": "Create a webhook notification channel named farmer-alerts with URL https://example.com/farm."}
+  ],
+  "applies": ["tool_accuracy"],
+  "expectations": {
+    "per_turn": ["Turn 1: farmer-alerts channel created"],
+    "overall": "Channel created"
+  },
+  "expect": {
+    "tools": ["shell"],
+    "commands": ["neomind message channel-create"]
+  },
+  "state_queries": [
+    {"type": "channel_exists", "params": {"name": "farmer-alerts"}, "expected": true}
+  ]
+}

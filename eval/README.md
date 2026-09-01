@@ -172,3 +172,31 @@ it to the subprocess.
 - Spec: `docs/superpowers/specs/2026-06-29-eval-system-design.md`
 - Plan: `docs/superpowers/plans/2026-06-29-eval-system.md` (historical —
   describes the original Rust crate architecture, now superseded by Python)
+
+## Regression gate (`run_eval.py regression`)
+
+Fast verdict gate over the curated set in `regression_set.txt` (33 cases:
+30 domain-stratified + 3 `surface-micro` single-command cases that isolate
+CLI-surface accuracy from multi-step planning noise). Resolves cases by JSON
+`id` — file location/name is irrelevant, which is what makes the case-library
+layout free to reorganize.
+
+```bash
+# CI / pre-merge gate (exit 1 on robust PASS->FAIL):
+AGENT_LLM_* ... python3 eval/run_eval.py regression --rounds 2
+
+# after merging an approved change, refresh the reference:
+AGENT_LLM_* ... python3 eval/run_eval.py regression --rounds 2 --update-baseline
+```
+
+- **Use `--rounds 2` for verdicts you act on.** Single-round runs have a
+  ~7pp noise floor (observed 2026-09-01: 3/33 flagged regressions on a
+  single round, all three PASS on rerun). A single round is fine as a
+  quick smoke during development.
+- The baseline is per-case robust: multi-round baselines demote
+  round-disagreeing cases to `None` (noisy bucket) instead of flip-flopping.
+- Cases present in the set but absent from the baseline run without
+  affecting the verdict — extend the set first, `--update-baseline` later.
+- Note: `--case-id` selection (also used internally by the gate) matches by
+  id across BOTH langs and takes the first path (en sorts before zh), so
+  the gate exercises the `en` variant of each case.

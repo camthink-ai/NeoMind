@@ -77,7 +77,8 @@ neomind message channel-types                     # List available channel types
 neomind message channel-type-schema <TYPE>        # Get config schema for a type
 neomind message channel-list                      # List all channels
 neomind message channel-get <NAME>                # Get channel details
-neomind message channel-create --name <N> --type <T> --config '<JSON>'  # Create channel
+neomind message channel-create --name <N> --type <T> --param <k>=<v>...  # Create channel (flags, preferred)
+neomind message channel-create --name <N> --type <T> --config '<JSON>'  # Create channel (full JSON form)
 neomind message channel-update <NAME> --config '<JSON>'                 # Update channel config
 neomind message channel-delete <NAME>             # Delete channel
 neomind message channel-test <NAME>               # Test channel delivery
@@ -94,8 +95,9 @@ neomind message channel-types
 # Step 2: Get config schema for the desired type
 neomind message channel-type-schema telegram
 
-# Step 3: Create the channel with proper config
-neomind message channel-create --name my-telegram --type telegram --config '{"token":"...","chat_id":"..."}'
+# Step 3: Create the channel with proper config — prefer flag form, one --param per field
+neomind message channel-create --name my-telegram --type telegram --param token=123:ABC --param chat_id=99887
+# (equivalent JSON form: --config '{"token":"123:ABC","chat_id":"99887"}')
 
 # Step 4: Test the channel
 neomind message channel-test my-telegram

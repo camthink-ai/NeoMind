@@ -1,0 +1,24 @@
+{
+  "id": "micro-rule-create",
+  "lang": "zh",
+  "category": "surface",
+  "workflow": "surface-micro",
+  "scenario_type": "single_turn",
+  "description": "表面微测：单条阈值规则，隔离多步规划噪声，只验证 rule create 命令面（flag 快车道与 --body 全形式）。",
+  "setup": {"fixture": "scenario-agriculture-solution"},
+  "turns": [
+    {"user": "给 tomato-field 创建一条告警规则：soil_moisture_pct 低于 40 就触发告警，通知消息里带上当前值。"}
+  ],
+  "applies": ["tool_accuracy"],
+  "expectations": {
+    "per_turn": ["Turn 1: 一条 tomato-field 湿度阈值规则"],
+    "overall": "规则创建成功"
+  },
+  "expect": {
+    "tools": ["shell"],
+    "commands": ["neomind rule create"]
+  },
+  "state_queries": [
+    {"type": "rule_count", "expected_min": 1}
+  ]
+}

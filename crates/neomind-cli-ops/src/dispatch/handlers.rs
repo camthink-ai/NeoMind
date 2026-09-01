@@ -229,12 +229,23 @@ pub async fn run_device_cmd(cmd: DeviceCommand) -> Result<(CliResponse, OutputFo
             id,
             command,
             params,
+            param,
         } => {
-            let params_json = if let Some(params_str) = params {
+            let mut params_json = if let Some(params_str) = params {
                 serde_json::from_str(&params_str)?
             } else {
                 serde_json::json!({})
             };
+            if !param.is_empty() {
+                let overrides =
+                    crate::kv::parse_kv_params(&param).map_err(|e| anyhow::anyhow!("{}", e))?;
+                let Some(obj) = params_json.as_object_mut() else {
+                    anyhow::bail!(
+                        "--params JSON must be an object to combine with --param key=value"
+                    );
+                };
+                obj.extend(overrides);
+            }
             (
                 control_device(&client, &id, &command, params_json).await?,
                 base_format,
@@ -496,8 +507,59 @@ pub async fn run_rule_cmd(cmd: RuleCommand) -> Result<(CliResponse, OutputFormat
     let response = match cmd {
         RuleCommand::List => list_rules(&client).await?,
         RuleCommand::Get { id } => get_rule(&client, &id).await?,
-        RuleCommand::Create { body } => create_rule(&client, &body).await?,
-        RuleCommand::Update { id, body } => update_rule(&client, &id, &body).await?,
+        RuleCommand::Create {
+            body,
+            name,
+            trigger_device,
+            metric,
+            source,
+            operator,
+            threshold,
+            notify,
+            severity,
+            cooldown,
+        } => {
+            let json_body = match body {
+                Some(b) => b,
+                None => {
+                    let Some(name) = name else {
+                        anyhow::bail!("--name is required on the flag fast path (or use --body)");
+                    };
+                    let Some(operator) = operator else {
+                        anyhow::bail!(
+                            "--operator is required on the flag fast path (or use --body)"
+                        );
+                    };
+                    let Some(threshold) = threshold else {
+                        anyhow::bail!(
+                            "--threshold is required on the flag fast path (or use --body)"
+                        );
+                    };
+                    let Some(notify) = notify else {
+                        anyhow::bail!("--notify is required on the flag fast path (or use --body)");
+                    };
+                    let fast = crate::rule::RuleFastPathArgs {
+                        name: &name,
+                        trigger_device: trigger_device.as_deref(),
+                        metric: metric.as_deref(),
+                        source: source.as_deref(),
+                        operator: &operator,
+                        threshold,
+                        notify: &notify,
+                        severity: severity.as_deref(),
+                        cooldown,
+                    };
+                    crate::rule::build_rule_body(&fast)?.to_string()
+                }
+            };
+            create_rule(&client, &json_body).await?
+        }
+        RuleCommand::Update { id, id_flag, body } => {
+            let rule_id = id.or(id_flag).ok_or_else(|| {
+                anyhow::anyhow!("rule ID is required: pass it positionally (`rule update <ID> --body ...`) or as --id <ID>")
+            })?;
+            update_rule(&client, &rule_id, &body).await?
+        }
         RuleCommand::Delete { id } => delete_rule(&client, &id).await?,
         RuleCommand::Enable { id } => enable_rule(&client, &id).await?,
         RuleCommand::Disable { id } => disable_rule(&client, &id).await?,
@@ -778,8 +840,12 @@ pub async fn run_message_cmd(cmd: MessageCommand) -> Result<(CliResponse, Output
             name,
             channel_type,
             config,
+            param,
             enabled,
-        } => create_channel(&client, &name, &channel_type, &config, enabled).await?,
+        } => {
+            let config_json = merge_channel_config(config.as_deref(), &param)?;
+            create_channel(&client, &name, &channel_type, &config_json, enabled).await?
+        }
         MessageCommand::ChannelUpdate { name, config } => {
             update_channel(&client, &name, &config).await?
         }

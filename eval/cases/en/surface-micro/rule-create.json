@@ -1,0 +1,24 @@
+{
+  "id": "micro-rule-create",
+  "lang": "en",
+  "category": "surface",
+  "workflow": "surface-micro",
+  "scenario_type": "single_turn",
+  "description": "Surface micro-test: single threshold rule, isolates command-surface accuracy from multi-step planning noise.",
+  "setup": {"fixture": "scenario-agriculture-solution"},
+  "turns": [
+    {"user": "Create an alert rule for tomato-field: trigger when soil_moisture_pct drops below 40, include the current value in the notification."}
+  ],
+  "applies": ["tool_accuracy"],
+  "expectations": {
+    "per_turn": ["Turn 1: one soil-moisture threshold rule for tomato-field"],
+    "overall": "Rule created"
+  },
+  "expect": {
+    "tools": ["shell"],
+    "commands": ["neomind rule create"]
+  },
+  "state_queries": [
+    {"type": "rule_count", "expected_min": 1}
+  ]
+}

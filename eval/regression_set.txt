@@ -28,3 +28,6 @@ llm-delete
 retail-coldchain-alarm
 rule-enable-existing
 settings-retention
+micro-rule-create
+micro-channel-create
+micro-device-control

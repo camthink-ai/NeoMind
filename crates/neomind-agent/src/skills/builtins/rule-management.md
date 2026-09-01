@@ -145,7 +145,14 @@ Before running `neomind rule create`, tick every box:
 ## Phase 4: Activate & Verify
 
 ```bash
-# Rule is ENABLED by default on creation — no separate enable step needed.
+# FAST PATH for single-metric threshold rules — flags, no JSON.
+# Rule is ENABLED by default on creation; cooldown defaults to 300000 (5 min).
+neomind rule create --name "High Temp" \
+  --trigger-device living-room-sensor --metric temperature \
+  --operator greater_than --threshold 30 \
+  --notify "Too hot: {value}"
+
+# FULL FORM for anything else (range/logical/multi-action/schedule):
 neomind rule create --body '<your_json>'
 # Note the returned rule ID.
 
@@ -155,6 +162,8 @@ neomind rule test <ID> --input '{"<metric>": <value_above_threshold>}'
 # For ongoing monitoring of when/how it fires.
 neomind rule history <ID>
 ```
+
+Fast-path variants: `--operator` accepts greater_than | less_than | greater_equal | less_equal | equal | not_equal; `--severity` (info | warning | critical | emergency, default warning) and `--cooldown <ms>` tune the notify action; non-device metrics use `--source extension:<id>:<metric>` (or `transform:<id>:<field>`) instead of `--trigger-device`/`--metric`.
 
 ## Diagnosis Flow — "Why didn't my rule fire?"
 
@@ -184,8 +193,10 @@ Run these in order. Stop at the first failure.
 ```bash
 neomind rule list                         # all rules
 neomind rule get <ID>                     # inspect one
-neomind rule create --body '<JSON>'       # create (enabled by default)
-neomind rule update <ID> --body '<JSON>'  # modify fields
+neomind rule create --name <N> --trigger-device <D> --metric <M> --operator <OP> --threshold <V> --notify <MSG>
+                                          # fast path: single-metric threshold rule (flags)
+neomind rule create --body '<JSON>'       # full form: range/logical/multi-action (enabled by default)
+neomind rule update <ID> --body '<JSON>'  # modify fields (ID also accepted as --id <ID>)
 neomind rule enable <ID>                  # re-enable a paused rule
 neomind rule disable <ID>                 # pause without deleting
 neomind rule delete <ID>                  # permanent removal

@@ -297,6 +297,16 @@ pub fn build_cli_command(original_tool_name: &str, arguments: &Value) -> Option<
         return None;
     }
 
+    // Repair-hit counter: the model emitted a structured domain tool call
+    // (e.g. {"action":"control","device_id":...}) instead of a shell command
+    // string, and this rewrite bails it out. Per-domain hit rates from logs
+    // rank which surfaces most need typed flags.
+    tracing::debug!(
+        target: "neomind::agent::mapper",
+        tool = %original_tool_name,
+        "structured tool call rewritten to CLI command string"
+    );
+
     // Use existing parameter mapping to normalize args (infer action, rename keys, etc.)
     let mapped = map_tool_parameters(original_tool_name, arguments);
     let obj = mapped.as_object()?;

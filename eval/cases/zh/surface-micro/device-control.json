@@ -1,0 +1,24 @@
+{
+  "id": "micro-device-control",
+  "lang": "zh",
+  "category": "surface",
+  "workflow": "surface-micro",
+  "scenario_type": "single_turn",
+  "description": "表面微测：单设备控制命令，只验证 device control 命令面（位置参数 + --param k=v / --params JSON）。",
+  "setup": {"fixture": "scenario-agriculture-solution"},
+  "turns": [
+    {"user": "立刻给 tomato-field-valve 发送 set_valve 命令，把 valve_open 设为 true 打开灌溉阀。"}
+  ],
+  "applies": ["tool_accuracy"],
+  "expectations": {
+    "per_turn": ["Turn 1: set_valve 命令送达 tomato-field-valve"],
+    "overall": "阀门命令发送成功"
+  },
+  "expect": {
+    "tools": ["shell"],
+    "commands": ["neomind device control tomato-field-valve set_valve"]
+  },
+  "state_queries": [
+    {"type": "device_command_sent", "params": {"id": "tomato-field-valve", "command": "set_valve"}, "expected": true}
+  ]
+}

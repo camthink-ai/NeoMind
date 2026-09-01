@@ -1,0 +1,24 @@
+{
+  "id": "micro-channel-create",
+  "lang": "zh",
+  "category": "surface",
+  "workflow": "surface-micro",
+  "scenario_type": "single_turn",
+  "description": "表面微测：单频道创建，只验证 channel-create 命令面（--param k=v 与 --config JSON）。",
+  "setup": {"fixture": "scenario-agriculture-solution"},
+  "turns": [
+    {"user": "创建一个名叫 farmer-alerts 的 webhook 通知频道，URL 是 https://example.com/farm。"}
+  ],
+  "applies": ["tool_accuracy"],
+  "expectations": {
+    "per_turn": ["Turn 1: farmer-alerts 频道创建"],
+    "overall": "频道创建成功"
+  },
+  "expect": {
+    "tools": ["shell"],
+    "commands": ["neomind message channel-create"]
+  },
+  "state_queries": [
+    {"type": "channel_exists", "params": {"name": "farmer-alerts"}, "expected": true}
+  ]
+}

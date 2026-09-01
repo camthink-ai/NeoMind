@@ -56,6 +56,117 @@ pub async fn get_rule(client: &ApiClient, id: &str) -> Result<CliResponse> {
     Ok(CliResponse::success(data, "Rule retrieved"))
 }
 
+/// Flat flags from `rule create`'s fast path (single-metric threshold rule).
+pub struct RuleFastPathArgs<'a> {
+    pub name: &'a str,
+    pub trigger_device: Option<&'a str>,
+    pub metric: Option<&'a str>,
+    pub source: Option<&'a str>,
+    pub operator: &'a str,
+    pub threshold: f64,
+    pub notify: &'a str,
+    pub severity: Option<&'a str>,
+    pub cooldown: Option<u64>,
+}
+
+/// Canonical comparison operators accepted by the rule engine, plus the
+/// common aliases models reach for. Anything else is an error that lists the
+/// valid spellings (the eval showed alias invention, not typo correction,
+/// is the failure mode worth catching).
+const OPERATORS: &[(&str, &str)] = &[
+    ("greater_than", "greater_than"),
+    (">", "greater_than"),
+    ("gt", "greater_than"),
+    ("less_than", "less_than"),
+    ("<", "less_than"),
+    ("lt", "less_than"),
+    ("greater_equal", "greater_equal"),
+    (">=", "greater_equal"),
+    ("gte", "greater_equal"),
+    ("less_equal", "less_equal"),
+    ("<=", "less_equal"),
+    ("lte", "less_equal"),
+    ("equal", "equal"),
+    ("==", "equal"),
+    ("eq", "equal"),
+    ("not_equal", "not_equal"),
+    ("!=", "not_equal"),
+    ("ne", "not_equal"),
+];
+
+const SEVERITIES: &[&str] = &["info", "warning", "critical", "emergency"];
+
+/// Default cooldown for notify rules created via the fast path. The skill
+/// guide mandates an explicit cooldown to prevent alert storms; baking the
+/// default here means models can't forget it.
+const DEFAULT_COOLDOWN_MS: u64 = 300_000;
+
+/// Build the rule JSON body from `rule create` flat flags.
+///
+/// Pure — no I/O, directly unit-testable. Produces the canonical
+/// single-comparison, single-notify-action shape; complex rules go through
+/// `--body` instead.
+pub fn build_rule_body(args: &RuleFastPathArgs<'_>) -> Result<serde_json::Value> {
+    let operator = OPERATORS
+        .iter()
+        .find(|(alias, _)| *alias == args.operator)
+        .map(|(_, canonical)| canonical.to_string())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "invalid --operator '{}': valid values are greater_than | less_than | greater_equal | less_equal | equal | not_equal",
+                args.operator
+            )
+        })?;
+
+    let severity = match args.severity {
+        Some(s) => {
+            if SEVERITIES.contains(&s) {
+                s.to_string()
+            } else {
+                anyhow::bail!(
+                    "invalid --severity '{}': valid values are {}",
+                    s,
+                    SEVERITIES.join(" | ")
+                );
+            }
+        }
+        None => "warning".to_string(),
+    };
+
+    let source = match (args.trigger_device, args.metric, args.source) {
+        (Some(device), Some(metric), None) => format!("device:{}:{}", device, metric),
+        (None, None, Some(source)) => {
+            let parts: Vec<&str> = source.split(':').collect();
+            let valid =
+                parts.len() >= 3 && matches!(parts[0], "device" | "extension" | "transform");
+            if !valid {
+                anyhow::bail!(
+                    "invalid --source '{}': must be device:<id>:<metric>, extension:<id>:<metric>, or transform:<id>:<field>",
+                    source
+                );
+            }
+            source.to_string()
+        }
+        _ => anyhow::bail!("provide either --trigger-device + --metric, or --source"),
+    };
+
+    Ok(json!({
+        "name": args.name,
+        "condition": {
+            "condition_type": "comparison",
+            "source": source,
+            "operator": operator,
+            "threshold": args.threshold,
+        },
+        "cooldown": args.cooldown.unwrap_or(DEFAULT_COOLDOWN_MS),
+        "actions": [{
+            "type": "notify",
+            "message": args.notify,
+            "severity": severity,
+        }],
+    }))
+}
+
 /// Create a new rule via JSON body.
 ///
 /// Accepts a raw JSON string that is forwarded to the API.
@@ -153,4 +264,82 @@ pub async fn test_rule(
 pub async fn get_rule_history(client: &ApiClient, id: &str) -> Result<CliResponse> {
     let data = client.get(&format!("/rules/{}/history", id)).await?;
     Ok(CliResponse::success(data, "Rule history retrieved"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fast_args() -> RuleFastPathArgs<'static> {
+        RuleFastPathArgs {
+            name: "High CO2",
+            trigger_device: Some("meeting-room-a"),
+            metric: Some("co2_ppm"),
+            source: None,
+            operator: "greater_than",
+            threshold: 1000.0,
+            notify: "CO2 high: {value}",
+            severity: None,
+            cooldown: None,
+        }
+    }
+
+    #[test]
+    fn builds_canonical_comparison_rule() {
+        let body = build_rule_body(&fast_args()).unwrap();
+        assert_eq!(body["name"], "High CO2");
+        assert_eq!(body["condition"]["source"], "device:meeting-room-a:co2_ppm");
+        assert_eq!(body["condition"]["operator"], "greater_than");
+        assert_eq!(body["condition"]["threshold"], 1000.0);
+        assert_eq!(body["cooldown"], 300_000);
+        assert_eq!(body["actions"][0]["severity"], "warning");
+    }
+
+    #[test]
+    fn accepts_source_form_for_extension_metrics() {
+        let mut args = fast_args();
+        args.trigger_device = None;
+        args.metric = None;
+        args.source = Some("extension:yolo-v2:roi_count");
+        let body = build_rule_body(&args).unwrap();
+        assert_eq!(body["condition"]["source"], "extension:yolo-v2:roi_count");
+    }
+
+    #[test]
+    fn maps_operator_aliases_to_canonical() {
+        let mut args = fast_args();
+        args.operator = ">=";
+        assert_eq!(
+            build_rule_body(&args).unwrap()["condition"]["operator"],
+            "greater_equal"
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_operator_with_valid_list() {
+        let mut args = fast_args();
+        args.operator = "above";
+        let err = build_rule_body(&args).unwrap_err().to_string();
+        assert!(err.contains("greater_than | less_than"), "{}", err);
+    }
+
+    #[test]
+    fn rejects_bad_severity_and_source() {
+        let mut args = fast_args();
+        args.severity = Some("urgent");
+        assert!(build_rule_body(&args).is_err());
+
+        let mut args = fast_args();
+        args.trigger_device = None;
+        args.metric = None;
+        args.source = Some("sensor-1:temp");
+        assert!(build_rule_body(&args).is_err());
+    }
+
+    #[test]
+    fn explicit_cooldown_wins() {
+        let mut args = fast_args();
+        args.cooldown = Some(60_000);
+        assert_eq!(build_rule_body(&args).unwrap()["cooldown"], 60_000);
+    }
 }

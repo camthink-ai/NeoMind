@@ -1624,6 +1624,7 @@ mod data_dir_tests {
     }
 }
 
+#[cfg(test)]
 mod install_budget_tests {
     use super::*;
 

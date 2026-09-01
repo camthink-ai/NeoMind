@@ -493,7 +493,7 @@ pub enum ExtensionCommand {
     /// Install a .nep extension package.
     ///
     /// Installs from a local file path. The extension is loaded immediately.
-    /// Example: `neomind extension install ./weather-forecast-v2.nep`
+    /// Example: `neomind extension install ./weather-forecast.nep`
     Install {
         /// Path to the .nep file or URL.
         #[arg(required = true)]
@@ -757,9 +757,10 @@ pub enum DeviceCommand {
     ///
     /// Workflow:
     ///   1. `device get <ID>` — check available commands
-    ///   2. `device control <ID> <command> --params '<json>'`
+    ///   2. `device control <ID> <command> --param key=value` (repeatable)
+    ///      or `device control <ID> <command> --params '<json>'`
     ///
-    /// Example: `neomind device control <ID> toggle --params '{"state":true}'`
+    /// Example: `neomind device control <ID> toggle --param state=true`
     #[command(alias = "command")]
     Control {
         /// Device ID.
@@ -771,6 +772,10 @@ pub enum DeviceCommand {
         /// Command parameters JSON. Example: '{"state":true}'
         #[arg(short, long)]
         params: Option<String>,
+        /// Command parameter as key=value. Repeatable; avoids JSON quoting.
+        /// Merged over --params when both are given.
+        #[arg(long, value_name = "KEY=VALUE")]
+        param: Vec<String>,
     },
     /// Device type management.
     Types {
@@ -1135,15 +1140,56 @@ pub enum RuleCommand {
     },
     /// Create a new rule.
     ///
-    /// Uses JSON format for rule definition. Must include name, condition, and actions.
-    /// Example: `neomind rule create --body '{"name":"Alert","condition":{...},"actions":[...]}'`
+    /// Fast path for single-metric threshold rules (flags, no JSON):
+    /// `neomind rule create --name "High Temp" --trigger-device sensor-1 --metric temperature --operator greater_than --threshold 30 --notify "Too hot: {value}"`
+    ///
+    /// Full JSON form for complex rules (range/logical/multi-action):
+    /// `neomind rule create --body '{"name":"Alert","condition":{...},"actions":[...]}'`
+    #[command(subcommand_help_heading = None)]
     Create {
-        /// Rule definition as JSON string.
+        /// Rule definition as JSON string (full form).
         /// Required fields: name, condition (optional for schedule/manual), actions.
         /// Conditions: {"condition_type":"comparison","source":"device:sensor1:temp","operator":"greater_than","threshold":30}
         /// Actions: [{"type":"notify","message":"Too hot","severity":"critical"}]
-        #[arg(short, long)]
-        body: String,
+        #[arg(
+            short,
+            long,
+            conflicts_with_all = [
+                "name", "trigger_device", "source", "metric", "operator", "threshold", "notify",
+                "severity", "cooldown"
+            ]
+        )]
+        body: Option<String>,
+        /// Rule name.
+        #[arg(short, long, required_unless_present = "body")]
+        name: Option<String>,
+        /// Device whose metric the rule watches. Builds source `device:<ID>:<metric>`.
+        #[arg(long, requires = "metric", conflicts_with = "source")]
+        trigger_device: Option<String>,
+        /// Metric name on the trigger device (must match `device get` metric_fields).
+        #[arg(long, requires = "trigger_device")]
+        metric: Option<String>,
+        /// Full source form when the metric is not device-based:
+        /// `extension:<ext_id>:<metric>` or `transform:<transform_id>:<field>`.
+        #[arg(long, conflicts_with = "trigger_device")]
+        source: Option<String>,
+        /// Comparison operator: greater_than | less_than | greater_equal |
+        /// less_equal | equal | not_equal.
+        #[arg(long, required_unless_present = "body")]
+        operator: Option<String>,
+        /// Threshold value to compare the metric against.
+        #[arg(long, required_unless_present = "body")]
+        threshold: Option<f64>,
+        /// Notify action message. Supports `{value}` and `{source_id}` placeholders.
+        #[arg(long, required_unless_present = "body")]
+        notify: Option<String>,
+        /// Notify severity: info | warning | critical | emergency (default: warning).
+        #[arg(long, requires = "notify")]
+        severity: Option<String>,
+        /// Cooldown in ms between triggers (default: 300000 = 5 min, guards
+        /// against alert storms).
+        #[arg(long)]
+        cooldown: Option<u64>,
     },
     /// Update rule.
     ///
@@ -1151,10 +1197,15 @@ pub enum RuleCommand {
     /// Test first with `rule test <ID> --input '...'` to verify new conditions.
     ///
     /// Example: `neomind rule update rule-001 --body '{"name":"New Name"}'`
+    /// The ID may also be passed as a flag: `--id rule-001` (models coming
+    /// off a `rule create` response reach for this form).
     Update {
-        /// Rule ID.
-        #[arg(required = true)]
-        id: String,
+        /// Rule ID (positional).
+        #[arg(required_unless_present = "id_flag")]
+        id: Option<String>,
+        /// Rule ID (flag form — exactly one of this or the positional).
+        #[arg(long = "id", value_name = "ID", conflicts_with = "id")]
+        id_flag: Option<String>,
         /// Updated rule definition as JSON string.
         #[arg(short, long)]
         body: String,
@@ -1812,7 +1863,8 @@ pub enum MessageCommand {
     ///   slack:    '{"webhook_url":"https://hooks.slack.com/services/T00/B00/xxx"}'
     ///   feishu:   '{"hook_id":"xxxxxxxx","secret":"optional_sign_secret"}'
     ///
-    /// Example: `neomind message channel-create --name "alerts" --type webhook --config '{"url":"https://hooks.slack.com/..."}'`
+    /// Example: `neomind message channel-create --name "alerts" --type webhook --param url=https://hooks.slack.com/...`
+    /// (or `--config '{"url":"https://..."}'` for the full JSON form)
     ChannelCreate {
         /// Channel name (unique identifier).
         #[arg(long)]
@@ -1821,8 +1873,13 @@ pub enum MessageCommand {
         #[arg(long, visible_alias = "type")]
         channel_type: String,
         /// Channel config as JSON. Run `channel-type-schema <TYPE>` for field details.
-        #[arg(long)]
-        config: String,
+        #[arg(long, required_unless_present = "param")]
+        config: Option<String>,
+        /// Channel config field as key=value. Repeatable; avoids JSON quoting.
+        /// Merged over --config when both are given.
+        /// Example: --param url=https://example.com/hook --param timeout_secs=30
+        #[arg(long, value_name = "KEY=VALUE")]
+        param: Vec<String>,
         /// Enable the channel on creation (default: enabled).
         #[arg(long, default_value_t = true)]
         enabled: bool,
@@ -2383,6 +2440,49 @@ pub fn parse_duration(s: &str) -> u64 {
         num.parse::<u64>().unwrap_or(1) * 86400
     } else {
         s.parse::<u64>().unwrap_or(300)
+    }
+}
+
+#[cfg(test)]
+mod rule_update_id_flag_tests {
+    //! `rule update` accepts the ID positionally or as `--id` — models coming
+    //! off a `rule create` response habitually write `--id <uuid>` (seen in
+    //! eval traces 2026-09-01); exactly one form must be given.
+
+    use super::{Args, Command, RuleCommand};
+    use clap::Parser;
+
+    fn parse(argv: &[&str]) -> Result<Option<String>, String> {
+        Args::try_parse_from(["neomind"].into_iter().chain(argv.iter().copied()))
+            .map(|a| match a.command {
+                Command::Rule {
+                    rule_cmd: RuleCommand::Update { id, id_flag, .. },
+                } => id.or(id_flag),
+                _ => None,
+            })
+            .map_err(|e| e.to_string())
+    }
+
+    #[test]
+    fn positional_form_still_works() {
+        assert_eq!(
+            parse(&["rule", "update", "rule-001", "--body", "{}"]).unwrap(),
+            Some("rule-001".to_string())
+        );
+    }
+
+    #[test]
+    fn id_flag_form_parses() {
+        assert_eq!(
+            parse(&["rule", "update", "--id", "d4b69717-3b90", "--body", "{}"]).unwrap(),
+            Some("d4b69717-3b90".to_string())
+        );
+    }
+
+    #[test]
+    fn both_forms_conflict_and_neither_fails() {
+        assert!(parse(&["rule", "update", "rule-001", "--id", "other", "--body", "{}"]).is_err());
+        assert!(parse(&["rule", "update", "--body", "{}"]).is_err());
     }
 }
 

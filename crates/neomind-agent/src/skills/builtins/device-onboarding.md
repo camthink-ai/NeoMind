@@ -45,12 +45,16 @@ To send a command to a device (stop, set speed, alarm, reboot, ...):
 
 1. **Always inspect first**: `neomind device get <id>` — its output lists the device's supported commands. Do NOT guess a command name.
 2. **Send with the correct argument order**: `neomind device control <id> <COMMAND>` — the device ID comes FIRST, the command name SECOND. (Common mistake: writing the command before the ID, or `device <command> <id>`. The subcommand is `control`, not the command name.)
-3. Optional params: `neomind device control <id> <COMMAND> --params '{"key":"value"}'`.
+3. Optional params — prefer the repeatable flag form (no JSON quoting):
+   `neomind device control <id> <COMMAND> --param key=value --param key2=value2`.
+   Numbers/booleans are auto-detected (`--param state=true --param speed=2`).
+   The JSON form also works: `--params '{"key":"value"}'`.
 
 Example:
 ```bash
 neomind device get pump-A            # → shows stop / set_speed / calibrate
 neomind device control pump-A stop   # → sends stop (ID first, command second)
+neomind device control pump-A set_speed --param speed=2
 ```
 
 If `device get` shows the command is NOT defined for the device's template, tell the user it isn't available — do not fabricate a success.
@@ -374,7 +378,7 @@ Yes! Any topic works. NeoMind auto-discovers data from any topic.
 
 ### "How do I send commands to a device?"
 ```bash
-neomind device control <ID> <command> --params '<json>'
+neomind device control <ID> <command> --param key=value
 ```
 Commands are sent via MQTT to `{device_topic}/command` or `{device_topic}/downlink`.
 
@@ -407,7 +411,7 @@ These typically require a **gateway** that translates the protocol to MQTT or HT
 | `neomind device delete <ID>` | Delete device |
 | `neomind device get <ID>` | Get device details (metrics + commands) |
 | `neomind device history <ID> [--metric <M>] [--time-range <R>]` | Telemetry history |
-| `neomind device control <ID> <CMD> [--params '<JSON>']` | Send command |
+| `neomind device control <ID> <CMD> [--param k=v]... [--params '<JSON>']` | Send command |
 | `neomind device types list` | List device types |
 | `neomind device types create --name <N> --metrics '<JSON>'` | Create device type |
 | `neomind device types get <ID>` | Get device type details |

@@ -53,7 +53,17 @@ impl std::error::Error for DispatchError {}
 pub async fn dispatch(argv: &[String]) -> Result<CliResponse, DispatchError> {
     let parsed = match Args::try_parse_from(argv.iter()) {
         Ok(args) => args,
-        Err(e) => return Err(DispatchError::Parse(e.to_string())),
+        Err(e) => {
+            // First-shot flag errors from the agent's shell tool land here.
+            // Counted from logs to rank which commands need surface fixes.
+            tracing::warn!(
+                target: "neomind::cli_dispatch",
+                argv = ?argv,
+                error = %e,
+                "clap parse error"
+            );
+            return Err(DispatchError::Parse(e.to_string()));
+        }
     };
 
     match parsed.command {
