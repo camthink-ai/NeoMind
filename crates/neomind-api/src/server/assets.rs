@@ -246,8 +246,13 @@ pub fn configure_static_file_serving<S>(router: Router<S>) -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
 {
+    // A single catch-all serves everything. A dedicated `/assets/*path` route
+    // used to sit here, but axum's `Path<String>` extracts ONLY the wildcard
+    // segment — for `/assets/index.js` that is `index.js` without the
+    // `assets/` prefix — so `Assets::get` missed every hashed asset and the
+    // SPA fell back to a 404 index (blank page). The catch-all captures the
+    // full path and matches `/assets/...` equally well.
     let static_routes = Router::new()
-        .route("/assets/*path", get(serve_asset))
         .route("/*path", get(serve_asset))
         .route("/", get(serve_index));
     router.merge(static_routes)
