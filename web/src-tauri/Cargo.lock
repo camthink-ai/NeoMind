@@ -4364,7 +4364,7 @@ dependencies = [
 
 [[package]]
 name = "neomind-extension-sdk"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "async-trait",
  "base64 0.22.1",

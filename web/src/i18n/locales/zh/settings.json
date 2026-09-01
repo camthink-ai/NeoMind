@@ -368,7 +368,7 @@
   "backupNowDone": "备份已创建",
   "marketSource": "扩展市场源",
   "marketSourceUrl": "市场源地址",
-  "marketSourceDesc": "扩展市场的基础 URL。默认地址(raw.githubusercontent.com)无法访问时可切换镜像,例如 https://ghfast.top/https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions。注意:切换后包完整性校验针对镜像源的产物生效。",
+  "marketSourceDesc": "默认源不可访问时可换镜像，如：https://ghfast.top/https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions（完整性校验以镜像产物为准）",
   "marketSourceDefault": "当前使用默认源",
   "marketSourceCustom": "当前使用自定义源",
   "marketSourceReset": "恢复默认",
