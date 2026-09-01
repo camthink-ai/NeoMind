@@ -111,7 +111,10 @@ pub fn web_tarball_url(version: &str) -> String {
 /// (tag has no leading `v`; body is markdown, may be absent).
 pub async fn github_latest_release(client: &reqwest::Client) -> Result<(String, Option<String>)> {
     let resp: serde_json::Value = client
-        .get(format!("https://api.github.com/repos/{}/releases/latest", REPO))
+        .get(format!(
+            "https://api.github.com/repos/{}/releases/latest",
+            REPO
+        ))
         .send()
         .await?
         .error_for_status()
@@ -270,9 +273,7 @@ pub fn run_shell(sudo: Option<&str>, args: &[&str]) -> Result<()> {
             c
         }
         None => {
-            let (first, rest) = args
-                .split_first()
-                .ok_or_else(|| anyhow!("empty command"))?;
+            let (first, rest) = args.split_first().ok_or_else(|| anyhow!("empty command"))?;
             let mut c = std::process::Command::new(first);
             c.args(rest);
             c
@@ -293,7 +294,12 @@ pub fn sudo_prefix() -> Option<String> {
         .arg("-u")
         .output()
         .ok()
-        .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<u32>().ok())
+        .and_then(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .trim()
+                .parse::<u32>()
+                .ok()
+        })
         .map(|u| u == 0)
         .unwrap_or(false);
     if is_root {
@@ -339,7 +345,12 @@ pub fn apply_binaries(
     if cur_bin.exists() {
         run_shell(
             sudo,
-            &["cp", "-a", &cur_bin.to_string_lossy(), &bak_bin.to_string_lossy()],
+            &[
+                "cp",
+                "-a",
+                &cur_bin.to_string_lossy(),
+                &bak_bin.to_string_lossy(),
+            ],
         )?;
     }
     if new_runner.is_some() && cur_runner.exists() {

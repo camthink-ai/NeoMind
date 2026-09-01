@@ -157,7 +157,9 @@ pub async fn run_upgrade(version: Option<String>, yes: bool) -> Result<()> {
             eprintln!("⚠️ service did not come back up — check: sudo systemctl status neomind");
         }
     } else {
-        println!("✅ neomind upgraded to v{target} (no systemd service detected — restart manually)");
+        println!(
+            "✅ neomind upgraded to v{target} (no systemd service detected — restart manually)"
+        );
     }
     print_rollback_hint(&install_dir, &outcome);
     Ok(())
@@ -191,10 +193,9 @@ pub fn run_apply_staged() -> Result<()> {
         .map(str::to_string);
 
     let manifest_path = find_staged_manifest(&staging_root, wanted_version.as_deref())?;
-    let manifest: up::StagingManifest = serde_json::from_str(&std::fs::read_to_string(
-        &manifest_path,
-    )?)
-    .context("staging manifest is not valid JSON")?;
+    let manifest: up::StagingManifest =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path)?)
+            .context("staging manifest is not valid JSON")?;
     let staging = manifest_path
         .parent()
         .ok_or_else(|| anyhow!("staging manifest has no parent dir"))?
@@ -290,7 +291,11 @@ fn find_staged_manifest(root: &std::path::Path, wanted: Option<&str>) -> Result<
                 return Ok(manifest);
             }
         }
-        if newest.as_ref().map(|(t, _)| m.staged_at > *t).unwrap_or(true) {
+        if newest
+            .as_ref()
+            .map(|(t, _)| m.staged_at > *t)
+            .unwrap_or(true)
+        {
             newest = Some((m.staged_at, manifest));
         }
     }
@@ -367,7 +372,10 @@ pub async fn run_uninstall(purge: bool, yes: bool) -> Result<()> {
     // 3. Remove the binaries (current + .bak rollback copies) from the install dir.
     let dir = up::install_dir_from_exe();
     println!("Removing binaries from {}", dir.display());
-    let _ = up::run_shell(sudo.as_deref(), &["rm", "-f", &dir.join("neomind").to_string_lossy()]);
+    let _ = up::run_shell(
+        sudo.as_deref(),
+        &["rm", "-f", &dir.join("neomind").to_string_lossy()],
+    );
     let _ = up::run_shell(
         sudo.as_deref(),
         &[
@@ -378,7 +386,11 @@ pub async fn run_uninstall(purge: bool, yes: bool) -> Result<()> {
     );
     let _ = up::run_shell(
         sudo.as_deref(),
-        &["sh", "-c", &format!("rm -f {}/neomind*.bak*", dir.display())],
+        &[
+            "sh",
+            "-c",
+            &format!("rm -f {}/neomind*.bak*", dir.display()),
+        ],
     );
 
     // 4. Optional purge of data + web.
@@ -393,9 +405,7 @@ pub async fn run_uninstall(purge: bool, yes: bool) -> Result<()> {
 
     println!("✅ NeoMind uninstalled.");
     if !purge {
-        println!(
-            "(data dir {DATA_DIR} retained — remove manually or re-run with --purge)"
-        );
+        println!("(data dir {DATA_DIR} retained — remove manually or re-run with --purge)");
     }
     Ok(())
 }

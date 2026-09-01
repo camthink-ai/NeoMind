@@ -57,7 +57,9 @@ impl Extension for TestExtension {
 
         match command {
             "echo" => Ok(json!({"echo": args})),
-            "fail" => Err(ExtensionError::ExecutionFailed("intentional failure".into())),
+            "fail" => Err(ExtensionError::ExecutionFailed(
+                "intentional failure".into(),
+            )),
             _ => Err(ExtensionError::CommandNotFound(command.to_string())),
         }
     }
@@ -120,7 +122,11 @@ async fn test_event_injection() {
         .await
         .expect("event should process");
 
-    assert!(duration.as_millis() < 100, "event processing should be <100ms, got {:?}", duration);
+    assert!(
+        duration.as_millis() < 100,
+        "event processing should be <100ms, got {:?}",
+        duration
+    );
 }
 
 #[tokio::test]
@@ -162,8 +168,14 @@ async fn test_timeout_actually_times_out() {
 async fn test_capability_recording() {
     let recorder = CapabilityRecorder::new();
 
-    recorder.record("device_metrics_write", &json!({"device_id": "d1", "metric": "temp", "value": 25}));
-    recorder.record("device_metrics_write", &json!({"device_id": "d1", "metric": "hum", "value": 60}));
+    recorder.record(
+        "device_metrics_write",
+        &json!({"device_id": "d1", "metric": "temp", "value": 25}),
+    );
+    recorder.record(
+        "device_metrics_write",
+        &json!({"device_id": "d1", "metric": "hum", "value": 60}),
+    );
     recorder.record("event_publish", &json!({"event_type": "test"}));
 
     assert_eq!(recorder.call_count(), 3);
@@ -190,12 +202,16 @@ async fn test_capability_mock_programming() {
 
     // Programmed success
     provider.set_response("some_capability", json!({"custom": true}));
-    let result = provider.invoke("some_capability", &json!({"x": 2})).unwrap();
+    let result = provider
+        .invoke("some_capability", &json!({"x": 2}))
+        .unwrap();
     assert_eq!(result["custom"], true);
 
     // Programmed failure
     provider.set_error("some_capability", "simulated failure");
-    let err = provider.invoke("some_capability", &json!({"x": 3})).unwrap_err();
+    let err = provider
+        .invoke("some_capability", &json!({"x": 3}))
+        .unwrap_err();
     assert!(err.contains("simulated failure"));
 
     // Recording happened for all calls
@@ -221,15 +237,11 @@ async fn test_concurrent_event_injection() {
 
     // Inject events while running a command — should not deadlock
     let result = kit
-        .with_concurrent_events(
-            "test-device",
-            std::time::Duration::from_millis(10),
-            async {
-                // Simulate concurrent work
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                "concurrent work done"
-            },
-        )
+        .with_concurrent_events("test-device", std::time::Duration::from_millis(10), async {
+            // Simulate concurrent work
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            "concurrent work done"
+        })
         .await
         .expect("should not deadlock");
 

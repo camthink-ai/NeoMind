@@ -233,7 +233,10 @@ impl UpgradeState {
         if deployment != DeploymentEnv::Systemd {
             return (
                 false,
-                format!("upgrade not supported in deployment '{}'", deployment.as_str()),
+                format!(
+                    "upgrade not supported in deployment '{}'",
+                    deployment.as_str()
+                ),
             );
         }
         if !env::helper_available() {
@@ -340,7 +343,8 @@ async fn run_staged_upgrade(
                 shared.total.store(t, Ordering::SeqCst);
             }
             let now = now_epoch_ms();
-            let throttle = now.saturating_sub(last_publish_ms) < EVENT_THROTTLE_MS && last_publish_ms != 0;
+            let throttle =
+                now.saturating_sub(last_publish_ms) < EVENT_THROTTLE_MS && last_publish_ms != 0;
             if throttle {
                 return;
             }
@@ -360,7 +364,15 @@ async fn run_staged_upgrade(
 
     // 3. Extract + verify (blocking work off the async threads).
     shared.set_phase(phase::VERIFYING);
-    publish_progress(&event_bus, phase::VERIFYING, Some(&target), None, None, None, None);
+    publish_progress(
+        &event_bus,
+        phase::VERIFYING,
+        Some(&target),
+        None,
+        None,
+        None,
+        None,
+    );
     let staging_for_block = staging.clone();
     let extracted = tokio::task::spawn_blocking(move || -> Result<PathBuf> {
         common::extract_tar_gz(&tarball, &staging_for_block)?;
@@ -388,9 +400,11 @@ async fn run_staged_upgrade(
     };
     let verify_bin = new_bin.clone();
     let verify_target = target.clone();
-    let vstr = tokio::task::spawn_blocking(move || common::verify_binary_version(&verify_bin, &verify_target))
-        .await
-        .context("verify task panicked")??;
+    let vstr = tokio::task::spawn_blocking(move || {
+        common::verify_binary_version(&verify_bin, &verify_target)
+    })
+    .await
+    .context("verify task panicked")??;
     tracing::info!(version = %vstr, "web upgrade: staged binary verified");
 
     // 4. Stage the web tarball too when the server actually serves one.
@@ -406,7 +420,8 @@ async fn run_staged_upgrade(
                 shared.total.store(t, Ordering::SeqCst);
             }
             let now = now_epoch_ms();
-            let throttle = now.saturating_sub(last_publish_ms) < EVENT_THROTTLE_MS && last_publish_ms != 0;
+            let throttle =
+                now.saturating_sub(last_publish_ms) < EVENT_THROTTLE_MS && last_publish_ms != 0;
             if throttle {
                 return;
             }
@@ -453,7 +468,15 @@ async fn run_staged_upgrade(
         .with_context(|| format!("cannot write {}", manifest_path.display()))?;
 
     shared.set_phase(phase::STAGED);
-    publish_progress(&event_bus, phase::STAGED, Some(&target), None, None, None, None);
+    publish_progress(
+        &event_bus,
+        phase::STAGED,
+        Some(&target),
+        None,
+        None,
+        None,
+        None,
+    );
 
     // 6. Hand off to the root helper by writing the trigger file the
     //    `neomind-upgrade-apply.path` unit watches. No sudo involved — the
@@ -463,7 +486,15 @@ async fn run_staged_upgrade(
     //    once the helper swaps binaries it restarts this process, and events
     //    published after that would never reach the WS.
     shared.set_phase(phase::APPLYING);
-    publish_progress(&event_bus, phase::APPLYING, Some(&target), None, None, None, None);
+    publish_progress(
+        &event_bus,
+        phase::APPLYING,
+        Some(&target),
+        None,
+        None,
+        None,
+        None,
+    );
     tokio::time::sleep(RESTART_GRACE).await;
     shared.set_phase(phase::RESTARTING);
     publish_progress(

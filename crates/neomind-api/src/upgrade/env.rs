@@ -29,7 +29,9 @@ pub enum DeploymentEnv {
 /// still allows upgrade — the apply step runs the binary directly).
 pub fn detect() -> DeploymentEnv {
     if Path::new("/.dockerenv").exists()
-        || std::env::var("NEOMIND_IN_DOCKER").map(|v| v == "1").unwrap_or(false)
+        || std::env::var("NEOMIND_IN_DOCKER")
+            .map(|v| v == "1")
+            .unwrap_or(false)
     {
         return DeploymentEnv::Docker;
     }

@@ -68,7 +68,10 @@ impl ExtensionUninstallService {
                 }
             }
             report.directory_removed = true;
-            info!("Removed extension directory (data/ preserved): {}", ext_dir.display());
+            info!(
+                "Removed extension directory (data/ preserved): {}",
+                ext_dir.display()
+            );
         }
 
         // 2. Delete from database

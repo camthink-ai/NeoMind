@@ -40,22 +40,22 @@
 //! Enable via `features = ["testkit"]` in `[dev-dependencies]`.
 
 #[cfg(feature = "testkit")]
-pub mod mock_runner;
-#[cfg(feature = "testkit")]
-pub mod mock_capability;
+pub mod assertions;
 #[cfg(feature = "testkit")]
 pub mod event_injector;
 #[cfg(feature = "testkit")]
-pub mod assertions;
+pub mod mock_capability;
+#[cfg(feature = "testkit")]
+pub mod mock_runner;
 
 #[cfg(feature = "testkit")]
-pub use mock_runner::{TestKit, TestKitConfig};
-#[cfg(feature = "testkit")]
-pub use mock_capability::{CapabilityRecorder, RecordedCall, MockCapabilityProvider};
-#[cfg(feature = "testkit")]
-pub use event_injector::{EventInjector, DeviceMetricEvent as InjectedMetric};
-#[cfg(feature = "testkit")]
 pub use assertions::{assert_event_processed_within, TimingViolation};
+#[cfg(feature = "testkit")]
+pub use event_injector::{DeviceMetricEvent as InjectedMetric, EventInjector};
+#[cfg(feature = "testkit")]
+pub use mock_capability::{CapabilityRecorder, MockCapabilityProvider, RecordedCall};
+#[cfg(feature = "testkit")]
+pub use mock_runner::{TestKit, TestKitConfig};
 
 #[cfg(all(feature = "testkit", test))]
 mod testkit_tests;

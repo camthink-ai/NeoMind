@@ -1589,7 +1589,6 @@ impl Default for InstallBudget {
     }
 }
 
-
 #[cfg(test)]
 mod data_dir_tests {
     use super::*;
@@ -1612,7 +1611,9 @@ mod data_dir_tests {
         std::fs::create_dir_all(ext_dir.join("binaries")).unwrap();
         std::fs::write(ext_dir.join("binaries/extension.dylib"), b"bin").unwrap();
 
-        ExtensionPackage::uninstall(&install_dir, "vision-hub").await.unwrap();
+        ExtensionPackage::uninstall(&install_dir, "vision-hub")
+            .await
+            .unwrap();
 
         // Package files gone…
         assert!(!ext_dir.join("manifest.json").exists());

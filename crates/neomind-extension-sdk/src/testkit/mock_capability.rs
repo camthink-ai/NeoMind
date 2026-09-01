@@ -75,7 +75,11 @@ impl CapabilityRecorder {
 
     /// Call count for a specific capability.
     pub fn count_for(&self, capability: &str) -> usize {
-        self.calls.read().iter().filter(|c| c.capability == capability).count()
+        self.calls
+            .read()
+            .iter()
+            .filter(|c| c.capability == capability)
+            .count()
     }
 
     /// Clear recorded calls (useful between test phases).

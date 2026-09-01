@@ -9,7 +9,7 @@
 //! two-phase staging design). Handlers only gate on the admin role and
 //! translate `UpgradeState` results into responses.
 
-use axum::extract::{State, Extension};
+use axum::extract::{Extension, State};
 use axum::Json;
 use serde_json::json;
 

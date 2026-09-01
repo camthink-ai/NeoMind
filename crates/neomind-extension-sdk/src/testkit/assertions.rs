@@ -34,10 +34,7 @@ macro_rules! assert_no_deadlock {
         let first = tokio::spawn($first_op);
         // Give the first operation time to acquire its locks
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        let second = tokio::time::timeout(
-            std::time::Duration::from_secs(3),
-            $second_op,
-        );
+        let second = tokio::time::timeout(std::time::Duration::from_secs(3), $second_op);
         let _ = first.await;
         match second.await {
             Ok(result) => result,

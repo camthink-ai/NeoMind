@@ -22,11 +22,11 @@ use parking_lot::RwLock;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::host::Extension;
-use crate::ipc_types::{IpcMessage, IpcResponse, ExtensionDescriptor};
+use crate::ipc_types::{ExtensionDescriptor, IpcMessage, IpcResponse};
 use crate::ExtensionMetadata;
 
-use super::mock_capability::MockCapabilityProvider;
 use super::mock_capability::CapabilityRecorder;
+use super::mock_capability::MockCapabilityProvider;
 
 /// Configuration for the test kit.
 #[derive(Debug, Clone)]
@@ -93,9 +93,8 @@ impl<E: Extension + Send + Sync + 'static> TestKit<E> {
         let (resp_tx, resp_rx) = mpsc::unbounded_channel();
 
         let capability_recorder = Arc::new(CapabilityRecorder::new());
-        let capability_provider = Arc::new(MockCapabilityProvider::new(
-            capability_recorder.clone(),
-        ));
+        let capability_provider =
+            Arc::new(MockCapabilityProvider::new(capability_recorder.clone()));
 
         Self {
             extension: Arc::new(extension),
@@ -215,22 +214,18 @@ impl<E: Extension + Send + Sync + 'static> TestKit<E> {
     }
 
     /// Produce metrics (calls through the extension's produce_metrics).
-    pub async fn produce_metrics(
-        &self,
-    ) -> Result<Vec<crate::ExtensionMetricValue>, TestKitError> {
+    pub async fn produce_metrics(&self) -> Result<Vec<crate::ExtensionMetricValue>, TestKitError> {
         let ext = self.extension.clone();
         let timeout = self.config.command_timeout;
 
-        tokio::time::timeout(timeout, async move {
-            ext.produce_metrics()
-        })
-        .await
-        .map_err(|_| TestKitError::Timeout {
-            command: "produce_metrics".to_string(),
-            elapsed: timeout,
-            timeout,
-        })?
-        .map_err(|e| TestKitError::ExtensionError(e.to_string()))
+        tokio::time::timeout(timeout, async move { ext.produce_metrics() })
+            .await
+            .map_err(|_| TestKitError::Timeout {
+                command: "produce_metrics".to_string(),
+                elapsed: timeout,
+                timeout,
+            })?
+            .map_err(|e| TestKitError::ExtensionError(e.to_string()))
     }
 
     /// Call the extension's configure method (simulates platform config push).
