@@ -1593,7 +1593,10 @@ pub async fn process_stream_events_with_safeguards(
         // Read token usage from LLM interface (captured from Ollama backend stream)
         let prompt_tokens = llm_interface.take_last_prompt_tokens().await;
         match prompt_tokens {
-            Some(pt) => yield AgentEvent::end_with_tokens(pt),
+            Some(pt) => {
+                let (system_tokens, tool_tokens) = llm_interface.estimate_prompt_breakdown().await;
+                yield AgentEvent::end_with_usage(pt, system_tokens, tool_tokens);
+            }
             None => yield AgentEvent::end(),
         }
     }))

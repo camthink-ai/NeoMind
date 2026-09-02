@@ -150,7 +150,11 @@ export type ServerMessage =
   // Error occurred - sessionId is always included when sent from backend
   | { type: 'Error'; message: string; sessionId: string }
   // Stream ended
-  | { type: 'end'; sessionId: string; tokenUsage?: { promptTokens: number } }
+  | { type: 'end'; sessionId: string; tokenUsage?: {
+      promptTokens: number
+      systemPromptTokens?: number
+      toolTokens?: number
+    } }
   // Intermediate end for multi-round tool calling (indicates more content coming)
   | { type: 'intermediate_end'; sessionId: string }
   // Non-streaming response (fallback)

@@ -18,6 +18,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useToast } from "@/hooks/use-toast"
 import type { ChatImage, LlmBackendInstance } from "@/types"
 import { cn } from "@/lib/utils"
@@ -46,8 +47,17 @@ interface ChatComposerProps {
   backends?: LlmBackendInstance[]
   activeBackendId?: string | null
   onActivateBackend?: (id: string) => void
-  // Context usage indicator — null hides it.
-  contextUsage?: { used: number; max: number } | null
+  // Context usage indicator — null hides it. The breakdown powers the hover
+  // card; parts are undefined while only a character estimate is available.
+  contextUsage?: {
+    used: number
+    max: number
+    system?: number
+    tools?: number
+    history?: number
+    estimated?: boolean
+    messageCount?: number
+  } | null
   /** Textarea max height in px (default 100, chat desktop uses 160). */
   maxHeight?: number
 }
@@ -285,16 +295,74 @@ export function ChatComposer({
             </DropdownMenu>
           )}
 
-          {/* Context usage indicator */}
+          {/* Context usage — progress ring; hover for the breakdown card */}
           {contextUsage && (() => {
-            const ratio = contextUsage.used / contextUsage.max
+            const ratio = Math.min(1, contextUsage.used / contextUsage.max)
+            const color = ratio > 0.9 ? 'var(--error)' : ratio > 0.7 ? 'var(--warning)' : 'var(--muted-foreground)'
+            const R = 7
+            const C = 2 * Math.PI * R
+            // One unit per card, decided by the window size — mixing raw
+            // tokens and K-formatted values in the same card reads as noise.
+            const useK = contextUsage.max >= 1000
+            const fmt = (n: number) => {
+              if (!useK) return String(Math.round(n))
+              if (n === 0) return '0'
+              const k = n / 1000
+              return `${k >= 10 ? k.toFixed(1) : k.toFixed(2)}K`
+            }
+            const pct = Math.round(ratio * 100)
+            const rows: Array<{ label: string; value?: number; color: string; suffix?: string }> = [
+              { label: t('chat.context.systemPrompt', 'System prompt'), value: contextUsage.system, color: 'var(--primary)' },
+              { label: t('chat.context.toolDefs', 'Tool definitions'), value: contextUsage.tools, color: 'var(--accent-cyan)' },
+              { label: t('chat.context.history', 'Conversation history'), value: contextUsage.history, color: 'var(--muted-foreground)', suffix: contextUsage.messageCount != null ? t('chat.context.msgCount', { defaultValue: ' · {{count}} msgs', count: contextUsage.messageCount }) : undefined },
+            ]
             return (
-              <span className={cn(
-                "text-xs shrink-0 transition-colors tabular-nums",
-                ratio > 0.9 ? "text-error" : ratio > 0.7 ? "text-warning" : "text-muted-foreground"
-              )}>
-                Context {(contextUsage.used / 1000).toFixed(1)}K / {(contextUsage.max / 1000).toFixed(0)}K
-              </span>
+              <TooltipProvider delayDuration={150}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className="shrink-0 flex items-center gap-1.5 text-muted-foreground hover:text-foreground transition-colors"
+                      aria-label={`${t('chat.context.title', 'Context usage')}: ${pct}%`}
+                    >
+                      <svg width="20" height="20" viewBox="0 0 20 20" className="-rotate-90">
+                        <circle cx="10" cy="10" r={R} fill="none" stroke="var(--border)" strokeWidth="2.5" />
+                        <circle
+                          cx="10" cy="10" r={R} fill="none"
+                          stroke={color} strokeWidth="2.5" strokeLinecap="round"
+                          strokeDasharray={C} strokeDashoffset={C * (1 - ratio)}
+                          className="transition-all duration-500"
+                        />
+                      </svg>
+                      <span className={cn("text-xs tabular-nums", ratio > 0.9 ? "text-error" : ratio > 0.7 ? "text-warning" : "text-muted-foreground")}>
+                        {fmt(contextUsage.used)}
+                      </span>
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" align="end" className="w-60 p-3">
+                    <p className="text-xs font-medium mb-2">
+                      {t('chat.context.title', 'Context usage')}
+                      <span className="ml-1.5 text-muted-foreground tabular-nums">
+                        {fmt(contextUsage.used)} / {fmt(contextUsage.max)} · {pct}%
+                      </span>
+                    </p>
+                    <div className="space-y-1.5">
+                      {rows.map(r => (
+                        <div key={r.label} className="flex items-center gap-2">
+                          <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: r.color }} />
+                          <span className="text-xs text-muted-foreground flex-1 truncate">{r.label}</span>
+                          <span className="text-xs tabular-nums">{(r.value != null ? fmt(r.value) : '—') + (r.suffix ?? '')}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {contextUsage.estimated && (
+                      <p className="mt-2 text-nano text-muted-foreground">
+                        {t('chat.context.estimatedHint', 'Character-based estimate — updates after the next reply')}
+                      </p>
+                    )}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             )
           })()}
 

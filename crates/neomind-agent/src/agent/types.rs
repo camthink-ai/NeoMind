@@ -59,6 +59,13 @@ pub enum AgentEvent {
         /// Prompt tokens used in this request (from LLM backend)
         #[serde(skip_serializing_if = "Option::is_none")]
         prompt_tokens: Option<u32>,
+        /// System-prompt portion of the prompt (estimated) — context-usage
+        /// breakdown for the UI.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        system_prompt_tokens: Option<u32>,
+        /// Tool-definition portion of the prompt (estimated)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tool_tokens: Option<u32>,
     },
     /// Intermediate end (for multi-round tool calling)
     /// Indicates the current round is complete but more processing is coming
@@ -181,13 +188,18 @@ impl AgentEvent {
     pub fn end() -> Self {
         Self::End {
             prompt_tokens: None,
+            system_prompt_tokens: None,
+            tool_tokens: None,
         }
     }
 
-    /// Create an end event with token usage data.
-    pub fn end_with_tokens(prompt_tokens: u32) -> Self {
+    /// Create an end event with token usage data plus the prompt breakdown
+    /// (system prompt / tool definitions) for context-usage display.
+    pub fn end_with_usage(prompt_tokens: u32, system_prompt_tokens: usize, tool_tokens: usize) -> Self {
         Self::End {
             prompt_tokens: Some(prompt_tokens),
+            system_prompt_tokens: Some(system_prompt_tokens as u32),
+            tool_tokens: Some(tool_tokens as u32),
         }
     }
 

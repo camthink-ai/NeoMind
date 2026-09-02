@@ -231,5 +231,13 @@
   "footer": {
     "disclaimer": "免责声明"
   },
-  "toolLoopProgress": "工具调用中 · 第 {{round}} 轮"
+  "toolLoopProgress": "工具调用中 · 第 {{round}} 轮",
+  "context": {
+    "title": "上下文占用",
+    "systemPrompt": "系统提示词",
+    "toolDefs": "工具定义",
+    "history": "对话历史",
+    "estimatedHint": "基于字符估算——下次回复后更新为精确值",
+    "msgCount": " · {{count}} 条"
+  }
 }

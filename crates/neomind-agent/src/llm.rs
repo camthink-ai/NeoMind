@@ -678,6 +678,19 @@ impl LlmInterface {
     /// Estimate the token overhead from system prompt + tool definitions.
     /// This is the non-history cost that must be deducted from the context window budget.
     pub async fn estimate_prompt_overhead_tokens(&self) -> usize {
+        let (prompt_tokens, tools_tokens) = self.estimate_prompt_breakdown().await;
+        let overhead = prompt_tokens + tools_tokens;
+        tracing::debug!(
+            "Prompt overhead: system_prompt={} tokens, tools={} tokens, total={} tokens",
+            prompt_tokens,
+            tools_tokens,
+            overhead
+        );
+        overhead
+    }
+
+    /// Per-part prompt overhead: (system prompt tokens, tool-definition tokens).
+    pub async fn estimate_prompt_breakdown(&self) -> (usize, usize) {
         // System prompt: build it and measure
         let system_prompt = self.build_system_prompt_with_tools(None).await;
         let prompt_tokens = crate::agent::tokenizer::estimate_tokens(&system_prompt);
@@ -705,15 +718,7 @@ impl LlmInterface {
                 .sum()
         };
 
-        let overhead = prompt_tokens + tools_tokens;
-        tracing::debug!(
-            "Prompt overhead: system_prompt={} tokens, tools={} tokens ({} tools), total={} tokens",
-            prompt_tokens,
-            tools_tokens,
-            tools.len(),
-            overhead
-        );
-        overhead
+        (prompt_tokens, tools_tokens)
     }
 
     /// Check if the current LLM backend supports multimodal (vision) input.
@@ -2085,10 +2090,21 @@ impl LlmInterface {
                     msgs.push((*msg).clone());
                 }
             } else {
-                // Find the first user message index (original question) — always preserve it
-                let original_user_idx = history_msgs
-                    .iter()
-                    .position(|m| m.role == neomind_core::MessageRole::User);
+                // Preserve-the-first-question is a SINGLE-TASK heuristic: it
+                // serves focused runs where the opening message is the task
+                // charter. In a long multi-task chat the oldest message is
+                // usually unrelated to whatever the user is doing now, and
+                // pinning it steals budget the recent context needs. Apply it
+                // only when the history is short enough to plausibly be one
+                // task (~12 messages ≈ 6 turns).
+                let preserve_original_user = history_msgs.len() <= 12;
+                let original_user_idx = if preserve_original_user {
+                    history_msgs
+                        .iter()
+                        .position(|m| m.role == neomind_core::MessageRole::User)
+                } else {
+                    None
+                };
                 let user_msg_tokens = original_user_idx
                     .map(|idx| estimate_tokens(&history_msgs[idx].content.as_text()))
                     .unwrap_or(0);

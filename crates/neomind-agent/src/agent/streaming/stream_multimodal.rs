@@ -680,7 +680,10 @@ pub async fn process_multimodal_stream_events_with_safeguards(
 
         let pt = llm_interface.take_last_prompt_tokens().await;
         match pt {
-            Some(t) => yield AgentEvent::end_with_tokens(t),
+            Some(t) => {
+                let (system_tokens, tool_tokens) = llm_interface.estimate_prompt_breakdown().await;
+                yield AgentEvent::end_with_usage(t, system_tokens, tool_tokens);
+            }
             None => yield AgentEvent::end(),
         }
     }))

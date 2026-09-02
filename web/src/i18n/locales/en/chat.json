@@ -231,5 +231,13 @@
   "footer": {
     "disclaimer": "Disclaimer"
   },
-  "toolLoopProgress": "Working · tool round {{round}}"
+  "toolLoopProgress": "Working · tool round {{round}}",
+  "context": {
+    "title": "Context usage",
+    "systemPrompt": "System prompt",
+    "toolDefs": "Tool definitions",
+    "history": "Conversation history",
+    "estimatedHint": "Character-based estimate — updates after the next reply",
+    "msgCount": " · {{count}} msgs"
+  }
 }

@@ -193,7 +193,11 @@ async fn process_stream_to_channel(
                             "sessionId": session_id,
                         })
                     }
-                    AgentEvent::End { prompt_tokens } => {
+                    AgentEvent::End {
+                        prompt_tokens,
+                        system_prompt_tokens,
+                        tool_tokens,
+                    } => {
                         // P0.3: Delete pending state on successful completion
                         let _ = session_store.delete_pending_stream(&session_id);
 
@@ -242,7 +246,9 @@ async fn process_stream_to_channel(
                         });
                         if let Some(pt) = prompt_tokens {
                             end_json["tokenUsage"] = json!({
-                                "promptTokens": pt
+                                "promptTokens": pt,
+                                "systemPromptTokens": system_prompt_tokens,
+                                "toolTokens": tool_tokens,
                             });
                         }
                         end_json

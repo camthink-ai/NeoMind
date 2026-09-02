@@ -97,7 +97,26 @@ export function ChatPage() {
   const [streamingContent, setStreamingContent] = useState("")
   const [streamingThinking, setStreamingThinking] = useState("")
   const [streamingToolCalls, setStreamingToolCalls] = useState<any[]>([])
-  const [lastTokenUsage, setLastTokenUsage] = useState<{ promptTokens: number } | null>(null)
+  const [lastTokenUsage, setLastTokenUsage] = useState<{ promptTokens: number; systemPromptTokens?: number; toolTokens?: number } | null>(null)
+
+  // Token usage survives reloads/session switches — the context it measured
+  // is unchanged until the next reply, so a restored session shows real
+  // numbers instead of falling back to the character estimate.
+  const tokenUsageKey = (sid: string) => `neomind:tokenUsage:${sid}`
+  const restoreTokenUsage = (sid: string | undefined) => {
+    if (!sid) { setLastTokenUsage(null); return }
+    try {
+      const raw = localStorage.getItem(tokenUsageKey(sid))
+      setLastTokenUsage(raw ? JSON.parse(raw) : null)
+    } catch { setLastTokenUsage(null) }
+  }
+  const persistTokenUsage = (sid: string | undefined, usage: { promptTokens: number; systemPromptTokens?: number; toolTokens?: number } | null) => {
+    if (!sid) return
+    try {
+      if (usage) localStorage.setItem(tokenUsageKey(sid), JSON.stringify(usage))
+      else localStorage.removeItem(tokenUsageKey(sid))
+    } catch { /* storage unavailable */ }
+  }
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const pageSidebarSlot = usePageSidebarSlot()
   // Track the ID of the last assistant message for tool call result updates
@@ -194,6 +213,8 @@ export function ChatPage() {
       clearMessages()
       setLastTokenUsage(null)
     }
+    // Restore the persisted per-session usage (falls back to estimate if absent)
+    restoreTokenUsage(urlSessionId)
   }, [urlSessionId, switchSession, handleError, clearMessages])
 
   // Handle deleted session redirects and root path
@@ -356,7 +377,13 @@ export function ChatPage() {
         case "end": {
           // Capture token usage from backend
           if (data.tokenUsage?.promptTokens) {
-            setLastTokenUsage({ promptTokens: data.tokenUsage.promptTokens })
+            const usage = {
+              promptTokens: data.tokenUsage.promptTokens,
+              systemPromptTokens: data.tokenUsage.systemPromptTokens,
+              toolTokens: data.tokenUsage.toolTokens,
+            }
+            setLastTokenUsage(usage)
+            persistTokenUsage(data.sessionId || urlSessionId, usage)
           }
           const toolCalls = capturedStreamingRef.current.toolCalls
           // Accumulate thinking from current round into total
@@ -694,16 +721,39 @@ export function ChatPage() {
     const activeBackend = llmBackends.find(b => b.id === activeBackendId)
     const maxContext = activeBackend?.capabilities?.max_context ?? 8192
     const promptTokens = lastTokenUsage?.promptTokens
+    // Character estimator with the backend's weights (CJK ≈1.8 tokens/char,
+    // ASCII ≈0.25/char, ×1.1 buffer) — the old chars/3 underestimated
+    // Chinese ~5x, which made the ring look like it RESET on every send
+    // (real 12K dropped to a ~2K estimate while streaming).
+    const estimateTokens = (text: string): number => {
+      let cjk = 0, ascii = 0, digits = 0, special = 0
+      for (const ch of text) {
+        const cp = ch.codePointAt(0) ?? 0
+        if ((cp >= 0x4e00 && cp <= 0x9fff) || (cp >= 0x3400 && cp <= 0x4dbf) || (cp >= 0x3000 && cp <= 0x303f) || (cp >= 0xff00 && cp <= 0xffef)) cjk++
+        else if (ch >= '0' && ch <= '9') digits++
+        else if (/[a-zA-Z]/.test(ch)) ascii++
+        else special++
+      }
+      return Math.ceil((cjk * 1.8 + ascii * 0.25 + digits * 0.3 + special * 0.5) * 1.1)
+    }
     let used: number
     if (promptTokens != null && !isStreaming) {
       used = promptTokens
     } else {
-      const msgChars = messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0)
-      const streamChars = (streamingContent?.length ?? 0) + (streamingThinking?.length ?? 0)
-        + streamingToolCalls.reduce((s, tc) => s + (tc.arguments?.length ?? 0) + (tc.result?.length ?? 0), 0)
-      used = Math.ceil((msgChars + streamChars) / 3)
+      const corpus = messages.map(m => m.content ?? '').join('\n') + '\n' + (streamingContent ?? '') + (streamingThinking ?? '')
+        + streamingToolCalls.map(tc => (tc.arguments ?? '') + (tc.result ?? '')).join('')
+      used = estimateTokens(corpus)
+      // While streaming with a known real baseline, never dip below it — the
+      // in-flight request's context is at least the last measured prompt.
+      if (promptTokens != null) used = Math.max(used, promptTokens)
     }
-    return { used, max: maxContext }
+    const system = lastTokenUsage?.systemPromptTokens
+    const tools = lastTokenUsage?.toolTokens
+    const history = system != null && tools != null && promptTokens != null
+      ? Math.max(0, used - system - tools)
+      : undefined
+    const estimated = promptTokens == null || isStreaming
+    return { used, max: maxContext, system, tools, history, estimated, messageCount: messages.length }
   }, [messages, isWelcomeMode, llmBackends, activeBackendId, lastTokenUsage, isStreaming, streamingContent, streamingThinking, streamingToolCalls])
 
   // Show LLM setup prompt if not configured. First-ever load shows a
