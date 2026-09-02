@@ -325,6 +325,7 @@ function AgentDefaultsSection() {
     default_temperature: number
     default_top_p: number
     default_thinking_enabled: boolean | null
+    chat_history_depth: number
   } | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -359,6 +360,7 @@ function AgentDefaultsSection() {
   const concOpts = [2, 4, 6, 8, 12, 16]
   const tempOpts = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
   const topPOpts = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+  const depthOpts = [10, 20, 30, 50, 100, 200]
 
   return (
     <section>
@@ -395,6 +397,14 @@ function AgentDefaultsSection() {
             <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
             <SelectContent>
               {tempOpts.map((tp) => <SelectItem key={tp} value={tp.toFixed(1)}>{tp.toFixed(1)}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </SettingsRow>
+        <SettingsRow label={t("settings:chatHistoryDepth")} description={t("settings:chatHistoryDepthDesc")}>
+          <Select value={String(config.chat_history_depth)} onValueChange={(v) => saveConfig({ chat_history_depth: +v })}>
+            <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {depthOpts.map((d) => <SelectItem key={d} value={String(d)}>{d}</SelectItem>)}
             </SelectContent>
           </Select>
         </SettingsRow>

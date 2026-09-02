@@ -423,6 +423,11 @@ pub struct AgentDefaults {
     /// Default thinking_enabled override (None = use backend default).
     #[serde(default)]
     pub default_thinking_enabled: Option<bool>,
+    /// Chat conversation history depth — how many recent TURNS (user+assistant
+    /// pairs) the chat pipeline sends to the model. Applies to chat sessions;
+    /// scheduled agents keep their per-agent context_window_size. Default 50.
+    #[serde(default = "default_agent_chat_history_depth")]
+    pub chat_history_depth: usize,
 }
 
 fn default_agent_max_rounds() -> u32 {
@@ -440,6 +445,9 @@ fn default_agent_temperature() -> f32 {
 fn default_agent_top_p() -> f32 {
     0.7
 }
+fn default_agent_chat_history_depth() -> usize {
+    50
+}
 
 impl Default for AgentDefaults {
     fn default() -> Self {
@@ -450,6 +458,7 @@ impl Default for AgentDefaults {
             default_temperature: default_agent_temperature(),
             default_top_p: default_agent_top_p(),
             default_thinking_enabled: None,
+            chat_history_depth: default_agent_chat_history_depth(),
         }
     }
 }

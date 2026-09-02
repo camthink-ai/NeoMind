@@ -68,7 +68,7 @@ pub struct ConversationContext {
 pub struct ContextCleanupConfig {
     /// 多少轮后自动清理旧实体（默认：10轮）
     pub cleanup_turn_interval: usize,
-    /// 保留最近几轮的实体引用（默认：5轮）
+    /// 保留最近几轮的实体引用（默认：10轮）
     pub keep_recent_turns: usize,
 }
 
@@ -76,7 +76,7 @@ impl Default for ContextCleanupConfig {
     fn default() -> Self {
         Self {
             cleanup_turn_interval: 10,
-            keep_recent_turns: 5,
+            keep_recent_turns: 10,
         }
     }
 }
@@ -152,17 +152,9 @@ impl ConversationContext {
                 && self.turn_count.saturating_sub(entity.last_mentioned_turn) <= keep_recent_turns
         });
 
-        // 如果当前设备/位置不在引用列表中，清空它们
-        if let Some(ref device) = self.current_device {
-            if !self.mentioned_devices.iter().any(|e| &e.name == device) {
-                self.current_device = None;
-            }
-        }
-        if let Some(ref location) = self.current_location {
-            if !self.mentioned_locations.iter().any(|e| &e.name == location) {
-                self.current_location = None;
-            }
-        }
+        // 焦点设备/位置是"正在处理什么"的工作状态，不是缓存——按轮数过期
+        // 会让"它的温度呢"这类回指在闲聊几轮后失效。它们只在 update() 中
+        // 被新实体替换（或调用方显式重置），不参与轮数清理。
     }
 
     /// 提取位置信息

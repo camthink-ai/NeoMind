@@ -372,5 +372,7 @@
   "marketSourceDefault": "Using default source",
   "marketSourceCustom": "Using custom source",
   "marketSourceReset": "Reset to default",
-  "marketSourceSaved": "Marketplace source updated"
+  "marketSourceSaved": "Marketplace source updated",
+  "chatHistoryDepth": "Chat History Depth",
+  "chatHistoryDepthDesc": "Recent conversation turns sent to the model in chat (scheduled agents use their own setting)"
 }

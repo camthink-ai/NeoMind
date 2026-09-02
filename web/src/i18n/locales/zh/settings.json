@@ -372,5 +372,7 @@
   "marketSourceDefault": "当前使用默认源",
   "marketSourceCustom": "当前使用自定义源",
   "marketSourceReset": "恢复默认",
-  "marketSourceSaved": "市场源已更新"
+  "marketSourceSaved": "市场源已更新",
+  "chatHistoryDepth": "对话历史深度",
+  "chatHistoryDepthDesc": "聊天发送给模型的最近对话轮数（定时智能体不受影响，用各自设置）"
 }

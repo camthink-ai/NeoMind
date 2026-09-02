@@ -342,6 +342,8 @@ pub struct AgentDefaultsRequest {
     pub default_top_p: f32,
     #[serde(default)]
     pub default_thinking_enabled: Option<bool>,
+    /// Chat history depth in turns (5-200)
+    pub chat_history_depth: Option<usize>,
 }
 
 /// Get agent execution defaults (max_rounds, timeout, concurrency, sampling).
@@ -361,6 +363,7 @@ pub async fn get_agent_defaults(
         "default_temperature": config.default_temperature,
         "default_top_p": config.default_top_p,
         "default_thinking_enabled": config.default_thinking_enabled,
+        "chat_history_depth": config.chat_history_depth,
     }))
 }
 
@@ -372,6 +375,10 @@ pub async fn update_agent_defaults(
 ) -> HandlerResult<serde_json::Value> {
     use neomind_storage::SettingsStore;
 
+    // Missing optional fields keep their current value (not a silent reset).
+    let existing = SettingsStore::open_default()
+        .map(|s| s.get_agent_defaults())
+        .unwrap_or_default();
     let config = neomind_storage::AgentDefaults {
         max_rounds: req.max_rounds.clamp(1, 50),
         execution_timeout_secs: req.execution_timeout_secs.clamp(30, 1800),
@@ -379,6 +386,7 @@ pub async fn update_agent_defaults(
         default_temperature: req.default_temperature.clamp(0.0, 2.0),
         default_top_p: req.default_top_p.clamp(0.0, 1.0),
         default_thinking_enabled: req.default_thinking_enabled,
+        chat_history_depth: req.chat_history_depth.map(|d| d.clamp(5, 200)).unwrap_or(existing.chat_history_depth),
     };
 
     let settings_store = SettingsStore::open_default()
@@ -405,6 +413,7 @@ pub async fn update_agent_defaults(
         "default_temperature": config.default_temperature,
         "default_top_p": config.default_top_p,
         "default_thinking_enabled": config.default_thinking_enabled,
+        "chat_history_depth": config.chat_history_depth,
     }))
 }
 

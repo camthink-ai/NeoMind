@@ -313,6 +313,19 @@ pub fn compact_conversation(
         });
     }
 
+    // LAST RESORT — only when tool outputs are cleared and assistants are
+    // summarized and the assembly is STILL over target: truncate the
+    // verbatim user messages (1000 chars each, not the old 200 — user
+    // intent loses fidelity fast below that).
+    if _current_tokens > target_tokens {
+        for msg in compressed_older.iter_mut() {
+            if msg.role == "user" && msg.content.len() > 1000 {
+                let s: String = msg.content.chars().take(1000).collect();
+                msg.content = format!("{}... (message truncated)", s).into();
+            }
+        }
+    }
+
     // Combine compressed older messages with recent messages
     let mut final_result = compressed_older;
     final_result.extend(result);
@@ -1945,7 +1958,7 @@ impl Agent {
 
         // Get existing history (user message already added by caller in `process`)
         // Optimize: Clone only needed messages in one pass, avoiding double-clone
-        let history_without_last: Vec<AgentMessage> = {
+        let mut history_without_last: Vec<AgentMessage> = {
             let state = self.internal_state.read().await;
             let memory = &state.memory;
             if memory.len() > 1 {
@@ -1955,6 +1968,37 @@ impl Agent {
                 Vec::new()
             }
         };
+
+        // === CHAT HISTORY DEPTH (configurable, /api/settings/agent) ===
+        // Keep the last N TURNS: walk back to the Nth-from-last user message
+        // and drop everything before it. Tool/assistant messages belonging to
+        // those turns go with them. Scheduled agents are unaffected — they
+        // carry their own per-agent context_window_size.
+        {
+            let depth = neomind_storage::AgentDefaults::get().chat_history_depth;
+            let mut user_turns_seen = 0usize;
+            let mut cut_idx = None;
+            for (i, m) in history_without_last.iter().enumerate().rev() {
+                if m.role == "user" {
+                    user_turns_seen += 1;
+                    if user_turns_seen >= depth {
+                        cut_idx = Some(i);
+                        break;
+                    }
+                }
+            }
+            if let Some(idx) = cut_idx {
+                if idx > 0 {
+                    tracing::debug!(
+                        before = history_without_last.len(),
+                        after = history_without_last.len() - idx,
+                        depth,
+                        "Applied chat history depth"
+                    );
+                    history_without_last.drain(..idx);
+                }
+            }
+        }
 
         // === DYNAMIC CONTEXT WINDOW: Get model's actual capacity ===
         // Query the LLM backend for the actual context window size.
@@ -1988,6 +2032,26 @@ impl Agent {
             effective_max
         );
 
+        // === BUDGET-FIRST SHORT-CIRCUIT ===
+        // Compaction is LOSSY (old user messages truncated to 200 chars,
+        // assistant turns squeezed to one-line summaries). Running it before
+        // knowing the budget destroyed history even when the window had ample
+        // room. Measure first: when the whole (depth-capped) history fits the
+        // effective window, pass it through untouched — the lossy pipeline
+        // below only runs when it genuinely doesn't fit.
+        let history_tokens: usize = history_without_last
+            .iter()
+            .map(tokenizer::estimate_message_tokens)
+            .sum();
+        let compacted_history = if history_tokens <= effective_max {
+            tracing::debug!(
+                history_tokens,
+                effective_max,
+                msgs = history_without_last.len(),
+                "History fits budget — skipping lossy compaction"
+            );
+            history_without_last.clone()
+        } else {
         // === ANTHROPIC-STYLE IMPROVEMENT: Apply context window with tool result clearing ===
         // This prevents context bloat from old tool calls while maintaining conversation continuity
         // Uses compaction cache for incremental updates when only a few messages changed
@@ -2028,6 +2092,9 @@ impl Agent {
             // Update cache
             state.compaction_cache = Some((current_count, effective_max, compacted.clone()));
             compacted
+        };
+
+            compacted_history
         };
 
         tracing::debug!(
