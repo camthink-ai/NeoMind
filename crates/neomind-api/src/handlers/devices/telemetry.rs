@@ -499,6 +499,7 @@ pub async fn get_device_telemetry_handler(
                                     effective_start,
                                     end,
                                     Some(fetch_limit),
+                                    0,
                                 )
                                 .await
                             {

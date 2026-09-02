@@ -492,6 +492,9 @@ pub struct TelemetryQueryParams {
     pub end: Option<i64>,
     /// Maximum number of data points to return (default: 100, max: 5000)
     pub limit: Option<usize>,
+    /// Number of newest records to skip before collecting (server-side
+    /// pagination over newest-first order; default: 0)
+    pub offset: Option<usize>,
     /// Aggregation function: "avg", "min", "max", "sum", "count", "last"
     pub aggregate: Option<String>,
     /// When true, use server-side time-bucket downsampling to return evenly-spaced points
@@ -576,7 +579,9 @@ pub async fn query_telemetry_handler(
         }));
     }
 
-    // Regular query — use bucketed downsampling when requested
+    // Regular query — use bucketed downsampling when requested. offset only
+    // applies to the paged path (bucketed downsampling has no record order).
+    let offset = params.offset.unwrap_or(0);
     let (points, total_count) = if params.bucketed.unwrap_or(false) {
         telemetry
             .query_bucketed(&source_part, metric_part, start, end, limit)
@@ -584,7 +589,7 @@ pub async fn query_telemetry_handler(
             .map_err(|e| crate::models::error::ErrorResponse::internal(e.to_string()))?
     } else {
         telemetry
-            .query_with_limit(&source_part, metric_part, start, end, Some(limit))
+            .query_with_limit(&source_part, metric_part, start, end, Some(limit), offset)
             .await
             .map_err(|e| crate::models::error::ErrorResponse::internal(e.to_string()))?
     };

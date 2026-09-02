@@ -1242,12 +1242,13 @@ impl TimeSeriesStore {
         start: i64,
         end: i64,
         limit: Option<usize>,
+        offset: usize,
     ) -> Result<TimeSeriesResult, Error> {
         // [fake-async fix] see query_range.
         let db = self.db.clone();
         let (src, met) = (source_id.to_string(), metric.to_string());
         tokio::task::spawn_blocking(move || {
-            Self::query_range_rev_impl(&db, &src, &met, start, end, limit)
+            Self::query_range_rev_impl(&db, &src, &met, start, end, limit, offset)
         })
         .await
         .map_err(|e| Error::Storage(format!("query_range_rev join error: {}", e)))?
@@ -1260,6 +1261,7 @@ impl TimeSeriesStore {
         start: i64,
         end: i64,
         limit: Option<usize>,
+        offset: usize,
     ) -> Result<TimeSeriesResult, Error> {
         let read_txn = db.begin_read()?;
 
@@ -1282,46 +1284,43 @@ impl TimeSeriesStore {
         let cap = limit.map(|n| n.min(5000)).unwrap_or(0);
         let mut points = Vec::with_capacity(cap);
         let mut collected = 0usize;
+        let mut skipped = 0usize;
         let mut total_count = 0u32;
 
-        // Iterate in reverse (newest first)
+        // Iterate in reverse (newest first). The scan always runs to the end of
+        // the range so total_count is exact even when limit truncates the
+        // collected points; offset skips the newest `offset` records first —
+        // together they give server-side pagination over newest-first order.
         for result in table.range(start_key..=end_key)?.rev() {
             total_count += 1;
-            let (_key, value) = result?;
-
+            if skipped < offset {
+                skipped += 1;
+                continue;
+            }
             if limit.is_none_or(|n| collected < n) {
+                let (_key, value) = result?;
                 let point: DataPoint = serde_json::from_slice(value.value())?;
                 points.push(point);
                 collected += 1;
-            } else {
-                // Continue counting total but don't collect more
             }
         }
 
-        // Note: total_count may be inaccurate when limit is hit because we stopped
-        // iterating early. This is acceptable for pagination (caller uses the primary
-        // path's total count). If exact total is needed, caller should query without limit.
-        if limit.is_some() && collected >= limit.unwrap_or(usize::MAX) {
-            // We may have stopped early, total_count is just the points we saw
-            // The caller will use a separate count or accept approximate total
-        }
-
         tracing::debug!(
-            "query_range_rev: source_id={}, metric={}, found {} points",
+            "query_range_rev: source_id={}, metric={}, found {} points (skipped {}, total {})",
             source_id,
             metric,
             collected,
+            skipped,
+            total_count,
         );
 
         Ok(TimeSeriesResult {
             source_id: source_id.to_string(),
             metric: metric.to_string(),
             points,
-            total_count: if limit.is_some() {
-                None
-            } else {
-                Some(total_count as usize)
-            },
+            // Exact: the scan counts every record in range regardless of
+            // limit/offset truncation.
+            total_count: Some(total_count as usize),
         })
     }
 

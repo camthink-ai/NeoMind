@@ -63,5 +63,11 @@
     "7d": "7d"
   },
   "historyLoadFailed": "Failed to load historical data",
-  "retry": "Retry"
+  "retry": "Retry",
+  "chartTruncated": "Showing the latest {{count}} points",
+  "stats": {
+    "min": "Min",
+    "max": "Max",
+    "avg": "Avg"
+  }
 }

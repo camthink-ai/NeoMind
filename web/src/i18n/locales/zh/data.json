@@ -63,5 +63,11 @@
     "7d": "7天"
   },
   "historyLoadFailed": "历史数据加载失败",
-  "retry": "重试"
+  "retry": "重试",
+  "chartTruncated": "图表显示最近 {{count}} 个数据点",
+  "stats": {
+    "min": "最小",
+    "max": "最大",
+    "avg": "平均"
+  }
 }

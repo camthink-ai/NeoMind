@@ -1939,7 +1939,7 @@ fn agent_event_to_json(event: &AgentEvent) -> Value {
         }),
         AgentEvent::Plan { step, stage } => json!({ "type": "Plan", "step": step, "stage": stage }),
         AgentEvent::IntermediateEnd => json!({ "type": "intermediate_end" }),
-        AgentEvent::End { prompt_tokens } => {
+        AgentEvent::End { prompt_tokens, .. } => {
             let mut v = json!({ "type": "end" });
             if let Some(pt) = prompt_tokens {
                 v["tokenUsage"] = json!({ "promptTokens": pt });

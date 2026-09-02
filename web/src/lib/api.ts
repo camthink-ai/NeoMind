@@ -588,44 +588,6 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(req),
     }),
-  generateDeviceTypeFromSamples: (req: {
-    device_id?: string
-    manufacturer?: string
-    samples: Array<{ timestamp: number; data: Record<string, unknown> }>
-    min_coverage?: number
-    min_confidence?: number
-  }) =>
-    fetchAPI<{
-      id: string
-      name: string
-      description: string
-      category: string
-      manufacturer: string
-      metrics: Array<{
-        name: string
-        path: string
-        display_name: string
-        description: string
-        data_type: string
-        semantic_type: string
-        unit: string | null
-        readable: boolean
-        writable: boolean
-        confidence: number
-      }>
-      commands: Array<{
-        name: string
-        display_name: string
-        description: string
-        parameters: Array<{ name: string; type: string; required: boolean }>
-        confidence: number
-      }>
-      confidence: number
-    }>('/device-types/generate-from-samples', {
-      method: 'POST',
-      body: JSON.stringify(req),
-    }),
-
   // ========== Draft Devices API (Auto-onboarding) ==========
   // List all draft devices discovered through auto-onboarding
   getDraftDevices: () =>
@@ -1993,13 +1955,23 @@ export const api = {
    * Query telemetry time-series data for any source type
    * GET /api/telemetry?source=...&metric=...&start=...&end=...&limit=...
    */
-  queryTelemetry: (source: string, metric: string, start: number, end: number, limit?: number, bucketed?: boolean) => {
+  /**
+   * Aggregate a telemetry series over a time range.
+   * GET /api/telemetry?source=...&metric=...&start=...&end=...&aggregate=avg
+   */
+  aggregateTelemetry: (source: string, metric: string, start: number, end: number, agg: 'avg' | 'min' | 'max' | 'sum' | 'count') => {
+    const qs = new URLSearchParams({ source, metric, start: String(start), end: String(end), aggregate: agg }).toString()
+    return fetchAPI<{ value: number | null; count: number }>(`/telemetry?${qs}`)
+  },
+
+  queryTelemetry: (source: string, metric: string, start: number, end: number, limit?: number, bucketed?: boolean, offset?: number) => {
     const qs = new URLSearchParams({
       source, metric,
       start: String(start),
       end: String(end),
       ...(limit ? { limit: String(limit) } : {}),
       ...(bucketed ? { bucketed: 'true' } : {}),
+      ...(offset ? { offset: String(offset) } : {}),
     }).toString()
     return fetchAPI<{ source_id: string; data: Array<{ timestamp: number; value: unknown; quality: number | null }>; count: number; total_count?: number }>(`/telemetry?${qs}`)
   },
