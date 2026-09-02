@@ -123,14 +123,15 @@ const BuiltInComponent = memo(function BuiltInComponent({
   )
 
   // Bound device exists but is offline/idle — the card keeps showing the last
-  // reported value. Badge it so it can't be mistaken for a live reading.
+  // reported value. A corner dot (not a text pill — compact cards have no room
+  // for one) badges it so it can't be mistaken for a live reading.
   // Hidden in edit mode (the hover action toolbar occupies the same corner).
-  if (bindingStatus.staleDeviceIds.length > 0 && !editMode) {
+  if (bindingStatus.staleDevices.length > 0 && !editMode) {
     return (
       <div className="relative w-full h-full">
         {widget}
         <StaleDataBadge
-          deviceIds={bindingStatus.staleDeviceIds}
+          devices={bindingStatus.staleDevices}
           className="absolute top-1.5 right-1.5 z-10"
         />
       </div>

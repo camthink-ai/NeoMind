@@ -1250,5 +1250,8 @@
   "installConfirm": "确认安装",
   "bindingDeviceRemoved": "绑定的设备已删除",
   "bindingDeviceRemovedHint": "请重新绑定一个存在的设备",
-  "staleData": "最后数值 · 设备离线"
+  "staleData": "最后数值 · 设备离线",
+  "staleDataIdle": "最后数值 · 连接待机，等待数据",
+  "staleDataLastSeen": "最后上报：{{age}}",
+  "staleDataDevices": "设备：{{names}}"
 }

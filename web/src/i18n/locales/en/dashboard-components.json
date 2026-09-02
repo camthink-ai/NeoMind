@@ -1250,5 +1250,8 @@
   "installConfirm": "Install Confirm",
   "bindingDeviceRemoved": "Bound device was removed",
   "bindingDeviceRemovedHint": "Rebind this component to an existing device",
-  "staleData": "Last value — device offline"
+  "staleData": "Last value — device offline",
+  "staleDataIdle": "Last value — awaiting data",
+  "staleDataLastSeen": "Last reported {{age}}",
+  "staleDataDevices": "Devices: {{names}}"
 }

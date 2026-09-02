@@ -25,15 +25,33 @@ function toList(ds: DataSourceOrList | undefined): DataSource[] {
   return isDataSourceList(ds) ? ds : [ds]
 }
 
+/**
+ * A bound device whose data is not fresh — the widget keeps showing its last
+ * reported value. `state` distinguishes WHY it is stale: `offline` (transport
+ * gone, value may be arbitrarily old — the 4-state model colors it warning)
+ * vs `connectedIdle` (transport alive, awaiting data — a calm state the badge
+ * must not paint with the same urgency).
+ */
+export interface StaleDeviceRef {
+  id: string
+  /** Device display name at classification time, for tooltip rendering. */
+  name: string
+  state: 'offline' | 'connectedIdle'
+  /** Epoch ms of the last report; null when never/unknown. */
+  lastSeen: number | null
+}
+
 export interface DeviceBindingStatus {
   /** Widget has at least one device-sourced latest/timeseries binding. */
   hasDeviceBinding: boolean
-  /** Every device binding points at a device that no longer exists. */
+  /** Every device binding points at a device that no longer exists in the registry. */
   allDangling: boolean
   /** IDs of bound devices that no longer exist in the registry. */
   danglingDeviceIds: string[]
-  /** IDs of bound devices that exist but are not currently online. */
+  /** Flat id list of every stale device (offline + connectedIdle), in binding order. */
   staleDeviceIds: string[]
+  /** Stale bindings carrying state + last report time, for differentiated rendering. */
+  staleDevices: StaleDeviceRef[]
 }
 
 const NO_BINDING: DeviceBindingStatus = {
@@ -41,6 +59,7 @@ const NO_BINDING: DeviceBindingStatus = {
   allDangling: false,
   danglingDeviceIds: [],
   staleDeviceIds: [],
+  staleDevices: [],
 }
 
 /**
@@ -69,7 +88,7 @@ export function classifyDeviceBindings(
   const deviceById = new Map(deviceList.map(d => [d.id, d]))
 
   const danglingDeviceIds: string[] = []
-  const staleDeviceIds: string[] = []
+  const staleDevices: StaleDeviceRef[] = []
   for (const id of deviceIds) {
     const device = deviceById.get(id)
     if (!device) {
@@ -82,7 +101,13 @@ export function classifyDeviceBindings(
     // a stale badge would only be noise.
     const state = getDeviceState(device).state
     if (state === 'offline' || state === 'connectedIdle') {
-      staleDeviceIds.push(id)
+      const lastSeenEpoch = Date.parse(device.last_seen ?? '')
+      staleDevices.push({
+        id,
+        name: device.name || id,
+        state,
+        lastSeen: Number.isFinite(lastSeenEpoch) && lastSeenEpoch > 0 ? lastSeenEpoch : null,
+      })
     }
   }
 
@@ -90,7 +115,8 @@ export function classifyDeviceBindings(
     hasDeviceBinding: true,
     allDangling: danglingDeviceIds.length > 0 && danglingDeviceIds.length === deviceIds.size,
     danglingDeviceIds,
-    staleDeviceIds,
+    staleDeviceIds: staleDevices.map((d) => d.id),
+    staleDevices,
   }
 }
 
