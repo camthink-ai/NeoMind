@@ -47,7 +47,7 @@ export function EmptyState({
   return (
     <div className={cn(
       dashboardCardBase,
-      'flex flex-col items-center justify-center gap-3 min-h-full',
+      'flex flex-col items-center justify-center gap-3 min-h-full w-full',
       sizeConfig.padding,
       className
     )}>
@@ -91,7 +91,7 @@ export function ErrorState({
   return (
     <div className={cn(
       dashboardCardBase,
-      'flex flex-col items-center justify-center gap-2 min-h-full',
+      'flex flex-col items-center justify-center gap-2 min-h-full w-full',
       sizeConfig.padding,
       className
     )}>
