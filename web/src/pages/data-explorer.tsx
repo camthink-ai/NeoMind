@@ -241,14 +241,31 @@ export function DataExplorerPage() {
     return () => { stale = true }
   }, [selectedSource, historyRange, historyRetryTick])
 
-  // Fetch historical telemetry when a source is selected or range changes.
-  // Two queries with different contracts: the chart takes the newest
-  // CHART_POINT_CAP points; the table takes one server-paged window
-  // (offset = (page-1) * pageSize) so deep history stays reachable.
+  // Chart query — the NEWEST CHART_POINT_CAP points; independent of table
+  // pagination (flipping pages must not refetch the chart).
+  useEffect(() => {
+    if (!selectedSource) { setChartData([]); setChartTotal(null); return }
+    const rangeSeconds: Record<string, number> = {
+      '1h': 3600, '6h': 21600, '24h': 86400, '7d': 604800,
+    }
+    const now = Math.floor(Date.now() / 1000)
+    const start = now - (rangeSeconds[historyRange] || 3600)
+    const parts = selectedSource.id.split(':')
+    if (parts.length < 3) return
+    const source = `${parts[0]}:${parts[1]}`
+    const metric = parts.slice(2).join(':')
+    let stale = false
+    api.queryTelemetry(source, metric, start, now, CHART_POINT_CAP).then(res => {
+      if (stale) return
+      setChartData((res?.data || []).map(p => ({ timestamp: p.timestamp, value: p.value, quality: p.quality })))
+      setChartTotal(typeof res?.total_count === 'number' ? res.total_count : null)
+    }).catch(() => { if (!stale) { setChartData([]); setChartTotal(null) } })
+    return () => { stale = true }
+  }, [selectedSource, historyRange, historyRetryTick])
+
+  // Table query — one server-paged window (offset = (page-1) * pageSize).
   useEffect(() => {
     if (!selectedSource) {
-      setChartData([])
-      setChartTotal(null)
       setTableData([])
       setTableTotal(0)
       setHistoryLoading(false)
@@ -260,12 +277,10 @@ export function DataExplorerPage() {
     }
     const now = Math.floor(Date.now() / 1000)
     const start = now - (rangeSeconds[historyRange] || 3600)
-
     const parts = selectedSource.id.split(':')
     if (parts.length < 3) return
     const source = `${parts[0]}:${parts[1]}`
     const metric = parts.slice(2).join(':')
-
     let stale = false
     setHistoryLoading(true)
     setHistoryError(false)
@@ -279,23 +294,13 @@ export function DataExplorerPage() {
         return
       }
     }
-    Promise.all([
-      api.queryTelemetry(source, metric, start, now, CHART_POINT_CAP),
-      api.queryTelemetry(source, metric, start, now, historyPageSize, false, (historyPage - 1) * historyPageSize),
-    ]).then(([chartRes, tableRes]) => {
+    api.queryTelemetry(source, metric, start, now, historyPageSize, false, (historyPage - 1) * historyPageSize).then(res => {
       if (stale) return
-      setChartData((chartRes?.data || []).map(p => ({
-        timestamp: p.timestamp, value: p.value, quality: p.quality,
-      })))
-      setChartTotal(typeof chartRes?.total_count === 'number' ? chartRes.total_count : null)
-      setTableData((tableRes?.data || []).map(p => ({
-        timestamp: p.timestamp, value: p.value, quality: p.quality,
-      })))
-      setTableTotal(typeof tableRes?.total_count === 'number' ? tableRes.total_count : (tableRes?.data || []).length)
+      setTableData((res?.data || []).map(p => ({ timestamp: p.timestamp, value: p.value, quality: p.quality })))
+      setTableTotal(typeof res?.total_count === 'number' ? res.total_count : (res?.data || []).length)
     }).catch(err => {
       if (stale) return
       console.error('[DataExplorer] Failed to fetch history:', err)
-      setChartData([])
       setTableData([])
       setTableTotal(0)
       setHistoryError(true)

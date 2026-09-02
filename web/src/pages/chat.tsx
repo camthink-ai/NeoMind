@@ -28,6 +28,21 @@ import { LlmSetupGuide } from "@/components/llm/LlmSetupGuide"
 // Hook to detect desktop breakpoint — md: 768px, matching the app-wide
 // breakpoint (useIsMobile < 768). The old 1024 left the 768–1024 band in a
 // hybrid state.
+// Character estimator with the backend's weights (CJK ≈1.8 tokens/char,
+// ASCII ≈0.25/char, ×1.1 buffer) — the old chars/3 underestimated Chinese
+// ~5x, which made the ring look like it RESET on every send.
+function estimateTokens(text: string): number {
+  let cjk = 0, ascii = 0, digits = 0, special = 0
+  for (const ch of text) {
+    const cp = ch.codePointAt(0) ?? 0
+    if ((cp >= 0x4e00 && cp <= 0x9fff) || (cp >= 0x3400 && cp <= 0x4dbf) || (cp >= 0x3000 && cp <= 0x303f) || (cp >= 0xff00 && cp <= 0xffef)) cjk++
+    else if (ch >= '0' && ch <= '9') digits++
+    else if (/[a-zA-Z]/.test(ch)) ascii++
+    else special++
+  }
+  return Math.ceil((cjk * 1.8 + ascii * 0.25 + digits * 0.3 + special * 0.5) * 1.1)
+}
+
 function useIsDesktop() {
   const [isDesktop, setIsDesktop] = useState(() => {
     if (typeof window === 'undefined') return false
@@ -715,36 +730,31 @@ export function ChatPage() {
   // Show chat area if there are messages or currently streaming
   const hasMessages = filteredMessages.length > 0 || isStreaming
 
+  // Settled-messages token estimate (backend CJK-aware weights) — memoized
+  // separately from the streaming delta so chunks don't resc an the history.
+  const messageTokensEstimate = useMemo(
+    () => estimateTokens(messages.map(m => m.content ?? '').join('\n')),
+    [messages],
+  )
+
   // Context usage — real prompt tokens after a turn, chars/3 estimate otherwise
   const contextUsage = useMemo(() => {
     if (messages.length === 0 || isWelcomeMode) return null
     const activeBackend = llmBackends.find(b => b.id === activeBackendId)
     const maxContext = activeBackend?.capabilities?.max_context ?? 8192
     const promptTokens = lastTokenUsage?.promptTokens
-    // Character estimator with the backend's weights (CJK ≈1.8 tokens/char,
-    // ASCII ≈0.25/char, ×1.1 buffer) — the old chars/3 underestimated
-    // Chinese ~5x, which made the ring look like it RESET on every send
-    // (real 12K dropped to a ~2K estimate while streaming).
-    const estimateTokens = (text: string): number => {
-      let cjk = 0, ascii = 0, digits = 0, special = 0
-      for (const ch of text) {
-        const cp = ch.codePointAt(0) ?? 0
-        if ((cp >= 0x4e00 && cp <= 0x9fff) || (cp >= 0x3400 && cp <= 0x4dbf) || (cp >= 0x3000 && cp <= 0x303f) || (cp >= 0xff00 && cp <= 0xffef)) cjk++
-        else if (ch >= '0' && ch <= '9') digits++
-        else if (/[a-zA-Z]/.test(ch)) ascii++
-        else special++
-      }
-      return Math.ceil((cjk * 1.8 + ascii * 0.25 + digits * 0.3 + special * 0.5) * 1.1)
-    }
     let used: number
     if (promptTokens != null && !isStreaming) {
       used = promptTokens
     } else {
-      const corpus = messages.map(m => m.content ?? '').join('\n') + '\n' + (streamingContent ?? '') + (streamingThinking ?? '')
+      // Only the streaming delta is re-estimated per chunk — the settled
+      // messages' total is memoized below, so each chunk costs O(delta)
+      // instead of a full-history join + scan.
+      const streamCorpus = (streamingContent ?? '') + (streamingThinking ?? '')
         + streamingToolCalls.map(tc => (tc.arguments ?? '') + (tc.result ?? '')).join('')
-      used = estimateTokens(corpus)
+      used = messageTokensEstimate + estimateTokens(streamCorpus)
       // While streaming with a known real baseline, never dip below it — the
-      // in-flight request's context is at least the last measured prompt.
+      // in-flight request's at least the last measured prompt.
       if (promptTokens != null) used = Math.max(used, promptTokens)
     }
     const system = lastTokenUsage?.systemPromptTokens
