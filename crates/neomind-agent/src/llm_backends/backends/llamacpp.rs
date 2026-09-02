@@ -53,6 +53,40 @@ pub struct LlamaCppConfig {
     pub cache_prompt: bool,
 }
 
+/// llama-server answers 503 {"error":{"message":"Loading model",...}} while
+/// the model is still being loaded into memory — most commonly right after
+/// switching to the builtin backend. That's not a failure; the server IS
+/// coming up. Failing fast here surfaced a spurious error during backend
+/// switches, so both call paths wait for readiness and resend once.
+fn is_model_loading(status: reqwest::StatusCode, body: &str) -> bool {
+    status == reqwest::StatusCode::SERVICE_UNAVAILABLE && body.contains("Loading model")
+}
+
+/// Poll the server's /health until it answers 200 (model ready) or the
+/// deadline passes. llama-server serves /health with 503 during load.
+async fn wait_for_llama_model_ready(
+    client: &reqwest::Client,
+    base_url: &str,
+    api_key: &Option<String>,
+    timeout: std::time::Duration,
+) -> bool {
+    let health = format!("{}/health", base_url.trim_end_matches('/'));
+    let deadline = tokio::time::Instant::now() + timeout;
+    while tokio::time::Instant::now() < deadline {
+        let mut req = client.get(&health).timeout(std::time::Duration::from_secs(2));
+        if let Some(ref key) = api_key {
+            req = req.bearer_auth(key);
+        }
+        if let Ok(r) = req.send().await {
+            if r.status().is_success() {
+                return true;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+    false
+}
+
 fn default_endpoint() -> String {
     DEFAULT_ENDPOINT.to_string()
 }
@@ -406,19 +440,44 @@ impl LlmRuntime for LlamaCppRuntime {
             }
         }
 
-        let response = self
-            .auth_request(reqwest::Method::POST, &url)
-            .json(&req_body)
-            .timeout(self.config.timeout())
-            .send()
-            .await
-            .map_err(|e| LlmError::Network(e.to_string()))?;
-
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .map_err(|e| LlmError::Network(e.to_string()))?;
+        // Model-loading gate: on 503 "Loading model" wait for /health (≤60s)
+        // and resend once before surfacing an error.
+        let (status, body) = {
+            let mut retried = false;
+            loop {
+                let response = self
+                    .auth_request(reqwest::Method::POST, &url)
+                    .json(&req_body)
+                    .timeout(self.config.timeout())
+                    .send()
+                    .await
+                    .map_err(|e| LlmError::Network(e.to_string()))?;
+                let status = response.status();
+                let body = response
+                    .text()
+                    .await
+                    .map_err(|e| LlmError::Network(e.to_string()))?;
+                if !retried && is_model_loading(status, &body) {
+                    retried = true;
+                    tracing::info!("llama.cpp model still loading — waiting for readiness (up to 60s)");
+                    let client = Client::builder()
+                        .timeout(self.config.timeout())
+                        .build()
+                        .map_err(|e| LlmError::Network(e.to_string()))?;
+                    if wait_for_llama_model_ready(
+                        &client,
+                        &self.config.base_url(),
+                        &self.config.api_key,
+                        std::time::Duration::from_secs(60),
+                    )
+                    .await
+                    {
+                        continue;
+                    }
+                }
+                break (status, body);
+            }
+        };
 
         if !status.is_success() {
             self.metrics
@@ -648,7 +707,63 @@ impl LlmRuntime for LlamaCppRuntime {
                 req_builder = req_builder.bearer_auth(key);
             }
 
-            let result = req_builder.send().await;
+            // Model-loading gate (mirrors the non-stream path): on 503
+            // "Loading model" wait for /health (≤60s) and resend once —
+            // a freshly switched builtin backend is loading, not broken.
+            let mut result = req_builder.send().await;
+            // Take ownership only when the gate actually fires; every path
+            // through the block either returns or reassigns `result`, so the
+            // match below always sees a valid value.
+            let gate_needed = matches!(
+                &result,
+                Ok(r) if r.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE
+            );
+            if gate_needed {
+                let resp = match result {
+                    Ok(r) => r,
+                    Err(_) => unreachable!("gate only fires on Ok"),
+                };
+                let status_now = resp.status();
+                let body_text = resp.text().await.unwrap_or_default();
+                if is_model_loading(status_now, &body_text) {
+                    tracing::info!("llama.cpp model still loading (stream) — waiting for readiness (up to 60s)");
+                    let base = url
+                        .trim_end_matches('/')
+                        .trim_end_matches("/v1/chat/completions")
+                        .to_string();
+                    if wait_for_llama_model_ready(
+                        &client,
+                        &base,
+                        &api_key,
+                        std::time::Duration::from_secs(60),
+                    )
+                    .await
+                    {
+                        let mut rb = client.post(&url).json(&req_body);
+                        if let Some(ref key) = api_key {
+                            rb = rb.bearer_auth(key);
+                        }
+                        result = rb.send().await;
+                    } else {
+                        let _ = tx
+                            .send(Err(LlmError::Generation(
+                                "llama.cpp API error 503: model still loading after 60s"
+                                    .to_string(),
+                            )))
+                            .await;
+                        return;
+                    }
+                } else {
+                    let _ = tx
+                        .send(Err(LlmError::Generation(format!(
+                            "llama.cpp API error {}: {}",
+                            status_now.as_u16(),
+                            body_text
+                        ))))
+                        .await;
+                    return;
+                }
+            }
 
             match result {
                 Ok(response) => {
