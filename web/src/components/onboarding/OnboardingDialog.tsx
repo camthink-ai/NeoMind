@@ -42,14 +42,6 @@ interface OnboardingDialogProps {
 
 const STEPS = ["welcome", "llm", "device", "ready"] as const
 
-// Progress stages map 1:1 onto the wizard steps — clicking a stage jumps
-// straight to it. Labels reuse the setup item titles / common:done.
-const PROGRESS_STAGES: { key: StepKey; icon: React.ReactNode; label: string }[] = [
-  { key: "welcome", icon: <Rocket className="w-4 h-4" />, label: "onboarding.stages.welcome" },
-  { key: "llm", icon: <Sparkles className="w-4 h-4" />, label: "onboarding.setup.llm.title" },
-  { key: "device", icon: <Cpu className="w-4 h-4" />, label: "onboarding.setup.device.title" },
-  { key: "ready", icon: <Check className="w-4 h-4" />, label: "done" },
-]
 type StepKey = (typeof STEPS)[number]
 
 export function OnboardingDialog({ open, onOpenChange, status, onDismiss }: OnboardingDialogProps) {
@@ -150,61 +142,6 @@ export function OnboardingDialog({ open, onOpenChange, status, onDismiss }: Onbo
       >
         <X className="w-5 h-5" />
       </button>
-
-      {/* Progress indicator — one stage per wizard step, icon above label
-          (vertical), with connector lines aligned to the circle row. State
-          colors fill as stages complete; clicking a stage navigates
-          directly to that step. */}
-      <div className="shrink-0 pt-8 pb-3 px-6">
-        <div className="max-w-5xl mx-auto flex items-start justify-center">
-          {PROGRESS_STAGES.map((stage, i) => {
-            // Welcome has no backend completion state — it counts as done
-            // once the user has moved past it (wizard "visited" check).
-            const completed =
-              stage.key === "llm"
-                ? !!status.steps.llm.completed
-                : stage.key === "device"
-                  ? !!status.steps.device.completed
-                  : stage.key === "welcome"
-                    ? stepIndex > i
-                    : false
-            const active = stage.key === step
-            return (
-              <div key={stage.key} className="flex items-start">
-                <button
-                  onClick={() => setStep(stage.key)}
-                  className="flex flex-col items-center gap-1.5"
-                  aria-label={t(stage.label)}
-                >
-                  <span className={cn(
-                    "flex items-center justify-center w-8 h-8 rounded-full transition-all duration-slow",
-                    completed && !active && "bg-success text-primary-foreground",
-                    completed && active && "bg-success text-primary-foreground ring-4 ring-primary-light",
-                    !completed && active && "bg-primary text-primary-foreground ring-4 ring-primary-light",
-                    !completed && !active && "bg-muted-30 text-muted-foreground",
-                  )}>
-                    {completed ? <Check className="w-4 h-4" /> : stage.icon}
-                  </span>
-                  <span className={cn(
-                    "text-xs font-medium hidden sm:block text-center max-w-[6rem] leading-tight transition-colors",
-                    active ? "text-foreground" : completed ? "text-success" : "text-muted-foreground",
-                  )}>
-                    {t(stage.label)}
-                  </span>
-                </button>
-                {i < PROGRESS_STAGES.length - 1 && (
-                  <span className={cn(
-                    // mt-[15px] centers the 2px line on the 32px circle's
-                    // midpoint (columns are top-aligned via items-start).
-                    "w-6 sm:w-10 h-0.5 rounded-full mt-[15px] mx-2 sm:mx-3 shrink-0 transition-colors duration-500",
-                    completed ? "bg-success" : "bg-border",
-                  )} />
-                )}
-              </div>
-            )
-          })}
-        </div>
-      </div>
 
       {/* Scrollable content — my-auto centers each step vertically on tall
           viewports and degrades to top-aligned scrolling when content

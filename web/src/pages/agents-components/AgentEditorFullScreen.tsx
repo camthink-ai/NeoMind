@@ -14,6 +14,7 @@
  * Using unified FullScreenDialog components with glassmorphism style.
  */
 
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible'
 import { getPortalRoot } from '@/lib/portal'
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { useTranslation } from "react-i18next"
@@ -340,6 +341,8 @@ export function AgentEditorFullScreen({
   const [priority, setPriority] = useState(5)
   const [contextWindowSize, setContextWindowSize] = useState(10)
   const [maxChainDepth, setMaxChainDepth] = useState(5)
+  // Advanced knobs collapsed by default — defaults suit most agents
+  const [advancedOpen, setAdvancedOpen] = useState(false)
 
   // LLM validation state
   const [llmValidating, setLlmValidating] = useState(false)
@@ -1328,10 +1331,10 @@ export function AgentEditorFullScreen({
                   type="button"
                   onClick={() => setExecutionMode('focused')}
                   className={cn(
-                    "relative flex flex-col items-start gap-1.5 rounded-lg border-2 p-3 text-left transition-all",
+                    "relative flex flex-col items-start gap-1.5 rounded-lg border p-3 text-left transition-colors",
                     isFocusedMode
-                      ? "border-primary bg-muted shadow-sm"
-                      : "border-border hover:border-border"
+                      ? "border-primary bg-muted"
+                      : "border-muted hover:border-border"
                   )}
                 >
                   <div className="flex items-center gap-2 w-full">
@@ -1354,10 +1357,10 @@ export function AgentEditorFullScreen({
                   type="button"
                   onClick={() => { setExecutionMode('free'); setSelectedResources([]) }}
                   className={cn(
-                    "relative flex flex-col items-start gap-1.5 rounded-lg border-2 p-3 text-left transition-all",
+                    "relative flex flex-col items-start gap-1.5 rounded-lg border p-3 text-left transition-colors",
                     isFreeMode
-                      ? "border-primary bg-muted shadow-sm"
-                      : "border-border hover:border-border"
+                      ? "border-primary bg-muted"
+                      : "border-muted hover:border-border"
                   )}
                 >
                   <div className="flex items-center gap-2 w-full">
@@ -1546,6 +1549,20 @@ export function AgentEditorFullScreen({
               )}
             </div>
 
+            {/* Advanced knobs — rarely changed; collapsed so the required
+                fields (mode / name / requirements) keep the visual focus. */}
+            <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+              <CollapsibleTrigger className="w-full flex items-center justify-between py-1 text-left">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                  {tAgent('creator.advanced.title', 'Advanced Configuration')}
+                </span>
+                <ChevronRight className={cn(
+                  "h-4 w-4 text-muted-foreground transition-transform",
+                  advancedOpen && "rotate-90"
+                )} />
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <div className="pt-3 space-y-6">
             {/* Agent Priority */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
@@ -1598,6 +1615,9 @@ export function AgentEditorFullScreen({
                 {tAgent('creator.advanced.contextHint', 'Number of recent conversation turns to include as context')}
               </p>
             </div>
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
 
             {/* Execution Schedule */}
             <div className="space-y-3">
@@ -2705,7 +2725,7 @@ function ScheduleCard({ icon, label, description, active, onClick, isMobile = fa
       type="button"
       onClick={onClick}
       className={cn(
-        "flex flex-col items-center rounded-lg border-2 transition-all",
+        "flex flex-col items-center rounded-lg border transition-colors",
         isMobile ? "gap-3 p-4" : "gap-2 p-3",
         active
           ? "border-primary bg-muted"
