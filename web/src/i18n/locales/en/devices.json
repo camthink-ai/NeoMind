@@ -316,6 +316,35 @@
     "smartGeneration": "Smart Generation",
     "advancedMode": "Advanced Mode",
     "generating": "Generating...",
+    "editTitle": "Edit Device Type",
+    "sections": {
+      "basic": "Basic Information",
+      "data": "Data Definition",
+      "commands": "Commands"
+    },
+    "form": {
+      "nameLabel": "Type Name",
+      "namePlaceholder": "e.g., Smart Temperature Sensor",
+      "typeIdLabel": "Type ID",
+      "typeIdHint": "Auto-generated from the name — edit if needed",
+      "descLabel": "Description",
+      "descPlaceholder": "Describe what this device type does…",
+      "categoriesLabel": "Categories",
+      "addCategoryPlaceholder": "Type and press Enter",
+      "removeCategory": "Remove category"
+    },
+    "data": {
+      "modeMetrics": "Define Metrics",
+      "modeMetricsDesc": "Parse & store each field",
+      "modeRaw": "Raw Data Mode",
+      "modeRawDesc": "Store payload as-is",
+      "noMetrics": "No metrics defined"
+    },
+    "commands": {
+      "addCommand": "Add Command",
+      "emptyCommand": "Empty Command",
+      "noCommands": "No commands defined"
+    },
     "validate": {
       "button": "Validate",
       "format": "Validate Format",
@@ -441,95 +470,6 @@
       "interval": "Interval",
       "seconds": "seconds"
     },
-    "generator": {
-      "title": "AI Device Type Generator",
-      "description": "Paste device data samples and AI will automatically generate the device type definition",
-      "tabs": {
-        "samples": "Samples",
-        "metrics": "Metrics",
-        "commands": "Commands",
-        "preview": "Preview"
-      },
-      "step1": {
-        "info": "Supports JSONL (one per line), JSON array [{...},{...}], or single multi-line JSON object",
-        "loadSample": "Load Sample Data",
-        "deviceId": "Device Instance ID (Optional - for AI context)",
-        "deviceIdPlaceholder": "e.g., sensor-01, device-123",
-        "manufacturer": "Manufacturer (Optional - for AI context)",
-        "manufacturerPlaceholder": "e.g., Generic, Xiaomi, etc.",
-        "sampleData": "Data Samples (JSON)",
-        "sampleDataPlaceholder": "// JSONL (one per line):\n{\"temp\": 25.5, \"hum\": 60}\n{\"temp\": 26.0, \"hum\": 58}\n\n// Or JSON array:\n[{\"temp\": 25.5, \"hum\": 60}, {\"temp\": 26.0, \"hum\": 58}]\n\n// Or single object:\n{\"temp\": 25.5, \"hum\": 60, \"battery\": 85}",
-        "validSamples": "{{count}} valid sample{{count !== 1 ? 's' : ''}}",
-        "noValidSamples": "No Valid Samples",
-        "noValidSamplesDesc": "Please enter valid JSON data (supports JSONL, array, or single object)",
-        "minCoverage": "Min Field Coverage",
-        "minCoverageDesc": "Fields appearing in less than this % of samples will be excluded. Set to 0% to include all fields.",
-        "minConfidence": "Min AI Confidence",
-        "minConfidenceDesc": "Metrics with AI confidence below this will be excluded. Set to 0% to include all metrics.",
-        "generateButton": "Generate Device Type",
-        "analyzing": "Analyzing..."
-      },
-      "step2": {
-        "title": "Discovered Metrics",
-        "metricsFound": "{{count}} metrics found",
-        "field": "Field",
-        "semanticType": "Semantic Type",
-        "displayName": "Display Name",
-        "unit": "Unit",
-        "readable": "Readable",
-        "writable": "Writable",
-        "confidence": "Confidence",
-        "back": "Back",
-        "next": "Next: Commands"
-      },
-      "step3": {
-        "title": "Discovered Commands",
-        "commandsFound": "{{count}} commands found",
-        "command": "Command",
-        "description": "Description",
-        "parameters": "Parameters",
-        "noCommands": "No commands were discovered from the sample data.",
-        "noCommandsDesc": "Commands require writable fields or specific patterns.",
-        "back": "Back",
-        "next": "Next: Preview"
-      },
-      "step4": {
-        "title": "Device Type Preview",
-        "description": "Review and customize before creating",
-        "typeName": "Device Type Name *",
-        "typeNamePlaceholder": "e.g., Temperature & Humidity Sensor",
-        "typeId": "Device Type ID *",
-        "typeIdPlaceholder": "e.g., temp_hum_sensor",
-        "validate": "Validate & Continue",
-        "validationPassed": "Validation Passed",
-        "validationWarnings": "Validation Warnings",
-        "duplicateMetric": "Duplicate metric name: {{name}}",
-        "noMetricsWarning": "No metrics were discovered. Device may not be usable.",
-        "lowConfidenceWarning": "Low confidence ({{percent}}%). Consider providing more sample data.",
-        "unknownCategoryWarning": "Device category could not be determined.",
-        "enableImmediately": "Enable devices using this type immediately",
-        "back": "Back"
-      },
-      "confidence": {
-        "high": "High",
-        "medium": "Medium",
-        "low": "Low"
-      },
-      "toast": {
-        "analysisComplete": "Analysis Complete",
-        "analysisCompleteDesc": "Generated device type with {{metrics}} metrics and {{commands}} commands",
-        "analysisFailed": "Analysis Failed",
-        "nameRequired": "Name Required",
-        "nameRequiredDesc": "Please enter a device type name",
-        "idRequired": "ID Required",
-        "idRequiredDesc": "Please enter a device type ID",
-        "validationFailed": "Validation Failed",
-        "validationFailedDesc": "Please fix the issues before creating",
-        "creationFailed": "Creation Failed",
-        "created": "Device Type Created",
-        "createdDesc": "Successfully created {{name}}"
-      }
-    },
     "adding": "Adding"
   },
   "pending": {
@@ -537,8 +477,6 @@
     "title": "Pending Devices",
     "items": "items",
     "loading": "Loading pending devices...",
-    "noPending": "No pending devices",
-    "noPendingDesc": "Pending devices will appear here when unknown devices are discovered",
     "cleanup": {
       "button": "Cleanup Old",
       "title": "Cleanup Old Records",
@@ -568,6 +506,15 @@
     "process": "Process",
     "typeSelection": "Type Selection",
     "confirmRegister": "Confirm Register",
+    "register": "Register",
+    "registrationSuccess": "Device Registered",
+    "originalId": "Original ID",
+    "systemId": "System ID",
+    "recommendedTopic": "Recommended Topic",
+    "recommendedTopicHint": "Device data arrives via this topic (already subscribed — no device-side change needed)",
+    "editDeviceType": "Edit Device Type",
+    "metricsEditHint": "Metrics are auto-inferred from samples. To correct names, units, or data types, edit the device type after registration.",
+    "createTypeOption": "Create new type \"{{value}}\"",
     "exactMatch": "Exact Match",
     "noMatchingTypes": "No matching device types found",
     "status": {
@@ -597,9 +544,6 @@
     "noSamples": "No samples available",
     "parsedData": "Parsed Data",
     "rawData": "Raw Bytes",
-    "editMetrics": "Edit Metrics",
-    "saveMetrics": "Save Metrics",
-    "editMetricsDesc": "Edit metric names, display names, units, and data types",
     "createDeviceType": "Create Device Type",
     "createDeviceTypeDesc": "Create a new device type from this draft",
     "createTypeSuccess": "Device type \"{{name}}\" created successfully",
@@ -645,9 +589,6 @@
       "retentionDesc": "How long to keep unapproved draft devices before cleanup"
     },
     "hours": "hours",
-    "noBrokerTitle": "No Device Connection Source",
-    "noBrokerDesc": "Auto discovery requires a connection source (e.g. MQTT broker, Webhook) to receive device data. Configure one in Settings to get started.",
-    "goToSettings": "Go to Settings",
     "noDraftsTitle": "No Discovered Devices",
     "noDraftsDesc": "New devices will appear here automatically when they send data via MQTT or Webhook.",
     "noDeviceTypes": "No device types",

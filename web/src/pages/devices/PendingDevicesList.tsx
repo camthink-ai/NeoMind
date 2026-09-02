@@ -1,23 +1,16 @@
-import { useState, useEffect, useCallback, useMemo } from "react"
+import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { useTranslation } from "react-i18next"
 import { useNavigate } from "react-router-dom"
-import { useStore } from "@/store"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { Badge } from "@/components/ui/badge"
 import { ResponsiveTable, EmptyState } from "@/components/shared"
-import { Cpu, Globe, Badge as BadgeIcon, Clock, Activity, Check, ChevronDown, X, Loader2, Search as SearchIcon, Hourglass, CheckCircle2, XCircle, AlertTriangle, BarChart3, CircleDot } from "lucide-react"
+import { Cpu, Activity, Check, ChevronDown, ChevronRight, Copy, Loader2, Search as SearchIcon, Hourglass, CheckCircle2, XCircle, AlertTriangle } from "lucide-react"
 import { UnifiedFormDialog } from "@/components/dialog/UnifiedFormDialog"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible"
 import {
   Table,
   TableHeader,
@@ -28,6 +21,7 @@ import {
 } from "@/components/ui/table"
 import { cn } from "@/lib/utils"
 import { formatTimestamp } from "@/lib/utils/format"
+import { copyToClipboard } from "@/lib/clipboard"
 import { useToast } from "@/hooks/use-toast"
 import { useEvents } from "@/hooks/useEvents"
 import { api } from "@/lib/api"
@@ -57,8 +51,6 @@ export function PendingDevicesList({
   const [drafts, setDrafts] = useState<DraftDevice[]>([])
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
-  const openSettings = useStore((s) => s.openSettings)
-  const [hasBroker, setHasBroker] = useState<boolean | null>(null)
 
   // Use external pagination state if provided, otherwise use internal state
   const [internalPage, setInternalPage] = useState(externalPage || 1)
@@ -82,6 +74,8 @@ export function PendingDevicesList({
   const [selectedDeviceType, setSelectedDeviceType] = useState('')
   const [showTypeDropdown, setShowTypeDropdown] = useState(false)
   const [typeInputValue, setTypeInputValue] = useState('')
+  // Keyboard-highlighted option in the type dropdown (combobox navigation)
+  const [highlightedTypeIndex, setHighlightedTypeIndex] = useState(0)
 
   // New type additional fields (only shown when creating a new type)
   const [newTypeFields, setNewTypeFields] = useState({
@@ -91,21 +85,107 @@ export function PendingDevicesList({
     device_type: ''
   })
 
-  // Metrics editing state
-  const [isEditingMetrics, setIsEditingMetrics] = useState(false)
-  const [editingMetrics, setEditingMetrics] = useState<Array<{
-    name: string
-    display_name: string
-    path: string
-    unit: string
-    data_type: string
-  }>>([])
+  // Inline field validation (replaces destructive toasts — the fields are
+  // right in front of the user, errors belong under them)
+  const [formErrors, setFormErrors] = useState<{ name?: string; type?: string }>({})
+
+  // Registration success — shown in-dialog instead of a transient toast: the
+  // recommended topic is the single most important output of this flow and
+  // must survive longer than a toast, copyable.
+  const [approveResult, setApproveResult] = useState<Awaited<ReturnType<typeof api.approveDraftDeviceWithType>> | null>(null)
+
+  // Review sections (metrics / raw samples) start collapsed — the decision
+  // form leads; the review content is reference material.
+  const [metricsOpen, setMetricsOpen] = useState(false)
+  const [samplesOpen, setSamplesOpen] = useState(false)
+
+  const [copiedField, setCopiedField] = useState<string | null>(null)
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const handleCopy = useCallback(async (field: string, value: string) => {
+    try {
+      await copyToClipboard(value)
+      setCopiedField(field)
+      if (copyTimer.current) clearTimeout(copyTimer.current)
+      copyTimer.current = setTimeout(() => setCopiedField(null), 1500)
+    } catch {
+      // clipboard blocked — silent, same policy as CopyMessageButton
+    }
+  }, [])
+
+  useEffect(() => () => {
+    if (copyTimer.current) clearTimeout(copyTimer.current)
+  }, [])
 
   // Check if selected type is an existing type or a new one
   const isNewType = useMemo(() => {
     if (!selectedDeviceType) return false
     return !suggestedTypes.some(t => t.device_type === selectedDeviceType)
   }, [selectedDeviceType, suggestedTypes])
+
+  // Combobox options: suggestions filtered by the input text, plus a
+  // "create new type" entry when the typed id doesn't match an existing
+  // suggestion — typing a novel id previously showed an unfiltered list that
+  // ignored the query entirely.
+  const typeOptions = useMemo<Array<
+    | { kind: 'existing'; type: SuggestedDeviceType }
+    | { kind: 'create'; value: string }
+  >>(() => {
+    const q = typeInputValue.trim().toLowerCase()
+    const filtered = q
+      ? suggestedTypes.filter(t =>
+          t.name?.toLowerCase().includes(q) ||
+          t.device_type.toLowerCase().includes(q) ||
+          t.description?.toLowerCase().includes(q))
+      : suggestedTypes
+    const options: Array<
+      | { kind: 'existing'; type: SuggestedDeviceType }
+      | { kind: 'create'; value: string }
+    > = filtered.map(type => ({ kind: 'existing', type }))
+    const trimmed = typeInputValue.trim()
+    if (trimmed && !suggestedTypes.some(t => t.device_type === trimmed)) {
+      options.unshift({ kind: 'create', value: trimmed })
+    }
+    return options
+  }, [typeInputValue, suggestedTypes])
+
+  // Keep the keyboard highlight inside the (shrinking) option list
+  useEffect(() => {
+    setHighlightedTypeIndex(i => Math.min(i, Math.max(typeOptions.length - 1, 0)))
+  }, [typeOptions.length])
+
+  const commitTypeSelection = useCallback((option: { kind: 'existing'; type: SuggestedDeviceType } | { kind: 'create'; value: string }) => {
+    const value = option.kind === 'existing' ? option.type.device_type : option.value
+    setSelectedDeviceType(value)
+    setTypeInputValue(value)
+    setShowTypeDropdown(false)
+    setFormErrors(errors => ({ ...errors, type: undefined }))
+  }, [])
+
+  const handleTypeInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!showTypeDropdown) {
+      if (e.key === 'ArrowDown' || e.key === 'Enter') {
+        e.preventDefault()
+        setShowTypeDropdown(true)
+      }
+      return
+    }
+    if (typeOptions.length === 0) return
+    const lastIndex = typeOptions.length - 1
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setHighlightedTypeIndex(i => Math.min(i + 1, lastIndex))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setHighlightedTypeIndex(i => Math.max(i - 1, 0))
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      commitTypeSelection(typeOptions[Math.min(highlightedTypeIndex, lastIndex)])
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      setShowTypeDropdown(false)
+    }
+  }
 
   // Registered/Rejected devices are removed from drafts and won't appear here
   const activeDrafts = drafts.filter(draft =>
@@ -160,27 +240,6 @@ export function PendingDevicesList({
       setLoading(false)
     }
   }, [selectedDraftForApproval])
-
-  // Check broker status when drafts are empty
-  useEffect(() => {
-    if (loading || activeDrafts.length > 0) return
-
-    let cancelled = false
-    const checkBroker = async () => {
-      try {
-        const { status } = await api.getMqttStatus()
-        if (!cancelled) {
-          const hasBuiltIn = status.connected
-          const hasExternal = !!status.external_brokers && status.external_brokers.length > 0
-          setHasBroker(hasBuiltIn || hasExternal)
-        }
-      } catch {
-        if (!cancelled) setHasBroker(false)
-      }
-    }
-    checkBroker()
-    return () => { cancelled = true }
-  }, [loading, activeDrafts.length])
 
   // Fetch type signatures for type reuse
   const fetchTypeSignatures = useCallback(async () => {
@@ -237,8 +296,12 @@ export function PendingDevicesList({
     setSuggestedTypes([])
     setSelectedDeviceType('')
     setTypeInputValue('')
+    setHighlightedTypeIndex(0)
     setNewTypeFields({ name: '', type_name: '', description: '', device_type: '' })
-    setIsEditingMetrics(false)
+    setFormErrors({})
+    setApproveResult(null)
+    setMetricsOpen(false)
+    setSamplesOpen(false)
 
     // Initialize new type form from generated type
     if (draft.generated_type) {
@@ -248,14 +311,6 @@ export function PendingDevicesList({
         type_name: draft.generated_type.name,  // Default type name to generated name
         description: draft.generated_type.description,
       })
-      // Initialize editing metrics
-      setEditingMetrics((draft.generated_type.metrics || []).map(m => ({
-        name: m.name,
-        display_name: m.display_name || m.name,
-        path: m.path,
-        unit: m.unit || '',
-        data_type: m.data_type || 'string'
-      })))
     }
 
     // Fetch suggested types
@@ -283,28 +338,20 @@ export function PendingDevicesList({
     }
   }
 
-  // Validate form before submission
+  // Validate form before submission — inline field errors, not toasts
   const validateForm = (): boolean => {
+    const errors: { name?: string; type?: string } = {}
     if (!selectedDeviceType.trim()) {
-      toast({
-        title: t('common:warning'),
-        description: t('devices:pending.pleaseSelectType'),
-        variant: 'destructive'
-      })
-      return false
+      errors.type = t('devices:pending.pleaseSelectType')
     }
 
     // Name is always required (whether creating new type or using existing)
     if (!newTypeFields.name.trim()) {
-      toast({
-        title: t('common:warning'),
-        description: t('devices:pending.pleaseEnterDeviceName'),
-        variant: 'destructive'
-      })
-      return false
+      errors.name = t('devices:pending.pleaseEnterDeviceName')
     }
 
-    return true
+    setFormErrors(errors)
+    return Object.keys(errors).length === 0
   }
 
   // Handle final approval after type selection
@@ -339,22 +386,10 @@ export function PendingDevicesList({
         )
       }
 
-      // Show approval result with system device_id and recommended topic
-      toast({
-        title: t('common:success'),
-        description: (
-          <div className="space-y-1">
-            <p>{result.message}</p>
-            <div className="text-xs bg-muted p-2 rounded space-y-1">
-              <p><span className="font-semibold">Original ID:</span> {result.original_device_id}</p>
-              <p><span className="font-semibold">System ID:</span> {result.system_device_id}</p>
-              <p><span className="font-semibold">Device Type:</span> {result.device_type}</p>
-              <p><span className="font-semibold">Recommended Topic:</span> <code className="bg-background px-1 rounded">{result.recommended_topic}</code></p>
-            </div>
-          </div>
-        ),
-      })
-      setShowApproveDialog(false)
+      // Keep the dialog open on the result — system id + recommended topic
+      // are the outputs the user needs to carry away (the toast used to
+      // evaporate after a few seconds with no copy affordance).
+      setApproveResult(result)
       await fetchDrafts()
       onRefresh?.()
     } catch (error) {
@@ -365,12 +400,18 @@ export function PendingDevicesList({
       })
     } finally {
       setProcessing(null)
-      setSelectedDraftForApproval(null)
-      setSelectedDeviceType('')
-      setTypeInputValue('')
-      setNewTypeFields({ name: '', type_name: '', description: '', device_type: '' })
     }
   }
+
+  // Close the approve dialog and clear the result state
+  const closeApproveDialog = useCallback(() => {
+    setShowApproveDialog(false)
+    setApproveResult(null)
+    setSelectedDraftForApproval(null)
+    setSelectedDeviceType('')
+    setTypeInputValue('')
+    setNewTypeFields({ name: '', type_name: '', description: '', device_type: '' })
+  }, [])
 
   // Reject draft device
   const handleReject = async (draft: DraftDevice) => {
@@ -407,12 +448,15 @@ export function PendingDevicesList({
     return status.toLowerCase().replace(/[^a-z]/g, '_')
   }
 
-  // Get status badge
+  // Get status badge — "waiting for the user" is a calm, informational
+  // state, not a warning: orange read as an error cue. Blue keeps the
+  // reserved warning color for states that actually need attention
+  // (offline devices, failures).
   const getStatusBadge = (status: string) => {
     const statusMap: Record<string, { color: string; label: string; icon: React.ReactNode }> = {
       collecting: { color: "bg-info-light text-info", label: t('devices:pending.status.collecting'), icon: <Loader2 className="h-4 w-4" /> },
       analyzing: { color: "bg-accent-purple-light text-accent-purple", label: t('devices:pending.status.analyzing'), icon: <SearchIcon className="h-4 w-4" /> },
-      waiting_processing: { color: "bg-warning-light text-warning", label: t('devices:pending.status.waitingProcessing'), icon: <Hourglass className="h-4 w-4" /> },
+      waiting_processing: { color: "bg-info-light text-info", label: t('devices:pending.status.waitingProcessing'), icon: <Hourglass className="h-4 w-4" /> },
       registered: { color: "bg-success-light text-success", label: t('devices:pending.status.registered'), icon: <CheckCircle2 className="h-4 w-4" /> },
       rejected: { color: "bg-error-light text-error", label: t('devices:pending.status.rejected'), icon: <XCircle className="h-4 w-4" /> },
       failed: { color: "bg-error-light text-error", label: t('devices:pending.status.failed'), icon: <AlertTriangle className="h-4 w-4" /> },
@@ -460,28 +504,25 @@ export function PendingDevicesList({
             label: t('devices:pending.headers.discoveredAt'),
             align: 'center',
           },
+          {
+            key: 'actions',
+            label: '',
+            align: 'right',
+          },
         ]}
         data={paginatedDrafts}
         rowKey={(draft: DraftDevice) => draft.id}
         loading={loading}
         emptyState={
-          hasBroker === false ? (
-            <EmptyState
-              icon="settings"
-              title={t('devices:pending.noBrokerTitle')}
-              description={t('devices:pending.noBrokerDesc')}
-              action={{
-                label: t('devices:pending.goToSettings'),
-                onClick: () => openSettings('connections'),
-              }}
-            />
-          ) : (
-            <EmptyState
-              icon="inbox"
-              title={t('devices:pending.noDraftsTitle')}
-              description={t('devices:pending.noDraftsDesc')}
-            />
-          )
+          // The server always runs its built-in MQTT broker + webhook ingest,
+          // so "no connection source" is not a real state — an empty list just
+          // means nothing unknown has reported yet. (The old broker-status
+          // probe also misfired whenever the broker port was merely occupied.)
+          <EmptyState
+            icon="inbox"
+            title={t('devices:pending.noDraftsTitle')}
+            description={t('devices:pending.noDraftsDesc')}
+          />
         }
         renderCell={(columnKey, rowData) => {
           const draft = rowData
@@ -492,13 +533,16 @@ export function PendingDevicesList({
             case 'deviceId':
               return (
                 <div className="flex items-center gap-3">
+                  {/* Neutral tile — the status badge stays the single strong
+                      color signal on the row (same principle as the mobile
+                      card's confidence rendering). Purple marks an in-flight
+                      analysis; waiting is not a colored state of the device
+                      itself. */}
                   <div className={cn(
                     "w-9 h-9 rounded-lg flex items-center justify-center transition-colors",
-                    draft.status === 'waiting_processing'
-                      ? "bg-warning-light text-warning"
-                      : draft.status === 'analyzing'
-                        ? "bg-accent-purple-light text-accent-purple"
-                        : "bg-muted text-muted-foreground"
+                    draft.status === 'analyzing'
+                      ? "bg-accent-purple-light text-accent-purple"
+                      : "bg-muted text-muted-foreground"
                   )}>
                     <Cpu className="h-4 w-4" />
                   </div>
@@ -578,6 +622,31 @@ export function PendingDevicesList({
                 </span>
               )
 
+            case 'actions':
+              // Row-level actions — reject used to be reachable only from
+              // inside the approve dialog's footer (the least visible spot).
+              if (draft.status !== 'waiting_processing') return null
+              return (
+                <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+                  <Button
+                    size="sm"
+                    onClick={() => handleApproveClick(draft)}
+                    disabled={processing === draft.id}
+                  >
+                    {t('devices:pending.register')}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-error hover:text-error hover:bg-error-light"
+                    onClick={() => handleReject(draft)}
+                    disabled={processing === draft.id}
+                  >
+                    {t('devices:pending.reject')}
+                  </Button>
+                </div>
+              )
+
             default:
               return null
           }
@@ -628,6 +697,30 @@ export function PendingDevicesList({
                   {sourceLabel} · {formatTimestamp(draft.discovered_at, false)}
                 </span>
               </div>
+
+              {/* Row-level actions — same affordance as the desktop table's
+                  actions column (the card itself opens the approve dialog). */}
+              {draft.status === 'waiting_processing' && (
+                <div className="flex gap-2 pt-1">
+                  <Button
+                    size="sm"
+                    className="flex-1"
+                    onClick={(e) => { e.stopPropagation(); handleApproveClick(draft) }}
+                    disabled={processing === draft.id}
+                  >
+                    {t('devices:pending.register')}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1 text-error hover:text-error hover:bg-error-light"
+                    onClick={(e) => { e.stopPropagation(); handleReject(draft) }}
+                    disabled={processing === draft.id}
+                  >
+                    {t('devices:pending.reject')}
+                  </Button>
+                </div>
+              )}
             </div>
           )
         }}
@@ -653,413 +746,507 @@ export function PendingDevicesList({
       {showApproveDialog && selectedDraftForApproval && (
         <UnifiedFormDialog
           open={showApproveDialog}
-          onOpenChange={setShowApproveDialog}
-          title={t('devices:pending.approveTitle')}
+          onOpenChange={(open) => { if (!open) closeApproveDialog() }}
+          title={approveResult
+            ? t('devices:pending.registrationSuccess')
+            : t('devices:pending.approveTitle')}
           width="2xl"
           contentClassName="overflow-y-auto"
           onSubmit={handleFinalApprove}
           isSubmitting={processing === selectedDraftForApproval.id}
           submitLabel={t('devices:pending.confirmRegister')}
-          submitDisabled={processing === selectedDraftForApproval.id || !selectedDeviceType.trim()}
+          submitDisabled={!!approveResult || processing === selectedDraftForApproval.id || !selectedDeviceType.trim()}
           footer={
-            <div className="flex flex-wrap items-center gap-2 justify-end">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-error hover:text-error hover:bg-error-light"
-                onClick={() => {
-                  setShowApproveDialog(false)
-                  if (selectedDraftForApproval) handleReject(selectedDraftForApproval)
-                }}
-                disabled={processing === selectedDraftForApproval.id}
-              >
-                {t('devices:pending.reject')}
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => setShowApproveDialog(false)}>
-                {t('common:cancel')}
-              </Button>
-              <Button
-                size="sm"
-                onClick={handleFinalApprove}
-                disabled={processing === selectedDraftForApproval.id || !selectedDeviceType.trim()}
-              >
-                {processing === selectedDraftForApproval.id ? t('common:processing') : t('devices:pending.confirmRegister')}
-              </Button>
-            </div>
+            approveResult ? (
+              <div className="flex flex-wrap items-center gap-2 justify-end">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => { navigate('/devices/types'); closeApproveDialog() }}
+                >
+                  {t('devices:pending.editDeviceType')}
+                </Button>
+                <Button size="sm" onClick={closeApproveDialog}>
+                  {t('common:done')}
+                </Button>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2 justify-end">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-error hover:text-error hover:bg-error-light"
+                  onClick={() => {
+                    closeApproveDialog()
+                    if (selectedDraftForApproval) handleReject(selectedDraftForApproval)
+                  }}
+                  disabled={processing === selectedDraftForApproval.id}
+                >
+                  {t('devices:pending.reject')}
+                </Button>
+                <Button variant="outline" size="sm" onClick={closeApproveDialog}>
+                  {t('common:cancel')}
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleFinalApprove}
+                  disabled={processing === selectedDraftForApproval.id || !selectedDeviceType.trim()}
+                >
+                  {processing === selectedDraftForApproval.id ? t('common:processing') : t('devices:pending.confirmRegister')}
+                </Button>
+              </div>
+            )
           }
         >
-          <div className="space-y-6">
-              {/* Device Info Section */}
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                  {t('devices:pending.deviceInfo')}
-                </h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 sm:gap-x-6 gap-y-2 text-sm bg-muted-30 rounded-lg p-3 sm:p-4">
-                  <div>
-                    <span className="text-muted-foreground">{t('devices:pending.headers.deviceId')}: </span>
-                    <span className="font-mono font-medium">{selectedDraftForApproval.device_id}</span>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">{t('devices:pending.headers.source')}: </span>
-                    <Badge variant="outline" className="ml-1 font-mono">
-                      {selectedDraftForApproval.source.includes(':')
-                        ? selectedDraftForApproval.source.split(':').slice(1).join(':')
-                        : selectedDraftForApproval.source}
-                    </Badge>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">{t('devices:pending.headers.status')}: </span>
-                    <Badge variant={selectedDraftForApproval.status === 'waiting_processing' ? 'default' : 'secondary'} className="ml-1">
-                      {selectedDraftForApproval.status === 'waiting_processing'
-                        ? t('devices:pending.status.waitingProcessing')
-                        : selectedDraftForApproval.status.replace(/_/g, ' ')}
-                    </Badge>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">{t('devices:pending.headers.samples')}: </span>
-                    <span className="font-medium">{selectedDraftForApproval.sample_count} / {selectedDraftForApproval.max_samples}</span>
-                  </div>
+          {approveResult ? (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-full bg-success-light text-success flex items-center justify-center shrink-0">
+                  <CheckCircle2 className="h-5 w-5" />
+                </div>
+                <div className="min-w-0">
+                  <p className="font-medium">{t('devices:pending.registrationSuccess')}</p>
+                  <p className="text-xs text-muted-foreground truncate">{approveResult.message}</p>
                 </div>
               </div>
 
-              {/* Metrics Section */}
-              {selectedDraftForApproval.generated_type ? (
-                <>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs text-muted-foreground">{t('devices:pending.metrics')} ({selectedDraftForApproval.generated_type.metrics.length})</span>
-                    {!isEditingMetrics ? (
-                      <Button variant="ghost" size="xs" onClick={() => setIsEditingMetrics(true)}>
-                        {t('common:edit')}
-                      </Button>
-                    ) : (
-                      <div className="flex gap-1">
-                        <Button variant="ghost" size="xs" onClick={() => {
-                          setIsEditingMetrics(false)
-                          // Reset to original values
-                          if (selectedDraftForApproval.generated_type) {
-                            setEditingMetrics((selectedDraftForApproval.generated_type.metrics || []).map(m => ({
-                              name: m.name,
-                              display_name: m.display_name || m.name,
-                              path: m.path,
-                              unit: m.unit || '',
-                              data_type: m.data_type || 'string'
-                            })))
-                          }
-                        }}>
-                          {t('common:cancel')}
-                        </Button>
-                        <Button variant="default" size="xs" onClick={() => setIsEditingMetrics(false)}>
-                          {t('common:save')}
-                        </Button>
-                      </div>
-                    )}
+              {/* The backend registers the device under its original id —
+                  system_device_id === original_device_id by contract. Show
+                  one row; split only if a future backend ever diverges. */}
+              <div className="rounded-lg border border-border bg-muted-30 p-3 space-y-2.5">
+                {approveResult.original_device_id === approveResult.system_device_id ? (
+                  <div className="flex items-center justify-between gap-3 text-sm">
+                    <span className="text-muted-foreground shrink-0">{t('devices:pending.headers.deviceId')}</span>
+                    <span className="font-mono text-xs truncate text-right" title={approveResult.system_device_id}>
+                      {approveResult.system_device_id}
+                    </span>
                   </div>
-                  <div className="border rounded-lg overflow-x-auto -mx-1 px-1">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>{t('devices:types.headers.path')}</TableHead>
-                          <TableHead>{t('devices:types.headers.displayName')}</TableHead>
-                          <TableHead>{t('devices:types.headers.dataType')}</TableHead>
-                          <TableHead>{t('devices:types.headers.unit')}</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {(isEditingMetrics ? editingMetrics : (selectedDraftForApproval.generated_type.metrics || [])).map((metric, idx) => (
-                          <TableRow key={metric.name}>
-                            <TableCell className="font-mono text-xs">{metric.path}</TableCell>
-                            <TableCell>
-                              {isEditingMetrics ? (
-                                <Input
-                                  value={metric.display_name}
-                                  onChange={(e) => {
-                                    const updated = [...editingMetrics]
-                                    updated[idx].display_name = e.target.value
-                                    setEditingMetrics(updated)
-                                  }}
-                                  className="h-7 text-xs"
-                                />
-                              ) : (
-                                metric.display_name
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              {isEditingMetrics ? (
-                                <Select
-                                  value={metric.data_type}
-                                  onValueChange={(value) => {
-                                    const updated = [...editingMetrics]
-                                    updated[idx].data_type = value
-                                    setEditingMetrics(updated)
-                                  }}
-                                >
-                                  <SelectTrigger className="h-7 text-xs">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="string">String</SelectItem>
-                                    <SelectItem value="integer">Integer</SelectItem>
-                                    <SelectItem value="float">Float</SelectItem>
-                                    <SelectItem value="boolean">Boolean</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              ) : (
-                                <span className="text-xs capitalize">{metric.data_type || 'string'}</span>
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              {isEditingMetrics ? (
-                                <Input
-                                  value={metric.unit}
-                                  onChange={(e) => {
-                                    const updated = [...editingMetrics]
-                                    updated[idx].unit = e.target.value
-                                    setEditingMetrics(updated)
-                                  }}
-                                  placeholder="-"
-                                  className="h-7 text-xs w-16"
-                                />
-                              ) : (
-                                metric.unit || '-'
-                              )}
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                </>
-              ) : (
-                <div className="text-center py-4 text-muted-foreground text-sm">
-                  {t('devices:pending.noGeneratedType')}
-                </div>
-              )}
-
-              {/* Original Data Section */}
-              {selectedDraftForApproval.samples && selectedDraftForApproval.samples.length > 0 && (
-                <div className="space-y-3">
-                  <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                    {t('devices:pending.originalData')}
-                  </h3>
-                  <div className="bg-muted-30 rounded-lg p-3">
-                    <div className="flex gap-1 mb-3">
-                      {selectedDraftForApproval.samples.slice(0, 5).map((_, index) => (
-                        <button
-                          key={index}
-                          onClick={() => setSelectedSampleIndex(index)}
-                          onTouchEnd={(e) => {
-                            e.preventDefault()
-                            setSelectedSampleIndex(index)
-                          }}
-                          className={`w-6 h-6 text-xs rounded ${
-                            selectedSampleIndex === index
-                              ? 'bg-primary text-primary-foreground'
-                              : 'bg-background hover:bg-muted'
-                          }`}
-                          style={{ touchAction: 'manipulation' }}
-                        >
-                          {index + 1}
-                        </button>
-                      ))}
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between gap-3 text-sm">
+                      <span className="text-muted-foreground shrink-0">{t('devices:pending.originalId')}</span>
+                      <span className="font-mono text-xs truncate text-right" title={approveResult.original_device_id}>
+                        {approveResult.original_device_id}
+                      </span>
                     </div>
-                    {selectedDraftForApproval.samples[selectedSampleIndex]?.parsed && (
-                      <pre className="text-xs bg-background p-3 rounded overflow-x-auto">
-                        {JSON.stringify(selectedDraftForApproval.samples[selectedSampleIndex].parsed, null, 2)}
-                      </pre>
-                    )}
+                    <div className="flex items-center justify-between gap-3 text-sm">
+                      <span className="text-muted-foreground shrink-0">{t('devices:pending.systemId')}</span>
+                      <span className="font-mono text-xs truncate text-right" title={approveResult.system_device_id}>
+                        {approveResult.system_device_id}
+                      </span>
+                    </div>
+                  </>
+                )}
+                <div className="flex items-center justify-between gap-3 text-sm">
+                  <span className="text-muted-foreground shrink-0">{t('devices:pending.deviceType')}</span>
+                  <span className="font-mono text-xs truncate text-right" title={approveResult.device_type}>
+                    {approveResult.device_type}
+                  </span>
+                </div>
+                {/* The platform subscribes to the topic the device was found
+                    publishing on — reference information for debugging, not an
+                    action item: the device changes nothing. Webhook-sourced
+                    devices have no real topic (the backend returns the literal
+                    "webhook"), so the row is MQTT-only. */}
+                {selectedDraftForApproval.source.startsWith('mqtt') && (
+                  <div className="flex items-center justify-between gap-3 text-sm">
+                    <span className="text-muted-foreground shrink-0">{t('devices:pending.recommendedTopic')}</span>
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      <span className="font-mono text-xs truncate" title={approveResult.recommended_topic}>
+                        {approveResult.recommended_topic}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleCopy('topic', approveResult.recommended_topic)}
+                        className="text-muted-foreground hover:text-foreground shrink-0"
+                        aria-label={t('common:copy')}
+                      >
+                        {copiedField === 'topic'
+                          ? <Check className="h-3.5 w-3.5 text-success" />
+                          : <Copy className="h-3.5 w-3.5" />}
+                      </button>
+                    </span>
                   </div>
-                </div>
-              )}
-
-              {/* Device Information Section */}
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                  {t('devices:pending.deviceInfo')}
-                </h3>
-
-                {/* Device Name Field */}
-                <div>
-                  <Label className="text-xs text-muted-foreground">
-                    {t('devices:pending.deviceName')} <span className="text-error">*</span>
-                  </Label>
-                  <Input
-                    value={newTypeFields.name}
-                    onChange={(e) => setNewTypeFields({ ...newTypeFields, name: e.target.value })}
-                    placeholder={t('devices:pending.deviceNamePlaceholder')}
-                    className="h-9 mt-1"
-                  />
-                </div>
+                )}
               </div>
 
-              {/* Device Type Selection Section */}
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                  {t('devices:pending.deviceTypeSelection')}
-                  <span className="text-error ml-1">*</span>
-                </h3>
+              {selectedDraftForApproval.source.startsWith('mqtt') && (
+                <p className="text-xs text-muted-foreground">
+                  {t('devices:pending.recommendedTopicHint')}
+                </p>
+              )}
+            </div>
+          ) : (
+          <div className="space-y-5">
+            {/* ── Registration form — the decision fields lead; review
+                  context follows below, collapsed by default ── */}
 
-                {/* Unified Type Input with Dropdown */}
+            {/* Device Name */}
+            <div>
+              <Label className="text-xs text-muted-foreground">
+                {t('devices:pending.deviceName')} <span className="text-error">*</span>
+              </Label>
+              <Input
+                value={newTypeFields.name}
+                onChange={(e) => {
+                  setNewTypeFields({ ...newTypeFields, name: e.target.value })
+                  if (formErrors.name) setFormErrors(errors => ({ ...errors, name: undefined }))
+                }}
+                placeholder={t('devices:pending.deviceNamePlaceholder')}
+                aria-invalid={!!formErrors.name}
+                className="h-9 mt-1"
+              />
+              {formErrors.name && (
+                <p className="text-xs text-error mt-1">{formErrors.name}</p>
+              )}
+            </div>
+
+            {/* Device Type Selection */}
+            <div className="space-y-2.5">
+              <Label className="text-xs text-muted-foreground">
+                {t('devices:pending.deviceTypeSelection')} <span className="text-error">*</span>
+              </Label>
+
+              {/* Filterable, keyboard-navigable combobox. Container-level blur
+                  (relatedTarget check) replaces the old setTimeout(200) race. */}
+              <div
+                className="relative"
+                onBlur={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                    setShowTypeDropdown(false)
+                  }
+                }}
+              >
                 <div className="relative">
-                  <Label className="text-xs text-muted-foreground mb-1.5 block">
-                    {t('devices:pending.selectOrCreateType')}
-                  </Label>
-                  <div className="relative">
-                    <Input
-                      value={typeInputValue}
-                      onChange={(e) => {
-                        const value = e.target.value
-                        setTypeInputValue(value)
-                        setSelectedDeviceType(value)
-                        setShowTypeDropdown(value.length > 0)
-                      }}
-                      onFocus={() => {
-                        if (typeInputValue.length === 0) {
-                          setShowTypeDropdown(true)
-                        }
-                      }}
-                      onBlur={() => {
-                        // Delay to allow clicking on dropdown items
-                        setTimeout(() => setShowTypeDropdown(false), 200)
-                      }}
-                      placeholder={t('devices:pending.typeInputPlaceholder')}
-                      className="pr-10"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowTypeDropdown(!showTypeDropdown)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    >
-                      <ChevronDown className="h-4 w-4" />
-                    </button>
-                  </div>
+                  <Input
+                    value={typeInputValue}
+                    role="combobox"
+                    aria-expanded={showTypeDropdown}
+                    aria-autocomplete="list"
+                    aria-controls="device-type-options"
+                    aria-activedescendant={showTypeDropdown && typeOptions.length > 0
+                      ? `device-type-option-${Math.min(highlightedTypeIndex, typeOptions.length - 1)}`
+                      : undefined}
+                    onChange={(e) => {
+                      const value = e.target.value
+                      setTypeInputValue(value)
+                      setSelectedDeviceType(value)
+                      setShowTypeDropdown(true)
+                      setHighlightedTypeIndex(0)
+                      setFormErrors(errors => ({ ...errors, type: undefined }))
+                    }}
+                    onFocus={() => setShowTypeDropdown(true)}
+                    onKeyDown={handleTypeInputKeyDown}
+                    placeholder={t('devices:pending.typeInputPlaceholder')}
+                    aria-invalid={!!formErrors.type}
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onClick={() => setShowTypeDropdown(!showTypeDropdown)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    aria-label={t('devices:pending.deviceTypeSelection')}
+                  >
+                    <ChevronDown className={cn(
+                      'h-4 w-4 transition-transform',
+                      showTypeDropdown && 'rotate-180'
+                    )} />
+                  </button>
+                </div>
 
-                  {/* Dropdown with suggested types */}
-                  {showTypeDropdown && (
-                    <div className="absolute z-10 w-full mt-1 bg-background border border-border rounded-lg shadow-lg max-h-64 overflow-y-auto">
-                      {loadingSuggestions ? (
-                        <div className="p-3 text-sm text-muted-foreground text-center">
-                          {t('common:loading')}...
-                        </div>
-                      ) : suggestedTypes.length > 0 ? (
-                        <>
-                          {suggestedTypes.map((type) => (
-                            <div
-                              key={type.device_type}
-                              onClick={() => {
-                                setSelectedDeviceType(type.device_type)
-                                setTypeInputValue(type.device_type)
-                                setShowTypeDropdown(false)
-                              }}
-                              onTouchEnd={(e) => {
-                                e.preventDefault()
-                                setSelectedDeviceType(type.device_type)
-                                setTypeInputValue(type.device_type)
-                                setShowTypeDropdown(false)
-                              }}
-                              className={`p-3 cursor-pointer transition-colors border-b last:border-b-0 ${
-                                selectedDeviceType === type.device_type
-                                  ? 'bg-muted border-primary'
-                                  : 'hover:bg-muted-50 border-transparent'
-                              }`}
-                              style={{ touchAction: 'manipulation' }}
-                            >
+                {showTypeDropdown && (
+                  <div
+                    id="device-type-options"
+                    role="listbox"
+                    className="absolute z-10 w-full mt-1 bg-background border border-border rounded-lg shadow-lg max-h-64 overflow-y-auto"
+                  >
+                    {loadingSuggestions ? (
+                      <div className="p-3 text-sm text-muted-foreground text-center">
+                        {t('common:loading')}...
+                      </div>
+                    ) : typeOptions.length > 0 ? (
+                      typeOptions.map((option, index) => {
+                        const highlighted = index === Math.min(highlightedTypeIndex, typeOptions.length - 1)
+                        return (
+                          <div
+                            key={option.kind === 'existing' ? option.type.device_type : `create-${option.value}`}
+                            id={`device-type-option-${index}`}
+                            role="option"
+                            aria-selected={highlighted}
+                            // Keep focus in the input so the container blur
+                            // check can't race the click.
+                            onMouseDown={(e) => e.preventDefault()}
+                            onTouchEnd={(e) => e.preventDefault()}
+                            onClick={() => commitTypeSelection(option)}
+                            onMouseEnter={() => setHighlightedTypeIndex(index)}
+                            className={cn(
+                              'p-3 cursor-pointer transition-colors border-b last:border-b-0',
+                              highlighted ? 'bg-muted border-primary' : 'hover:bg-muted-50 border-transparent'
+                            )}
+                            style={{ touchAction: 'manipulation' }}
+                          >
+                            {option.kind === 'create' ? (
+                              <div className="flex items-center gap-2">
+                                <Check className="h-4 w-4 text-primary shrink-0" />
+                                <span className="text-sm">
+                                  {t('devices:pending.createTypeOption', { value: option.value })}
+                                </span>
+                              </div>
+                            ) : (
                               <div className="flex items-center justify-between">
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-2">
-                                    <span className="font-medium truncate">{type.name}</span>
-                                    {type.is_exact_match && (
+                                    <span className="font-medium truncate">{option.type.name}</span>
+                                    {option.type.is_exact_match && (
                                       <Badge variant="default" className="text-xs h-5 shrink-0">
                                         {t('devices:pending.exactMatch')}
                                       </Badge>
                                     )}
                                   </div>
-                                  <p className="text-xs text-muted-foreground truncate">{type.description}</p>
+                                  <p className="text-xs text-muted-foreground truncate">{option.type.description}</p>
                                   <p className="text-xs text-muted-foreground mt-0.5">
-                                    {type.device_type} · {type.metric_count} {t('devices:pending.metrics')}
+                                    {option.type.device_type} · {option.type.metric_count} {t('devices:pending.metrics')}
                                   </p>
                                 </div>
                                 <div className="flex items-center gap-2 shrink-0 ml-3">
                                   <Badge
-                                    variant={type.match_score >= 80 ? "default" : "outline"}
-                                    className={type.match_score >= 80 ? "" : "border-border"}
+                                    variant={option.type.match_score >= 80 ? 'default' : 'outline'}
+                                    className={option.type.match_score >= 80 ? '' : 'border-border'}
                                   >
-                                    {type.match_score}%
+                                    {option.type.match_score}%
                                   </Badge>
-                                  {selectedDeviceType === type.device_type && (
+                                  {selectedDeviceType === option.type.device_type && (
                                     <Check className="h-4 w-4 text-primary" />
                                   )}
                                 </div>
                               </div>
-                            </div>
-                          ))}
-                        </>
-                      ) : (
-                        <div className="p-3 text-sm text-muted-foreground text-center">
-                          {t('devices:pending.noDeviceTypes')}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* Type selection status indicator */}
-                {selectedDeviceType && (
-                  <div className={`rounded-lg p-3 flex items-center gap-2 text-sm ${
-                    isNewType
-                      ? 'bg-warning-light border-warning text-warning'
-                      : 'bg-success-light border border-success text-success'
-                  }`}>
-                    {isNewType ? (
-                      <>
-                        <span className="bg-accent-orange-light text-accent-orange text-xs px-2 py-0.5 rounded">
-                          {t('devices:pending.newType')}
-                        </span>
-                        <span>{t('devices:pending.willCreateNewType', { type: selectedDeviceType })}</span>
-                      </>
+                            )}
+                          </div>
+                        )
+                      })
                     ) : (
-                      <>
-                        <Check className="h-4 w-4" />
-                        <span>{t('devices:pending.usingExistingType', { type: selectedDeviceType })}</span>
-                      </>
+                      <div className="p-3 text-sm text-muted-foreground text-center">
+                        {t('devices:pending.noDeviceTypes')}
+                      </div>
                     )}
                   </div>
                 )}
+              </div>
 
-                {/* Type Description field - only shown when creating a new type */}
-                {selectedDeviceType && isNewType && (
-                  <div>
-                    <Label className="text-xs text-muted-foreground">
-                      {t('devices:pending.deviceTypeName')} <span className="text-error">*</span>
-                    </Label>
-                    <Input
-                      value={newTypeFields.type_name}
-                      onChange={(e) => setNewTypeFields({ ...newTypeFields, type_name: e.target.value })}
-                      placeholder={t('devices:pending.typeNamePlaceholder')}
-                      className="h-9 mt-1"
-                    />
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {t('devices:pending.typeNameHint')}
+              {formErrors.type && (
+                <p className="text-xs text-error">{formErrors.type}</p>
+              )}
+
+              {/* Type selection status indicator */}
+              {selectedDeviceType && (
+                <div className={`rounded-lg p-3 flex items-center gap-2 text-sm ${
+                  isNewType
+                    ? 'bg-warning-light border border-warning text-warning'
+                    : 'bg-success-light border border-success text-success'
+                }`}>
+                  {isNewType ? (
+                    <>
+                      <span className="bg-accent-orange-light text-accent-orange text-xs px-2 py-0.5 rounded">
+                        {t('devices:pending.newType')}
+                      </span>
+                      <span>{t('devices:pending.willCreateNewType', { type: selectedDeviceType })}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="h-4 w-4" />
+                      <span>{t('devices:pending.usingExistingType', { type: selectedDeviceType })}</span>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* Type display name — only when creating a new type */}
+              {selectedDeviceType && isNewType && (
+                <div>
+                  <Label className="text-xs text-muted-foreground">
+                    {t('devices:pending.deviceTypeName')} <span className="text-error">*</span>
+                  </Label>
+                  <Input
+                    value={newTypeFields.type_name}
+                    onChange={(e) => setNewTypeFields({ ...newTypeFields, type_name: e.target.value })}
+                    placeholder={t('devices:pending.typeNamePlaceholder')}
+                    className="h-9 mt-1"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {t('devices:pending.typeNameHint')}
+                  </p>
+                </div>
+              )}
+
+              {/* Type description — only when creating a new type */}
+              {selectedDeviceType && isNewType && (
+                <div>
+                  <Label className="text-xs text-muted-foreground">
+                    {t('devices:types.headers.description')}
+                  </Label>
+                  <Textarea
+                    value={newTypeFields.description}
+                    onChange={(e) => setNewTypeFields({ ...newTypeFields, description: e.target.value })}
+                    placeholder={t('devices:pending.typeDescPlaceholder')}
+                    rows={2}
+                    className="mt-1"
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* ── Context: device facts (single occurrence of this header —
+                  it used to appear twice, once per section) ── */}
+            <div className="space-y-2">
+              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                {t('devices:pending.deviceInfo')}
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 sm:gap-x-6 gap-y-2 text-sm bg-muted-30 rounded-lg p-3 sm:p-4">
+                <div>
+                  <span className="text-muted-foreground">{t('devices:pending.headers.deviceId')}: </span>
+                  <span className="font-mono font-medium">{selectedDraftForApproval.device_id}</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">{t('devices:pending.headers.source')}: </span>
+                  <Badge variant="outline" className="ml-1 font-mono">
+                    {selectedDraftForApproval.source.includes(':')
+                      ? selectedDraftForApproval.source.split(':').slice(1).join(':')
+                      : selectedDraftForApproval.source}
+                  </Badge>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">{t('devices:pending.headers.status')}: </span>
+                  <Badge variant={selectedDraftForApproval.status === 'waiting_processing' ? 'default' : 'secondary'} className="ml-1">
+                    {selectedDraftForApproval.status === 'waiting_processing'
+                      ? t('devices:pending.status.waitingProcessing')
+                      : selectedDraftForApproval.status.replace(/_/g, ' ')}
+                  </Badge>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">{t('devices:pending.headers.samples')}: </span>
+                  <span className="font-medium">{selectedDraftForApproval.sample_count} / {selectedDraftForApproval.max_samples}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* ── Review: AI-inferred metrics — reference for the type
+                  decision; edits belong to the type manager after
+                  registration (the in-dialog editor never reached the
+                  API, so it is gone instead of lying) ── */}
+            {selectedDraftForApproval.generated_type && (
+              <Collapsible open={metricsOpen} onOpenChange={setMetricsOpen}>
+                <CollapsibleTrigger className="w-full flex items-center justify-between py-1 text-left">
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                    {t('devices:pending.metrics')} ({selectedDraftForApproval.generated_type.metrics.length})
+                  </span>
+                  <ChevronRight className={cn(
+                    'h-4 w-4 text-muted-foreground transition-transform',
+                    metricsOpen && 'rotate-90'
+                  )} />
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className="pt-2 space-y-2">
+                    <div className="border rounded-lg overflow-x-auto -mx-1 px-1">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>{t('devices:types.headers.path')}</TableHead>
+                            <TableHead>{t('devices:types.headers.displayName')}</TableHead>
+                            <TableHead>{t('devices:types.headers.dataType')}</TableHead>
+                            <TableHead>{t('devices:types.headers.unit')}</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {(selectedDraftForApproval.generated_type.metrics || []).map((metric) => (
+                            <TableRow key={metric.name}>
+                              <TableCell className="font-mono text-xs">{metric.path}</TableCell>
+                              <TableCell>{metric.display_name}</TableCell>
+                              <TableCell>
+                                <span className="text-xs capitalize">{metric.data_type || 'string'}</span>
+                              </TableCell>
+                              <TableCell>{metric.unit || '-'}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {t('devices:pending.metricsEditHint')}
                     </p>
                   </div>
-                )}
+                </CollapsibleContent>
+              </Collapsible>
+            )}
 
-                {/* Type Description field - only shown when creating a new type */}
-                {selectedDeviceType && isNewType && (
-                  <div>
-                    <Label className="text-xs text-muted-foreground">
-                      {t('devices:types.headers.description')}
-                    </Label>
-                    <Textarea
-                      value={newTypeFields.description}
-                      onChange={(e) => setNewTypeFields({ ...newTypeFields, description: e.target.value })}
-                      placeholder={t('devices:pending.typeDescPlaceholder')}
-                      rows={2}
-                      className="mt-1"
-                    />
+            {/* ── Review: raw samples ── */}
+            {selectedDraftForApproval.samples && selectedDraftForApproval.samples.length > 0 && (
+              <Collapsible open={samplesOpen} onOpenChange={setSamplesOpen}>
+                <CollapsibleTrigger className="w-full flex items-center justify-between py-1 text-left">
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                    {t('devices:pending.originalData')} ({selectedDraftForApproval.samples.length})
+                  </span>
+                  <ChevronRight className={cn(
+                    'h-4 w-4 text-muted-foreground transition-transform',
+                    samplesOpen && 'rotate-90'
+                  )} />
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className="pt-2">
+                    <div className="bg-muted-30 rounded-lg p-3">
+                      <div className="flex items-center gap-2 mb-3">
+                        {selectedDraftForApproval.samples.slice(0, 5).map((_, index) => (
+                          <button
+                            key={index}
+                            onClick={() => setSelectedSampleIndex(index)}
+                            onTouchEnd={(e) => {
+                              e.preventDefault()
+                              setSelectedSampleIndex(index)
+                            }}
+                            className={`w-6 h-6 text-xs rounded ${
+                              selectedSampleIndex === index
+                                ? 'bg-primary text-primary-foreground'
+                                : 'bg-background hover:bg-muted'
+                            }`}
+                            style={{ touchAction: 'manipulation' }}
+                          >
+                            {index + 1}
+                          </button>
+                        ))}
+                        {selectedDraftForApproval.samples[selectedSampleIndex] && (
+                          <span className="text-xs text-muted-foreground ml-auto">
+                            {formatTimestamp(selectedDraftForApproval.samples[selectedSampleIndex].timestamp, false)}
+                          </span>
+                        )}
+                      </div>
+                      {selectedDraftForApproval.samples[selectedSampleIndex]?.parsed && (
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={() => handleCopy(
+                              'sample',
+                              JSON.stringify(selectedDraftForApproval.samples?.[selectedSampleIndex]?.parsed ?? '', null, 2)
+                            )}
+                            className="absolute right-2 top-2 text-muted-foreground hover:text-foreground z-10"
+                            aria-label={t('common:copy')}
+                          >
+                            {copiedField === 'sample'
+                              ? <Check className="h-3.5 w-3.5 text-success" />
+                              : <Copy className="h-3.5 w-3.5" />}
+                          </button>
+                          <pre className="text-xs bg-background p-3 rounded overflow-x-auto">
+                            {JSON.stringify(selectedDraftForApproval.samples[selectedSampleIndex].parsed, null, 2)}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                )}
-              </div>
+                </CollapsibleContent>
+              </Collapsible>
+            )}
           </div>
+          )}
+
         </UnifiedFormDialog>
       )}
 
@@ -1068,7 +1255,6 @@ export function PendingDevicesList({
         open={!!rejectDialogDraft}
         onOpenChange={(open) => { if (!open) setRejectDialogDraft(null) }}
         title={t('devices:pending.reject')}
-        description={rejectDialogDraft ? t('devices:pending.rejectConfirm', { deviceId: rejectDialogDraft.device_id }) : undefined}
         width="sm"
         footer={
           <>
@@ -1089,7 +1275,14 @@ export function PendingDevicesList({
           </>
         }
       >
-        <></>
+        {/* The confirm sentence lives in the body — it used to ride the
+            header `description` prop, which the desktop dialog dropped
+            entirely, leaving this dialog visually empty. */}
+        {rejectDialogDraft ? (
+          <p className="text-sm text-muted-foreground">
+            {t('devices:pending.rejectConfirm', { deviceId: rejectDialogDraft.device_id })}
+          </p>
+        ) : null}
       </UnifiedFormDialog>
     </>
   )

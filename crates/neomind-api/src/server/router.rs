@@ -493,10 +493,6 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/device-types/:id",
             delete(devices::delete_device_type_handler),
         )
-        .route(
-            "/api/device-types/generate-from-samples",
-            post(devices::generate_device_type_from_samples_handler),
-        )
         // Device Type Import from Cloud API
         .route(
             "/api/device-types/cloud/import",

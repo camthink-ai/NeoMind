@@ -316,8 +316,37 @@
     "smartGeneration": "智能生成",
     "advancedMode": "高级模式",
     "generating": "生成中...",
+    "editTitle": "编辑设备类型",
+    "sections": {
+      "basic": "基本信息",
+      "data": "数据定义",
+      "commands": "命令"
+    },
+    "form": {
+      "nameLabel": "类型名称",
+      "namePlaceholder": "例如：智能温湿度传感器",
+      "typeIdLabel": "类型 ID",
+      "typeIdHint": "输入名称后自动生成，可手动修改",
+      "descLabel": "描述",
+      "descPlaceholder": "描述该设备类型的用途…",
+      "categoriesLabel": "分类",
+      "addCategoryPlaceholder": "输入后回车添加",
+      "removeCategory": "移除分类"
+    },
+    "data": {
+      "modeMetrics": "定义指标",
+      "modeMetricsDesc": "解析并存储每个字段",
+      "modeRaw": "原始数据模式",
+      "modeRawDesc": "载荷按原样存储",
+      "noMetrics": "暂未定义指标"
+    },
+    "commands": {
+      "addCommand": "添加命令",
+      "emptyCommand": "空白命令",
+      "noCommands": "暂未定义命令"
+    },
     "validate": {
-      "button": "验证",
+      "button": "校验定义",
       "format": "验证格式",
       "failed": "验证失败"
     },
@@ -441,95 +470,6 @@
       "interval": "间隔时间",
       "seconds": "秒"
     },
-    "generator": {
-      "title": "AI 设备类型生成器",
-      "description": "粘贴设备数据样本，AI 将自动生成设备类型定义",
-      "tabs": {
-        "samples": "样本数据",
-        "metrics": "指标",
-        "commands": "命令",
-        "preview": "预览"
-      },
-      "step1": {
-        "info": "支持 JSONL（每行一个）、JSON 数组 [{...},{...}] 或单行多段 JSON 对象",
-        "loadSample": "加载示例数据",
-        "deviceId": "设备实例ID（可选 - AI上下文提示）",
-        "deviceIdPlaceholder": "例如：sensor-01、device-123",
-        "manufacturer": "制造商（可选 - AI上下文提示）",
-        "manufacturerPlaceholder": "例如：Generic、小米等",
-        "sampleData": "数据样本（JSON）",
-        "sampleDataPlaceholder": "// JSONL 格式（每行一个）：\n{\"temp\": 25.5, \"hum\": 60}\n{\"temp\": 26.0, \"hum\": 58}\n\n// 或 JSON 数组：\n[{\"temp\": 25.5, \"hum\": 60}, {\"temp\": 26.0, \"hum\": 58}]\n\n// 或单个对象：\n{\"temp\": 25.5, \"hum\": 60, \"battery\": 85}",
-        "validSamples": "{{count}} 个有效样本",
-        "noValidSamples": "无有效样本",
-        "noValidSamplesDesc": "请输入有效的 JSON 数据（支持 JSONL、数组或单个对象）",
-        "minCoverage": "最小字段覆盖率",
-        "minCoverageDesc": "在样本中出现比例低于此值的字段将被排除。设置为 0% 可包含所有字段。",
-        "minConfidence": "最小 AI 置信度",
-        "minConfidenceDesc": "AI 置信度低于此值的指标将被排除。设置为 0% 可包含所有指标。",
-        "generateButton": "生成设备类型",
-        "analyzing": "分析中..."
-      },
-      "step2": {
-        "title": "发现的指标",
-        "metricsFound": "发现 {{count}} 个指标",
-        "field": "字段",
-        "semanticType": "语义类型",
-        "displayName": "显示名称",
-        "unit": "单位",
-        "readable": "可读",
-        "writable": "可写",
-        "confidence": "置信度",
-        "back": "上一步",
-        "next": "下一步：命令"
-      },
-      "step3": {
-        "title": "发现的命令",
-        "commandsFound": "发现 {{count}} 个命令",
-        "command": "命令",
-        "description": "描述",
-        "parameters": "参数",
-        "noCommands": "未从样本数据中发现任何命令。",
-        "noCommandsDesc": "命令需要可写字段或特定模式才能生成。",
-        "back": "上一步",
-        "next": "下一步：预览"
-      },
-      "step4": {
-        "title": "设备类型预览",
-        "description": "创建前请检查和自定义",
-        "typeName": "设备类型名称 *",
-        "typeNamePlaceholder": "例如：温湿度传感器",
-        "typeId": "设备类型 ID *",
-        "typeIdPlaceholder": "例如：temp_hum_sensor",
-        "validate": "验证并继续",
-        "validationPassed": "验证通过",
-        "validationWarnings": "验证警告",
-        "duplicateMetric": "重复的指标名称：{{name}}",
-        "noMetricsWarning": "未发现任何指标。设备可能无法使用。",
-        "lowConfidenceWarning": "置信度较低（{{percent}}%）。建议提供更多样本数据。",
-        "unknownCategoryWarning": "无法确定设备类别。",
-        "enableImmediately": "创建后立即启用使用此类型的设备",
-        "back": "上一步"
-      },
-      "confidence": {
-        "high": "高",
-        "medium": "中",
-        "low": "低"
-      },
-      "toast": {
-        "analysisComplete": "分析完成",
-        "analysisCompleteDesc": "已生成包含 {{metrics}} 个指标和 {{commands}} 个命令的设备类型",
-        "analysisFailed": "分析失败",
-        "nameRequired": "需要名称",
-        "nameRequiredDesc": "请输入设备类型名称",
-        "idRequired": "需要 ID",
-        "idRequiredDesc": "请输入设备类型 ID",
-        "validationFailed": "验证失败",
-        "validationFailedDesc": "请先修复问题后再创建",
-        "creationFailed": "创建失败",
-        "created": "设备类型已创建",
-        "createdDesc": "成功创建 {{name}}"
-      }
-    },
     "adding": "添加中"
   },
   "pending": {
@@ -537,8 +477,6 @@
     "title": "待注册设备",
     "items": "个",
     "loading": "加载待注册设备中...",
-    "noPending": "暂无待注册设备",
-    "noPendingDesc": "发现未知设备后，待注册设备将显示在这里",
     "cleanup": {
       "button": "清理旧记录",
       "title": "清理旧记录",
@@ -568,6 +506,15 @@
     "process": "处理",
     "typeSelection": "类型选择",
     "confirmRegister": "确认注册",
+    "register": "注册",
+    "registrationSuccess": "注册成功",
+    "originalId": "原始 ID",
+    "systemId": "系统 ID",
+    "recommendedTopic": "推荐 Topic",
+    "recommendedTopicHint": "设备数据经此 Topic 接入（平台已订阅，设备无需改动）",
+    "editDeviceType": "编辑设备类型",
+    "metricsEditHint": "指标由 AI 根据样本自动推断。如需修正名称、单位或数据类型，请在注册后于设备类型管理中编辑。",
+    "createTypeOption": "创建新类型 \"{{value}}\"",
     "exactMatch": "完全匹配",
     "noMatchingTypes": "没有找到匹配的设备类型",
     "status": {
@@ -597,9 +544,6 @@
     "noSamples": "无可用样本",
     "parsedData": "解析数据",
     "rawData": "原始字节",
-    "editMetrics": "编辑指标",
-    "saveMetrics": "保存指标",
-    "editMetricsDesc": "编辑指标名称、显示名称、单位和数据类型",
     "createDeviceType": "创建设备类型",
     "createDeviceTypeDesc": "从此草稿创建新的设备类型",
     "createTypeSuccess": "设备类型 \"{{name}}\" 创建成功",
@@ -645,9 +589,6 @@
       "retentionDesc": "未批准的草稿设备在清理前保留的时间"
     },
     "hours": "小时",
-    "noBrokerTitle": "未配置设备连接来源",
-    "noBrokerDesc": "自动发现需要设备连接来源（如 MQTT Broker、Webhook 等）来接收设备数据。请在设置中配置连接来源以开始使用。",
-    "goToSettings": "前往设置",
     "noDraftsTitle": "暂无发现的设备",
     "noDraftsDesc": "当新设备通过 MQTT 或 Webhook 发送数据时，将自动显示在此处。",
     "noDeviceTypes": "暂无设备类型",

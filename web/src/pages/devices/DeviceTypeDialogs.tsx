@@ -7,7 +7,6 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
-import { Switch } from "@/components/ui/switch"
 import { LoadingState } from "@/components/shared/LoadingState"
 import { EmptyStateCompact } from "@/components/shared/EmptyState"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -31,7 +30,6 @@ import {
   Trash2,
   ChevronLeft,
   ChevronRight,
-  ChevronDown,
   Check,
   X,
   AlertCircle,
@@ -43,26 +41,22 @@ import {
   Code,
   Database,
   MoreVertical,
-  Github,
   Download,
   Loader2,
   FileJson,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { cardPadded } from "@/design-system/tokens/size"
 import { textMini } from "@/design-system/tokens/typography"
 import { api, fetchAPI } from "@/lib/api"
-import { useIsMobile, useSafeAreaInsets } from "@/hooks/useMobile"
+import { useIsMobile } from "@/hooks/useMobile"
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible"
 import type { DeviceType, MetricDefinition, CommandDefinition } from "@/types"
 import {
   FullScreenDialog,
   FullScreenDialogHeader,
   FullScreenDialogContent,
   FullScreenDialogFooter,
-  FullScreenDialogSidebar,
   FullScreenDialogMain,
-  VerticalStepper,
-  type Step,
 } from "@/components/automation/dialog"
 
 /**
@@ -115,10 +109,8 @@ interface AddDeviceTypeDialogProps {
   editDeviceType?: DeviceType | null
 }
 
-type WizardStep = 'basic' | 'data' | 'commands' | 'review' | 'finish'
-
 // ============================================================================
-// STEP WIZARD DIALOG
+// SINGLE-PAGE ADD/EDIT DIALOG
 // ============================================================================
 
 export function AddDeviceTypeDialog({
@@ -131,13 +123,7 @@ export function AddDeviceTypeDialog({
   editDeviceType,
 }: AddDeviceTypeDialogProps) {
   const { t } = useTranslation(['common', 'devices'])
-  const { toast } = useToast()
   const isEditMode = !!editDeviceType
-  const isMobile = useIsMobile()
-
-  // Step state
-  const [currentStep, setCurrentStep] = useState<WizardStep>('basic')
-  const [completedSteps, setCompletedSteps] = useState<Set<WizardStep>>(new Set())
 
   // Form data
   const [formData, setFormData] = useState<Partial<DeviceType>>({
@@ -154,18 +140,17 @@ export function AddDeviceTypeDialog({
   // UI states
   const [formErrors, setFormErrors] = useState<FormErrors>({})
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null)
+  const [commandsOpen, setCommandsOpen] = useState(false)
 
   // Reset when dialog opens or editDeviceType changes
   useEffect(() => {
     if (open) {
-      setCurrentStep('basic')
-      setCompletedSteps(new Set())
-
       if (editDeviceType) {
-        // Load existing data for edit mode
         setFormData(editDeviceType)
+        // Commands only matter for a minority of types — collapsed unless
+        // the edited type already has some.
+        setCommandsOpen((editDeviceType.commands?.length || 0) > 0)
       } else {
-        // Reset to empty for add mode
         setFormData({
           device_type: "",
           name: "",
@@ -176,36 +161,32 @@ export function AddDeviceTypeDialog({
           commands: [],
           uplink_samples: [],
         })
+        setCommandsOpen(false)
       }
-
       setFormErrors({})
       setValidationResult(null)
     }
   }, [open, editDeviceType])
 
-  // Update field (auto-generation now handled in BasicInfoStep on blur)
+  // Update field
   const updateField = <K extends keyof DeviceType>(field: K, value: DeviceType[K]) => {
     setFormData(prev => ({ ...prev, [field]: value }))
-    // Clear error for this field
     if (formErrors[field as string]) {
       setFormErrors(prev => ({ ...prev, [field]: undefined }))
     }
   }
 
-  // Validate current step
-  const validateStep = (step: WizardStep): boolean => {
+  // Validate everything in one pass — no step gating
+  const validateAll = (): boolean => {
     const errors: FormErrors = {}
 
-    if (step === 'basic') {
-      if (!formData.name?.trim()) {
-        errors.name = t('devices:types.validation.nameRequired')
-      }
-      if (!formData.device_type?.trim()) {
-        errors.device_type = t('devices:types.validation.deviceTypeRequired')
-      }
+    if (!formData.name?.trim()) {
+      errors.name = t('devices:types.validation.nameRequired')
     }
-
-    if (step === 'data' && formData.mode === 'full') {
+    if (!formData.device_type?.trim()) {
+      errors.device_type = t('devices:types.validation.deviceTypeRequired')
+    }
+    if (formData.mode === 'full') {
       formData.metrics?.forEach((metric, i) => {
         if (!metric.name?.trim()) {
           if (!errors.metrics) errors.metrics = {}
@@ -213,54 +194,21 @@ export function AddDeviceTypeDialog({
         }
       })
     }
-
-    if (step === 'commands') {
-      formData.commands?.forEach((cmd, i) => {
-        if (!cmd.name?.trim()) {
-          if (!errors.commands) errors.commands = {}
-          errors.commands[i] = t('devices:types.validation.commandNameRequired')
-        }
-      })
-    }
+    formData.commands?.forEach((cmd, i) => {
+      if (!cmd.name?.trim()) {
+        if (!errors.commands) errors.commands = {}
+        errors.commands[i] = t('devices:types.validation.commandNameRequired')
+      }
+    })
 
     setFormErrors(errors)
     return Object.keys(errors).length === 0
   }
 
-  // Navigate to next step
-  const handleNext = async () => {
-    if (!validateStep(currentStep)) return
-
-    const newCompleted = new Set(completedSteps)
-    newCompleted.add(currentStep)
-    setCompletedSteps(newCompleted)
-
-    const steps: WizardStep[] = ['basic', 'data', 'commands', 'review', 'finish']
-    const currentIndex = steps.indexOf(currentStep)
-    if (currentIndex < steps.length - 1) {
-      setCurrentStep(steps[currentIndex + 1])
-    }
-  }
-
-  // Navigate to previous step
-  const handlePrevious = () => {
-    const steps: WizardStep[] = ['basic', 'data', 'commands', 'review', 'finish']
-    const currentIndex = steps.indexOf(currentStep)
-    if (currentIndex > 0) {
-      const prevStep = steps[currentIndex - 1]
-      setCurrentStep(prevStep)
-      // Clear completed steps that come after the previous step
-      // This ensures the completion state is accurate when navigating back
-      const newCompleted = new Set<WizardStep>()
-      for (let i = 0; i < currentIndex - 1; i++) {
-        newCompleted.add(steps[i])
-      }
-      setCompletedSteps(newCompleted)
-    }
-  }
-
-  // Final save
+  // Save
   const handleSave = async () => {
+    if (!validateAll()) return
+
     const definition: DeviceType = {
       device_type: formData.device_type!,
       name: formData.name!,
@@ -274,134 +222,93 @@ export function AddDeviceTypeDialog({
 
     const success = await onAdd(definition)
     if (success) {
-      setCurrentStep('finish')
+      onOpenChange(false)
     }
   }
 
-  // Step navigation config for VerticalStepper
-  const stepperSteps: Step[] = [
-    { id: 'basic', label: 'Basic', icon: <Settings className="h-4 w-4" /> },
-    { id: 'data', label: 'Data', icon: <ArrowDown className="h-4 w-4" /> },
-    { id: 'commands', label: 'Commands', icon: <FileText className="h-4 w-4" /> },
-    { id: 'review', label: 'Review', icon: <Check className="h-4 w-4" /> },
-    { id: 'finish', label: 'Finish', icon: <Sparkles className="h-4 w-4" /> },
-  ]
-
-  const stepIndex = stepperSteps.findIndex(s => s.id === currentStep)
-  const isFirstStep = currentStep === 'basic'
+  // Optional definition check against the backend validator
+  const handleValidate = async () => {
+    const result = await onValidate(formData as DeviceType)
+    setValidationResult(result)
+  }
 
   return (
-    <FullScreenDialog
+    <UnifiedFormDialog
       open={open}
       onOpenChange={onOpenChange}
+      title={isEditMode ? t('devices:types.editTitle') : t('devices:types.add.title')}
+      width="2xl"
+      contentClassName="overflow-y-auto"
+      onSubmit={handleSave}
+      isSubmitting={adding}
+      submitDisabled={adding}
+      footer={
+        <div className="flex flex-wrap items-center justify-end gap-2 w-full">
+          <Button variant="outline" size="sm" onClick={handleValidate} disabled={validating || adding}>
+            {validating && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
+            {t('devices:types.validate.button')}
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+            {t('common:cancel')}
+          </Button>
+          <Button size="sm" onClick={handleSave} disabled={adding}>
+            {adding && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
+            {adding ? t('devices:types.adding') : t('common:save')}
+          </Button>
+        </div>
+      }
     >
-      {/* Header */}
-      <FullScreenDialogHeader
-        icon={<Zap className="h-5 w-5" />}
-        iconBg="bg-warning-light"
-        iconColor="text-warning"
-        title={isEditMode ? 'Edit Device Type' : t('devices:types.add.title')}
-        onClose={() => onOpenChange(false)}
-      />
+      <div className="space-y-5">
+        {/* ── Basic info leads; data & commands follow ── */}
+        <BasicInfoStep data={formData} onChange={updateField} errors={formErrors} />
 
-      {/* Content Area */}
-      <FullScreenDialogContent>
-        {/* Left Sidebar - Vertical Steps - Hide on mobile */}
-        <FullScreenDialogSidebar className="p-4">
-          <VerticalStepper
-            steps={stepperSteps}
-            currentStep={currentStep}
-            completedSteps={Array.from(completedSteps)}
-            onStepClick={(stepId) => {
-              const idx = stepperSteps.findIndex(s => s.id === stepId)
-              if (completedSteps.has(stepId as WizardStep) || idx < stepIndex) {
-                setCurrentStep(stepId as WizardStep)
-              }
-            }}
-          />
-        </FullScreenDialogSidebar>
+        <DataDefinitionStep
+          data={formData}
+          onChange={updateField as (field: keyof DeviceType, value: unknown) => void}
+          errors={formErrors}
+        />
 
-        {/* Main Content */}
-        <FullScreenDialogMain>
-          <div className={cn(
-            isMobile ? "px-4 py-4" : "px-6 py-6"
-          )}>
-            <div className="space-y-4 max-w-2xl mx-auto">
-              {currentStep === 'basic' && (
-                <BasicInfoStep
-                  data={formData}
-                  onChange={updateField}
-                  errors={formErrors}
-                />
-              )}
-
-              {currentStep === 'data' && (
-                <DataDefinitionStep
-                  data={formData}
-                  onChange={updateField as (field: keyof DeviceType, value: unknown) => void}
-                  errors={formErrors}
-                />
-              )}
-
-              {currentStep === 'commands' && (
-                <CommandsStep
-                  data={formData}
-                  onChange={setFormData}
-                  errors={formErrors}
-                />
-              )}
-
-              {currentStep === 'review' && (
-                <ReviewStep
-                  data={formData as DeviceType}
-                  onEdit={(step) => setCurrentStep(step)}
-                  onValidate={async () => {
-                    const result = await onValidate(formData as DeviceType)
-                    setValidationResult(result)
-                    return result
-                  }}
-                  validating={validating}
-                  validationResult={validationResult}
-                />
-              )}
-
-              {currentStep === 'finish' && (
-                <FinishStep
-                  deviceType={formData.device_type || ""}
-                  onOpenChange={onOpenChange}
-                  isEditMode={isEditMode}
-                />
-              )}
+        {/* ── Commands: collapsed by default — most types have none ── */}
+        <Collapsible open={commandsOpen} onOpenChange={setCommandsOpen}>
+          <CollapsibleTrigger className="w-full flex items-center justify-between py-1 text-left">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              {t('devices:types.sections.commands')} ({formData.commands?.length || 0})
+            </span>
+            <ChevronRight className={cn(
+              'h-4 w-4 text-muted-foreground transition-transform',
+              commandsOpen && 'rotate-90'
+            )} />
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="pt-2">
+              <CommandsStep data={formData} onChange={setFormData} errors={formErrors} />
             </div>
+          </CollapsibleContent>
+        </Collapsible>
+
+        {/* Validation result banner */}
+        {validationResult && (
+          <div className={cn(
+            'rounded-lg border p-3 space-y-1.5',
+            validationResult.valid
+              ? 'border-success bg-success-light text-success'
+              : 'border-error bg-error-light text-error'
+          )}>
+            <p className="text-sm font-medium">{validationResult.message}</p>
+            {(validationResult.errors?.length || 0) > 0 && (
+              <ul className="text-xs space-y-0.5 list-disc list-inside">
+                {validationResult.errors!.map((e, i) => <li key={i}>{e}</li>)}
+              </ul>
+            )}
+            {(validationResult.warnings?.length || 0) > 0 && (
+              <ul className="text-xs space-y-0.5 list-disc list-inside opacity-80">
+                {validationResult.warnings!.map((w, i) => <li key={i}>{w}</li>)}
+              </ul>
+            )}
           </div>
-        </FullScreenDialogMain>
-      </FullScreenDialogContent>
-
-      {/* Footer Navigation */}
-      {currentStep !== 'finish' && (
-        <FullScreenDialogFooter>
-          {!isFirstStep && (
-            <Button variant="outline" size={isMobile ? "default" : "sm"} onClick={handlePrevious}>
-              <ChevronLeft className="h-4 w-4 mr-1" />
-              {t('common:previous')}
-            </Button>
-          )}
-
-          <div className="flex-1" />
-
-          {currentStep === 'review' ? (
-            <Button size={isMobile ? "default" : "sm"} onClick={handleSave} disabled={adding}>
-              {adding ? (isEditMode ? 'Saving...' : t('devices:types.adding')) : (isEditMode ? 'Save' : t('common:save'))}
-            </Button>
-          ) : (
-            <Button size={isMobile ? "default" : "sm"} onClick={handleNext}>
-              {t('common:next')}
-              <ChevronRight className="h-4 w-4 ml-1" />
-            </Button>
-          )}
-        </FullScreenDialogFooter>
-      )}
-    </FullScreenDialog>
+        )}
+      </div>
+    </UnifiedFormDialog>
   )
 }
 
@@ -416,7 +323,7 @@ interface BasicInfoStepProps {
 }
 
 function BasicInfoStep({ data, onChange, errors }: BasicInfoStepProps) {
-  const isMobile = useIsMobile()
+  const { t } = useTranslation(['devices'])
   const [categoryInput, setCategoryInput] = useState("")
   const [nameInput, setNameInput] = useState(data.name || "")
 
@@ -429,12 +336,23 @@ function BasicInfoStep({ data, onChange, errors }: BasicInfoStepProps) {
     const cat = categoryInput.trim()
     if (cat && !data.categories?.includes(cat)) {
       onChange('categories', [...(data.categories || []), cat])
-      setCategoryInput("")
     }
+    setCategoryInput("")
   }
 
   const removeCategory = (cat: string) => {
     onChange('categories', (data.categories || []).filter(c => c !== cat))
+  }
+
+  // Tag-input keyboard: Enter/comma commits, Backspace on empty input
+  // removes the last tag.
+  const handleCategoryKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault()
+      addCategory()
+    } else if (e.key === 'Backspace' && !categoryInput && (data.categories?.length || 0) > 0) {
+      onChange('categories', (data.categories || []).slice(0, -1))
+    }
   }
 
   // Generate type ID from name
@@ -459,100 +377,102 @@ function BasicInfoStep({ data, onChange, errors }: BasicInfoStepProps) {
   }
 
   return (
-    <div className="flex flex-col h-full py-4">
-      {!isMobile && (
-        <div className="text-center mb-6 shrink-0">
-          <h3 className="text-lg font-semibold">Basic Information</h3>
-          <p className="text-sm text-muted-foreground">Enter the basic information for your device type</p>
-        </div>
-      )}
+    <div className="space-y-4">
+      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+        {t('devices:types.sections.basic')}
+      </h3>
 
-      <div className="flex-1 overflow-y-auto overflow-x-visible">
-        <div className="space-y-6 max-w-2xl mx-auto px-1 pb-4">
-
-      {/* Device Type (name) */}
-      <div className="space-y-2">
-        <Label htmlFor="device-type-name" className="text-sm font-medium">
-          Device Type <span className="text-error">*</span>
-        </Label>
-        <Input
-          id="device-type-name"
-          value={nameInput}
-          onChange={(e) => handleNameChange(e.target.value)}
-          onBlur={handleNameBlur}
-          placeholder="e.g., Smart Temperature Sensor"
-          className={cn(errors.name && "border-error")}
-        />
-        {errors.name && (
-          <p className="text-xs text-error flex items-center gap-1">
-            <AlertCircle className="h-4 w-4" />
-            {errors.name}
-          </p>
-        )}
-      </div>
-
-      {/* Type ID (auto-generated from Device Type) */}
-      <div className="space-y-2">
-        <Label htmlFor="type-id" className="text-sm font-medium">
-          Type ID <span className="text-error">*</span>
-        </Label>
-        <Input
-          id="type-id"
-          value={data.device_type || ""}
-          onChange={(e) => onChange('device_type', e.target.value)}
-          placeholder="smart_temp_sensor"
-          className={cn("font-mono", errors.device_type && "border-error")}
-        />
-        <p className="text-xs text-muted-foreground">
-          Auto-generated from Device Type after you finish typing
-        </p>
-        {errors.device_type && (
-          <p className="text-xs text-error flex items-center gap-1">
-            <AlertCircle className="h-4 w-4" />
-            {errors.device_type}
-          </p>
-        )}
-      </div>
-
-      {/* Description */}
-      <div className="space-y-2">
-        <Label htmlFor="description" className="text-sm font-medium">Description</Label>
-        <Textarea
-          id="description"
-          value={data.description || ""}
-          onChange={(e) => onChange('description', e.target.value)}
-          placeholder="Describe what this device type does..."
-          rows={3}
-          className="resize-none"
-        />
-      </div>
-
-      {/* Categories */}
-      <div className="space-y-2">
-        <Label className="text-sm font-medium">Categories</Label>
-        <div className="flex gap-2 flex-wrap items-center">
-          {data.categories?.map((cat, i) => (
-            <Badge key={i} variant="secondary" className="gap-1 pl-2.5 pr-1 h-7">
-              {cat}
-              <button
-                type="button"
-                onClick={() => removeCategory(cat)}
-                className="ml-0.5 flex items-center justify-center w-4 h-4 rounded hover:text-error transition-colors"
-                aria-label="Remove category"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </Badge>
-          ))}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
+        {/* Device Type (name) */}
+        <div className="space-y-1.5 sm:col-span-2">
+          <Label htmlFor="device-type-name" className="text-xs text-muted-foreground">
+            {t('devices:types.form.nameLabel')} <span className="text-error">*</span>
+          </Label>
           <Input
-            placeholder="Add category"
-            value={categoryInput}
-            onChange={(e) => setCategoryInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addCategory())}
-            className="w-[140px] text-sm"
+            id="device-type-name"
+            value={nameInput}
+            onChange={(e) => handleNameChange(e.target.value)}
+            onBlur={handleNameBlur}
+            placeholder={t('devices:types.form.namePlaceholder')}
+            aria-invalid={!!errors.name}
+            className={cn("h-9", errors.name && "border-error")}
           />
+          {errors.name && (
+            <p className="text-xs text-error flex items-center gap-1">
+              <AlertCircle className="h-3.5 w-3.5" />
+              {errors.name}
+            </p>
+          )}
         </div>
-      </div>
+
+        {/* Type ID (auto-generated from Device Type) */}
+        <div className="space-y-1.5">
+          <Label htmlFor="type-id" className="text-xs text-muted-foreground">
+            {t('devices:types.form.typeIdLabel')} <span className="text-error">*</span>
+          </Label>
+          <Input
+            id="type-id"
+            value={data.device_type || ""}
+            onChange={(e) => onChange('device_type', e.target.value)}
+            placeholder="smart_temp_sensor"
+            aria-invalid={!!errors.device_type}
+            className={cn("h-9 font-mono", errors.device_type && "border-error")}
+          />
+          {errors.device_type ? (
+            <p className="text-xs text-error flex items-center gap-1">
+              <AlertCircle className="h-3.5 w-3.5" />
+              {errors.device_type}
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              {t('devices:types.form.typeIdHint')}
+            </p>
+          )}
+        </div>
+
+        {/* Categories — tag input: chips + inline input in one container */}
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">
+            {t('devices:types.form.categoriesLabel')}
+          </Label>
+          <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-input bg-background px-2 py-1.5 min-h-9 focus-within:ring-1 focus-within:ring-ring">
+            {data.categories?.map((cat) => (
+              <Badge key={cat} variant="secondary" className="gap-1 pl-2 pr-1 h-6 text-xs">
+                {cat}
+                <button
+                  type="button"
+                  onClick={() => removeCategory(cat)}
+                  className="flex items-center justify-center w-4 h-4 rounded hover:text-error transition-colors"
+                  aria-label={t('devices:types.form.removeCategory')}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </Badge>
+            ))}
+            <input
+              value={categoryInput}
+              onChange={(e) => setCategoryInput(e.target.value)}
+              onKeyDown={handleCategoryKeyDown}
+              onBlur={() => { if (categoryInput.trim()) addCategory() }}
+              placeholder={(data.categories?.length || 0) === 0 ? t('devices:types.form.addCategoryPlaceholder') : ''}
+              className="flex-1 min-w-[80px] bg-transparent outline-none text-sm placeholder:text-muted-foreground"
+            />
+          </div>
+        </div>
+
+        {/* Description */}
+        <div className="space-y-1.5 sm:col-span-2">
+          <Label htmlFor="description" className="text-xs text-muted-foreground">
+            {t('devices:types.form.descLabel')}
+          </Label>
+          <Textarea
+            id="description"
+            value={data.description || ""}
+            onChange={(e) => onChange('description', e.target.value)}
+            placeholder={t('devices:types.form.descPlaceholder')}
+            rows={2}
+            className="resize-none"
+          />
         </div>
       </div>
     </div>
@@ -632,11 +552,6 @@ function DataDefinitionStep({
       if (value === 'true' || value === 'false') return 'boolean'
     }
     return 'string'
-  }
-
-  // Convert camelCase to snake_case
-  const toSnakeCase = (str: string): string => {
-    return str.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`)
   }
 
   // Flatten nested JSON object into dot-notation paths
@@ -799,79 +714,72 @@ function DataDefinitionStep({
   }
 
   return (
-    <div className="flex flex-col h-full py-4">
-      {!isMobile && (
-        <div className="text-center mb-4 shrink-0">
-          <h3 className="text-lg font-semibold">Data Definition (Uplink)</h3>
-          <p className="text-sm text-muted-foreground">Define how device data is parsed and stored</p>
-        </div>
-      )}
+    <div className="space-y-4">
+      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+        {t('devices:types.sections.data')}
+      </h3>
 
-      <div className="flex-1 overflow-y-auto min-h-0">
-        <div className="space-y-4">
-          {/* Mode Selection */}
-          <div className="flex justify-center gap-4 shrink-0">
-            <button
-              onClick={() => onChange('mode', 'full')}
-              className={cn(
-                "flex-1 max-w-xs p-4 rounded-lg border-2 transition-all text-left",
-                !isRawMode
-                  ? "border-primary bg-muted"
-                  : "border-muted hover:border-border"
-              )}
-            >
-              <div className="flex items-center gap-3">
-                <div className={cn(
-                  "p-2 rounded-lg",
-                  !isRawMode ? "bg-primary text-primary-foreground" : "bg-muted"
-                )}>
-                  <Settings className="h-5 w-5" />
-                </div>
-                <div>
-                  <p className={cn("font-medium", !isRawMode ? "text-foreground" : "text-muted-foreground")}>
-                    Define Metrics
-                  </p>
-                  <p className="text-xs text-muted-foreground">Parse & store each field</p>
-                </div>
-              </div>
-            </button>
-
-            <button
-              onClick={() => onChange('mode', 'simple')}
-              className={cn(
-                "flex-1 max-w-xs p-4 rounded-lg border-2 transition-all text-left",
-                isRawMode
-                  ? "border-primary bg-muted"
-                  : "border-muted hover:border-border"
-              )}
-            >
-              <div className="flex items-center gap-3">
-                <div className={cn(
-                  "p-2 rounded-lg",
-                  isRawMode ? "bg-primary text-primary-foreground" : "bg-muted"
-                )}>
-                  <Zap className="h-5 w-5" />
-                </div>
-                <div>
-                  <p className={cn("font-medium", isRawMode ? "text-foreground" : "text-muted-foreground")}>
-                    Raw Data Mode
-                  </p>
-                  <p className="text-xs text-muted-foreground">Store payload as-is</p>
-                </div>
-              </div>
-            </button>
+      {/* Mode Selection */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={() => onChange('mode', 'full')}
+          className={cn(
+            "flex items-center gap-3 p-3 rounded-lg border text-left transition-colors",
+            !isRawMode
+              ? "border-primary bg-muted"
+              : "border-muted hover:border-border"
+          )}
+        >
+          <div className={cn(
+            "p-1.5 rounded-md shrink-0",
+            !isRawMode ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+          )}>
+            <Settings className="h-4 w-4" />
           </div>
+          <div className="min-w-0">
+            <p className={cn("text-sm font-medium", !isRawMode ? "text-foreground" : "text-muted-foreground")}>
+              {t('devices:types.data.modeMetrics')}
+            </p>
+            <p className="text-xs text-muted-foreground truncate">{t('devices:types.data.modeMetricsDesc')}</p>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onChange('mode', 'simple')}
+          className={cn(
+            "flex items-center gap-3 p-3 rounded-lg border text-left transition-colors",
+            isRawMode
+              ? "border-primary bg-muted"
+              : "border-muted hover:border-border"
+          )}
+        >
+          <div className={cn(
+            "p-1.5 rounded-md shrink-0",
+            isRawMode ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+          )}>
+            <Zap className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <p className={cn("text-sm font-medium", isRawMode ? "text-foreground" : "text-muted-foreground")}>
+              {t('devices:types.data.modeRaw')}
+            </p>
+            <p className="text-xs text-muted-foreground truncate">{t('devices:types.data.modeRawDesc')}</p>
+          </div>
+        </button>
+      </div>
 
       {/* Define Metrics Mode */}
       {!isRawMode && (
-        <div className="space-y-4">
+        <div className="space-y-3">
           {/* Quick Start */}
           {(!data.metrics || data.metrics.length === 0) && (
-            <div className="p-4 bg-info-light rounded-lg border border-info">
-              <p className="text-xs font-medium text-info mb-2">
+            <div className="p-3 bg-info-light rounded-lg border border-info">
+              <p className="text-xs font-medium text-info mb-1">
                 {t('devices:metricEditor.quickStart')}
               </p>
-              <p className="text-xs text-info mb-3">
+              <p className="text-xs text-info mb-2.5">
                 {t('devices:metricEditor.quickStartDesc')}
               </p>
               <div className="flex gap-2">
@@ -912,10 +820,10 @@ function DataDefinitionStep({
             </div>
 
             {(!data.metrics || data.metrics.length === 0) ? (
-              <div className="flex items-center justify-center border-2 border-dashed rounded-lg bg-muted-30 py-12">
+              <div className="flex items-center justify-center border-2 border-dashed rounded-lg bg-muted-30 py-10">
                 <div className="text-center">
                   <FileText className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                  <p className="text-sm text-muted-foreground">No metrics defined</p>
+                  <p className="text-sm text-muted-foreground">{t('devices:types.data.noMetrics')}</p>
                   <p className="text-xs text-muted-foreground mt-1">
                     {t('devices:metricEditor.orImportFromJson')}
                   </p>
@@ -940,23 +848,23 @@ function DataDefinitionStep({
 
       {/* Raw Data Mode */}
       {isRawMode && (
-        <div className="max-w-2xl mx-auto space-y-4">
-          <div className="rounded-lg border bg-muted-30 p-6 text-center">
-            <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-4">
-              <Database className="h-6 w-6 text-muted-foreground" />
+        <div className="rounded-lg border bg-muted-30 p-4">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-full bg-muted flex items-center justify-center shrink-0">
+              <Database className="h-4 w-4 text-muted-foreground" />
             </div>
-            <h4 className="font-medium mb-2">Raw Data Mode</h4>
-            <p className="text-sm text-muted-foreground mb-2">
-              {t('devices:metricEditor.simpleModeDesc')}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              {t('devices:metricEditor.simpleModeNote')}
-            </p>
+            <div>
+              <h4 className="text-sm font-medium mb-1">{t('devices:types.data.modeRaw')}</h4>
+              <p className="text-xs text-muted-foreground">
+                {t('devices:metricEditor.simpleModeDesc')}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {t('devices:metricEditor.simpleModeNote')}
+              </p>
+            </div>
           </div>
         </div>
       )}
-        </div>
-      </div>
 
       {/* JSON Import Dialog */}
       <UnifiedFormDialog
@@ -1016,7 +924,6 @@ function CommandsStep({
 }: CommandsStepProps) {
   const { t } = useTranslation(['devices'])
   const { toast } = useToast()
-  const isMobile = useIsMobile()
 
   // Add command
   const addCommand = () => {
@@ -1139,301 +1046,62 @@ function CommandsStep({
   }
 
   return (
-    <div className="flex flex-col h-full py-4">
-      {!isMobile && (
-        <div className="text-center mb-4 shrink-0">
-          <h3 className="text-lg font-semibold">Commands (Downlink)</h3>
-          <p className="text-sm text-muted-foreground">Define commands that can be sent to the device</p>
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="sm" variant="outline">
+              <Plus className="mr-1 h-4 w-4" />
+              {t('devices:types.commands.addCommand')}
+              <MoreVertical className="ml-1 h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={addCommand}>
+              <Plus className="mr-2 h-4 w-4" />
+              {t('devices:types.commands.emptyCommand')}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={importFromJson}>
+              <Code className="mr-2 h-4 w-4" />
+              {t('devices:commandsStep.importJson', 'Import from JSON')}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => fileInputRef.current?.click()}>
+              <Database className="mr-2 h-4 w-4" />
+              {t('devices:commandsStep.importFromFile', 'Import from File')}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".json"
+          className="hidden"
+          onChange={handleFileImport}
+        />
+      </div>
+
+      {(!data.commands || data.commands.length === 0) ? (
+        <div className="text-center py-8 border-2 border-dashed rounded-lg bg-muted-30">
+          <FileText className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+          <p className="text-sm text-muted-foreground">{t('devices:types.commands.noCommands')}</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            {t('devices:commandsStep.orImportFromJson', 'Add commands manually or import from JSON')}
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {data.commands.map((cmd, i) => (
+            <CommandEditorCompact
+              key={i}
+              command={cmd}
+              onChange={(c) => updateCommand(i, c)}
+              onRemove={() => removeCommand(i)}
+              error={errors.commands?.[i]}
+            />
+          ))}
         </div>
       )}
-
-      <div className="flex-1 overflow-y-auto min-h-0">
-        <div className="space-y-4">
-          {/* Manual Entry List */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h4 className="text-sm font-medium flex items-center gap-2">
-                <FileText className="h-4 w-4" />
-                Commands ({data.commands?.length || 0})
-              </h4>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button size="sm" variant="outline">
-                    <Plus className="mr-1 h-4 w-4" />
-                    Add Command
-                    <MoreVertical className="ml-1 h-4 w-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={addCommand}>
-                    <Plus className="mr-2 h-4 w-4" />
-                    Empty Command
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={importFromJson}>
-                    <Code className="mr-2 h-4 w-4" />
-                    {t('devices:commandsStep.importJson', 'Import from JSON')}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => fileInputRef.current?.click()}>
-                    <Database className="mr-2 h-4 w-4" />
-                    {t('devices:commandsStep.importFromFile', 'Import from File')}
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".json"
-                className="hidden"
-                onChange={handleFileImport}
-              />
-            </div>
-
-            {(!data.commands || data.commands.length === 0) ? (
-              <div className="text-center py-12 border-2 border-dashed rounded-lg bg-muted-30">
-                <FileText className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
-                <p className="text-sm text-muted-foreground">No commands defined</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {t('devices:commandsStep.orImportFromJson', 'Add commands manually or import from JSON')}
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {data.commands.map((cmd, i) => (
-                  <CommandEditorCompact
-                    key={i}
-                    command={cmd}
-                    onChange={(c) => updateCommand(i, c)}
-                    onRemove={() => removeCommand(i)}
-                    error={errors.commands?.[i]}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ============================================================================
-// STEP 4: Review
-// ============================================================================
-
-interface ReviewStepProps {
-  data: DeviceType
-  onEdit: (step: WizardStep) => void
-  onValidate: () => Promise<ValidationResult>
-  validating: boolean
-  validationResult: ValidationResult | null
-}
-
-function ReviewStep({ data, onEdit, onValidate, validating, validationResult }: ReviewStepProps) {
-  const isMobile = useIsMobile()
-  const handleValidate = async () => {
-    await onValidate()
-  }
-
-  return (
-    <div className="flex flex-col h-full py-4">
-      {!isMobile && (
-        <div className="text-center mb-4 shrink-0">
-          <h3 className="text-lg font-semibold">Review & Confirm</h3>
-          <p className="text-sm text-muted-foreground">Review your device type before saving</p>
-        </div>
-      )}
-
-      <div className="flex-1 overflow-y-auto min-h-0">
-        <div className="space-y-6 max-w-3xl mx-auto">
-          {/* Summary Cards */}
-          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2 sm:gap-4 mb-4 sm:mb-6">
-            <div className={cn(cardPadded, "text-center !p-3 sm:!p-4")}>
-              <div className="text-xl sm:text-2xl font-semibold text-primary">{data.metrics?.length || 0}</div>
-              <div className={cn(textMini, "sm:text-xs text-muted-foreground")}>Metrics</div>
-            </div>
-            <div className={cn(cardPadded, "text-center !p-3 sm:!p-4")}>
-              <div className="text-xl sm:text-2xl font-semibold text-info">{data.commands?.length || 0}</div>
-              <div className={cn(textMini, "sm:text-xs text-muted-foreground")}>Commands</div>
-            </div>
-            <div className={cn(cardPadded, "text-center !p-3 sm:!p-4")}>
-              <div className="text-xl sm:text-2xl font-bold text-success">
-                {data.mode === 'simple' ? 'Raw' : 'Full'}
-              </div>
-              <div className="text-xs text-muted-foreground">Mode</div>
-            </div>
-          </div>
-
-          {/* Basic Info */}
-          <div className={cn(cardPadded)}>
-            <div className="flex items-center justify-between mb-3">
-              <h4 className="font-medium flex items-center gap-2">
-                <Settings className="h-4 w-4" />
-                Basic Info
-              </h4>
-              <Button variant="ghost" size="sm" onClick={() => onEdit('basic')}>
-                Edit
-              </Button>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-              <div>
-                <span className="text-muted-foreground">Name:</span>
-                <span className="ml-2 font-medium">{data.name}</span>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Type ID:</span>
-                <span className="ml-2 font-mono">{data.device_type}</span>
-              </div>
-              <div className="col-span-2">
-                <span className="text-muted-foreground">Description:</span>
-                <span className="ml-2">{data.description || '-'}</span>
-              </div>
-              <div className="col-span-2">
-                <span className="text-muted-foreground">Categories:</span>
-                <div className="ml-2 inline-flex gap-1">
-                  {data.categories.length > 0 ? (
-                    data.categories.map((cat, i) => (
-                      <Badge key={i} variant="secondary">{cat}</Badge>
-                    ))
-                  ) : (
-                    <span className="text-muted-foreground">-</span>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Metrics */}
-          <div className={cn(cardPadded)}>
-            <div className="flex items-center justify-between mb-4">
-              <h4 className="font-medium flex items-center gap-2">
-                <ArrowDown className="h-4 w-4 text-success" />
-                Metrics ({data.metrics?.length || 0})
-              </h4>
-              <Button variant="ghost" size="sm" onClick={() => onEdit('data')}>
-                Edit
-              </Button>
-            </div>
-            {(!data.metrics || data.metrics.length === 0) ? (
-              <p className="text-sm text-muted-foreground">
-                {data.mode === 'simple' ? 'Raw Data Mode - no metrics defined' : 'No metrics defined'}
-              </p>
-            ) : (
-              <div className="space-y-3">
-                {data.metrics.map((metric, i) => (
-                  <div key={i} className="p-3 bg-muted-30 rounded-lg">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <span className="font-mono text-sm">{metric.name}</span>
-                        <span className="text-muted-foreground mx-2">•</span>
-                        <span className="text-sm">{metric.display_name}</span>
-                      </div>
-                      <Badge variant="outline" className="text-xs">{formatDataType(metric.data_type)}</Badge>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Commands */}
-          <div className={cn(cardPadded)}>
-            <div className="flex items-center justify-between mb-3">
-              <h4 className="font-medium flex items-center gap-2">
-                <FileText className="h-4 w-4 text-info" />
-                Commands ({data.commands?.length || 0})
-              </h4>
-              <Button variant="ghost" size="sm" onClick={() => onEdit('commands')}>
-                Edit
-              </Button>
-            </div>
-            {(!data.commands || data.commands.length === 0) ? (
-              <p className="text-sm text-muted-foreground">No commands defined</p>
-            ) : (
-              <div className="space-y-2">
-                {data.commands.map((cmd, i) => (
-                  <div key={i} className="text-sm p-2 bg-muted-30 rounded flex items-center justify-between">
-                    <div>
-                      <span className="font-mono">{cmd.name}</span>
-                      <span className="text-muted-foreground mx-2">•</span>
-                      <span>{cmd.display_name}</span>
-                    </div>
-                    <Badge variant="secondary" className="text-xs">
-                      {cmd.parameters?.length || 0} params
-                    </Badge>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Validation */}
-          <div className={cn(cardPadded)}>
-            <div className="flex items-center justify-between mb-3">
-              <h4 className="font-medium">Validation</h4>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleValidate}
-                disabled={validating}
-              >
-                {validating ? 'Validating...' : 'Validate Definition'}
-              </Button>
-            </div>
-            {validationResult && (
-              <div className={cn(
-                "p-3 rounded-lg text-sm",
-                validationResult.valid ? "bg-success-light text-success" : "bg-muted text-error"
-              )}>
-                <div className="flex items-center gap-2 font-medium">
-                  {validationResult.valid ? <Check className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
-                  {validationResult.message}
-                </div>
-                {validationResult.errors && validationResult.errors.length > 0 && (
-                  <ul className="mt-2 ml-6 list-disc space-y-1">
-                    {validationResult.errors.map((err, i) => <li key={i}>{err}</li>)}
-                  </ul>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ============================================================================
-// STEP 5: Finish
-// ============================================================================
-
-interface FinishStepProps {
-  deviceType: string
-  onOpenChange: (open: boolean) => void
-  isEditMode?: boolean
-}
-
-function FinishStep({ deviceType, onOpenChange, isEditMode = false }: FinishStepProps) {
-  const { t } = useTranslation(['common', 'devices'])
-
-  return (
-    <div className="flex flex-col items-center justify-center h-full py-8">
-      <div className="w-16 h-16 rounded-full bg-success-light flex items-center justify-center mb-6">
-        <Check className="h-8 w-8 text-success" />
-      </div>
-      <h3 className="text-xl font-semibold mb-2">
-        {isEditMode ? 'Device Type Updated Successfully!' : 'Device Type Added Successfully!'}
-      </h3>
-      <p className="text-muted-foreground mb-6">
-        {isEditMode ? (
-          <>The device type <code className="px-2 py-0.5 bg-muted rounded">{deviceType}</code> has been updated.</>
-        ) : (
-          <>The device type <code className="px-2 py-0.5 bg-muted rounded">{deviceType}</code> has been registered.</>
-        )}
-      </p>
-      <Button onClick={() => onOpenChange(false)}>
-        {t('common:close')}
-      </Button>
     </div>
   )
 }

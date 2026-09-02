@@ -31,7 +31,6 @@ import {
   EditDeviceTypeDialog,
 } from "./devices/index"
 import { CloudImportDialog } from "@/pages/devices/DeviceTypeDialogs"
-import { DeviceTypeGeneratorDialog } from "@/components/devices/DeviceTypeGeneratorDialog"
 import { PendingDevicesList } from "./devices/PendingDevicesList"
 import { AddDeviceGlobalDialog } from "./devices/AddDeviceGlobalDialog"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
@@ -500,7 +499,6 @@ export function DevicesPage() {
   const [addDeviceTypeOpen, setAddDeviceTypeOpen] = useState(false)
   const [viewDeviceTypeOpen, setViewDeviceTypeOpen] = useState(false)
   const [editDeviceTypeOpen, setEditDeviceTypeOpen] = useState(false)
-  const [generatorOpen, setGeneratorOpen] = useState(false)
   const [cloudImportOpen, setCloudImportOpen] = useState(false)
   const [importingDeviceType, setImportingDeviceType] = useState(false)
   const deviceTypeImportRef = useRef<HTMLInputElement>(null)
@@ -936,16 +934,6 @@ export function DevicesPage() {
         accept=".json"
         className="hidden"
         onChange={handleDeviceTypeImport}
-      />
-
-      {/* Device Type Generator Dialog */}
-      <DeviceTypeGeneratorDialog
-        open={generatorOpen}
-        onOpenChange={setGeneratorOpen}
-        onDeviceTypeCreated={() => {
-          fetchDeviceTypes()
-          setGeneratorOpen(false)
-        }}
       />
 
       {/* Cloud Import Dialog */}

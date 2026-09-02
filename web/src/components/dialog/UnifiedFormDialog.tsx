@@ -364,7 +364,15 @@ export function UnifiedFormDialog({
           <div className="flex items-center justify-between gap-2 px-6 py-4 border-b shrink-0">
             <div className="flex items-center gap-2 flex-1 min-w-0">
               {icon && <span className="text-muted-foreground shrink-0">{icon}</span>}
-              <h2 className="text-lg font-semibold leading-none truncate">{title}</h2>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-lg font-semibold leading-none truncate">{title}</h2>
+                {/* Desktop used to drop the description entirely (only the
+                    mobile branch rendered it) — confirm dialogs that put
+                    their whole message here showed an empty body. */}
+                {description && (
+                  <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{description}</p>
+                )}
+              </div>
             </div>
             <button
               onClick={handleClose}
