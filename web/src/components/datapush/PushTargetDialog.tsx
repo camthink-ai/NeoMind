@@ -124,6 +124,7 @@ export function PushTargetDialog() {
   const [targetType, setTargetType] = useState<PushTargetType>('webhook')
   const [webhookUrl, setWebhookUrl] = useState('')
   const [webhookUrlError, setWebhookUrlError] = useState<string | null>(null)
+  const [mqttTopicError, setMqttTopicError] = useState<string | null>(null)
   const [mqttBroker, setMqttBroker] = useState('')
   const [mqttTopic, setMqttTopic] = useState('')
   const [mqttPort, setMqttPort] = useState(1883)
@@ -361,6 +362,11 @@ export function PushTargetDialog() {
       setWebhookUrlError(t('common:dataPush.urlRequired', 'URL is required'))
       return
     }
+    if (targetType === 'mqtt' && !mqttTopic.trim()) {
+      setMqttTopicError(t('common:dataPush.topicRequired', 'Topic is required'))
+      return
+    }
+    setMqttTopicError(null)
 
     // Resolve MQTT broker from selected external broker or manual input
     const resolvedMqttBroker = mqttMode === 'select' && selectedBrokerId
@@ -388,9 +394,12 @@ export function PushTargetDialog() {
           ...(resolvedMqttBroker?.password ? { password: resolvedMqttBroker.password } : mqttPassword ? { password: mqttPassword } : {}),
         }
 
+    // Typed number inputs can hold NaN (cleared field) — fall back to the
+    // defaults instead of serializing null into the request.
+    const safeInterval = Number.isFinite(intervalSecs) && intervalSecs >= 1 ? Math.round(intervalSecs) : 60
     const schedule = scheduleType === 'event_driven'
       ? { type: 'event_driven' as const, event_types: ['device_metric', 'extension_output'] }
-      : { type: 'interval' as const, interval_secs: intervalSecs }
+      : { type: 'interval' as const, interval_secs: safeInterval }
 
     let sourcePatterns: string[]
     if (showAdvanced && manualPatterns.trim()) {
@@ -405,8 +414,8 @@ export function PushTargetDialog() {
     }
 
     const batchConfig = batchEnabled ? {
-      batch_size: batchSize,
-      batch_interval_ms: batchIntervalMs,
+      batch_size: Number.isFinite(batchSize) ? Math.min(1000, Math.max(2, Math.round(batchSize))) : 50,
+      batch_interval_ms: Number.isFinite(batchIntervalMs) ? Math.min(60000, Math.max(100, Math.round(batchIntervalMs))) : 2000,
       format: batchFormat,
     } : undefined
 
@@ -469,7 +478,7 @@ export function PushTargetDialog() {
                         type="button"
                         onClick={() => setTargetType(type)}
                         className={cn(
-                          "relative flex flex-col items-start gap-1.5 rounded-lg border-2 p-3 text-left transition-all",
+                          "relative flex flex-col items-start gap-1.5 rounded-lg border p-3 text-left transition-colors",
                           isActive
                             ? "border-primary bg-muted shadow-sm"
                             : "border-border hover:border-border"
@@ -664,10 +673,12 @@ export function PushTargetDialog() {
                     <div className="sm:col-span-2">
                       <Input
                         value={mqttTopic}
-                        onChange={(e) => setMqttTopic(e.target.value)}
+                        onChange={(e) => { setMqttTopic(e.target.value); if (mqttTopicError) setMqttTopicError(null) }}
                         placeholder="neomind/data"
-                        className={isMobile ? "h-12 text-base" : "h-10"}
+                        aria-invalid={!!mqttTopicError}
+                        className={cn(isMobile ? "h-12 text-base" : "h-10", mqttTopicError && "border-error")}
                       />
+                      {mqttTopicError && <p className="text-sm text-error mt-1">{mqttTopicError}</p>}
                     </div>
                     <Select value={String(mqttQos)} onValueChange={(v) => setMqttQos(Number(v))}>
                       <SelectTrigger className={isMobile ? "h-12 text-base" : "h-10"}>

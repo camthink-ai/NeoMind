@@ -570,7 +570,8 @@
     "running": "Running",
     "toggle": "Start / Stop",
     "nameRequired": "Name Required",
-    "urlRequired": "Url Required"
+    "urlRequired": "Url Required",
+    "topicRequired": "Topic is required"
   },
   "active": "Active",
   "test": "Test Connection",
