@@ -13,8 +13,8 @@ import { memo, useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { dynamicIconMap } from '@/lib/dynamicIcons'
 import {
-  LayoutGrid, Store as StoreIcon, Search, Boxes, PackagePlus, RefreshCw,
-  Box, Trash2, Loader2, ArrowDownCircle,
+  LayoutGrid, Store as StoreIcon, Search, Boxes, PackagePlus, Plus, RefreshCw,
+  Box, Check, Trash2, Loader2, ArrowDownCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Input } from '@/components/ui/input'
@@ -275,8 +275,13 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
               const McIcon = dynamicIconMap[mc.icon || 'Box'] || Box
               const mcName = localized(mc.name, i18n.language, mc.id)
               const mcDesc = localized(mc.description, i18n.language, '')
+              const isHighlighted = highlightedId === mc.id
               return (
-                <div key={mc.id} className="rounded-lg border border-border bg-card p-3.5 flex flex-col gap-2">
+                <div
+                  key={mc.id}
+                  ref={isHighlighted ? highlightedRef : undefined}
+                  className={`relative group rounded-lg border bg-card p-3.5 flex flex-col gap-2 ${isHighlighted ? 'border-primary shadow-sm ring-2 ring-primary animate-[fadeHighlight_2s_ease-out_forwards]' : 'border-border'}`}
+                >
                   <div className="flex items-start gap-2.5">
                     <div className="w-9 h-9 rounded-lg bg-muted text-foreground flex items-center justify-center shrink-0">
                       <McIcon className="w-4 h-4" />
@@ -284,45 +289,76 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-medium text-foreground truncate">{mcName}</span>
+                        {isInstalled && <Check className="w-3.5 h-3.5 text-success shrink-0" />}
                       </div>
                       <p className="text-xs text-muted-foreground">{t('componentLibrary.version')}: {mc.version}{mc.author ? ` · ${mc.author}` : ''}</p>
                     </div>
                   </div>
                   <p className="text-xs text-muted-foreground line-clamp-2 flex-1 min-h-0">{mcDesc}</p>
-                  <Button
-                    variant={isInstalled ? 'ghost' : 'outline'}
-                    size="sm"
-                    className="w-full h-7 text-xs"
-                    disabled={installingId === mc.id}
-                    onClick={async () => {
-                      onSetInstalling(mc.id)
-                      try {
-                        if (isInstalled) {
-                          await onUninstall(mc.id)
-                          notifySuccess(t('componentLibrary.uninstallSuccess'))
-                        } else {
+                  {isInstalled ? (
+                    /* Installed: add to dashboard (primary) + uninstall (icon). */
+                    <div className="flex items-center gap-1.5">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="flex-1 h-7 text-xs"
+                        onClick={() => onAddComponent(mc.id)}
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        {t('visualDashboard.addComponent')}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-error shrink-0"
+                        disabled={installingId === mc.id}
+                        aria-label={t('componentLibrary.uninstall')}
+                        onClick={async () => {
+                          onSetInstalling(mc.id)
+                          try {
+                            await onUninstall(mc.id)
+                            notifySuccess(t('componentLibrary.uninstallSuccess'))
+                          } catch {
+                            notifyError(t('componentLibrary.installError'))
+                          } finally {
+                            onSetInstalling(null)
+                          }
+                        }}
+                      >
+                        {installingId === mc.id
+                          ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          : <Trash2 className="h-3.5 w-3.5" />}
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full h-7 text-xs"
+                      disabled={installingId === mc.id}
+                      onClick={async () => {
+                        onSetInstalling(mc.id)
+                        try {
                           await onInstall(mc.id)
                           notifySuccess(t('componentLibrary.installSuccess'))
-                          // Guide the user to where the component can now
-                          // be added to a dashboard.
-                          onLibraryTabChange('custom')
+                          // Stay here: the card flips to its installed state
+                          // (add + uninstall) and pulses, so the next action
+                          // is right where the user is looking.
                           setHighlightedId(mc.id)
+                        } catch {
+                          notifyError(t('componentLibrary.installError'))
+                        } finally {
+                          onSetInstalling(null)
                         }
-                      } catch {
-                        notifyError(t('componentLibrary.installError'))
-                      } finally {
-                        onSetInstalling(null)
-                      }
-                    }}
-                  >
-                    {installingId === mc.id ? (
-                      <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />{isInstalled ? t('componentLibrary.uninstall') : t('componentLibrary.install')}</>
-                    ) : isInstalled ? (
-                      <><Trash2 className="w-3.5 h-3.5 mr-1" />{t('componentLibrary.uninstall')}</>
-                    ) : (
-                      <><PackagePlus className="w-3.5 h-3.5 mr-1" />{t('componentLibrary.install')}</>
-                    )}
-                  </Button>
+                      }}
+                    >
+                      {installingId === mc.id ? (
+                        <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />{t('componentLibrary.install')}</>
+                      ) : (
+                        <><PackagePlus className="w-3.5 h-3.5 mr-1" />{t('componentLibrary.install')}</>
+                      )}
+                    </Button>
+                  )}
                 </div>
               )
             })}
@@ -332,10 +368,15 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
     </div>
   )
 
+  // Custom holds MANUAL imports only (zip upload / server path).
+  // Marketplace-installed components stay managed on the Marketplace
+  // source — they are third-party published, not "custom".
+  const manualImports = installedComponents.filter((c) => c.source !== 'marketplace')
+
   const customPane = (
     <div className="flex-1 overflow-y-auto px-4 md:px-6 pb-8">
       <div className="mx-auto w-full max-w-5xl">
-        {installedComponents.length === 0 ? (
+        {manualImports.length === 0 ? (
           <div className="flex h-full min-h-[320px]">
             <EmptyState
               icon={<PackagePlus className="h-12 w-12" />}
@@ -349,13 +390,12 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
           </div>
         ) : (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3 pt-1">
-            {installedComponents.map((c) => {
+            {manualImports.map((c) => {
               const Icon = dynamicIconMap[c.icon || 'Box'] || Box
               const name = localized(c.name, i18n.language, c.id)
               const desc = localized(c.description, i18n.language, '')
               const update = updatesAvailable[c.id]
               const isHighlighted = highlightedId === c.id
-              const fromMarket = c.source === 'marketplace'
               return (
                 <div
                   key={c.id}
@@ -377,15 +417,7 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
                       <Icon className="h-4 w-4 shrink-0" />
                     </span>
                     <span className="flex-1 min-w-0">
-                      <span className="flex items-center gap-1.5">
-                        <span className="text-sm font-medium text-foreground truncate">{name}</span>
-                        <span className={cn(
-                          'shrink-0 text-[10px] leading-none rounded-full px-1.5 py-0.5',
-                          fromMarket ? 'bg-info-light text-info' : 'bg-muted text-muted-foreground',
-                        )}>
-                          {fromMarket ? t('componentLibrary.sourceMarket') : t('componentLibrary.sourceLocal')}
-                        </span>
-                      </span>
+                      <span className="text-sm font-medium text-foreground truncate block">{name}</span>
                       <span className="block text-xs text-muted-foreground mt-0.5">
                         {t('componentLibrary.version')}: {c.version}
                       </span>
@@ -497,7 +529,14 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
                   <button
                     key={id}
                     type="button"
-                    onClick={() => onLibraryTabChange(id)}
+                    onClick={() => {
+                      onLibraryTabChange(id)
+                      // A category selection from another Components
+                      // session may reference a category that vanished
+                      // (e.g. its extension was uninstalled) — start
+                      // every source visit from the full list.
+                      setSelectedCategory('all')
+                    }}
                     className={cn(
                       'flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-sm font-medium transition-colors',
                       libraryTab === id
