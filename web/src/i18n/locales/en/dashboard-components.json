@@ -888,6 +888,7 @@
     "imageHistory.failedToLoad": "Failed to load",
     "tabComponents": "Components",
     "tabMarketplace": "Marketplace",
+    "all": "All",
     "importComponent": "Import Component",
     "marketplaceEmpty": "No components available",
     "install": "Install",
