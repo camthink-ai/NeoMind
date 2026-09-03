@@ -636,9 +636,7 @@
       "unreachableHint": "The server is listening on loopback only (127.0.0.1) — LAN devices cannot connect. Restart it with the default 0.0.0.0 bind (CLI: --host 0.0.0.0; desktop: NEOMIND_HOST=0.0.0.0).",
       "followup": "After publishing, the system auto-discovers the device as a draft. Run these to view and approve it, completing onboarding:"
     },
-    "stages": {
-      "welcome": "Welcome"
-    },
+    "stages": {},
     "setup": {
       "title": "Welcome to NeoMind",
       "heroSubtitle": "An edge AI platform for IoT. Configure your AI brain and connect devices, then just describe what you want in natural language.",

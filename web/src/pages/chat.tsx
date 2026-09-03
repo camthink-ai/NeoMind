@@ -210,6 +210,25 @@ export function ChatPage() {
   // Get sessions from store for navigation logic
   const sessions = useStore((state) => state.sessions)
 
+  // Prune per-session token-usage keys whose session no longer exists —
+  // deleting a session never removed its key, so entries accumulated for
+  // the life of the browser profile.
+  useEffect(() => {
+    if (sessions.length === 0) return
+    const live = new Set(sessions.map(s => s.sessionId))
+    try {
+      const stale: string[] = []
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i)
+        if (key?.startsWith('neomind:tokenUsage:')) {
+          const sid = key.slice('neomind:tokenUsage:'.length)
+          if (!live.has(sid)) stale.push(key)
+        }
+      }
+      stale.forEach(k => localStorage.removeItem(k))
+    } catch { /* storage unavailable */ }
+  }, [sessions])
+
   // Load session from URL parameter (only when on /chat/:sessionId)
   // This effect handles all session switches triggered by URL changes:
   // - Initial page load with sessionId in URL

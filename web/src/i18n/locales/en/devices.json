@@ -40,7 +40,6 @@
   "telemetry": "Telemetry",
   "commands": "Commands",
   "commandHistory": "Command History",
-  "generateMDLFailed": "Failed to generate MDL",
   "category": {
     "temperature_sensor": "Temperature Sensor",
     "humidity_sensor": "Humidity Sensor",
@@ -279,7 +278,6 @@
     "aiMode": "AI",
     "validationError": "Validation Error",
     "requiredFields": "Required fields are missing",
-    "generatedFilled": "Device type generated! Review and edit in the form.",
     "validation": {
       "deviceTypeRequired": "Type ID is required",
       "nameRequired": "Name is required",
@@ -303,7 +301,6 @@
       "definitionRequired": "Please enter device type definition",
       "jsonError": "JSON format error: {{error}}",
       "missingFields": "Missing required fields: device_type, name",
-      "generateFirst": "Please click \"Generate MDL\" button first",
       "parseError": "Failed to parse generated definition: {{error}}",
       "nameRequired": "Please enter device name first",
       "typeId": "Type ID: {{id}}",
@@ -313,9 +310,7 @@
       "view": "View",
       "export": "Export"
     },
-    "smartGeneration": "Smart Generation",
     "advancedMode": "Advanced Mode",
-    "generating": "Generating...",
     "editTitle": "Edit Device Type",
     "sections": {
       "basic": "Basic Information",
@@ -375,7 +370,6 @@
       "title": "Generated JSON Definition"
     },
     "generate": {
-      "title": "Generate MDL Definition",
       "failed": "Generation failed: {{error}}"
     },
     "save": {
@@ -526,7 +520,6 @@
       "failed": "Failed"
     },
     "confidence": "Confidence",
-    "generatedType": "Generated Device Type",
     "metrics": "Metrics",
     "metricName": "Metric Name",
     "path": "Path",
@@ -536,7 +529,6 @@
     "samplesAnalyzed": "Samples Analyzed",
     "fieldsDiscovered": "Fields Discovered",
     "warnings": "Warnings",
-    "noGeneratedType": "No generated type yet",
     "waitingForSamples": "Waiting for more samples to analyze...",
     "error": "Error",
     "originalData": "Original Data Samples",

@@ -40,7 +40,6 @@
   "telemetry": "遥测数据",
   "commands": "命令",
   "commandHistory": "命令历史",
-  "generateMDLFailed": "MDL 生成失败",
   "category": {
     "temperature_sensor": "温度传感器",
     "humidity_sensor": "湿度传感器",
@@ -279,7 +278,6 @@
     "aiMode": "AI",
     "validationError": "验证错误",
     "requiredFields": "缺少必填字段",
-    "generatedFilled": "设备类型已生成！请在表单中查看和编辑。",
     "validation": {
       "deviceTypeRequired": "类型 ID 不能为空",
       "nameRequired": "名称不能为空",
@@ -303,7 +301,6 @@
       "definitionRequired": "请输入设备类型定义",
       "jsonError": "JSON 格式错误: {{error}}",
       "missingFields": "缺少必填字段: device_type, name",
-      "generateFirst": "请先点击「生成 MDL」按钮",
       "parseError": "生成的定义解析失败: {{error}}",
       "nameRequired": "请先输入设备名称",
       "typeId": "类型 ID: {{id}}",
@@ -313,9 +310,7 @@
       "view": "查看",
       "export": "导出"
     },
-    "smartGeneration": "智能生成",
     "advancedMode": "高级模式",
-    "generating": "生成中...",
     "editTitle": "编辑设备类型",
     "sections": {
       "basic": "基本信息",
@@ -375,7 +370,6 @@
       "title": "生成的 JSON 定义"
     },
     "generate": {
-      "title": "生成 MDL 定义",
       "failed": "生成失败: {{error}}"
     },
     "save": {
@@ -526,7 +520,6 @@
       "failed": "失败"
     },
     "confidence": "置信度",
-    "generatedType": "生成的设备类型",
     "metrics": "指标",
     "metricName": "指标名称",
     "path": "路径",
@@ -536,7 +529,6 @@
     "samplesAnalyzed": "已分析样本",
     "fieldsDiscovered": "发现字段",
     "warnings": "警告",
-    "noGeneratedType": "尚未生成类型",
     "waitingForSamples": "等待更多样本以进行分析...",
     "error": "错误",
     "originalData": "原始数据样本",

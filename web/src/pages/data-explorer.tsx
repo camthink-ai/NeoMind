@@ -157,7 +157,7 @@ export function DataExplorerPage() {
       if (selectedSourceName !== '__all__') params.source = selectedSourceName
       if (debouncedSearch.trim()) params.search = debouncedSearch.trim()
 
-      const res = await api.listUnifiedDataSources(params)
+      const res = await api.listUnifiedDataSources(params, controller.signal)
       if (controller.signal.aborted) return
       const newData = res?.data || []
       if (isMobile && page > 1) {
@@ -199,7 +199,9 @@ export function DataExplorerPage() {
     updateSearch(search)
   }, [search, updateSearch])
 
-  // Refresh on device events (debounced to avoid burst refetches)
+  // Refresh on device events (debounced to avoid burst refetches).
+  // Clear the pending timer on unmount — otherwise it fires a fetch and
+  // sets state on a gone page.
   const eventFetchRef = useRef<ReturnType<typeof setTimeout>>()
   useEvents({
     enabled: true,
@@ -209,6 +211,7 @@ export function DataExplorerPage() {
       eventFetchRef.current = setTimeout(fetchDataSources, 1000)
     },
   })
+  useEffect(() => () => clearTimeout(eventFetchRef.current), [])
 
   // Range aggregates for the side pane — parallel streaming folds on the
   // backend, cheap; skipped entirely for non-numeric metrics.
@@ -728,7 +731,9 @@ export function DataExplorerPage() {
                     const chartTruncated = chartTotal !== null && chartTotal > chartData.length
                     if (!historyLoading && !historyError && points.length >= 2) {
                       const labelFmt = (ts: number) => {
-                        const d = new Date(ts)
+                        // Telemetry timestamps are unix seconds; the ×1000
+                        // heuristic matches formatTimestamp in this file.
+                        const d = new Date(ts < 1e12 ? ts * 1000 : ts)
                         const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
                         return historyRange === '7d' || historyRange === '24h'
                           ? `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${hm}`

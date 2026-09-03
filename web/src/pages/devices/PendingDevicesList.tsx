@@ -101,6 +101,8 @@ export function PendingDevicesList({
 
   const [copiedField, setCopiedField] = useState<string | null>(null)
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Guards suggestDeviceTypes responses against interleaved dialog opens
+  const suggestTokenRef = useRef(0)
 
   const handleCopy = useCallback(async (field: string, value: string) => {
     try {
@@ -313,9 +315,16 @@ export function PendingDevicesList({
       })
     }
 
-    // Fetch suggested types
+    // Fetch suggested types. Guard against interleaved opens: a slow
+    // response for draft A must not auto-select A's type while draft B's
+    // dialog is showing (auto-selection enables submit, so the wrong
+    // draft's type would silently register). Each open bumps the token;
+    // only the newest request may apply its response.
+    const suggestToken = ++suggestTokenRef.current
+    const applyIfCurrent = () => suggestTokenRef.current === suggestToken
     try {
       const response = await api.suggestDeviceTypes(draft.device_id)
+      if (!applyIfCurrent()) return
       setSuggestedTypes(response.suggestions || [])
       // Auto-select exact match if found
       if (response.exact_match) {
@@ -330,11 +339,14 @@ export function PendingDevicesList({
         }
       }
     } catch (error) {
+      if (!applyIfCurrent()) return
       handleError(error, { operation: 'Fetch suggested types', showToast: false })
       // Show empty state on error
       setSuggestedTypes([])
     } finally {
-      setLoadingSuggestions(false)
+      if (applyIfCurrent()) {
+        setLoadingSuggestions(false)
+      }
     }
   }
 

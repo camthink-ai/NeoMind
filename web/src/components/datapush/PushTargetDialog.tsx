@@ -194,6 +194,7 @@ export function PushTargetDialog() {
         } else {
           setMqttBroker(editingPushTarget.config?.broker || '')
           setMqttTopic(editingPushTarget.config?.topic || '')
+          setMqttTopicError(null)
           setMqttPort(editingPushTarget.config?.port || 1883)
           setMqttUsername(editingPushTarget.config?.username || '')
           setMqttPassword(editingPushTarget.config?.password || '')
@@ -262,6 +263,7 @@ export function PushTargetDialog() {
     setName('')
     setNameError(null)
     setWebhookUrlError(null)
+    setMqttTopicError(null)
     setTargetType('webhook')
     setWebhookUrl('')
     setWebhookAuthType('none')
@@ -387,7 +389,10 @@ export function PushTargetDialog() {
         }
       : {
           broker: resolvedMqttBroker ? resolvedMqttBroker.broker : mqttBroker,
-          port: resolvedMqttBroker ? resolvedMqttBroker.port : mqttPort,
+          // Cleared number input yields NaN/0 — fall back to the MQTT default.
+          port: resolvedMqttBroker
+            ? resolvedMqttBroker.port
+            : Number.isFinite(mqttPort) && mqttPort > 0 ? Math.round(mqttPort) : 1883,
           topic: mqttTopic,
           qos: mqttQos,
           ...(resolvedMqttBroker?.username ? { username: resolvedMqttBroker.username } : mqttUsername.trim() ? { username: mqttUsername } : {}),

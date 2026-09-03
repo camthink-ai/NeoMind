@@ -208,6 +208,39 @@ pub fn compact_tool_results(messages: &[AgentMessage], keep_recent: usize) -> Ve
 /// - Never compress system messages
 ///
 /// Expected impact: 30-50% token reduction for long conversations.
+/// Cap history to the last N user turns (configurable chat depth,
+/// /api/settings/agent). Walks back to the Nth-from-last user message
+/// and drops everything before it — tool/assistant messages belonging
+/// to those turns go with them. Shared by every chat path (streaming
+/// SSE/WS, multimodal, non-streaming) so the advertised setting behaves
+/// identically everywhere. Scheduled agents are unaffected — they carry
+/// their own per-agent context_window_size.
+pub(crate) fn apply_chat_history_depth(history: &mut Vec<AgentMessage>) {
+    let depth = neomind_storage::AgentDefaults::get().chat_history_depth;
+    let mut user_turns_seen = 0usize;
+    let mut cut_idx = None;
+    for (i, m) in history.iter().enumerate().rev() {
+        if m.role == "user" {
+            user_turns_seen += 1;
+            if user_turns_seen >= depth {
+                cut_idx = Some(i);
+                break;
+            }
+        }
+    }
+    if let Some(idx) = cut_idx {
+        if idx > 0 {
+            tracing::debug!(
+                before = history.len(),
+                after = history.len() - idx,
+                depth,
+                "Applied chat history depth"
+            );
+            history.drain(..idx);
+        }
+    }
+}
+
 pub fn compact_conversation(
     messages: &[AgentMessage],
     keep_recent: usize,
@@ -253,19 +286,13 @@ pub fn compact_conversation(
             continue;
         }
 
-        // Keep user messages verbatim (they contain critical intent)
+        // Keep user messages verbatim (they contain critical intent).
+        // Tightening to 1000 chars happens in the LAST RESORT block below
+        // and only when the assembled set is over budget — truncating here
+        // unconditionally used to destroy intent even when the window had
+        // ample room (and made the last-resort pass dead code).
         if msg.role == "user" {
-            // Truncate very long user messages
-            let truncated_content: Arc<str> = if msg.content.len() > 200 {
-                let s: String = msg.content.chars().take(200).collect();
-                format!("{}... (message truncated)", s).into()
-            } else {
-                msg.content.clone()
-            };
-            compressed_older.push(AgentMessage {
-                content: truncated_content,
-                ..msg.clone()
-            });
+            compressed_older.push(msg.clone());
             _current_tokens += tokenizer::estimate_message_tokens(msg);
             continue;
         }
@@ -1970,35 +1997,7 @@ impl Agent {
         };
 
         // === CHAT HISTORY DEPTH (configurable, /api/settings/agent) ===
-        // Keep the last N TURNS: walk back to the Nth-from-last user message
-        // and drop everything before it. Tool/assistant messages belonging to
-        // those turns go with them. Scheduled agents are unaffected — they
-        // carry their own per-agent context_window_size.
-        {
-            let depth = neomind_storage::AgentDefaults::get().chat_history_depth;
-            let mut user_turns_seen = 0usize;
-            let mut cut_idx = None;
-            for (i, m) in history_without_last.iter().enumerate().rev() {
-                if m.role == "user" {
-                    user_turns_seen += 1;
-                    if user_turns_seen >= depth {
-                        cut_idx = Some(i);
-                        break;
-                    }
-                }
-            }
-            if let Some(idx) = cut_idx {
-                if idx > 0 {
-                    tracing::debug!(
-                        before = history_without_last.len(),
-                        after = history_without_last.len() - idx,
-                        depth,
-                        "Applied chat history depth"
-                    );
-                    history_without_last.drain(..idx);
-                }
-            }
-        }
+        apply_chat_history_depth(&mut history_without_last);
 
         // === DYNAMIC CONTEXT WINDOW: Get model's actual capacity ===
         // Query the LLM backend for the actual context window size.

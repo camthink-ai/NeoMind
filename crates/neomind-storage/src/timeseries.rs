@@ -3044,6 +3044,83 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_query_range_rev_pagination() {
+        // The data explorer pages through newest-first data with
+        // offset/limit; total_count drives the pager and the export
+        // truncation warning, so page contents and the exact total are
+        // contract.
+        let store = TimeSeriesStore::memory().unwrap();
+
+        // 15 points: timestamps 1000..2400 step 100, values 0..14
+        for i in 0..15 {
+            store
+                .write("device1", "temp", DataPoint::new(1000 + i * 100, i as f64))
+                .await
+                .unwrap();
+        }
+        store.flush().unwrap();
+
+        // Page 1: newest 5, newest-first within the page (the explorer
+        // displays newest-first and re-sorts defensively)
+        let p1 = store
+            .query_range_rev("device1", "temp", 1000, 2400, Some(5), 0)
+            .await
+            .unwrap();
+        assert_eq!(
+            p1.points.iter().map(|p| p.as_f64().unwrap()).collect::<Vec<_>>(),
+            vec![14.0, 13.0, 12.0, 11.0, 10.0]
+        );
+        assert_eq!(p1.total_count, Some(15));
+
+        // Page 2: next-newest 5
+        let p2 = store
+            .query_range_rev("device1", "temp", 1000, 2400, Some(5), 5)
+            .await
+            .unwrap();
+        assert_eq!(
+            p2.points.iter().map(|p| p.as_f64().unwrap()).collect::<Vec<_>>(),
+            vec![9.0, 8.0, 7.0, 6.0, 5.0]
+        );
+        assert_eq!(p2.total_count, Some(15));
+
+        // Last page: remainder only
+        let p3 = store
+            .query_range_rev("device1", "temp", 1000, 2400, Some(5), 10)
+            .await
+            .unwrap();
+        assert_eq!(
+            p3.points.iter().map(|p| p.as_f64().unwrap()).collect::<Vec<_>>(),
+            vec![4.0, 3.0, 2.0, 1.0, 0.0]
+        );
+
+        // Offset beyond the data: empty page, exact total still reported
+        let p4 = store
+            .query_range_rev("device1", "temp", 1000, 2400, Some(5), 15)
+            .await
+            .unwrap();
+        assert!(p4.points.is_empty());
+        assert_eq!(p4.total_count, Some(15));
+
+        // Offset into the final element: single point
+        let p5 = store
+            .query_range_rev("device1", "temp", 1000, 2400, Some(5), 14)
+            .await
+            .unwrap();
+        assert_eq!(p5.points.len(), 1);
+        assert_eq!(p5.points[0].as_f64(), Some(0.0));
+
+        // No limit: full range newest-first, exact total
+        let full = store
+            .query_range_rev("device1", "temp", 1000, 2400, None, 0)
+            .await
+            .unwrap();
+        assert_eq!(full.points.len(), 15);
+        assert_eq!(full.points.first().unwrap().as_f64(), Some(14.0));
+        assert_eq!(full.points.last().unwrap().as_f64(), Some(0.0));
+        assert_eq!(full.total_count, Some(15));
+    }
+
+    #[tokio::test]
     async fn test_aggregated_queries_avg_min_max_sum_count() {
         let store = TimeSeriesStore::memory().unwrap();
 

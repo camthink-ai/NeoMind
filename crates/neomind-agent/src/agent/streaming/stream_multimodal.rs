@@ -56,8 +56,11 @@ pub async fn process_multimodal_stream_events_with_safeguards(
 
     // Get conversation history
     let state_guard = internal_state.read().await;
-    let history_messages = state_guard.memory.clone();
+    let mut history_messages = state_guard.memory.clone();
     drop(state_guard);
+
+    // === CHAT HISTORY DEPTH — same cap as the text-streaming path ===
+    crate::agent::apply_chat_history_depth(&mut history_messages);
 
     // Build context window — measure actual prompt overhead instead of guessing
     let max_context = llm_interface.max_context_length().await;

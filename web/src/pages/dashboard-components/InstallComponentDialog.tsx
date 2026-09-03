@@ -67,6 +67,14 @@ export function InstallComponentDialog({ open, onOpenChange }: InstallComponentD
     acceptFile(e.dataTransfer.files?.[0])
   }
 
+  // dragleave fires when the pointer crosses INTO a child element too —
+  // only clear the highlight when the pointer actually left the zone.
+  const handleDragLeave = (e: React.DragEvent) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+      setIsDragOver(false)
+    }
+  }
+
   const handleInstall = async () => {
     setIsSubmitting(true)
     setSubmitError(null)
@@ -159,7 +167,7 @@ export function InstallComponentDialog({ open, onOpenChange }: InstallComponentD
               onClick={handleClick}
               onKeyDown={handleKeyDown}
               onDragOver={(e) => { e.preventDefault(); setIsDragOver(true) }}
-              onDragLeave={() => setIsDragOver(false)}
+              onDragLeave={handleDragLeave}
               onDrop={handleDrop}
               className={cn(
                 'border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors outline-none',

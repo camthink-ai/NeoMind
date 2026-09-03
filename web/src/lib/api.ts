@@ -1942,13 +1942,13 @@ export const api = {
    * Aggregates all data sources (devices, extensions, transforms, AI metrics) in a single call.
    * Supports server-side filtering and pagination.
    */
-  listUnifiedDataSources: (params?: Record<string, string | number>) => {
+  listUnifiedDataSources: (params?: Record<string, string | number>, signal?: AbortSignal) => {
     const qs = params && Object.keys(params).length > 0
       ? new URLSearchParams(
           Object.entries(params).map(([k, v]) => [k, String(v)])
         ).toString()
       : ''
-    return fetchAPI<{ data: UnifiedDataSourceInfo[]; total: number; source_options: [string, string][] }>(qs ? `/data/sources?${qs}` : '/data/sources')
+    return fetchAPI<{ data: UnifiedDataSourceInfo[]; total: number; source_options: [string, string][] }>(qs ? `/data/sources?${qs}` : '/data/sources', { signal })
   },
 
   /**

@@ -600,6 +600,20 @@ pub async fn install_component_from_path_handler(
         ));
     }
 
+    // Reject oversized packages BEFORE reading them into memory — the
+    // data directory also hosts large stores, and buffering a multi-GB
+    // file just to fail the cap check would be a free memory DoS.
+    let metadata = tokio::fs::metadata(&path)
+        .await
+        .map_err(|e| ErrorResponse::bad_request(format!("Failed to stat package file: {}", e)))?;
+    if metadata.len() as usize > MARKETPLACE_DOWNLOAD_CAP_BYTES {
+        return Err(ErrorResponse::bad_request(format!(
+            "Package too large ({} bytes); local install cap is {} bytes",
+            metadata.len(),
+            MARKETPLACE_DOWNLOAD_CAP_BYTES
+        )));
+    }
+
     let zip_data = tokio::fs::read(&path)
         .await
         .map_err(|e| ErrorResponse::bad_request(format!("Failed to read package file: {}", e)))?;
@@ -683,16 +697,37 @@ fn extract_zip_contents(zip_data: &[u8]) -> Result<(String, Vec<u8>), ErrorRespo
         match filename.as_str() {
             "manifest.json" => {
                 let mut text = String::new();
-                file.read_to_string(&mut text).map_err(|e| {
+                // Manifests are tiny JSON documents; anything large is
+                // malformed or malicious.
+                let mut limited = file.take(1024 * 1024);
+                limited.read_to_string(&mut text).map_err(|e| {
                     ErrorResponse::bad_request(format!("Failed to read manifest.json: {}", e))
                 })?;
                 manifest_text = Some(text);
             }
             "bundle.js" => {
                 let mut bytes = Vec::new();
-                file.read_to_end(&mut bytes).map_err(|e| {
-                    ErrorResponse::bad_request(format!("Failed to read bundle.js: {}", e))
-                })?;
+                // Bound the decompressed size: a small zip can inflate to
+                // gigabytes (zip bomb), and whatever we buffer here gets
+                // persisted to disk by store.install.
+                let mut remaining = MARKETPLACE_DOWNLOAD_CAP_BYTES;
+                let mut chunk = [0u8; 64 * 1024];
+                loop {
+                    let n = file.read(&mut chunk).map_err(|e| {
+                        ErrorResponse::bad_request(format!("Failed to read bundle.js: {}", e))
+                    })?;
+                    if n == 0 {
+                        break;
+                    }
+                    if remaining < n {
+                        return Err(ErrorResponse::bad_request(format!(
+                            "bundle.js decompresses beyond the {} byte cap",
+                            MARKETPLACE_DOWNLOAD_CAP_BYTES
+                        )));
+                    }
+                    remaining -= n;
+                    bytes.extend_from_slice(&chunk[..n]);
+                }
                 bundle_bytes = Some(bytes);
             }
             _ => {}

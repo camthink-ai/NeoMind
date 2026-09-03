@@ -203,6 +203,12 @@ pub async fn process_stream_events_with_safeguards(
         history_messages.pop();
     }
 
+    // === CHAT HISTORY DEPTH (configurable, /api/settings/agent) ===
+    // Same cap the non-streaming path applies — the server chat entry
+    // points (SSE/WS) all stream, so without this the advertised setting
+    // would never run for real conversations.
+    crate::agent::apply_chat_history_depth(&mut history_messages);
+
     // === DYNAMIC CONTEXT WINDOW: Get model's actual capacity ===
     let max_context = llm_interface.max_context_length().await;
 
