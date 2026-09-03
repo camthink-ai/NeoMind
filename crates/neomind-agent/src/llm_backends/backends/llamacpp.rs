@@ -470,7 +470,7 @@ impl LlmRuntime for LlamaCppRuntime {
                         .map_err(|e| LlmError::Network(e.to_string()))?;
                     if wait_for_llama_model_ready(
                         &client,
-                        &self.config.base_url(),
+                        self.config.base_url(),
                         &self.config.api_key,
                         std::time::Duration::from_secs(60),
                     )
