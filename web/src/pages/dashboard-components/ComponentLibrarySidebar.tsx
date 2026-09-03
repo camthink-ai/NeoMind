@@ -120,13 +120,13 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
   }, [open])
 
   // Source-of-origin split: Components = built-ins only, Extensions =
-  // everything registered by extensions (their self-declared categories,
-  // 'custom' as canonical fallback), Custom = manual imports. An
+  // components registered by extensions, Custom = manual imports. An
   // extension may declare a built-in category ("charts") — so the split
   // is per ITEM, then empty groups are dropped.
   const extensionTypes = useMemo(
     () => new Set(dynamicRegistry.getAllMetas().map((d) => d.type)),
-    []
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-evaluate when the library prop rebuilds (refreshVersion bumps on extension register/unregister)
+    [filteredLibrary]
   )
   const nonCommunity = useMemo(
     () => filteredLibrary.filter((c) => c.category !== 'local' && c.category !== 'marketplace'),
@@ -139,13 +139,33 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
         .filter((c) => c.items.length > 0),
     [nonCommunity, extensionTypes]
   )
-  const extensionCategories = useMemo(
-    () =>
-      nonCommunity
-        .map((c) => ({ ...c, items: c.items.filter((i) => extensionTypes.has(i.id)) }))
-        .filter((c) => c.items.length > 0),
-    [nonCommunity, extensionTypes]
-  )
+  // Extensions group by PROVIDING EXTENSION, not by their self-declared
+  // category — extension authors don't keep categories consistent (one
+  // extension may ship custom/other/empty across its own components),
+  // while the providing extension is registry-truth and answers the
+  // actual question ("which extension owns this widget?").
+  const extensionGroups = useMemo(() => {
+    const itemById = new Map<string, ComponentCategory['items'][number]>()
+    for (const cat of nonCommunity) {
+      for (const item of cat.items) {
+        if (extensionTypes.has(item.id)) itemById.set(item.id, item)
+      }
+    }
+    return dynamicRegistry
+      .getExtensions()
+      .map((ext) => ({
+        category: ext.extensionId,
+        categoryLabel: ext.extensionName || ext.extensionId,
+        categoryIcon: Puzzle,
+        categoryColor: 'bg-primary-light text-primary',
+        items: ext.componentTypes
+          .map((type) => itemById.get(type))
+          .filter((item): item is ComponentCategory['items'][number] => !!item),
+      }))
+      .filter((g) => g.items.length > 0)
+      .sort((a, b) => a.categoryLabel.localeCompare(b.categoryLabel))
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see extensionTypes
+  }, [nonCommunity, extensionTypes])
 
   // Search always matches across every category; otherwise the rail's
   // selection scopes the grid (mobile has no rail, so it shows all).
@@ -272,16 +292,16 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
   const extensionsPane = (
     <div className="flex-1 overflow-y-auto px-4 md:px-6 pb-8">
       <div className="mx-auto w-full max-w-5xl">
-        {extensionCategories.length === 0 ? (
+        {extensionGroups.length === 0 ? (
           <div className="flex h-full min-h-[320px]">
             <EmptyState
               icon={<Puzzle className="h-12 w-12" />}
-              title={t('componentLibrary.extensionsEmptyTitle')}
-              description={t('componentLibrary.extensionsEmptyDesc')}
+              title={searching ? t('componentLibrary.noResults') : t('componentLibrary.extensionsEmptyTitle')}
+              description={searching ? t('componentLibrary.noResultsHint') : t('componentLibrary.extensionsEmptyDesc')}
             />
           </div>
         ) : (
-          renderCategorySections(extensionCategories, true)
+          renderCategorySections(extensionGroups, true)
         )}
       </div>
     </div>
