@@ -178,6 +178,7 @@ Full spec in [`web/DESIGN_SPEC.md`](web/DESIGN_SPEC.md). Non-negotiable rules:
 - **Dead `Default` impl**: check 4 patterns — `X::default()`, `unwrap_or_default()` on `Option<X>`, `HashMap::entry().or_default()` with X value, `..Default::default()` in struct literals.
 - **Subagent unreliability for dead code**: ~70% false-positive rate. Always verify candidates with manual greps before removing; prefer batch-remove + `cargo build` to catch errors.
 - Rust: `cargo fmt` + `cargo clippy`. Frontend: run type checks after every change.
+- **Clippy driver PATH trap**: `cargo +1.92.0 clippy` can still run Homebrew's 1.98 `clippy-driver` — `cargo-clippy` resolves the driver through PATH, and 1.98's lints differ (false "failures" like `unneeded_wildcard_pattern`). Prepend the toolchain bin dir: `PATH="$HOME/.rustup/toolchains/1.92.0-aarch64-apple-darwin/bin:$PATH" cargo +1.92.0 clippy --workspace --all-targets --locked -- -D warnings`, and sanity-check with `clippy --version` (must print `0.1.92`). CI runs exactly this gate on 1.92.0.
 
 ## In-Tree References
 
