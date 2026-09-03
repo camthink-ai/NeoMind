@@ -9,6 +9,7 @@
 
 import { Check, Settings2, Plus, Share2, Maximize } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
   Tooltip,
@@ -119,8 +120,18 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
 
   const { t } = useTranslation('dashboardComponents')
 
+  // Sidebar mode on desktop: the action buttons sit directly under the
+  // page title (left-aligned) so title + actions read as one header
+  // block. Tabs/mobile keep them at the right edge opposite the tab bar.
+  const actionsAlignLeft = layoutMode === 'sidebar' && !isMobile
+
   return (
-    <header className="shrink-0 flex items-center justify-between px-4 sm:px-6 md:px-8 py-2 bg-background z-10">
+    <header
+      className={cn(
+        'shrink-0 flex items-center px-4 sm:px-6 md:px-8 py-2 bg-background z-10',
+        actionsAlignLeft ? 'justify-start' : 'justify-between',
+      )}
+    >
       {/* Mobile: always show the dropdown switcher regardless of layoutMode.
           Sidebar-mode's "open the list drawer" pattern has no trigger on
           touch devices, so we route through DashboardTabBar's mobile UI. */}
@@ -139,7 +150,7 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
       ) : (
         /* Sidebar mode on desktop: the page title above already shows the
            current dashboard's name, so the left slot stays empty and only
-           the action buttons remain (right-aligned via justify-between). */
+           the action buttons remain, left-aligned under the title. */
         <span aria-hidden="true" />
       )}
 
