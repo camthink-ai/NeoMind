@@ -573,6 +573,62 @@ pub async fn install_component_handler(
     let bundle_bytes = bundle_bytes
         .ok_or_else(|| ErrorResponse::bad_request("Missing 'bundle' or 'package' field"))?;
 
+    install_from_parts(&state, manifest_text, bundle_bytes, "manual upload").await
+}
+
+#[derive(serde::Deserialize)]
+pub struct InstallFromPathRequest {
+    pub file_path: String,
+}
+
+/// POST `/api/frontend-components/from-path`
+///
+/// Install a community component from a `.zip` package that already sits
+/// on the server, inside the data directory. Mirrors the extensions
+/// upload API's `file_path` pattern: edge deployments often receive
+/// packages via scp/USB, and a phone browser has no way to pick a file
+/// that lives on the box.
+pub async fn install_component_from_path_handler(
+    State(state): State<ServerState>,
+    Json(req): Json<InstallFromPathRequest>,
+) -> HandlerResult<serde_json::Value> {
+    let path = crate::handlers::extensions::resolve_confined_package_path(&req.file_path)?;
+
+    if path.extension().and_then(|e| e.to_str()) != Some("zip") {
+        return Err(ErrorResponse::bad_request(
+            "file_path must point to a .zip package",
+        ));
+    }
+
+    let zip_data = tokio::fs::read(&path)
+        .await
+        .map_err(|e| ErrorResponse::bad_request(format!("Failed to read package file: {}", e)))?;
+
+    if zip_data.len() > MARKETPLACE_DOWNLOAD_CAP_BYTES {
+        return Err(ErrorResponse::bad_request(format!(
+            "Package too large ({} bytes); local install cap is {} bytes",
+            zip_data.len(),
+            MARKETPLACE_DOWNLOAD_CAP_BYTES
+        )));
+    }
+
+    let (manifest_text, bundle_bytes) =
+        tokio::task::spawn_blocking(move || extract_zip_contents(&zip_data))
+            .await
+            .map_err(|e| ErrorResponse::internal(format!("ZIP extraction task failed: {}", e)))??;
+
+    install_from_parts(&state, manifest_text, bundle_bytes, "server path").await
+}
+
+/// Shared install tail for every manual install entry point (multipart
+/// upload, server path): parse + validate the manifest, persist via the
+/// store, publish the lifecycle event.
+async fn install_from_parts(
+    state: &ServerState,
+    manifest_text: String,
+    bundle_bytes: Vec<u8>,
+    via: &str,
+) -> HandlerResult<serde_json::Value> {
     // Parse manifest
     let mut manifest: ComponentManifest = serde_json::from_str(&manifest_text)
         .map_err(|e| ErrorResponse::bad_request(format!("Invalid manifest JSON: {}", e)))?;
@@ -593,11 +649,12 @@ pub async fn install_component_handler(
         .map_err(|e| ErrorResponse::internal(format!("Failed to install component: {}", e)))?;
 
     // Publish lifecycle event
-    publish_lifecycle_event(&state, &id_for_event, "installed").await;
+    publish_lifecycle_event(state, &id_for_event, "installed").await;
 
     tracing::info!(
         component_id = %id_for_event,
-        "Component installed via manual upload"
+        via = %via,
+        "Community component installed"
     );
 
     ok(json!({

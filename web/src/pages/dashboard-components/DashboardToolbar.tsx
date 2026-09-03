@@ -21,7 +21,7 @@ import { DashboardTabBar } from '@/components/dashboard/DashboardTabBar'
 import { ComponentLibrarySidebar } from './ComponentLibrarySidebar'
 import type { Dashboard } from '@/types/dashboard'
 import type { ComponentCategory } from './componentLibraryUtils'
-import type { MarketComponentEntry } from '@/types/frontend-component'
+import type { MarketComponentEntry, FrontendComponentMeta } from '@/types/frontend-component'
 
 export interface DashboardToolbarProps {
   // Dashboard data
@@ -57,8 +57,8 @@ export interface DashboardToolbarProps {
   // Component library sidebar
   componentLibraryOpen: boolean
   setComponentLibraryOpen: (open: boolean) => void
-  libraryTab: 'components' | 'marketplace'
-  onLibraryTabChange: (tab: 'components' | 'marketplace') => void
+  libraryTab: 'components' | 'marketplace' | 'custom'
+  onLibraryTabChange: (tab: 'components' | 'marketplace' | 'custom') => void
   librarySearch: string
   onLibrarySearchChange: (q: string) => void
   filteredLibrary: ComponentCategory[]
@@ -67,7 +67,8 @@ export interface DashboardToolbarProps {
   // Marketplace
   marketComponents: MarketComponentEntry[]
   marketLoading: boolean
-  installedComponents: { id: string; source?: 'local' | 'marketplace' }[]
+  installedComponents: FrontendComponentMeta[]
+  onRefreshMarket: () => Promise<void>
   installingId: string | null
   onInstall: (id: string) => Promise<void>
   onUninstall: (id: string) => Promise<void>
@@ -108,6 +109,7 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
     marketComponents,
     marketLoading,
     installedComponents,
+    onRefreshMarket,
     installingId,
     onInstall,
     onUninstall,
@@ -224,6 +226,7 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
             marketComponents={marketComponents}
             marketLoading={marketLoading}
             installedComponents={installedComponents}
+            onRefreshMarket={onRefreshMarket}
             installingId={installingId}
             onInstall={onInstall}
             onUninstall={onUninstall}

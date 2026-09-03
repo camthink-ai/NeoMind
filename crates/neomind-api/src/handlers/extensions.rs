@@ -528,7 +528,7 @@ async fn fetch_release_checksum(
 /// the machine for anyone holding credentials. Relative paths resolve
 /// against the data dir; absolute paths must land inside it (after
 /// canonicalization, so `..` and symlinks can't escape).
-fn resolve_confined_package_path(raw: &str) -> Result<PathBuf, ErrorResponse> {
+pub(crate) fn resolve_confined_package_path(raw: &str) -> Result<PathBuf, ErrorResponse> {
     let data_dir = neomind_core::paths::data_dir()
         .to_string_lossy()
         .to_string();

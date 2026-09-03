@@ -1160,6 +1160,10 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         )
         // Frontend Component API (protected - install/uninstall/list)
         .route(
+            "/api/frontend-components/from-path",
+            post(frontend_components::install_component_from_path_handler),
+        )
+        .route(
             "/api/frontend-components/market/install",
             post(frontend_components::market_install_handler),
         )

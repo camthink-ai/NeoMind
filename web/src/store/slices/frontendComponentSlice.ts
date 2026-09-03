@@ -40,6 +40,8 @@ export interface FrontendComponentSlice extends FrontendComponentState {
   fetchMarket: () => Promise<void>
   installFromMarket: (componentId: string) => Promise<void>
   installManualZip: (zipFile: File) => Promise<FrontendComponentMeta>
+  /** Install from a .zip that already sits on the server, inside its data directory. */
+  installFromPath: (filePath: string) => Promise<FrontendComponentMeta>
   uninstall: (id: string) => Promise<void>
   refreshComponent: (id: string) => Promise<void>
   checkUpdates: () => Promise<void>
@@ -224,6 +226,47 @@ export const createFrontendComponentSlice: StateCreator<
       return component
     } catch (error) {
       logError(error, { operation: 'Install ZIP component' })
+      set({
+        error: error instanceof Error ? error.message : 'Failed to install component',
+      })
+      throw error
+    } finally {
+      set({ loading: false })
+    }
+  },
+
+  /**
+   * Install a component from a ZIP package that already sits on the
+   * server (inside its data directory).
+   * Backend: POST /frontend-components/from-path
+   */
+  installFromPath: async (filePath) => {
+    set({ loading: true, error: null })
+    try {
+      const res = await api.post<{ component: FrontendComponentMeta }>(
+        '/frontend-components/from-path',
+        { file_path: filePath },
+      )
+      const component = res.component
+
+      // Add to installed list
+      set((state) => ({
+        installed: [...state.installed, component],
+      }))
+
+      // Sync with community registry
+      communityRegistry.syncFromApi([...get().installed, component])
+
+      // Clear cache to force refresh
+      set((state) => ({
+        fetchCache: Object.fromEntries(
+          Object.entries(state.fetchCache).filter(([key]) => key !== 'installed')
+        ),
+      }))
+
+      return component
+    } catch (error) {
+      logError(error, { operation: 'Install component from server path' })
       set({
         error: error instanceof Error ? error.message : 'Failed to install component',
       })

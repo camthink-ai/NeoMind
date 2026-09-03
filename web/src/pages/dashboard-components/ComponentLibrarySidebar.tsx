@@ -1,20 +1,20 @@
 /**
  * Component Library Sidebar
  *
- * Full-screen dialog split into a left navigation rail (source switch
- * between built-in components / marketplace, plus category filtering)
- * and a right content pane (search bar sitting directly above the grid
- * it filters). Mobile keeps a compact tab strip instead of the rail.
- * Extracted from VisualDashboard to reduce its file size and improve
- * maintainability.
+ * Full-screen dialog split into a left navigation rail (source switch:
+ * built-in Components / Marketplace / Custom imports, plus category
+ * filtering for the components source) and a right content pane whose
+ * toolbar carries the per-source action — search above the grid it
+ * filters, market refresh, or the import entry for custom components.
+ * Mobile keeps a compact tab strip instead of the rail.
  */
 
 import { memo, useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { dynamicIconMap } from '@/lib/dynamicIcons'
 import {
-  LayoutGrid, Store as StoreIcon, Search, Boxes,
-  Box, Check, Trash2, Download, Loader2, PackagePlus, RefreshCw, ArrowDownCircle,
+  LayoutGrid, Store as StoreIcon, Search, Boxes, PackagePlus, RefreshCw,
+  Box, Trash2, Loader2, ArrowDownCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Input } from '@/components/ui/input'
@@ -27,15 +27,17 @@ import {
 import { EmptyState } from '@/components/shared/EmptyState'
 import { notifySuccess, notifyError } from '@/lib/notify'
 import { useIsMobile } from '@/hooks/useMobile'
-import type { MarketComponentEntry } from '@/types/frontend-component'
+import type { MarketComponentEntry, FrontendComponentMeta } from '@/types/frontend-component'
 import type { ComponentCategory } from './componentLibraryUtils'
 import { InstallComponentDialog } from './InstallComponentDialog'
+
+export type ComponentLibraryTab = 'components' | 'marketplace' | 'custom'
 
 export interface ComponentLibrarySidebarProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  libraryTab: 'components' | 'marketplace'
-  onLibraryTabChange: (tab: 'components' | 'marketplace') => void
+  libraryTab: ComponentLibraryTab
+  onLibraryTabChange: (tab: ComponentLibraryTab) => void
   librarySearch: string
   onLibrarySearchChange: (search: string) => void
   filteredLibrary: ComponentCategory[]
@@ -44,7 +46,9 @@ export interface ComponentLibrarySidebarProps {
   // Marketplace
   marketComponents: MarketComponentEntry[]
   marketLoading: boolean
-  installedComponents: { id: string; source?: 'local' | 'marketplace' }[]
+  installedComponents: FrontendComponentMeta[]
+  /** Re-fetch the marketplace index (toolbar refresh on the marketplace source). */
+  onRefreshMarket: () => Promise<void>
   installingId: string | null
   onInstall: (id: string) => Promise<void>
   onUninstall: (id: string) => Promise<void>
@@ -56,6 +60,15 @@ export interface ComponentLibrarySidebarProps {
   // Import dialog
   importDialogOpen: boolean
   onImportDialogOpenChange: (open: boolean) => void
+}
+
+/** Resolve a possibly localized manifest string field. */
+function localized(value: string | Record<string, string> | undefined, language: string, fallback: string): string {
+  if (typeof value === 'string') return value
+  if (value && typeof value === 'object') {
+    return value[language] || value.en || Object.values(value)[0] || fallback
+  }
+  return fallback
 }
 
 export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
@@ -70,6 +83,7 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
   marketComponents,
   marketLoading,
   installedComponents,
+  onRefreshMarket,
   installingId,
   onInstall,
   onUninstall,
@@ -104,14 +118,21 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
     if (!open) setSelectedCategory('all')
   }, [open])
 
+  // The Components source is built-ins + extensions only. Installed
+  // community components (manual imports and marketplace installs) live
+  // on the Custom source instead of leaking in as extra categories.
+  const builtinCategories = filteredLibrary.filter(
+    (c) => c.category !== 'local' && c.category !== 'marketplace'
+  )
+
   // Search always matches across every category; otherwise the rail's
   // selection scopes the grid (mobile has no rail, so it shows all).
   const searching = librarySearch.trim().length > 0
   const showAllCategories = searching || selectedCategory === 'all' || isMobile
   const visibleCategories = showAllCategories
-    ? filteredLibrary
-    : filteredLibrary.filter((c) => c.category === selectedCategory)
-  const totalComponentCount = filteredLibrary.reduce((n, c) => n + c.items.length, 0)
+    ? builtinCategories
+    : builtinCategories.filter((c) => c.category === selectedCategory)
+  const totalComponentCount = builtinCategories.reduce((n, c) => n + c.items.length, 0)
 
   const resetOnClose = () => {
     onOpenChange(false)
@@ -130,6 +151,42 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
       />
     </div>
   )
+
+  const importButton = (fullWidth = false) => (
+    <Button
+      variant="outline"
+      size="sm"
+      className={cn('h-9 gap-1.5 text-xs', fullWidth && 'w-full justify-start')}
+      onClick={() => onImportDialogOpenChange(true)}
+    >
+      <PackagePlus className="w-3.5 h-3.5" />
+      {t('componentLibrary.importComponent')}
+    </Button>
+  )
+
+  const handleUninstall = async (id: string) => {
+    onSetInstalling(id)
+    try {
+      await onUninstall(id)
+      notifySuccess(t('componentLibrary.uninstallSuccess'))
+    } catch {
+      notifyError(t('componentLibrary.installError'))
+    } finally {
+      onSetInstalling(null)
+    }
+  }
+
+  const handleRefresh = async (id: string) => {
+    onSetInstalling(id)
+    try {
+      await onRefreshComponent(id)
+      notifySuccess(t('componentLibrary.reinstallSuccess'))
+    } catch {
+      notifyError(t('componentLibrary.installError'))
+    } finally {
+      onSetInstalling(null)
+    }
+  }
 
   const componentsPane = (
     <div className="flex-1 overflow-y-auto px-4 md:px-6 pb-8">
@@ -159,93 +216,22 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
               <div className="grid grid-cols-[repeat(auto-fill,minmax(210px,1fr))] gap-3">
                 {category.items.map((item) => {
                   const Icon = item.icon
-                  const installedComp = installedComponents.find(c => c.id === item.id)
-                  const isCommunity = !!installedComp
-                  const update = updatesAvailable[item.id]
                   const isHighlighted = highlightedId === item.id
                   return (
-                    <div
+                    <button
                       key={item.id}
-                      ref={isHighlighted ? highlightedRef : undefined}
-                      className="relative group"
+                      type="button"
+                      onClick={() => onAddComponent(item.id)}
+                      className={`w-full h-[76px] flex items-center gap-3 py-2 px-3 rounded-lg border hover:shadow-sm transition-all duration-normal cursor-pointer active:scale-[0.98] text-left ${isHighlighted ? 'border-primary shadow-sm ring-2 ring-primary animate-[fadeHighlight_2s_ease-out_forwards]' : 'border-border'}`}
                     >
-                      {update && (
-                        <span
-                          className="absolute top-2 right-2 z-10 h-2 w-2 rounded-full bg-info ring-2 ring-background transition-opacity duration-normal group-hover:opacity-0"
-                          title={t('componentLibrary.updateAvailable', { version: update.latest })}
-                        />
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => onAddComponent(item.id)}
-                        className={`w-full h-[76px] flex items-center gap-3 py-2 px-3 rounded-lg border hover:shadow-sm transition-all duration-normal cursor-pointer active:scale-[0.98] text-left ${isHighlighted ? 'border-primary shadow-sm ring-2 ring-primary animate-[fadeHighlight_2s_ease-out_forwards]' : 'border-border'}`}
-                      >
-                        <span className="w-9 h-9 rounded-lg bg-muted text-foreground flex items-center justify-center shrink-0">
-                          <Icon className="h-4 w-4 shrink-0" />
-                        </span>
-                        <div className="flex-1 min-w-0">
-                          <span className="text-sm font-medium block truncate">{item.name}</span>
-                          <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2 leading-snug">{item.description}</p>
-                        </div>
-                      </button>
-                      {isCommunity && (
-                        <div className="absolute top-1 right-1 flex gap-0.5 rounded-md bg-background/90 backdrop-blur-sm p-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className={`h-6 w-6 ${update ? 'text-info' : 'text-muted-foreground hover:text-info'}`}
-                            disabled={installingId === item.id}
-                            title={update
-                              ? t('componentLibrary.updateAvailable', { version: update.latest })
-                              : t('componentLibrary.reinstall')}
-                            aria-label={update
-                              ? t('componentLibrary.updateAvailable', { version: update.latest })
-                              : t('componentLibrary.reinstall')}
-                            onClick={async (e) => {
-                              e.stopPropagation()
-                              onSetInstalling(item.id)
-                              try {
-                                await onRefreshComponent(item.id)
-                                notifySuccess(t('componentLibrary.reinstallSuccess'))
-                              } catch {
-                                notifyError(t('componentLibrary.installError'))
-                              } finally {
-                                onSetInstalling(null)
-                              }
-                            }}
-                          >
-                            {installingId === item.id
-                              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              : update
-                                ? <ArrowDownCircle className="h-3.5 w-3.5" />
-                                : <RefreshCw className="h-3.5 w-3.5" />}
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6 text-muted-foreground hover:text-error"
-                            disabled={installingId === item.id}
-                            aria-label={t('componentLibrary.uninstall')}
-                            onClick={async (e) => {
-                              e.stopPropagation()
-                              onSetInstalling(item.id)
-                              try {
-                                await onUninstall(item.id)
-                                notifySuccess(t('componentLibrary.uninstallSuccess'))
-                              } catch {
-                                notifyError(t('componentLibrary.installError'))
-                              } finally {
-                                onSetInstalling(null)
-                              }
-                            }}
-                          >
-                            {installingId === item.id
-                              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              : <Trash2 className="h-3.5 w-3.5" />}
-                          </Button>
-                        </div>
-                      )}
-                    </div>
+                      <span className="w-9 h-9 rounded-lg bg-muted text-foreground flex items-center justify-center shrink-0">
+                        <Icon className="h-4 w-4 shrink-0" />
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <span className="text-sm font-medium block truncate">{item.name}</span>
+                        <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2 leading-snug">{item.description}</p>
+                      </div>
+                    </button>
                   )
                 })}
               </div>
@@ -287,8 +273,8 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
             {marketComponents.map((mc: MarketComponentEntry) => {
               const isInstalled = installedComponents.some(c => c.id === mc.id)
               const McIcon = dynamicIconMap[mc.icon || 'Box'] || Box
-              const mcName = typeof mc.name === 'string' ? mc.name : (mc.name[i18n.language] || mc.name.en || Object.values(mc.name)[0] || mc.id)
-              const mcDesc = typeof mc.description === 'string' ? mc.description : (mc.description[i18n.language] || mc.description.en || Object.values(mc.description)[0] || '')
+              const mcName = localized(mc.name, i18n.language, mc.id)
+              const mcDesc = localized(mc.description, i18n.language, '')
               return (
                 <div key={mc.id} className="rounded-lg border border-border bg-card p-3.5 flex flex-col gap-2">
                   <div className="flex items-start gap-2.5">
@@ -298,7 +284,6 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-medium text-foreground truncate">{mcName}</span>
-                        {isInstalled && <Check className="w-3.5 h-3.5 text-success shrink-0" />}
                       </div>
                       <p className="text-xs text-muted-foreground">{t('componentLibrary.version')}: {mc.version}{mc.author ? ` · ${mc.author}` : ''}</p>
                     </div>
@@ -318,7 +303,9 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
                         } else {
                           await onInstall(mc.id)
                           notifySuccess(t('componentLibrary.installSuccess'))
-                          onLibraryTabChange('components')
+                          // Guide the user to where the component can now
+                          // be added to a dashboard.
+                          onLibraryTabChange('custom')
                           setHighlightedId(mc.id)
                         }
                       } catch {
@@ -333,7 +320,7 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
                     ) : isInstalled ? (
                       <><Trash2 className="w-3.5 h-3.5 mr-1" />{t('componentLibrary.uninstall')}</>
                     ) : (
-                      <><Download className="w-3.5 h-3.5 mr-1" />{t('componentLibrary.install')}</>
+                      <><PackagePlus className="w-3.5 h-3.5 mr-1" />{t('componentLibrary.install')}</>
                     )}
                   </Button>
                 </div>
@@ -344,6 +331,119 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
       </div>
     </div>
   )
+
+  const customPane = (
+    <div className="flex-1 overflow-y-auto px-4 md:px-6 pb-8">
+      <div className="mx-auto w-full max-w-5xl">
+        {installedComponents.length === 0 ? (
+          <div className="flex h-full min-h-[320px]">
+            <EmptyState
+              icon={<PackagePlus className="h-12 w-12" />}
+              title={t('componentLibrary.customEmptyTitle')}
+              description={t('componentLibrary.customEmptyDesc')}
+              action={{
+                label: t('componentLibrary.importComponent'),
+                onClick: () => onImportDialogOpenChange(true),
+              }}
+            />
+          </div>
+        ) : (
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3 pt-1">
+            {installedComponents.map((c) => {
+              const Icon = dynamicIconMap[c.icon || 'Box'] || Box
+              const name = localized(c.name, i18n.language, c.id)
+              const desc = localized(c.description, i18n.language, '')
+              const update = updatesAvailable[c.id]
+              const isHighlighted = highlightedId === c.id
+              const fromMarket = c.source === 'marketplace'
+              return (
+                <div
+                  key={c.id}
+                  ref={isHighlighted ? highlightedRef : undefined}
+                  className="relative group"
+                >
+                  {update && (
+                    <span
+                      className="absolute top-2 right-2 z-10 h-2 w-2 rounded-full bg-info ring-2 ring-background transition-opacity duration-normal group-hover:opacity-0"
+                      title={t('componentLibrary.updateAvailable', { version: update.latest })}
+                    />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => onAddComponent(c.id)}
+                    className={`w-full h-[88px] flex items-center gap-3 py-2 px-3 rounded-lg border bg-card hover:shadow-sm transition-all duration-normal cursor-pointer active:scale-[0.98] text-left ${isHighlighted ? 'border-primary shadow-sm ring-2 ring-primary animate-[fadeHighlight_2s_ease-out_forwards]' : 'border-border'}`}
+                  >
+                    <span className="w-9 h-9 rounded-lg bg-muted text-foreground flex items-center justify-center shrink-0">
+                      <Icon className="h-4 w-4 shrink-0" />
+                    </span>
+                    <span className="flex-1 min-w-0">
+                      <span className="flex items-center gap-1.5">
+                        <span className="text-sm font-medium text-foreground truncate">{name}</span>
+                        <span className={cn(
+                          'shrink-0 text-[10px] leading-none rounded-full px-1.5 py-0.5',
+                          fromMarket ? 'bg-info-light text-info' : 'bg-muted text-muted-foreground',
+                        )}>
+                          {fromMarket ? t('componentLibrary.sourceMarket') : t('componentLibrary.sourceLocal')}
+                        </span>
+                      </span>
+                      <span className="block text-xs text-muted-foreground mt-0.5">
+                        {t('componentLibrary.version')}: {c.version}
+                      </span>
+                      <span className="block text-xs text-muted-foreground mt-0.5 line-clamp-1 leading-snug">{desc}</span>
+                    </span>
+                  </button>
+                  <div className="absolute top-1 right-1 flex gap-0.5 rounded-md bg-background/90 backdrop-blur-sm p-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {update && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 text-info"
+                        disabled={installingId === c.id}
+                        title={t('componentLibrary.updateAvailable', { version: update.latest })}
+                        aria-label={t('componentLibrary.updateAvailable', { version: update.latest })}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleRefresh(c.id)
+                        }}
+                      >
+                        {installingId === c.id
+                          ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          : <ArrowDownCircle className="h-3.5 w-3.5" />}
+                      </Button>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 text-muted-foreground hover:text-error"
+                      disabled={installingId === c.id}
+                      aria-label={t('componentLibrary.uninstall')}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleUninstall(c.id)
+                      }}
+                    >
+                      {installingId === c.id
+                        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        : <Trash2 className="h-3.5 w-3.5" />}
+                    </Button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+
+  const sourceButtons = [
+    { id: 'components' as const, icon: LayoutGrid, label: t('componentLibrary.tabComponents') },
+    { id: 'marketplace' as const, icon: StoreIcon, label: t('componentLibrary.tabMarketplace') },
+    { id: 'custom' as const, icon: PackagePlus, label: t('componentLibrary.tabCustom') },
+  ]
+
+  const paneFor = (tab: ComponentLibraryTab) =>
+    tab === 'components' ? componentsPane : tab === 'marketplace' ? marketplacePane : customPane
 
   return (
     <>
@@ -366,72 +466,49 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
           `}</style>
 
           {isMobile ? (
-            /* Mobile: no room for a rail — compact tab strip + inline
-               search above the shared scroll content. */
+            /* Mobile: no room for a rail — compact tab strip + contextual
+               action + inline search above the shared scroll content. */
             <div className="flex-1 flex flex-col overflow-hidden">
               <div className="px-4 pt-3 pb-3 shrink-0 space-y-3">
                 <div className="flex items-center gap-3">
-                  <Tabs value={libraryTab} onValueChange={(v) => onLibraryTabChange(v as 'components' | 'marketplace')}>
+                  <Tabs value={libraryTab} onValueChange={(v) => onLibraryTabChange(v as ComponentLibraryTab)}>
                     <TabsList className="h-9">
-                      <TabsTrigger value="components" className="gap-1.5 text-xs px-3">
-                        <LayoutGrid className="w-3.5 h-3.5" />
-                        {t('componentLibrary.tabComponents')}
-                      </TabsTrigger>
-                      <TabsTrigger value="marketplace" className="gap-1.5 text-xs px-3">
-                        <StoreIcon className="w-3.5 h-3.5" />
-                        {t('componentLibrary.tabMarketplace')}
-                      </TabsTrigger>
+                      {sourceButtons.map(({ id, icon: Icon, label }) => (
+                        <TabsTrigger key={id} value={id} className="gap-1.5 text-xs px-3">
+                          <Icon className="w-3.5 h-3.5" />
+                          {label}
+                        </TabsTrigger>
+                      ))}
                     </TabsList>
                   </Tabs>
-                  {libraryTab === 'marketplace' && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-9 gap-1.5 text-xs"
-                      onClick={() => onImportDialogOpenChange(true)}
-                    >
-                      <PackagePlus className="w-3.5 h-3.5" />
-                      {t('componentLibrary.importComponent')}
-                    </Button>
-                  )}
+                  {libraryTab === 'custom' && importButton()}
                 </div>
                 {libraryTab === 'components' && searchInput}
               </div>
-              {libraryTab === 'components' ? componentsPane : marketplacePane}
+              {paneFor(libraryTab)}
             </div>
           ) : (
             /* Desktop split layout: the rail owns navigation (source
                switch + category filter); the content pane owns actions
-               and results — search/import sit directly above the grid
-               they act on. */
+               and results. */
             <div className="flex-1 flex overflow-hidden">
               <FullScreenDialogSidebar className="flex flex-col overflow-hidden p-3 gap-1">
-                <button
-                  type="button"
-                  onClick={() => onLibraryTabChange('components')}
-                  className={cn(
-                    'flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-sm font-medium transition-colors',
-                    libraryTab === 'components'
-                      ? 'bg-muted text-foreground'
-                      : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-                  )}
-                >
-                  <LayoutGrid className="h-4 w-4 shrink-0" />
-                  {t('componentLibrary.tabComponents')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onLibraryTabChange('marketplace')}
-                  className={cn(
-                    'flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-sm font-medium transition-colors',
-                    libraryTab === 'marketplace'
-                      ? 'bg-muted text-foreground'
-                      : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-                  )}
-                >
-                  <StoreIcon className="h-4 w-4 shrink-0" />
-                  {t('componentLibrary.tabMarketplace')}
-                </button>
+                {sourceButtons.map(({ id, icon: Icon, label }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => onLibraryTabChange(id)}
+                    className={cn(
+                      'flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-sm font-medium transition-colors',
+                      libraryTab === id
+                        ? 'bg-muted text-foreground'
+                        : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                    )}
+                  >
+                    <Icon className="h-4 w-4 shrink-0" />
+                    {label}
+                  </button>
+                ))}
 
                 {libraryTab === 'components' && (
                   <>
@@ -453,7 +530,7 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
                         <span className="truncate">{t('componentLibrary.all')}</span>
                         <span className="ml-auto text-xs tabular-nums text-muted-foreground">{totalComponentCount}</span>
                       </button>
-                      {filteredLibrary.map((category) => (
+                      {builtinCategories.map((category) => (
                         <button
                           type="button"
                           key={category.category}
@@ -480,27 +557,31 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
               </FullScreenDialogSidebar>
 
               <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-                {/* Content toolbar — same row geometry for both sources so
-                    switching never jumps: components get the search input,
-                    marketplace gets the import action. */}
+                {/* Content toolbar — same row geometry for every source so
+                    switching never jumps. */}
                 <div className="shrink-0 px-4 md:px-6 pt-4 pb-3">
                   <div className="mx-auto w-full max-w-5xl">
                     {libraryTab === 'components' ? (
                       searchInput
-                    ) : (
+                    ) : libraryTab === 'marketplace' ? (
                       <Button
                         variant="outline"
                         size="sm"
                         className="h-9 gap-1.5 text-xs"
-                        onClick={() => onImportDialogOpenChange(true)}
+                        disabled={marketLoading}
+                        onClick={() => onRefreshMarket()}
                       >
-                        <PackagePlus className="w-3.5 h-3.5" />
-                        {t('componentLibrary.importComponent')}
+                        {marketLoading
+                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          : <RefreshCw className="w-3.5 h-3.5" />}
+                        {t('componentLibrary.refreshMarket')}
                       </Button>
+                    ) : (
+                      importButton()
                     )}
                   </div>
                 </div>
-                {libraryTab === 'components' ? componentsPane : marketplacePane}
+                {paneFor(libraryTab)}
               </div>
             </div>
           )}
