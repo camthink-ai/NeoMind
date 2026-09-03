@@ -120,7 +120,7 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
   }
 
   const searchInput = (
-    <div className="relative w-full max-w-sm">
+    <div className="relative w-full">
       <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
       <Input
         value={librarySearch}
@@ -258,7 +258,7 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
 
   const marketplacePane = (
     <div className="flex-1 overflow-y-auto px-4 md:px-6 pb-8">
-      <div className="mx-auto w-full max-w-5xl pt-4">
+      <div className="mx-auto w-full max-w-5xl">
         {marketLoading ? (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3">
             {Array.from({ length: 6 }).map((_, i) => (
@@ -401,9 +401,9 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
             </div>
           ) : (
             /* Desktop split layout: the rail owns navigation (source
-               switch + category filter / import entry) so the content
-               pane is purely results — search sits directly above the
-               grid it filters instead of floating next to tabs. */
+               switch + category filter); the content pane owns actions
+               and results — search/import sit directly above the grid
+               they act on. */
             <div className="flex-1 flex overflow-hidden">
               <FullScreenDialogSidebar className="flex flex-col overflow-hidden p-3 gap-1">
                 <button
@@ -433,7 +433,7 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
                   {t('componentLibrary.tabMarketplace')}
                 </button>
 
-                {libraryTab === 'components' ? (
+                {libraryTab === 'components' && (
                   <>
                     <div className="my-2 border-t border-border" />
                     <nav className="flex-1 overflow-y-auto space-y-0.5">
@@ -476,29 +476,30 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
                       ))}
                     </nav>
                   </>
-                ) : (
-                  <div className="pt-1">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-9 w-full justify-start gap-2 text-sm font-medium"
-                      onClick={() => onImportDialogOpenChange(true)}
-                    >
-                      <PackagePlus className="h-4 w-4" />
-                      {t('componentLibrary.importComponent')}
-                    </Button>
-                  </div>
                 )}
               </FullScreenDialogSidebar>
 
               <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-                {libraryTab === 'components' && (
-                  <div className="shrink-0 px-4 md:px-6 pt-4 pb-3">
-                    <div className="mx-auto w-full max-w-5xl">
-                      {searchInput}
-                    </div>
+                {/* Content toolbar — same row geometry for both sources so
+                    switching never jumps: components get the search input,
+                    marketplace gets the import action. */}
+                <div className="shrink-0 px-4 md:px-6 pt-4 pb-3">
+                  <div className="mx-auto w-full max-w-5xl">
+                    {libraryTab === 'components' ? (
+                      searchInput
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-9 gap-1.5 text-xs"
+                        onClick={() => onImportDialogOpenChange(true)}
+                      >
+                        <PackagePlus className="w-3.5 h-3.5" />
+                        {t('componentLibrary.importComponent')}
+                      </Button>
+                    )}
                   </div>
-                )}
+                </div>
                 {libraryTab === 'components' ? componentsPane : marketplacePane}
               </div>
             </div>
