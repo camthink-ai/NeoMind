@@ -73,7 +73,9 @@ async fn wait_for_llama_model_ready(
     let health = format!("{}/health", base_url.trim_end_matches('/'));
     let deadline = tokio::time::Instant::now() + timeout;
     while tokio::time::Instant::now() < deadline {
-        let mut req = client.get(&health).timeout(std::time::Duration::from_secs(2));
+        let mut req = client
+            .get(&health)
+            .timeout(std::time::Duration::from_secs(2));
         if let Some(ref key) = api_key {
             req = req.bearer_auth(key);
         }
@@ -459,7 +461,9 @@ impl LlmRuntime for LlamaCppRuntime {
                     .map_err(|e| LlmError::Network(e.to_string()))?;
                 if !retried && is_model_loading(status, &body) {
                     retried = true;
-                    tracing::info!("llama.cpp model still loading — waiting for readiness (up to 60s)");
+                    tracing::info!(
+                        "llama.cpp model still loading — waiting for readiness (up to 60s)"
+                    );
                     let client = Client::builder()
                         .timeout(self.config.timeout())
                         .build()

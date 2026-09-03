@@ -164,7 +164,6 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
       }))
       .filter((g) => g.items.length > 0)
       .sort((a, b) => a.categoryLabel.localeCompare(b.categoryLabel))
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- see extensionTypes
   }, [nonCommunity, extensionTypes])
 
   // Search always matches across every category; otherwise the rail's

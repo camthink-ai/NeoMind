@@ -195,7 +195,11 @@ impl AgentEvent {
 
     /// Create an end event with token usage data plus the prompt breakdown
     /// (system prompt / tool definitions) for context-usage display.
-    pub fn end_with_usage(prompt_tokens: u32, system_prompt_tokens: usize, tool_tokens: usize) -> Self {
+    pub fn end_with_usage(
+        prompt_tokens: u32,
+        system_prompt_tokens: usize,
+        tool_tokens: usize,
+    ) -> Self {
         Self::End {
             prompt_tokens: Some(prompt_tokens),
             system_prompt_tokens: Some(system_prompt_tokens as u32),

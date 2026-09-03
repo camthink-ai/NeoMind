@@ -339,7 +339,14 @@ impl TimeSeriesStorage {
         let (filtered, total_count) = if limit.is_some() {
             let rev = self
                 .store()
-                .query_range_rev(source_id, metric, start_timestamp, end_timestamp, limit, offset)
+                .query_range_rev(
+                    source_id,
+                    metric,
+                    start_timestamp,
+                    end_timestamp,
+                    limit,
+                    offset,
+                )
                 .await
                 .map_err(|e| {
                     tracing::error!("query_range_rev failed for {}/{}: {}", source_id, metric, e);

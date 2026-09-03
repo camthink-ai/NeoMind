@@ -3067,7 +3067,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            p1.points.iter().map(|p| p.as_f64().unwrap()).collect::<Vec<_>>(),
+            p1.points
+                .iter()
+                .map(|p| p.as_f64().unwrap())
+                .collect::<Vec<_>>(),
             vec![14.0, 13.0, 12.0, 11.0, 10.0]
         );
         assert_eq!(p1.total_count, Some(15));
@@ -3078,7 +3081,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            p2.points.iter().map(|p| p.as_f64().unwrap()).collect::<Vec<_>>(),
+            p2.points
+                .iter()
+                .map(|p| p.as_f64().unwrap())
+                .collect::<Vec<_>>(),
             vec![9.0, 8.0, 7.0, 6.0, 5.0]
         );
         assert_eq!(p2.total_count, Some(15));
@@ -3089,7 +3095,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            p3.points.iter().map(|p| p.as_f64().unwrap()).collect::<Vec<_>>(),
+            p3.points
+                .iter()
+                .map(|p| p.as_f64().unwrap())
+                .collect::<Vec<_>>(),
             vec![4.0, 3.0, 2.0, 1.0, 0.0]
         );
 

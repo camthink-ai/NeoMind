@@ -386,7 +386,10 @@ pub async fn update_agent_defaults(
         default_temperature: req.default_temperature.clamp(0.0, 2.0),
         default_top_p: req.default_top_p.clamp(0.0, 1.0),
         default_thinking_enabled: req.default_thinking_enabled,
-        chat_history_depth: req.chat_history_depth.map(|d| d.clamp(5, 200)).unwrap_or(existing.chat_history_depth),
+        chat_history_depth: req
+            .chat_history_depth
+            .map(|d| d.clamp(5, 200))
+            .unwrap_or(existing.chat_history_depth),
     };
 
     let settings_store = SettingsStore::open_default()

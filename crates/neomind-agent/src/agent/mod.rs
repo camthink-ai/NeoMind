@@ -2051,47 +2051,47 @@ impl Agent {
             );
             history_without_last.clone()
         } else {
-        // === ANTHROPIC-STYLE IMPROVEMENT: Apply context window with tool result clearing ===
-        // This prevents context bloat from old tool calls while maintaining conversation continuity
-        // Uses compaction cache for incremental updates when only a few messages changed
-        let compacted_history = {
-            let mut state = self.internal_state.write().await;
-            let current_count = state.memory.len().saturating_sub(1); // without last
+            // === ANTHROPIC-STYLE IMPROVEMENT: Apply context window with tool result clearing ===
+            // This prevents context bloat from old tool calls while maintaining conversation continuity
+            // Uses compaction cache for incremental updates when only a few messages changed
+            let compacted_history = {
+                let mut state = self.internal_state.write().await;
+                let current_count = state.memory.len().saturating_sub(1); // without last
 
-            // Check cache validity: same max_tokens and small message delta
-            let cached = state.compaction_cache.take();
-            let compacted = if let Some((cached_count, cached_max, ref cached_msgs)) = cached {
-                if cached_max == effective_max
-                    && current_count > cached_count
-                    && current_count <= cached_count + 4
-                {
-                    // Incremental: only compact the new messages and append
-                    let new_msgs: Vec<AgentMessage> = history_without_last
-                        .iter()
-                        .skip(cached_count)
-                        .cloned()
-                        .collect();
-                    let mut base = cached_msgs.clone();
-                    if !new_msgs.is_empty() {
-                        // Re-compact the tail with existing context
-                        // For small deltas, just append (tool compaction will handle on next full run)
-                        base.extend(new_msgs);
-                        build_context_window(&base, effective_max)
+                // Check cache validity: same max_tokens and small message delta
+                let cached = state.compaction_cache.take();
+                let compacted = if let Some((cached_count, cached_max, ref cached_msgs)) = cached {
+                    if cached_max == effective_max
+                        && current_count > cached_count
+                        && current_count <= cached_count + 4
+                    {
+                        // Incremental: only compact the new messages and append
+                        let new_msgs: Vec<AgentMessage> = history_without_last
+                            .iter()
+                            .skip(cached_count)
+                            .cloned()
+                            .collect();
+                        let mut base = cached_msgs.clone();
+                        if !new_msgs.is_empty() {
+                            // Re-compact the tail with existing context
+                            // For small deltas, just append (tool compaction will handle on next full run)
+                            base.extend(new_msgs);
+                            build_context_window(&base, effective_max)
+                        } else {
+                            base
+                        }
                     } else {
-                        base
+                        // Full recompaction needed
+                        build_context_window(&history_without_last, effective_max)
                     }
                 } else {
-                    // Full recompaction needed
                     build_context_window(&history_without_last, effective_max)
-                }
-            } else {
-                build_context_window(&history_without_last, effective_max)
-            };
+                };
 
-            // Update cache
-            state.compaction_cache = Some((current_count, effective_max, compacted.clone()));
-            compacted
-        };
+                // Update cache
+                state.compaction_cache = Some((current_count, effective_max, compacted.clone()));
+                compacted
+            };
 
             compacted_history
         };
