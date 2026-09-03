@@ -156,7 +156,6 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
   // Extension lifecycle management for hot updates
   const { refreshVersion } = useExtensionLifecycle({
     autoSyncOnRegister: true,
-    autoRemoveOnUnregister: true,
   })
 
   // Community component lifecycle

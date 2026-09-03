@@ -641,7 +641,10 @@ export function dtoToComponentMeta(dto: DashboardComponentDto): ComponentMeta {
     type: dto.type as any, // Extension component types are dynamic
     name: dto.name,
     description: dto.description,
-    category: dto.category as any, // Type assertion needed for different ComponentCategory types
+    // Extensions may omit or null the category — default them into the
+    // canonical "custom" (Extension Components) group instead of letting
+    // a null key fall through the grouping logic.
+    category: (dto.category || 'custom') as any,
     icon: IconComponent,
     sizeConstraints: dto.size_constraints as any, // Convert SizeConstraints to ComponentSizeConstraints
     hasDataSource: dto.has_data_source,

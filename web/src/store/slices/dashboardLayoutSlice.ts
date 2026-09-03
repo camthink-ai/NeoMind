@@ -23,7 +23,6 @@ export interface DashboardLayoutSlice {
   moveComponent: (id: string, position: ComponentPosition) => void
   batchUpdatePositions: (positions: Array<{ id: string; position: ComponentPosition }>) => void
   removeComponent: (id: string) => void
-  removeComponentsByExtension: (extensionId: string) => void
   removeComponentsByDevice: (deviceId: string) => void
   duplicateComponent: (id: string) => void
 }
@@ -100,36 +99,6 @@ export const createDashboardLayoutSlice: StateCreator<
           configComponentId: configComponentId === id ? null : configComponentId,
         },
       )
-    },
-
-    removeComponentsByExtension(extensionId) {
-      const { currentDashboard, selectedComponent, configComponentId } = get()
-      if (!currentDashboard) return
-      // Single-pass: classify, cleanup agents, and reset selection refs together.
-      const matches = (comp: DashboardComponent): boolean => {
-        if (comp.type.startsWith(`${extensionId}:`)) return true
-        const ds = comp.dataSource
-        if (!ds) return false
-        const sources: DataSource[] = Array.isArray(ds) ? ds : [ds]
-        return sources.some((s) => s.extensionId === extensionId)
-      }
-      const toKeep: DashboardComponent[] = []
-      let removedSelected = false
-      let removedConfig = false
-      for (const comp of currentDashboard.components) {
-        if (matches(comp)) {
-          cleanupAgentForComponent(comp)
-          if (selectedComponent === comp.id) removedSelected = true
-          if (configComponentId === comp.id) removedConfig = true
-        } else {
-          toKeep.push(comp)
-        }
-      }
-      if (toKeep.length === currentDashboard.components.length) return
-      commitDashboard(toKeep, {
-        selectedComponent: removedSelected ? null : selectedComponent,
-        configComponentId: removedConfig ? null : configComponentId,
-      })
     },
 
     removeComponentsByDevice(deviceId) {

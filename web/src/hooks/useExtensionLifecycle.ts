@@ -1,23 +1,28 @@
 /**
  * Hook for subscribing to extension lifecycle events
  *
- * Handles automatic updates to DynamicRegistry and Dashboard when
- * extensions are registered or unregistered.
+ * Handles automatic updates to DynamicRegistry when extensions are
+ * registered or unregistered.
+ *
+ * Widget *definitions* on dashboards are deliberately decoupled from the
+ * extension runtime: when an extension unregisters (reload, crash
+ * re-register, uninstall), its component templates leave the registry so
+ * existing widgets render the "component unavailable" placeholder, but
+ * the widgets themselves are NEVER removed from the dashboard. When the
+ * extension comes back ("registered"), the templates return and the
+ * widgets resume rendering in place. The backend already persists
+ * unknown widget types for the same reason (see update_dashboard_handler).
  */
 
 import { useCallback, useRef, useState } from 'react'
 import { useEvents } from './useEvents'
 import { dynamicRegistry } from '@/components/dashboard/registry/DynamicRegistry'
 import type { ExtensionLifecycleEvent } from '@/lib/events'
-import { useStore } from '@/store'
 import { getApiBase } from '@/lib/api'
-import type { DashboardComponent, Dashboard } from '@/types/dashboard'
 
 export interface UseExtensionLifecycleOptions {
   /** Auto-sync extension components on register (default: true) */
   autoSyncOnRegister?: boolean
-  /** Auto-remove dashboard components on unregister (default: true) */
-  autoRemoveOnUnregister?: boolean
 }
 
 export interface ExtensionLifecycleResult {
@@ -38,7 +43,6 @@ export function useExtensionLifecycle(
 ): ExtensionLifecycleResult {
   const {
     autoSyncOnRegister = true,
-    autoRemoveOnUnregister = true,
   } = options
 
   const syncingRef = useRef(false)
@@ -78,57 +82,17 @@ export function useExtensionLifecycle(
   }, [autoSyncOnRegister])
 
   /**
-   * Handle extension unregistered event
+   * Handle extension unregistered event (reload, crash re-register,
+   * uninstall). Only the component TEMPLATES are removed — widgets that
+   * reference them stay on the dashboard and render the unavailable
+   * placeholder until the extension returns.
    */
   const handleUnregistered = useCallback((extensionId: string) => {
-    if (!autoRemoveOnUnregister) return
-
-    // 1. Get component types from DynamicRegistry BEFORE unregistering
-    //    We need these types to remove components from Dashboard
-    const extInfo = dynamicRegistry.getExtensions().find(ext => ext.extensionId === extensionId)
-    const componentTypes = extInfo?.componentTypes || []
-
-    // 2. Remove components from Dashboard by matching component types
-    if (componentTypes.length > 0) {
-      const { currentDashboard, dashboards, persistDashboard } = useStore.getState()
-      if (currentDashboard) {
-        const typeSet = new Set(componentTypes)
-        const componentsToRemove = currentDashboard.components.filter(
-          (comp: DashboardComponent) => typeSet.has(comp.type)
-        )
-
-        if (componentsToRemove.length > 0) {
-          const idsToRemove = new Set(componentsToRemove.map((c: DashboardComponent) => c.id))
-          const updatedDashboard: Dashboard = {
-            ...currentDashboard,
-            components: currentDashboard.components.filter((c: DashboardComponent) => !idsToRemove.has(c.id)),
-            updatedAt: Date.now(),
-          }
-
-          const updatedDashboards = dashboards.map((d: Dashboard) =>
-            d.id === currentDashboard.id ? updatedDashboard : d
-          )
-
-          useStore.setState({
-            dashboards: updatedDashboards,
-            currentDashboard: updatedDashboard,
-          })
-
-          // Persist changes to storage
-          persistDashboard(updatedDashboard.id).catch((err: unknown) => {
-            console.warn('[ExtensionLifecycle] Failed to persist dashboard after removing components:', err)
-          })
-
-        }
-      }
-    }
-
-    // 3. Unregister from DynamicRegistry (removes component templates)
     dynamicRegistry.unregisterExtension(extensionId)
 
     // Trigger re-render
     setRefreshVersion(v => v + 1)
-  }, [autoRemoveOnUnregister])
+  }, [])
 
   // Subscribe to extension lifecycle events
   useEvents({

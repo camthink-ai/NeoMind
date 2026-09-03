@@ -1254,5 +1254,9 @@
   "staleData": "Last value — device offline",
   "staleDataIdle": "Last value — awaiting data",
   "staleDataLastSeen": "Last reported {{age}}",
-  "staleDataDevices": "Devices: {{names}}"
+  "staleDataDevices": "Devices: {{names}}",
+  "renderer": {
+    "componentUnavailable": "Component unavailable",
+    "componentUnavailableHint": "The extension providing this component is not running; it will reappear once the extension returns"
+  }
 }

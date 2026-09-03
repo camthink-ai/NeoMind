@@ -7,7 +7,8 @@
  */
 
 import { lazy, Suspense, memo, useMemo, useState, useEffect, useCallback, useRef } from 'react'
-import { AlertTriangle } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import { AlertTriangle, Puzzle } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
@@ -129,13 +130,18 @@ interface UnknownComponentProps {
 }
 
 function UnknownComponent({ type, className }: UnknownComponentProps) {
+  const { t } = useTranslation('dashboardComponents')
   return (
     <Card className={cn('border-dashed border-2', className)}>
       <div className="flex items-center justify-center h-full min-h-[120px] p-4 text-center">
         <div className="text-muted-foreground">
-          <p className="font-medium">Unknown Component</p>
+          <Puzzle className="h-5 w-5 mx-auto mb-2 opacity-70" />
+          <p className="font-medium">{t('renderer.componentUnavailable')}</p>
           <p className="text-sm text-muted-foreground mt-1">
-            Type: <code className="text-xs bg-muted px-1 py-0.5 rounded">{type}</code>
+            {t('renderer.componentUnavailableHint')}
+          </p>
+          <p className="text-xs text-muted-foreground/70 mt-2">
+            <code className="bg-muted px-1 py-0.5 rounded">{type}</code>
           </p>
         </div>
       </div>

@@ -52,6 +52,8 @@ import {
   // Community
   Store,
   Code,
+  // Fallback for extension-declared categories
+  Puzzle,
 } from 'lucide-react'
 
 // ============================================================================
@@ -614,7 +616,9 @@ export function groupComponentsByCategory(options: RegistryFilterOptions = {}): 
   const components = filterComponents(options)
 
   const grouped = components.reduce((acc, component) => {
-    const category = component.category
+    // Defensive: a missing/null category lands in the canonical
+    // extension group rather than a "null" bucket.
+    const category = component.category || 'custom'
     if (!acc[category]) {
       acc[category] = {
         category,
@@ -625,7 +629,7 @@ export function groupComponentsByCategory(options: RegistryFilterOptions = {}): 
     return acc
   }, {} as Record<string, GroupedComponentRegistry[number]>)
 
-  // Return in a consistent order
+  // Built-in categories render in a curated order
   const categoryOrder: ComponentCategory[] = [
     'indicators',
     'charts',
@@ -638,13 +642,33 @@ export function groupComponentsByCategory(options: RegistryFilterOptions = {}): 
     'marketplace', // Marketplace-installed community components
   ]
 
-  return categoryOrder
-    .filter(cat => grouped[cat])
+  // Any other category (extension-declared, e.g. "fitness") is still a
+  // valid group — render it after the built-ins instead of dropping it.
+  const known = categoryOrder.filter(cat => grouped[cat]).map(cat => grouped[cat])
+  const unknown = Object.keys(grouped)
+    .filter(cat => !categoryOrder.includes(cat as ComponentCategory))
+    .sort((a, b) => a.localeCompare(b))
     .map(cat => grouped[cat])
+
+  return [...known, ...unknown]
+}
+
+/**
+ * Humanize a raw category id ("my-widgets" → "My Widgets") for
+ * extension-declared categories that have no curated metadata.
+ */
+function prettifyCategory(category: string): string {
+  return category
+    .replace(/[-_]+/g, ' ')
+    .trim()
+    .replace(/\b[a-z]/g, ch => ch.toUpperCase())
 }
 
 /**
  * Get category info
+ *
+ * Unknown (extension-declared) categories fall back to a prettified
+ * label and a generic icon so they render like any other group.
  */
 export function getCategoryInfo(category: ComponentCategory): { name: string; icon: React.ComponentType<{ className?: string }> } {
   const categoryInfos: Record<string, { name: string; icon: React.ComponentType<{ className?: string }> }> = {
@@ -659,5 +683,5 @@ export function getCategoryInfo(category: ComponentCategory): { name: string; ic
     marketplace: { name: 'Marketplace', icon: Store }, // Marketplace-installed community components
   }
 
-  return categoryInfos[category]
+  return categoryInfos[category] ?? { name: prettifyCategory(String(category)), icon: Puzzle }
 }
