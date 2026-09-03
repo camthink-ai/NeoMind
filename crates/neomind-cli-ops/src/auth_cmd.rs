@@ -223,11 +223,11 @@ mod tests {
         assert_eq!(dir, "/tmp/explicit-test");
     }
 
-    /// Serializes tests that touch the process-global NEOMIND_DATA_DIR env:
-    /// the env and not-found tests set/remove the same variable, and running
-    /// them concurrently lets one delete what the other just set (a flake
-    /// that surfaced under the new full-test CI gate).
-    static DATA_DIR_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    /// Serializes tests that touch the process-global NEOMIND_DATA_DIR env.
+    /// Reuses auto_auth's lock: both test modules share one test binary, so
+    /// a module-local lock still raced against auto_auth's env tests (the
+    /// CI flake in test_resolve_data_dir_env_override).
+    use crate::auto_auth::DATA_DIR_ENV_LOCK;
 
     #[test]
     fn test_resolve_login_data_dir_env() {

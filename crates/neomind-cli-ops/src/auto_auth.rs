@@ -269,6 +269,17 @@ fn decrypt_api_key(cipher: &Aes256Gcm, encoded: &str) -> Option<String> {
     String::from_utf8(plaintext).ok()
 }
 
+/// Serializes EVERY test in this crate that touches the process-global
+/// NEOMIND_DATA_DIR env. `std::env::set_var`/`remove_var` race under
+/// Rust's parallel test threads — one test's `remove_var` (or its
+/// `set_var("")`) lands between another's `set_var` and its read, and
+/// the reader correctly ignores the empty/missing override and falls
+/// through to the "data" legacy default (the CI flake in
+/// test_resolve_data_dir_env_override). auth_cmd's env tests take the
+/// SAME lock: they share one test binary with this module.
+#[cfg(test)]
+pub(crate) static DATA_DIR_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,6 +292,7 @@ mod tests {
 
     #[test]
     fn test_resolve_data_dir_env_override() {
+        let _lock = DATA_DIR_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // NEOMIND_DATA_DIR takes priority over platform default and legacy "data".
         std::env::set_var("NEOMIND_DATA_DIR", "/tmp/neomind-resolve-test-unique");
         assert_eq!(resolve_data_dir(), "/tmp/neomind-resolve-test-unique");
@@ -289,6 +301,7 @@ mod tests {
 
     #[test]
     fn test_resolve_data_dir_empty_env_falls_back() {
+        let _lock = DATA_DIR_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // An empty NEOMIND_DATA_DIR should be ignored (fall through to other sources).
         std::env::set_var("NEOMIND_DATA_DIR", "");
         let resolved = resolve_data_dir();
