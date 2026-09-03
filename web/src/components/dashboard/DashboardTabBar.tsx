@@ -484,7 +484,7 @@ export function DashboardTabBar({
                           variant="ghost"
                           size="icon"
                           className="h-7 w-7 rounded-md mr-1"
-                          aria-label={t('common.actions')}
+                          aria-label={t('sidebar.moreActions')}
                           onClick={(e) => e.stopPropagation()}
                         >
                           <MoreVertical className="h-3.5 w-3.5" />

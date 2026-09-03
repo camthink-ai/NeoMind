@@ -26,7 +26,6 @@ export interface DashboardToolbarProps {
   // Dashboard data
   sortedDashboards: Dashboard[]
   currentDashboardId: string | null
-  currentDashboard: Dashboard
   layoutMode: 'sidebar' | 'tabs'
 
   // Dashboard handlers
@@ -82,7 +81,6 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
   const {
     sortedDashboards,
     currentDashboardId,
-    currentDashboard,
     layoutMode,
     onDashboardSwitch,
     onDashboardCreate,
@@ -139,11 +137,10 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
           onSwitchToSidebar={onSwitchToSidebar}
         />
       ) : (
-        <div className="flex items-center gap-2 min-w-0">
-          <h1 className="text-sm font-semibold truncate">
-            {currentDashboard.name}
-          </h1>
-        </div>
+        /* Sidebar mode on desktop: the page title above already shows the
+           current dashboard's name, so the left slot stays empty and only
+           the action buttons remain (right-aligned via justify-between). */
+        <span aria-hidden="true" />
       )}
 
       <TooltipProvider delayDuration={300}>

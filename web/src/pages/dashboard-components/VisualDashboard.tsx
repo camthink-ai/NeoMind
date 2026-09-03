@@ -1087,7 +1087,6 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
         <DashboardToolbar
           sortedDashboards={sortedDashboards}
           currentDashboardId={currentDashboardId}
-          currentDashboard={currentDashboard}
           layoutMode={layoutMode}
           onDashboardSwitch={handleDashboardSwitch}
           onDashboardCreate={handleDashboardCreate}
