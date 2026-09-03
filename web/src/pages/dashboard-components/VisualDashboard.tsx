@@ -1062,11 +1062,25 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
           <MobilePageHeader title={t('common:nav.visual-dashboard')} />
         )}
         {/* Desktop title row — identical to PageLayout's so the floating
-            global controls (top-right) align with every other page. */}
+            global controls (top-right) align with every other page. Sidebar
+            mode shows the current dashboard's name as the page title (the
+            sidebar rail is a nav rail, not a title); tabs mode keeps the
+            page label — the active tab already renders the name at the
+            highest visual weight, and a second copy above it is pure
+            duplication. Zero dashboards falls back to the page label. */}
         {!isMobile && (
           <div className="shrink-0 bg-background">
             <div className="w-full px-4 pt-4 pb-2 sm:px-6 sm:pt-5 sm:pb-3 md:px-8 md:pt-6 md:pb-3">
-              <PageHeader title={t('common:nav.visual-dashboard')} />
+              {layoutMode === 'sidebar' && currentDashboard ? (
+                <h1
+                  key={currentDashboard.id}
+                  className="animate-in fade-in duration-200 truncate text-xl font-bold tracking-tight sm:text-2xl"
+                >
+                  {currentDashboard.name}
+                </h1>
+              ) : (
+                <PageHeader title={t('common:nav.visual-dashboard')} />
+              )}
             </div>
           </div>
         )}
