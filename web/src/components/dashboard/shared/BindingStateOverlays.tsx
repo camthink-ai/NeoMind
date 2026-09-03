@@ -94,11 +94,11 @@ export function StaleDataBadge({ devices, className }: StaleDataBadgeProps) {
           >
             <span
               className={cn(
-                'block h-2 w-2 rounded-full ring-2 ring-background',
-                // accent-orange (OKLCH-harmonized) instead of the semantic
-                // warning yellow — a small saturated warning dot reads harsh;
-                // the accent keeps "attention" without the alarm glare.
-                hasOffline ? 'bg-accent-orange' : 'bg-muted-foreground/60',
+                // Hollow status ring at minimum weight — 8px, 1px outline.
+                // No slash-opacity tokens: nested DEFAULT var tokens don't
+                // compile with /opacity (silently invisible).
+                'block h-2 w-2 rounded-full border-2 bg-transparent',
+                hasOffline ? 'border-accent-orange' : 'border-muted-foreground',
               )}
             />
           </span>
