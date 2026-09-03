@@ -182,7 +182,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
 
   // Component library search
   const [librarySearch, setLibrarySearch] = useState('')
-  const [libraryTab, setLibraryTab] = useState<'components' | 'marketplace' | 'custom'>('components')
+  const [libraryTab, setLibraryTab] = useState<'components' | 'extensions' | 'marketplace' | 'custom'>('components')
   const [importDialogOpen, setImportDialogOpen] = useState(false)
   const [installingId, setInstallingId] = useState<string | null>(null)
 

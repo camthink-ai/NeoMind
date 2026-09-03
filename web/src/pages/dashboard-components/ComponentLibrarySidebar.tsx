@@ -9,17 +9,18 @@
  * Mobile keeps a compact tab strip instead of the rail.
  */
 
-import { memo, useState, useEffect, useCallback } from 'react'
+import { memo, useState, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { dynamicIconMap } from '@/lib/dynamicIcons'
 import {
-  LayoutGrid, Store as StoreIcon, Search, Boxes, PackagePlus, Plus, RefreshCw,
+  LayoutGrid, Store as StoreIcon, Search, Boxes, PackagePlus, Plus, Puzzle, RefreshCw,
   Box, Check, Trash2, Loader2, ArrowDownCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { dynamicRegistry } from '@/components/dashboard/registry/DynamicRegistry'
 import {
   FullScreenDialog, FullScreenDialogHeader, FullScreenDialogContent,
   FullScreenDialogSidebar,
@@ -31,7 +32,7 @@ import type { MarketComponentEntry, FrontendComponentMeta } from '@/types/fronte
 import type { ComponentCategory } from './componentLibraryUtils'
 import { InstallComponentDialog } from './InstallComponentDialog'
 
-export type ComponentLibraryTab = 'components' | 'marketplace' | 'custom'
+export type ComponentLibraryTab = 'components' | 'extensions' | 'marketplace' | 'custom'
 
 export interface ComponentLibrarySidebarProps {
   open: boolean
@@ -118,11 +119,32 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
     if (!open) setSelectedCategory('all')
   }, [open])
 
-  // The Components source is built-ins + extensions only. Installed
-  // community components (manual imports and marketplace installs) live
-  // on the Custom source instead of leaking in as extra categories.
-  const builtinCategories = filteredLibrary.filter(
-    (c) => c.category !== 'local' && c.category !== 'marketplace'
+  // Source-of-origin split: Components = built-ins only, Extensions =
+  // everything registered by extensions (their self-declared categories,
+  // 'custom' as canonical fallback), Custom = manual imports. An
+  // extension may declare a built-in category ("charts") — so the split
+  // is per ITEM, then empty groups are dropped.
+  const extensionTypes = useMemo(
+    () => new Set(dynamicRegistry.getAllMetas().map((d) => d.type)),
+    []
+  )
+  const nonCommunity = useMemo(
+    () => filteredLibrary.filter((c) => c.category !== 'local' && c.category !== 'marketplace'),
+    [filteredLibrary]
+  )
+  const builtinCategories = useMemo(
+    () =>
+      nonCommunity
+        .map((c) => ({ ...c, items: c.items.filter((i) => !extensionTypes.has(i.id)) }))
+        .filter((c) => c.items.length > 0),
+    [nonCommunity, extensionTypes]
+  )
+  const extensionCategories = useMemo(
+    () =>
+      nonCommunity
+        .map((c) => ({ ...c, items: c.items.filter((i) => extensionTypes.has(i.id)) }))
+        .filter((c) => c.items.length > 0),
+    [nonCommunity, extensionTypes]
   )
 
   // Search always matches across every category; otherwise the rail's
@@ -188,55 +210,78 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
     }
   }
 
+  const renderCategorySections = (categories: ComponentCategory[], showHeaders: boolean) =>
+    categories.map((category) => (
+      <section key={category.category} className="pt-5 first:pt-1">
+        {showHeaders && (
+          <div className="flex items-center gap-2 pb-2.5">
+            <span className={`flex h-6 w-6 items-center justify-center rounded-md ${category.categoryColor}`}>
+              <category.categoryIcon className="h-3.5 w-3.5" />
+            </span>
+            <span className="text-sm font-medium text-foreground">{category.categoryLabel}</span>
+            <span className="text-[10px] tabular-nums text-muted-foreground bg-muted rounded-full px-1.5 py-0.5 leading-none">
+              {category.items.length}
+            </span>
+          </div>
+        )}
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(210px,1fr))] gap-3">
+          {category.items.map((item) => {
+            const Icon = item.icon
+            const isHighlighted = highlightedId === item.id
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => onAddComponent(item.id)}
+                className={`w-full h-[76px] flex items-center gap-3 py-2 px-3 rounded-lg border hover:shadow-sm transition-all duration-normal cursor-pointer active:scale-[0.98] text-left ${isHighlighted ? 'border-primary shadow-sm ring-2 ring-primary animate-[fadeHighlight_2s_ease-out_forwards]' : 'border-border'}`}
+              >
+                <span className="w-9 h-9 rounded-lg bg-muted text-foreground flex items-center justify-center shrink-0">
+                  <Icon className="h-4 w-4 shrink-0" />
+                </span>
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm font-medium block truncate">{item.name}</span>
+                  <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2 leading-snug">{item.description}</p>
+                </div>
+              </button>
+            )
+          })}
+        </div>
+      </section>
+    ))
+
+  const noResultsPane = (
+    <div className="flex h-full min-h-[320px]">
+      <EmptyState
+        icon="search"
+        title={t('componentLibrary.noResults')}
+        description={t('componentLibrary.noResultsHint')}
+      />
+    </div>
+  )
+
   const componentsPane = (
     <div className="flex-1 overflow-y-auto px-4 md:px-6 pb-8">
       <div className="mx-auto w-full max-w-5xl">
-        {visibleCategories.length === 0 ? (
+        {visibleCategories.length === 0
+          ? noResultsPane
+          : renderCategorySections(visibleCategories, showAllCategories)}
+      </div>
+    </div>
+  )
+
+  const extensionsPane = (
+    <div className="flex-1 overflow-y-auto px-4 md:px-6 pb-8">
+      <div className="mx-auto w-full max-w-5xl">
+        {extensionCategories.length === 0 ? (
           <div className="flex h-full min-h-[320px]">
             <EmptyState
-              icon="search"
-              title={t('componentLibrary.noResults')}
-              description={t('componentLibrary.noResultsHint')}
+              icon={<Puzzle className="h-12 w-12" />}
+              title={t('componentLibrary.extensionsEmptyTitle')}
+              description={t('componentLibrary.extensionsEmptyDesc')}
             />
           </div>
         ) : (
-          visibleCategories.map((category) => (
-            <section key={category.category} className="pt-5 first:pt-1">
-              {showAllCategories && (
-                <div className="flex items-center gap-2 pb-2.5">
-                  <span className={`flex h-6 w-6 items-center justify-center rounded-md ${category.categoryColor}`}>
-                    <category.categoryIcon className="h-3.5 w-3.5" />
-                  </span>
-                  <span className="text-sm font-medium text-foreground">{category.categoryLabel}</span>
-                  <span className="text-[10px] tabular-nums text-muted-foreground bg-muted rounded-full px-1.5 py-0.5 leading-none">
-                    {category.items.length}
-                  </span>
-                </div>
-              )}
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(210px,1fr))] gap-3">
-                {category.items.map((item) => {
-                  const Icon = item.icon
-                  const isHighlighted = highlightedId === item.id
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => onAddComponent(item.id)}
-                      className={`w-full h-[76px] flex items-center gap-3 py-2 px-3 rounded-lg border hover:shadow-sm transition-all duration-normal cursor-pointer active:scale-[0.98] text-left ${isHighlighted ? 'border-primary shadow-sm ring-2 ring-primary animate-[fadeHighlight_2s_ease-out_forwards]' : 'border-border'}`}
-                    >
-                      <span className="w-9 h-9 rounded-lg bg-muted text-foreground flex items-center justify-center shrink-0">
-                        <Icon className="h-4 w-4 shrink-0" />
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <span className="text-sm font-medium block truncate">{item.name}</span>
-                        <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2 leading-snug">{item.description}</p>
-                      </div>
-                    </button>
-                  )
-                })}
-              </div>
-            </section>
-          ))
+          renderCategorySections(extensionCategories, true)
         )}
       </div>
     </div>
@@ -470,12 +515,16 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
 
   const sourceButtons = [
     { id: 'components' as const, icon: LayoutGrid, label: t('componentLibrary.tabComponents') },
+    { id: 'extensions' as const, icon: Puzzle, label: t('componentLibrary.tabExtensions') },
     { id: 'marketplace' as const, icon: StoreIcon, label: t('componentLibrary.tabMarketplace') },
     { id: 'custom' as const, icon: PackagePlus, label: t('componentLibrary.tabCustom') },
   ]
 
   const paneFor = (tab: ComponentLibraryTab) =>
-    tab === 'components' ? componentsPane : tab === 'marketplace' ? marketplacePane : customPane
+    tab === 'components' ? componentsPane
+      : tab === 'extensions' ? extensionsPane
+        : tab === 'marketplace' ? marketplacePane
+          : customPane
 
   return (
     <>
@@ -600,7 +649,7 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
                     switching never jumps. */}
                 <div className="shrink-0 px-4 md:px-6 pt-4 pb-3">
                   <div className="mx-auto w-full max-w-5xl">
-                    {libraryTab === 'components' ? (
+                    {libraryTab === 'components' || libraryTab === 'extensions' ? (
                       searchInput
                     ) : libraryTab === 'marketplace' ? (
                       <Button

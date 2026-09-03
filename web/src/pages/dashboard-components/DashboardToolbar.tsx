@@ -57,8 +57,8 @@ export interface DashboardToolbarProps {
   // Component library sidebar
   componentLibraryOpen: boolean
   setComponentLibraryOpen: (open: boolean) => void
-  libraryTab: 'components' | 'marketplace' | 'custom'
-  onLibraryTabChange: (tab: 'components' | 'marketplace' | 'custom') => void
+  libraryTab: 'components' | 'extensions' | 'marketplace' | 'custom'
+  onLibraryTabChange: (tab: 'components' | 'extensions' | 'marketplace' | 'custom') => void
   librarySearch: string
   onLibrarySearchChange: (q: string) => void
   filteredLibrary: ComponentCategory[]
