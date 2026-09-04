@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.23] - 2026-09-03 — extension stream gains binary push frames (opt-in, double-base64 eliminated)
+
+### Binary push frames on `/api/extensions/:id/stream`
+- **Push outputs can now ride WS Binary frames instead of Text+base64.** Every `push_output` used to force-base64 the payload into a JSON string (`BASE64_STANDARD.encode(&output.data)` at four send sites) — for image/audio extensions (stream-player, yolo-video, voice-assistant, video-vlm) that pushed raw JPEG/PCM bytes the platform itself had just received as `Vec<u8>`, taxing every frame with a full encode plus a matching `atob` + string churn in the browser. A negotiated session now sends the same bytes verbatim inside one binary frame: `[kind u8=1][version u8=1][sequence u64 BE][meta_len u32 BE][meta JSON][payload]` — `meta` mirrors the Text envelope minus `data`/`sequence`. Control messages (`session_created`, `error`, …) stay on Text; the WebSocket frame type is the first-level discriminator, mirroring the long-standing inbound binary format.
+- **Negotiation is application-level and safe in every deploy quadrant.** The client opts in with `init` config `{"binary": true}` (config is free-form JSON, so old servers simply ignore the key) and the server acknowledges in `session_created.binary`. Old frontends never opt in → byte-identical legacy Text; new frontends against old servers get no ack → stay on the Text parser. No `Sec-WebSocket-Protocol` involvement: with subprotocols, a client offering a list to a server that echoes none fails the connection outright (RFC 6455) — exactly the trap a rolling deploy must avoid.
+- **All four push send paths share one encoder** (`encode_push_output`) so the two formats can never diverge; the outbound-only `watch` fast path and the Bidirectional mpsc path both now carry `WsMessage` (Text or Binary) through their channels. The stateless `Result` path deliberately stays Text — no session context, no negotiation, no change.
+- **First rider: gym-tracker 2.10.0** (Extensions repo) pushes an `application/x-neomind-frame` container — `[u32 meta_len BE][tracks/faces/ts meta JSON][JPEG bytes]` — killing both base64 layers on its leg (device-side `img_b64` is decoded once at ingest and stored as `Arc<Vec<u8>>`; the REST `get_frame` fallback still serves a re-encoded string for old frontends). Its Monitor frontend parses binary frames with `createImageBitmap` (async off-main-thread decode, no object-URL lifecycle) and keeps the legacy Text/REST paths for old servers.
+- Tests: header roundtrip + malformed-frame rejection + negotiation matrix (missing/false/wrong-typed flag all downgrade to Text) + legacy Text wire-format lock in `extension_stream.rs`; end-to-end smoke against a mock NE503 device feed verified all 15 checks (binary session, legacy session, REST fallback) on 2.10.0.
+
+---
+
 ## [0.9.22] - 2026-09-03 — dialogs rebuilt single-page, Data Explorer detail grows up, chat context ring
 
 ### Pending-device registration — one honest page

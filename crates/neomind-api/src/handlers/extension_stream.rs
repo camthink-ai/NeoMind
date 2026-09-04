@@ -27,10 +27,22 @@
 //!
 //! # Binary Frame Format
 //!
-//! Binary frames use the following format:
+//! Client → server binary frames:
 //! ```text
 //! [sequence: u64 (8 bytes, big endian)][data...]
 //! ```
+//!
+//! Server → client binary push frames (opt-in via `init` config `{"binary": true}`,
+//! acknowledged by `session_created.binary`):
+//! ```text
+//! [kind: u8 = 1][version: u8 = 1][sequence: u64 BE][meta_len: u32 BE]
+//! [meta: JSON utf8][payload bytes]
+//! ```
+//! `meta` mirrors the Text `push_output` envelope minus `data`/`sequence`
+//! (`session_id`, `data_type`, `timestamp`, `metadata`). Payload is the raw
+//! `PushOutputMessage.data` — no base64 anywhere. Control messages
+//! (`session_created`, `error`, …) always stay on Text frames; the WebSocket
+//! frame type itself is the first-level discriminator.
 //!
 //! # Push Mode Architecture
 //!
@@ -90,6 +102,9 @@ enum ServerMessage {
     SessionCreated {
         session_id: String,
         server_time: i64,
+        /// Whether push_output frames for this session will use binary frames
+        /// (only meaningful in Push mode; always false otherwise).
+        binary: bool,
     },
     /// Processing result
     Result {
@@ -406,6 +421,10 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
     // Track session if stateful
     let mut session_id: Option<String> = None;
     let mut output_sequence = 0u64;
+    // Negotiated per-connection: the client opted into binary push frames via
+    // `init` config. Until opted in, every push goes out as legacy Text+base64
+    // (byte-identical to pre-negotiation behavior).
+    let mut binary_push_session = false;
 
     // For Push mode: channel to receive push outputs from extension
     let mut push_rx: Option<mpsc::Receiver<PushOutputMessage>> = None;
@@ -428,15 +447,8 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                     match output {
                         Some(output) => {
                             // Forward push output to WebSocket
-                            let push_msg = ServerMessage::PushOutput {
-                                session_id: output.session_id,
-                                sequence: output.sequence,
-                                data: BASE64_STANDARD.encode(&output.data),
-                                data_type: output.data_type,
-                                timestamp: output.timestamp,
-                                metadata: output.metadata,
-                            };
-                            send_message(&mut socket, &push_msg).await;
+                            let msg = encode_push_output(&output, binary_push_session);
+                            let _ = send_with_timeout(&mut socket, msg).await;
                             continue;
                         }
                         None => {
@@ -463,6 +475,9 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                                 }
                                 ClientMessage::Init { config } => {
                                     if matches!(cap.mode, StreamMode::Stateful | StreamMode::Push) {
+                                        // Binary push frames only exist in Push mode.
+                                        binary_push_session =
+                                            cap.mode == StreamMode::Push && binary_requested(&config);
                                         // Create session
                                         let sid = Uuid::new_v4().to_string();
                                         let client_info = ClientInfoMessage {
@@ -572,6 +587,7 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                                                     session_id: sid.clone(),
                                                     server_time: chrono::Utc::now()
                                                         .timestamp_millis(),
+                                                    binary: binary_push_session,
                                                 },
                                             )
                                             .await;
@@ -590,7 +606,7 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                                             // binary frames to process_session_chunk (mic PCM).
                                             if cap.direction == StreamDirection::Bidirectional {
                                                 let (ws_out_tx, mut ws_out_rx) =
-                                                    mpsc::channel::<String>(64);
+                                                    mpsc::channel::<WsMessage>(64);
                                                 let (ws_in_tx, mut ws_in_rx) =
                                                     mpsc::channel::<String>(8);
                                                 let (binary_in_tx, mut binary_in_rx) =
@@ -634,9 +650,9 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                                                                 }
                                                                 json = ws_out_rx.recv() => {
                                                                     match json {
-                                                                        Some(json) => {
+                                                                        Some(msg) => {
                                                                             let send_start = std::time::Instant::now();
-                                                                            match send_with_timeout(&mut socket, WsMessage::Text(json)).await {
+                                                                            match send_with_timeout(&mut socket, msg).await {
                                                                                 Ok(_) => {
                                                                                     let elapsed = send_start.elapsed();
                                                                                     if elapsed > std::time::Duration::from_millis(500) {
@@ -670,22 +686,13 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                                                             match output {
                                                                 Some(output) => {
                                                                     frames_received += 1;
-                                                                    let push_msg = ServerMessage::PushOutput {
-                                                                        session_id: output.session_id,
-                                                                        sequence: output.sequence,
-                                                                        data: BASE64_STANDARD.encode(&output.data),
-                                                                        data_type: output.data_type,
-                                                                        timestamp: output.timestamp,
-                                                                        metadata: output.metadata,
-                                                                    };
-                                                                    if let Ok(json) = serde_json::to_string(&push_msg) {
-                                                                        if let Err(e) = ws_out_tx.try_send(json) {
-                                                                            tracing::warn!(
-                                                                                frames_received,
-                                                                                error = %e,
-                                                                                "ws_out_tx full — dropping push frame (client too slow)"
-                                                                            );
-                                                                        }
+                                                                    let msg = encode_push_output(&output, binary_push_session);
+                                                                    if let Err(e) = ws_out_tx.try_send(msg) {
+                                                                        tracing::warn!(
+                                                                            frames_received,
+                                                                            error = %e,
+                                                                            "ws_out_tx full — dropping push frame (client too slow)"
+                                                                        );
                                                                     }
                                                                 }
                                                                 None => {
@@ -738,7 +745,7 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                                                                 retryable: true,
                                                             };
                                                             if let Ok(json) = serde_json::to_string(&stall_msg) {
-                                                                let _ = ws_out_tx.try_send(json);
+                                                                let _ = ws_out_tx.try_send(WsMessage::Text(json));
                                                             }
                                                             break;
                                                         }
@@ -763,7 +770,7 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                                                         stats: SessionStatsDto::from(&stats),
                                                     };
                                                     if let Ok(json) = serde_json::to_string(&msg) {
-                                                        let _ = ws_out_tx.try_send(json);
+                                                        let _ = ws_out_tx.try_send(WsMessage::Text(json));
                                                     }
                                                 }
 
@@ -784,7 +791,7 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                                             // This is ideal for video streaming where showing the
                                             // most recent frame matters more than delivering every one.
                                             let (ws_out_tx, mut ws_out_rx) =
-                                                tokio::sync::watch::channel(String::new());
+                                                tokio::sync::watch::channel(WsMessage::Text(String::new()));
                                             let (ws_in_tx, mut ws_in_rx) =
                                                 mpsc::channel::<String>(8);
                                             // Done signal: avoids JoinHandle panic on re-poll
@@ -821,9 +828,9 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                                                                 }
                                                             }
                                                             _ = ws_out_rx.changed() => {
-                                                                let json = ws_out_rx.borrow_and_update().clone();
+                                                                let msg = ws_out_rx.borrow_and_update().clone();
                                                                 let send_start = std::time::Instant::now();
-                                                                match send_with_timeout(&mut socket, WsMessage::Text(json)).await {
+                                                                match send_with_timeout(&mut socket, msg).await {
                                                                     Ok(_) => {
                                                                         let elapsed = send_start.elapsed();
                                                                         if elapsed > std::time::Duration::from_millis(500) {
@@ -856,20 +863,11 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                                                         match output {
                                                             Some(output) => {
                                                                 frames_received += 1;
-                                                                let push_msg = ServerMessage::PushOutput {
-                                                                    session_id: output.session_id,
-                                                                    sequence: output.sequence,
-                                                                    data: BASE64_STANDARD.encode(&output.data),
-                                                                    data_type: output.data_type,
-                                                                    timestamp: output.timestamp,
-                                                                    metadata: output.metadata,
-                                                                };
-                                                                if let Ok(json) = serde_json::to_string(&push_msg) {
-                                                                    // watch::send replaces old value (latest frame wins)
-                                                                    let is_new = ws_out_tx.send(json).is_ok();
-                                                                    if !is_new {
-                                                                        frames_dropped += 1;
-                                                                    }
+                                                                let msg = encode_push_output(&output, binary_push_session);
+                                                                // watch::send replaces old value (latest frame wins)
+                                                                let is_new = ws_out_tx.send(msg).is_ok();
+                                                                if !is_new {
+                                                                    frames_dropped += 1;
                                                                 }
                                                                 // Periodic diagnostics
                                                                 if frames_received.is_multiple_of(500) {
@@ -925,7 +923,7 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                                                             retryable: true,
                                                         };
                                                         if let Ok(json) = serde_json::to_string(&stall_msg) {
-                                                            let _ = ws_out_tx.send(json);
+                                                            let _ = ws_out_tx.send(WsMessage::Text(json));
                                                         }
                                                         break;
                                                     }
@@ -951,7 +949,7 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                                                     stats: SessionStatsDto::from(&stats),
                                                 };
                                                 if let Ok(json) = serde_json::to_string(&msg) {
-                                                    let _ = ws_out_tx.send(json);
+                                                    let _ = ws_out_tx.send(WsMessage::Text(json));
                                                 }
                                             }
 
@@ -976,6 +974,7 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                                             &ServerMessage::SessionCreated {
                                                 session_id: sid.clone(),
                                                 server_time: chrono::Utc::now().timestamp_millis(),
+                                                binary: binary_push_session,
                                             },
                                         )
                                         .await;
@@ -1209,6 +1208,98 @@ fn parse_binary_frame(mut data: Vec<u8>) -> Option<(u64, Vec<u8>)> {
     Some((sequence, data))
 }
 
+// ============================================================================
+// Outbound Binary Push Frames
+// ============================================================================
+
+/// Outbound binary frame kind: push output (first header byte).
+const BINARY_FRAME_KIND_PUSH: u8 = 1;
+/// Outbound binary frame format version (second header byte).
+const BINARY_FRAME_VERSION: u8 = 1;
+/// Outbound binary frame header size: kind(1) + version(1) + seq(8) + meta_len(4).
+const BINARY_FRAME_HEADER_LEN: usize = 14;
+
+/// Extract the client's binary-frame opt-in from `init` config.
+///
+/// Missing, malformed, or non-boolean values all fall back to `false` so that
+/// legacy clients (and legacy servers paired with new clients) keep the
+/// Text+base64 behavior byte-for-byte.
+fn binary_requested(config: &Option<serde_json::Value>) -> bool {
+    config
+        .as_ref()
+        .and_then(|c| c.get("binary"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+/// Encode a push output for the wire.
+///
+/// All push paths must go through here so the two formats can never diverge:
+/// - `binary == true`: one WS Binary frame, payload is raw bytes (no base64).
+/// - `binary == false`: legacy Text JSON with base64 `data` (pre-negotiation
+///   behavior, unchanged).
+fn encode_push_output(output: &PushOutputMessage, binary: bool) -> WsMessage {
+    if binary {
+        return encode_binary_push_frame(output);
+    }
+    let msg = ServerMessage::PushOutput {
+        session_id: output.session_id.clone(),
+        sequence: output.sequence,
+        data: BASE64_STANDARD.encode(&output.data),
+        data_type: output.data_type.clone(),
+        timestamp: output.timestamp,
+        metadata: output.metadata.clone(),
+    };
+    WsMessage::Text(serde_json::to_string(&msg).unwrap_or_default())
+}
+
+/// Build an outbound binary push frame:
+///
+/// ```text
+/// [kind: u8][version: u8][sequence: u64 BE][meta_len: u32 BE][meta JSON][payload]
+/// ```
+///
+/// `meta` mirrors the Text `push_output` envelope minus `data`/`sequence`.
+fn encode_binary_push_frame(output: &PushOutputMessage) -> WsMessage {
+    let meta = serde_json::json!({
+        "session_id": output.session_id,
+        "data_type": output.data_type,
+        "timestamp": output.timestamp,
+        "metadata": output.metadata,
+    });
+    // Serialization of this plain object cannot fail; `{}` is a safe fallback.
+    let meta_bytes = serde_json::to_vec(&meta).unwrap_or_else(|_| b"{}".to_vec());
+    let mut frame =
+        Vec::with_capacity(BINARY_FRAME_HEADER_LEN + meta_bytes.len() + output.data.len());
+    frame.push(BINARY_FRAME_KIND_PUSH);
+    frame.push(BINARY_FRAME_VERSION);
+    frame.extend_from_slice(&output.sequence.to_be_bytes());
+    frame.extend_from_slice(&(meta_bytes.len() as u32).to_be_bytes());
+    frame.extend_from_slice(&meta_bytes);
+    frame.extend_from_slice(&output.data);
+    WsMessage::Binary(frame)
+}
+
+/// Decode an outbound binary push frame. Returns
+/// `(kind, version, sequence, meta_bytes, payload_bytes)`.
+///
+/// Mirror of the browser-side parser; kept test-only until a consumer needs it.
+#[cfg(test)]
+fn decode_binary_push_frame(frame: &[u8]) -> Option<(u8, u8, u64, &[u8], &[u8])> {
+    if frame.len() < BINARY_FRAME_HEADER_LEN {
+        return None;
+    }
+    let kind = frame[0];
+    let version = frame[1];
+    let seq = u64::from_be_bytes(frame[2..10].try_into().ok()?);
+    let meta_len = u32::from_be_bytes(frame[10..14].try_into().ok()?) as usize;
+    let meta_end = BINARY_FRAME_HEADER_LEN.checked_add(meta_len)?;
+    if meta_end > frame.len() {
+        return None;
+    }
+    Some((kind, version, seq, &frame[14..meta_end], &frame[meta_end..]))
+}
+
 /// Send error message to client
 async fn send_error(socket: &mut WebSocket, code: &str, message: String) {
     let msg = ServerMessage::Error {
@@ -1373,5 +1464,91 @@ mod tests {
         assert_eq!(dto.mode, "stateless");
         assert_eq!(dto.supported_data_types.len(), 2);
         assert!(dto.supported_data_types.contains(&"image/jpeg".to_string()));
+    }
+
+    fn sample_push_output() -> PushOutputMessage {
+        PushOutputMessage {
+            session_id: "sess-1".to_string(),
+            sequence: 42,
+            data: vec![0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3],
+            data_type: "image/jpeg".to_string(),
+            timestamp: 1_725_000_000_000,
+            metadata: Some(serde_json::json!({"seq_hint": "k"})),
+        }
+    }
+
+    #[test]
+    fn test_binary_requested_negotiation_matrix() {
+        // Missing config / no binary key → legacy Text mode
+        assert!(!binary_requested(&None));
+        assert!(!binary_requested(&Some(serde_json::json!({}))));
+
+        // Explicit opt-in
+        assert!(binary_requested(&Some(serde_json::json!({"binary": true}))));
+
+        // Wrong types and explicit false must NOT enable binary — a malformed
+        // flag silently downgrading to Text is the safe direction.
+        assert!(!binary_requested(&Some(serde_json::json!({"binary": false}))));
+        assert!(!binary_requested(&Some(serde_json::json!({"binary": "yes"}))));
+        assert!(!binary_requested(&Some(serde_json::json!({"binary": 1}))));
+    }
+
+    #[test]
+    fn test_encode_binary_push_frame_roundtrip() {
+        let output = sample_push_output();
+        let WsMessage::Binary(frame) = encode_push_output(&output, true) else {
+            panic!("expected binary frame");
+        };
+
+        let (kind, version, seq, meta_bytes, payload) =
+            decode_binary_push_frame(&frame).expect("frame must decode");
+        assert_eq!(kind, BINARY_FRAME_KIND_PUSH);
+        assert_eq!(version, BINARY_FRAME_VERSION);
+        assert_eq!(seq, 42);
+        assert_eq!(payload, output.data);
+
+        // Meta mirrors the Text envelope minus data/sequence
+        let meta: serde_json::Value = serde_json::from_slice(meta_bytes).unwrap();
+        assert_eq!(meta["session_id"], "sess-1");
+        assert_eq!(meta["data_type"], "image/jpeg");
+        assert_eq!(meta["timestamp"], serde_json::json!(1_725_000_000_000i64));
+        assert_eq!(meta["metadata"]["seq_hint"], "k");
+        assert!(meta.get("data").is_none());
+        assert!(meta.get("sequence").is_none());
+    }
+
+    #[test]
+    fn test_decode_binary_push_frame_rejects_malformed() {
+        // Too short for the fixed header
+        assert!(decode_binary_push_frame(&[0u8; 13]).is_none());
+
+        // meta_len pointing past the end of the frame
+        let output = sample_push_output();
+        let WsMessage::Binary(frame) = encode_binary_push_frame(&output) else {
+            panic!("expected binary frame");
+        };
+        let mut forged = frame[..BINARY_FRAME_HEADER_LEN].to_vec();
+        // Header only, meta_len claims the full meta + payload but bytes absent
+        forged[10..14].copy_from_slice(&1_000u32.to_be_bytes());
+        assert!(decode_binary_push_frame(&forged).is_none());
+    }
+
+    #[test]
+    fn test_encode_push_output_text_legacy_unchanged() {
+        let output = sample_push_output();
+        let WsMessage::Text(json) = encode_push_output(&output, false) else {
+            panic!("expected text frame");
+        };
+
+        // Wire format must stay byte-compatible with pre-negotiation behavior
+        let msg: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg["type"], "push_output");
+        assert_eq!(msg["session_id"], "sess-1");
+        assert_eq!(msg["sequence"], 42);
+        assert_eq!(msg["data_type"], "image/jpeg");
+        assert_eq!(
+            msg["data"],
+            BASE64_STANDARD.encode(&output.data).as_str()
+        );
     }
 }
