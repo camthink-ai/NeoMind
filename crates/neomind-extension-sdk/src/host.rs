@@ -1105,6 +1105,35 @@ pub type PushOutputWriterFn = unsafe extern "C" fn(*const u8, usize) -> i32;
 
 static PUSH_WRITER: OnceLock<PushOutputWriterFn> = OnceLock::new();
 
+/// Function pointer type for the ZERO-SERIALIZATION push writer.
+///
+/// The JSON writer above forces the payload through serde (with the data
+/// field base64-encoded) on every frame; for a 35-300 KB video access
+/// unit that was the last remaining codec pass on the relay. The raw
+/// writer takes every field as ptr+len slices — the payload bytes travel
+/// from the extension's `Vec<u8>` to the IPC segment untouched. Only the
+/// (usually tiny) metadata is serialized, by the SDK, as JSON.
+pub type PushOutputRawWriterFn = unsafe extern "C" fn(
+    session_id: *const u8,
+    session_id_len: usize,
+    sequence: u64,
+    data_type: *const u8,
+    data_type_len: usize,
+    timestamp: i64,
+    metadata_json: *const u8, // nullable: len 0 = None
+    metadata_len: usize,
+    data: *const u8,
+    data_len: usize,
+) -> i32;
+
+static PUSH_WRITER_RAW: OnceLock<PushOutputRawWriterFn> = OnceLock::new();
+
+/// Install the raw push writer (called by the generated
+/// `neomind_extension_register_push_writer_raw` export).
+pub fn set_push_output_writer_raw(writer: PushOutputRawWriterFn) {
+    let _ = PUSH_WRITER_RAW.set(writer);
+}
+
 /// Called by the generated FFI registration function to install the
 /// push-output writer callback. Returns 0 on success.
 pub fn set_push_output_writer(writer: PushOutputWriterFn) {
@@ -1116,6 +1145,44 @@ pub fn set_push_output_writer(writer: PushOutputWriterFn) {
 /// The extension calls this during Push mode to emit data chunks.
 /// Returns `Ok(())` on success or an error if no writer is registered.
 pub fn send_push_output(msg: &PushOutputMessage) -> crate::ipc_types::Result<()> {
+    // ZERO-SERIALIZATION fast path: prefer the raw writer when the runner
+    // registered one (runners built after the raw-FFI change do). Old
+    // runners never register it and the JSON path below is the fallback.
+    if let Some(raw) = PUSH_WRITER_RAW.get() {
+        let metadata = match &msg.metadata {
+            Some(m) => serde_json::to_vec(m).map_err(|e| {
+                crate::ipc_types::ExtensionError::InternalError(format!(
+                    "failed to serialize push metadata: {}",
+                    e
+                ))
+            })?,
+            None => Vec::new(),
+        };
+        let (meta_ptr, meta_len) =
+            if metadata.is_empty() { (std::ptr::null(), 0) } else { (metadata.as_ptr(), metadata.len()) };
+        let rc = unsafe {
+            raw(
+                msg.session_id.as_ptr(),
+                msg.session_id.len(),
+                msg.sequence,
+                msg.data_type.as_ptr(),
+                msg.data_type.len(),
+                msg.timestamp,
+                meta_ptr,
+                meta_len,
+                msg.data.as_ptr(),
+                msg.data.len(),
+            )
+        };
+        return if rc == 0 {
+            Ok(())
+        } else {
+            Err(crate::ipc_types::ExtensionError::InternalError(format!(
+                "push_output_raw_writer returned {}",
+                rc
+            )))
+        };
+    }
     let writer = PUSH_WRITER.get().ok_or_else(|| {
         crate::ipc_types::ExtensionError::InternalError("push output writer not registered".into())
     })?;

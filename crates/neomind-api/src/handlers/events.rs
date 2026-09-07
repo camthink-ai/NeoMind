@@ -437,6 +437,69 @@ pub async fn publish_event_handler(
 /// Streams real-time events from the event bus using Server-Sent Events.
 /// Clients can filter by event type or category.
 /// Supports JWT token (`?token=xxx`) or API key (`?api_key=xxx`) authentication.
+// ============================================================================
+// Shared event-envelope serialization cache
+// ============================================================================
+
+/// Process-global cache: serialized WS envelope per event_id.
+///
+/// Every connected client receives a clone of the same events and used to
+/// rebuild the identical payload Value tree (extract_event_data) and
+/// re-serialize it PER CLIENT — K clients paid Kx the cost. The envelope
+/// contains no client-specific fields, so it is built once globally and
+/// shared as an `Arc<str>`; per-client work drops to a string concat.
+/// Bounded by a wholesale clear when it exceeds the cap (ids are unique
+/// strings; the rebuild costs one serialization per window).
+static EVENT_ENVELOPE_CACHE: std::sync::OnceLock<
+    parking_lot::Mutex<std::collections::HashMap<String, std::sync::Arc<str>>>,
+> = std::sync::OnceLock::new();
+
+/// Serialize one event's WS envelope, cached across all connections.
+fn cached_event_envelope(
+    event: &neomind_core::event::NeoMindEvent,
+    metadata: &EventMetadata,
+    event_type: &str,
+) -> std::sync::Arc<str> {
+    let cache = EVENT_ENVELOPE_CACHE.get_or_init(Default::default);
+    {
+        let g = cache.lock();
+        if let Some(hit) = g.get(&metadata.event_id) {
+            return hit.clone();
+        }
+    }
+    let payload = serde_json::json!({
+        "id": metadata.event_id,
+        "type": event_type,
+        "timestamp": event.timestamp(),
+        "source": metadata.source,
+        "data": extract_event_data(event),
+    });
+    let json: std::sync::Arc<str> = std::sync::Arc::from(
+        serde_json::to_string(&payload).unwrap_or_default(),
+    );
+    let mut g = cache.lock();
+    if g.len() > 1024 {
+        g.clear();
+    }
+    g.insert(metadata.event_id.clone(), json.clone());
+    json
+}
+
+/// Assemble a batch message from pre-serialized envelopes (string concat —
+/// each entry is a complete JSON object).
+fn assemble_batch(events: &[std::sync::Arc<str>]) -> String {
+    let mut s = String::with_capacity(64 + events.iter().map(|e| e.len() + 1).sum::<usize>());
+    s.push_str("{\"batch\":true,\"events\":[");
+    for (i, e) in events.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push_str(e);
+    }
+    s.push_str("]}");
+    s
+}
+
 pub async fn event_stream_handler(
     State(state): State<ServerState>,
     Query(params): Query<EventStreamParams>,
@@ -655,7 +718,8 @@ pub async fn event_websocket_handler(
         // Send events to the authenticated WebSocket client
         // Performance optimization: Batch events to reduce network overhead
         let config = BatchConfig::default();
-        let mut event_buffer: Vec<Value> = Vec::with_capacity(config.batch_size);
+        let mut event_buffer: Vec<std::sync::Arc<str>> =
+            Vec::with_capacity(config.batch_size);
         let mut last_flush = tokio::time::Instant::now();
 
         // Create a ticker for periodic flushing
@@ -727,13 +791,10 @@ pub async fn event_websocket_handler(
                             {
                                 continue;
                             }
-                            let payload = serde_json::json!({
-                                "id": metadata.event_id,
-                                "type": event_type,
-                                "timestamp": event.timestamp(),
-                                "source": metadata.source,
-                                "data": extract_event_data(&event),
-                            });
+                            // Shared-cache serialization: the envelope is
+                            // identical across all clients.
+                            let payload = cached_event_envelope(
+                                &event, &metadata, event_type);
 
                             // Check if this event should be sent immediately
                             let should_send_immediately = config.immediate_events.contains(&event_type);
@@ -741,21 +802,15 @@ pub async fn event_websocket_handler(
                             if should_send_immediately {
                                 // Flush any buffered events first
                                 if !event_buffer.is_empty() {
-                                    let batch_msg = serde_json::json!({ "batch": true, "events": event_buffer });
-                                    if let Ok(json) = serde_json::to_string(&batch_msg) {
+                                    let batch_json = assemble_batch(&event_buffer);
+                                    { let json = batch_json.clone();
                                         let _ = socket.send(Message::Text(json)).await;
                                     }
                                     event_buffer.clear();
                                 }
 
-                                // Send immediate event
-                                let msg = match serde_json::to_string(&payload) {
-                                    Ok(json) => Message::Text(json),
-                                    Err(e) => {
-                                        tracing::warn!(error = %e, "Failed to serialize event for WebSocket");
-                                        continue;
-                                    }
-                                };
+                                // Send immediate event (already serialized)
+                                let msg = Message::Text(payload.to_string());
 
                                 if socket.send(msg).await.is_err() {
                                     break;
@@ -766,8 +821,8 @@ pub async fn event_websocket_handler(
 
                                 // Check if buffer is full
                                 if event_buffer.len() >= config.batch_size {
-                                    let batch_msg = serde_json::json!({ "batch": true, "events": event_buffer });
-                                    if let Ok(json) = serde_json::to_string(&batch_msg) {
+                                    let batch_json = assemble_batch(&event_buffer);
+                                    { let json = batch_json.clone();
                                         if socket.send(Message::Text(json)).await.is_err() {
                                             break;
                                         }
@@ -780,8 +835,8 @@ pub async fn event_websocket_handler(
                         None => {
                             // Channel closed, flush remaining events and exit
                             if !event_buffer.is_empty() {
-                                let batch_msg = serde_json::json!({ "batch": true, "events": event_buffer });
-                                if let Ok(json) = serde_json::to_string(&batch_msg) {
+                                let batch_json = assemble_batch(&event_buffer);
+                                { let json = batch_json.clone();
                                     let _ = socket.send(Message::Text(json)).await;
                                 }
                             }
@@ -792,8 +847,8 @@ pub async fn event_websocket_handler(
                 // Periodic flush of buffered events
                 _ = flush_interval.tick() => {
                     if !event_buffer.is_empty() && last_flush.elapsed() >= config.max_delay {
-                        let batch_msg = serde_json::json!({ "batch": true, "events": event_buffer });
-                        if let Ok(json) = serde_json::to_string(&batch_msg) {
+                        let batch_json = assemble_batch(&event_buffer);
+                        { let json = batch_json.clone();
                             if socket.send(Message::Text(json)).await.is_err() {
                                 break;
                             }

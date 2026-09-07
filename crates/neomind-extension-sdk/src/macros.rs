@@ -593,6 +593,20 @@ macro_rules! neomind_export_with_constructor {
                 $crate::set_push_output_writer(writer);
                 0
             }
+
+            /// Raw (zero-serialization) variant — runners that support it
+            /// resolve this OPTIONAL export and register a
+            /// PushOutputRawWriterFn; the SDK's send_push_output then
+            /// bypasses JSON/base64 entirely. Old runners never look this
+            /// symbol up; new runners treat its absence as "legacy
+            /// extension, use the JSON path".
+            #[no_mangle]
+            pub extern "C" fn neomind_extension_register_push_writer_raw(
+                writer: $crate::PushOutputRawWriterFn,
+            ) -> i32 {
+                $crate::set_push_output_writer_raw(writer);
+                0
+            }
         }
 
         // WASM exports - Full support for metrics, commands, and execution

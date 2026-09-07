@@ -1889,6 +1889,11 @@ impl MqttAdapter {
                                     device_id, dt
                                 );
 
+                                // Client-supplied timestamp (DEF-001): honor
+                                // backfill payloads like the webhook path does;
+                                // fall back to server receive time.
+                                let client_ts = extract_client_timestamp(&json_value);
+
                                 // Use UnifiedExtractor to extract metrics
                                 let result = extractor.extract(&device_id, dt, &json_value).await;
 
@@ -1907,11 +1912,12 @@ impl MqttAdapter {
 
                                 // Emit all extracted metrics
                                 for metric in result.metrics {
+                                    let point_ts = client_ts.unwrap_or_else(|| now.timestamp());
                                     // Convert Binary to URL before storage + event bus (fork point)
                                     let value = Self::convert_binary_to_url(
                                         &device_id,
                                         &metric.name,
-                                        now.timestamp(),
+                                        point_ts,
                                         metric.value.clone(),
                                         data_dir,
                                     );
@@ -1928,7 +1934,7 @@ impl MqttAdapter {
                                     // Store in telemetry storage
                                     if let Some(storage) = telemetry_storage.read().await.as_ref() {
                                         let data_point = crate::telemetry::DataPoint {
-                                            timestamp: now.timestamp(),
+                                            timestamp: point_ts,
                                             value: value.clone(),
                                             quality: None,
                                         };
@@ -1957,7 +1963,7 @@ impl MqttAdapter {
                                         device_id: device_id.clone(),
                                         metric: metric.name.clone(),
                                         value: value.clone(),
-                                        timestamp: now.timestamp(),
+                                        timestamp: point_ts,
                                     }) {
                                         error!(
                                             "Failed to send metric event to channel: {}/{} - {}",
@@ -2137,8 +2143,10 @@ impl MqttAdapter {
                         debug!("Device type for {}: {:?}", device_id, device_type_opt);
 
                         // Parse payload and process for the registered device
-                        if let Ok(json_data) = serde_json::from_slice::<serde_json::Value>(&payload)
-                        {
+                        if let Ok(json_data) = serde_json::from_slice::<serde_json::Value>(&payload) {
+                            // Client timestamp (DEF-001) — same policy as the
+                            // registered-type branch above.
+                            let client_ts_fallback = extract_client_timestamp(&json_data);
                             debug!("Successfully parsed JSON payload for device {}", device_id);
 
                             // Use UnifiedExtractor with the full JSON data
@@ -2146,6 +2154,7 @@ impl MqttAdapter {
                             // DO NOT pre-extract the "data" field - it causes double-extraction issues
                             if let Some(dt) = device_type_opt {
                                 let result = extractor.extract(device_id, &dt, &json_data).await;
+                                let point_ts_fb = client_ts_fallback.unwrap_or_else(|| now.timestamp());
                                 debug!(
                                     "Extraction result for device {}: mode={:?}, metrics={}",
                                     device_id,
@@ -2182,7 +2191,7 @@ impl MqttAdapter {
                                     // Store in telemetry storage
                                     if let Some(storage) = telemetry_storage.read().await.as_ref() {
                                         let data_point = crate::telemetry::DataPoint {
-                                            timestamp: now.timestamp(),
+                                            timestamp: point_ts_fb,
                                             value: value.clone(),
                                             quality: None,
                                         };
@@ -2207,7 +2216,7 @@ impl MqttAdapter {
                                         device_id: device_id.clone(),
                                         metric: metric.name.clone(),
                                         value: value.clone(),
-                                        timestamp: now.timestamp(),
+                                        timestamp: point_ts_fb,
                                     }) {
                                         error!(
                                             "Failed to send metric event to channel: {}/{} - {}",
@@ -2564,6 +2573,38 @@ fn sanitize_auto_device_id(id: String) -> Option<String> {
     } else {
         Some(cleaned)
     }
+}
+
+/// Extract a client-supplied timestamp from an uplink JSON payload.
+///
+/// Recognizes the common field names (`timestamp`, `ts`, `ts_ms`, `ts_ns`,
+/// `time`) and auto-detects the epoch unit (seconds / milliseconds /
+/// nanoseconds) from the magnitude. Returns `None` when absent, malformed,
+/// or implausible (> 5 minutes in the future — a wildly wrong clock must
+/// not corrupt the series). This aligns MQTT ingest with the webhook
+/// path, which already honors `payload.timestamp` (DEF-001).
+fn extract_client_timestamp(json: &serde_json::Value) -> Option<i64> {
+    const FIELDS: [&str; 5] = ["timestamp", "ts", "ts_ms", "ts_ns", "time"];
+    let raw = FIELDS
+        .iter()
+        .find_map(|f| json.get(f).and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|x| x as i64))))?;
+    // unit detection by magnitude: ns ~1e18 (>1e17), ms ~1e12 (>1e11),
+    // s ~1e9 (>1e8). Thresholds sit well below current epochs and well
+    // above the next-smaller unit, so boundary years can't cross.
+    let secs = if raw > 100_000_000_000_000_000 {
+        raw / 1_000_000_000
+    } else if raw > 100_000_000_000 {
+        raw / 1_000
+    } else if raw > 100_000_000 {
+        raw
+    } else {
+        return None; // implausibly small — not an epoch
+    };
+    let now = chrono::Utc::now().timestamp();
+    if secs > now + 300 {
+        return None; // > 5 min in the future — reject (clock skew / garbage)
+    }
+    Some(secs)
 }
 
 fn extract_device_id_from_topic(topic: &str, config: &MqttAdapterConfig) -> Option<String> {
@@ -2970,6 +3011,29 @@ pub async fn test_mqtt_connection(
             success: false,
             message: "Connection timeout after 10 seconds".to_string(),
         },
+    }
+}
+
+#[cfg(test)]
+mod ts_tests {
+    use super::extract_client_timestamp;
+    use serde_json::json;
+
+    #[test]
+    fn detects_units_and_fields() {
+        let now = chrono::Utc::now().timestamp();
+        assert_eq!(extract_client_timestamp(&json!({"timestamp": now - 7200})), Some(now - 7200));
+        assert_eq!(extract_client_timestamp(&json!({"ts": (now - 60) * 1000})), Some(now - 60));
+        assert_eq!(extract_client_timestamp(&json!({"ts_ns": (now - 1) * 1_000_000_000})), Some(now - 1));
+    }
+
+    #[test]
+    fn rejects_garbage_and_future() {
+        let now = chrono::Utc::now().timestamp();
+        assert_eq!(extract_client_timestamp(&json!({})), None);
+        assert_eq!(extract_client_timestamp(&json!({"timestamp": "not-a-number"})), None);
+        assert_eq!(extract_client_timestamp(&json!({"timestamp": 123})), None);       // 非纪元
+        assert_eq!(extract_client_timestamp(&json!({"timestamp": now + 3600})), None); // 未来
     }
 }
 

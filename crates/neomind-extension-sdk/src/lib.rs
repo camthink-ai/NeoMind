@@ -211,6 +211,7 @@ pub use host::{
     FlowControl,
     // Push mode
     PushOutputWriterFn,
+    PushOutputRawWriterFn,
     SessionStats,
     StreamCapability,
     StreamDataType,

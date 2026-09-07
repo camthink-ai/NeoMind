@@ -58,6 +58,28 @@ async fn new_session() -> (SessionManager, String) {
         .unwrap()
         .set_custom_llm(llm)
         .await;
+    // Cloud OpenAI-compatible custom endpoints take the TEXT tool-calling path
+    // (supports_function_calling=false for CloudProvider::Custom), but the OpenAI
+    // backend lacks the format-teaching injection that the Ollama backend has
+    // (format_tools_for_text_calling). Inject it as a system-prompt suffix so the
+    // model knows HOW to emit tool calls; without this the eval measures the
+    // integration gap, not the model.
+    sm.get_session(&sid)
+        .await
+        .unwrap()
+        .llm_interface()
+        .set_system_prompt_suffix(Some(
+            "## Tool Calling Format (JSON)\n\
+             You must call tools using JSON format. Do not just describe what to do.\n\n\
+             Format:\n\
+             [{\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}]\n\n\
+             ## Important Rules\n\
+             1. ALWAYS output tool calls as a JSON array\n\
+             2. Don't explain, just call the tool directly\n\
+             3. Use the exact tool names and parameters from the Available Tools section above\n"
+                .to_string(),
+        ))
+        .await;
     (sm, sid)
 }
 
@@ -1046,7 +1068,13 @@ async fn comprehensive_20round_evaluation() -> anyhow::Result<()> {
     let mut total_metrics = Metrics::default();
     let total_start = Instant::now();
 
-    for (idx, &name) in SCENARIO_NAMES.iter().enumerate() {
+    // ROUNDS env var limits the evaluation to the first N scenarios (quick mode).
+    let max_rounds: usize = std::env::var("ROUNDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(SCENARIO_NAMES.len());
+
+    for (idx, &name) in SCENARIO_NAMES.iter().enumerate().take(max_rounds) {
         println!("\n{}", "─".repeat(60));
         println!("Round {}/20: {}", idx + 1, name);
         println!("{}", "─".repeat(60));

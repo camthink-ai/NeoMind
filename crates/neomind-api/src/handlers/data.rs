@@ -10,6 +10,7 @@ use axum::extract::{Query, State};
 use serde::{Deserialize, Serialize};
 
 use crate::handlers::common::{ok, HandlerResult};
+use crate::models::error::ErrorResponse;
 use crate::server::types::ServerState;
 use neomind_core::datasource::DataSourceId;
 
@@ -479,13 +480,17 @@ async fn collect_transform_sources(state: &ServerState, sources: &mut Vec<Unifie
 // ============================================================================
 
 /// Query parameters for the generic telemetry endpoint.
+///
+/// `source` and `metric` are REQUIRED. They are typed `Option` only so the
+/// handler can reject them with a self-describing error (serde's default
+/// rejection is a bare "missing field" with no hint) — see DEF-002.
 #[derive(Debug, Deserialize)]
 pub struct TelemetryQueryParams {
     /// Source identifier (e.g. "device:sensor1", "extension:weather", "ai:demo", "transform:proc")
     /// Required.
-    pub source: String,
+    pub source: Option<String>,
     /// Metric name (e.g. "temperature", "score"). Required.
-    pub metric: String,
+    pub metric: Option<String>,
     /// Start timestamp in seconds (default: 24 hours ago)
     pub start: Option<i64>,
     /// End timestamp in seconds (default: now)
@@ -514,6 +519,26 @@ pub async fn query_telemetry_handler(
     State(state): State<ServerState>,
     Query(params): Query<TelemetryQueryParams>,
 ) -> HandlerResult<serde_json::Value> {
+    // Self-describing required-param validation (DEF-002): both `source`
+    // and `metric` are mandatory; tell the caller exactly what is missing
+    // and the expected format instead of serde's bare field error.
+    let (Some(source), Some(metric)) = (&params.source, &params.metric) else {
+        let missing = [
+            ("source", params.source.is_none()),
+            ("metric", params.metric.is_none()),
+        ]
+        .iter()
+        .filter(|(_, m)| *m)
+        .map(|(n, _)| *n)
+        .collect::<Vec<_>>()
+        .join(", ");
+        return Err(ErrorResponse::bad_request(format!(
+            "Missing required query parameter(s): {}. This endpoint queries ONE              series: pass `source` (e.g. device:sensor1, extension:weather, \
+             transform:proc) and `metric` (e.g. temperature). Optional: start, \
+             end (epoch seconds), limit, offset, aggregate.",
+            missing
+        )));
+    };
     let now = chrono::Utc::now().timestamp();
     let start = params.start.unwrap_or(now - 86400);
     let end = params.end.unwrap_or(now);
@@ -521,19 +546,19 @@ pub async fn query_telemetry_handler(
 
     // Parse source into a DataSourceId to extract the storage key
     let ds_id =
-        DataSourceId::parse(&format!("{}:{}", params.source, params.metric)).or_else(|| {
+        DataSourceId::parse(&format!("{}:{}", source, metric)).or_else(|| {
             // Try treating source as a raw storage prefix (e.g. "device:sensor1" → device)
-            let parts: Vec<&str> = params.source.splitn(2, ':').collect();
+            let parts: Vec<&str> = source.splitn(2, ':').collect();
             if parts.len() == 2 {
                 match parts[0] {
-                    "device" => Some(DataSourceId::device(parts[1], &params.metric)),
-                    "extension" => Some(DataSourceId::extension(parts[1], &params.metric)),
-                    "transform" => Some(DataSourceId::transform(parts[1], &params.metric)),
+                    "device" => Some(DataSourceId::device(parts[1], metric)),
+                    "extension" => Some(DataSourceId::extension(parts[1], metric)),
+                    "transform" => Some(DataSourceId::transform(parts[1], metric)),
                     _ => None,
                 }
             } else {
                 // Bare device ID
-                Some(DataSourceId::device(&params.source, &params.metric))
+                Some(DataSourceId::device(source, metric))
             }
         });
 
@@ -541,7 +566,7 @@ pub async fn query_telemetry_handler(
         Some(id) => id,
         None => {
             return Err(crate::models::error::ErrorResponse::bad_request(
-                format!("Invalid source format: '{}'. Use 'type:id' (e.g. 'device:sensor1') or full DataSourceId.", params.source),
+                format!("Invalid source format: '{}'. Use 'type:id' (e.g. 'device:sensor1') or full DataSourceId.", source),
             ));
         }
     };
@@ -569,7 +594,7 @@ pub async fn query_telemetry_handler(
 
         return ok(serde_json::json!({
             "source_id": ds_id.storage_key(),
-            "source": params.source,
+            "source": source,
             "metric": params.metric,
             "start": start,
             "end": end,
@@ -607,7 +632,7 @@ pub async fn query_telemetry_handler(
 
     ok(serde_json::json!({
         "source_id": ds_id.storage_key(),
-        "source": params.source,
+        "source": source,
         "metric": params.metric,
         "start": start,
         "end": end,

@@ -119,7 +119,12 @@ parking_lot = "0.12"
 dirs = "5"
 
 [profile.release]
+# Line tables only: zero runtime cost, restores stack traces/symbols in
+# perf/sample profiling — production was unprofilable without this
+# (fully-stripped binaries turned every profile into `???`). strip
+# downgraded none<-`true` accordingly; expect a modest size increase.
+debug = "line-tables-only"
 lto = "thin"
 codegen-units = 1
-strip = true
+strip = "none"
 opt-level = 3

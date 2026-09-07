@@ -790,8 +790,24 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                                             // is kept — old frames are automatically replaced.
                                             // This is ideal for video streaming where showing the
                                             // most recent frame matters more than delivering every one.
-                                            let (ws_out_tx, mut ws_out_rx) =
-                                                tokio::sync::watch::channel(WsMessage::Text(String::new()));
+                                            let (ws_out_tx, mut ws_out_rx): (OutTx, OutRx) =
+                                                if binary_push_session {
+                                                    let (tx, rx) =
+                                                        mpsc::channel::<WsMessage>(128);
+                                                    (OutTx::Mpsc(tx), OutRx::Mpsc(rx))
+                                                } else {
+                                                    let (tx, rx) = tokio::sync::watch::channel(
+                                                        WsMessage::Text(String::new()));
+                                                    (OutTx::Watch(tx), OutRx::Watch(rx))
+                                                };
+                                            tracing::info!(
+                                                session_id = %sid,
+                                                channel = if binary_push_session { "mpsc" } else { "watch" },
+                                                "Push session channel selected"
+                                            );
+                                            let ws_sent = std::sync::Arc::new(
+                                                std::sync::atomic::AtomicU64::new(0));
+                                            let ws_sent_task = ws_sent.clone();
                                             let (ws_in_tx, mut ws_in_rx) =
                                                 mpsc::channel::<String>(8);
                                             // Done signal: avoids JoinHandle panic on re-poll
@@ -827,8 +843,9 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                                                                     _ => {}
                                                                 }
                                                             }
-                                                            _ = ws_out_rx.changed() => {
-                                                                let msg = ws_out_rx.borrow_and_update().clone();
+                                                            msg = ws_out_rx.recv() => {
+                                                                let Some(msg) = msg else { return };
+                                                                ws_sent_task.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                                                 let send_start = std::time::Instant::now();
                                                                 match send_with_timeout(&mut socket, msg).await {
                                                                     Ok(_) => {
@@ -864,15 +881,18 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                                                             Some(output) => {
                                                                 frames_received += 1;
                                                                 let msg = encode_push_output(&output, binary_push_session);
-                                                                // watch::send replaces old value (latest frame wins)
-                                                                let is_new = ws_out_tx.send(msg).is_ok();
-                                                                if !is_new {
+                                                                // Watch: latest-wins (JPEG semantics). Mpsc:
+                                                                // FIFO with try_send — a full queue drops
+                                                                // THIS frame (differential corruption risk
+                                                                // is bounded by the ≤1 s keyframe cadence).
+                                                                if !ws_out_tx.send_lossy(msg) {
                                                                     frames_dropped += 1;
                                                                 }
                                                                 // Periodic diagnostics
                                                                 if frames_received.is_multiple_of(500) {
                                                                     tracing::info!(
                                                                         received = frames_received,
+                                                                        sent = ws_sent.load(std::sync::atomic::Ordering::Relaxed),
                                                                         dropped = frames_dropped,
                                                                         "Push stream stats"
                                                                     );
@@ -923,7 +943,7 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                                                             retryable: true,
                                                         };
                                                         if let Ok(json) = serde_json::to_string(&stall_msg) {
-                                                            let _ = ws_out_tx.send(WsMessage::Text(json));
+                                                            let _ = ws_out_tx.send_lossy(WsMessage::Text(json));
                                                         }
                                                         break;
                                                     }
@@ -949,7 +969,7 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                                                     stats: SessionStatsDto::from(&stats),
                                                 };
                                                 if let Ok(json) = serde_json::to_string(&msg) {
-                                                    let _ = ws_out_tx.send(WsMessage::Text(json));
+                                                    let _ = ws_out_tx.send_lossy(WsMessage::Text(json));
                                                 }
                                             }
 
@@ -1218,6 +1238,45 @@ const BINARY_FRAME_KIND_PUSH: u8 = 1;
 const BINARY_FRAME_VERSION: u8 = 1;
 /// Outbound binary frame header size: kind(1) + version(1) + seq(8) + meta_len(4).
 const BINARY_FRAME_HEADER_LEN: usize = 14;
+
+/// Outbound channel handle for the outbound-only push loop.
+///
+/// Binary-negotiated sessions carry differential payloads (H.264 access
+/// units) where dropping a frame corrupts every following one until the
+/// next keyframe — they get a bounded FIFO (`mpsc`) instead of the
+/// legacy `watch` (latest-wins, correct for independent JPEG frames).
+enum OutTx {
+    Watch(tokio::sync::watch::Sender<WsMessage>),
+    Mpsc(mpsc::Sender<WsMessage>),
+}
+
+impl OutTx {
+    /// Best-effort send; false when undelivered (queue full / no receiver).
+    fn send_lossy(&self, msg: WsMessage) -> bool {
+        match self {
+            OutTx::Watch(tx) => tx.send(msg).is_ok(),
+            OutTx::Mpsc(tx) => tx.try_send(msg).is_ok(),
+        }
+    }
+}
+
+enum OutRx {
+    Watch(tokio::sync::watch::Receiver<WsMessage>),
+    Mpsc(mpsc::Receiver<WsMessage>),
+}
+
+impl OutRx {
+    /// Next outbound message; `None` = channel closed (session end).
+    async fn recv(&mut self) -> Option<WsMessage> {
+        match self {
+            OutRx::Watch(rx) => match rx.changed().await {
+                Ok(_) => Some(rx.borrow_and_update().clone()),
+                Err(_) => None,
+            },
+            OutRx::Mpsc(rx) => rx.recv().await,
+        }
+    }
+}
 
 /// Extract the client's binary-frame opt-in from `init` config.
 ///
