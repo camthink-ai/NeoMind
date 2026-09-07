@@ -115,6 +115,11 @@ pub struct TimeRangeQuery {
     pub start: Option<i64>,
     pub end: Option<i64>,
     pub limit: Option<usize>,
+    /// Convenience window in hours (end − h×3600) when `start` is absent.
+    /// Handlers that don't support it simply don't read the field; unknown
+    /// query keys were always ignored by serde, which is exactly how a
+    /// caller's `?hours=6` went silently unhonored for so long.
+    pub hours: Option<i64>,
 }
 
 /// Request to add a new device.

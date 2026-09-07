@@ -1405,7 +1405,14 @@ pub async fn query_extension_metric_data_handler(
     use neomind_devices::mdl::MetricValue;
 
     let end = query.end.unwrap_or_else(|| chrono::Utc::now().timestamp());
-    let start = query.start.unwrap_or(end - 86400); // Default 24 hours
+    // `hours` beats the 24 h default when given; explicit start still wins.
+    // The gym-tracker Traffic chart sent `?hours=6` for months while this
+    // struct had no such field — axum dropped it silently and every "last
+    // 6h" chart actually plotted a 24 h window.
+    let start = query
+        .start
+        .or_else(|| query.hours.map(|h| end - h * 3600))
+        .unwrap_or(end - 86400); // Default 24 hours
 
     // Use typed DataSourceId
     let source_id = DataSourceId::extension(&extension_id, &metric);
@@ -1427,9 +1434,14 @@ pub async fn query_extension_metric_data_handler(
     const MAX_METRIC_QUERY_LIMIT: usize = 10000;
     let effective_limit = query.limit.unwrap_or(1000).min(MAX_METRIC_QUERY_LIMIT);
 
+    // Keep the NEWEST `limit` points, not the oldest: points come back in
+    // chronological order, so `.take(limit)` truncates from the front —
+    // once a store outgrew the cap (1440 pts/24h at 1/min vs the 1000
+    // default) the chart froze on the oldest slice and never advanced.
+    let skip = points.len().saturating_sub(effective_limit);
     let data_points: Vec<serde_json::Value> = points
         .iter()
-        .take(effective_limit)
+        .skip(skip)
         .map(|point| {
             let value_json = match &point.value {
                 MetricValue::Integer(n) => serde_json::json!(n),
