@@ -22,6 +22,8 @@ use neomind_core::llm::backend::{
 };
 use neomind_core::message::{Content, ContentPart, Message, MessageRole};
 
+use crate::llm_backends::text_tool_calls;
+
 /// Default llama.cpp server endpoint.
 const DEFAULT_ENDPOINT: &str = "http://127.0.0.1:8080";
 
@@ -411,8 +413,19 @@ impl LlmRuntime for LlamaCppRuntime {
             None => delegated_cap(),
         };
 
+        // Text tool-calling teaching — see `llm_backends::text_tool_calls`.
+        // The /props probe (or a user override) decides whether the server's
+        // chat template lifts tools natively; when it reports no function
+        // calling, teach the JSON protocol in the system message so the
+        // agent-layer `tool_parser` can act on the reply.
+        let messages = text_tool_calls::prepare_messages(
+            input.messages,
+            input.tools.as_deref(),
+            self.capabilities().function_calling,
+        );
+
         let mut req_body = serde_json::json!({
-            "messages": self.messages_to_api(&input.messages),
+            "messages": self.messages_to_api(&messages),
             "stream": false,
             "cache_prompt": self.config.cache_prompt,
         });
@@ -656,7 +669,14 @@ impl LlmRuntime for LlamaCppRuntime {
             None => delegated_cap(),
         };
 
-        let api_messages = self.messages_to_api(&input.messages);
+        // Same teaching gate as non-streaming `generate` — see
+        // `llm_backends::text_tool_calls`.
+        let messages = text_tool_calls::prepare_messages(
+            input.messages,
+            input.tools.as_deref(),
+            self.capabilities().function_calling,
+        );
+        let api_messages = self.messages_to_api(&messages);
         let msg_count = api_messages.len();
 
         let mut req_body = serde_json::json!({

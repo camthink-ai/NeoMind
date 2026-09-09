@@ -1,31 +1,56 @@
-# Edge Model Deployment Guide — LFM2.5 Dual-Model Recipe
+# Edge Model Deployment Guide — MiniCPM5-2B + Vision Dual-Model Recipe
 
 NeoMind runs best on a single edge box with **two small models instead of one**:
 a text model that *acts* (drives the agent's tool calling) and a vision model
-that *sees* (describes images for the `vision` tool). This guide documents the
-measured recipe using LiquidAI's LFM2.5 family, including the exact
-llama.cpp flags that matter.
+that *sees* (describes images for the `vision` tool). The measured agent
+recommendation is **MiniCPM5-2B** (2026-09 re-evaluation, see below); the
+vision slot stays `LFM2.5-VL-3B`.
 
-> All numbers below are hard-signal measurements (`cmd_ok` = exact CLI command
-> emitted) from NeoMind's own 154-case bilingual eval, 2026-08.
+> **2026-09 harness correction.** The 2026-08 numbers (`cmd_ok`, 154-case)
+> were produced by an eval harness with three defects (no production tool set
+> registered on the session, phantom 4096 context window, memory pipeline
+> dead). All models were re-measured on the corrected harness — production
+> 7-tool surface, real `/props`-probed context, seeded sandbox platform,
+> working memory extraction; 5 scenarios × 15 turns. Old and new scores are
+> NOT comparable. Rankings changed.
 
 ## The split
 
-| Role | Model | Measured (hard cmd_ok) | Why |
+| Role | Model | Measured (2026-09 corrected harness) | Why |
 |---|---|---|---|
-| **Agent** (tool calling) | `LFM2.5-2.6B` (text) | **64% full-en / 83% 30-case regression** — on par with Qwen3.5-4B | Mamba-hybrid: ~80 tok/s generation, ~800 tok/s prompt ingest on an M4 Pro; 1.6 GB (Q4_K_M) |
-| **Perception** (vision) | `LFM2.5-VL-3B` (vision) | 10% as an agent — **do not use it as the agent** | Strong vision (ScreenSpot 80.7, OCR-class benchmarks), but the vision training materially degraded its tool calling despite sharing the 2.6B backbone |
+| **Agent** (tool calling) | `MiniCPM5-2B` (text) | **81% tool accuracy / 66 overall** — statistically ties cloud deepseek-v4-flash; best-in-class CLI domain selection at 2B | 1.5 GB (Q4_K_M); native OpenAI-format tool calling incl. parallel calls; ~53 tok/s on M4 Pro. Serve at **8K context** — see trade-off below |
+| **Perception** (vision) | `LFM2.5-VL-3B` (vision) | 10% as an agent (2026-08) — **do not use it as the agent** | Strong vision (ScreenSpot 80.7, OCR-class benchmarks), but the vision training materially degraded its tool calling despite sharing the 2.6B backbone |
 
 Both models speak OpenAI-compatible function calling through llama.cpp's
 `--jinja` chat-template path, verified end-to-end against NeoMind's agent loop.
 
+### Full 2026-09 leaderboard (same protocol for every model)
+
+| Model | Tool acc | Memory recall | Overall | Notes |
+|---|---|---|---|---|
+| **MiniCPM5-2B (8K)** | **81.2%** | 0% | **66.2** | Recommended. Memory recall starved at 8K by verbose real tool results |
+| MiniCPM5-2B (32K) | 70.2% | 20% | 67.9 | Same overall — long ctx trades tool accuracy for recall. Not worth it |
+| Qwen3.5-4B | 74.5% | 0% | 58.4 | Runner-up; 100% multi-tool flows, weak CLI parameter mapping |
+| Ling-3.0-tiny | 67.4% | 0% | 56.3 | Needs llama.cpp ≥ b10545 (bailingmoe3) |
+| gemma-4-E2B | 74.5% | 10% | 44.4 | ~2× MiniCPM5 latency |
+| LFM2.5-2.6B | 60.4% | 10% | 41.3 | Former default; CLI domain mapping drifts (maps "list devices" to `ls /dev`) |
+| MiniCPM5-1B | 51.1% | 10% | 32.9 | Below agent threshold |
+| Qwen3.5-0.8B | 48.9% | 0% | 31.5 | Below agent threshold |
+| deepseek-v4-flash (cloud ref) | 57.1% | 50% | 60.9 | Same tier as MiniCPM5-2B; investigates before acting, 5× faster per turn |
+
+Memory-recall caveat: the score depends on both the context window and the
+model's own fact-extraction quality (the extractor is the model under test).
+At 8K, planted facts are the first casualty of history trimming; DeepSeek's
+50% is largely free 128K-context reading. A platform-side dedicated extractor
+is the highest-leverage fix.
+
 ## Serving (llama.cpp)
 
 ```bash
-# Agent — LFM2.5-2.6B (text)
-llama-server -m LFM2.5-2.6B-Q4_K_M.gguf \
-  --host 127.0.0.1 --port 8081 -ngl 99 -c 131072 \
-  --jinja --repeat-penalty 1.0 --top-k 50
+# Agent — MiniCPM5-2B (text)
+llama-server -m MiniCPM5-2B-Q4_K_M.gguf \
+  --host 127.0.0.1 --port 8081 -ngl 99 -c 8192 \
+  --jinja --alias MiniCPM5-2B --temp 1.0 --top-p 0.95
 
 # Perception — LFM2.5-VL-3B (vision; needs its mmproj)
 llama-server -m LFM2.5-VL-3B-Q4_K_M.gguf --mmproj mmproj-LFM2.5-VL-3B-F16.gguf \
@@ -33,11 +58,18 @@ llama-server -m LFM2.5-VL-3B-Q4_K_M.gguf --mmproj mmproj-LFM2.5-VL-3B-F16.gguf \
   --jinja --repeat-penalty 1.0 --top-k 50
 ```
 
-Non-negotiable flags:
+Non-negotiable flags (MiniCPM5):
 
-- **`--jinja`** — LFM's function calling uses special-token-delimited calls;
-  without the full Jinja chat-template handler the calls never round-trip into
-  OpenAI `tool_calls` and every agentic request fails.
+- **`--jinja`** — MiniCPM5's function calling is template-rendered XML; without
+  the Jinja handler the calls never round-trip into OpenAI `tool_calls`.
+- **`-c 8192`** — measured 8K vs 32K A/B (2026-09, corrected harness): overall
+  score is flat (66.2 vs 67.9) but 8K wins tool accuracy 81%→70%, keeps
+  parallel multi-tool calls (100%→33%), runs faster, and only loses memory
+  recall (0% vs 20%) — which the platform-side extractor should restore.
+  Take 8K.
+- **`--temp 1.0 --top-p 0.95`** — model-card recommendation, used server-side
+  as default; NeoMind's requests carry their own sampler (temp 0.6) which
+  overrides it — both were validated working.
 - **`--repeat-penalty 1.0`** — Mamba-style hybrids degrade under repeat
   penalty (vendor recommendation; verified in testing).
 - **`-c 131072`** — the hybrid KV state is cheap; long agent loops on slow
@@ -69,12 +101,15 @@ images arriving via `/api/images/...` from cameras.
 
 ## Licensing note
 
+**MiniCPM5-2B is Apache-2.0** — bundlable in the Docker image/installer
+without restriction, and now the catalog's recommended agent
+([Abiray/MiniCPM5-2B-GGUF](https://huggingface.co/Abiray/MiniCPM5-2B-GGUF)).
+
 LFM2.5 models are **`lfm1.0` (Liquid AI proprietary)** — NeoMind cannot bundle
 them in the Docker image or installer. Users download the GGUFs themselves
 ([LFM2.5-2.6B-GGUF](https://huggingface.co/LiquidAI/LFM2.5-2.6B-GGUF),
 [LFM2.5-VL-3B-GGUF](https://huggingface.co/LiquidAI/LFM2.5-VL-3B-GGUF)) and
-serve them locally. For a bundlable default, the Docker image ships
-Gemma4-E2B.
+serve them locally (the VL model remains the vision-slot recommendation).
 
 ## Troubleshooting
 
@@ -86,7 +121,12 @@ Gemma4-E2B.
 | Long multi-step deploys die mid-run | Chat turn bound was raised to 2400s; if you run a custom harness, make sure *its* per-turn and per-case budgets exceed the model's realistic completion time (~20+ min for 20-round deploys at edge speeds) |
 | Vision works in isolation but agent never "sees" images | The active (text) backend not being multimodal is fine for tool-routed vision, but *user-uploaded chat images* currently require a multimodal active backend — upload via the vision flow instead |
 
-## Sampling: keep temp 0.6 — official 0.1 measured (2026-08-17/18)
+## Sampling: keep temp 0.6 — official 0.1 measured (2026-08-17/18, LFM2.5)
+
+> LFM-specific reference data, retained for provenance; the 2026-09
+> MiniCPM5-2B recommendation uses the same temp 0.6 policy (server default
+> temp 1.0 / top_p 0.95 per its model card; NeoMind requests carry temp 0.6
+> and override it).
 
 LiquidAI's model card recommends `--temp 0.1 --top-k 50 --repeat-penalty 1.1`.
 We ran the full 154-case agent suite both ways on 0.9.17:
@@ -123,7 +163,11 @@ memory ~46 GB/s effective decode bandwidth — top of the community range).
 
 *small-sample prompt figures; generation numbers are stable 128-token runs.
 
-Selection guide on Orin-class: speed/vision → Gemma; **best speed+agent → Ling (16G+ only)**; strongest agent on 8G → Qwen; balanced default → LFM.
+Selection guide on Orin-class (agent scores from the 2026-09 corrected
+harness; throughput from the 2026-08 Jetson runs): speed/vision → Gemma;
+**best speed+agent → Ling (16G+ only)**; strongest agent overall on any RAM →
+**MiniCPM5-2B** (1.5 GB, 81% tool accuracy); LFM2.5-2.6B remains the
+long-context (128K) niche pick.
 
 8G boards: Qwen 64K fits only when clean (6.8G free after cleanup); Ling's
 4.8G weights + KV need ≥16G (the picker's 6 GB floor steers small boards

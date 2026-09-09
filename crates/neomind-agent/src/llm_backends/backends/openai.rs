@@ -22,6 +22,7 @@ use neomind_core::llm::backend::{
 use neomind_core::message::{Content, ContentPart, ImageDetail, Message, MessageRole};
 
 use super::super::rate_limited_client::{ProviderRateLimits, RateLimitedClient};
+use super::super::text_tool_calls;
 
 /// Cloud API provider.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -126,6 +127,13 @@ pub struct CloudConfig {
     /// Request timeout in seconds (default: 60).
     #[serde(default = "default_cloud_timeout_secs")]
     pub timeout_secs: u64,
+
+    /// Context window override. `None` = provider table default. Custom
+    /// endpoints MUST be able to declare this — guessing too small (the old
+    /// hardcoded 4096) collapses the history budget to zero and silently
+    /// kills cross-turn memory for every model behind the endpoint.
+    #[serde(default)]
+    pub max_context: Option<usize>,
 }
 
 /// Default timeout in seconds for cloud backends.
@@ -147,6 +155,7 @@ impl CloudConfig {
             model: None,
             base_url: None,
             timeout_secs: 60,
+            max_context: None,
         }
     }
 
@@ -158,6 +167,7 @@ impl CloudConfig {
             model: None,
             base_url: None,
             timeout_secs: 60,
+            max_context: None,
         }
     }
 
@@ -169,6 +179,7 @@ impl CloudConfig {
             model: None,
             base_url: None,
             timeout_secs: 60,
+            max_context: None,
         }
     }
 
@@ -180,6 +191,7 @@ impl CloudConfig {
             model: None,
             base_url: None,
             timeout_secs: 60,
+            max_context: None,
         }
     }
 
@@ -191,6 +203,7 @@ impl CloudConfig {
             model: None,
             base_url: Some(base_url.into()),
             timeout_secs: 60,
+            max_context: None,
         }
     }
 
@@ -202,6 +215,7 @@ impl CloudConfig {
             model: None,
             base_url: None,
             timeout_secs: 60,
+            max_context: None,
         }
     }
 
@@ -213,6 +227,7 @@ impl CloudConfig {
             model: None,
             base_url: None,
             timeout_secs: 60,
+            max_context: None,
         }
     }
 
@@ -224,6 +239,7 @@ impl CloudConfig {
             model: None,
             base_url: None,
             timeout_secs: 60,
+            max_context: None,
         }
     }
 
@@ -235,6 +251,7 @@ impl CloudConfig {
             model: None,
             base_url: None,
             timeout_secs: 60,
+            max_context: None,
         }
     }
 
@@ -247,6 +264,14 @@ impl CloudConfig {
     /// Set the timeout in seconds.
     pub fn with_timeout_secs(mut self, timeout_secs: u64) -> Self {
         self.timeout_secs = timeout_secs;
+        self
+    }
+
+    /// Override the context window used for history budgeting. Set this for
+    /// custom endpoints — the provider table cannot know what a proxy/vLLM
+    /// deployment actually serves.
+    pub fn with_max_context(mut self, max_context: usize) -> Self {
+        self.max_context = Some(max_context);
         self
     }
 
@@ -759,9 +784,26 @@ impl CloudRuntime {
             None
         };
 
+        // Text tool-calling fallback (shared with Ollama / llama.cpp —
+        // `llm_backends::text_tool_calls`): when the effective capability says
+        // the model has no native function calling — `CloudProvider::Custom`
+        // defaults to false in the `capabilities()` heuristic, as does any
+        // stored override that turned tools off — teach the JSON protocol in
+        // the system message so the agent-layer `tool_parser` can act on the
+        // reply. Without this, custom OpenAI-compatible endpoints carried the
+        // `tools` schema but the model was never taught how to answer, and
+        // every tool-aware turn degraded to plain prose. Computed before
+        // `input.tools` is moved into the request below. Native providers
+        // produce byte-identical messages.
+        let messages = text_tool_calls::prepare_messages(
+            input.messages,
+            input.tools.as_deref(),
+            self.capabilities().function_calling,
+        );
+
         let request = ChatCompletionRequest {
             model,
-            messages: self.messages_to_api(&input.messages),
+            messages: self.messages_to_api(&messages),
             temperature: input.params.temperature,
             top_p: input.params.top_p,
             max_tokens,
@@ -1780,6 +1822,11 @@ impl LlmRuntime for CloudRuntime {
     }
 
     fn max_context_length(&self) -> usize {
+        // Explicit per-endpoint override wins (CloudConfig field / stored
+        // instance settings) — provider tables are guesses.
+        if let Some(max) = self.config.max_context {
+            return max;
+        }
         match self.config.provider {
             CloudProvider::OpenAI => 128000,
             CloudProvider::Anthropic => 200000,
@@ -1789,7 +1836,12 @@ impl LlmRuntime for CloudRuntime {
             CloudProvider::DeepSeek => 128000,
             CloudProvider::GLM => 128000,
             CloudProvider::MiniMax => 512000,
-            CloudProvider::Custom => 4096,
+            // 32k floor: virtually every model served behind a custom
+            // OpenAI-compatible endpoint today is >=32k, and under-guessing
+            // truncates conversation history to nothing (the Custom=4096 bug
+            // made chat memory silently dead). A too-large guess degrades
+            // gracefully — overflow is rescued by the compact-retry ladder.
+            CloudProvider::Custom => 32768,
         }
     }
 
@@ -2456,6 +2508,7 @@ mod tests {
             model: None,
             base_url: Some(base.into()),
             timeout_secs: 60,
+            max_context: None,
         };
         // Ecosystem convention: base without /v1 → client expands it.
         assert_eq!(
@@ -2818,6 +2871,120 @@ mod tests {
                 .map(|v| v.is_null())
                 .unwrap_or(true),
             "non-Qwen providers must not receive enable_thinking field"
+        );
+    }
+
+    // ── text tool-calling teaching for non-native providers ─────────────
+    //
+    // Regression guard for the Custom-endpoint gap: the request always went
+    // out with the `tools` schema, but models behind custom OpenAI-compatible
+    // endpoints default to function_calling=false (provider heuristic in
+    // `capabilities()`) and were never TAUGHT the JSON protocol the
+    // agent-layer `tool_parser` understands — every tool-aware turn degraded
+    // to plain prose while the Ollama backend taught its models. The teaching
+    // must ride the system message exactly when the Ollama backend would
+    // inject it: no native calling + tools attached.
+
+    fn one_tool() -> neomind_core::llm::backend::ToolDefinition {
+        neomind_core::llm::backend::ToolDefinition {
+            name: "list_devices".to_string(),
+            description: "List registered devices".to_string(),
+            parameters: serde_json::json!({"type": "object", "properties": {}}),
+        }
+    }
+
+    #[test]
+    fn test_custom_endpoint_teaches_text_tool_calling() {
+        let runtime = CloudRuntime::new(
+            CloudConfig::custom("sk-test", "http://localhost:8080/v1").with_model("local-model"),
+        )
+        .expect("runtime builds");
+
+        let input = LlmInput {
+            messages: vec![
+                Message::new(MessageRole::System, Content::text("You are helpful.")),
+                Message::new(MessageRole::User, Content::text("hi")),
+            ],
+            params: GenerationParams::default(),
+            model: None,
+            stream: false,
+            tools: Some(vec![one_tool()]),
+        };
+
+        let request = runtime.build_chat_request(input, false);
+        let json = serde_json::to_value(&request).expect("serialize");
+        let sys = json["messages"][0]["content"]
+            .as_str()
+            .expect("system content serializes as text");
+        assert!(
+            sys.contains("Tool Calling Format (JSON)"),
+            "custom endpoints default to no native function calling — the system message must teach the JSON protocol"
+        );
+        assert!(
+            sys.starts_with("You are helpful.\n\n"),
+            "teaching is appended after the original system prompt"
+        );
+        assert!(
+            json["tools"].is_array(),
+            "tools schema still rides the request alongside the teaching"
+        );
+    }
+
+    #[test]
+    fn test_native_tool_provider_skips_text_tool_teaching() {
+        // OpenAI sits in the native-function-calling heuristic — the model
+        // gets the tools schema only, byte-identical to pre-teaching requests.
+        let runtime = CloudRuntime::new(CloudConfig::openai("sk-test").with_model("gpt-4o"))
+            .expect("runtime builds");
+
+        let input = LlmInput {
+            messages: vec![
+                Message::new(MessageRole::System, Content::text("You are helpful.")),
+                Message::new(MessageRole::User, Content::text("hi")),
+            ],
+            params: GenerationParams::default(),
+            model: None,
+            stream: false,
+            tools: Some(vec![one_tool()]),
+        };
+
+        let request = runtime.build_chat_request(input, false);
+        let json = serde_json::to_value(&request).expect("serialize");
+        let sys = json["messages"][0]["content"].as_str().expect("text");
+        assert!(
+            !sys.contains("Tool Calling Format"),
+            "native tool-calling providers must not receive the teaching"
+        );
+    }
+
+    #[test]
+    fn test_function_calling_override_skips_text_tool_teaching() {
+        // A stored/user override that turns native tools ON for a custom
+        // endpoint suppresses the injection — the native protocol wins, and
+        // double-teaching would only waste tokens.
+        let runtime = CloudRuntime::new(
+            CloudConfig::custom("sk-test", "http://localhost:8080/v1").with_model("local-model"),
+        )
+        .expect("runtime builds")
+        .with_capabilities_override(false, false, true, 8192);
+
+        let input = LlmInput {
+            messages: vec![Message::new(
+                MessageRole::System,
+                Content::text("You are helpful."),
+            )],
+            params: GenerationParams::default(),
+            model: None,
+            stream: false,
+            tools: Some(vec![one_tool()]),
+        };
+
+        let request = runtime.build_chat_request(input, false);
+        let json = serde_json::to_value(&request).expect("serialize");
+        let sys = json["messages"][0]["content"].as_str().expect("text");
+        assert!(
+            !sys.contains("Tool Calling Format"),
+            "an override declaring native tool support must suppress the teaching"
         );
     }
 

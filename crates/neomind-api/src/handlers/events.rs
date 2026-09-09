@@ -432,11 +432,6 @@ pub async fn publish_event_handler(
     }))
 }
 
-/// SSE endpoint for streaming events.
-///
-/// Streams real-time events from the event bus using Server-Sent Events.
-/// Clients can filter by event type or category.
-/// Supports JWT token (`?token=xxx`) or API key (`?api_key=xxx`) authentication.
 // ============================================================================
 // Shared event-envelope serialization cache
 // ============================================================================
@@ -474,9 +469,8 @@ fn cached_event_envelope(
         "source": metadata.source,
         "data": extract_event_data(event),
     });
-    let json: std::sync::Arc<str> = std::sync::Arc::from(
-        serde_json::to_string(&payload).unwrap_or_default(),
-    );
+    let json: std::sync::Arc<str> =
+        std::sync::Arc::from(serde_json::to_string(&payload).unwrap_or_default());
     let mut g = cache.lock();
     if g.len() > 1024 {
         g.clear();
@@ -500,6 +494,11 @@ fn assemble_batch(events: &[std::sync::Arc<str>]) -> String {
     s
 }
 
+/// SSE endpoint for streaming events.
+///
+/// Streams real-time events from the event bus using Server-Sent Events.
+/// Clients can filter by event type or category.
+/// Supports JWT token (`?token=xxx`) or API key (`?api_key=xxx`) authentication.
 pub async fn event_stream_handler(
     State(state): State<ServerState>,
     Query(params): Query<EventStreamParams>,

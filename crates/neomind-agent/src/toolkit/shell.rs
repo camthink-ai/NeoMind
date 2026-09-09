@@ -275,6 +275,18 @@ impl ShellTool {
         command: &str,
         timeout: Duration,
     ) -> Option<CommandOutput> {
+        // Truncation pipelines (`neomind device list 2>&1 | head -100`) are
+        // applied in-process: dispatch the base command, then cut the output.
+        // Without this the pipes fall back to a subprocess whose CLI goes
+        // through the HTTP API — an auth dependency pure data queries don't
+        // need. Unsupported stages (grep/sort/…) return None → subprocess.
+        let (base, merge_stderr, truncation) = split_truncation_pipeline(command.trim())?;
+        let output = self.dispatch_in_process(&base, timeout).await?;
+        Some(apply_truncation_pipeline(output, merge_stderr, &truncation))
+    }
+
+    /// In-process dispatch of a single (pipe-free) neomind command line.
+    async fn dispatch_in_process(&self, command: &str, timeout: Duration) -> Option<CommandOutput> {
         let trimmed = command.trim();
 
         // Shell sequencing: `&&` (stop on failure) or `;` (always continue).
@@ -823,13 +835,107 @@ fn kill_process_by_pid(pid: Option<u32>) {
 /// and double quotes and backslash escapes.
 ///
 /// This is NOT a full shell parser — it deliberately ignores pipes,
-/// redirections, `$` expansions, and command separators, because those
-/// constructs are never part of a pure `neomind` data query. A command that
-/// uses them is left for the real shell (subprocess path) to interpret.
+/// redirections, `$` expansions, and command separators. Simple truncation
+/// pipes (`| head -100`) are handled one level up by
+/// [`split_truncation_pipeline`]; anything else is left for the real shell
+/// (subprocess path) to interpret.
 ///
 /// The first token is expected to be `neomind`. Returns an error if the input
 /// has unbalanced quotes (so the caller can fall back to the subprocess and
 /// surface the real shell error message).
+/// A supported truncation stage of a `| head/tail` pipeline.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum TruncationOp {
+    Head,
+    Tail,
+}
+
+/// Split a command line into its base command plus an in-process-able
+/// truncation pipeline. Models routinely decorate queries as
+/// `neomind device list 2>&1 | head -100`; handling the `head/tail/cat`
+/// stages in-process keeps the dispatch on the pure-data path (no subprocess
+/// auth dependency). Returns `None` when any pipeline stage is unsupported
+/// (grep/sort/awk/…) — the caller falls back to the real shell.
+///
+/// Returns `(base_command, merge_stderr, stages)`; `merge_stderr` is set when
+/// the base ends with `2>&1` (stderr is folded into stdout, matching what
+/// the shell would have produced).
+fn split_truncation_pipeline(trimmed: &str) -> Option<(String, bool, Vec<(TruncationOp, usize)>)> {
+    let (base_raw, pipe_part) = match trimmed.split_once('|') {
+        Some((b, p)) => (b.trim(), Some(p)),
+        None => (trimmed, None),
+    };
+    let (base, merge_stderr) = match base_raw.strip_suffix("2>&1") {
+        Some(b) => (b.trim(), true),
+        None => (base_raw, false),
+    };
+    if base.is_empty() {
+        return None;
+    }
+    let mut stages: Vec<(TruncationOp, usize)> = Vec::new();
+    if let Some(pipes) = pipe_part {
+        for stage in pipes.split('|') {
+            let toks: Vec<&str> = stage.split_whitespace().collect();
+            let parsed = match toks.as_slice() {
+                ["cat"] => None,
+                ["head", rest @ ..] | ["tail", rest @ ..] => {
+                    let op = if toks[0] == "head" {
+                        TruncationOp::Head
+                    } else {
+                        TruncationOp::Tail
+                    };
+                    // `head -100` and `head -n 100` are the two forms in use.
+                    let n = match rest {
+                        [n] => n.strip_prefix('-').unwrap_or(n),
+                        ["-n", n] => *n,
+                        _ => return None,
+                    };
+                    Some((op, n.parse::<usize>().ok()?))
+                }
+                _ => return None,
+            };
+            if let Some(stage) = parsed {
+                stages.push(stage);
+            }
+        }
+    }
+    Some((base.to_string(), merge_stderr, stages))
+}
+
+/// Fold stderr into stdout (`2>&1`) and apply `head/tail` line truncation,
+/// in pipeline order, to an in-process dispatch result.
+fn apply_truncation_pipeline(
+    mut output: CommandOutput,
+    merge_stderr: bool,
+    stages: &[(TruncationOp, usize)],
+) -> CommandOutput {
+    if merge_stderr {
+        if !output.stderr.is_empty() {
+            if !output.stdout.is_empty() {
+                output.stdout.push('\n');
+            }
+            output.stdout.push_str(&output.stderr);
+        }
+        output.stderr = String::new();
+    }
+    for (op, n) in stages {
+        let lines: Vec<&str> = if output.stdout.is_empty() {
+            Vec::new()
+        } else {
+            output.stdout.lines().collect()
+        };
+        let kept: Vec<&str> = match op {
+            TruncationOp::Head => lines.into_iter().take(*n).collect(),
+            TruncationOp::Tail => {
+                let start = lines.len().saturating_sub(*n);
+                lines[start..].to_vec()
+            }
+        };
+        output.stdout = kept.join("\n");
+    }
+    output
+}
+
 fn tokenize_neomind_command(input: &str) -> std::result::Result<Vec<String>, String> {
     // Shell-construct guard: a pipe / redirection / command-substitution char
     // OUTSIDE quotes means this is a real shell command line, not a pure
@@ -1303,6 +1409,57 @@ Native host tools also available via `/bin/sh -c`: ping, curl, ps, df, grep, doc
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn truncation_pipeline_splits_head_decorations() {
+        let (base, merge, stages) =
+            split_truncation_pipeline("neomind device list 2>&1 | head -100").unwrap();
+        assert_eq!(base, "neomind device list");
+        assert!(merge);
+        assert_eq!(stages, vec![(TruncationOp::Head, 100)]);
+    }
+
+    #[test]
+    fn truncation_pipeline_supports_n_form_and_composition() {
+        let (base, merge, stages) =
+            split_truncation_pipeline("neomind rule list | head -n 20 | tail -n 5").unwrap();
+        assert_eq!(base, "neomind rule list");
+        assert!(!merge);
+        assert_eq!(
+            stages,
+            vec![(TruncationOp::Head, 20), (TruncationOp::Tail, 5)]
+        );
+    }
+
+    #[test]
+    fn truncation_pipeline_rejects_unsupported_stages() {
+        assert!(split_truncation_pipeline("neomind device list | grep temp").is_none());
+        assert!(split_truncation_pipeline("neomind device list | sort").is_none());
+    }
+
+    #[test]
+    fn truncation_pipeline_passes_plain_commands_through() {
+        let (base, merge, stages) = split_truncation_pipeline("neomind device list").unwrap();
+        assert_eq!(base, "neomind device list");
+        assert!(!merge);
+        assert!(stages.is_empty());
+    }
+
+    #[test]
+    fn truncation_applied_head_then_tail_in_order() {
+        let out = CommandOutput {
+            exit_code: Some(0),
+            stdout: "1\n2\n3\n4\n5".into(),
+            stderr: String::new(),
+            timed_out: false,
+        };
+        let out = apply_truncation_pipeline(
+            out,
+            false,
+            &[(TruncationOp::Head, 3), (TruncationOp::Tail, 2)],
+        );
+        assert_eq!(out.stdout, "2\n3");
+    }
 
     fn test_config() -> ShellConfig {
         ShellConfig {

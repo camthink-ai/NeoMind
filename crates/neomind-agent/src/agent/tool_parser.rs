@@ -63,7 +63,173 @@ pub fn parse_tool_calls(text: &str) -> Result<(String, Vec<ToolCall>)> {
         return result;
     }
 
+    // === PRIORITY 5: Pythonic format ===
+    // LFM2.5's native protocol (LiquidAI): `[tool_name(key='value', ...)]` —
+    // a Python-style call list, emitted after the model's <think> block.
+    // rkNN-converted LFM deployments reply in exactly this shape.
+    if let Some(result) = try_parse_pythonic(text) {
+        return result;
+    }
+
     Ok((text.to_string(), Vec::new()))
+}
+
+/// Try to parse Pythonic-style tool calls (LFM2.5 native format).
+///
+/// Accepts `[name(key='value')]`, possibly several calls inside one bracket
+/// list, or a bare `name(key='value')` on its own line. Values may be single-
+/// or double-quoted strings, integers, floats, or true/false. When the reply
+/// carries a `<think>...</think>` block, only the text after it is scanned so
+/// calls merely *planned* inside the reasoning never become phantom invokes.
+fn try_parse_pythonic(text: &str) -> Option<Result<(String, Vec<ToolCall>)>> {
+    let scan = match text.find("</think>") {
+        Some(pos) => &text[pos + "</think>".len()..],
+        None => text,
+    };
+
+    let call_re = call_re();
+    let mut tool_calls = Vec::new();
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+
+    for cap in call_re.captures_iter(scan) {
+        let whole = cap.get(0)?;
+        let name = cap.get(1)?.as_str().to_string();
+        let args_src = cap.get(2)?.as_str();
+
+        // Require at least one keyword argument — `f(x)` with a bare body is
+        // far more likely to be prose (function application in an example,
+        // math) than a tool call.
+        if !args_src.contains('=') {
+            continue;
+        }
+
+        let mut arguments = serde_json::Map::new();
+        let mut parsed_any = false;
+        for part in split_top_level_commas(args_src) {
+            let part = part.trim();
+            if part.is_empty() {
+                continue;
+            }
+            if let Some((key, raw_value)) = part.split_once('=') {
+                let key = key.trim().trim_matches('"').trim_matches('\'').to_string();
+                if key.is_empty() {
+                    continue;
+                }
+                arguments.insert(key, Value::String(parse_pythonic_value(raw_value.trim())));
+                parsed_any = true;
+            }
+        }
+        if !parsed_any {
+            continue;
+        }
+
+        spans.push((whole.start(), whole.end()));
+        tool_calls.push(ToolCall {
+            name,
+            id: Uuid::new_v4().to_string(),
+            arguments: Value::Object(arguments),
+            result: None,
+            round: None,
+        });
+    }
+
+    if tool_calls.is_empty() {
+        return None;
+    }
+
+    // Remove the matched call spans from the reply text. When every call sits
+    // inside one `[...]` group whose leftover content is only separators, drop
+    // the whole group so the user doesn't see a bare "[]" remnant.
+    let mut remaining = String::with_capacity(scan.len());
+    let group = scan.find('[').zip(scan.rfind(']')).filter(|(open, close)| {
+        close > open
+            && spans.iter().all(|(s, e)| *s > *open && *e <= *close)
+            && scan[open + 1..*close].char_indices().all(|(off, c)| {
+                let abs = open + 1 + off;
+                c == ',' || c.is_whitespace() || spans.iter().any(|(s, e)| abs >= *s && abs <= *e)
+            })
+    });
+    if let Some((open, close)) = group {
+        remaining.push_str(&scan[..open]);
+        remaining.push_str(&scan[close + 1..]);
+        return Some(Ok((remaining, tool_calls)));
+    }
+    let mut cursor = 0;
+    for (start, end) in &spans {
+        remaining.push_str(&scan[cursor..*start]);
+        cursor = *end;
+    }
+    remaining.push_str(&scan[cursor..]);
+
+    Some(Ok((remaining, tool_calls)))
+}
+
+/// Lazy pre-compiled regex for one Pythonic call: `name(key=value, ...)`.
+/// Arguments must be parenthesis-free (LFM2.5 emits flat keyword calls).
+fn call_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"([A-Za-z_][A-Za-z0-9_]*)\(([^()]*)\)")
+            .expect("pythonic call regex is a compile-time constant")
+    })
+}
+
+/// Split on commas that are not inside single/double quotes.
+fn split_top_level_commas(src: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut escaped = false;
+    for c in src.chars() {
+        if escaped {
+            current.push(c);
+            escaped = false;
+            continue;
+        }
+        match c {
+            '\\' if in_single || in_double => {
+                escaped = true;
+                current.push(c);
+            }
+            '\'' if in_single => {
+                in_single = false;
+                current.push(c);
+            }
+            '\'' if !in_double => {
+                in_single = true;
+                current.push(c);
+            }
+            '"' if in_double => {
+                in_double = false;
+                current.push(c);
+            }
+            '"' if !in_single => {
+                in_double = true;
+                current.push(c);
+            }
+            ',' if !in_single && !in_double => {
+                parts.push(std::mem::take(&mut current));
+            }
+            _ => current.push(c),
+        }
+    }
+    parts.push(current);
+    parts
+}
+
+/// Interpret a Pythonic argument value: quoted string, bool, number — else raw.
+fn parse_pythonic_value(raw: &str) -> String {
+    let raw = raw.trim();
+    if (raw.starts_with('\'') && raw.ends_with('\'') && raw.len() >= 2)
+        || (raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2)
+    {
+        return raw[1..raw.len() - 1]
+            .replace("\\'", "'")
+            .replace("\\\"", "\"")
+            .replace("\\\\", "\\");
+    }
+    raw.to_string()
 }
 
 /// Try to parse JSON array format tool calls.
@@ -769,6 +935,47 @@ mod tests {
         assert_eq!(calls[0].arguments["city"], "北京"); // multibyte value
         assert_eq!(calls[1].name, "get_time");
         assert_eq!(calls[1].arguments["zone"], "UTC");
+    }
+
+    #[test]
+    fn test_parse_pythonic_lfm25_bracket_call() {
+        // LFM2.5 native format (rkNN deployments reply in exactly this shape).
+        let (content, calls) = parse_tool_calls("[shell(command='neomind device list')]").unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "shell");
+        assert_eq!(calls[0].arguments["command"], "neomind device list");
+        assert!(
+            content.trim().is_empty(),
+            "call span removed, got: {content:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_pythonic_after_think_block() {
+        // Only text after </think> is scanned: planned-but-not-made calls in
+        // the reasoning must not become phantom invokes.
+        let text = "<think>I could call shell(command='X') here.\n</think>[shell(command='neomind device list')]";
+        let (_content, calls) = parse_tool_calls(text).unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].arguments["command"], "neomind device list");
+    }
+
+    #[test]
+    fn test_parse_pythonic_multiple_and_multibyte() {
+        let text = "[device_data(device_id='sensor_01'), shell(command='neomind 规则 列表')]";
+        let (_content, calls) = parse_tool_calls(text).unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].name, "device_data");
+        assert_eq!(calls[0].arguments["device_id"], "sensor_01");
+        assert_eq!(calls[1].arguments["command"], "neomind 规则 列表");
+    }
+
+    #[test]
+    fn test_parse_pythonic_ignores_prose_without_keyword_args() {
+        // `f(x)` with no key= inside must not be mistaken for a tool call.
+        let (content, calls) = parse_tool_calls("The result is max(a, b) in general.").unwrap();
+        assert!(calls.is_empty());
+        assert!(content.contains("max(a, b)"));
     }
 
     #[test]

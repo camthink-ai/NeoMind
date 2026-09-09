@@ -1770,12 +1770,25 @@ pub fn parse_response_payload(
         return IpcResponse::from_bytes(payload);
     };
     Ok(IpcResponse::PushOutput {
-        session_id: v.get("session_id").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
+        session_id: v
+            .get("session_id")
+            .and_then(|x| x.as_str())
+            .unwrap_or_default()
+            .to_string(),
         sequence: v.get("sequence").and_then(|x| x.as_u64()).unwrap_or(0),
         data: payload[4 + hlen..].to_vec(),
-        data_type: v.get("data_type").and_then(|x| x.as_str()).unwrap_or("application/octet-stream").to_string(),
-        timestamp: v.get("timestamp").and_then(|x| x.as_i64()).unwrap_or_default(),
-        metadata: v.get("metadata").and_then(|m| if m.is_null() { None } else { Some(m.clone()) }),
+        data_type: v
+            .get("data_type")
+            .and_then(|x| x.as_str())
+            .unwrap_or("application/octet-stream")
+            .to_string(),
+        timestamp: v
+            .get("timestamp")
+            .and_then(|x| x.as_i64())
+            .unwrap_or_default(),
+        metadata: v
+            .get("metadata")
+            .and_then(|m| if m.is_null() { None } else { Some(m.clone()) }),
     })
 }
 
@@ -1829,7 +1842,6 @@ impl IpcFrame {
 // Tests
 // ============================================================================
 
-
 #[cfg(test)]
 mod segmented_tests {
     use super::*;
@@ -1841,7 +1853,14 @@ mod segmented_tests {
         let payload = encode_segmented_payload(header, segment);
         let r = parse_response_payload(&payload).expect("segmented must parse");
         match r {
-            IpcResponse::PushOutput { session_id, sequence, data, data_type, timestamp, metadata } => {
+            IpcResponse::PushOutput {
+                session_id,
+                sequence,
+                data,
+                data_type,
+                timestamp,
+                metadata,
+            } => {
                 assert_eq!(session_id, "s1");
                 assert_eq!(sequence, 7);
                 assert_eq!(data, segment);

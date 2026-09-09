@@ -194,6 +194,7 @@ pub use host::{
 
     set_native_capability_bridge,
     set_push_output_writer,
+    set_push_output_writer_raw,
     AvailableCapabilities,
     CapabilityError,
     CapabilityManifest,
@@ -209,9 +210,9 @@ pub use host::{
     ExtensionContext,
     ExtensionContextConfig,
     FlowControl,
+    PushOutputRawWriterFn,
     // Push mode
     PushOutputWriterFn,
-    PushOutputRawWriterFn,
     SessionStats,
     StreamCapability,
     StreamDataType,

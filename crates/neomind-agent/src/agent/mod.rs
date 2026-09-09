@@ -2364,11 +2364,11 @@ impl Agent {
             };
             AgentMessage::assistant_with_tools_and_thinking(
                 &final_text,
-                tool_calls_with_results,
+                tool_calls_with_results.clone(),
                 &cleaned_thinking,
             )
         } else {
-            AgentMessage::assistant_with_tools(&final_text, tool_calls_with_results)
+            AgentMessage::assistant_with_tools(&final_text, tool_calls_with_results.clone())
         };
         self.internal_state
             .write()
@@ -2377,7 +2377,11 @@ impl Agent {
 
         Ok(AgentResponse {
             message: final_message,
-            tool_calls,
+            // Accumulated across every round of the multi-round loop — the
+            // first round alone under-reports turns where the model
+            // investigates before acting (and made eval metrics blind to
+            // exactly that behavior).
+            tool_calls: tool_calls_with_results,
             memory_context_used: true,
             tools_used,
             processing_time_ms: 0,

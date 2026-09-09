@@ -2143,7 +2143,8 @@ impl MqttAdapter {
                         debug!("Device type for {}: {:?}", device_id, device_type_opt);
 
                         // Parse payload and process for the registered device
-                        if let Ok(json_data) = serde_json::from_slice::<serde_json::Value>(&payload) {
+                        if let Ok(json_data) = serde_json::from_slice::<serde_json::Value>(&payload)
+                        {
                             // Client timestamp (DEF-001) — same policy as the
                             // registered-type branch above.
                             let client_ts_fallback = extract_client_timestamp(&json_data);
@@ -2154,7 +2155,8 @@ impl MqttAdapter {
                             // DO NOT pre-extract the "data" field - it causes double-extraction issues
                             if let Some(dt) = device_type_opt {
                                 let result = extractor.extract(device_id, &dt, &json_data).await;
-                                let point_ts_fb = client_ts_fallback.unwrap_or_else(|| now.timestamp());
+                                let point_ts_fb =
+                                    client_ts_fallback.unwrap_or_else(|| now.timestamp());
                                 debug!(
                                     "Extraction result for device {}: mode={:?}, metrics={}",
                                     device_id,
@@ -2585,9 +2587,10 @@ fn sanitize_auto_device_id(id: String) -> Option<String> {
 /// path, which already honors `payload.timestamp` (DEF-001).
 fn extract_client_timestamp(json: &serde_json::Value) -> Option<i64> {
     const FIELDS: [&str; 5] = ["timestamp", "ts", "ts_ms", "ts_ns", "time"];
-    let raw = FIELDS
-        .iter()
-        .find_map(|f| json.get(f).and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|x| x as i64))))?;
+    let raw = FIELDS.iter().find_map(|f| {
+        json.get(f)
+            .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|x| x as i64)))
+    })?;
     // unit detection by magnitude: ns ~1e18 (>1e17), ms ~1e12 (>1e11),
     // s ~1e9 (>1e8). Thresholds sit well below current epochs and well
     // above the next-smaller unit, so boundary years can't cross.
@@ -3022,18 +3025,33 @@ mod ts_tests {
     #[test]
     fn detects_units_and_fields() {
         let now = chrono::Utc::now().timestamp();
-        assert_eq!(extract_client_timestamp(&json!({"timestamp": now - 7200})), Some(now - 7200));
-        assert_eq!(extract_client_timestamp(&json!({"ts": (now - 60) * 1000})), Some(now - 60));
-        assert_eq!(extract_client_timestamp(&json!({"ts_ns": (now - 1) * 1_000_000_000})), Some(now - 1));
+        assert_eq!(
+            extract_client_timestamp(&json!({"timestamp": now - 7200})),
+            Some(now - 7200)
+        );
+        assert_eq!(
+            extract_client_timestamp(&json!({"ts": (now - 60) * 1000})),
+            Some(now - 60)
+        );
+        assert_eq!(
+            extract_client_timestamp(&json!({"ts_ns": (now - 1) * 1_000_000_000})),
+            Some(now - 1)
+        );
     }
 
     #[test]
     fn rejects_garbage_and_future() {
         let now = chrono::Utc::now().timestamp();
         assert_eq!(extract_client_timestamp(&json!({})), None);
-        assert_eq!(extract_client_timestamp(&json!({"timestamp": "not-a-number"})), None);
-        assert_eq!(extract_client_timestamp(&json!({"timestamp": 123})), None);       // 非纪元
-        assert_eq!(extract_client_timestamp(&json!({"timestamp": now + 3600})), None); // 未来
+        assert_eq!(
+            extract_client_timestamp(&json!({"timestamp": "not-a-number"})),
+            None
+        );
+        assert_eq!(extract_client_timestamp(&json!({"timestamp": 123})), None); // 非纪元
+        assert_eq!(
+            extract_client_timestamp(&json!({"timestamp": now + 3600})),
+            None
+        ); // 未来
     }
 }
 

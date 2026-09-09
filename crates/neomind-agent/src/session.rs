@@ -1130,6 +1130,12 @@ impl SessionManager {
         // the limits for (Settings → Preferences), silently destroying memory.
         let mem_cfg = neomind_storage::MemoryConfig::load();
         let store = neomind_storage::MarkdownMemoryStore::new(&mem_cfg.storage_path);
+        // new() does NOT create the directory tree — only the server's
+        // init() does. Core-path consumers (CLI/eval/embedded) run before or
+        // without that init, and every write into the missing dir failed
+        // silently (write_file error swallowed by the merge below), so
+        // extracted facts vanished. Initialize best-effort; idempotent.
+        let _ = store.init();
         let (user_limit, knowledge_limit) = (mem_cfg.user_char_limit, mem_cfg.knowledge_char_limit);
         let snapshots = self.memory_snapshots.clone();
         let session_id = session_id.to_string();
@@ -1308,7 +1314,11 @@ Assistant: {ar}\n"
         self.store
             .get_session_metadata(session_id)
             .map(|m| m.memory_enabled)
-            .unwrap_or(false)
+            // Bare sessions (no metadata row — core-path consumers like the
+            // CLI/eval create exactly these) default ON: extraction is
+            // budget-capped and background, and a default-off gate was one
+            // half of why cross-session memory stayed empty in practice.
+            .unwrap_or(true)
     }
 
     /// Ensure the session's frozen memory snapshot is loaded and set on the
@@ -1519,6 +1529,15 @@ Assistant: {ar}\n"
         if let Err(e) = self.save_history(session_id, &messages) {
             tracing::error!(session_id = %session_id, error = %e, message = "Failed to save history");
         }
+
+        // Background chat memory extraction — the REST chat path runs this
+        // after every turn (handlers/sessions.rs); the core path must too,
+        // or every non-REST consumer (CLI, embedded, eval) leaves USER.md
+        // empty forever and the memory tool answers from nothing. Awaiting
+        // (not spawning) matches the non-streaming REST semantics and keeps
+        // the next turn's snapshot deterministic.
+        self.maybe_extract_memory(session_id, message, &response.message.content)
+            .await;
 
         Ok(response)
     }

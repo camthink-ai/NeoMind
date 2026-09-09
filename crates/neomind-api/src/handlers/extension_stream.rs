@@ -476,8 +476,8 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                                 ClientMessage::Init { config } => {
                                     if matches!(cap.mode, StreamMode::Stateful | StreamMode::Push) {
                                         // Binary push frames only exist in Push mode.
-                                        binary_push_session =
-                                            cap.mode == StreamMode::Push && binary_requested(&config);
+                                        binary_push_session = cap.mode == StreamMode::Push
+                                            && binary_requested(&config);
                                         // Create session
                                         let sid = Uuid::new_v4().to_string();
                                         let client_info = ClientInfoMessage {
@@ -770,7 +770,8 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                                                         stats: SessionStatsDto::from(&stats),
                                                     };
                                                     if let Ok(json) = serde_json::to_string(&msg) {
-                                                        let _ = ws_out_tx.try_send(WsMessage::Text(json));
+                                                        let _ = ws_out_tx
+                                                            .try_send(WsMessage::Text(json));
                                                     }
                                                 }
 
@@ -792,12 +793,12 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                                             // most recent frame matters more than delivering every one.
                                             let (ws_out_tx, mut ws_out_rx): (OutTx, OutRx) =
                                                 if binary_push_session {
-                                                    let (tx, rx) =
-                                                        mpsc::channel::<WsMessage>(128);
+                                                    let (tx, rx) = mpsc::channel::<WsMessage>(128);
                                                     (OutTx::Mpsc(tx), OutRx::Mpsc(rx))
                                                 } else {
                                                     let (tx, rx) = tokio::sync::watch::channel(
-                                                        WsMessage::Text(String::new()));
+                                                        WsMessage::Text(String::new()),
+                                                    );
                                                     (OutTx::Watch(tx), OutRx::Watch(rx))
                                                 };
                                             tracing::info!(
@@ -806,7 +807,8 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                                                 "Push session channel selected"
                                             );
                                             let ws_sent = std::sync::Arc::new(
-                                                std::sync::atomic::AtomicU64::new(0));
+                                                std::sync::atomic::AtomicU64::new(0),
+                                            );
                                             let ws_sent_task = ws_sent.clone();
                                             let (ws_in_tx, mut ws_in_rx) =
                                                 mpsc::channel::<String>(8);
@@ -969,7 +971,8 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                                                     stats: SessionStatsDto::from(&stats),
                                                 };
                                                 if let Ok(json) = serde_json::to_string(&msg) {
-                                                    let _ = ws_out_tx.send_lossy(WsMessage::Text(json));
+                                                    let _ =
+                                                        ws_out_tx.send_lossy(WsMessage::Text(json));
                                                 }
                                             }
 
@@ -1339,12 +1342,16 @@ fn encode_binary_push_frame(output: &PushOutputMessage) -> WsMessage {
     WsMessage::Binary(frame)
 }
 
-/// Decode an outbound binary push frame. Returns
+/// Decoded parts of an outbound binary push frame:
 /// `(kind, version, sequence, meta_bytes, payload_bytes)`.
+#[cfg(test)]
+type DecodedBinaryPushFrame<'a> = (u8, u8, u64, &'a [u8], &'a [u8]);
+
+/// Decode an outbound binary push frame.
 ///
 /// Mirror of the browser-side parser; kept test-only until a consumer needs it.
 #[cfg(test)]
-fn decode_binary_push_frame(frame: &[u8]) -> Option<(u8, u8, u64, &[u8], &[u8])> {
+fn decode_binary_push_frame(frame: &[u8]) -> Option<DecodedBinaryPushFrame<'_>> {
     if frame.len() < BINARY_FRAME_HEADER_LEN {
         return None;
     }
@@ -1547,8 +1554,12 @@ mod tests {
 
         // Wrong types and explicit false must NOT enable binary — a malformed
         // flag silently downgrading to Text is the safe direction.
-        assert!(!binary_requested(&Some(serde_json::json!({"binary": false}))));
-        assert!(!binary_requested(&Some(serde_json::json!({"binary": "yes"}))));
+        assert!(!binary_requested(&Some(
+            serde_json::json!({"binary": false})
+        )));
+        assert!(!binary_requested(&Some(
+            serde_json::json!({"binary": "yes"})
+        )));
         assert!(!binary_requested(&Some(serde_json::json!({"binary": 1}))));
     }
 
@@ -1605,9 +1616,6 @@ mod tests {
         assert_eq!(msg["session_id"], "sess-1");
         assert_eq!(msg["sequence"], 42);
         assert_eq!(msg["data_type"], "image/jpeg");
-        assert_eq!(
-            msg["data"],
-            BASE64_STANDARD.encode(&output.data).as_str()
-        );
+        assert_eq!(msg["data"], BASE64_STANDARD.encode(&output.data).as_str());
     }
 }

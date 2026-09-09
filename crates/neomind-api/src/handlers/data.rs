@@ -545,22 +545,21 @@ pub async fn query_telemetry_handler(
     let limit = params.limit.unwrap_or(100).min(5000);
 
     // Parse source into a DataSourceId to extract the storage key
-    let ds_id =
-        DataSourceId::parse(&format!("{}:{}", source, metric)).or_else(|| {
-            // Try treating source as a raw storage prefix (e.g. "device:sensor1" → device)
-            let parts: Vec<&str> = source.splitn(2, ':').collect();
-            if parts.len() == 2 {
-                match parts[0] {
-                    "device" => Some(DataSourceId::device(parts[1], metric)),
-                    "extension" => Some(DataSourceId::extension(parts[1], metric)),
-                    "transform" => Some(DataSourceId::transform(parts[1], metric)),
-                    _ => None,
-                }
-            } else {
-                // Bare device ID
-                Some(DataSourceId::device(source, metric))
+    let ds_id = DataSourceId::parse(&format!("{}:{}", source, metric)).or_else(|| {
+        // Try treating source as a raw storage prefix (e.g. "device:sensor1" → device)
+        let parts: Vec<&str> = source.splitn(2, ':').collect();
+        if parts.len() == 2 {
+            match parts[0] {
+                "device" => Some(DataSourceId::device(parts[1], metric)),
+                "extension" => Some(DataSourceId::extension(parts[1], metric)),
+                "transform" => Some(DataSourceId::transform(parts[1], metric)),
+                _ => None,
             }
-        });
+        } else {
+            // Bare device ID
+            Some(DataSourceId::device(source, metric))
+        }
+    });
 
     let ds_id = match ds_id {
         Some(id) => id,

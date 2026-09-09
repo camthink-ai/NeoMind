@@ -21,6 +21,8 @@ use neomind_core::llm::backend::{
 };
 use neomind_core::message::{Content, ContentPart, Message, MessageRole};
 
+use crate::llm_backends::text_tool_calls;
+
 /// Ollama configuration.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct OllamaConfig {
@@ -279,28 +281,6 @@ impl OllamaRuntime {
         }
     }
 
-    /// Format tool calling format instructions for models without native tool support.
-    /// Only includes format rules and examples (tool descriptions are already in the system prompt).
-    fn format_tools_for_text_calling(
-        _tools: &[neomind_core::llm::backend::ToolDefinition],
-    ) -> String {
-        let mut result = String::from("## Tool Calling Format (JSON)\n");
-        result.push_str(
-            "You must call tools using JSON format. Do not just describe what to do.\n\n",
-        );
-        result.push_str("Format:\n");
-        result.push_str("[{\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}]\n\n");
-
-        result.push_str("## Important Rules\n");
-        result.push_str("1. ALWAYS output tool calls as a JSON array\n");
-        result.push_str("2. Don't explain, just call the tool directly\n");
-        result.push_str(
-            "3. Use the exact tool names and parameters from the Available Tools section above\n",
-        );
-
-        result
-    }
-
     /// Convert messages to Ollama format, optionally injecting tool descriptions.
     fn messages_to_ollama_with_tools(
         &self,
@@ -308,11 +288,8 @@ impl OllamaRuntime {
         tools: Option<&[neomind_core::llm::backend::ToolDefinition]>,
         supports_native_tools: bool,
     ) -> Vec<OllamaMessage> {
-        // Safe: tools.is_some_and() guarantees Some if the condition is true
-        let tool_instructions = if !supports_native_tools && tools.is_some_and(|t| !t.is_empty()) {
-            Some(Self::format_tools_for_text_calling(
-                tools.expect("tools must be Some when is_some_and is true"),
-            ))
+        let tool_instructions = if text_tool_calls::needed(supports_native_tools, tools) {
+            Some(text_tool_calls::format_teaching())
         } else {
             None
         };

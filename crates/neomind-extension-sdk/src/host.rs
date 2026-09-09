@@ -1158,8 +1158,11 @@ pub fn send_push_output(msg: &PushOutputMessage) -> crate::ipc_types::Result<()>
             })?,
             None => Vec::new(),
         };
-        let (meta_ptr, meta_len) =
-            if metadata.is_empty() { (std::ptr::null(), 0) } else { (metadata.as_ptr(), metadata.len()) };
+        let (meta_ptr, meta_len) = if metadata.is_empty() {
+            (std::ptr::null(), 0)
+        } else {
+            (metadata.as_ptr(), metadata.len())
+        };
         let rc = unsafe {
             raw(
                 msg.session_id.as_ptr(),

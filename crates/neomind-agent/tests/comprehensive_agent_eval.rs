@@ -6,15 +6,215 @@
 //!   3. Context System — conversation continuity, long-context handling
 //!   4. Task Completion — single-turn / multi-turn / complex resource creation
 //!
-//! Run:
+//! The test self-hosts a sandbox NeoMind API server (fresh data dir, private
+//! port, seeded devices) so the model operates against a REAL platform —
+//! every `neomind` CLI call (in-process dispatch AND subprocess) targets it
+//! via NEOMIND_API_BASE/NEOMIND_API_KEY. Without this, commands hit whatever
+//! server happens to run on :9375 (or nothing) and the model's entire world
+//! is error messages.
+//!
+//! Run (self-contained — no external env needed beyond the LLM backend):
 //!   cargo test -p neomind-agent --test comprehensive_agent_eval -- --ignored --nocapture
+//! Requires target/release/neomind (cargo build -p neomind-cli --release).
 
 use std::sync::Arc;
 use std::time::Instant;
 
 use neomind_agent::llm_backends::{CloudConfig, CloudRuntime, OllamaConfig, OllamaRuntime};
 use neomind_agent::session::SessionManager;
+use neomind_agent::toolkit::{
+    FileEditTool, FileWriteTool, ImageEditTool, MemoryTool, ShellConfig, ToolRegistryBuilder,
+    WebFetchTool,
+};
 use neomind_core::llm::backend::LlmRuntime;
+
+#[cfg(feature = "llamacpp")]
+use neomind_agent::llm_backends::backends::llamacpp::{LlamaCppConfig, LlamaCppRuntime};
+
+// ── sandbox platform ─────────────────────────────────────────────────
+
+/// Self-hosted sandbox: `neomind serve` subprocess on a private port with a
+/// fresh data dir, plus seeded devices so read turns have a real world.
+mod sandbox {
+    use std::io::Read;
+    use std::sync::Mutex;
+
+    static SERVER: Mutex<Option<std::process::Child>> = Mutex::new(None);
+
+    fn serve_binary() -> std::path::PathBuf {
+        let bin =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/release/neomind");
+        if !bin.exists() {
+            panic!(
+                "sandbox needs {}; build it with: cargo build -p neomind-cli --release",
+                bin.display()
+            );
+        }
+        bin
+    }
+
+    fn free_port() -> u16 {
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .expect("bind :0 for a free port")
+            .local_addr()
+            .expect("local addr")
+            .port()
+    }
+
+    /// Start the sandbox server, point the whole test process at it, and
+    /// seed the platform. Idempotent — the second call is a no-op.
+    pub async fn start() {
+        {
+            let guard = SERVER.lock().unwrap();
+            if guard.is_some() {
+                return;
+            }
+        }
+
+        let port = free_port();
+        let data_dir =
+            std::env::temp_dir().join(format!("neomind-eval-sbx-{}", std::process::id()));
+        std::fs::create_dir_all(&data_dir).unwrap();
+        let log_path = data_dir.join("serve.log");
+        let log = std::fs::File::create(&log_path).unwrap();
+        // The default-API-key banner is written on stderr — route it into
+        // the same log or the key can never be harvested.
+        let log_err = log.try_clone().unwrap();
+
+        let mut child = std::process::Command::new(serve_binary())
+            .arg("serve")
+            .arg("--port")
+            .arg(port.to_string())
+            // Run from the sandbox dir: the storage layer falls back to a
+            // CWD-relative legacy `data/` store when it finds one, which
+            // would silently bind the sandbox to the repo's dev data.
+            .current_dir(&data_dir)
+            .env("NEOMIND_DATA_DIR", &data_dir)
+            .stdout(log)
+            .stderr(log_err)
+            .spawn()
+            .expect("spawn sandbox neomind serve");
+
+        // Wait for HTTP readiness, then harvest the auto-generated default
+        // API key from the first-boot banner in the log.
+        let base = format!("http://127.0.0.1:{port}/api");
+        let client = reqwest::Client::new();
+        let mut ready = false;
+        for _ in 0..60 {
+            if client
+                .get(format!("{base}/docs"))
+                .timeout(std::time::Duration::from_secs(2))
+                .send()
+                .await
+                .is_ok_and(|r| r.status().as_u16() == 200)
+            {
+                ready = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        if !ready {
+            let _ = child.kill();
+            panic!("sandbox server failed to become ready; log: {log_path:?}");
+        }
+
+        let mut log_text = String::new();
+        if let Ok(mut f) = std::fs::File::open(&log_path) {
+            let _ = f.read_to_string(&mut log_text);
+        }
+        let api_key = log_text
+            .lines()
+            .find_map(|l| {
+                let idx = l.find("Key:")?;
+                l[idx + 4..]
+                    .split_whitespace()
+                    .next()
+                    .filter(|k| k.starts_with("nmk_"))
+                    .map(String::from)
+            })
+            .unwrap_or_else(|| {
+                let _ = child.kill();
+                panic!("no default API key in sandbox log: {log_path:?}")
+            });
+
+        // Route EVERYTHING (in-process CLI dispatch + subprocess commands)
+        // at the sandbox, and isolate all storage under its data dir.
+        std::env::set_var("NEOMIND_DATA_DIR", &data_dir);
+        std::env::set_var("NEOMIND_API_BASE", &base);
+        std::env::set_var("NEOMIND_API_KEY", &api_key);
+
+        *SERVER.lock().unwrap() = Some(child);
+        eprintln!("sandbox platform ready on :{port} (data: {data_dir:?})");
+
+        seed(&client, &base, &api_key).await;
+    }
+
+    /// Seed the world the eval's read turns assume: sensor_01 / sensor_02 /
+    /// an office sensor, plus one threshold rule. All best-effort — a seed
+    /// failure degrades realism, it must not kill the run.
+    async fn seed(client: &reqwest::Client, base: &str, key: &str) {
+        let auth = |r: reqwest::RequestBuilder| r.bearer_auth(key);
+        let json_post = |url: String, body: serde_json::Value| auth(client.post(url).json(&body));
+
+        // Register a generic sensor type (fresh data dirs ship only cameras).
+        let _ = json_post(
+            format!("{base}/device-types"),
+            serde_json::json!({
+                "device_type": "generic_sensor",
+                "name": "Generic Sensor",
+                "categories": ["sensor"],
+            }),
+        )
+        .send()
+        .await;
+
+        for (id, name) in [
+            ("sensor_01", "办公室温湿度传感器"),
+            ("sensor_02", "仓库温湿度传感器"),
+            ("light_living", "客厅智能灯"),
+        ] {
+            let resp = json_post(
+                format!("{base}/devices"),
+                serde_json::json!({
+                    "device_type": "generic_sensor",
+                    "device_id": id,
+                    "name": name,
+                    "adapter_type": "mqtt",
+                    "connection_config": {"topic": format!("neomind/devices/{id}")},
+                }),
+            )
+            .send()
+            .await;
+            if !resp.as_ref().is_ok_and(|r| r.status().is_success()) {
+                eprintln!("sandbox seed: device {id} failed: {resp:?}");
+            }
+        }
+
+        let _ = json_post(
+            format!("{base}/rules"),
+            serde_json::json!({
+                "name": "温度告警规则",
+                "condition": {
+                    "condition_type": "comparison",
+                    "source": "device:sensor_01:temperature",
+                    "operator": "greater_than",
+                    "threshold": 35,
+                },
+                "actions": [{"type": "notify", "message": "温度超过35度"}],
+            }),
+        )
+        .send()
+        .await;
+    }
+
+    /// Kill the sandbox server (call at test end; best-effort).
+    pub fn stop() {
+        if let Some(mut child) = SERVER.lock().unwrap().take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
 
 // ── helpers ───────────────────────────────────────────────────────────
 
@@ -23,23 +223,130 @@ fn ollama_up() -> bool {
     std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(2)).is_ok()
 }
 
+/// llama.cpp standalone server (llama-server) mode, selected by setting
+/// LLAMACPP_ENDPOINT (e.g. http://127.0.0.1:8080). The server has the model
+/// loaded at startup; MODEL is forwarded in the request body, so give
+/// llama-server a matching `--alias`.
+///
+/// Probes /props for the real context window and applies it as the
+/// capabilities override — without it `max_context_length()` hardcodes 4096
+/// and the session truncates history against a phantom budget, starving
+/// cross-turn context and memory recall.
+#[cfg(feature = "llamacpp")]
+async fn llamacpp_llm() -> Arc<dyn LlmRuntime> {
+    let endpoint = std::env::var("LLAMACPP_ENDPOINT").unwrap();
+    let model = std::env::var("MODEL").unwrap_or_default();
+    let runtime = LlamaCppRuntime::new(LlamaCppConfig {
+        endpoint,
+        model,
+        timeout_secs: 240,
+        api_key: None,
+        cache_prompt: true,
+    })
+    .unwrap();
+    let runtime = match runtime.detect_capabilities().await {
+        Some(caps) => {
+            eprintln!(
+                "llama.cpp capabilities: n_ctx={}, tools={}, thinking={}, multimodal={}",
+                caps.max_context,
+                caps.supports_tools,
+                caps.supports_thinking,
+                caps.supports_multimodal
+            );
+            runtime.with_capabilities_override(
+                caps.supports_multimodal,
+                caps.supports_thinking,
+                caps.supports_tools,
+                caps.max_context,
+            )
+        }
+        None => {
+            eprintln!("warning: /props probe failed — assuming 4096 context");
+            runtime
+        }
+    };
+    Arc::new(runtime)
+}
+
+#[cfg(not(feature = "llamacpp"))]
+async fn llamacpp_llm() -> Arc<dyn LlmRuntime> {
+    panic!("LLAMACPP_ENDPOINT is set but the llamacpp feature is off — rebuild with --features llamacpp");
+}
+
 async fn new_session() -> (SessionManager, String) {
     let sm = SessionManager::memory();
+
+    // Production-parity tool set. The real server's chat path registers the
+    // full toolkit (shell first-class + standalone tools); without this the
+    // session only carries the interaction tools from `Agent::new`
+    // (ask_user / confirm_action / clarify_intent). A native-tools model
+    // then can only ever ask questions — earlier scores came from models
+    // emitting out-of-schema `shell` calls through the TEXT protocol, which
+    // `parse_tool_calls` accepts but native OpenAI-tools backends never
+    // produce. VisionTool is VLM-gated and extensions need installed
+    // packages, so both stay out (matches a text-only production backend).
+    let data_dir =
+        std::path::PathBuf::from(std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| {
+            std::env::temp_dir()
+                .join("neomind-eval-data")
+                .display()
+                .to_string()
+        }));
+    let mut registry = ToolRegistryBuilder::new()
+        .with_shell_tool(Some(ShellConfig {
+            enabled: true,
+            timeout_secs: 30,
+            max_output_chars: 10_000,
+        }))
+        .build();
+    registry.register(Arc::new(
+        neomind_agent::toolkit::skill_tool::SkillTool::with_data_dir(
+            sm.skill_registry(),
+            data_dir.clone(),
+        ),
+    ));
+    registry.register(Arc::new(WebFetchTool::new()));
+    registry.register(Arc::new(FileWriteTool::new(data_dir.clone())));
+    registry.register(Arc::new(FileEditTool::new(data_dir.clone())));
+    registry.register(Arc::new(ImageEditTool::new(data_dir.clone())));
+    let memory_store = neomind_storage::MarkdownMemoryStore::new(
+        &neomind_storage::MemoryConfig::load().storage_path,
+    );
+    registry.register(Arc::new(MemoryTool::new(Arc::new(
+        tokio::sync::RwLock::new(memory_store),
+    ))));
+    sm.set_tool_registry(Arc::new(registry)).await;
+
     let sid = sm.create_session().await.unwrap();
 
-    let llm: Arc<dyn LlmRuntime> = if let Ok(api_key) = std::env::var("LLM_API_KEY") {
-        // Cloud LLM mode (GLM-5, OpenAI, etc.)
-        let endpoint = std::env::var("LLM_ENDPOINT")
-            .unwrap_or("https://open.bigmodel.cn/api/coding/paas/v4".into());
+    // Memory recall is one of the measured dimensions — the R5/R10/R15
+    // rounds plant facts and query them back. Enable the session memory
+    // system so extraction ↔ recall is exercised end-to-end.
+    let _ = sm.toggle_memory(&sid, true).await;
+
+    let llm: Arc<dyn LlmRuntime> = if std::env::var("LLAMACPP_ENDPOINT").is_ok() {
+        // llama.cpp standalone server mode (native tools path — run llama-server
+        // with --jinja so the model's own chat template handles tool calls)
+        llamacpp_llm().await
+    } else if let Ok(api_key) = std::env::var("LLM_API_KEY") {
+        // Cloud LLM mode. MODEL names containing "deepseek" use the built-in
+        // DeepSeek provider (official endpoint, 128k context, native function
+        // calling) — mirrors how production users configure DeepSeek. Other
+        // models take the custom-endpoint path (LLM_ENDPOINT), which is the
+        // proxy/vLLM scenario.
         let model = std::env::var("MODEL").unwrap_or("glm-5".into());
-        Arc::new(
-            CloudRuntime::new(
-                CloudConfig::custom(api_key, endpoint)
-                    .with_model(model)
-                    .with_timeout_secs(180),
-            )
-            .unwrap(),
-        )
+        let cfg = if model.to_lowercase().contains("deepseek") {
+            CloudConfig::deepseek(api_key)
+                .with_model(model)
+                .with_timeout_secs(600)
+        } else {
+            let endpoint = std::env::var("LLM_ENDPOINT")
+                .unwrap_or("https://open.bigmodel.cn/api/coding/paas/v4".into());
+            CloudConfig::custom(api_key, endpoint)
+                .with_model(model)
+                .with_timeout_secs(600)
+        };
+        Arc::new(CloudRuntime::new(cfg).unwrap())
     } else {
         // Local Ollama mode
         let model = std::env::var("MODEL").unwrap_or("qwen3.5:2b".into());
@@ -58,35 +365,27 @@ async fn new_session() -> (SessionManager, String) {
         .unwrap()
         .set_custom_llm(llm)
         .await;
-    // Cloud OpenAI-compatible custom endpoints take the TEXT tool-calling path
-    // (supports_function_calling=false for CloudProvider::Custom), but the OpenAI
-    // backend lacks the format-teaching injection that the Ollama backend has
-    // (format_tools_for_text_calling). Inject it as a system-prompt suffix so the
-    // model knows HOW to emit tool calls; without this the eval measures the
-    // integration gap, not the model.
-    sm.get_session(&sid)
-        .await
-        .unwrap()
-        .llm_interface()
-        .set_system_prompt_suffix(Some(
-            "## Tool Calling Format (JSON)\n\
-             You must call tools using JSON format. Do not just describe what to do.\n\n\
-             Format:\n\
-             [{\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}]\n\n\
-             ## Important Rules\n\
-             1. ALWAYS output tool calls as a JSON array\n\
-             2. Don't explain, just call the tool directly\n\
-             3. Use the exact tool names and parameters from the Available Tools section above\n"
-                .to_string(),
-        ))
-        .await;
+    // No manual format-teaching suffix needed anymore: every backend now
+    // injects the text tool-calling protocol itself when the model reports
+    // no native function calling (`llm_backends::text_tool_calls`), so this
+    // eval measures the model, not the integration gap.
     (sm, sid)
 }
+
+// Process-wide turn telemetry — send() sees every turn but not the Metrics
+// struct the scenarios own, so wall-clock latency and tool-turn counts
+// accumulate here for the final report.
+static TOTAL_ELAPSED_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static TURNS_WITH_TOOLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 async fn send(sm: &SessionManager, sid: &str, msg: &str) -> MsgResult {
     let start = Instant::now();
     let resp = sm.process_message(sid, msg).await.unwrap();
     let elapsed = start.elapsed();
+    TOTAL_ELAPSED_MS.fetch_add(
+        elapsed.as_millis() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
     // Extract CLI commands from shell tool calls
     let shell_commands: Vec<String> = resp
         .tool_calls
@@ -95,6 +394,9 @@ async fn send(sm: &SessionManager, sid: &str, msg: &str) -> MsgResult {
         .filter_map(|t| t.arguments.get("command").and_then(|v| v.as_str()))
         .map(|s| s.to_string())
         .collect();
+    if !shell_commands.is_empty() {
+        TURNS_WITH_TOOLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
 
     MsgResult {
         content: resp.message.content.to_string(),
@@ -156,7 +458,6 @@ struct Metrics {
     total_rounds: usize,
 
     // Tool system
-    turns_with_tools: usize,
     tools_correct: usize,
     tools_total_expected: usize,
     multi_tool_attempts: usize,
@@ -178,9 +479,7 @@ struct Metrics {
     multi_turn_success: usize,
     resource_creation_tasks: usize,
     resource_creation_success: usize,
-
     // Performance
-    total_elapsed_ms: u64,
 }
 
 impl Metrics {
@@ -226,13 +525,6 @@ impl Metrics {
             self.memory_recall_success as f64 / self.memory_recall_queries as f64 * 100.0
         }
     }
-    fn avg_latency(&self) -> u64 {
-        if self.total_turns == 0 {
-            0
-        } else {
-            self.total_elapsed_ms / (self.total_turns as u64)
-        }
-    }
 }
 
 // ── Test scenarios ────────────────────────────────────────────────────
@@ -251,7 +543,6 @@ async fn r1_device_management(sm: &SessionManager, sid: &str, m: &mut Metrics) -
         m.tools_correct += 1;
     }
     m.tools_total_expected += 1;
-    m.turns_with_tools += if r.shell_commands.is_empty() { 0 } else { 1 };
     m.single_turn_tasks += 1;
     if r.has_domain("device") {
         m.single_turn_success += 1;
@@ -1054,10 +1345,31 @@ static SCENARIO_NAMES: &[&str] = &[
 #[tokio::test]
 #[ignore = "Requires Ollama. cargo test -p neomind-agent --test comprehensive_agent_eval -- --ignored --nocapture"]
 async fn comprehensive_20round_evaluation() -> anyhow::Result<()> {
-    if !ollama_up() && std::env::var("LLM_API_KEY").is_err() {
-        eprintln!("Neither Ollama nor LLM_API_KEY available, skipping");
+    if !ollama_up()
+        && std::env::var("LLM_API_KEY").is_err()
+        && std::env::var("LLAMACPP_ENDPOINT").is_err()
+    {
+        eprintln!("Neither Ollama, llama.cpp, nor LLM_API_KEY available, skipping");
         return Ok(());
     }
+
+    // Diagnostics: set EVAL_TRACE=1 to surface the crate's tracing output
+    // (filter via RUST_LOG, default neomind_agent=debug) — shows the raw LLM
+    // responses and parsed tool-call counts per turn.
+    if std::env::var("EVAL_TRACE").is_ok() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "neomind_agent=debug".into()),
+            )
+            .with_writer(std::io::stderr)
+            .try_init();
+    }
+
+    // Self-hosted sandbox platform: fresh data dir, private port, seeded
+    // devices — the model's CLI calls operate on a real world instead of
+    // 401s against whatever server happens to run on :9375.
+    sandbox::start().await;
 
     let model = std::env::var("MODEL").unwrap_or("qwen3.5:2b".into());
     println!("\n{}", "═".repeat(70));
@@ -1103,7 +1415,6 @@ async fn comprehensive_20round_evaluation() -> anyhow::Result<()> {
         // Accumulate
         total_metrics.total_rounds += 1;
         total_metrics.total_turns += round_metrics.total_turns;
-        total_metrics.turns_with_tools += round_metrics.turns_with_tools;
         total_metrics.tools_correct += round_metrics.tools_correct;
         total_metrics.tools_total_expected += round_metrics.tools_total_expected;
         total_metrics.multi_tool_attempts += round_metrics.multi_tool_attempts;
@@ -1119,7 +1430,6 @@ async fn comprehensive_20round_evaluation() -> anyhow::Result<()> {
         total_metrics.multi_turn_success += round_metrics.multi_turn_success;
         total_metrics.resource_creation_tasks += round_metrics.resource_creation_tasks;
         total_metrics.resource_creation_success += round_metrics.resource_creation_success;
-        total_metrics.total_elapsed_ms += round_metrics.total_elapsed_ms;
     }
 
     let total_elapsed = total_start.elapsed();
@@ -1133,7 +1443,9 @@ async fn comprehensive_20round_evaluation() -> anyhow::Result<()> {
     println!("  Rounds:          {}", total_metrics.total_rounds);
     println!("  Total Turns:     {}", total_metrics.total_turns);
     println!("  Total Time:      {:.1}s", total_elapsed.as_secs_f64());
-    println!("  Avg Latency:     {}ms/turn", total_metrics.avg_latency());
+    let avg_ms = TOTAL_ELAPSED_MS.load(std::sync::atomic::Ordering::Relaxed)
+        / total_metrics.total_turns.max(1) as u64;
+    println!("  Avg Latency:     {avg_ms}ms/turn");
 
     println!("\n[Tool System]");
     println!(
@@ -1142,11 +1454,12 @@ async fn comprehensive_20round_evaluation() -> anyhow::Result<()> {
         total_metrics.tools_correct,
         total_metrics.tools_total_expected
     );
+    let turns_tools = TURNS_WITH_TOOLS.load(std::sync::atomic::Ordering::Relaxed);
     println!(
         "  Turns with Tools:    {}/{} ({:.0}%)",
-        total_metrics.turns_with_tools,
+        turns_tools,
         total_metrics.total_turns,
-        total_metrics.turns_with_tools as f64 / total_metrics.total_turns as f64 * 100.0
+        turns_tools as f64 / total_metrics.total_turns as f64 * 100.0
     );
     println!(
         "  Multi-Tool Rate:     {}/{} ({:.0}%)",
@@ -1221,12 +1534,17 @@ async fn comprehensive_20round_evaluation() -> anyhow::Result<()> {
 
     println!("\n{}", "═".repeat(70));
 
-    // Sanity checks
+    // Sanity checks — scale with ROUNDS (every scenario runs exactly 15
+    // turns). ROUNDS=5 quick mode must not fail the 20-round expectation.
+    let min_expected_turns = max_rounds * 15;
     assert!(
-        total_metrics.total_turns >= 300,
-        "Should have 300+ turns across 20 rounds, got {}",
+        total_metrics.total_turns >= min_expected_turns,
+        "Should have {}+ turns across {} rounds, got {}",
+        min_expected_turns,
+        max_rounds,
         total_metrics.total_turns
     );
 
+    sandbox::stop();
     Ok(())
 }

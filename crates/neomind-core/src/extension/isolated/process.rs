@@ -995,7 +995,8 @@ impl IsolatedExtension {
                 // Parse response — segmented binary payloads (push hot
                 // path) are handled by the SDK parser; legacy whole-JSON
                 // payloads parse exactly as before.
-                let response = match neomind_extension_sdk::parse_response_payload(payload.as_ref()) {
+                let response = match neomind_extension_sdk::parse_response_payload(payload.as_ref())
+                {
                     Ok(r) => {
                         // Debug: log StreamSessionInit responses specifically
                         if let IpcResponse::StreamSessionInit {
