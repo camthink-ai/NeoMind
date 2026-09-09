@@ -374,5 +374,7 @@
   "marketSourceReset": "恢复默认",
   "marketSourceSaved": "市场源已更新",
   "chatHistoryDepth": "对话历史深度",
-  "chatHistoryDepthDesc": "聊天发送给模型的最近对话轮数（定时智能体不受影响，用各自设置）"
+  "chatHistoryDepthDesc": "聊天发送给模型的最近对话轮数（定时智能体不受影响，用各自设置）",
+  "chatTurnTimeout": "单轮对话时间预算",
+  "chatTurnTimeoutDesc": "一轮对话中多步工具调用的总时限，超时后强制总结收尾（默认 30 分钟；长任务可调大）"
 }

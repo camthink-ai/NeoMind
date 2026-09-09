@@ -317,7 +317,13 @@ pub async fn process_stream_events_with_safeguards(
         // pathological loop grinds forever with no text answer (observed:
         // 16+ min of verify rounds). Exiting here falls through to the
         // forced-summary path below, so the user ALWAYS gets a text reply.
-        const TURN_WALL_CLOCK_BUDGET: std::time::Duration = std::time::Duration::from_secs(240);
+        // Configurable via /api/settings/agent `chat_turn_timeout_secs`
+        // (Settings → Preferences); default 1800s. The original hardcoded
+        // 240s cut legitimate long multi-step tasks (thinking-model rounds +
+        // slow tool executions) off mid-task — the agent "stopped halfway".
+        let turn_wall_clock_budget = std::time::Duration::from_secs(
+            neomind_storage::AgentDefaults::get().chat_turn_timeout_secs,
+        );
         let turn_started_at = Instant::now();
         // Accumulate ALL tool results across rounds for final summary
         let mut all_round_tool_results: Vec<(String, String)> = Vec::new();
@@ -1149,10 +1155,11 @@ pub async fn process_stream_events_with_safeguards(
                 // or give the final answer.
 
                 // Check iteration limit, wall-clock budget and duplicate detection
-                let wall_clock_exhausted = turn_started_at.elapsed() >= TURN_WALL_CLOCK_BUDGET;
+                let wall_clock_exhausted = turn_started_at.elapsed() >= turn_wall_clock_budget;
                 if wall_clock_exhausted {
                     tracing::warn!(
                         elapsed = ?turn_started_at.elapsed(),
+                        budget_secs = turn_wall_clock_budget.as_secs(),
                         rounds = tool_iteration_count + 1,
                         "Turn wall-clock budget exhausted — exiting tool loop for the final summary"
                     );

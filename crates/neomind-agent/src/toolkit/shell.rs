@@ -831,24 +831,15 @@ fn kill_process_by_pid(pid: Option<u32>) {
     }
 }
 
-/// Tokenize a `neomind` command line into an argv vector, respecting single
-/// and double quotes and backslash escapes.
-///
-/// This is NOT a full shell parser — it deliberately ignores pipes,
-/// redirections, `$` expansions, and command separators. Simple truncation
-/// pipes (`| head -100`) are handled one level up by
-/// [`split_truncation_pipeline`]; anything else is left for the real shell
-/// (subprocess path) to interpret.
-///
-/// The first token is expected to be `neomind`. Returns an error if the input
-/// has unbalanced quotes (so the caller can fall back to the subprocess and
-/// surface the real shell error message).
 /// A supported truncation stage of a `| head/tail` pipeline.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum TruncationOp {
     Head,
     Tail,
 }
+
+/// Truncation stages of a split pipeline: `(op, line_count)` per stage.
+type TruncationStages = Vec<(TruncationOp, usize)>;
 
 /// Split a command line into its base command plus an in-process-able
 /// truncation pipeline. Models routinely decorate queries as
@@ -860,7 +851,7 @@ enum TruncationOp {
 /// Returns `(base_command, merge_stderr, stages)`; `merge_stderr` is set when
 /// the base ends with `2>&1` (stderr is folded into stdout, matching what
 /// the shell would have produced).
-fn split_truncation_pipeline(trimmed: &str) -> Option<(String, bool, Vec<(TruncationOp, usize)>)> {
+fn split_truncation_pipeline(trimmed: &str) -> Option<(String, bool, TruncationStages)> {
     let (base_raw, pipe_part) = match trimmed.split_once('|') {
         Some((b, p)) => (b.trim(), Some(p)),
         None => (trimmed, None),
@@ -936,6 +927,18 @@ fn apply_truncation_pipeline(
     output
 }
 
+/// Tokenize a `neomind` command line into an argv vector, respecting single
+/// and double quotes and backslash escapes.
+///
+/// This is NOT a full shell parser — it deliberately ignores pipes,
+/// redirections, `$` expansions, and command separators. Simple truncation
+/// pipes (`| head -100`) are handled one level up by
+/// [`split_truncation_pipeline`]; anything else is left for the real shell
+/// (subprocess path) to interpret.
+///
+/// The first token is expected to be `neomind`. Returns an error if the input
+/// has unbalanced quotes (so the caller can fall back to the subprocess and
+/// surface the real shell error message).
 fn tokenize_neomind_command(input: &str) -> std::result::Result<Vec<String>, String> {
     // Shell-construct guard: a pipe / redirection / command-substitution char
     // OUTSIDE quotes means this is a real shell command line, not a pure

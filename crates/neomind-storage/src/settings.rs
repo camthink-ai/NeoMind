@@ -428,6 +428,13 @@ pub struct AgentDefaults {
     /// scheduled agents keep their per-agent context_window_size. Default 50.
     #[serde(default = "default_agent_chat_history_depth")]
     pub chat_history_depth: usize,
+    /// Wall-clock budget for ONE interactive chat turn (all multi-round tool
+    /// loop rounds combined). When exhausted the loop exits into the forced
+    /// summary so the user always gets a text reply. Distinct from
+    /// `execution_timeout_secs` (scheduled-agent path) and from the
+    /// per-stream duration cap. Default 1800s.
+    #[serde(default = "default_agent_chat_turn_timeout")]
+    pub chat_turn_timeout_secs: u64,
 }
 
 fn default_agent_max_rounds() -> u32 {
@@ -448,6 +455,9 @@ fn default_agent_top_p() -> f32 {
 fn default_agent_chat_history_depth() -> usize {
     50
 }
+fn default_agent_chat_turn_timeout() -> u64 {
+    1800
+}
 
 impl Default for AgentDefaults {
     fn default() -> Self {
@@ -459,6 +469,7 @@ impl Default for AgentDefaults {
             default_top_p: default_agent_top_p(),
             default_thinking_enabled: None,
             chat_history_depth: default_agent_chat_history_depth(),
+            chat_turn_timeout_secs: default_agent_chat_turn_timeout(),
         }
     }
 }

@@ -326,6 +326,7 @@ function AgentDefaultsSection() {
     default_top_p: number
     default_thinking_enabled: boolean | null
     chat_history_depth: number
+    chat_turn_timeout_secs: number
   } | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -357,6 +358,15 @@ function AgentDefaultsSection() {
     { v: 60, l: "1 min" }, { v: 180, l: "3 min" }, { v: 300, l: "5 min" },
     { v: 600, l: "10 min" }, { v: 1800, l: "30 min" },
   ]
+  // Chat turn budget: include the stored value even when it was set via API
+  // outside this list, so the Select never renders blank.
+  const baseTurnOpts = [
+    { v: 300, l: "5 min" }, { v: 600, l: "10 min" }, { v: 1200, l: "20 min" },
+    { v: 1800, l: "30 min" }, { v: 3600, l: "1 h" }, { v: 7200, l: "2 h" },
+  ]
+  const chatTurnOpts = baseTurnOpts.some((o) => o.v === config.chat_turn_timeout_secs)
+    ? baseTurnOpts
+    : [...baseTurnOpts, { v: config.chat_turn_timeout_secs, l: `${Math.round(config.chat_turn_timeout_secs / 60)} min` }].sort((a, b) => a.v - b.v)
   const concOpts = [2, 4, 6, 8, 12, 16]
   const tempOpts = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
   const topPOpts = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
@@ -381,6 +391,14 @@ function AgentDefaultsSection() {
             <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
             <SelectContent>
               {timeoutOpts.map((o) => <SelectItem key={o.v} value={String(o.v)}>{o.l}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </SettingsRow>
+        <SettingsRow label={t("settings:chatTurnTimeout")} description={t("settings:chatTurnTimeoutDesc")}>
+          <Select value={String(config.chat_turn_timeout_secs)} onValueChange={(v) => saveConfig({ chat_turn_timeout_secs: +v })}>
+            <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {chatTurnOpts.map((o) => <SelectItem key={o.v} value={String(o.v)}>{o.l}</SelectItem>)}
             </SelectContent>
           </Select>
         </SettingsRow>

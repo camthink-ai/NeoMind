@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Chat turn time budget is now configurable (default 1800s) — agent no longer stops halfway on long tasks
+- **Root cause of "agent 运行一半自己停下来":** the streaming tool loop carried a hardcoded 240-second wall-clock budget (`TURN_WALL_CLOCK_BUDGET`, added 2026-08-22 to guarantee a text reply on pathological loops). It covers ALL rounds of one turn — every thinking-model LLM round plus every tool execution — so a legitimate multi-step task (build pipeline/dashboard/bridge on a gateway) with a cloud reasoning model hit the 4-minute mark mid-task, exited the loop, and the forced-summary prompt explicitly forbade further tool calls. Tasks that fit under 4 minutes finished fine, which is why the failure looked intermittent; a user-side "long-task discipline" system prompt could only counter the model's *voluntary* early wrap-ups, never this forced exit.
+- The budget is now `AgentDefaults.chat_turn_timeout_secs`, default **1800s** (30 min), clamped 60–7200 via `PUT /api/settings/agent`, editable in Settings → Preferences (5 min–2 h presets; an API-set value outside the presets still renders). Read once per turn in `stream_core.rs` — applies from the next turn, never mid-flight. The safety intent survives: exhausting the budget still falls through to the forced summary so the user always gets a text reply.
+
+---
+
 ## [0.9.23] - 2026-09-03 — extension stream gains binary push frames (opt-in, double-base64 eliminated)
 
 ### Binary push frames on `/api/extensions/:id/stream`

@@ -344,6 +344,8 @@ pub struct AgentDefaultsRequest {
     pub default_thinking_enabled: Option<bool>,
     /// Chat history depth in turns (5-200)
     pub chat_history_depth: Option<usize>,
+    /// Wall-clock budget for one interactive chat turn, seconds (60-7200)
+    pub chat_turn_timeout_secs: Option<u64>,
 }
 
 /// Get agent execution defaults (max_rounds, timeout, concurrency, sampling).
@@ -364,6 +366,7 @@ pub async fn get_agent_defaults(
         "default_top_p": config.default_top_p,
         "default_thinking_enabled": config.default_thinking_enabled,
         "chat_history_depth": config.chat_history_depth,
+        "chat_turn_timeout_secs": config.chat_turn_timeout_secs,
     }))
 }
 
@@ -390,6 +393,10 @@ pub async fn update_agent_defaults(
             .chat_history_depth
             .map(|d| d.clamp(5, 200))
             .unwrap_or(existing.chat_history_depth),
+        chat_turn_timeout_secs: req
+            .chat_turn_timeout_secs
+            .map(|s| s.clamp(60, 7200))
+            .unwrap_or(existing.chat_turn_timeout_secs),
     };
 
     let settings_store = SettingsStore::open_default()
@@ -417,6 +424,7 @@ pub async fn update_agent_defaults(
         "default_top_p": config.default_top_p,
         "default_thinking_enabled": config.default_thinking_enabled,
         "chat_history_depth": config.chat_history_depth,
+        "chat_turn_timeout_secs": config.chat_turn_timeout_secs,
     }))
 }
 

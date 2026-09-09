@@ -374,5 +374,7 @@
   "marketSourceReset": "Reset to default",
   "marketSourceSaved": "Marketplace source updated",
   "chatHistoryDepth": "Chat History Depth",
-  "chatHistoryDepthDesc": "Recent conversation turns sent to the model in chat (scheduled agents use their own setting)"
+  "chatHistoryDepthDesc": "Recent conversation turns sent to the model in chat (scheduled agents use their own setting)",
+  "chatTurnTimeout": "Chat Turn Time Budget",
+  "chatTurnTimeoutDesc": "Total wall-clock budget for one chat turn's multi-step tool loop; exceeding it forces a final summary (default 30 min; raise it for long tasks)"
 }
