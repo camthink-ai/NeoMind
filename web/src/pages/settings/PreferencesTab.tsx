@@ -359,14 +359,17 @@ function AgentDefaultsSection() {
     { v: 600, l: "10 min" }, { v: 1800, l: "30 min" },
   ]
   // Chat turn budget: include the stored value even when it was set via API
-  // outside this list, so the Select never renders blank.
+  // outside this list, so the Select never renders blank. A pre-0.9.24
+  // backend omits the field entirely — treat that as the server default
+  // (1800s) instead of rendering "NaN min".
+  const chatTurnValue = config.chat_turn_timeout_secs || 1800
   const baseTurnOpts = [
     { v: 300, l: "5 min" }, { v: 600, l: "10 min" }, { v: 1200, l: "20 min" },
     { v: 1800, l: "30 min" }, { v: 3600, l: "1 h" }, { v: 7200, l: "2 h" },
   ]
-  const chatTurnOpts = baseTurnOpts.some((o) => o.v === config.chat_turn_timeout_secs)
+  const chatTurnOpts = baseTurnOpts.some((o) => o.v === chatTurnValue)
     ? baseTurnOpts
-    : [...baseTurnOpts, { v: config.chat_turn_timeout_secs, l: `${Math.round(config.chat_turn_timeout_secs / 60)} min` }].sort((a, b) => a.v - b.v)
+    : [...baseTurnOpts, { v: chatTurnValue, l: `${Math.round(chatTurnValue / 60)} min` }].sort((a, b) => a.v - b.v)
   const concOpts = [2, 4, 6, 8, 12, 16]
   const tempOpts = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
   const topPOpts = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
@@ -395,7 +398,7 @@ function AgentDefaultsSection() {
           </Select>
         </SettingsRow>
         <SettingsRow label={t("settings:chatTurnTimeout")} description={t("settings:chatTurnTimeoutDesc")}>
-          <Select value={String(config.chat_turn_timeout_secs)} onValueChange={(v) => saveConfig({ chat_turn_timeout_secs: +v })}>
+          <Select value={String(chatTurnValue)} onValueChange={(v) => saveConfig({ chat_turn_timeout_secs: +v })}>
             <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
             <SelectContent>
               {chatTurnOpts.map((o) => <SelectItem key={o.v} value={String(o.v)}>{o.l}</SelectItem>)}
