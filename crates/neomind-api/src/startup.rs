@@ -103,6 +103,24 @@ impl StartupLogger {
             "{}",
             color("└─────────────────────────────────────────┘", ANSI_CYAN)
         );
+        // A server built without the `static` feature still runs the API
+        // fine, but every UI route serves a "not embedded" page — this
+        // bit operators MORE than once (they saw a broken-looking page
+        // and assumed the server was broken). Say it loudly here too.
+        #[cfg(not(feature = "static"))]
+        {
+            println!(
+                "{} {}",
+                color("⚠", ANSI_YELLOW),
+                color(
+                    "Web UI not embedded — API only. \
+                     Rebuild with --features static to serve the dashboard.",
+                    ANSI_YELLOW
+                )
+            );
+            println!();
+        }
+        #[cfg(feature = "static")]
         println!();
     }
 

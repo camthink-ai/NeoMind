@@ -357,11 +357,25 @@ impl ExtensionMetricsCollector {
             );
 
             if metric_values.is_empty() {
-                debug!(
-                    category = "extensions",
-                    extension_id = %extension_id,
-                    "No metric values produced"
-                );
+                // An extension that DECLARES metrics returning zero values
+                // is a broken IPC (stale registration, crashed runner) —
+                // debug hides it until someone notices a flat chart.
+                // Warn with the declared count so it's actionable.
+                if !info.metrics.is_empty() {
+                    warn!(
+                        category = "extensions",
+                        extension_id = %extension_id,
+                        declared = info.metrics.len(),
+                        "Extension declares {} metrics but produced 0 values —                          IPC may be broken (stale registration or crashed runner);                          consider reloading the extension",
+                        info.metrics.len()
+                    );
+                } else {
+                    debug!(
+                        category = "extensions",
+                        extension_id = %extension_id,
+                        "No metric values produced"
+                    );
+                }
                 continue;
             }
 
