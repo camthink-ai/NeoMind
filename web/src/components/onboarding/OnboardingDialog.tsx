@@ -137,34 +137,31 @@ export function OnboardingDialog({ open, onOpenChange, status, onDismiss }: Onbo
         <X className="w-5 h-5" />
       </button>
 
-      {/* Scrollable content — the header of every step 2–4 anchors at the
-          same top spot (switching keeps the title in place), while the step
-          content below it centers in the remaining space; only the short
-          Ready step visibly moves. The welcome step is a landing cover and
-          centers as one block instead — a top-crammed cover reads as broken.
-          Known tradeoff: the 1→2 switch moves the title, the only place the
-          anchor breaks. */}
+      {/* Scrollable content — every step centers vertically as one block:
+          uniform treatment across all four steps beats a stable title
+          anchor, per iteration with the design. Auto margins collapse when
+          content overflows, degrading to top-aligned scrolling. Bottom
+          padding exceeds the top so the centered block rides slightly above
+          center — pure geometric centering reads as sitting too low. */}
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-5xl mx-auto px-6 sm:px-10 min-h-full flex flex-col py-8 sm:py-10">
-          {step === "welcome" && (
-            <div className="my-auto w-full">
-              <WelcomeStep />
-            </div>
-          )}
-          {step === "llm" && (
-            <SetupStep
-              which="llm"
-              status={status}
-              onAction={handleAction}
-              onOpenBuiltinWizard={() => setBuiltinWizardOpen(true)}
-            />
-          )}
-          {step === "device" && (
-            <SetupStep which="device" status={status} onAction={handleAction} />
-          )}
+        <div className="max-w-5xl mx-auto px-6 sm:px-10 min-h-full flex flex-col pt-8 sm:pt-10 pb-20 sm:pb-28">
+          <div className="my-auto w-full">
+            {step === "welcome" && <WelcomeStep />}
+            {step === "llm" && (
+              <SetupStep
+                which="llm"
+                status={status}
+                onAction={handleAction}
+                onOpenBuiltinWizard={() => setBuiltinWizardOpen(true)}
+              />
+            )}
+            {step === "device" && (
+              <SetupStep which="device" status={status} onAction={handleAction} />
+            )}
             {step === "ready" && (
               <ReadyStep status={status} onPromptNavigate={handlePromptNavigate} />
             )}
+          </div>
         </div>
       </div>
 
@@ -567,7 +564,7 @@ function SetupStep({
         }
 
   return (
-    <div className="flex-1 flex flex-col">
+    <div>
       <StepHeader
         icon={item.icon}
         tint={item.tint}
@@ -581,15 +578,13 @@ function SetupStep({
           </span>
         ) : undefined}
       />
-      <div className="my-auto w-full">
-        <SetupDetailPane item={item} />
+      <SetupDetailPane item={item} />
 
-        {which === "llm" && (
-          <div className="mt-6 rounded-xl bg-muted-30 p-4">
-            <p className="text-sm text-muted-foreground">{t("onboarding.setup.hint")}</p>
-          </div>
-        )}
-      </div>
+      {which === "llm" && (
+        <div className="mt-6 rounded-xl bg-muted-30 p-4">
+          <p className="text-sm text-muted-foreground">{t("onboarding.setup.hint")}</p>
+        </div>
+      )}
     </div>
   )
 }
@@ -673,7 +668,7 @@ function ReadyStep({
   ]
 
   return (
-    <div className="flex-1 flex flex-col">
+    <div>
       {/* Step header — celebration or partial-state title, matching the
           other steps' hero block */}
       <StepHeader
@@ -687,9 +682,8 @@ function ReadyStep({
       />
 
       {/* Prompt cards — each card hands off to chat with its prompt, so no
-          extra CTA button is needed below; exiting is the footer's Finish.
-          my-auto centers the grid in the space below the anchored header. */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 my-auto w-full">
+          extra CTA button is needed below; exiting is the footer's Finish. */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {cards.map((c) => (
           <button
             key={c.key}
