@@ -143,6 +143,41 @@ impl ExtensionRuntime {
         Ok(())
     }
 
+    /// Rebuild + re-register an extension's proxy after the isolated
+    /// manager restarted its runner process. The manager's crash-restart
+    /// path reloads into ITS map only — the proxy registry keeps serving
+    /// the OLD (dead) instance, so every stream-session call fails
+    /// "Extension not running" until the whole serve restarts (observed
+    /// repeatedly on 2026-09-09: runner respawned fine, sessions dead).
+    pub async fn refresh_proxy(&self, id: &str) -> Result<(), ExtensionError> {
+        let file_path = self
+            .proxy_registry
+            .get_info(id)
+            .await
+            .and_then(|i| i.metadata.file_path.clone());
+
+        let Some(isolated) = self.isolated_manager.get(id).await else {
+            return Err(ExtensionError::LoadFailed(format!(
+                "extension {id} not present in isolated manager"
+            )));
+        };
+
+        let descriptor = isolated.descriptor().await;
+        let proxy = if let Some(desc) = descriptor {
+            super::proxy::create_proxy_with_descriptor(isolated, desc)
+        } else {
+            super::proxy::create_proxy(isolated)
+        };
+
+        // Swap under unregister+register: `register` refuses existing ids.
+        if self.proxy_registry.contains(id).await {
+            let _ = self.proxy_registry.unregister(id).await;
+        }
+        self.proxy_registry
+            .register_with_path(id.to_string(), proxy, file_path)
+            .await
+    }
+
     /// Alias for unload used by API handlers.
     pub async fn unregister(&self, id: &str) -> Result<(), ExtensionError> {
         self.unload(id).await

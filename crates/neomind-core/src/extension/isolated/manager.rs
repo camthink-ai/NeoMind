@@ -431,14 +431,31 @@ impl IsolatedExtensionManager {
                                     .map(|info| {
                                         let config = &self.config.extension_config;
                                         let can_restart = config.restart_on_crash;
-                                        let within_limit = info.runtime.restart_count
+                                        // Budget decay: a process that stayed
+                                        // up ≥1h since the last restart has
+                                        // effectively recovered — treat the
+                                        // budget as fresh. Without this, a
+                                        // long-lived system that crashed N
+                                        // times historically permanently
+                                        // loses auto-restart (observed:
+                                        // 3 manual kills exhausted
+                                        // max_restart_attempts and every
+                                        // later death needed a serve restart).
+                                        let now = chrono::Utc::now().timestamp();
+                                        let budget_count = match info
+                                            .runtime
+                                            .last_restart_at
+                                        {
+                                            Some(t) if now - t >= 3600 => 0,
+                                            _ => info.runtime.restart_count,
+                                        };
+                                        let within_limit = budget_count
                                             < config.max_restart_attempts as u64;
 
                                         // Check cooldown period
                                         let past_cooldown = if let Some(last_restart) =
                                             info.runtime.last_restart_at
                                         {
-                                            let now = chrono::Utc::now().timestamp();
                                             (now - last_restart)
                                                 >= config.restart_cooldown_secs as i64
                                         } else {

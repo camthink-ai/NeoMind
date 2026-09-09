@@ -478,6 +478,19 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                         let ext_id = extension_id.to_string();
                         let rt = runtime.clone();
                         tokio::spawn(async move {
+                            // The manager's crash-restart rebuilt its own map;
+                            // swap the proxy registry to the fresh instance
+                            // FIRST — otherwise session/init calls keep
+                            // hitting the dead proxy ("Extension not
+                            // running") and even send_config_update below
+                            // goes through the stale handle.
+                            if let Err(e) = rt.refresh_proxy(&ext_id).await {
+                                tracing::warn!(
+                                    extension_id = %ext_id,
+                                    error = %e,
+                                    "Failed to refresh proxy after crash recovery"
+                                );
+                            }
                             if let Ok(store) = ExtensionStore::open(crate::server::paths::extension_store_path()) {
                                 // Clear error status after successful crash recovery
                                 if let Ok(Some(mut record)) = store.load(&ext_id) {
