@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Neutral "definition of done" in the platform prompts
 - The round-continuation prompt was one-sided: it told the model when to STOP ("give the final response NOW. Do NOT call them again") but never when NOT to — on long multi-step tasks this nudged models into premature wrap-ups ("I will now…" endings), the exact failure users were patching with custom "long-task discipline" system prompts. Both the slim system prompt (Tactical Rules) and the per-round message now carry a bidirectional completion criterion: *a multi-step task is complete only when verified end-to-end (expected data returned, created resource readable); verified → answer now with no more calls, not yet verified → continue with the next tool call — a plan alone is not a completed task.* Deliberately neutral wording: it defines "done" without banning stops, so it does not create the opposite failure (never-stopping loops the wall-clock budget exists to catch).
 
+### Preferences: Language row shows the truth; timezone list follows the UI language
+- The Language combobox displayed `neomind_preferences.language` (default zh) while the app's actual language lived in i18next's own storage (navigator-detected) — an English UI showed "简体中文" until you saved. The row now initializes from `i18n.language`, so it reflects reality no matter which of the six switchers (sidebar, global controls, mobile nav, login, system page, this row) last changed it. `<html lang>` also follows the active language now (was a static zh-CN — wrong for screen readers and translation tools in either direction).
+- The System Timezone dropdown listed names from `/api/settings/timezones`, whose backend list is fixed Chinese ("中国 (UTC+8)") regardless of UI language. The frontend already ships a fully localized zone catalog; display names are now remapped through it by id (server names survive only for zones the catalog lacks), so English shows "Shanghai (UTC+8)".
+
 ---
 
 ## [0.9.23] - 2026-09-03 — extension stream gains binary push frames (opt-in, double-base64 eliminated)

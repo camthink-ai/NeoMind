@@ -76,7 +76,16 @@ export function PreferencesTab() {
   const { t, i18n } = useTranslation(["common", "settings"])
   const { handleError } = useErrorHandler()
   const { toast } = useToast()
-  const [preferences, setPreferences] = useState<Preferences>(loadPreferences)
+  const [preferences, setPreferences] = useState<Preferences>(() => ({
+    ...loadPreferences(),
+    // The displayed language must reflect what i18n is ACTUALLY running.
+    // neomind_preferences.language drifts from reality because the other
+    // language switchers (sidebar, global controls, mobile nav, login,
+    // system page) call i18n.changeLanguage directly without writing this
+    // record — showing the stored value displayed "简体中文" on an English
+    // UI until the user happened to save.
+    language: i18n.language.startsWith("zh") ? "zh" : "en",
+  }))
   const [hasChanges, setHasChanges] = useState(false)
 
   // Global timezone for scheduling (separate from UI display)
@@ -126,6 +135,16 @@ export function PreferencesTab() {
 
   // Get localized timezone list
   const localizedTimezones = getLocalizedTimezones(t)
+  // The backend list (/api/settings/timezones) carries fixed Chinese display
+  // names; remap to the frontend i18n catalog by id so the dropdown follows
+  // the UI language. Server names only survive as fallback for zones outside
+  // the frontend catalog.
+  const timezoneSource =
+    availableTimezones.length > 0 ? availableTimezones : localizedTimezones
+  const timezoneOptions = timezoneSource.map((tz: { id: string; name: string }) => ({
+    ...tz,
+    name: localizedTimezones.find((l) => l.id === tz.id)?.name ?? tz.name,
+  }))
 
   return (
     <div className="space-y-8">
@@ -236,7 +255,7 @@ export function PreferencesTab() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {(availableTimezones.length > 0 ? availableTimezones : localizedTimezones).map(
+                  {timezoneOptions.map(
                     (tz: { id: string; name: string }) => (
                       <SelectItem key={tz.id} value={tz.id}>
                         {tz.name}

@@ -99,4 +99,13 @@ i18n
     },
   });
 
+// Keep <html lang> in sync with the active language — index.html ships a
+// static zh-CN and it was never updated, so screen readers and translation
+// tools saw Chinese on an English UI (and vice versa after any switch).
+const applyHtmlLang = (lng: string) => {
+  document.documentElement.lang = lng.startsWith('zh') ? 'zh-CN' : lng || 'en';
+};
+applyHtmlLang(i18n.language);
+i18n.on('languageChanged', applyHtmlLang);
+
 export default i18n;
