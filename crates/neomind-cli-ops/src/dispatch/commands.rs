@@ -252,6 +252,15 @@ pub enum Command {
 /// User account subcommands.
 #[derive(Subcommand, Debug)]
 pub enum UserCommand {
+    /// List all user accounts (offline).
+    ///
+    /// Shows username, role, and active status from the server's auth DB.
+    /// Example: `neomind user list --data-dir /var/lib/neomind`
+    List {
+        /// Server data directory (auto-detected if omitted).
+        #[arg(long)]
+        data_dir: Option<String>,
+    },
     /// Reset a user's password (offline).
     ///
     /// Rewrites the stored bcrypt hash without verifying the old password.

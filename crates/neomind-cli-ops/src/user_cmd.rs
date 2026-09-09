@@ -48,6 +48,27 @@ fn users_db_path(data_dir: &str) -> String {
     format!("{}/users.redb", data_dir)
 }
 
+/// List all usernames stored in `users.redb` (empty if the DB is absent).
+fn list_users_in_db(path: &str) -> anyhow::Result<Vec<(String, String)>> {
+    if !Path::new(path).exists() {
+        return Ok(Vec::new());
+    }
+    let db = Database::open(path)?;
+    let read_txn = db.begin_read()?;
+    let table = read_txn.open_table(USERS_TABLE)?;
+    let mut out = Vec::new();
+    for row in table.range::<&str>(..)? {
+        let (k, v) = row?;
+        if let Ok(u) = bincode::deserialize::<User>(v.value()) {
+            out.push((u.username.clone(), format!("{:?}", u.role)));
+        } else {
+            out.push((k.value().to_string(), "?".into()));
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
 /// Read one user row from `users.redb`. `Ok(None)` if the row or DB is absent.
 fn read_user_from_db(path: &str, username: &str) -> anyhow::Result<Option<User>> {
     if !Path::new(path).exists() {
@@ -106,7 +127,25 @@ pub fn reset_user_password(
 
     let path = users_db_path(data_dir);
     let Some(mut user) = read_user_from_db(&path, username)? else {
-        anyhow::bail!("User '{}' not found in {}", username, path);
+        let known = list_users_in_db(&path)?;
+        let hint = if known.is_empty() {
+            format!(
+                "no users found in {} — is this the right data dir? \
+                 Try: neomind user reset-password {} --data-dir <server-data-dir>",
+                path, username
+            )
+        } else {
+            format!(
+                "available users in {}: {}",
+                path,
+                known
+                    .iter()
+                    .map(|(u, r)| format!("{} ({})", u, r))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        anyhow::bail!("User '{}' not found — {}", username, hint);
     };
 
     let new_hash = bcrypt::hash(new_password, bcrypt::DEFAULT_COST)?;
@@ -185,6 +224,33 @@ pub async fn run_set_role(
             "Role of '{}' set to {:?}. Restart the server if it is running.",
             username, role
         ),
+    ))
+}
+
+pub async fn run_list_users(
+    data_dir: Option<String>,
+) -> anyhow::Result<CliResponse> {
+    let resolved_dir = crate::auth_cmd::resolve_login_data_dir(data_dir)?;
+    let path = users_db_path(&resolved_dir);
+    let users = list_users_in_db(&path)?;
+    if users.is_empty() {
+        return Ok(CliResponse::success(
+            serde_json::json!({ "users": [], "data_dir": resolved_dir }),
+            format!("No users in {} — is this the right data dir?", path),
+        ));
+    }
+    let rows: Vec<serde_json::Value> = users
+        .iter()
+        .map(|(u, r)| serde_json::json!({ "username": u, "role": r }))
+        .collect();
+    let display = users
+        .iter()
+        .map(|(u, r)| format!("{:<20} {}", u, r))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(CliResponse::success(
+        serde_json::json!({ "users": rows, "data_dir": resolved_dir }),
+        format!("Users in {}:\n{}", path, display),
     ))
 }
 
