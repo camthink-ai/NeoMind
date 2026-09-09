@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.9.23] - 2026-09-09 — binary push frames + platform perf pass, long-task agent fixes, onboarding wizard redesigned
+
 ### Chat turn time budget is now configurable (default 1800s) — agent no longer stops halfway on long tasks
 - **Root cause of "agent 运行一半自己停下来":** the streaming tool loop carried a hardcoded 240-second wall-clock budget (`TURN_WALL_CLOCK_BUDGET`, added 2026-08-22 to guarantee a text reply on pathological loops). It covers ALL rounds of one turn — every thinking-model LLM round plus every tool execution — so a legitimate multi-step task (build pipeline/dashboard/bridge on a gateway) with a cloud reasoning model hit the 4-minute mark mid-task, exited the loop, and the forced-summary prompt explicitly forbade further tool calls. Tasks that fit under 4 minutes finished fine, which is why the failure looked intermittent; a user-side "long-task discipline" system prompt could only counter the model's *voluntary* early wrap-ups, never this forced exit.
 - The budget is now `AgentDefaults.chat_turn_timeout_secs`, default **1800s** (30 min), clamped 60–7200 via `PUT /api/settings/agent`, editable in Settings → Preferences (5 min–2 h presets; an API-set value outside the presets still renders). Read once per turn in `stream_core.rs` — applies from the next turn, never mid-flight. The safety intent survives: exhausting the budget still falls through to the forced summary so the user always gets a text reply.
@@ -20,10 +24,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Language combobox displayed `neomind_preferences.language` (default zh) while the app's actual language lived in i18next's own storage (navigator-detected) — an English UI showed "简体中文" until you saved. The row now initializes from `i18n.language`, so it reflects reality no matter which of the six switchers (sidebar, global controls, mobile nav, login, system page, this row) last changed it. `<html lang>` also follows the active language now (was a static zh-CN — wrong for screen readers and translation tools in either direction).
 - The System Timezone dropdown listed names from `/api/settings/timezones`, whose backend list is fixed Chinese ("中国 (UTC+8)") regardless of UI language. The frontend already ships a fully localized zone catalog; display names are now remapped through it by id (server names survive only for zones the catalog lacks), so English shows "Shanghai (UTC+8)".
 
----
-
-## [0.9.23] - 2026-09-03 — extension stream gains binary push frames (opt-in, double-base64 eliminated)
-
 ### Binary push frames on `/api/extensions/:id/stream`
 - **Push outputs can now ride WS Binary frames instead of Text+base64.** Every `push_output` used to force-base64 the payload into a JSON string (`BASE64_STANDARD.encode(&output.data)` at four send sites) — for image/audio extensions (stream-player, yolo-video, voice-assistant, video-vlm) that pushed raw JPEG/PCM bytes the platform itself had just received as `Vec<u8>`, taxing every frame with a full encode plus a matching `atob` + string churn in the browser. A negotiated session now sends the same bytes verbatim inside one binary frame: `[kind u8=1][version u8=1][sequence u64 BE][meta_len u32 BE][meta JSON][payload]` — `meta` mirrors the Text envelope minus `data`/`sequence`. Control messages (`session_created`, `error`, …) stay on Text; the WebSocket frame type is the first-level discriminator, mirroring the long-standing inbound binary format.
 - **Negotiation is application-level and safe in every deploy quadrant.** The client opts in with `init` config `{"binary": true}` (config is free-form JSON, so old servers simply ignore the key) and the server acknowledges in `session_created.binary`. Old frontends never opt in → byte-identical legacy Text; new frontends against old servers get no ack → stay on the Text parser. No `Sec-WebSocket-Protocol` involvement: with subprotocols, a client offering a list to a server that echoes none fails the connection outright (RFC 6455) — exactly the trap a rolling deploy must avoid.
@@ -34,6 +34,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Text tool-calling teaching now reaches every backend
 - **Custom OpenAI-compatible endpoints can call tools again.** The request always carried the `tools` schema, but `CloudProvider::Custom` defaults to `function_calling=false` in the provider heuristic and the OpenAI-compatible backend never taught those models HOW to answer: the Ollama backend has always injected the JSON tool-call protocol into the system message for non-native models (`format_tools_for_text_calling`), while OpenAI-compatible and llama.cpp requests went out untaught — the model answered in plain prose, `tool_parser` found nothing, and every tool-aware turn silently degraded for anyone behind a custom endpoint (vLLM/llama.cpp servers or proxies without native function calling). All three backends now share one injection (`llm_backends::text_tool_calls`), gated on the effective capability so native providers (OpenAI/Qwen/DeepSeek/GLM/… and any endpoint whose stored override turns tools on) produce byte-identical requests; a `with_capabilities_override(..., true, ...)` suppresses the teaching. Anthropic keeps its native tool-use path. The eval harness (`comprehensive_agent_eval.rs`) drops its manual system-prompt suffix workaround — the platform now teaches the format itself.
 - Gate repairs found by the 1.92 clippy run (all pre-existing from the binary-push commit): `neomind-extension-sdk` re-exports `set_push_output_writer_raw` (macro-only references left it unreachable → dead-code error), the SSE endpoint doc comment orphaned by the envelope-cache insertion in `events.rs` is re-attached to `event_stream_handler`, and the test-only `decode_binary_push_frame` tuple grew a named alias. Plus `cargo fmt` catch-up on the drifted files.
+
+### Platform perf: shared event cache, zero-copy extension IPC, runner workers
+- **WS event fan-out no longer re-serializes per client.** The events path now shares one `Arc<str>` envelope per event_id behind a 1024-entry LRU — a burst fanned out to N subscribers costs one serialization instead of N.
+- **Extension IPC carries raw bytes without a codec.** `push_output` payloads ride a segmented binary frame (`[hlen][json][raw]`) over the SDK's new `PushOutputRawWriterFn` raw FFI writer (ABI 3 unchanged, legacy callers pass through); the runner consumes it across `NEOMIND_RUNNER_WORKERS` workers.
+- **Web first-load: bundled logos 1 MB → 84 KB (-92%)**; release builds keep line-tables-only debug info (a full strip was killing the tables).
+- New `bench/` harnesses (devices, telemetry, api, engine, frontend, concurrency) back the numbers.
+
+### DEF-001/002 — MQTT client timestamps honored; telemetry source/metric validated
+- **DEF-001:** the MQTT adapter overwrote device-reported timestamps with server receive time. Client ts is now honored with unit auto-detection and a 5-minute future guard; the event ts is aligned to the DataPoint ts with dual-write dedup.
+- **DEF-002:** telemetry `source`/`metric` identifiers are validated up front with self-describing errors instead of failing opaquely downstream.
+- Full RCA in `docs/DEFECTS.md`.
+
+### Metric history honors the hours window
+- The metric history API now honors its `hours` parameter and keeps the newest points instead of trimming them.
+
+### Onboarding wizard redesigned
+- Every step opens with the same header — icon, "Step N of 4" counter, title, purpose subtitle — with a completed setup step showing an inline Done badge beside the title; previously only the first step carried a title and the later steps looked bare.
+- Setup cards replaced their dense description paragraph with a scannable feature list (built-in / local / cloud for the LLM step; MQTT / other options / AI cameras for devices) beside the CLI quick-start, and the Ready step lost its status-chips strip and Start Chatting CTA (the prompt cards and footer Finish already cover both).
+- All four steps center vertically as one block, headers left-aligned; render tests guard the step-header contract.
+
+### Edge-model leaderboard: corrected-harness re-run
+- The comprehensive agent eval gained resource-creation scoring and rounds r6–r12 (device/rule/agent management, cross-domain, memory stress, long horizon, tools breadth), run against a self-hosted seeded sandbox under identical conditions for every model (8K ctx, 5×15 turns). Ling-3.0-tiny tops the overall score (71.2, 77% resource creation) while MiniCPM5-2B keeps the recommended-default slot (81% tool accuracy, 1.5 GB, Apache-2.0); README and `docs/edge-models.md` updated.
 
 ---
 
