@@ -1155,16 +1155,26 @@ async fn show_extension_info(id_or_path: &str) -> Result<()> {
         return Ok(());
     }
 
-    // Try API first (shows runtime info: status, commands, metrics)
+    // Try API first (shows runtime info: status, commands, metrics). A 2xx
+    // whose body isn't JSON (the web SPA fallback for an unrouted path)
+    // parses to Null in the client — treat anything but a non-empty JSON
+    // object as "no answer" and fall through, never as success.
     let client = neomind_cli_ops::ApiClient::new();
     if let Ok(response) = neomind_cli_ops::extension::get_extension(&client, id_or_path).await {
-        let output_format = if std::env::var("NEOMIND_JSON").is_ok() {
-            OutputFormat::Json
-        } else {
-            OutputFormat::Human
-        };
-        format_output(&response, output_format);
-        return Ok(());
+        let looks_like_extension = response
+            .data
+            .as_ref()
+            .and_then(|d| d.as_object())
+            .is_some_and(|o| !o.is_empty());
+        if looks_like_extension {
+            let output_format = if std::env::var("NEOMIND_JSON").is_ok() {
+                OutputFormat::Json
+            } else {
+                OutputFormat::Human
+            };
+            format_output(&response, output_format);
+            return Ok(());
+        }
     }
 
     // Fallback: search local filesystem for .nep files

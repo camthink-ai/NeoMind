@@ -46,15 +46,36 @@ pub async fn list_extensions(client: &ApiClient) -> Result<CliResponse> {
     ))
 }
 
+/// Percent-encode a URL path segment. A raw `/` inside an extension ID
+/// splits the request path into extra segments, which escapes the
+/// `/extensions/{id}` route entirely — the web SPA fallback then answers
+/// 200 with HTML, and the API client reads that as success.
+fn encode_segment(id: &str) -> String {
+    let mut out = String::with_capacity(id.len());
+    for b in id.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
 /// Get extension by ID
 pub async fn get_extension(client: &ApiClient, id: &str) -> Result<CliResponse> {
-    let data = client.get(&format!("/extensions/{}", id)).await?;
+    let data = client
+        .get(&format!("/extensions/{}", encode_segment(id)))
+        .await?;
     Ok(CliResponse::success(data, "Extension retrieved"))
 }
 
 /// Get extension health status
 pub async fn get_extension_status(client: &ApiClient, id: &str) -> Result<CliResponse> {
-    let resp = client.get(&format!("/extensions/{}/health", id)).await?;
+    let resp = client
+        .get(&format!("/extensions/{}/health", encode_segment(id)))
+        .await?;
     // Extract inner data to avoid double-wrapping (API already has success/data structure)
     let data = resp.get("data").cloned().unwrap_or(resp);
     Ok(CliResponse::success(data, "Extension status retrieved"))
@@ -67,9 +88,9 @@ pub async fn get_extension_logs(
     lines: Option<usize>,
 ) -> Result<CliResponse> {
     let path = if let Some(n) = lines {
-        format!("/extensions/{}/logs?lines={}", id, n)
+        format!("/extensions/{}/logs?lines={}", encode_segment(id), n)
     } else {
-        format!("/extensions/{}/logs", id)
+        format!("/extensions/{}/logs", encode_segment(id))
     };
     let data = client.get(&path).await?;
     Ok(CliResponse::success(data, "Extension logs retrieved"))
