@@ -617,6 +617,7 @@
     "title": "新手引导",
     "dismiss": "跳过引导",
     "completed": "已完成",
+    "stepIndicator": "第 {{current}} 步 · 共 {{total}} 步",
     "nav": {
       "prev": "上一步",
       "next": "下一步",
@@ -648,13 +649,21 @@
       },
       "llm": {
         "title": "配置 AI 模型",
-        "description": "NeoMind 的核心是 AI 助手。一键下载内置模型（离线可用、无需 API key），或配置你自己的后端——本地 Ollama / llama.cpp，或 OpenAI / Anthropic / Google 等云端——就能用自然语言管理整个系统。",
+        "features": {
+          "builtin": { "title": "内置模型", "desc": "一键下载，离线可用，无需 API key" },
+          "local": { "title": "本地后端", "desc": "Ollama、llama.cpp" },
+          "cloud": { "title": "云端服务", "desc": "OpenAI、Anthropic、GLM、DeepSeek 等" }
+        },
         "purpose": "AI 是 NeoMind 的主要交互入口。配好后，连接设备、创建规则、搭建看板都能通过对话完成，不必逐页手动配置。",
         "action": "配置 AI 模型"
       },
       "device": {
         "title": "连接设备",
-        "description": "通过 MQTT 接入设备（内置代理端口 1883），连接后自动发现、一键批准。也支持 Webhook、手动添加、BLE 配网。NE101 / NE301 等 AI 摄像头开箱即用。",
+        "features": {
+          "mqtt": { "title": "MQTT 接入", "desc": "内置代理端口 1883，自动发现、一键批准" },
+          "other": { "title": "其他方式", "desc": "Webhook、手动添加、BLE 配网" },
+          "camera": { "title": "AI 摄像头", "desc": "NE101 / NE301 开箱即用" }
+        },
         "purpose": "设备是所有数据的来源。没有设备，监控、告警、分析都无从谈起——这是整个系统的起点。",
         "action": "查看设备"
       }
@@ -680,11 +689,6 @@
           "desc": "AI 视觉、天气预报等",
           "prompt": "帮我安装天气预报扩展"
         }
-      },
-      "chatButton": "开始对话",
-      "statusLabels": {
-        "llm": "AI 模型",
-        "device": "设备"
       }
     }
   },

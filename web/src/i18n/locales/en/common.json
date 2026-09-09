@@ -617,6 +617,7 @@
     "title": "Setup Guide",
     "dismiss": "Skip Setup Guide",
     "completed": "Done",
+    "stepIndicator": "Step {{current}} of {{total}}",
     "nav": {
       "prev": "Back",
       "next": "Next",
@@ -648,13 +649,21 @@
       },
       "llm": {
         "title": "Configure AI Model",
-        "description": "At NeoMind's core is an AI assistant. Download the built-in model (one click, offline, no API key) — or bring your own backend: local Ollama / llama.cpp, or cloud like OpenAI / Anthropic / Google — and run the whole system in natural language.",
+        "features": {
+          "builtin": { "title": "Built-in model", "desc": "One-click download, offline, no API key needed" },
+          "local": { "title": "Local backends", "desc": "Ollama, llama.cpp" },
+          "cloud": { "title": "Cloud services", "desc": "OpenAI, Anthropic, GLM, DeepSeek, and more" }
+        },
         "purpose": "AI is the primary way to interact with NeoMind. Once set up, connecting devices, creating rules, and building dashboards all happen through conversation — no need to configure each page manually.",
         "action": "Configure AI Model"
       },
       "device": {
         "title": "Connect Devices",
-        "description": "Connect devices over MQTT (built-in broker on port 1883) — they're auto-discovered and ready to approve in one click. Webhook, manual entry, and BLE provisioning are also supported. AI cameras like the NE101 / NE301 work out of the box.",
+        "features": {
+          "mqtt": { "title": "MQTT", "desc": "Built-in broker on port 1883 — auto-discovered, approve in one click" },
+          "other": { "title": "Other options", "desc": "Webhooks, manual entry, BLE provisioning" },
+          "camera": { "title": "AI cameras", "desc": "NE101 / NE301 work out of the box" }
+        },
         "purpose": "Devices are the source of all data. Without them, monitoring, alerting, and analysis aren't possible — this is where the system starts.",
         "action": "View Devices"
       }
@@ -680,11 +689,6 @@
           "desc": "AI vision, weather forecasts, and more",
           "prompt": "Install the weather forecast extension"
         }
-      },
-      "chatButton": "Start Chatting",
-      "statusLabels": {
-        "llm": "AI Model",
-        "device": "Devices"
       }
     }
   },

@@ -121,12 +121,6 @@ export function OnboardingDialog({ open, onOpenChange, status, onDismiss }: Onbo
     navigate(`/chat?q=${encodeURIComponent(prompt)}`)
   }
 
-  const handleStartChat = () => {
-    onDismiss()
-    onOpenChange(false)
-    navigate("/chat")
-  }
-
   const root = typeof document !== "undefined"
     ? document.getElementById("dialog-root") || document.body
     : null
@@ -143,28 +137,34 @@ export function OnboardingDialog({ open, onOpenChange, status, onDismiss }: Onbo
         <X className="w-5 h-5" />
       </button>
 
-      {/* Scrollable content — my-auto centers each step vertically on tall
-          viewports and degrades to top-aligned scrolling when content
-          overflows (auto margins don't clip like justify-center does). */}
+      {/* Scrollable content — the header of every step 2–4 anchors at the
+          same top spot (switching keeps the title in place), while the step
+          content below it centers in the remaining space; only the short
+          Ready step visibly moves. The welcome step is a landing cover and
+          centers as one block instead — a top-crammed cover reads as broken.
+          Known tradeoff: the 1→2 switch moves the title, the only place the
+          anchor breaks. */}
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-5xl mx-auto px-6 sm:px-10 min-h-full flex flex-col py-6 sm:py-8">
-          <div className="my-auto w-full">
-            {step === "welcome" && <WelcomeStep />}
-            {step === "llm" && (
-              <SetupStep
-                which="llm"
-                status={status}
-                onAction={handleAction}
-                onOpenBuiltinWizard={() => setBuiltinWizardOpen(true)}
-              />
-            )}
-            {step === "device" && (
-              <SetupStep which="device" status={status} onAction={handleAction} />
-            )}
+        <div className="max-w-5xl mx-auto px-6 sm:px-10 min-h-full flex flex-col py-8 sm:py-10">
+          {step === "welcome" && (
+            <div className="my-auto w-full">
+              <WelcomeStep />
+            </div>
+          )}
+          {step === "llm" && (
+            <SetupStep
+              which="llm"
+              status={status}
+              onAction={handleAction}
+              onOpenBuiltinWizard={() => setBuiltinWizardOpen(true)}
+            />
+          )}
+          {step === "device" && (
+            <SetupStep which="device" status={status} onAction={handleAction} />
+          )}
             {step === "ready" && (
-              <ReadyStep status={status} onPromptNavigate={handlePromptNavigate} onStartChat={handleStartChat} />
+              <ReadyStep status={status} onPromptNavigate={handlePromptNavigate} />
             )}
-          </div>
         </div>
       </div>
 
@@ -397,6 +397,49 @@ function DeviceQuickStart() {
   )
 }
 
+// ── Shared step header ──
+// Every step opens with the same header block (icon + step counter + title +
+// subtitle). Top-anchored and left-aligned so the title sits at the exact
+// same spot on every step — centered headers shift around when switching,
+// because each step's title/subtitle length differs.
+function StepHeader({
+  icon,
+  tint,
+  step,
+  title,
+  subtitle,
+  badge,
+}: {
+  icon: React.ReactNode
+  tint: string
+  step: number
+  title: string
+  subtitle: string
+  /** Inline chip next to the title (e.g. the setup steps' "Done" badge) —
+      keeps completion state visible without spending a row of height. */
+  badge?: React.ReactNode
+}) {
+  const { t } = useTranslation("common")
+
+  return (
+    <div className="flex items-center gap-4 sm:gap-5 mb-5 sm:mb-6">
+      <div className={cn("w-14 h-14 rounded-2xl flex items-center justify-center shrink-0", tint)}>
+        {icon}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-xs text-muted-foreground mb-1">
+          {t("onboarding.stepIndicator", { current: step, total: STEPS.length })}
+        </p>
+        <div className="flex items-center flex-wrap gap-x-3 gap-y-1 mb-1">
+          <h2 className="text-2xl font-bold text-foreground">{title}</h2>
+          {badge}
+        </div>
+        <p className="text-sm text-muted-foreground leading-relaxed max-w-2xl">{subtitle}</p>
+      </div>
+    </div>
+  )
+}
+
 // ── Step 1: Welcome — platform intro + docs entry points ──
 // Kept as its own step (not folded into the LLM card) so the two setup steps
 // share an identical structure, and the welcome moment gets a full screen.
@@ -411,14 +454,16 @@ function WelcomeStep() {
   const { t } = useTranslation("common")
 
   return (
-    <div className="max-w-2xl mx-auto text-center">
-      <div className="w-16 h-16 rounded-2xl bg-accent-indigo-light flex items-center justify-center mx-auto mb-5">
-        <Rocket className="w-8 h-8 text-accent-indigo" />
-      </div>
-      <h2 className="text-2xl font-bold text-foreground mb-3">{t("onboarding.setup.title")}</h2>
-      <p className="text-sm text-muted-foreground leading-relaxed mb-8">{t("onboarding.setup.heroSubtitle")}</p>
+    <div>
+      <StepHeader
+        icon={<Rocket className="w-7 h-7 text-accent-indigo" />}
+        tint="bg-accent-indigo-light"
+        step={1}
+        title={t("onboarding.setup.title")}
+        subtitle={t("onboarding.setup.heroSubtitle")}
+      />
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-left">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {DOC_LINKS.map((doc) => (
           <a
             key={doc.href}
@@ -442,10 +487,14 @@ function WelcomeStep() {
 // ── Steps 2 & 3: setup items (LLM / Devices), one wizard step each ──
 
 interface SetupItem {
+  /** Icon / tint / title / purpose feed the step header; the feature list
+      stays inside the card so the card isn't a title-less orphan. */
   icon: React.ReactNode
   tint: string
   title: string
-  description: string
+  /** Bullet-list accent, matching the header tint (dot color per feature row). */
+  accent: string
+  features: { title: string; desc: string }[]
   purpose: string
   completed: boolean
   completedLabel: string
@@ -456,6 +505,11 @@ interface SetupItem {
       (e.g. the built-in model download in the LLM card). */
   primaryAction?: { label: string; onClick: () => void }
 }
+
+// Feature-row keys per setup item, mapping into
+// onboarding.setup.<llm|device>.features.<key>.{title,desc}.
+const LLM_FEATURE_KEYS = ["builtin", "local", "cloud"] as const
+const DEVICE_FEATURE_KEYS = ["mqtt", "other", "camera"] as const
 
 function SetupStep({
   which,
@@ -474,10 +528,14 @@ function SetupStep({
   const item: SetupItem =
     which === "llm"
       ? {
-          icon: <Sparkles className="w-5 h-5" />,
+          icon: <Sparkles className="w-7 h-7" />,
           tint: "bg-accent-indigo-light text-accent-indigo",
+          accent: "bg-accent-indigo",
           title: t("onboarding.setup.llm.title"),
-          description: t("onboarding.setup.llm.description"),
+          features: LLM_FEATURE_KEYS.map((k) => ({
+            title: t(`onboarding.setup.llm.features.${k}.title`),
+            desc: t(`onboarding.setup.llm.features.${k}.desc`),
+          })),
           purpose: t("onboarding.setup.llm.purpose"),
           completed: status.steps.llm.completed,
           completedLabel,
@@ -489,10 +547,14 @@ function SetupStep({
             : undefined,
         }
       : {
-          icon: <Cpu className="w-5 h-5" />,
+          icon: <Cpu className="w-7 h-7" />,
           tint: "bg-accent-cyan-light text-accent-cyan",
+          accent: "bg-accent-cyan",
           title: t("onboarding.setup.device.title"),
-          description: t("onboarding.setup.device.description"),
+          features: DEVICE_FEATURE_KEYS.map((k) => ({
+            title: t(`onboarding.setup.device.features.${k}.title`),
+            desc: t(`onboarding.setup.device.features.${k}.desc`),
+          })),
           purpose: t("onboarding.setup.device.purpose"),
           completed: status.steps.device.completed,
           completedLabel,
@@ -505,49 +567,55 @@ function SetupStep({
         }
 
   return (
-    <div>
-      <SetupDetailPane item={item} />
+    <div className="flex-1 flex flex-col">
+      <StepHeader
+        icon={item.icon}
+        tint={item.tint}
+        step={which === "llm" ? 2 : 3}
+        title={item.title}
+        subtitle={item.purpose}
+        badge={item.completed ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-success-light px-2.5 py-1 text-xs font-medium text-success shrink-0">
+            <Check className="w-3.5 h-3.5" />
+            {item.completedLabel}
+          </span>
+        ) : undefined}
+      />
+      <div className="my-auto w-full">
+        <SetupDetailPane item={item} />
 
-      {which === "llm" && (
-        <div className="mt-6 rounded-xl bg-muted-30 p-4 text-center">
-          <p className="text-sm text-muted-foreground">{t("onboarding.setup.hint")}</p>
-        </div>
-      )}
+        {which === "llm" && (
+          <div className="mt-6 rounded-xl bg-muted-30 p-4">
+            <p className="text-sm text-muted-foreground">{t("onboarding.setup.hint")}</p>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
 
-// Detail pane: two equal columns — intro/purpose/actions on the left,
-// the CLI quick-start on the right. A completed item shows a success strip
-// above the content instead of replacing it, so the actions stay reachable
-// (e.g. adding a second backend or more devices).
+// Detail pane: two equal columns — feature list/actions on the left,
+// the CLI quick-start on the right. The completed state shows as a badge
+// beside the StepHeader title (not a strip in here), so the card keeps a
+// constant height and the actions stay reachable. The step title/purpose
+// also live in the StepHeader above the card, not in here.
 function SetupDetailPane({ item }: { item: SetupItem }) {
   return (
     <div className="rounded-2xl border border-border bg-card p-5 transition-colors">
-      {item.completed && (
-        <div className="mb-4 flex items-center gap-1.5 rounded-xl bg-success-light px-3.5 py-2.5 text-xs font-medium text-success">
-          <Check className="w-4 h-4 shrink-0" />
-          {item.completedLabel}
-        </div>
-      )}
       <div className="grid items-stretch gap-6 md:grid-cols-2">
-        {/* Left: intro + purpose + actions */}
+        {/* Left: feature list + actions */}
         <div className="flex min-w-0 flex-col">
-          <div className="flex items-start gap-3 mb-3">
-            <div className={cn(
-              "w-10 h-10 rounded-xl flex items-center justify-center shrink-0",
-              item.tint,
-            )}>
-              {item.icon}
-            </div>
-            <div className="flex-1 min-w-0">
-              <h3 className="font-semibold text-sm">
-                {item.title}
-              </h3>
-              <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{item.description}</p>
-            </div>
-          </div>
-          <p className="text-xs text-muted-foreground mb-4 leading-relaxed">{item.purpose}</p>
+          <ul className="space-y-3">
+            {item.features.map((f) => (
+              <li key={f.title} className="flex items-start gap-2.5">
+                <span className={cn("w-1.5 h-1.5 rounded-full mt-[7px] shrink-0", item.accent)} />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-foreground">{f.title}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{f.desc}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
           <div className="mt-auto pt-4 flex flex-wrap justify-end gap-2">
             {item.primaryAction && (
               <Button size="sm" onClick={item.primaryAction.onClick} className="gap-1.5">
@@ -579,19 +647,12 @@ function SetupDetailPane({ item }: { item: SetupItem }) {
 function ReadyStep({
   status,
   onPromptNavigate,
-  onStartChat,
 }: {
   status: OnboardingStatus
   onPromptNavigate: (prompt: string) => void
-  onStartChat: () => void
 }) {
   const { t } = useTranslation("common")
   const allComplete = status.steps.llm.completed && status.steps.device.completed
-
-  const statusItems = [
-    { key: "llm", completed: status.steps.llm.completed },
-    { key: "device", completed: status.steps.device.completed },
-  ] as const
 
   const cards = [
     {
@@ -612,53 +673,23 @@ function ReadyStep({
   ]
 
   return (
-    <div>
-      {/* Header — celebration banner when all complete */}
-      <div className={cn(
-        "rounded-2xl p-5 mb-6",
-        allComplete ? "bg-success-light" : "bg-card border border-border",
-      )}>
-        <div className="flex items-center gap-3 mb-2">
-          <div className={cn(
-            "w-10 h-10 rounded-xl flex items-center justify-center shrink-0",
-            allComplete ? "bg-success text-primary-foreground" : "bg-accent-indigo-light text-accent-indigo",
-          )}>
-            {allComplete ? <Check className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
-          </div>
-          <h2 className="text-lg font-bold text-foreground">
-            {allComplete ? t("onboarding.ready.allSetTitle") : t("onboarding.ready.partialTitle")}
-          </h2>
-        </div>
-        <p className="text-sm text-muted-foreground leading-relaxed mb-3">
-          {allComplete ? t("onboarding.ready.allSetSubtitle") : t("onboarding.ready.partialSubtitle")}
-        </p>
-        {/* Status summary chips */}
-        <div className="flex items-center gap-2 flex-wrap">
-          {statusItems.map((item) => (
-            <div
-              key={item.key}
-              className={cn(
-                "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium",
-                item.completed
-                  ? allComplete
-                    ? "bg-card text-success"
-                    : "bg-success-light text-success"
-                  : "bg-muted-30 text-muted-foreground",
-              )}
-            >
-              {item.completed ? (
-                <Check className="w-3.5 h-3.5" />
-              ) : (
-                <span className="w-2.5 h-2.5 rounded-full border-2 border-current opacity-40" />
-              )}
-              {t(`onboarding.ready.statusLabels.${item.key}`)}
-            </div>
-          ))}
-        </div>
-      </div>
+    <div className="flex-1 flex flex-col">
+      {/* Step header — celebration or partial-state title, matching the
+          other steps' hero block */}
+      <StepHeader
+        icon={allComplete ? <Check className="w-7 h-7" /> : <Sparkles className="w-7 h-7" />}
+        tint={allComplete
+          ? "bg-success text-primary-foreground"
+          : "bg-accent-indigo-light text-accent-indigo"}
+        step={4}
+        title={allComplete ? t("onboarding.ready.allSetTitle") : t("onboarding.ready.partialTitle")}
+        subtitle={allComplete ? t("onboarding.ready.allSetSubtitle") : t("onboarding.ready.partialSubtitle")}
+      />
 
-      {/* Prompt cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+      {/* Prompt cards — each card hands off to chat with its prompt, so no
+          extra CTA button is needed below; exiting is the footer's Finish.
+          my-auto centers the grid in the space below the anchored header. */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 my-auto w-full">
         {cards.map((c) => (
           <button
             key={c.key}
@@ -683,13 +714,6 @@ function ReadyStep({
             </div>
           </button>
         ))}
-      </div>
-
-      <div className="flex justify-center">
-        <Button size="lg" onClick={onStartChat} className="gap-2">
-          <MessageSquareText className="w-4 h-4" />
-          {t("onboarding.ready.chatButton")}
-        </Button>
       </div>
     </div>
   )
