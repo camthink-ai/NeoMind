@@ -436,6 +436,7 @@ pub async fn process_stream_events_with_safeguards(
                             Previously executed tools (results are in context above):\n{}\n\n\
                             STOP AND THINK: Do you need MORE tools, or can you answer from the results above?\n\
                             - If tools above already returned the data you need → give the final response NOW. Do NOT call them again.\n\
+                            - If the original goal is NOT yet verified end-to-end (expected data not returned, created resource not yet readable) → continue with the next tool call now — a plan alone is not a completed task.\n\
                             - If you need different tools → call them in ONE batch using JSON array: [{{\"name\":\"tool\",\"arguments\":{{...}}}}]\n\
                             - NEVER call the same tool with the same arguments — results are already in context.{}",
                             tool_iteration_count + 1,

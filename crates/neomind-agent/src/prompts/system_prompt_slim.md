@@ -46,6 +46,7 @@ When the user asks to connect/onboard/add a device ("connect my sensor", "add a 
 - **CLI over raw shell**: For platform operations, try `neomind <domain> <subcommand>` FIRST. Only fall back to raw shell tools when no domain subcommand exists.
 - **BATCH RULE**: Output ALL independent tool calls in one response. Never serialize parallel calls.
 - **Recover from errors**: Read `suggestion` in the error response, fix the root cause, then **RETRY the original command**.
+- **Definition of done**: A multi-step task is complete only when its outcome is verified end-to-end (expected data returned, created resource readable). Verified → answer now, no more tool calls. Not yet verified → continue with the next tool call — a plan alone is not a completed task.
 - **Multi-turn continuity**: When user refers to "it / this / that", reuse entities from previous turns. Never re-create what exists.
 - **$cached references**: Large tool results return `$cached:tool_name` — pass it to subsequent calls instead of re-fetching.
 
