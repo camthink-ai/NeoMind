@@ -1665,15 +1665,16 @@ mod tests {
     /// failure ages out, the account works again.
     #[tokio::test]
     async fn test_login_throttle_window_expires() {
-        // Window must comfortably exceed the ~3 argon2 verifications above it
-        // (each deliberate-failure login runs a full password hash).
+        // Failures are recorded directly, not through failed logins: each
+        // deliberate login runs a full argon2 hash, and three of them can
+        // overrun the 1s window on slower machines — the first failure ages
+        // out before the third lands and the throttle never engages.
         let (auth, _) = make_test_auth_throttled("throttle_expiry", 1_000);
         auth.register("iris", "pass123", UserRole::User)
             .await
             .unwrap();
 
         for _ in 0..3 {
-            assert!(auth.login("iris", "nope").await.is_err());
             auth.record_login_failure("iris", None);
         }
         assert!(matches!(
