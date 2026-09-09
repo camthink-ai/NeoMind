@@ -1106,11 +1106,43 @@ impl AuthUserState {
                 return Err(AuthError::UserDisabled);
             }
 
-            if !Self::verify_password(password, &user.password_hash) {
-                return Err(AuthError::InvalidCredentials);
+            if Self::verify_password(password, &user.password_hash) {
+                (user.id.clone(), user.role.clone(), user.created_at)
+            } else {
+                // Cache-staleness rescue: the offline CLI (`neomind user
+                // reset-password`) rewrites the DB hash directly — the
+                // in-memory cache keeps serving the OLD hash until restart
+                // (observed: reset confirmed, login still 401). On a failed
+                // verify, re-read the DB once; if the stored hash differs
+                // and verifies, swap the cache and proceed. Costs nothing
+                // on the happy path.
+                let db_user = Self::load_users_from_db(self.db_path)
+                    .ok()
+                    .and_then(|db| db.get(username).cloned());
+                match db_user {
+                    Some(dbu)
+                        if dbu.password_hash != user.password_hash
+                            && Self::verify_password(password, &dbu.password_hash) =>
+                    {
+                        let id = dbu.id.clone();
+                        let role = dbu.role.clone();
+                        let created = dbu.created_at;
+                        let new_hash = dbu.password_hash;
+                        drop(users);
+                        let mut users = self.users.write().await;
+                        if let Some(u) = users.get_mut(username) {
+                            u.password_hash = new_hash;
+                        }
+                        info!(
+                            category = "auth",
+                            username = %username,
+                            "Login cache rescued from DB — offline password reset applied without restart"
+                        );
+                        (id, role, created)
+                    }
+                    _ => return Err(AuthError::InvalidCredentials),
+                }
             }
-
-            (user.id.clone(), user.role.clone(), user.created_at)
         };
 
         // Update last login
