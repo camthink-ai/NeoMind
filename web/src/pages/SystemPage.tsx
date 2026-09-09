@@ -29,6 +29,7 @@ import {
   type LucideIcon,
 } from "lucide-react"
 import { useStore } from "@/store"
+import { version as appVersion } from "../../package.json"
 import { cn } from "@/lib/utils"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
@@ -40,7 +41,6 @@ import { OnboardingDialog } from "@/components/onboarding/OnboardingDialog"
 import { useOnboarding } from "@/hooks/useOnboarding"
 import { useBrand } from "@/hooks/useBrand"
 import { MobilePageHeader } from "@/components/layout/MobilePageHeader"
-import { useIsMobile } from "@/hooks/useMobile"
 
 interface CardDef {
   id: string
@@ -265,7 +265,7 @@ export default function SystemPage() {
           <div className="min-w-0 flex-1">
             <div className="truncate text-lg font-bold leading-tight text-foreground">{brandName}</div>
             <div className="truncate text-mini text-muted-foreground">
-              {t("system.version", { version: "0.8.19" })}
+              {t("system.version", { version: appVersion })}
             </div>
           </div>
         </div>
