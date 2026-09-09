@@ -24,19 +24,23 @@ vision slot stays `LFM2.5-VL-3B`.
 Both models speak OpenAI-compatible function calling through llama.cpp's
 `--jinja` chat-template path, verified end-to-end against NeoMind's agent loop.
 
-### Full 2026-09 leaderboard (same protocol for every model)
+### Full 2026-09 leaderboard (identical conditions for every model: self-hosted seeded sandbox, 5×15 turns, 8K ctx)
 
-| Model | Tool acc | Memory recall | Overall | Notes |
-|---|---|---|---|---|
-| **MiniCPM5-2B (8K)** | **81.2%** | 0% | **66.2** | Recommended. Memory recall starved at 8K by verbose real tool results |
-| MiniCPM5-2B (32K) | 70.2% | 20% | 67.9 | Same overall — long ctx trades tool accuracy for recall. Not worth it |
-| Qwen3.5-4B | 74.5% | 0% | 58.4 | Runner-up; 100% multi-tool flows, weak CLI parameter mapping |
-| Ling-3.0-tiny | 67.4% | 0% | 56.3 | Needs llama.cpp ≥ b10545 (bailingmoe3) |
-| gemma-4-E2B | 74.5% | 10% | 44.4 | ~2× MiniCPM5 latency |
-| LFM2.5-2.6B | 60.4% | 10% | 41.3 | Former default; CLI domain mapping drifts (maps "list devices" to `ls /dev`) |
-| MiniCPM5-1B | 51.1% | 10% | 32.9 | Below agent threshold |
-| Qwen3.5-0.8B | 48.9% | 0% | 31.5 | Below agent threshold |
-| deepseek-v4-flash (cloud ref) | 57.1% | 50% | 60.9 | Same tier as MiniCPM5-2B; investigates before acting, 5× faster per turn |
+| Model | Tool acc | Memory recall | Resource creation | Overall | Notes |
+|---|---|---|---|---|---|
+| **Ling-3.0-tiny** | 79.6% | 20% | **77%** | **71.2 (B)** | Top overall — strongest complete workflows. 4.8 GB, needs llama.cpp ≥ b10545 (bailingmoe3) |
+| MiniCPM5-2B (32K) | 70.2% | 20% | 54% | 67.9 | Long ctx trades tool accuracy for recall. Not worth it vs 8K |
+| **MiniCPM5-2B (8K)** | **81.2%** | 0% | 54% | **66.2** | **Recommended default** — highest tool accuracy, 1.5 GB, Apache-2.0 |
+| deepseek-v4-flash (cloud ref) | 57.1% | 50% | 46% | 60.9 | Same tier; investigates before acting, 5× faster per turn |
+| gemma-4-E2B | 74.5% | 30% | 0% | 59.1 | Good tool selection, resource creation collapses on real data |
+| LFM2.5-2.6B | 66.7% | 0% | 31% | 38.1 | Former default; CLI domain mapping drifts (maps "list devices" to `ls /dev`) |
+| Qwen3.5-4B | 61.7% | 10% | 8% | 37.9 | Thinking model investigates deeply (~40 s/turn) but creations fail checks |
+| MiniCPM5-1B | 27.3% | 0% | 23% | 26.3 | Below agent threshold |
+| Qwen3.5-0.8B | 34.8% | 0% | 15% | 25.9 | Below agent threshold |
+
+n=1 per model (single run each): treat ≤6-point gaps as statistical ties; the
+structural gaps (Ling's 77% resource creation, MiniCPM5's 81% tool accuracy,
+the 1B-class collapse) are the load-bearing findings.
 
 Memory-recall caveat: the score depends on both the context window and the
 model's own fact-extraction quality (the extractor is the model under test).
@@ -165,9 +169,9 @@ memory ~46 GB/s effective decode bandwidth — top of the community range).
 
 Selection guide on Orin-class (agent scores from the 2026-09 corrected
 harness; throughput from the 2026-08 Jetson runs): speed/vision → Gemma;
-**best speed+agent → Ling (16G+ only)**; strongest agent overall on any RAM →
-**MiniCPM5-2B** (1.5 GB, 81% tool accuracy); LFM2.5-2.6B remains the
-long-context (128K) niche pick.
+**top agent overall → Ling-3.0-tiny (16G+ only)**; **best agent per byte →
+MiniCPM5-2B** (1.5 GB, 81% tool accuracy, the recommended default on any
+RAM); LFM2.5-2.6B remains the long-context (128K) niche pick.
 
 8G boards: Qwen 64K fits only when clean (6.8G free after cleanup); Ling's
 4.8G weights + KV need ≥16G (the picker's 6 GB floor steers small boards

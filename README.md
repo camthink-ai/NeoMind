@@ -275,17 +275,18 @@ server {
 
 All are **built in** — pick one in the app (**Settings → LLM Backends** → built-in model, or the first-run wizard) and it downloads, boots its own engine, and becomes chat-ready with zero configuration. The picker shows each model's memory feasibility on your hardware before anything downloads, and the context size is adjustable per model (8K/32K/64K/128K).
 
-All run NeoMind's full agent toolkit (tool selection, in-process CLI dispatch, multi-step tasks) — measured on the comprehensive agent eval (5 scenarios × 15 turns against a seeded sandbox platform; 2026-09 re-run on the corrected harness: production tool surface, real context window, working memory pipeline):
+All run NeoMind's full agent toolkit (tool selection, in-process CLI dispatch, multi-step tasks) — measured on the comprehensive agent eval (5 scenarios × 15 turns against a self-hosted seeded sandbox platform; 2026-09, corrected harness: production tool surface, real context window, working memory pipeline — every model measured under identical conditions):
 
 | Model | Quant | Size | Min free RAM | Eval (tool acc / overall) | Best for |
 |-------|-------|------|--------------|---------------------------|----------|
-| **MiniCPM5-2B** ⭐ first choice | Q4_K_M | 1.5 GB | 3 GB | **81% / 66** — ties cloud deepseek-v4-flash | Best-in-class CLI tool calling at 2B — beats 4B-class on domain selection and parameter mapping. Serve at 8K context (32K degrades tool selection with no overall gain). |
-| **Qwen 3.5 4B** | Q4_K_M | 2.7 GB | 4 GB | 74% / 58 | Runner-up: strong multi-tool flows and the only one with built-in vision (add the mmproj file); weaker CLI parameter mapping. Non-thinking by default. |
-| **Ling 3.0-tiny** | Q4_K_M | 4.8 GB | — | 67% / 56 | Community MoE matching Qwen overall; best at single-step tool tasks, misses on long multi-step deploys. Needs llama.cpp ≥ b10545 (bailingmoe3). |
-| **LFM 2.5 2.6B** | QAD Q4_0 | 1.5 GB | 3 GB | 60% / 41 | Smallest footprint with native 128K context (hybrid KV is cheap). Thinking is integral. Check the LFM license before redistribution. |
-| **Gemma 4 E2B** | QAT q4_0 | 3.1 GB | 4.5 GB | 74% / 44 | Google's official QAT quant; vision-ready via the `mmproj` file. ~2× the latency of MiniCPM5-2B on M4-class. |
+| **MiniCPM5-2B** ⭐ first choice | Q4_K_M | 1.5 GB | 3 GB | **81% / 66** — highest tool accuracy, ties cloud deepseek-v4-flash | Best agent per byte: beats 4B-class on domain selection and parameter mapping, Apache-2.0 redistributable, 3 GB floor. Serve at 8K context (32K degrades tool selection with no overall gain). |
+| **Ling 3.0-tiny** | Q4_K_M | 4.8 GB | 6 GB | 80% / **71** — top overall | Strongest complete-workflow score (77% resource creation). MoE speed demon, but 4.8 GB weights and needs llama.cpp ≥ b10545 (bailingmoe3). The performance pick when RAM allows. |
+| **Gemma 4 E2B** | QAT q4_0 | 3.1 GB | 4.5 GB | 74% / 59 | Google's official QAT quant; vision-ready via the `mmproj` file. Solid tools, fails resource creation (0%) on real data. |
+| **LFM 2.5 2.6B** | QAD Q4_0 | 1.5 GB | 3 GB | 67% / 38 | Smallest footprint with native 128K context (hybrid KV is cheap). Thinking is integral. Check the LFM license before redistribution. |
+| **Qwen 3.5 4B** | Q4_K_M | 2.7 GB | 4 GB | 62% / 38 | Investigates deeply before acting (~40 s/turn on edge) but resource creation collapses on real data (8%). Vision via mmproj. Non-thinking by default. |
+| MiniCPM5-1B / Qwen3.5-0.8B | Q4 | 0.9–1.2 GB | 2 GB | 27–35% / 26 | Below the agent threshold — chat only. |
 
-Rule of thumb: **MiniCPM5-2B** for the best agent experience per byte, **Qwen 3.5 4B** when you want its vision path, **LFM 2.5** for modest devices and long sessions. Prefer a manual setup? All are GGUF — serve with [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server --jinja` and add the endpoint under **Settings → LLM Backends**. Any OpenAI-compatible backend also works. The built-in picker serves the models in its catalog ([NeoMind-Runtimes](https://github.com/camthink-ai/NeoMind-Runtimes), curated + community); adding a new one is a catalog edit, no product release.
+Rule of thumb: **MiniCPM5-2B** as the default (smallest bundlable agent), **Ling 3.0-tiny** when you have ≥6 GB free and want the strongest workflows, **LFM 2.5** for long 128K sessions. Prefer a manual setup? All are GGUF — serve with [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server --jinja` and add the endpoint under **Settings → LLM Backends**. Any OpenAI-compatible backend also works. The built-in picker serves the models in its catalog ([NeoMind-Runtimes](https://github.com/camthink-ai/NeoMind-Runtimes), curated + community); adding a new one is a catalog edit, no product release.
 
 ### Development
 
