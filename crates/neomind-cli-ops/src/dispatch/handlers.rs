@@ -556,7 +556,7 @@ pub async fn run_rule_cmd(cmd: RuleCommand) -> Result<(CliResponse, OutputFormat
         }
         RuleCommand::Update { id, id_flag, body } => {
             let rule_id = id.or(id_flag).ok_or_else(|| {
-                anyhow::anyhow!("rule ID is required: pass it positionally (`rule update <ID> --body ...`) or as --id <ID>")
+                anyhow::anyhow!("rule ID is required: pass it positionally (`rule update <ID> --body ...`) or as --id <ID>.\nHint: list rules with: neomind rule list")
             })?;
             update_rule(&client, &rule_id, &body).await?
         }

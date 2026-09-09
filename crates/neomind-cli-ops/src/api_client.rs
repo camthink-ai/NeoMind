@@ -83,11 +83,22 @@ impl ApiClient {
             }
             let body: serde_json::Value = resp.json().await.unwrap_or_default();
             if !status.is_success() {
-                anyhow::bail!("API error ({}): {}", status, extract_error_message(&body));
+                anyhow::bail!(
+                    "API error ({}): {}{}",
+                    status,
+                    extract_error_message(&body),
+                    if status == reqwest::StatusCode::UNAUTHORIZED {
+                        "\nHint: not logged in? Run: neomind login"
+                    } else if status == reqwest::StatusCode::NOT_FOUND {
+                        "\nHint: is the server running? Try: neomind health"
+                    } else {
+                        ""
+                    }
+                );
             }
             return Ok(body);
         }
-        anyhow::bail!("API request failed after retry")
+        anyhow::bail!("API request failed after retry — is the server running? Try: neomind health")
     }
 
     pub async fn post(&self, path: &str, body: &serde_json::Value) -> Result<serde_json::Value> {
@@ -105,14 +116,21 @@ impl ApiClient {
             let resp_body: serde_json::Value = resp.json().await.unwrap_or_default();
             if !status.is_success() {
                 anyhow::bail!(
-                    "API error ({}): {}",
+                    "API error ({}): {}{}",
                     status,
-                    extract_error_message(&resp_body)
+                    extract_error_message(&resp_body),
+                    if status == reqwest::StatusCode::UNAUTHORIZED {
+                        "\nHint: not logged in? Run: neomind login"
+                    } else if status == reqwest::StatusCode::NOT_FOUND {
+                        "\nHint: is the server running? Try: neomind health"
+                    } else {
+                        ""
+                    }
                 );
             }
             return Ok(resp_body);
         }
-        anyhow::bail!("API request failed after retry")
+        anyhow::bail!("API request failed after retry — is the server running? Try: neomind health")
     }
 
     pub async fn post_raw(&self, path: &str) -> Result<serde_json::Value> {
@@ -127,14 +145,21 @@ impl ApiClient {
             let resp_body: serde_json::Value = resp.json().await.unwrap_or_default();
             if !status.is_success() {
                 anyhow::bail!(
-                    "API error ({}): {}",
+                    "API error ({}): {}{}",
                     status,
-                    extract_error_message(&resp_body)
+                    extract_error_message(&resp_body),
+                    if status == reqwest::StatusCode::UNAUTHORIZED {
+                        "\nHint: not logged in? Run: neomind login"
+                    } else if status == reqwest::StatusCode::NOT_FOUND {
+                        "\nHint: is the server running? Try: neomind health"
+                    } else {
+                        ""
+                    }
                 );
             }
             return Ok(resp_body);
         }
-        anyhow::bail!("API request failed after retry")
+        anyhow::bail!("API request failed after retry — is the server running? Try: neomind health")
     }
 
     pub async fn put(&self, path: &str, body: &serde_json::Value) -> Result<serde_json::Value> {
@@ -152,14 +177,21 @@ impl ApiClient {
             let resp_body: serde_json::Value = resp.json().await.unwrap_or_default();
             if !status.is_success() {
                 anyhow::bail!(
-                    "API error ({}): {}",
+                    "API error ({}): {}{}",
                     status,
-                    extract_error_message(&resp_body)
+                    extract_error_message(&resp_body),
+                    if status == reqwest::StatusCode::UNAUTHORIZED {
+                        "\nHint: not logged in? Run: neomind login"
+                    } else if status == reqwest::StatusCode::NOT_FOUND {
+                        "\nHint: is the server running? Try: neomind health"
+                    } else {
+                        ""
+                    }
                 );
             }
             return Ok(resp_body);
         }
-        anyhow::bail!("API request failed after retry")
+        anyhow::bail!("API request failed after retry — is the server running? Try: neomind health")
     }
 
     pub async fn patch(&self, path: &str, body: &serde_json::Value) -> Result<serde_json::Value> {
@@ -177,14 +209,21 @@ impl ApiClient {
             let resp_body: serde_json::Value = resp.json().await.unwrap_or_default();
             if !status.is_success() {
                 anyhow::bail!(
-                    "API error ({}): {}",
+                    "API error ({}): {}{}",
                     status,
-                    extract_error_message(&resp_body)
+                    extract_error_message(&resp_body),
+                    if status == reqwest::StatusCode::UNAUTHORIZED {
+                        "\nHint: not logged in? Run: neomind login"
+                    } else if status == reqwest::StatusCode::NOT_FOUND {
+                        "\nHint: is the server running? Try: neomind health"
+                    } else {
+                        ""
+                    }
                 );
             }
             return Ok(resp_body);
         }
-        anyhow::bail!("API request failed after retry")
+        anyhow::bail!("API request failed after retry — is the server running? Try: neomind health")
     }
 
     pub async fn delete(&self, path: &str) -> Result<serde_json::Value> {
@@ -199,14 +238,21 @@ impl ApiClient {
             let resp_body: serde_json::Value = resp.json().await.unwrap_or_default();
             if !status.is_success() {
                 anyhow::bail!(
-                    "API error ({}): {}",
+                    "API error ({}): {}{}",
                     status,
-                    extract_error_message(&resp_body)
+                    extract_error_message(&resp_body),
+                    if status == reqwest::StatusCode::UNAUTHORIZED {
+                        "\nHint: not logged in? Run: neomind login"
+                    } else if status == reqwest::StatusCode::NOT_FOUND {
+                        "\nHint: is the server running? Try: neomind health"
+                    } else {
+                        ""
+                    }
                 );
             }
             return Ok(resp_body);
         }
-        anyhow::bail!("API request failed after retry")
+        anyhow::bail!("API request failed after retry — is the server running? Try: neomind health")
     }
 
     pub async fn delete_with_body(
@@ -228,14 +274,21 @@ impl ApiClient {
             let resp_body: serde_json::Value = resp.json().await.unwrap_or_default();
             if !status.is_success() {
                 anyhow::bail!(
-                    "API error ({}): {}",
+                    "API error ({}): {}{}",
                     status,
-                    extract_error_message(&resp_body)
+                    extract_error_message(&resp_body),
+                    if status == reqwest::StatusCode::UNAUTHORIZED {
+                        "\nHint: not logged in? Run: neomind login"
+                    } else if status == reqwest::StatusCode::NOT_FOUND {
+                        "\nHint: is the server running? Try: neomind health"
+                    } else {
+                        ""
+                    }
                 );
             }
             return Ok(resp_body);
         }
-        anyhow::bail!("API request failed after retry")
+        anyhow::bail!("API request failed after retry — is the server running? Try: neomind health")
     }
 
     /// Upload a single file as multipart with the specified field name.
@@ -277,14 +330,21 @@ impl ApiClient {
             let resp_body: serde_json::Value = resp.json().await.unwrap_or_default();
             if !status.is_success() {
                 anyhow::bail!(
-                    "API error ({}): {}",
+                    "API error ({}): {}{}",
                     status,
-                    extract_error_message(&resp_body)
+                    extract_error_message(&resp_body),
+                    if status == reqwest::StatusCode::UNAUTHORIZED {
+                        "\nHint: not logged in? Run: neomind login"
+                    } else if status == reqwest::StatusCode::NOT_FOUND {
+                        "\nHint: is the server running? Try: neomind health"
+                    } else {
+                        ""
+                    }
                 );
             }
             return Ok(resp_body);
         }
-        anyhow::bail!("API request failed after retry")
+        anyhow::bail!("API request failed after retry — is the server running? Try: neomind health")
     }
 
     /// Upload multiple named parts as multipart/form-data.
@@ -320,14 +380,21 @@ impl ApiClient {
             let resp_body: serde_json::Value = resp.json().await.unwrap_or_default();
             if !status.is_success() {
                 anyhow::bail!(
-                    "API error ({}): {}",
+                    "API error ({}): {}{}",
                     status,
-                    extract_error_message(&resp_body)
+                    extract_error_message(&resp_body),
+                    if status == reqwest::StatusCode::UNAUTHORIZED {
+                        "\nHint: not logged in? Run: neomind login"
+                    } else if status == reqwest::StatusCode::NOT_FOUND {
+                        "\nHint: is the server running? Try: neomind health"
+                    } else {
+                        ""
+                    }
                 );
             }
             return Ok(resp_body);
         }
-        anyhow::bail!("API request failed after retry")
+        anyhow::bail!("API request failed after retry — is the server running? Try: neomind health")
     }
 }
 
