@@ -37,11 +37,11 @@
   <table>
     <tr>
       <td align="center">
-        <img src="docs/img/chat.png" alt="AI Chat" width="400" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);" />
+        <img src="docs/img/2026-08/chat.png" alt="AI Chat" width="400" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);" />
         <br/><sub><b>AI Chat</b></sub>
       </td>
       <td align="center">
-        <img src="docs/img/devices.png" alt="Devices" width="400" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);" />
+        <img src="docs/img/2026-08/devices.png" alt="Devices" width="400" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);" />
         <br/><sub><b>Device Management</b></sub>
       </td>
       <td align="center">
@@ -76,50 +76,34 @@ NeoMind is an **edge-deployed AI platform** that brings intelligence to IoT. It 
 
 ## Features
 
-### AI-Powered Intelligence
-- **Natural Language Chat** — Conversational interface to query and control all connected devices
-- **Autonomous Agents** — Scheduled AI agents that monitor, analyze, and act on device data independently
-- **Built-in LLM + any backend** — a bundled local model runs out of the box; bring Ollama, llama.cpp, or any cloud vendor (OpenAI, Anthropic, Qwen, DeepSeek, GLM, xAI…) via the two cloud protocols (OpenAI-compatible / Anthropic)
-- **Memory System** — Multi-tier memory (User, Knowledge, Procedures, Session) with automatic extraction and compression
-- **Skill System** — YAML+Markdown skills that guide agent behavior for specific scenarios
-- **Multimodal** — Image upload and visual analysis support
+### AI Intelligence
+- **Natural-language control** — chat with devices, upload images for visual analysis
+- **Autonomous agents** — scheduled/event-driven, multi-step tool calling with memory & skills
+- **Built-in LLM + any backend** — bundled local model works out of the box; bring Ollama, llama.cpp, or any cloud vendor (OpenAI, Anthropic, Qwen, DeepSeek, GLM, xAI…)
 
-### Device Management
-- **MQTT Protocol** — Primary device integration with embedded broker, mTLS, and CA certificate support
-- **BLE Provisioning** — Zero-touch device setup via Bluetooth (Tauri native + Web Bluetooth)
-- **HTTP/Webhook** — Flexible device adapter for REST-based devices
-- **Auto-Discovery** — Automatic device detection, type registration, and AI-assisted onboarding
-- **Command Queue** — Send control commands to devices with parameter validation and tracking
-- **Custom Device Types** — Define device metrics and commands via JSON type definitions
+### Devices
+- **MQTT (embedded broker, mTLS) · BLE provisioning · HTTP/Webhook** — three ways in, zero external services
+- **Auto-discovery & AI-assisted onboarding** — unknown devices detected, typed, and set up automatically
+- **Custom device types** — metrics and commands via JSON, no code
 
 ### Automation
-- **Rule Engine** — JSON-based rules with recursive conditions (comparison/range/logical) and actions (notify/execute/trigger_agent), with cooldown and `for_duration` debouncing
-- **Data Transforms** — JavaScript-based data transformation for creating virtual metrics
-- **Scheduled Agents** — Time-based and event-driven AI agent execution
-- **Event Bus** — Pub/sub architecture for decoupled component communication
+- **Rule engine** — recursive JSON conditions, notify/execute/trigger-agent actions, cooldown & debouncing
+- **JS data transforms** — compute virtual metrics from live streams
+- **Event bus** — every component decoupled via pub/sub
 
-### Dashboards & Visualization
-- **Drag-and-Drop Builder** — Visual dashboard editor with responsive grid layout
-- **Rich Widgets** — Value cards, charts, gauges, tables, VLM vision components
-- **Real-time Updates** — WebSocket/SSE for live data streaming to dashboards
-- **Dashboard Sharing** — Public links with expiration for sharing dashboards
-- **Custom Components** — Build and publish your own dashboard widgets
+### Dashboards
+- **Drag-and-drop builder** — value cards, charts, gauges, VLM vision widgets
+- **Real-time (WS/SSE)** streaming and shareable public links
+- **Custom widgets** — publish React components to the marketplace
 
-### Notification & Data Push
-- **7 Notification Channels** — Webhook, Email, Telegram, WeCom, DingTalk, Slack, Feishu
-- **Data Push** — Forward telemetry data to external systems via Webhook or MQTT
-- **Delivery Tracking** — Retry logic with exponential backoff, delivery history, and log management
-- **Message Deduplication** — Prevent notification storms from high-frequency triggers
+### Alerts & Integration
+- **7 notification channels** — Webhook, Email, Telegram, WeCom, DingTalk, Slack, Feishu
+- **Data push** — forward telemetry to external systems with retry & dedup
 
 ### Platform
-- **Multi-Instance** — Connect to and manage multiple NeoMind backends from a single interface
-- **Extension System** — Native & WASM extensions with process isolation and capability-based permissions
-- **Cross-Platform Desktop** — macOS, Windows, Linux native apps via Tauri
-- **Mobile-Friendly Web** — Responsive web UI optimized for phone and tablet
-- **i18n** — English and Chinese language support
-- **Dark Mode** — System-aware dark/light theme
-- **API Key Auth** — Alternative to JWT for programmatic access
-- **CLI Tools** — Full-featured command-line interface for all operations
+- **Desktop apps** (macOS/Windows/Linux) + **mobile-friendly web**, EN/中文
+- **Process-isolated extensions** (native + WASM) with capability permissions
+- **Multi-instance management, full CLI, API-key access**
 
 ## Ecosystem
 
@@ -132,34 +116,6 @@ NeoMind is a modular ecosystem with specialized repositories for each concern:
 | **[NeoMind-DeviceTypes](https://github.com/camthink-ai/NeoMind-DeviceTypes)** | Device type definitions — standardized metrics and commands for IoT hardware |
 | **[NeoMind-Dashboard-Components](https://github.com/camthink-ai/NeoMind-Dashboard-Components)** | Dashboard widget marketplace — community-contributed React components |
 
-### Available Extensions
-
-22 official extensions across vision, voice, IoT bridges, and utilities. Browse the full list in the [Extensions Marketplace](https://github.com/camthink-ai/NeoMind-Extensions).
-
-| Extension | Category | Description |
-|-----------|----------|-------------|
-| **Image Analyzer** | Vision | YOLOv11 object detection on uploaded images (80+ COCO categories) |
-| **YOLO Video** | Vision | Real-time object detection on RTSP/RTMP/HLS streams with ROI + line crossing |
-| **YOLO Device Inference** | Vision | Auto YOLOv11 detection on NE301/NE101 camera feeds with smart capture |
-| **Face Recognition** | Vision | ArcFace enrollment, matching, and real-time detection on device streams |
-| **OCR Device Inference** | Vision | SVTR text recognition bound to device image streams |
-| **PaddleOCR-VL** | Vision | High-accuracy multilingual OCR, table recognition, and key info extraction |
-| **Locate Anything** | Vision | Visual grounding — object detection, phrase grounding, GUI grounding, OCR |
-| **CosyVoice 3** | Voice | Fun-CosyVoice3-0.5B streaming TTS (host audio + wav synthesis) |
-| **MOSS TTS Nano** | Voice | Voice-cloning TTS extension |
-| **SenseVoice ASR** | Voice | Multilingual (zh/en/ja/ko/yue) speech recognition via sherpa-onnx |
-| **Edge TTS** | Voice | sherpa-onnx ZipVoice cross-platform CPU streaming TTS |
-| **Voice Assistant** | Voice | Full pipeline orchestrator: mic → VAD → ASR → reply → TTS → speaker |
-| **Home Assistant Bridge** | IoT Bridge | Import 3000+ HA entity integrations as NeoMind devices |
-| **LoRaWAN Bridge** | IoT Bridge | ChirpStack/TTN sensors with auto-discovery + payload decoding |
-| **Modbus Bridge** | IoT Bridge | TCP/RTU PLCs, power meters, sensors, industrial devices |
-| **BACnet Bridge** | IoT Bridge | BACnet/IP building automation discovery and control |
-| **ONVIF Bridge** | IoT Bridge | IP camera discovery, RTSP streams, PTZ control |
-| **OPC-UA Bridge** | IoT Bridge | Industrial servers — node browsing + subscription monitoring |
-| **Uink-RMS Bridge** | IoT Bridge | E-paper display telemetry sync and image push |
-| **Weather Forecast** | Utility | Real-time multi-city weather via OpenWeatherMap API |
-| **Stream Player** | UI | RTSP/RTMP/HLS/local-file video player dashboard widget |
-| **WASM Demo** | Demo | SDK capabilities showcase (counter, greeting, echo) |
 ### Supported Devices
 
 NE301 (Edge AI Camera) and NE101 (Sensing Camera). See [NeoMind-DeviceTypes](https://github.com/camthink-ai/NeoMind-DeviceTypes) for full device type definitions.
@@ -210,104 +166,31 @@ docker run -d --name neomind \
   camthink/neomind:latest
 ```
 
-Or with [docker-compose](docker-compose.yml) (pulls `camthink/neomind:latest` automatically):
-
-```bash
-git clone https://github.com/camthink-ai/NeoMind.git
-cd NeoMind
-docker compose up -d
-```
-
-The `camthink/neomind:latest` image is rebuilt on every release (amd64 + arm64); pin a version with `camthink/neomind:0.9.15`. To build the image from source instead, uncomment the `build:` block in `docker-compose.yml`.
-
-**Specific version:**
-```bash
-curl -fsSL https://raw.githubusercontent.com/camthink-ai/NeoMind/main/scripts/install.sh | VERSION=0.9.15 sh
-```
-
-**Custom directories:**
-```bash
-curl -fsSL ... | INSTALL_DIR=~/.local/bin DATA_DIR=~/.neomind sh
-```
-
-**Backend only (no web UI):**
-```bash
-curl -fsSL ... | NO_WEB=true sh
-```
-
-**With nginx reverse proxy (port 80):**
-```bash
-curl -fsSL ... | USE_NGINX=true sh
-```
-
-**Manual installation:**
-```bash
-# Both assets resolve to the newest release — no version number to maintain
-wget https://github.com/camthink-ai/NeoMind/releases/latest/download/neomind-server-linux-amd64.tar.gz
-wget https://github.com/camthink-ai/NeoMind/releases/latest/download/neomind-web.tar.gz
-tar xzf neomind-server-linux-amd64.tar.gz
-sudo install -m 755 neomind /usr/local/bin/
-sudo install -m 755 neomind-extension-runner /usr/local/bin/
-sudo mkdir -p /var/www/neomind
-sudo tar xzf neomind-web.tar.gz -C /var/www/neomind
-./neomind serve
-```
-
-**Nginx config:**
-```nginx
-server {
-    listen 80;
-    root /var/www/neomind;
-    index index.html;
-    location / { try_files $uri $uri/ /index.html; }
-    location /api/ {
-        proxy_pass http://127.0.0.1:9375/api/;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-}
-```
+Full options — Docker Compose, pinned versions, custom directories,
+nginx reverse proxy, manual install — are in the wiki's
+[Install & Setup](https://wiki.camthink.ai/docs/neomind/user-guide/install-setup).
 
 </details>
 
 ### Recommended Local Models
 
-All are **built in** — pick one in the app (**Settings → LLM Backends** → built-in model, or the first-run wizard) and it downloads, boots its own engine, and becomes chat-ready with zero configuration. The picker shows each model's memory feasibility on your hardware before anything downloads, and the context size is adjustable per model (8K/32K/64K/128K).
+Pick a catalog model in **Settings → LLM Backends** (or the first-run wizard) — it downloads and runs with zero configuration. Context defaults to each model's tested optimum; 32K/64K/128K presets and custom values available.
 
-All run NeoMind's full agent toolkit (tool selection, in-process CLI dispatch, multi-step tasks) — measured on the comprehensive agent eval (5 scenarios × 15 turns against a self-hosted seeded sandbox platform; 2026-09, corrected harness: production tool surface, real context window, working memory pipeline — every model measured under identical conditions):
+Scores from the 2026-09 agent eval: 12 scenarios per cycle (Chinese + English, 40-turn long-horizon, tools-breadth), executed against a seeded sandbox platform under identical conditions. Finalists ran two cycles.
 
-| Model | Quant | Size | Min RAM | Eval @8K | @16K | @32K | Best for |
-|-------|-------|------|----------|----------|------|------|----------|
-| **MiniCPM5-2B** ⭐ first choice | Q4_K_M | 1.5 GB | 3 GB | **64** | 61 | ~68 | Most robust across windows — highest 8K tool accuracy (81%), Apache-2.0, runs on 3 GB. Serve @8K. |
-| **Qwen 3.5 4B** | Q4_K_M | 2.7 GB | 4 GB | 38 | **70** — top overall | 66 | The strongest agent **when given ≥16K context** (recall 50%, context 82%); collapses at 8K. Vision via mmproj. Serve @16K. |
-| **Ling 3.0-tiny** | Q4_K_M | 4.8 GB | 6 GB | 62 | 48 | 45 | Fast MoE for 8K-only short bursts; cliffs past 8K. MIT. Needs llama.cpp ≥ b10545. |
-| **Gemma 4 E2B** | QAT q4_0 | 3.1 GB | 4.5 GB | 59* | — | 60 | Most long-context-stable; vision-ready via mmproj. Resource creation is its weakness. |
-| **LFM 2.5 2.6B** | QAD Q4_0 | 1.5 GB | 3 GB | 41* | — | 54 | Improves with context; native 128K niche. Check the LFM license. |
-| deepseek-v4-flash (cloud ref) | — | — | — | — | — | 65 | Same tier as the best locals, 5× faster per turn. |
-| MiniCPM5-1B / Qwen3.5-0.8B | Q4 | 0.9–1.2 GB | 2 GB | ~26 | — | — | Below the agent threshold — chat only. |
+| Model | Quant | Size | Min RAM | @8K | @16K | @32K | Best for |
+|-------|-------|------|---------|-----|------|------|----------|
+| **MiniCPM5-2B** ⭐ | Q4_K_M | 1.5 GB | 3 GB | **64** | 61 | ~68* | Most robust across windows, 81% tool accuracy @8K. Apache-2.0. Serve @8K. |
+| **Qwen 3.5 4B** | Q4_K_M | 2.7 GB | 4 GB | 38* | **70** | 66 | Strongest agent at ≥16K context; collapses at 8K. Vision via mmproj. Serve @16K. |
+| **Ling 3.0-tiny** | Q4_K_M | 4.8 GB | 6 GB | 62 | 48 | 45 | Fast MoE, 8K-only — cliffs past 8K. Needs llama.cpp ≥ b10545. |
+| **Gemma 4 E2B** | QAT q4_0 | 3.1 GB | 4.5 GB | 59* | — | 60 | Long-context-stable; weak resource creation. |
+| **LFM 2.5 2.6B** | QAD Q4_0 | 1.5 GB | 3 GB | 41* | — | 54 | Improves with context; native 128K. |
+| deepseek-v4-flash (cloud) | — | — | — | — | — | 65–75 | Same tier as the best locals, 5× faster per turn. |
+| MiniCPM5-1B / Qwen3.5-0.8B | Q4 | ~1 GB | 2 GB | ~26* | — | — | Below agent threshold; not in the catalog. |
 
-(*older 5-scenario suite; all other numbers from the 12-scenario suite: zh+en mirrors,
-40-turn long-horizon, tools-breadth; self-hosted seeded sandbox, 2026-09.)
+\*Earlier 5-scenario suite at that window. Finalists were measured twice: stable models repeat within ±1 point; deepseek-v4-flash spread 65–75 (investigative style is variance-prone under keyword scoring).
 
-Scoring fairness note: re-judging domain turns with credit for investigation
-probes and correct no-tool answers converges all four contenders to 83–90%
-fair tool accuracy — one tier. The durable selection factors are footprint,
-latency, and context-regime fit (see the matrix), plus outcome quality
-(resource creation, memory recall).
-
-Key findings: context response is **model-specific** — Qwen is starved at 8K and peaks at
-16K, Ling cliffs after 8K, MiniCPM5/gemma are flat. Match the window to the model, not
-the other way round. All models: bilingual parity (zh≈en), long-horizon memory 0%
-(platform extraction ceiling, not model), non-shell tool selection 33–67% (a shared
-weak spot worth prompt work).
-
-Rule of thumb: **MiniCPM5-2B @8K** as the default (smallest, most robust, bundlable);
-**Qwen 3.5 4B @16K** when you have 4 GB+ and want the strongest agent; **Ling @8K**
-for fast short bursts on 6 GB+; cloud fallback **deepseek-v4-flash**. All are GGUF —
-serve with [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server --jinja`
-and register under **Settings → LLM Backends**. The built-in picker's catalog lives in
-[NeoMind-Runtimes](https://github.com/camthink-ai/NeoMind-Runtimes).
+Under fair scoring the top four are one tier (83–90% tool accuracy) — pick by footprint, latency, and context fit: **MiniCPM5-2B @8K** default, **Qwen @16K** strongest, **deepseek-v4-flash** cloud fallback. Full data: [docs/edge-models.md](docs/edge-models.md) · catalog: [NeoMind-Runtimes](https://github.com/camthink-ai/NeoMind-Runtimes).
 
 ### Development
 
@@ -327,6 +210,9 @@ cd web && npm install && npm run dev
 # Build desktop app
 cd web && npm run tauri:build
 ```
+
+<details>
+<summary><b>Architecture & repo layout (for contributors)</b></summary>
 
 ## Architecture
 
@@ -397,150 +283,7 @@ NeoMind/
 └── .env.example                 # Environment variable template
 ```
 
-## More Screenshots
-
-<details>
-<summary>Click to expand</summary>
-
-<br/>
-
-<table>
-  <tr>
-    <td><b>Login</b></td>
-    <td><b>AI Chat</b></td>
-  </tr>
-  <tr>
-    <td><img src="docs/img/login.png" width="480" /></td>
-    <td><img src="docs/img/chat.png" width="480" /></td>
-  </tr>
-  <tr>
-    <td><b>AI Agents</b></td>
-    <td><b>Rules Engine</b></td>
-  </tr>
-  <tr>
-    <td><img src="docs/img/agents.png" width="480" /></td>
-    <td><img src="docs/img/rules.png" width="480" /></td>
-  </tr>
-  <tr>
-    <td><b>Data Transforms</b></td>
-    <td><b>Messages</b></td>
-  </tr>
-  <tr>
-    <td><img src="docs/img/transforms.png" width="480" /></td>
-    <td><img src="docs/img/messages.png" width="480" /></td>
-  </tr>
-  <tr>
-    <td><b>Extensions</b></td>
-    <td><b>Data Push</b></td>
-  </tr>
-  <tr>
-    <td><img src="docs/img/extensions.png" width="480" /></td>
-    <td><img src="docs/img/data-push.png" width="480" /></td>
-  </tr>
-  <tr>
-    <td><b>LLM Backends</b></td>
-    <td><b>Mobile</b></td>
-  </tr>
-  <tr>
-    <td><img src="docs/img/llm-backends.png" width="480" /></td>
-    <td><img src="docs/img/mobile_web.png" width="200" /></td>
-  </tr>
-</table>
-
 </details>
-
-## Configuration
-
-### Supported LLM Backends
-
-Local: Ollama, llama.cpp (and the built-in bundled model). Cloud: a single **Cloud AI** card with two protocols — OpenAI-compatible (OpenAI, Qwen, DeepSeek, GLM, xAI, vLLM, OpenRouter, any `/v1` endpoint) and Anthropic. Configure via the **Settings → LLM Backends** page in the UI.
-
-<details>
-<summary>Environment variables</summary>
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `RUST_LOG` | `info` | Log level (trace, debug, info, warn, error) |
-| `NEOMIND_DATA_DIR` | `/var/lib/neomind` | Data directory |
-| `NEOMIND_BIND_ADDR` | `0.0.0.0:9375` | Server bind address |
-| `SERVER_PORT` | `9375` | API server port |
-
-</details>
-
-## CLI Reference
-
-```bash
-neomind serve                          # Start API server
-neomind health                        # System health check
-neomind device list                   # List devices
-neomind device create --name "..."    # Create device
-neomind rule list                     # List automation rules
-neomind extension list                # List extensions
-neomind extension install file.nep    # Install extension
-neomind agent list                    # List AI agents
-neomind message list                  # List messages
-neomind system info                   # System status & network info
-neomind api-key create                # Create API key
-```
-
-## Extension Development
-
-Build extensions using the Rust SDK with process isolation. See the [Developer Guide](https://wiki.camthink.ai/docs/neomind/developer-guide/overview) and [NeoMind-Extensions](https://github.com/camthink-ai/NeoMind-Extensions) for full examples.
-
-<details>
-<summary>Quick example</summary>
-
-```rust
-use neomind_extension_sdk::prelude::*;
-
-pub struct MyExtension;
-
-#[async_trait]
-impl Extension for MyExtension {
-    fn metadata(&self) -> &ExtensionMetadata {
-        static META: OnceLock<ExtensionMetadata> = OnceLock::new();
-        META.get_or_init(|| {
-            ExtensionMetadata::new("my-extension", "My Extension", "1.0.0")
-                .with_description("My custom extension")
-                .with_author("Your Name")
-        })
-    }
-
-    async fn execute_command(&self, cmd: &str, args: &Value) -> Result<Value> {
-        match cmd {
-            "do_something" => Ok(json!({ "result": "done" })),
-            _ => Err(ExtensionError::CommandNotFound(cmd.to_string())),
-        }
-    }
-
-    fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
-        Ok(vec![])
-    }
-}
-
-neomind_export!(MyExtension);
-```
-
-</details>
-
-## Documentation
-
-All user, install, and developer documentation lives on the **[NeoMind Wiki](https://wiki.camthink.ai/docs/neomind/product-overview/what-is-neomind)**:
-
-| Wiki Section | Covers |
-|--------------|--------|
-| [Product Overview](https://wiki.camthink.ai/docs/neomind/product-overview/what-is-neomind) | What NeoMind is, core concepts, architecture |
-| [Quick Start](https://wiki.camthink.ai/docs/neomind/quick-start/five-minute-guide) | Five-minute guide to your first running instance |
-| [Install & Setup](https://wiki.camthink.ai/docs/neomind/user-guide/install-setup) | Desktop app, server, Docker, configuration |
-| [Developer Guide](https://wiki.camthink.ai/docs/neomind/developer-guide/overview) | REST/WebSocket API, extensions, integrations |
-
-Repo-local references (kept here for contributors):
-
-| Resource | Description |
-|----------|-------------|
-| [CLAUDE.md](CLAUDE.md) | Development guide and code conventions |
-| [CHANGELOG.md](CHANGELOG.md) | Version history and release notes |
-| [Frontend Spec](web/DESIGN_SPEC.md) | UI design system and component standards |
 
 ## Tech Stack
 
@@ -565,7 +308,13 @@ Release announcements are published to the Discord `#announcements` channel and 
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome — feel free to open a PR!
+
+Repo-local references for contributors:
+
+- [CLAUDE.md](CLAUDE.md) — development conventions and code gotchas
+- [CHANGELOG.md](CHANGELOG.md) — version history
+- [web/DESIGN_SPEC.md](web/DESIGN_SPEC.md) — UI design system
 
 ## License
 

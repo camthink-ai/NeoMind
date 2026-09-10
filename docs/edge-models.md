@@ -33,7 +33,7 @@ Both models speak OpenAI-compatible function calling through llama.cpp's
 | Ling-3.0-tiny | 61.7 (R24) | 47.8 | 44.9 | Cliff between 8K and 16K. 8K-only. |
 | gemma-4-E2B | 59.1* | — | 59.7 | Flat / long-context-stable. |
 | LFM2.5-2.6B | 41.3* | — | 53.5 | Improves with context. |
-| deepseek-v4-flash (cloud, 128K) | — | — | 65.0 | Reference tier. |
+| deepseek-v4-flash (cloud, 128K) | — | — | 65.0 / 75.0 | Reference tier. Highest run variance of the field (±5) — investigation style under keyword scoring. |
 
 (* = older 5-scenario suite at that window; R24 = two full cycles, n=222 tool
 judgments. Cross-window comparisons for a model are decision-grade; ≤6-point
