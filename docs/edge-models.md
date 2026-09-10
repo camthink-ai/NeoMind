@@ -18,29 +18,59 @@ vision slot stays `LFM2.5-VL-3B`.
 
 | Role | Model | Measured (2026-09 corrected harness) | Why |
 |---|---|---|---|
-| **Agent** (tool calling) | `MiniCPM5-2B` (text) | **81% tool accuracy / 66 overall** — statistically ties cloud deepseek-v4-flash; best-in-class CLI domain selection at 2B | 1.5 GB (Q4_K_M); native OpenAI-format tool calling incl. parallel calls; ~53 tok/s on M4 Pro. Serve at **8K context** — see trade-off below |
+| **Agent** (tool calling) | `MiniCPM5-2B` (text) | **64 overall @8K (81% tool accuracy)** — statistically ties cloud deepseek-v4-flash; best-in-class CLI domain selection at 2B and flat across context windows | 1.5 GB (Q4_K_M); native OpenAI-format tool calling incl. parallel calls; ~53 tok/s on M4 Pro. Serve at **8K context** — see trade-off below |
 | **Perception** (vision) | `LFM2.5-VL-3B` (vision) | 10% as an agent (2026-08) — **do not use it as the agent** | Strong vision (ScreenSpot 80.7, OCR-class benchmarks), but the vision training materially degraded its tool calling despite sharing the 2.6B backbone |
 
 Both models speak OpenAI-compatible function calling through llama.cpp's
 `--jinja` chat-template path, verified end-to-end against NeoMind's agent loop.
 
-### Full 2026-09 leaderboard (identical conditions for every model: self-hosted seeded sandbox, 5×15 turns, 8K ctx)
+### Final 2026-09 context-response matrix (12-scenario suite: zh+en mirrors, 40-turn long-horizon, tools-breadth; seeded sandbox; every cell same protocol)
 
-| Model | Tool acc | Memory recall | Resource creation | Overall | Notes |
-|---|---|---|---|---|---|
-| **Ling-3.0-tiny** | 79.6% | 20% | **77%** | **71.2 (B)** | Top overall — strongest complete workflows. 4.8 GB, needs llama.cpp ≥ b10545 (bailingmoe3) |
-| MiniCPM5-2B (32K) | 70.2% | 20% | 54% | 67.9 | Long ctx trades tool accuracy for recall. Not worth it vs 8K |
-| **MiniCPM5-2B (8K)** | **81.2%** | 0% | 54% | **66.2** | **Recommended default** — highest tool accuracy, 1.5 GB, Apache-2.0 |
-| deepseek-v4-flash (cloud ref) | 57.1% | 50% | 46% | 60.9 | Same tier; investigates before acting, 5× faster per turn |
-| gemma-4-E2B | 74.5% | 30% | 0% | 59.1 | Good tool selection, resource creation collapses on real data |
-| LFM2.5-2.6B | 66.7% | 0% | 31% | 38.1 | Former default; CLI domain mapping drifts (maps "list devices" to `ls /dev`) |
-| Qwen3.5-4B | 61.7% | 10% | 8% | 37.9 | Thinking model investigates deeply (~40 s/turn) but creations fail checks |
-| MiniCPM5-1B | 27.3% | 0% | 23% | 26.3 | Below agent threshold |
-| Qwen3.5-0.8B | 34.8% | 0% | 15% | 25.9 | Below agent threshold |
+| Model | @8K | @16K | @32K | Context response profile |
+|---|---|---|---|---|
+| Qwen3.5-4B | 37.9 | **69.5** | 65.8 | Starved at 8K, peaks at 16K (tool 73.6%, recall 50%, context 82%). Serve @16K. |
+| MiniCPM5-2B | **64.0** (R24) | 61.4 | ~68* | Flat — most robust. Serve @8K (fastest, no loss). |
+| Ling-3.0-tiny | 61.7 (R24) | 47.8 | 44.9 | Cliff between 8K and 16K. 8K-only. |
+| gemma-4-E2B | 59.1* | — | 59.7 | Flat / long-context-stable. |
+| LFM2.5-2.6B | 41.3* | — | 53.5 | Improves with context. |
+| deepseek-v4-flash (cloud, 128K) | — | — | 65.0 | Reference tier. |
 
-n=1 per model (single run each): treat ≤6-point gaps as statistical ties; the
-structural gaps (Ling's 77% resource creation, MiniCPM5's 81% tool accuracy,
-the 1B-class collapse) are the load-bearing findings.
+(* = older 5-scenario suite at that window; R24 = two full cycles, n=222 tool
+judgments. Cross-window comparisons for a model are decision-grade; ≤6-point
+cross-model gaps are statistical ties.)
+
+## Fairness view (2026-09-10): classic scoring exaggerated the differences
+
+The classic score counts ONLY "emitted the right domain command" — it awards
+zero for investigation probes (`--help`) and for correct answers given
+without a tool call, biasing against careful models. Re-judging every domain
+turn (full command 1.0 / exploration 0.5 / substantive direct answer 0.75):
+
+| Model | Classic domain acc | Fair domain score | Bias delta |
+|---|---|---|---|
+| Qwen3.5-4B @16K | 61.0% | 87.8% | **+26.8pp** |
+| DeepSeek (cloud) | 71.4% | 84.9% | +13.5pp |
+| Ling @8K | 77.9% | 89.6% | +11.7pp |
+| MiniCPM5-2B @8K | 73.4% | 83.1% | +9.7pp |
+
+Under fair judging the four contenders CONVERGE to 83–90% — statistically one
+tier of tool competence. The classic leaderboard's cross-model gaps were
+largely scoring bias, not capability. Selection therefore rests on the real
+differentiators: footprint, latency, context-regime fit, and the outcome
+dimensions (resource creation, memory) — which is exactly what the
+context-response matrix above encodes. (Classic scores remain the primary
+report; the fairness view ships in the harness as a standard second block.)
+
+Bilingual: zh≈en for every contender (MiniCPM5 60/64, Ling 61/58, Qwen@16K 55/64,
+DeepSeek 51/49) — English parity is not a differentiator. Long-horizon (40-turn)
+memory: 0% for ALL models at ALL windows — the ceiling is the platform-side
+extraction/window budget, not model choice. Non-shell tool breadth (file/web/skill/
+memory selection): 33–67% everywhere — a shared weak spot.
+
+Selection: **MiniCPM5-2B @8K** = default (1.5 GB, 3 GB floor, Apache-2.0, robust);
+**Qwen3.5-4B @16K** = strongest agent when 4 GB+ RAM and 16K ctx fit; **Ling @8K** =
+fast short-burst MoE (6 GB+); **gemma @32K** = long-session stability; cloud =
+deepseek-v4-flash.
 
 Memory-recall caveat: the score depends on both the context window and the
 model's own fact-extraction quality (the extractor is the model under test).

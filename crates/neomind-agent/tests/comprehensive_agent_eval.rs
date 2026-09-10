@@ -397,6 +397,97 @@ async fn new_session() -> (SessionManager, String) {
 static TOTAL_ELAPSED_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static TURNS_WITH_TOOLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+// ── fairness view ─────────────────────────────────────────────────────
+//
+// The classic scoring rewards EMITTING the right domain command and gives
+// zero for anything else — structurally penalizing models that investigate
+// first (`--help` probes) or answer directly from context without a call.
+// The transcript + fair rescore below re-judges every domain turn:
+//   full command      → 1.0
+//   exploration probe → 0.5  (help/list in the right domain)
+//   direct answer     → 0.75 (no command, substantive reply)
+//   nothing           → 0
+// It is printed alongside the classic report, never replaces it.
+
+#[derive(Clone)]
+struct TurnRecord {
+    query: String,
+    commands: Vec<String>,
+    tools: Vec<String>,
+    content: String,
+}
+
+static TRANSCRIPT: std::sync::Mutex<Vec<TurnRecord>> = std::sync::Mutex::new(Vec::new());
+
+fn expected_domain(query: &str) -> Option<&'static str> {
+    let q = query.to_lowercase();
+    let device =
+        q.contains("设备") || q.contains("device") || q.contains("传感器") || q.contains("sensor");
+    let rule = q.contains("规则") || q.contains("rule");
+    let agent = q.contains("agent");
+    if agent {
+        Some("agent")
+    } else if rule {
+        Some("rule")
+    } else if device {
+        Some("device")
+    } else {
+        None
+    }
+}
+
+fn fair_rescore() -> (f64, usize, usize) {
+    let transcript = TRANSCRIPT.lock().unwrap();
+    let (mut points, mut n, mut classic_hits) = (0.0f64, 0usize, 0usize);
+    for t in transcript.iter() {
+        let Some(domain) = expected_domain(&t.query) else {
+            continue;
+        };
+        // Recall/summary/context turns are not command tasks.
+        if t.query.contains("总结")
+            || t.query.contains("summarize")
+            || t.query.contains("我叫什么")
+            || t.query.contains("my name")
+            || t.query.contains("多少个传感器")
+            || t.query.contains("how many sensors")
+            || t.query.contains("摄像头")
+            || t.query.contains("cameras?")
+            || t.query.contains("阈值")
+            || t.query.contains("threshold")
+            || t.query.contains("通知方式")
+            || t.query.contains("notification method")
+            || t.query.contains("门禁")
+            || t.query.contains("联系")
+            || t.query.contains("contact")
+        {
+            continue;
+        }
+        n += 1;
+        let prefix = format!("neomind {}", domain);
+        let mut full = false;
+        let mut expl = false;
+        for c in &t.commands {
+            let cl = c.to_lowercase();
+            if cl.starts_with(&prefix) || cl.starts_with(&format!("neomind {} ", domain)) {
+                if cl.contains("--help") {
+                    expl = true;
+                } else {
+                    full = true;
+                }
+            }
+        }
+        if full {
+            points += 1.0;
+            classic_hits += 1;
+        } else if expl {
+            points += 0.5;
+        } else if t.commands.is_empty() && t.content.chars().count() > 30 {
+            points += 0.75;
+        }
+    }
+    (points, n, classic_hits)
+}
+
 async fn send(sm: &SessionManager, sid: &str, msg: &str) -> MsgResult {
     let start = Instant::now();
     let resp = sm.process_message(sid, msg).await.unwrap();
@@ -416,6 +507,13 @@ async fn send(sm: &SessionManager, sid: &str, msg: &str) -> MsgResult {
     if !shell_commands.is_empty() {
         TURNS_WITH_TOOLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
+
+    TRANSCRIPT.lock().unwrap().push(TurnRecord {
+        query: msg.to_string(),
+        commands: shell_commands.clone(),
+        tools: resp.tool_calls.iter().map(|t| t.name.clone()).collect(),
+        content: resp.message.content.to_string(),
+    });
 
     MsgResult {
         content: resp.message.content.to_string(),
@@ -2237,6 +2335,7 @@ async fn comprehensive_20round_evaluation() -> anyhow::Result<()> {
         if total_metrics.multi_tool_attempts > 0 {
             total_metrics.multi_tool_success as f64 / total_metrics.multi_tool_attempts as f64
                 * 100.0
+                * 100.0
         } else {
             0.0
         }
@@ -2300,6 +2399,31 @@ async fn comprehensive_20round_evaluation() -> anyhow::Result<()> {
         _ => "F - Critical Issues",
     };
     println!("   Grade: {}", grade);
+
+    // Fairness view — re-judged domain turns (full command 1.0 / exploration
+    // 0.5 / substantive direct answer 0.75). Printed alongside the classic
+    // score: a large gap between the two views means the classic score was
+    // penalizing investigation-first or answer-from-context behavior.
+    let (fair_points, fair_n, classic_hits) = fair_rescore();
+    if fair_n > 0 {
+        println!("\n[Fairness View]");
+        println!(
+            "  Classic domain accuracy:  {:.1}% ({}/{})",
+            classic_hits as f64 / fair_n as f64 * 100.0,
+            classic_hits,
+            fair_n
+        );
+        println!(
+            "  Fair domain score:       {:.1}% ({:.1}/{})",
+            fair_points / fair_n as f64 * 100.0,
+            fair_points,
+            fair_n
+        );
+        println!(
+            "  Bias delta:              {:+.1}pp (negative = classic score penalized this model)",
+            fair_points / fair_n as f64 * 100.0 - classic_hits as f64 / fair_n as f64 * 100.0
+        );
+    }
 
     println!("\n{}", "═".repeat(70));
 

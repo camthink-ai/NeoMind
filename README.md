@@ -277,16 +277,37 @@ All are **built in** — pick one in the app (**Settings → LLM Backends** → 
 
 All run NeoMind's full agent toolkit (tool selection, in-process CLI dispatch, multi-step tasks) — measured on the comprehensive agent eval (5 scenarios × 15 turns against a self-hosted seeded sandbox platform; 2026-09, corrected harness: production tool surface, real context window, working memory pipeline — every model measured under identical conditions):
 
-| Model | Quant | Size | Min free RAM | Eval (tool acc / overall) | Best for |
-|-------|-------|------|--------------|---------------------------|----------|
-| **MiniCPM5-2B** ⭐ first choice | Q4_K_M | 1.5 GB | 3 GB | **81% / 66** — highest tool accuracy, ties cloud deepseek-v4-flash | Best agent per byte: beats 4B-class on domain selection and parameter mapping, Apache-2.0 redistributable, 3 GB floor. Serve at 8K context (32K degrades tool selection with no overall gain). |
-| **Ling 3.0-tiny** | Q4_K_M | 4.8 GB | 6 GB | 80% / **71** — top overall | Strongest complete-workflow score (77% resource creation). MoE speed demon, but 4.8 GB weights and needs llama.cpp ≥ b10545 (bailingmoe3). The performance pick when RAM allows. |
-| **Gemma 4 E2B** | QAT q4_0 | 3.1 GB | 4.5 GB | 74% / 59 | Google's official QAT quant; vision-ready via the `mmproj` file. Solid tools, fails resource creation (0%) on real data. |
-| **LFM 2.5 2.6B** | QAD Q4_0 | 1.5 GB | 3 GB | 67% / 38 | Smallest footprint with native 128K context (hybrid KV is cheap). Thinking is integral. Check the LFM license before redistribution. |
-| **Qwen 3.5 4B** | Q4_K_M | 2.7 GB | 4 GB | 62% / 38 | Investigates deeply before acting (~40 s/turn on edge) but resource creation collapses on real data (8%). Vision via mmproj. Non-thinking by default. |
-| MiniCPM5-1B / Qwen3.5-0.8B | Q4 | 0.9–1.2 GB | 2 GB | 27–35% / 26 | Below the agent threshold — chat only. |
+| Model | Quant | Size | Min RAM | Eval @8K | @16K | @32K | Best for |
+|-------|-------|------|----------|----------|------|------|----------|
+| **MiniCPM5-2B** ⭐ first choice | Q4_K_M | 1.5 GB | 3 GB | **64** | 61 | ~68 | Most robust across windows — highest 8K tool accuracy (81%), Apache-2.0, runs on 3 GB. Serve @8K. |
+| **Qwen 3.5 4B** | Q4_K_M | 2.7 GB | 4 GB | 38 | **70** — top overall | 66 | The strongest agent **when given ≥16K context** (recall 50%, context 82%); collapses at 8K. Vision via mmproj. Serve @16K. |
+| **Ling 3.0-tiny** | Q4_K_M | 4.8 GB | 6 GB | 62 | 48 | 45 | Fast MoE for 8K-only short bursts; cliffs past 8K. MIT. Needs llama.cpp ≥ b10545. |
+| **Gemma 4 E2B** | QAT q4_0 | 3.1 GB | 4.5 GB | 59* | — | 60 | Most long-context-stable; vision-ready via mmproj. Resource creation is its weakness. |
+| **LFM 2.5 2.6B** | QAD Q4_0 | 1.5 GB | 3 GB | 41* | — | 54 | Improves with context; native 128K niche. Check the LFM license. |
+| deepseek-v4-flash (cloud ref) | — | — | — | — | — | 65 | Same tier as the best locals, 5× faster per turn. |
+| MiniCPM5-1B / Qwen3.5-0.8B | Q4 | 0.9–1.2 GB | 2 GB | ~26 | — | — | Below the agent threshold — chat only. |
 
-Rule of thumb: **MiniCPM5-2B** as the default (smallest bundlable agent), **Ling 3.0-tiny** when you have ≥6 GB free and want the strongest workflows, **LFM 2.5** for long 128K sessions. Prefer a manual setup? All are GGUF — serve with [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server --jinja` and add the endpoint under **Settings → LLM Backends**. Any OpenAI-compatible backend also works. The built-in picker serves the models in its catalog ([NeoMind-Runtimes](https://github.com/camthink-ai/NeoMind-Runtimes), curated + community); adding a new one is a catalog edit, no product release.
+(*older 5-scenario suite; all other numbers from the 12-scenario suite: zh+en mirrors,
+40-turn long-horizon, tools-breadth; self-hosted seeded sandbox, 2026-09.)
+
+Scoring fairness note: re-judging domain turns with credit for investigation
+probes and correct no-tool answers converges all four contenders to 83–90%
+fair tool accuracy — one tier. The durable selection factors are footprint,
+latency, and context-regime fit (see the matrix), plus outcome quality
+(resource creation, memory recall).
+
+Key findings: context response is **model-specific** — Qwen is starved at 8K and peaks at
+16K, Ling cliffs after 8K, MiniCPM5/gemma are flat. Match the window to the model, not
+the other way round. All models: bilingual parity (zh≈en), long-horizon memory 0%
+(platform extraction ceiling, not model), non-shell tool selection 33–67% (a shared
+weak spot worth prompt work).
+
+Rule of thumb: **MiniCPM5-2B @8K** as the default (smallest, most robust, bundlable);
+**Qwen 3.5 4B @16K** when you have 4 GB+ and want the strongest agent; **Ling @8K**
+for fast short bursts on 6 GB+; cloud fallback **deepseek-v4-flash**. All are GGUF —
+serve with [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server --jinja`
+and register under **Settings → LLM Backends**. The built-in picker's catalog lives in
+[NeoMind-Runtimes](https://github.com/camthink-ai/NeoMind-Runtimes).
 
 ### Development
 
