@@ -340,6 +340,16 @@ impl ExtensionState {
                             is_isolated = true,
                             "Loaded extension from storage"
                         );
+                        // Symmetric with the Err arm's update_error_status:
+                        // a successful load clears any stale error from a
+                        // previous failed boot.
+                        if let Err(e) = store.clear_error_status(&record_id) {
+                            tracing::warn!(
+                                extension_id = %record_id,
+                                error = %e,
+                                "Failed to clear stale error status after successful load"
+                            );
+                        }
                         Ok(metadata.id)
                     }
                     Err(e) => {
@@ -479,17 +489,41 @@ impl ExtensionState {
 
             match self.runtime.load(&path).await {
                 Ok(loaded_metadata) => {
-                    // Save to storage with auto_start enabled (clear uninstalled flag if set)
-                    let record = neomind_storage::ExtensionRecord::new(
-                        loaded_metadata.id.clone(),
-                        loaded_metadata.name.clone(),
-                        path.to_string_lossy().to_string(),
-                        "native".to_string(),
-                        loaded_metadata.version.to_string(),
-                    )
-                    .with_description(loaded_metadata.description.clone())
-                    .with_author(loaded_metadata.author.clone())
-                    .with_auto_start(true);
+                    // Merge with any EXISTING store record instead of
+                    // overwriting with a fresh one: a fresh record silently
+                    // dropped the user's saved config, and a stale
+                    // health_status="error" from a previous failed boot
+                    // (e.g. missing runner binary) stuck forever even
+                    // though this load succeeded — the healthy extension
+                    // kept listing as "Error" (observed 2026-09-10).
+                    let record = match store.load(&loaded_metadata.id) {
+                        Ok(Some(mut existing)) => {
+                            existing.name = loaded_metadata.name.clone();
+                            existing.version =
+                                loaded_metadata.version.to_string();
+                            existing.description =
+                                loaded_metadata.description.clone();
+                            existing.author = loaded_metadata.author.clone();
+                            existing.file_path =
+                                path.to_string_lossy().to_string();
+                            existing.auto_start = true;
+                            existing.uninstalled = false;
+                            existing.health_status = "ok".to_string();
+                            existing.last_error = None;
+                            existing.last_error_at = None;
+                            existing
+                        }
+                        _ => neomind_storage::ExtensionRecord::new(
+                            loaded_metadata.id.clone(),
+                            loaded_metadata.name.clone(),
+                            path.to_string_lossy().to_string(),
+                            "native".to_string(),
+                            loaded_metadata.version.to_string(),
+                        )
+                        .with_description(loaded_metadata.description.clone())
+                        .with_author(loaded_metadata.author.clone())
+                        .with_auto_start(true),
+                    };
 
                     if let Err(e) = store.save(&record) {
                         tracing::warn!("Failed to save extension record: {}", e);

@@ -337,6 +337,35 @@ impl ExtensionStore {
     }
 
     /// Update extension error status
+    /// Clear a stale error status after a successful load. The load-failure
+    /// paths write health_status="error" via `update_error_status`, but the
+    /// success paths never reset it — an extension that failed once (e.g.
+    /// a transiently missing runner binary) kept listing "Error" on every
+    /// later healthy boot (observed 2026-09-10).
+    pub fn clear_error_status(&self, id: &str) -> Result<(), Error> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(EXTENSIONS_TABLE)?;
+        if table.get(id)?.is_none() {
+            return Ok(()); // nothing recorded, nothing to clear
+        }
+        let bytes = match table.get(id)? {
+            Some(guard) => guard.value().to_vec(),
+            None => return Ok(()),
+        };
+        drop(read_txn);
+
+        let mut record: ExtensionRecord = serde_json::from_slice(&bytes)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+        if record.last_error.is_none() && record.health_status == "ok" {
+            return Ok(()); // already clean — skip the write txn
+        }
+        record.last_error = None;
+        record.last_error_at = None;
+        record.health_status = "ok".to_string();
+        record.touch();
+        self.save(&record)
+    }
+
     pub fn update_error_status(&self, id: &str, error: &str) -> Result<(), Error> {
         let read_txn = self.db.begin_read()?;
         let table = read_txn.open_table(EXTENSIONS_TABLE)?;
