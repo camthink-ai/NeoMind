@@ -33,11 +33,11 @@
   <table>
     <tr>
       <td align="center">
-        <img src="docs/img/chat.png" alt="AI 对话" width="400" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);" />
+        <img src="docs/img/2026-08/chat.png" alt="AI 对话" width="400" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);" />
         <br/><sub><b>AI 对话</b></sub>
       </td>
       <td align="center">
-        <img src="docs/img/devices.png" alt="设备" width="400" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);" />
+        <img src="docs/img/2026-08/devices.png" alt="设备" width="400" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);" />
         <br/><sub><b>设备管理</b></sub>
       </td>
       <td align="center">
@@ -361,39 +361,39 @@ NeoMind/
     <td><b>AI 对话</b></td>
   </tr>
   <tr>
-    <td><img src="docs/img/login.png" width="480" /></td>
-    <td><img src="docs/img/chat.png" width="480" /></td>
+    <td><img src="docs/img/2026-08/login.png" width="480" /></td>
+    <td><img src="docs/img/2026-08/chat.png" width="480" /></td>
   </tr>
   <tr>
     <td><b>AI 智能体</b></td>
     <td><b>规则引擎</b></td>
   </tr>
   <tr>
-    <td><img src="docs/img/agents.png" width="480" /></td>
-    <td><img src="docs/img/rules.png" width="480" /></td>
+    <td><img src="docs/img/2026-08/agents.png" width="480" /></td>
+    <td><img src="docs/img/2026-08/rules.png" width="480" /></td>
   </tr>
   <tr>
     <td><b>数据转换</b></td>
     <td><b>消息通知</b></td>
   </tr>
   <tr>
-    <td><img src="docs/img/transforms.png" width="480" /></td>
-    <td><img src="docs/img/messages.png" width="480" /></td>
+    <td><img src="docs/img/2026-08/transforms.png" width="480" /></td>
+    <td><img src="docs/img/2026-08/messages.png" width="480" /></td>
   </tr>
   <tr>
     <td><b>扩展系统</b></td>
     <td><b>数据推送</b></td>
   </tr>
   <tr>
-    <td><img src="docs/img/extensions.png" width="480" /></td>
-    <td><img src="docs/img/data-push.png" width="480" /></td>
+    <td><img src="docs/img/2026-08/extensions.png" width="480" /></td>
+    <td><img src="docs/img/2026-08/data-push.png" width="480" /></td>
   </tr>
   <tr>
     <td><b>LLM 后端</b></td>
     <td><b>移动端</b></td>
   </tr>
   <tr>
-    <td><img src="docs/img/llm-backends.png" width="480" /></td>
+    <td><img src="docs/img/2026-08/llm-backends.png" width="480" /></td>
     <td><img src="docs/img/mobile_web.png" width="200" /></td>
   </tr>
 </table>

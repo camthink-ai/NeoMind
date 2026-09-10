@@ -50,7 +50,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### DEF-001/002 — MQTT client timestamps honored; telemetry source/metric validated
 - **DEF-001:** the MQTT adapter overwrote device-reported timestamps with server receive time. Client ts is now honored with unit auto-detection and a 5-minute future guard; the event ts is aligned to the DataPoint ts with dual-write dedup.
 - **DEF-002:** telemetry `source`/`metric` identifiers are validated up front with self-describing errors instead of failing opaquely downstream.
-- Full RCA in `docs/DEFECTS.md`.
 
 ### Metric history honors the hours window
 - The metric history API now honors its `hours` parameter and keeps the newest points instead of trimming them.
