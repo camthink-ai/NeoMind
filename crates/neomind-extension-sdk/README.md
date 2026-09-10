@@ -1,83 +1,61 @@
-# NeoMind Extension SDK V2
+# NeoMind Extension SDK
 
-**版本**: 0.6.4 | **ABI 版本**: 3
+**Version**: 0.7.1 | **ABI version**: 3 | **MSRV**: 1.75 | **License**: MIT OR Apache-2.0
 
-统一的 NeoMind 扩展开发工具包，支持 Native 和 WASM 目标。
+Unified SDK for developing NeoMind Edge AI Platform extensions — a single codebase
+that compiles to both **Native** (dynamic library, loaded by the extension runner)
+and **WASM** (executed via wasmtime) targets.
 
-## 特性
+## Highlights
 
-- **统一 SDK** - Native 和 WASM 单一代码库
-- **简化 FFI** - 一行宏导出所有 FFI 函数
-- **ABI 版本 3** - 新的扩展接口，改进的安全性
-- **类型安全** - 完整的类型定义和辅助宏
-- **异步支持** - 基于 Tokio 的异步运行时
-- **能力系统** - 20 种内置能力，支持自定义扩展
+- **Unified SDK** — Native and WASM from one codebase; target-specific details are `#[cfg]`-gated
+- **One-line FFI export** — `neomind_export!(MyExtension)` generates the whole FFI surface
+- **Process isolation** — every extension runs in its own runner process; crashes never take down the NeoMind core
+- **Capability system** — 20 built-in capabilities (devices, events, telemetry, agents, chat, rules) plus custom capabilities
+- **Streaming & push mode** — pull/stateless/stateful sessions and continuous push output
+- **Zero-serialization push** (0.7) — the raw FFI writer moves binary payloads (video access units, 35–300 KB) from your `Vec<u8>` to the IPC segment **without JSON serialization or base64**; only the small metadata is JSON-encoded
+- **Segmented payload codec** (0.7) — `encode_segmented_payload` / `parse_response_payload` eliminate base64 on the runner→core leg too
+- **Test kit** — protocol-level testing (in-process mock runner, capability recorder, event injector, timing assertions) behind the `testkit` feature
 
-## 能力系统
+## Architecture
 
-扩展可以通过能力系统访问 NeoMind 平台功能：
+All extensions run in isolated processes:
 
-### 内置能力
-
-| 能力 | 名称 | 描述 |
-|------|------|------|
-| DeviceMetricsRead | `device_metrics_read` | 读取设备指标 |
-| DeviceMetricsWrite | `device_metrics_write` | 写入虚拟指标 |
-| DeviceControl | `device_control` | 发送设备命令 |
-| StorageQuery | `storage_query` | 存储查询 |
-| EventPublish | `event_publish` | 发布事件 |
-| EventSubscribe | `event_subscribe` | 订阅事件 |
-| TelemetryHistory | `telemetry_history` | 遥测历史查询 |
-| MetricsAggregate | `metrics_aggregate` | 指标聚合计算 |
-| ExtensionCall | `extension_call` | 扩展间调用 |
-| AgentTrigger | `agent_trigger` | 触发代理执行 |
-| RuleTrigger | `rule_trigger` | 触发规则执行 |
-| ChatStream | `chat_stream` | 聊天流式推理 |
-| ChatStreamCancel | `chat_stream_cancel` | 取消聊天流 |
-| ChatSessionOpen | `chat_session_open` | 打开聊天会话 |
-| ChatSessionSend | `chat_session_send` | 发送会话消息 |
-| ChatSessionClose | `chat_session_close` | 关闭聊天会话 |
-| ChatStreamCancelTurn | `chat_stream_cancel_turn` | 取消当前回合 |
-| DeviceTemplateRegister | `device_template_register` | 注册设备类型模板 |
-| DeviceRegister | `device_register` | 注册设备 |
-| DeviceUnregister | `device_unregister` | 注销设备 |
-
-### 使用能力 API
-
-```rust
-use neomind_extension_sdk::capabilities::{device, event, agent, rule};
-
-// 读取设备指标
-let metrics = device::get_metrics(&context, "device-1").await?;
-
-// 写入虚拟指标
-device::write_virtual_metric(&context, "device-1", "calculated_value", &json!(42.5)).await?;
-
-// 发送设备命令
-device::send_command(&context, "device-1", "set_level", &json!({"level": 80})).await?;
-
-// 发布事件
-event::publish(&context, event).await?;
-
-// 触发代理
-agent::trigger(&context, "analyzer-agent", &json!({"query": "analyze"})).await?;
-
-// 触发规则
-rule::trigger(&context, "alert-rule", &json!({"value": 85})).await?;
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                   NeoMind Main Process                       │
+│  - UnifiedExtensionService manages all extensions           │
+│  - IPC communication via stdin/stdout                        │
+└─────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                  Extension Runner Process                    │
+│  - Your extension runs here in isolation                    │
+│  - Native: loaded via FFI                                   │
+│  - WASM: executed via wasmtime                              │
+│  - Crashes don't affect the main process                    │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-## 快速开始
+## Quick start
 
-### 安装
-
-在扩展的 `Cargo.toml` 中添加：
+Add the SDK to your extension's `Cargo.toml`:
 
 ```toml
 [dependencies]
-neomind-extension-sdk = { path = "../NeoMind/crates/neomind-extension-sdk" }
+neomind-extension-sdk = "0.7"
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+panic = "unwind"   # required — the runner catches panics at the FFI boundary
+opt-level = 3
+lto = "thin"
 ```
 
-### 基本用法
+Minimum example:
 
 ```rust
 use neomind_extension_sdk::prelude::*;
@@ -87,24 +65,33 @@ pub struct MyExtension {
     counter: AtomicI64,
 }
 
-impl MyExtension {
-    pub fn new() -> Self {
-        Self { counter: AtomicI64::new(0) }
-    }
-}
-
 #[async_trait]
 impl Extension for MyExtension {
     fn metadata(&self) -> &ExtensionMetadata {
-        static META: std::sync::OnceLock<ExtensionMetadata> = std::sync::OnceLock::new();
-        META.get_or_init(|| ExtensionMetadata {
-            id: "my-extension".to_string(),
-            name: "My Extension".to_string(),
-            version: Version::parse("1.0.0").unwrap(),
-            description: Some("My extension".to_string()),
-            author: Some("Your Name".to_string()),
-            ..Default::default()
-        })
+        static_metadata!("my-extension", "My Extension", "1.0.0")
+    }
+
+    fn metrics(&self) -> Vec<MetricDescriptor> {
+        vec![
+            MetricBuilder::new("counter", "Counter")
+                .integer()
+                .unit("count")
+                .build(),
+        ]
+    }
+
+    fn commands(&self) -> Vec<CommandDescriptor> {
+        vec![
+            CommandBuilder::new("increment")
+                .display_name("Increment")
+                .param(
+                    ParamBuilder::new("amount", MetricDataType::Integer)
+                        .display_name("Amount")
+                        .default(MetricValue::Integer(1))
+                        .build(),
+                )
+                .build(),
+        ]
     }
 
     async fn execute_command(&self, cmd: &str, args: &Value) -> Result<Value> {
@@ -119,267 +106,256 @@ impl Extension for MyExtension {
     }
 
     fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
-        Ok(vec![ExtensionMetricValue {
-            name: "counter".to_string(),
-            value: ParamMetricValue::Integer(self.counter.load(Ordering::SeqCst)),
-            timestamp: chrono::Utc::now().timestamp_millis(),
-        }])
+        Ok(vec![ExtensionMetricValue::new(
+            "counter",
+            MetricValue::Integer(self.counter.load(Ordering::SeqCst)),
+        )])
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
-// 导出 FFI - 只需要这一行！
+// Export the FFI surface — this one line is all it takes.
 neomind_extension_sdk::neomind_export!(MyExtension);
 ```
 
-## API 参考
+## The `Extension` trait
 
-### Extension Trait
+| Method | Required | Purpose |
+|--------|----------|---------|
+| `metadata()` | ✅ | Static identity: id, name, version, description, author |
+| `as_any()` | ✅ | Downcasting support |
+| `execute_command()` | default: `CommandNotFound` | Handle commands from the platform/CLI/UI |
+| `produce_metrics()` | optional | Emit current metric values |
+| `metrics()` / `commands()` | optional | Declare metric and command descriptors |
+| `init()` / `start()` / `stop()` / `on_unload()` | optional | Lifecycle hooks |
+| `configure()` | optional | Receive configuration updates |
+| `health_check()` | optional | Liveness probe |
+| `event_subscriptions()` / `handle_event()` | optional | Subscribe to and handle platform events |
+| `init_session()` / `process_session_chunk()` / `close_session()` | optional | Stateful streaming sessions |
+| `process_chunk()` | optional | Stateless streaming |
+| `start_push()` / `stop_push()` / `latest_output()` | optional | Push mode (continuous output) |
+| `stream_capability()` | optional | Advertise direction/mode/limits |
+| `descriptor()` / `status()` / `get_stats()` | optional | Richer descriptors for the dashboard |
 
-所有扩展必须实现 `Extension` trait：
-
-```rust
-#[async_trait]
-pub trait Extension: Send + Sync {
-    /// 扩展元数据（必需）
-    fn metadata(&self) -> &ExtensionMetadata;
-
-    /// 声明指标（可选）
-    fn metrics(&self) -> &[MetricDescriptor] { &[] }
-
-    /// 声明命令（可选）
-    fn commands(&self) -> &[ExtensionCommand] { &[] }
-
-    /// 执行命令（必需）
-    async fn execute_command(&self, command: &str, args: &Value) -> Result<Value>;
-
-    /// 生成指标数据（可选）
-    fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> { Ok(Vec::new()) }
-
-    /// 健康检查（可选）
-    async fn health_check(&self) -> Result<bool> { Ok(true) }
-}
-```
-
-### 宏
-
-#### `neomind_export!`
-
-导出所有 FFI 函数：
+## Macros
 
 ```rust
-// 基本用法
+// FFI export (generates all entry points, including the optional
+// register_push_writer_raw export that new runners resolve)
 neomind_extension_sdk::neomind_export!(MyExtension);
 
-// 自定义构造函数
-neomind_extension_sdk::neomind_export_with_constructor!(MyExtension, with_config);
+// Static metadata / metrics / commands without OnceLock boilerplate
+static_metadata!("my-extension", "My Extension", "1.0.0");
+static_metrics![..];
+static_commands![..];
 ```
 
-#### 辅助宏
+Helper macros: `metric_int!`, `metric_float!`, `metric_bool!`, `metric_string!`,
+and logging via `ext_info!`, `ext_debug!`, `ext_warn!`, `ext_error!`.
+
+## Builders
 
 ```rust
-// 创建度量值
-metric_int!("counter", 42);
-metric_float!("temperature", 23.5);
-metric_bool!("active", true);
-metric_string!("status", "running");
-
-// 日志
-ext_info!("Extension started");
-ext_debug!("Processing item {}", id);
-ext_warn!("Rate limit approaching");
-ext_error!("Failed: {}", err);
-```
-
-### 辅助类型
-
-```rust
-// 构建度量描述符
+// Metric descriptor
 let metric = MetricBuilder::new("temperature", "Temperature")
     .float()
     .unit("°C")
     .min(-50.0)
-    .max(50.0)
+    .max(150.0)
     .required()
     .build();
 
-// 构建命令定义
+// Command with typed parameters and a sample payload
 let command = CommandBuilder::new("increment")
     .display_name("Increment")
-    .llm_hints("Increment the counter")
+    .description("Increment the counter")
     .param_simple("amount", "Amount", MetricDataType::Integer)
     .sample(json!({ "amount": 1 }))
     .build();
 
-// 构建参数定义
+// Parameter definition
 let param = ParamBuilder::new("amount", MetricDataType::Integer)
     .display_name("Amount")
     .description("Amount to add")
-    .default(ParamMetricValue::Integer(1))
+    .default(MetricValue::Integer(1))
     .min(1.0)
     .max(100.0)
     .build();
 ```
 
-## 类型
+## Capability system
 
-### ExtensionMetadata
-
-```rust
-pub struct ExtensionMetadata {
-    pub id: String,
-    pub name: String,
-    pub version: Version,
-    pub description: Option<String>,
-    pub author: Option<String>,
-    pub homepage: Option<String>,
-    pub license: Option<String>,
-    pub file_path: Option<PathBuf>,
-    pub config_parameters: Option<Vec<ConfigParameter>>,
-}
-```
-
-### ExtensionCommand
+Extensions access NeoMind platform features through capabilities:
 
 ```rust
-pub struct ExtensionCommand {
-    pub name: String,
-    pub display_name: String,
-    pub payload_template: String,
-    pub parameters: Vec<ParameterDefinition>,
-    pub fixed_values: HashMap<String, Value>,
-    pub samples: Vec<Value>,
-    pub llm_hints: String,
-    pub parameter_groups: Vec<ParameterGroup>,
-}
+use neomind_extension_sdk::capabilities::{agent, device, event, rule};
+
+// Read device metrics
+let metrics = device::get_metrics(&context, "device-1").await?;
+
+// Write a virtual metric
+device::write_virtual_metric(&context, "device-1", "calculated_value", &json!(42.5)).await?;
+
+// Send a device command
+device::send_command(&context, "device-1", "set_level", &json!({"level": 80})).await?;
+
+// Publish an event
+event::publish(&context, event).await?;
+
+// Trigger an agent
+agent::trigger(&context, "analyzer-agent", &json!({"query": "analyze"})).await?;
+
+// Trigger a rule
+rule::trigger(&context, "alert-rule", &json!({"value": 85})).await?;
 ```
 
-### ExtensionMetricValue
+Built-in capabilities:
+
+| Capability | Name | Description |
+|------------|------|-------------|
+| DeviceMetricsRead | `device_metrics_read` | Read device metrics (current state) |
+| DeviceMetricsWrite | `device_metrics_write` | Write device metrics (incl. virtual metrics) |
+| DeviceControl | `device_control` | Send device commands |
+| StorageQuery | `storage_query` | Storage queries (read telemetry) |
+| EventPublish | `event_publish` | Publish events |
+| EventSubscribe | `event_subscribe` | Subscribe to events |
+| TelemetryHistory | `telemetry_history` | Query device telemetry history |
+| MetricsAggregate | `metrics_aggregate` | Aggregate device metrics |
+| ExtensionCall | `extension_call` | Call other extensions |
+| AgentTrigger | `agent_trigger` | Trigger agents |
+| ChatStream | `chat_stream` | Streaming chat with token-level events |
+| ChatStreamCancel | `chat_stream_cancel` | Cancel an in-flight chat stream |
+| ChatSessionOpen | `chat_session_open` | Open a persistent chat session |
+| ChatSessionSend | `chat_session_send` | Send a message to an open session |
+| ChatSessionClose | `chat_session_close` | Close a chat session |
+| ChatStreamCancelTurn | `chat_stream_cancel_turn` | Cancel the current turn only |
+| RuleTrigger | `rule_trigger` | Trigger rules |
+| DeviceTemplateRegister | `device_template_register` | Register device type templates |
+| DeviceRegister | `device_register` | Register device instances |
+| DeviceUnregister | `device_unregister` | Unregister device instances |
+
+Unknown capability names map to `ExtensionCapability::Custom`, so hosts can
+provide capabilities beyond the built-in set.
+
+## Push mode & streaming
+
+For continuous data (video relay, sensor streams) implement the push-mode hooks
+(`start_push` / `stop_push` / `latest_output`) and call `send_push_output`:
 
 ```rust
-pub struct ExtensionMetricValue {
-    pub name: String,
-    pub value: ParamMetricValue,
-    pub timestamp: i64,
-}
+use neomind_extension_sdk::{send_push_output, PushOutputMessage};
 
-pub enum ParamMetricValue {
-    Integer(i64),
-    Float(f64),
-    String(String),
-    Boolean(bool),
-}
+send_push_output(&PushOutputMessage {
+    session_id: "session-1".into(),
+    sequence: 42,
+    data_type: "application/octet-stream".into(), // MIME type
+    timestamp: 0,
+    metadata: None,
+    data: vec![0x00, 0x01, 0x02], // rides the raw IPC segment untouched
+})?;
 ```
 
-## 安全要求
+Since 0.7.0 the SDK prefers the **raw FFI writer** (`PushOutputRawWriterFn`)
+when the runner registered one: payload bytes skip JSON serialization and
+base64 entirely — only the (usually tiny) metadata is JSON-encoded by the SDK.
+This is transparent: `send_push_output` falls back to the legacy JSON writer on
+older runners, so extensions compiled with 0.7.x keep working with both
+generations, and pre-0.7 extensions run on new runners unchanged.
 
-扩展必须使用 `panic = "unwind"` 编译：
+Runners use `encode_segmented_payload` / `parse_response_payload`
+(`[u32 header_len LE][header JSON][binary segment]`) to move binary push
+responses to the core without base64; the format discriminator makes it
+impossible to confuse with legacy whole-JSON payloads.
+
+## WASM target
+
+The SDK compiles to `wasm32-unknown-unknown` with the same API surface:
 
 ```toml
-# Cargo.toml
-[profile.release]
-panic = "unwind"  # 安全性必需！
-opt-level = 3
-lto = "thin"
-```
-
-## 命名规范
-
-```
-扩展 ID: {category}-{name}-v{major}
-
-示例:
-- weather-forecast
-- image-analyzer
-- yolo-video
-
-库文件: libneomind_extension_{name}_v{major}.{ext}
-```
-
-## 示例
-
-参考 [NeoMind-Extensions](https://github.com/camthink-ai/NeoMind-Extensions) 仓库：
-
-| 扩展 | 类型 | 说明 |
-|------|------|------|
-| weather-forecast | Native | 天气预报 API |
-| image-analyzer | Native | YOLOv8 图像分析 |
-| yolo-video | Native | 实时视频处理 |
-
-## WASM 扩展开发
-
-SDK 支持编译为 WebAssembly，提供与 Native 扩展相同的 API。
-
-### 编译目标
-
-```bash
-# 添加 WASM 目标
-rustup target add wasm32-unknown-unknown
-
-# 编译 WASM 扩展
-cargo build --target wasm32-unknown-unknown --release
-```
-
-### WASM 特性
-
-```toml
-# Cargo.toml
 [dependencies]
-neomind-extension-sdk = { path = "../NeoMind/crates/neomind-extension-sdk" }
+neomind-extension-sdk = "0.7"
 
 [lib]
 crate-type = ["cdylib"]
 ```
 
-### WASM 能力 API
-
-WASM 扩展使用与 Native 相同的能力 API：
-
-```rust
-// Native: 异步 API
-#[cfg(not(target_arch = "wasm32"))]
-let metrics = device::get_metrics(&context, "device-1").await?;
-
-// WASM: 同步 API（自动选择）
-#[cfg(target_arch = "wasm32")]
-let metrics = device::get_metrics(&context, "device-1")?;
+```sh
+rustup target add wasm32-unknown-unknown
+cargo build --target wasm32-unknown-unknown --release
 ```
 
-### Host 函数接口
+Differences on WASM:
 
-WASM 扩展通过 Host 函数与 NeoMind 平台交互：
+- Capability calls are **synchronous** — same functions, selected automatically via `#[cfg]`:
+  ```rust
+  #[cfg(not(target_arch = "wasm32"))]
+  let metrics = device::get_metrics(&context, "device-1").await?;  // async (Native)
 
-| Host 函数 | 说明 |
-|-----------|------|
-| `host_invoke_capability` | 通用能力调用 |
-| `host_event_subscribe` | 事件订阅 |
-| `host_event_poll` | 事件轮询 |
-| `host_event_unsubscribe` | 取消订阅 |
-| `host_log` | 日志输出 |
-| `host_timestamp_ms` | 获取时间戳 |
-| `host_free` | 释放内存 |
+  #[cfg(target_arch = "wasm32")]
+  let metrics = device::get_metrics(&context, "device-1")?;        // sync (WASM)
+  ```
+- Platform access goes through host functions (`host_invoke_capability`, `host_event_subscribe`, `host_event_poll`, `host_log`, `host_timestamp_ms`, `host_free`)
+- Events use a polling model; memory is managed by the host
 
-### WASM 限制
+## Test kit
 
-- 同步 API（非异步）
-- 通过 Host 函数访问平台能力
-- 事件使用轮询模式
-- 内存由 Host 管理
+Enable the `testkit` feature in `[dev-dependencies]` to test your extension at
+the **IPC protocol level** — the same message flow as the real
+neomind-extension-runner, over in-memory channels. It catches deadlocks in
+command/event handlers, wrong capability call parameters, event routing errors,
+and stream session lifecycle leaks that plain unit tests cannot.
 
-## 内置能力提供者
+```rust ignore
+use neomind_extension_sdk::testkit::*;
 
-NeoMind 提供以下内置能力提供者：
+#[tokio::test]
+async fn test_analyze_command() {
+    let mut kit = TestKit::new(MyExtension::new());
+    kit.start().await;
 
-| Provider | 提供能力 |
-|----------|---------|
-| `DeviceCapabilityProvider` | DeviceMetricsRead, DeviceMetricsWrite, DeviceControl |
-| `EventCapabilityProvider` | EventPublish, EventSubscribe |
-| `TelemetryCapabilityProvider` | TelemetryHistory, MetricsAggregate |
-| `AgentCapabilityProvider` | AgentTrigger |
-| `RuleCapabilityProvider` | RuleTrigger |
-| `ExtensionCallCapabilityProvider` | ExtensionCall |
-| Chat 系列能力 | ChatStream, ChatStreamCancel, ChatSessionOpen/Send/Close, ChatStreamCancelTurn |
-| 设备注册能力 | DeviceTemplateRegister, DeviceRegister, DeviceUnregister |
+    let result = kit.execute_command("analyze", json!({"image": "..."})).await
+        .expect("command should complete within 5s");
+    assert!(result["success"].as_bool().unwrap());
 
-## 许可证
+    // Verify capability calls made by the extension
+    let calls = kit.capability_calls("device_metrics_write");
+    assert_eq!(calls.len(), 3);
+}
+```
 
-Apache-2.0
+## ABI stability
+
+The IPC boundary types (`neomind_extension_sdk::ipc`) are the stable protocol
+between extensions and the main process. Extensions compiled against older SDK
+versions keep working because:
+
+1. Messages are serialized as JSON over IPC — only the JSON format matters, not the implementation
+2. New fields use `#[serde(default)]` for forward compatibility
+3. New optional FFI exports (like the raw push-writer registration) are resolved dynamically; runners that don't know them never look them up
+
+Minimum NeoMind core version: **0.5.0**.
+
+## Safety requirements
+
+Extensions **must** be compiled with `panic = "unwind"` — the runner catches
+panics at the FFI boundary and converts them into error responses instead of
+aborting the runner process:
+
+```toml
+[profile.release]
+panic = "unwind"   # required!
+opt-level = 3
+lto = "thin"
+```
+
+## Naming conventions
+
+- Extension IDs are plain kebab-case, e.g. `weather-forecast`, `image-analyzer`, `yolo-video`
+- The built library file is `libneomind_extension_{name}.{dylib|so|wasm}`
+
+## License
+
+MIT OR Apache-2.0.
