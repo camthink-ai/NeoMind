@@ -13,8 +13,12 @@ pub struct Args {
     #[command(subcommand)]
     pub command: Command,
 
-    /// Model path or identifier.
-    #[arg(short, long, global = true)]
+    /// Model path or identifier (prompt/chat/serve only).
+    ///
+    /// Formerly `global = true`, which polluted EVERY subcommand's help
+    /// with `-m, --model` — confusing for `user reset-password`,
+    /// `api-key list`, `dashboard get`, etc. where a model is meaningless.
+    #[arg(short, long)]
     pub model: Option<String>,
 
     /// Verbose output.
