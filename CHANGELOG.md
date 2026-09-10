@@ -7,17 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [0.9.23] - 2026-09-09 — binary push frames + platform perf pass, long-task agent fixes, onboarding wizard redesigned
 
 ### SDK 0.7.0 — zero-serialization push (raw FFI) + segmented payload codec
 - **New FFI surface (backward compatible):** `PushOutputRawWriterFn` — a raw push writer that takes every field as ptr+len slices, so binary payloads (video access units, 35–300 KB) travel from the extension's `Vec<u8>` to the IPC segment **without any JSON serialization or base64 encoding**. Only the metadata (usually tiny) is JSON-encoded by the SDK. `neomind_export!` now emits an optional `neomind_extension_register_push_writer_raw` export automatically — new runners resolve it and register the raw path; old runners never look it up and extensions fall through to the legacy JSON writer. `send_push_output` prefers the raw writer when present.
 - **Segmented payload codec (public API):** `encode_segmented_payload` / `parse_response_payload` — `[u32 header_len LE][header JSON][binary segment]` format for runner→core push responses, eliminating base64 on that leg too. The discriminator (`hlen` plausibility + byte 4 = `{`) makes it impossible to confuse with legacy whole-JSON payloads.
 - Testkit: formatting cleanup + import ordering (no functional change).
 - All 105 tests pass; gym-tracker 2.11.0 (compiled against 0.6.6) verified running on the new runner.
-
----
-
-## [0.9.23] - 2026-09-09 — binary push frames + platform perf pass, long-task agent fixes, onboarding wizard redesigned
 
 ### Chat turn time budget is now configurable (default 1800s) — agent no longer stops halfway on long tasks
 - **Root cause of "agent 运行一半自己停下来":** the streaming tool loop carried a hardcoded 240-second wall-clock budget (`TURN_WALL_CLOCK_BUDGET`, added 2026-08-22 to guarantee a text reply on pathological loops). It covers ALL rounds of one turn — every thinking-model LLM round plus every tool execution — so a legitimate multi-step task (build pipeline/dashboard/bridge on a gateway) with a cloud reasoning model hit the 4-minute mark mid-task, exited the loop, and the forced-summary prompt explicitly forbade further tool calls. Tasks that fit under 4 minutes finished fine, which is why the failure looked intermittent; a user-side "long-task discipline" system prompt could only counter the model's *voluntary* early wrap-ups, never this forced exit.

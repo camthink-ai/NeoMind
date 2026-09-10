@@ -50,147 +50,106 @@
 
 <br/>
 
-## NeoMind 是什么？
+## NeoMind 是什么?
 
-NeoMind 是一个**边缘部署的 AI 平台**，将智能带入物联网。它在本地硬件上直接运行 LLM 驱动的智能体，通过 MQTT/BLE/Webhook 连接设备，利用规则引擎实现自动化响应，并在实时仪表板上可视化一切 — 无需依赖云服务。
+NeoMind 是一个**边缘部署的 AI 平台**,为物联网注入智能:LLM 智能体直接运行在你的硬件上,通过 MQTT/BLE/Webhook 接入设备,用规则引擎自动响应,并在实时仪表板上可视化一切——无需依赖云端。
 
-**核心理念**：用自然语言与你的设备对话。AI 理解你的意图，查询设备状态，创建自动化规则，并自主执行操作。
+**核心理念**:用自然语言和你的设备对话。AI 理解你的意图、查询设备状态、创建自动化规则、自主执行操作。
 
-> 📚 **完整文档已迁移至 [NeoMind Wiki](https://wiki.camthink.ai/zh-Hans/docs/neomind/product-overview/what-is-neomind)。** 本 README 仅作快速概览，详细指南请访问 Wiki：
+> 📚 **完整文档在 [NeoMind Wiki](https://wiki.camthink.ai/docs/neomind/product-overview/what-is-neomind)。** 本 README 只是速览:
 >
-> - [NeoMind 是什么？](https://wiki.camthink.ai/zh-Hans/docs/neomind/product-overview/what-is-neomind) — 产品概览与核心理念
-> - [五分钟快速开始](https://wiki.camthink.ai/zh-Hans/docs/neomind/quick-start/five-minute-guide) — 快速上手
-> - [安装与配置](https://wiki.camthink.ai/zh-Hans/docs/neomind/user-guide/install-setup) — 桌面端、服务器、Docker 部署
-> - [开发者指南](https://wiki.camthink.ai/zh-Hans/docs/neomind/developer-guide/overview) — API、扩展、集成
+> - [产品概览](https://wiki.camthink.ai/docs/neomind/product-overview/what-is-neomind) — 产品定位与核心概念
+> - [五分钟快速开始](https://wiki.camthink.ai/docs/neomind/quick-start/five-minute-guide) — 快速跑起来
+> - [安装与配置](https://wiki.camthink.ai/docs/neomind/user-guide/install-setup) — 桌面端、服务器、Docker
+> - [开发者指南](https://wiki.camthink.ai/docs/neomind/developer-guide/overview) — API、扩展、集成
 
-## 核心特性
+### 为什么选 NeoMind?
+
+- **完全自包含** — 内嵌 MQTT broker 与 redb 存储,无需安装外部数据库或消息中间件
+- **端到端类型安全** — Rust 后端的编译期保证;智能体的 CLI 命令进程内派发、结构化数据,没有脆弱的字符串解析
+- **扩展崩溃隔离** — 扩展运行在独立进程,基于能力的权限控制;劣化扩展绝不会拖垮服务器
+- **云端可选** — 本地 LLM(llama.cpp)100% 离线可用,需要更强算力时随时接入云端模型
+
+## 功能特性
 
 ### AI 智能
-- **自然语言对话** — 用自然语言查询和控制所有已连接设备
-- **自主智能体** — 定时 AI 智能体，独立监控、分析和处理设备数据
-- **内置 LLM + 任意后端** — 自带本地模型开箱即用；Ollama、llama.cpp，或任何云厂商（OpenAI、Anthropic、Qwen、DeepSeek、GLM、xAI…）经两个云协议（OpenAI 兼容 / Anthropic）接入
-- **记忆系统** — 多层级记忆（用户画像、知识库、任务记录、系统演化），支持自动提取和压缩
-- **技能系统** — YAML+Markdown 技能，引导智能体在特定场景下的行为
-- **多模态** — 支持图片上传和视觉分析
+- **自然语言控制** — 与设备对话,上传图像进行视觉分析
+- **自主智能体** — 定时/事件驱动,带记忆与技能的多步工具调用
+- **内置 LLM + 任意后端** — 自带本地模型开箱即用;支持 Ollama、llama.cpp 及任意云厂商(OpenAI、Anthropic、Qwen、DeepSeek、GLM、xAI…)
 
-### 设备管理
-- **MQTT 协议** — 主要设备集成方式，支持嵌入式 Broker、mTLS 和 CA 证书
-- **BLE 配网** — 通过蓝牙零接触设备设置（Tauri 原生 + Web Bluetooth）
-- **HTTP/Webhook** — 灵活的 REST 设备适配器
-- **自动发现** — 自动检测设备、注册类型，AI 辅助设备入板
-- **命令队列** — 向设备发送控制命令，支持参数验证和执行跟踪
-- **自定义设备类型** — 通过 JSON 定义设备指标和命令
+### 设备接入
+- **MQTT(内嵌 broker、mTLS)· BLE 配网 · HTTP/Webhook** — 三条接入路径,零外部依赖
+- **自动发现 + AI 辅助纳管** — 未知设备自动识别、定型、引导接入
+- **自定义设备类型** — JSON 定义指标与命令,无需写代码
 
 ### 自动化
-- **JSON 规则引擎** — 纯 JSON 条件/动作结构，UI 可视化编辑，自动生成人类可读的规则预览文本
-- **数据转换** — 基于 JavaScript 的数据转换，创建虚拟指标
-- **定时智能体** — 基于时间和事件驱动的 AI 智能体执行
-- **事件总线** — 发布/订阅架构，组件间解耦通信
+- **规则引擎** — 递归 JSON 条件、通知/执行/触发智能体动作、冷却与持续时间去抖
+- **JS 数据变换** — 从实时数据流计算虚拟指标
+- **事件总线** — 所有组件经发布/订阅解耦
 
-### 仪表板与可视化
-- **拖拽式构建器** — 可视化仪表板编辑器，响应式网格布局
-- **丰富组件** — 数值卡片、图表、仪表盘、表格、VLM 视觉组件
-- **实时更新** — WebSocket/SSE 实时数据推送到仪表板
-- **仪表板分享** — 带过期时间的公开链接
-- **自定义组件** — 构建并发布你自己的仪表板组件
+### 仪表板
+- **拖拽式搭建** — 数值卡片、图表、仪表、VLM 视觉组件
+- **实时更新(WS/SSE)** 与可分享的公开链接
+- **自定义组件** — 发布 React 组件到组件市场
 
-### 通知与数据推送
-- **7 种通知渠道** — Webhook、邮件、Telegram、企业微信、钉钉、Slack、飞书
-- **数据推送** — 通过 Webhook 或 MQTT 将遥测数据转发到外部系统
-- **投递追踪** — 指数退避重试逻辑、投递历史和日志管理
-- **消息去重** — 防止高频触发造成的通知风暴
+### 告警与集成
+- **7 个通知渠道** — Webhook、邮件、Telegram、企业微信、钉钉、Slack、飞书
+- **数据推送** — 遥测数据转发至外部系统,带重试与去重
 
-### 平台能力
-- **多实例管理** — 从单一界面连接和管理多个 NeoMind 后端
-- **扩展系统** — Native 和 WASM 扩展，进程隔离和基于能力的权限控制
-- **跨平台桌面** — 通过 Tauri 提供 macOS、Windows、Linux 原生应用
-- **移动端适配** — 针对手机和平板优化的响应式 Web 界面
-- **国际化** — 支持中文和英文
-- **深色模式** — 系统自适应的深色/浅色主题
-- **API 密钥认证** — JWT 的替代方案，适合程序化访问
-- **CLI 工具** — 全功能命令行界面
+### 平台
+- **桌面应用**(macOS/Windows/Linux)+ **移动友好 Web**,中英双语
+- **进程隔离扩展**(Native + WASM),能力级权限
+- **多实例管理、完整 CLI、API Key 接入**
 
-## 生态系统
+## 生态
 
-NeoMind 是一个模块化的生态系统，每个关注点都有专门的仓库：
-
-| 仓库 | 用途 |
+| 仓库 | 定位 |
 |------|------|
-| **[NeoMind](https://github.com/camthink-ai/NeoMind)** | 核心平台（本仓库）— 后端、前端、桌面应用 |
-| **[NeoMind-Extensions](https://github.com/camthink-ai/NeoMind-Extensions)** | 官方扩展市场 — 共 22 个扩展：视觉（YOLO/人脸/OCR）、语音（TTS/ASR）、IoT 桥接（HA/Modbus/BACnet/ONVIF/OPC-UA/LoRaWAN）等 |
-| **[NeoMind-DeviceTypes](https://github.com/camthink-ai/NeoMind-DeviceTypes)** | 设备类型定义 — 标准化的 IoT 硬件指标和命令 |
+| **[NeoMind](https://github.com/camthink-ai/NeoMind)**(本仓库) | 核心平台 — 后端、前端、桌面应用 |
+| **[NeoMind-Extensions](https://github.com/camthink-ai/NeoMind-Extensions)** | 官方扩展市场 — 22 个扩展:视觉(YOLO/人脸/OCR)、语音(TTS/ASR)、IoT 桥接(HA/Modbus/BACnet/ONVIF/OPC-UA/LoRaWAN)等 |
+| **[NeoMind-DeviceTypes](https://github.com/camthink-ai/NeoMind-DeviceTypes)** | 设备类型定义 — 物联网硬件的标准指标与命令 |
 | **[NeoMind-Dashboard-Components](https://github.com/camthink-ai/NeoMind-Dashboard-Components)** | 仪表板组件市场 — 社区贡献的 React 组件 |
 
-### 可用扩展
-
-共 22 个官方扩展，覆盖视觉、语音、IoT 桥接和实用工具。完整列表请浏览 [扩展市场](https://github.com/camthink-ai/NeoMind-Extensions)。
-
-| 扩展 | 分类 | 说明 |
-|------|------|------|
-| **图像分析（Image Analyzer）** | 视觉 | 基于 YOLOv11 的上传图片目标检测，支持 80+ 种 COCO 类别 |
-| **YOLO 视频（YOLO Video）** | 视觉 | RTSP/RTMP/HLS 实时视频流目标检测，支持 ROI 区域与越线分析 |
-| **YOLO 设备推理（YOLO Device Inference）** | 视觉 | 自动对 NE301/NE101 摄像头流运行 YOLO 检测，支持智能抓拍 |
-| **人脸识别（Face Recognition）** | 视觉 | ArcFace 嵌入向量，支持人脸注册、匹配和设备流实时检测 |
-| **OCR 设备推理（OCR Device Inference）** | 视觉 | SVTR 文字识别，绑定设备图片流实时输出文本指标 |
-| **PaddleOCR-VL** | 视觉 | 高精度多语言 OCR、表格识别与关键信息提取 |
-| **Locate Anything** | 视觉 | 视觉定位 — 目标检测、短语定位、GUI 定位、OCR 一体化 |
-| **CosyVoice 3** | 语音 | Fun-CosyVoice3-0.5B 流式 TTS，支持本机音频播放与音频合成 |
-| **MOSS TTS Nano** | 语音 | 支持声音克隆的 TTS 扩展 |
-| **SenseVoice ASR** | 语音 | 多语言（中/英/日/韩/粤）语音识别，基于 sherpa-onnx CPU 后端 |
-| **Edge TTS** | 语音 | sherpa-onnx ZipVoice 跨平台 CPU 流式 TTS |
-| **Voice Assistant** | 语音 | 语音助手编排器：麦克风 → VAD → ASR → 回复 → TTS → 扬声器 |
-| **Home Assistant 桥接** | IoT 桥接 | 将 3000+ HA 实体集成导入为 NeoMind 设备 |
-| **LoRaWAN 桥接** | IoT 桥接 | 接入 ChirpStack/TTN 传感器，支持自动发现与负载解码 |
-| **Modbus 桥接** | IoT 桥接 | TCP/RTU 协议，连接 PLC、电表、传感器等工业设备 |
-| **BACnet 桥接** | IoT 桥接 | BACnet/IP 楼宇自动化设备发现与控制 |
-| **ONVIF 桥接** | IoT 桥接 | IP 摄像头发现、RTSP 取流、PTZ 控制 |
-| **OPC-UA 桥接** | IoT 桥接 | 工业服务器节点浏览与数据订阅 |
-| **Uink-RMS 桥接** | IoT 桥接 | 电子纸屏设备遥测同步与图片推送 |
-| **天气预报（Weather Forecast）** | 实用工具 | 基于 OpenWeatherMap 的多城市实时天气 |
-| **流媒体播放器（Stream Player）** | UI | 仪表板视频播放组件，支持 RTSP/RTMP/HLS 与本地文件 |
-| **WASM Demo** | 示例 | SDK 能力演示（计数器、问候、回声命令） |
 ### 支持设备
 
-NE301（边缘 AI 摄像头）和 NE101（感知摄像头）。完整设备类型定义请查看 [NeoMind-DeviceTypes](https://github.com/camthink-ai/NeoMind-DeviceTypes)。
+NE301(边缘 AI 相机)与 NE101(感知相机)。完整设备类型见 [NeoMind-DeviceTypes](https://github.com/camthink-ai/NeoMind-DeviceTypes)。
 
-### 参与生态共建
+### 参与生态建设
 
-我们欢迎社区贡献，共同丰富 NeoMind 生态系统：
-
-- **[开发扩展](https://github.com/camthink-ai/NeoMind-Extensions)** — 为新的数据源、AI 模型或集成创建扩展。参考 [开发者指南](https://wiki.camthink.ai/zh-Hans/docs/neomind/developer-guide/overview) 快速上手，然后向市场提交 PR。
-- **[添加设备类型](https://github.com/camthink-ai/NeoMind-DeviceTypes)** — 为你的 IoT 硬件定义指标和命令，让其他人开箱即用。只需添加一个 JSON 文件。
-- **[创建仪表板组件](https://github.com/camthink-ai/NeoMind-Dashboard-Components)** — 构建可复用的 React 仪表板组件（图表、仪表盘、地图等），与社区分享。
+- **[开发扩展](https://github.com/camthink-ai/NeoMind-Extensions)** — 为新数据源、AI 模型或集成开发扩展,参照[扩展开发指南](https://wiki.camthink.ai/docs/neomind/developer-guide/overview),提交 PR 到市场
+- **[添加设备类型](https://github.com/camthink-ai/NeoMind-DeviceTypes)** — 为你的硬件定义指标与命令,一个 JSON 文件即可
+- **[制作仪表板组件](https://github.com/camthink-ai/NeoMind-Dashboard-Components)** — 构建可复用的 React 组件(图表、仪表、地图等)分享给社区
 
 ## 快速开始
 
-> 完整流程请参考 Wiki 的 [五分钟快速开始](https://wiki.camthink.ai/zh-Hans/docs/neomind/quick-start/five-minute-guide) 和 [安装与配置](https://wiki.camthink.ai/zh-Hans/docs/neomind/user-guide/install-setup)。
+> 完整流程见 wiki 的[五分钟指南](https://wiki.camthink.ai/docs/neomind/quick-start/five-minute-guide)与[安装配置](https://wiki.camthink.ai/docs/neomind/user-guide/install-setup)。
 
-### 桌面应用（推荐）
+### 桌面应用(推荐)
 
 从 [GitHub Releases](https://github.com/camthink-ai/NeoMind/releases/latest) 下载最新版本。
 
 | 平台 | 格式 |
 |------|------|
-| macOS (Apple Silicon + Intel) | `.dmg` |
+| macOS(Apple Silicon + Intel)| `.dmg` |
 | Windows | `.msi` / `.exe` |
 | Linux | `.AppImage` / `.deb` |
 
-首次启动时，四步引导向导（欢迎 → LLM 后端 → 设备 → 就绪）带你完成核心配置（管理员账户在首次运行流程中创建）。
+首次启动会经过四步引导(欢迎 → LLM 后端 → 设备 → 就绪),创建管理员账户后即可完成全部基础配置。
 
 ### 服务器部署
 
-一键安装（Linux & macOS）：
+一行安装(Linux & macOS):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/camthink-ai/NeoMind/main/scripts/install.sh | sh
 ```
 
-安装后访问 `http://your-server:9375`。
+浏览器访问 `http://your-server:9375`。
 
 <details>
-<summary>更多安装选项</summary>
+<summary>更多安装方式</summary>
 
-**Docker 部署（拉取 Docker Hub 官方多架构镜像，无需本地构建）：**
+**Docker(直接拉取 Docker Hub 官方多架构镜像,无需构建):**
 
 ```bash
 docker run -d --name neomind \
@@ -199,315 +158,144 @@ docker run -d --name neomind \
   camthink/neomind:latest
 ```
 
-或使用 [docker-compose](docker-compose.yml)（自动拉取 `camthink/neomind:latest`）：
-
-```bash
-git clone https://github.com/camthink-ai/NeoMind.git
-cd NeoMind
-docker compose up -d
-```
-
-`camthink/neomind:latest` 镜像在每次发版时自动重建（amd64 + arm64）；如需固定版本用 `camthink/neomind:0.9.15`。若想从源码构建镜像，取消注释 `docker-compose.yml` 中的 `build:` 块即可。
-
-**指定版本：**
-```bash
-curl -fsSL https://raw.githubusercontent.com/camthink-ai/NeoMind/main/scripts/install.sh | VERSION=0.9.15 sh
-```
-
-**自定义目录：**
-```bash
-curl -fsSL ... | INSTALL_DIR=~/.local/bin DATA_DIR=~/.neomind sh
-```
-
-**仅后端（无 Web UI）：**
-```bash
-curl -fsSL ... | NO_WEB=true sh
-```
-
-**使用 nginx 反向代理（端口 80）：**
-```bash
-curl -fsSL ... | USE_NGINX=true sh
-```
-
-**手动安装：**
-```bash
-# 两个资产都自动指向最新版 — 无需维护版本号
-wget https://github.com/camthink-ai/NeoMind/releases/latest/download/neomind-server-linux-amd64.tar.gz
-wget https://github.com/camthink-ai/NeoMind/releases/latest/download/neomind-web.tar.gz
-tar xzf neomind-server-linux-amd64.tar.gz
-sudo install -m 755 neomind /usr/local/bin/
-sudo install -m 755 neomind-extension-runner /usr/local/bin/
-sudo mkdir -p /var/www/neomind
-sudo tar xzf neomind-web.tar.gz -C /var/www/neomind
-./neomind serve
-```
-
-**Nginx 配置：**
-```nginx
-server {
-    listen 80;
-    root /var/www/neomind;
-    index index.html;
-    location / { try_files $uri $uri/ /index.html; }
-    location /api/ {
-        proxy_pass http://127.0.0.1:9375/api/;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-}
-```
+完整选项 — Docker Compose、固定版本、自定义目录、nginx 反向代理、手动安装 — 见 wiki 的[安装与配置](https://wiki.camthink.ai/docs/neomind/user-guide/install-setup)。
 
 </details>
 
-### 开发模式
+### 推荐本地模型
 
-**环境要求：** Rust 1.85+、Node.js 20+（LLM 后端可选 — 服务器会自举内置模型）
+在 **设置 → LLM 后端**(或首次引导)中选择目录内的模型 — 下载即用,零配置。上下文默认取各模型的实测最优值,可按 32K/64K/128K 预设或自定义调高。
+
+成绩来自 2026-09 智能体评测:每周期 12 个场景(中文+英文镜像、40 轮长程记忆、工具广度),在自托管种子沙箱平台上以完全一致的条件执行;决赛模型跑满两个周期。
+
+| 模型 | 量化 | 体积 | 最低内存 | @8K | @16K | @32K | 适用 |
+|------|------|------|----------|-----|------|------|------|
+| **MiniCPM5-2B** ⭐ | Q4_K_M | 1.5 GB | 3 GB | **64** | 61 | ~68* | 全窗口最稳,@8K 工具命中 81%。Apache-2.0。按 8K 服务。 |
+| **Qwen 3.5 4B** | Q4_K_M | 2.7 GB | 4 GB | 38* | **70** | 66 | ≥16K 上下文下最强智能体;8K 下大幅退化。视觉需 mmproj。按 16K 服务。 |
+| **Ling 3.0-tiny** | Q4_K_M | 4.8 GB | 6 GB | 62 | 48 | 45 | 高速 MoE,仅限 8K 短会话 — 过 8K 即滑坡。需 llama.cpp ≥ b10545。 |
+| **Gemma 4 E2B** | QAT q4_0 | 3.1 GB | 4.5 GB | 59* | — | 60 | 长上下文最稳;资源创建偏弱。 |
+| **LFM 2.5 2.6B** | QAD Q4_0 | 1.5 GB | 3 GB | 41* | — | 54 | 上下文越大表现越好;原生 128K。 |
+| deepseek-v4-flash(云端参照)| — | — | — | — | — | 65–75 | 与最强本地模型同档,单轮快 5 倍。 |
+| MiniCPM5-1B / Qwen3.5-0.8B | Q4 | ~1 GB | 2 GB | ~26* | — | — | 低于智能体门槛;不在目录内。 |
+
+\*该窗口为早期 5 场景套件数据。决赛模型各测两次:稳定模型复现差距 ±1 分以内;deepseek-v4-flash 波动 65–75(调查型风格在关键词评分下方差偏大)。
+
+公平评分下前四名同处一档(工具命中 83–90%)——按体积、延迟、上下文适配选型:**MiniCPM5-2B @8K** 默认首选,**Qwen @16K** 最强智能体,**deepseek-v4-flash** 云端备选。完整数据:[docs/edge-models.md](docs/edge-models.md) · 模型目录:[NeoMind-Runtimes](https://github.com/camthink-ai/NeoMind-Runtimes)。
+
+### 开发
+
+**前置条件:** Rust 1.85+、Node.js 20+(LLM 后端可选 — 服务器会自动引导内置模型)
 
 ```bash
-# 克隆
 git clone https://github.com/camthink-ai/NeoMind.git
 cd NeoMind
 
-# 启动后端（端口 9375）
+# 启动后端(端口 9375)
 cargo run -p neomind-cli -- serve
 
-# 启动前端开发服务器（端口 5173）
+# 启动前端开发服务器(端口 5173)
 cd web && npm install && npm run dev
 
 # 构建桌面应用
 cd web && npm run tauri:build
 ```
 
-## 系统架构
+<details>
+<summary><b>架构与仓库布局(面向贡献者)</b></summary>
 
-```raw
+```
 ┌──────────────────────────────────────────────────────────────┐
-│                    桌面应用 / Web 界面                         │
-│                    React 18 + TypeScript                      │
+│                  桌面应用 / Web UI                            │
+│                   React 18 + TypeScript                      │
 ├──────────────────────────────────────────────────────────────┤
-│                    Tauri 2.x / 浏览器                         │
+│                   Tauri 2.x / 浏览器                          │
 └────────────────────────┬─────────────────────────────────────┘
                          │ REST / WebSocket / SSE
                          ▼
 ┌──────────────────────────────────────────────────────────────┐
-│                         API 网关                              │
-│                      Axum Web 服务器                          │
-│  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐    │
-│  │ 认证   │ │ 设备   │ │ 自动化 │ │ 消息   │ │ 扩展   │    │
-│  └────────┘ └────────┘ └────────┘ └────────┘ └────────┘    │
+│                        API 网关(Axum)                        │
+│  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐     │
+│  │ 认证    │ │ 设备    │ │ 自动化  │ │ 消息    │ │ 扩展    │     │
+│  └────────┘ └────────┘ └────────┘ └────────┘ └────────┘     │
 └────────────────────────┬─────────────────────────────────────┘
                          │ 事件总线
           ┌──────────────┼──────────────┬────────────────┐
           ▼              ▼              ▼                ▼
    ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────┐
-   │ 设备管理 │  │  自动化  │  │ AI 智能体│  │     扩展系统     │
-   │          │  │          │  │          │  │                  │
-   │ MQTT     │  │ 规则     │  │ 对话     │  │ 进程隔离         │
-   │ BLE      │  │ 数据转换 │  │ 工具调用 │  │ Native + WASM   │
-   │ Webhook  │  │ 智能体   │  │ 记忆系统 │  │ 能力权限         │
+   │  设备     │  │ 自动化    │  │ AI 智能体 │  │     扩展          │
+   │  MQTT    │  │ 规则      │  │ 对话      │  │  进程隔离          │
+   │  BLE     │  │ 变换      │  │ 工具      │  │  Native + WASM   │
+   │  Webhook │  │ 智能体    │  │ 记忆      │  │  能力权限          │
    └──────────┘  └──────────┘  └──────────┘  └──────────────────┘
           │              │              │                │
           └──────────────┴──────────────┴────────────────┘
                          │
                          ▼
    ┌─────────────────────────────────────────────────────────┐
-   │                       存储层                             │
+   │                    存储层(redb)                          │
    │  ┌────────────┐ ┌────────────┐ ┌──────────┐ ┌────────┐ │
-   │  │  时序数据  │ │   状态     │ │ LLM 记忆 │ │ 推送   │ │
-   │  │  (redb)    │ │  (redb)    │ │          │ │ 日志   │ │
+   │  │ 时间序列    │ │  状态      │ │  LLM     │ │  推送   │ │
+   │  │  (redb)    │ │  (redb)    │ │  记忆    │ │  日志   │ │
    │  └────────────┘ └────────────┘ └──────────┘ └────────┘ │
    └─────────────────────────────────────────────────────────┘
 ```
 
-## 项目结构
-
-```raw
+```
 NeoMind/
 ├── crates/
-│   ├── neomind-core/            # 核心 traits 和类型系统
-│   ├── neomind-api/             # Web API 服务器（Axum）
+│   ├── neomind-core/            # 核心类型系统与事件总线
+│   ├── neomind-api/             # Web API 服务器(Axum)
 │   ├── neomind-agent/           # AI 智能体、工具调用、LLM 后端
-│   ├── neomind-devices/         # 设备管理（MQTT、BLE、Webhook）
-│   ├── neomind-storage/         # 存储层（redb）
-│   ├── neomind-messages/        # 通知系统（7 种渠道）
-│   ├── neomind-rules/           # JSON 规则引擎
-│   ├── neomind-data-push/       # 数据推送到外部系统
+│   ├── neomind-devices/         # 设备管理(MQTT、BLE、Webhook)
+│   ├── neomind-storage/         # 存储层(redb)
+│   ├── neomind-messages/        # 通知(7 渠道)
+│   ├── neomind-rules/           # 规则引擎(JSON 条件/动作)
+│   ├── neomind-data-push/       # 数据外推
+│   ├── neomind-cli-ops/         # CLI 共享逻辑(进程内派发)
 │   ├── neomind-extension-sdk/   # 扩展开发 SDK
-│   ├── neomind-extension-runner/# 扩展进程隔离运行器
-│   ├── neomind-cli/             # 命令行工具
-│   └── neomind-cli-ops/         # CLI 命令定义与进程内分发
+│   ├── neomind-extension-runner/# 扩展进程隔离
+│   └── neomind-cli/             # 命令行接口
 ├── web/
-│   ├── src/                     # React 前端（TypeScript）
-│   └── src-tauri/               # Tauri 桌面后端（Rust）
+│   ├── src/                     # React 前端(TypeScript)
+│   └── src-tauri/               # Tauri 桌面后端(Rust)
 ├── scripts/                     # 部署脚本
 ├── docs/                        # 文档
-├── deploy/                      # 部署配置（nginx、systemd）
+├── deploy/                      # 部署配置(nginx、systemd)
 ├── Dockerfile                   # 多阶段 Docker 构建
-├── docker-compose.yml           # Docker Compose 配置
+├── docker-compose.yml           # Docker Compose
 └── .env.example                 # 环境变量模板
 ```
 
-## 更多截图
-
-<details>
-<summary>点击展开</summary>
-
-<br/>
-
-<table>
-  <tr>
-    <td><b>登录</b></td>
-    <td><b>AI 对话</b></td>
-  </tr>
-  <tr>
-    <td><img src="docs/img/2026-08/login.png" width="480" /></td>
-    <td><img src="docs/img/2026-08/chat.png" width="480" /></td>
-  </tr>
-  <tr>
-    <td><b>AI 智能体</b></td>
-    <td><b>规则引擎</b></td>
-  </tr>
-  <tr>
-    <td><img src="docs/img/2026-08/agents.png" width="480" /></td>
-    <td><img src="docs/img/2026-08/rules.png" width="480" /></td>
-  </tr>
-  <tr>
-    <td><b>数据转换</b></td>
-    <td><b>消息通知</b></td>
-  </tr>
-  <tr>
-    <td><img src="docs/img/2026-08/transforms.png" width="480" /></td>
-    <td><img src="docs/img/2026-08/messages.png" width="480" /></td>
-  </tr>
-  <tr>
-    <td><b>扩展系统</b></td>
-    <td><b>数据推送</b></td>
-  </tr>
-  <tr>
-    <td><img src="docs/img/2026-08/extensions.png" width="480" /></td>
-    <td><img src="docs/img/2026-08/data-push.png" width="480" /></td>
-  </tr>
-  <tr>
-    <td><b>LLM 后端</b></td>
-    <td><b>移动端</b></td>
-  </tr>
-  <tr>
-    <td><img src="docs/img/2026-08/llm-backends.png" width="480" /></td>
-    <td><img src="docs/img/mobile_web.png" width="200" /></td>
-  </tr>
-</table>
-
 </details>
-
-## 配置
-
-### LLM 后端
-
-本地：Ollama（`http://localhost:11434`）、llama.cpp（`http://127.0.0.1:8080`，不带 `/v1`）以及内置捆绑模型。
-
-云端为单一 **Cloud AI** 卡片，两种协议：
-
-| 协议 | 端点示例 |
-|------|----------|
-| OpenAI 兼容（带 `/v1`） | OpenAI `https://api.openai.com/v1` · Qwen `https://dashscope.aliyuncs.com/compatible-mode/v1` · DeepSeek `https://api.deepseek.com/v1` · GLM `https://open.bigmodel.cn/api/paas/v4` · xAI `https://api.x.ai/v1` · vLLM/OpenRouter 等任意 `/v1` 端点 |
-| Anthropic | `https://api.anthropic.com`（`/v1` 可省略，自动补全） |
-
-### 环境变量
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `RUST_LOG` | `info` | 日志级别（trace、debug、info、warn、error） |
-| `NEOMIND_DATA_DIR` | `/var/lib/neomind` | 数据目录 |
-| `NEOMIND_BIND_ADDR` | `0.0.0.0:9375` | 服务器绑定地址 |
-| `SERVER_PORT` | `9375` | API 服务器端口 |
-
-## CLI 参考
-
-```bash
-neomind serve                          # 启动 API 服务器
-neomind health                        # 系统健康检查
-neomind device list                   # 列出设备
-neomind device create --name "..."    # 创建设备
-neomind rule list                     # 列出自动化规则
-neomind extension list                # 列出扩展
-neomind extension install file.nep    # 安装扩展
-neomind agent list                    # 列出 AI 智能体
-neomind message list                  # 列出消息
-neomind system info                   # 系统状态和网络信息
-neomind api-key create                # 创建 API 密钥
-```
-
-## 扩展开发
-
-使用 Rust SDK 构建进程隔离的扩展：
-
-```rust
-use neomind_extension_sdk::prelude::*;
-
-pub struct MyExtension;
-
-#[async_trait]
-impl Extension for MyExtension {
-    fn metadata(&self) -> &ExtensionMetadata {
-        static META: OnceLock<ExtensionMetadata> = OnceLock::new();
-        META.get_or_init(|| {
-            ExtensionMetadata::new("my-extension", "我的扩展", "1.0.0")
-                .with_description("我的自定义扩展")
-                .with_author("你的名字")
-        })
-    }
-
-    async fn execute_command(&self, cmd: &str, args: &Value) -> Result<Value> {
-        match cmd {
-            "do_something" => Ok(json!({ "result": "done" })),
-            _ => Err(ExtensionError::CommandNotFound(cmd.to_string())),
-        }
-    }
-
-    fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
-        Ok(vec![])
-    }
-}
-
-neomind_export!(MyExtension);
-```
-
-详见 [开发者指南](https://wiki.camthink.ai/zh-Hans/docs/neomind/developer-guide/overview) 和 [NeoMind-Extensions](https://github.com/camthink-ai/NeoMind-Extensions)。
-
-## 文档
-
-所有用户、安装和开发文档均位于 **[NeoMind Wiki](https://wiki.camthink.ai/zh-Hans/docs/neomind/product-overview/what-is-neomind)**：
-
-| Wiki 板块 | 内容 |
-|----------|------|
-| [产品概览](https://wiki.camthink.ai/zh-Hans/docs/neomind/product-overview/what-is-neomind) | NeoMind 是什么、核心概念、架构 |
-| [快速开始](https://wiki.camthink.ai/zh-Hans/docs/neomind/quick-start/five-minute-guide) | 五分钟跑起第一个实例 |
-| [安装与配置](https://wiki.camthink.ai/zh-Hans/docs/neomind/user-guide/install-setup) | 桌面端、服务器、Docker、配置 |
-| [开发者指南](https://wiki.camthink.ai/zh-Hans/docs/neomind/developer-guide/overview) | REST/WebSocket API、扩展、集成 |
-
-仓库内保留的本地参考（面向贡献者）：
-
-| 资源 | 说明 |
-|------|------|
-| [CLAUDE.md](CLAUDE.md) | 开发指南和代码规范 |
-| [CHANGELOG.md](CHANGELOG.md) | 版本历史和发布说明 |
-| [前端规范](web/DESIGN_SPEC.md) | UI 设计系统和组件标准 |
 
 ## 技术栈
 
-| 层级 | 技术 |
-|------|------|
+| 层 | 技术 |
+|----|------|
 | **后端** | Rust、Axum、Tokio、redb |
 | **前端** | React 18、TypeScript、Tailwind CSS、Zustand、Radix UI |
 | **桌面** | Tauri 2.x |
-| **AI/LLM** | Ollama、OpenAI、Anthropic 及 6+ 其他后端 |
-| **IoT** | MQTT（嵌入式 Broker）、BLE、HTTP/Webhook |
-| **扩展** | Native（.so/.dylib/.dll）、WASM、进程隔离 |
+| **AI/LLM** | llama.cpp、OpenAI、Anthropic 等 6+ 后端 |
+| **IoT** | MQTT(内嵌 broker)、BLE、HTTP/Webhook |
+| **扩展** | Native(.so/.dylib/.dll)、WASM、进程隔离 |
+
+## 社区
+
+- **[Discord](https://discord.gg/gkM7cc8gKb)** — 实时交流、支持与公告(推荐)
+- **[GitHub Issues](https://github.com/camthink-ai/NeoMind/issues)** — Bug 反馈与功能请求
+- **[NeoMind Wiki](https://wiki.camthink.ai/docs/neomind/product-overview/what-is-neomind)** — 完整文档
+
+版本发布公告见 Discord `#announcements` 频道与 [GitHub Releases](https://github.com/camthink-ai/NeoMind/releases)。
 
 ## 贡献
 
-欢迎贡献！请随时提交 Pull Request。
+欢迎贡献 — 随时提交 PR!
+
+贡献者参考:
+
+- [CLAUDE.md](CLAUDE.md) — 开发约定与代码要点
+- [CHANGELOG.md](CHANGELOG.md) — 版本历史
+- [web/DESIGN_SPEC.md](web/DESIGN_SPEC.md) — UI 设计系统
 
 ## 许可证
 
