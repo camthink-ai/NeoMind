@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use neomind_agent::llm_backends::LlmBackendInstanceManager;
 use neomind_core::builtin_llm::manifest::{
-    default_model_def, model_def, BuiltinModelDef, ModelManifest, BUILTIN_MODEL_ID,
+    default_model_def, model_def, BuiltinModelDef, ModelManifest,
 };
 use neomind_storage::{LlmBackendInstance, LlmBackendType};
 
@@ -150,7 +150,10 @@ pub async fn bootstrap(
         ),
     };
     instance.is_builtin = true;
-    instance.thinking_is_integral = def.manifest.id == BUILTIN_MODEL_ID;
+    // Integral thinking is a MODEL property (LFM's template ignores any
+    // reasoning toggle), not "is this the default model" — the default
+    // moving off LFM must not flip this flag for LFM installs.
+    instance.thinking_is_integral = def.manifest.id == "lfm25-2.6b";
     instance.thinking_enabled = def.default_thinking;
     instance.endpoint = Some(endpoint.clone());
     instance.model = def.manifest.id.clone();

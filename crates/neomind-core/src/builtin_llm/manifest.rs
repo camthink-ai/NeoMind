@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 
 /// Default builtin model. `BUILTIN_MODELS` (below) is the full registry; the
 /// user picks which one to install, this is the default/recommended entry.
-pub const BUILTIN_MODEL_ID: &str = "lfm25-2.6b";
+pub const BUILTIN_MODEL_ID: &str = "minicpm5-2b";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ModelManifest {
@@ -56,11 +56,42 @@ pub struct BuiltinModelDef {
     pub min_ram_mb: u64,
 }
 
-/// The builtin model registry. LFM2.5 is the default (small + cheap KV);
-/// Qwen3.5-4B is the strongest edge agent per our 30-case evals; Gemma4-E2B
-/// adds a QAT + vision-friendly option.
+/// The builtin model registry. MiniCPM5-2B is the default (2026-09
+/// corrected-harness eval: 81% tool accuracy @8K, most robust across
+/// context windows, Apache-2.0); Qwen3.5-4B is the strongest agent when
+/// given 16K; Gemma4-E2B adds a QAT + vision-friendly option; LFM2.5 keeps
+/// the native-128K niche.
 pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
     vec![
+        BuiltinModelDef {
+            manifest: ModelManifest {
+                id: "minicpm5-2b".to_string(),
+                version: "1.0".to_string(),
+                file_name: "minicpm5-2b-q4_k_m.gguf".to_string(),
+                sha256: "9252669758794f5ec0a0f2919a7d7507fd90748ffb75983ad7ff6c940a827b50"
+                    .to_string(),
+                quant: "q4_k_m".to_string(),
+            },
+            display_name: "MiniCPM5-2B",
+            // Eval-validated on the 2026-09 harness (81% tool accuracy);
+            // the model card's chat setting is 1.0/0.95 — agent use favors
+            // the focused sampler.
+            temperature: Some(0.6),
+            top_p: Some(0.85),
+            top_k: Some(40),
+            hf_repo: "Abiray/MiniCPM5-2B-GGUF",
+            hf_file: "MiniCPM5-2B-Q4_K_M.gguf",
+            size_bytes: 1_561_320_448,
+            // 8K is the measured optimum (2026-09 eval: 32K trades tool
+            // accuracy for recall with no overall gain); the UI presets can
+            // still raise it.
+            default_ctx: 8192,
+            max_ctx: 131072,
+            notes: "2026-09 评测首选 — 工具命中 81%、全窗口最稳、Apache-2.0 可分发",
+            recommended: true,
+            default_thinking: true,
+            min_ram_mb: 3_072,
+        },
         BuiltinModelDef {
             manifest: ModelManifest {
                 id: "lfm25-2.6b".to_string(),
@@ -80,8 +111,8 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             size_bytes: 1_500_000_000,
             default_ctx: 131072,
             max_ctx: 131072,
-            notes: "小体积 + 原生 128K 上下文(hybrid KV 很省) — 资源紧张设备的默认选择",
-            recommended: true,
+            notes: "原生 128K 上下文(hybrid KV 很省)— 长会话细分场景;默认首选已让位 MiniCPM5-2B",
+            recommended: false,
             default_thinking: true,
             min_ram_mb: 3_072,
         },
@@ -102,9 +133,12 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             hf_repo: "unsloth/Qwen3.5-4B-GGUF",
             hf_file: "Qwen3.5-4B-Q4_K_M.gguf",
             size_bytes: 2_740_000_000,
-            default_ctx: 32768,
+            // 16K is the measured sweet spot (2026-09 eval: 70/100 @16K vs
+            // 38 @8K starved).
+            default_ctx: 16384,
             max_ctx: 262144,
-            notes: "30 案 eval 最强的端侧 agent 模型(76% cmd_ok) — 工具调用首选",
+            notes:
+                "16K 窗口下最强端侧 agent(2026-09 评测 70 分)— 8K 下会大幅退化;可挂 mmproj 加视觉",
             recommended: false,
             default_thinking: false,
             min_ram_mb: 4_096,
@@ -147,14 +181,14 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             temperature: Some(1.0),
             top_p: Some(0.95),
             top_k: Some(20),
-            hf_repo: "bloomer010/Ling-3.0-tiny-GGUF",
+            hf_repo: "inclusionAI/Ling-3.0-tiny-GGUF",
             hf_file: "Ling-3.0-tiny-Q4_K_M.gguf",
             size_bytes: 4_823_894_880,
-            // Native 128K; the run default keeps the full window (MoE KV is
-            // modest) but the 6 GB floor steers small devices away.
-            default_ctx: 131072,
+            // 8K-only per the 2026-09 eval (62 → 48 at 16K — cliff);
+            // the 6 GB floor also steers small devices away.
+            default_ctx: 8192,
             max_ctx: 131072,
-            notes: "社区验证的 tiny MoE — 生成快,agent 得分强(77% 平 Qwen)",
+            notes: "高速 tiny MoE — 仅适合 8K 短会话(过 8K 滑坡),需 llama.cpp ≥ b10545",
             recommended: false,
             default_thinking: true,
             min_ram_mb: 6_144,
