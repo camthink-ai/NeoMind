@@ -413,7 +413,6 @@ static TURNS_WITH_TOOLS: std::sync::atomic::AtomicU64 = std::sync::atomic::Atomi
 struct TurnRecord {
     query: String,
     commands: Vec<String>,
-    tools: Vec<String>,
     content: String,
 }
 
@@ -511,7 +510,6 @@ async fn send(sm: &SessionManager, sid: &str, msg: &str) -> MsgResult {
     TRANSCRIPT.lock().unwrap().push(TurnRecord {
         query: msg.to_string(),
         commands: shell_commands.clone(),
-        tools: resp.tool_calls.iter().map(|t| t.name.clone()).collect(),
         content: resp.message.content.to_string(),
     });
 
