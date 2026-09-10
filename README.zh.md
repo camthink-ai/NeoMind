@@ -168,9 +168,9 @@ docker run -d --name neomind \
 
 成绩来自 2026-09 智能体评测:每周期 12 个场景(中文+英文镜像、40 轮长程记忆、工具广度),在自托管种子沙箱平台上以完全一致的条件执行;决赛模型跑满两个周期。
 
-| 模型 | 量化 | 体积 | 最低内存 | @8K | @16K | @32K | 适用 |
+| 模型 | 量化 | 体积 | 最低内存 | 8K | 16K | 32K | 适用 |
 |------|------|------|----------|-----|------|------|------|
-| **MiniCPM5-2B** ⭐ | Q4_K_M | 1.5 GB | 3 GB | **64** | 61 | ~68* | 全窗口最稳,@8K 工具命中 81%。Apache-2.0。按 8K 服务。 |
+| **MiniCPM5-2B** ⭐ | Q4_K_M | 1.5 GB | 3 GB | **64** | 61 | ~68* | 全窗口最稳,8K 工具命中 81%。Apache-2.0。按 8K 服务。 |
 | **Qwen 3.5 4B** | Q4_K_M | 2.7 GB | 4 GB | 38* | **70** | 66 | ≥16K 上下文下最强智能体;8K 下大幅退化。视觉需 mmproj。按 16K 服务。 |
 | **Ling 3.0-tiny** | Q4_K_M | 4.8 GB | 6 GB | 62 | 48 | 45 | 高速 MoE,仅限 8K 短会话 — 过 8K 即滑坡。需 llama.cpp ≥ b10545。 |
 | **Gemma 4 E2B** | QAT q4_0 | 3.1 GB | 4.5 GB | 59* | — | 60 | 长上下文最稳;资源创建偏弱。 |
@@ -180,7 +180,7 @@ docker run -d --name neomind \
 
 \*该窗口为早期 5 场景套件数据。决赛模型各测两次:稳定模型复现差距 ±1 分以内;deepseek-v4-flash 波动 65–75(调查型风格在关键词评分下方差偏大)。
 
-公平评分下前四名同处一档(工具命中 83–90%)——按体积、延迟、上下文适配选型:**MiniCPM5-2B @8K** 默认首选,**Qwen @16K** 最强智能体,**deepseek-v4-flash** 云端备选。完整数据:[docs/edge-models.md](docs/edge-models.md) · 模型目录:[NeoMind-Runtimes](https://github.com/camthink-ai/NeoMind-Runtimes)。
+公平评分下前四名同处一档(工具命中 83–90%)——按体积、延迟、上下文适配选型:**MiniCPM5-2B 8K** 默认首选,**Qwen 16K** 最强智能体,**deepseek-v4-flash** 云端备选。完整数据:[docs/edge-models.md](docs/edge-models.md) · 模型目录:[NeoMind-Runtimes](https://github.com/camthink-ai/NeoMind-Runtimes)。
 
 ### 开发
 
