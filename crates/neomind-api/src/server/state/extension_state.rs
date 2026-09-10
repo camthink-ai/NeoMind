@@ -499,13 +499,10 @@ impl ExtensionState {
                     let record = match store.load(&loaded_metadata.id) {
                         Ok(Some(mut existing)) => {
                             existing.name = loaded_metadata.name.clone();
-                            existing.version =
-                                loaded_metadata.version.to_string();
-                            existing.description =
-                                loaded_metadata.description.clone();
+                            existing.version = loaded_metadata.version.to_string();
+                            existing.description = loaded_metadata.description.clone();
                             existing.author = loaded_metadata.author.clone();
-                            existing.file_path =
-                                path.to_string_lossy().to_string();
+                            existing.file_path = path.to_string_lossy().to_string();
                             existing.auto_start = true;
                             existing.uninstalled = false;
                             existing.health_status = "ok".to_string();

@@ -354,8 +354,8 @@ impl ExtensionStore {
         };
         drop(read_txn);
 
-        let mut record: ExtensionRecord = serde_json::from_slice(&bytes)
-            .map_err(|e| Error::Serialization(e.to_string()))?;
+        let mut record: ExtensionRecord =
+            serde_json::from_slice(&bytes).map_err(|e| Error::Serialization(e.to_string()))?;
         if record.last_error.is_none() && record.health_status == "ok" {
             return Ok(()); // already clean — skip the write txn
         }

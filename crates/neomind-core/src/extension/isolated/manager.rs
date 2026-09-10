@@ -442,15 +442,12 @@ impl IsolatedExtensionManager {
                                         // max_restart_attempts and every
                                         // later death needed a serve restart).
                                         let now = chrono::Utc::now().timestamp();
-                                        let budget_count = match info
-                                            .runtime
-                                            .last_restart_at
-                                        {
+                                        let budget_count = match info.runtime.last_restart_at {
                                             Some(t) if now - t >= 3600 => 0,
                                             _ => info.runtime.restart_count,
                                         };
-                                        let within_limit = budget_count
-                                            < config.max_restart_attempts as u64;
+                                        let within_limit =
+                                            budget_count < config.max_restart_attempts as u64;
 
                                         // Check cooldown period
                                         let past_cooldown = if let Some(last_restart) =

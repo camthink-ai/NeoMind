@@ -227,9 +227,7 @@ pub async fn run_set_role(
     ))
 }
 
-pub async fn run_list_users(
-    data_dir: Option<String>,
-) -> anyhow::Result<CliResponse> {
+pub async fn run_list_users(data_dir: Option<String>) -> anyhow::Result<CliResponse> {
     let resolved_dir = crate::auth_cmd::resolve_login_data_dir(data_dir)?;
     let path = users_db_path(&resolved_dir);
     let users = list_users_in_db(&path)?;

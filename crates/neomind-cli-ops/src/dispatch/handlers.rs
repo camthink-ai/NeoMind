@@ -1322,9 +1322,7 @@ pub async fn run_user_cmd(user_cmd: UserCommand) -> Result<(CliResponse, OutputF
         OutputFormat::Human
     };
     let resp = match user_cmd {
-        UserCommand::List { data_dir } => {
-            crate::user_cmd::run_list_users(data_dir).await?
-        }
+        UserCommand::List { data_dir } => crate::user_cmd::run_list_users(data_dir).await?,
         UserCommand::ResetPassword { username, data_dir } => {
             crate::user_cmd::run_reset_password(data_dir, &username).await?
         }
