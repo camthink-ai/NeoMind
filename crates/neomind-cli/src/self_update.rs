@@ -60,6 +60,14 @@ pub async fn run_upgrade(version: Option<String>, yes: bool) -> Result<()> {
     println!("Upgrade available: {APP_VERSION} → v{target}");
 
     if !yes {
+        use std::io::IsTerminal;
+        if !std::io::stdin().is_terminal() {
+            // Non-interactive caller (agent/script/pipe): refuse instead of
+            // blocking on a stdin that will never answer.
+            anyhow::bail!(
+                "Upgrade to v{target} available — re-run with --yes to proceed non-interactively"
+            );
+        }
         println!("\nProceed with upgrade? [y/N] ");
         let mut input = String::new();
         std::io::stdin().read_line(&mut input)?;
@@ -325,6 +333,12 @@ pub async fn run_uninstall(purge: bool, yes: bool) -> Result<()> {
         );
     }
     if !yes {
+        use std::io::IsTerminal;
+        if !std::io::stdin().is_terminal() {
+            anyhow::bail!(
+                "Uninstall requires confirmation — re-run with --yes to proceed non-interactively"
+            );
+        }
         println!("\nProceed? [y/N] ");
         let mut input = String::new();
         std::io::stdin().read_line(&mut input)?;

@@ -515,11 +515,15 @@ pub enum ExtensionCommand {
     /// Uninstall an extension.
     ///
     /// Stops the extension process and removes all files. This is irreversible.
-    /// Example: `neomind extension uninstall weather-forecast`
+    /// Example: `neomind extension uninstall weather-forecast --yes`
     Uninstall {
         /// Extension ID.
         #[arg(required = true)]
         id: String,
+        /// Skip the confirmation prompt (required for non-interactive use —
+        /// the AI agent / scripts get a refusal instead of a hang without it).
+        #[arg(long)]
+        yes: bool,
     },
     /// Create a new extension scaffold.
     ///

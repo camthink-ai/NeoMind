@@ -38,6 +38,12 @@ export interface DashboardStorage {
   sync(dashboard: Dashboard): Promise<StorageResult<Dashboard>>
 
   /**
+   * Optional: subscribe to remote (other-tab) writes of the shared local
+   * cache. Implementations without cross-tab awareness omit it.
+   */
+  onRemoteCacheChange?(cb: () => void): () => void
+
+  /**
    * Delete a dashboard
    */
   delete(id: string): Promise<StorageResult<void>>

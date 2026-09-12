@@ -446,6 +446,8 @@ export class HybridDashboardStorage implements DashboardStorage {
   private epoch = 0
   // Map local UUID -> server ID so subsequent syncs use the server ID.
   private localToServerId: Map<string, string> = new Map()
+  // Cross-tab watchers: fired when another tab writes the shared cache.
+  private remoteCacheListeners: Set<() => void> = new Set()
 
   constructor(options: { cacheEnabled?: boolean } = {}) {
     this.apiStorage = new ApiDashboardStorage()
@@ -453,6 +455,36 @@ export class HybridDashboardStorage implements DashboardStorage {
     this.cacheEnabled = options.cacheEnabled ?? true
     // Restore persisted ID mapping from localStorage
     this.loadIdMapping()
+
+    // [cross-tab] localStorage 'storage' events fire in OTHER tabs on
+    // every write. Without this, each tab holds an independent id mapping
+    // and dashboard array — the second tab to save overwrote the first's
+    // dashboards wholesale, and the same local UUID synced from both tabs
+    // created the dashboard twice on the server. On a remote write:
+    // refresh this tab's id mapping (kills the duplicate-create path) and
+    // notify the store layer to refetch (kills the stale-overwrite path).
+    if (typeof window !== 'undefined') {
+      window.addEventListener('storage', (e: StorageEvent) => {
+        if (e.key !== LOCAL_STORAGE_KEY && e.key !== LOCAL_TO_SERVER_ID_KEY) return
+        if (e.key === LOCAL_TO_SERVER_ID_KEY) {
+          this.localToServerId.clear()
+          this.loadIdMapping()
+        }
+        this.remoteCacheListeners.forEach(cb => {
+          try { cb() } catch { /* listener errors are not ours to propagate */ }
+        })
+      })
+    }
+  }
+
+  /**
+   * Subscribe to remote (other-tab) writes of the shared cache. Returns an
+   * unsubscribe function. Store layers use this to refetch instead of
+   * clobbering with their stale in-memory copy.
+   */
+  onRemoteCacheChange(cb: () => void): () => void {
+    this.remoteCacheListeners.add(cb)
+    return () => this.remoteCacheListeners.delete(cb)
   }
 
   /** Persist localToServerId mapping to localStorage */
@@ -505,23 +537,39 @@ export class HybridDashboardStorage implements DashboardStorage {
       return this.localStorage.load()
     }
 
-    // Cache to localStorage if enabled and update timestamp. Merge instead of
-    // overwrite: dashboards that only exist locally (created while the backend
-    // was down and never synced) must survive a successful API load, otherwise
-    // they are washed out of the cache and lost on a later cold start.
-    if (this.cacheEnabled && apiResult.data) {
-      this.localStorage.save(this.mergeServerWithLocalOnly(apiResult.data)).catch(() => {})
-      this.updateCacheTimestamp()
+    // Merge instead of overwrite, and RETURN the merged list (the old code
+    // cached the merge but returned the raw server list — local-only and
+    // offline-edited dashboards were invisible until a cold start, and the
+    // next in-memory save then overwrote the cache with the server's stale
+    // versions). Dashboards that only exist locally must survive a
+    // successful API load; offline edits must not be handed back to the
+    // server as ground truth.
+    if (apiResult.data) {
+      const merged = this.mergeServerWithLocalOnly(apiResult.data)
+      if (this.cacheEnabled) {
+        this.localStorage.save(merged).catch(() => {})
+        this.updateCacheTimestamp()
+      }
+      return { data: merged, error: null }
     }
 
     return apiResult
   }
 
   /**
-   * Merge the server list with locally-cached dashboards that have never been
-   * synced (local UUID, no localToServerId mapping). Dashboards whose mapped
-   * server ID is absent from the server list were deleted — possibly from
-   * another client — and are intentionally dropped rather than resurrected.
+   * Merge the server list with the local cache, newest-write-wins:
+   *
+   * 1. [offline-edit recovery] For dashboards present on BOTH sides, a
+   *    STRICTLY NEWER local copy (by `updatedAt`) wins — it holds edits made
+   *    while the backend was unreachable. The old merge let the stale server
+   *    version overwrite the newer cache unconditionally, permanently losing
+   *    those edits on reload ("local-first" was only "local-until-reload").
+   *    Trade-off: an offline edit made after another client deleted the
+   *    dashboard resurrects it — losing the edit is worse than resurrecting.
+   *    Recovered winners are re-synced in the background so the server heals.
+   * 2. Local-only dashboards (no server id, no mapping) survive as before.
+   * 3. Dashboards whose mapped server ID is absent from the server list were
+   *    deleted from another client (and not edited locally since) — dropped.
    */
   private mergeServerWithLocalOnly(serverDashboards: Dashboard[]): Dashboard[] {
     try {
@@ -530,12 +578,45 @@ export class HybridDashboardStorage implements DashboardStorage {
       const local = JSON.parse(stored) as Dashboard[]
       if (!Array.isArray(local)) return serverDashboards
       const serverIds = new Set(serverDashboards.map(d => d.id))
+
+      // Newest local copy per server id (direct match or via the mapping).
+      const localByServerId = new Map<string, Dashboard>()
+      for (const d of local) {
+        if (!d || typeof d !== 'object' || typeof d.id !== 'string') continue
+        const serverId = serverIds.has(d.id) ? d.id : this.localToServerId.get(d.id)
+        if (!serverId || !serverIds.has(serverId)) continue
+        const prev = localByServerId.get(serverId)
+        if (!prev || (d.updatedAt ?? 0) > (prev.updatedAt ?? 0)) {
+          localByServerId.set(serverId, d)
+        }
+      }
+
+      const recovered: Dashboard[] = []
+      const merged = serverDashboards.map(sd => {
+        const ld = localByServerId.get(sd.id)
+        if (
+          ld &&
+          typeof ld.updatedAt === 'number' &&
+          typeof sd.updatedAt === 'number' &&
+          ld.updatedAt > sd.updatedAt
+        ) {
+          const winner = { ...ld, id: sd.id }
+          recovered.push(winner)
+          return winner
+        }
+        return sd
+      })
+
+      // Heal the server with the recovered versions (fire-and-forget).
+      for (const winner of recovered) {
+        void this.sync(winner).catch(() => { /* retried on the next edit */ })
+      }
+
       const localOnly = local.filter(d =>
         d && typeof d === 'object' && typeof d.id === 'string' &&
         !serverIds.has(d.id) && !this.localToServerId.has(d.id),
       )
-      if (localOnly.length === 0) return serverDashboards
-      return [...serverDashboards, ...localOnly]
+      return localOnly.length > 0 ? [...merged, ...localOnly] : merged
     } catch {
       return serverDashboards
     }

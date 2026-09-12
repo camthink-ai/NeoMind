@@ -986,8 +986,8 @@ async fn run_extension_cmd(cmd: ExtensionCommand) -> Result<()> {
             unreachable!()
         }
         ExtensionCommand::Uninstall { .. } => {
-            if let ExtensionCommand::Uninstall { id } = cmd {
-                return uninstall_extension(&id).await;
+            if let ExtensionCommand::Uninstall { id, yes, .. } = cmd {
+                return uninstall_extension(&id, yes).await;
             }
             unreachable!()
         }
@@ -1243,7 +1243,35 @@ async fn install_extension(package: &str) -> Result<()> {
 }
 
 /// Uninstall an extension.
-async fn uninstall_extension(id: &str) -> Result<()> {
+/// Confirmation prompt that is SAFE for non-interactive callers (the AI
+/// agent's shell tool, scripts, CI): with `--yes` it proceeds; on a
+/// non-terminal stdin it refuses with an actionable message instead of
+/// blocking forever on a pipe that will never answer (the old prompt hung
+/// the agent's subprocess until its tool timeout killed it).
+fn confirm_or_abort(prompt: &str, yes: bool) -> Result<()> {
+    if yes {
+        return Ok(());
+    }
+    use std::io::IsTerminal;
+    if !std::io::stdin().is_terminal() {
+        anyhow::bail!(
+            "{} — refusing to proceed non-interactively. Re-run with --yes to skip the prompt.",
+            prompt
+        );
+    }
+    print!("{} [y/N] ", prompt);
+    use std::io::Write;
+    std::io::stdout().flush()?;
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    if !input.trim().to_lowercase().starts_with('y') {
+        println!("Cancelled.");
+        return Err(anyhow::anyhow!("Cancelled by user"));
+    }
+    Ok(())
+}
+
+async fn uninstall_extension(id: &str, yes: bool) -> Result<()> {
     use std::fs;
 
     let search_dirs = [
@@ -1284,17 +1312,7 @@ async fn uninstall_extension(id: &str) -> Result<()> {
 
     println!("Uninstalling extension: {}", path.display());
     println!("This will delete the extension package.");
-    print!("Confirm? [y/N] ");
-    use std::io::Write;
-    std::io::stdout().flush()?;
-
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-
-    if !input.trim().to_lowercase().starts_with('y') {
-        println!("Cancelled.");
-        return Ok(());
-    }
+    confirm_or_abort("Confirm uninstall?", yes)?;
 
     fs::remove_file(path)?;
 

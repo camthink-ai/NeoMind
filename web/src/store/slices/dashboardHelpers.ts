@@ -22,6 +22,7 @@ export type DashboardStore = {
   dashboardsLoading: boolean
   scheduleSync: (dashboard: Dashboard) => void
   flushSync: () => Promise<void>
+  fetchDashboards: () => Promise<void>
   // UISlice
   editMode: boolean
   selectedComponent: string | null

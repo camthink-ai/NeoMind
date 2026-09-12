@@ -251,11 +251,15 @@ impl EmailChannel {
             severity_bg,
             severity_border,
             severity_color,
-            message.title,
+            // [html-injection] title and source carry user-controlled strings
+            // (rule names, device names) and used to be interpolated raw —
+            // a name containing <img onerror=...> rendered as live HTML in
+            // recipients' clients. Only severity/timestamp are trusted here.
+            html_escape(&message.title),
             severity_color,
             message.severity.as_str(),
             message.timestamp.format("%Y-%m-%d %H:%M:%S"),
-            message.source,
+            html_escape(&message.source),
             message_content,
         )
     }

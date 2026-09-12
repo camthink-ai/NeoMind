@@ -130,6 +130,14 @@ export const createDashboardCrudSlice: StateCreator<
 > = (set, get) => {
   const storage: DashboardStorage = createDashboardStorage({ type: 'hybrid', cacheEnabled: true })
 
+  // [cross-tab] Another tab wrote the shared cache: refetch instead of
+  // clobbering it with this tab's stale array on the next save. Skipped
+  // while this tab holds unsynced edits (the debounced flush owns them).
+  storage.onRemoteCacheChange?.(() => {
+    if (hasUnflushedLocalEdits()) return
+    void get().fetchDashboards()
+  })
+
   // Debounced sync — captured in closure
   let syncDebounceTimer: ReturnType<typeof setTimeout> | null = null
   // Bumped by clearDashboards (logout): in-flight syncs/flushes compare it

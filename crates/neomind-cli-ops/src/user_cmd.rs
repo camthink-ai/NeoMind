@@ -161,6 +161,17 @@ pub fn reset_user_password(
 pub fn prompt_new_password(username: &str) -> anyhow::Result<String> {
     use std::io::Write;
 
+    // Non-interactive callers (the AI agent's shell tool, scripts) would
+    // HANG on these reads — the old code blocked until the tool timeout
+    // killed the whole command. Refuse with the actionable path instead.
+    use std::io::IsTerminal;
+    if !std::io::stdin().is_terminal() {
+        anyhow::bail!(
+            "reset-password is interactive (two hidden-line reads) and stdin is not a \
+             terminal. Run it from a real shell, or see the API key path instead."
+        );
+    }
+
     let stdin = std::io::stdin();
     let mut line = String::new();
 
