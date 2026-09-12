@@ -68,6 +68,34 @@ fn get_plugin_info(adapter_id: &Option<String>) -> (Option<String>, Option<Strin
     }
 }
 
+/// Allowed range for a device's offline_timeout_secs override.
+pub(crate) const MIN_OFFLINE_TIMEOUT: u64 = 30; // below this causes status flicker
+pub(crate) const MAX_OFFLINE_TIMEOUT: u64 = 86400; // 24h — beyond this is unreasonable
+
+/// Validate an offline_timeout_secs override. Extracted so the range rule is
+/// testable (it was inline in the handler).
+fn validate_offline_timeout(secs: u64) -> Result<(), ErrorResponse> {
+    if !(MIN_OFFLINE_TIMEOUT..=MAX_OFFLINE_TIMEOUT).contains(&secs) {
+        return Err(ErrorResponse::bad_request(format!(
+            "offline_timeout_secs must be between {} and {} (got {})",
+            MIN_OFFLINE_TIMEOUT, MAX_OFFLINE_TIMEOUT, secs
+        )));
+    }
+    Ok(())
+}
+
+/// Resolve a device's effective offline timeout.
+/// Priority: device override > template default > global. Extracted from a
+/// closure duplicated across three handlers so the precedence is pinned by
+/// tests (a regression here flips devices offline too early/late).
+fn effective_offline_timeout(
+    device_override: Option<u64>,
+    template_default: Option<u64>,
+    global: u64,
+) -> u64 {
+    device_override.or(template_default).unwrap_or(global)
+}
+
 /// List devices with pagination and filtering support.
 /// Uses new DeviceService with real device status from event tracking
 ///
@@ -97,15 +125,14 @@ pub async fn list_devices_handler(
     // Resolve per-device effective offline timeout.
     // Priority: device override > template default > global.
     let effective_timeout = |config: &neomind_devices::DeviceConfig| -> u64 {
-        if let Some(secs) = config.offline_timeout_secs {
-            return secs;
-        }
-        if let Some(tpl) = template_map.get(config.device_type.as_str()) {
-            if let Some(secs) = tpl.default_offline_timeout_secs {
-                return secs;
-            }
-        }
-        global_offline_timeout
+        let template_default = template_map
+            .get(config.device_type.as_str())
+            .and_then(|tpl| tpl.default_offline_timeout_secs);
+        effective_offline_timeout(
+            config.offline_timeout_secs,
+            template_default,
+            global_offline_timeout,
+        )
     };
 
     struct DeviceWithStatus {
@@ -287,10 +314,11 @@ pub async fn get_device_handler(
 
     // Resolve per-device effective offline timeout
     // (device override > template default > global)
-    let effective_timeout = config
-        .offline_timeout_secs
-        .or(template.default_offline_timeout_secs)
-        .unwrap_or(state.devices.service.heartbeat_config().offline_timeout);
+    let effective_timeout = effective_offline_timeout(
+        config.offline_timeout_secs,
+        template.default_offline_timeout_secs,
+        state.devices.service.heartbeat_config().offline_timeout,
+    );
     let online = device_status.is_connected_within(effective_timeout);
 
     // Determine status string based on actual connectivity
@@ -372,10 +400,11 @@ pub async fn get_device_current_handler(
 
     // Get device status
     let device_status = state.devices.service.get_device_status(&device_id).await;
-    let effective_timeout = config
-        .offline_timeout_secs
-        .or(template.default_offline_timeout_secs)
-        .unwrap_or(state.devices.service.heartbeat_config().offline_timeout);
+    let effective_timeout = effective_offline_timeout(
+        config.offline_timeout_secs,
+        template.default_offline_timeout_secs,
+        state.devices.service.heartbeat_config().offline_timeout,
+    );
     let online = device_status.is_connected_within(effective_timeout);
     let status = if online {
         MdlConnectionStatus::Connected
@@ -734,14 +763,7 @@ pub async fn update_device_handler(
 
     // Validate offline_timeout_secs if provided
     if let Some(secs) = req.offline_timeout_secs {
-        const MIN_OFFLINE_TIMEOUT: u64 = 30; // 30s — below this causes status flicker
-        const MAX_OFFLINE_TIMEOUT: u64 = 86400; // 24h — beyond this is unreasonable
-        if !(MIN_OFFLINE_TIMEOUT..=MAX_OFFLINE_TIMEOUT).contains(&secs) {
-            return Err(ErrorResponse::bad_request(format!(
-                "offline_timeout_secs must be between {} and {} (got {})",
-                MIN_OFFLINE_TIMEOUT, MAX_OFFLINE_TIMEOUT, secs
-            )));
-        }
+        validate_offline_timeout(secs)?;
     }
 
     // Parse connection_config if provided
@@ -908,5 +930,79 @@ pub async fn refresh_device_handler(
             "refreshed": false,
             "error": "Adapter not available",
         }))
+    }
+}
+
+#[cfg(test)]
+mod crud_logic_tests {
+    use super::*;
+
+    /// Offline-timeout override range: the bounds exist because <30s makes
+    /// status flap with normal MQTT jitter and >24h hides real outages.
+    #[test]
+    fn offline_timeout_bounds() {
+        assert!(validate_offline_timeout(30).is_ok());
+        assert!(validate_offline_timeout(300).is_ok());
+        assert!(validate_offline_timeout(86400).is_ok());
+        for bad in [0, 1, 29, 86401, u64::MAX] {
+            let err = validate_offline_timeout(bad).unwrap_err();
+            assert!(
+                err.message.contains("between 30 and 86400"),
+                "got {} for {bad}: {}",
+                err.message,
+                bad
+            );
+        }
+    }
+
+    /// Precedence: device override beats template beats global. A device
+    /// override of exactly the global value still counts as an override
+    /// (indistinguishable here, but None vs Some matters upstream).
+    #[test]
+    fn effective_offline_timeout_precedence() {
+        let g = 300;
+        // override wins over both
+        assert_eq!(effective_offline_timeout(Some(60), Some(120), g), 60);
+        // template wins over global
+        assert_eq!(effective_offline_timeout(None, Some(120), g), 120);
+        // global when nothing else set
+        assert_eq!(effective_offline_timeout(None, None, g), 300);
+        // override wins even when SMALLER than template and global
+        assert_eq!(effective_offline_timeout(Some(31), Some(86400), g), 31);
+    }
+
+    /// Plugin display mapping: None = internal MQTT, external-mqtt* gets a
+    /// descriptive label, everything else passes through verbatim.
+    #[test]
+    fn plugin_info_mapping() {
+        let (id, name) = get_plugin_info(&None);
+        assert_eq!(
+            (id.as_deref(), name.as_deref()),
+            (Some("internal-mqtt"), Some("Internal MQTT"))
+        );
+
+        let (id, name) = get_plugin_info(&Some("external-mqtt-42".into()));
+        assert_eq!(id.as_deref(), Some("external-mqtt-42"));
+        assert_eq!(name.as_deref(), Some("External MQTT: external-mqtt-42"));
+
+        // A non-external custom adapter id passes through unchanged.
+        let (id, name) = get_plugin_info(&Some("modbus-gw1".into()));
+        assert_eq!(id.as_deref(), Some("modbus-gw1"));
+        assert_eq!(name.as_deref(), Some("modbus-gw1"));
+    }
+
+    /// Adapter→API status mapping is total (no variant silently dropped).
+    #[test]
+    fn status_mapping_is_total() {
+        use AdapterConnectionStatus as A;
+        let roundtrip = |a: A, expects: &str| {
+            let s = format!("{:?}", convert_status(a)).to_lowercase();
+            assert!(s.contains(expects), "{a:?} → {s}, expected {expects}");
+        };
+        roundtrip(A::Connected, "connected");
+        roundtrip(A::Connecting, "connecting");
+        roundtrip(A::Disconnected, "disconnected");
+        roundtrip(A::Reconnecting, "reconnecting");
+        roundtrip(A::Error, "error");
     }
 }

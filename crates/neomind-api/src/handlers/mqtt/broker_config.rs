@@ -721,3 +721,49 @@ pub async fn download_ca_cert_handler() -> Result<axum::response::Response, Erro
     )
         .into_response())
 }
+
+#[cfg(test)]
+mod pem_validation_tests {
+    use super::*;
+
+    const CERT: &str = "-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----";
+    const KEY: &str = "-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----";
+
+    #[test]
+    fn accepts_valid_cert_and_key_pems() {
+        assert!(validate_pem(CERT, "certificate").is_ok());
+        assert!(validate_pem(KEY, "private key").is_ok());
+        // EC + RSA key headers are accepted variants.
+        assert!(validate_pem(
+            &CERT.replace("CERTIFICATE", "EC PRIVATE KEY"),
+            "private key"
+        )
+        .is_ok());
+        assert!(validate_pem(
+            &CERT.replace("CERTIFICATE", "RSA PRIVATE KEY"),
+            "private key"
+        )
+        .is_ok());
+        // CA certificate label shares the certificate branch.
+        assert!(validate_pem(CERT, "CA certificate").is_ok());
+    }
+
+    #[test]
+    fn rejects_empty_and_non_pem_input() {
+        assert!(validate_pem("", "certificate").is_err());
+        assert!(validate_pem("   \n  ", "private key").is_err());
+        assert!(validate_pem("not a pem at all", "certificate").is_err());
+        assert!(validate_pem("-----BEGIN-----", "certificate").is_err());
+    }
+
+    #[test]
+    fn rejects_type_mismatch_with_actionable_message() {
+        // Sending a certificate where a key is required (and vice versa)
+        // must fail with a message naming the expected block.
+        let err = validate_pem(CERT, "private key").unwrap_err();
+        assert!(err.message.contains("private key"), "got: {}", err.message);
+
+        let err = validate_pem(KEY, "certificate").unwrap_err();
+        assert!(err.message.contains("certificate"), "got: {}", err.message);
+    }
+}

@@ -1824,3 +1824,107 @@ mod tests {
         }
     }
 }
+
+/// Edge coverage for the command tokenizer and output truncation — the
+/// in-process dispatch path the agent uses for every `neomind` invocation.
+/// A tokenizer bug here either crashes the tool call (panic) or silently
+/// rewrites the agent's command; a truncation bug can panic on CJK output
+/// (byte/char boundary mismatch) or lose the entire stderr.
+#[cfg(test)]
+mod dispatch_edge_tests {
+    use super::*;
+
+    #[test]
+    fn tokenizer_handles_quotes_and_escapes() {
+        // Single-quoted blob keeps spaces and double quotes intact.
+        let toks =
+            tokenize_neomind_command(r#"agent send-message a1 'hello "world" now'"#).unwrap();
+        assert_eq!(toks, ["agent", "send-message", "a1", "hello \"world\" now"]);
+
+        // Double quotes + escaped quote inside.
+        let toks = tokenize_neomind_command(r#"message send "say \"hi\"""#).unwrap();
+        assert_eq!(toks, ["message", "send", "say \"hi\""]);
+
+        // Escaped space glues two words into one argument.
+        let toks = tokenize_neomind_command(r"device get my\ device").unwrap();
+        assert_eq!(toks, ["device", "get", "my device"]);
+
+        // CJK passes through as ordinary argument characters.
+        let toks = tokenize_neomind_command("rule create --name 温湿度告警").unwrap();
+        assert_eq!(toks, ["rule", "create", "--name", "温湿度告警"]);
+    }
+
+    #[test]
+    fn tokenizer_rejects_shell_constructs_outside_quotes() {
+        for bad in [
+            "device list | grep x",
+            "device list > out.txt",
+            "device list < in.txt",
+            "device list `date`",
+            "device list $HOME",
+        ] {
+            assert!(
+                tokenize_neomind_command(bad).is_err(),
+                "must reject shell construct: {bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn tokenizer_accepts_shell_chars_inside_quotes() {
+        // The same constructs are fine when quoted — they become literal
+        // argument content, which clap receives intact.
+        let toks = tokenize_neomind_command(r"message send 'a | b > c $d'").unwrap();
+        assert_eq!(toks, ["message", "send", "a | b > c $d"]);
+    }
+
+    #[test]
+    fn tokenizer_rejects_unbalanced_quotes() {
+        assert!(tokenize_neomind_command("message send 'unclosed").is_err());
+        assert!(tokenize_neomind_command(r#"message send "unclosed"#).is_err());
+    }
+
+    /// Regression for the CJK crash class: budgets are in BYTES while
+    /// content is often multi-byte — truncation must back off to a char
+    /// boundary, never slice mid-codepoint (would panic the tool call).
+    #[test]
+    fn truncation_never_splits_multibyte_chars() {
+        let stdout = "温".repeat(2000); // 3 bytes each, 6000 bytes total
+        let stderr = "";
+        let (out, err) = truncate_output(&stdout, stderr, 300);
+        assert!(out.contains("truncated"), "must mark truncation: {out}");
+        assert!(!out.is_empty() && !err.is_empty() || err.is_empty());
+        // The kept prefix must be valid (test would have panicked otherwise)
+        // and the notice must report the byte count actually omitted.
+        assert!(out.contains("chars omitted"));
+    }
+
+    #[test]
+    fn truncation_splits_budget_between_streams() {
+        // Both streams over budget: each keeps a proportional share and
+        // gets its own notice; stderr must not be dropped wholesale.
+        let stdout = "S".repeat(1000);
+        let stderr = "E".repeat(1000);
+        let (out, err) = truncate_output(&stdout, &stderr, 400);
+        assert!(out.contains("truncated") && out.contains('S'));
+        assert!(err.contains("truncated") && err.contains('E'));
+        assert!(out.matches('S').count() < 1000);
+        assert!(err.matches('E').count() < 1000);
+    }
+
+    #[test]
+    fn truncation_passes_small_output_through_untouched() {
+        let (out, err) = truncate_output("ok", "warn", 100);
+        assert_eq!((out.as_str(), err.as_str()), ("ok", "warn"));
+    }
+
+    #[test]
+    fn safe_truncation_point_backs_off_to_boundary() {
+        // "温" is 3 bytes; max_bytes 4 lands mid-char and must back to 3.
+        let s = "温温温";
+        assert_eq!(find_safe_truncation_point(s, 4), 3);
+        assert_eq!(find_safe_truncation_point(s, 6), 6);
+        assert_eq!(find_safe_truncation_point(s, 999), s.len());
+        assert_eq!(find_safe_truncation_point("", 10), 0);
+    }
+}

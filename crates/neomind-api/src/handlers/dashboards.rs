@@ -2110,3 +2110,233 @@ mod tests {
         assert_eq!(target["tags"], serde_json::json!(["z"]));
     }
 }
+
+/// Wire-contract tests: the exact JSON the API emits must match what the
+/// frontend `fromDashboardDTO` (web/src/store/persistence/types.ts) parses,
+/// and the JSON the frontend `toDashboardDTO` sends must parse back. Field
+/// drift here breaks the dashboard UI SILENTLY (the TS converter drops
+/// unknown/renamed keys without error), which is why every key is pinned.
+#[cfg(test)]
+mod dto_contract_tests {
+    use super::*;
+
+    fn sample_component() -> DashboardComponent {
+        DashboardComponent {
+            id: "comp-1".into(),
+            component_type: "metric-card".into(),
+            position: ComponentPosition {
+                x: 0,
+                y: 0,
+                w: 4,
+                h: 3,
+                min_w: Some(2),
+                min_h: None,
+                max_w: None,
+                max_h: Some(8),
+            },
+            title: Some("Temperature".into()),
+            data_source: Some(serde_json::json!({"deviceId": "d1"})),
+            display: None,
+            config: Some(serde_json::json!({"unit": "°C"})),
+            actions: None,
+        }
+    }
+
+    fn sample_dashboard() -> Dashboard {
+        Dashboard {
+            id: "dash-1".into(),
+            name: "Home".into(),
+            description: None,
+            layout: DashboardLayout::default(),
+            components: vec![sample_component()],
+            created_at: 1_700_000_000,
+            updated_at: 1_700_000_001,
+            is_default: Some(true),
+            sort_order: Some(2),
+        }
+    }
+
+    /// The component emits `type` (NOT `component_type`) and snake_case
+    /// position min/max keys — exactly what `positionFromDTO` reads.
+    #[test]
+    fn component_wire_keys_match_frontend_contract() {
+        let json = serde_json::to_value(sample_component()).unwrap();
+        let obj = json.as_object().unwrap();
+
+        assert_eq!(
+            obj.keys()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>(),
+            ["id", "type", "position", "title", "data_source", "config"]
+                .into_iter()
+                .map(str::to_string)
+                .collect::<std::collections::BTreeSet<_>>(),
+            "exact component key set drifted — frontend silently drops unknown/renamed keys"
+        );
+        assert_eq!(
+            obj["type"], "metric-card",
+            "must emit `type`, not `component_type`"
+        );
+
+        let pos = obj["position"].as_object().unwrap();
+        assert_eq!(
+            pos.keys()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>(),
+            ["x", "y", "w", "h", "min_w", "max_h"]
+                .into_iter()
+                .map(str::to_string)
+                .collect::<std::collections::BTreeSet<_>>()
+        );
+        assert_eq!(pos["min_w"], 2);
+        assert_eq!(pos["max_h"], 8);
+    }
+
+    /// Dashboard level is snake_case (`created_at`, `is_default`,
+    /// `sort_order`), `rows` carries the "auto"-or-number duality.
+    #[test]
+    fn dashboard_wire_keys_match_frontend_contract() {
+        let json = serde_json::to_value(sample_dashboard()).unwrap();
+        let obj = json.as_object().unwrap();
+
+        assert_eq!(
+            obj.keys()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>(),
+            [
+                "id",
+                "name",
+                "layout",
+                "components",
+                "created_at",
+                "updated_at",
+                "is_default",
+                "sort_order"
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<std::collections::BTreeSet<_>>()
+        );
+        assert_eq!(obj["created_at"], 1_700_000_000);
+        assert_eq!(obj["is_default"], true);
+        assert_eq!(obj["sort_order"], 2);
+
+        // Layout contract: columns + rows ("auto" string OR number) +
+        // all four breakpoints present — the TS interface requires all.
+        let layout = obj["layout"].as_object().unwrap();
+        assert_eq!(layout["rows"], "auto");
+        let bps = layout["breakpoints"].as_object().unwrap();
+        assert_eq!(
+            bps.keys()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>(),
+            ["lg", "md", "sm", "xs"]
+                .into_iter()
+                .map(str::to_string)
+                .collect::<std::collections::BTreeSet<_>>()
+        );
+    }
+
+    /// The frontend's `toDashboardDTO` payload must round-trip into the
+    /// create request — including `type` for component_type and a numeric
+    /// `rows` variant.
+    #[test]
+    fn create_request_parses_frontend_payload() {
+        let payload = serde_json::json!({
+            "name": "From UI",
+            "layout": {
+                "columns": 12,
+                "rows": 8,
+                "breakpoints": {"lg": 1200, "md": 996, "sm": 768, "xs": 480}
+            },
+            "components": [{
+                "id": "c-ui",
+                "type": "chart",
+                "position": {"x": 1, "y": 2, "w": 3, "h": 4},
+                "title": "Chart",
+                "data_source": {"deviceId": "d2", "metric": "temp"}
+            }]
+        });
+        let req: CreateDashboardRequest = serde_json::from_value(payload).unwrap();
+        assert_eq!(req.name, "From UI");
+        assert!(matches!(req.layout.rows, RowsValue::Number(8)));
+        assert_eq!(req.components.len(), 1);
+        assert_eq!(req.components[0].component_type, "chart");
+        assert!(req.components[0].data_source.is_some());
+    }
+
+    /// Wire input contract: `type` is THE accepted spelling. Note that the
+    /// Rust field name `component_type` is NOT accepted — `rename = "type"`
+    /// fully replaces the original name (an alias of the same value adds
+    /// nothing). Persisted rows never hit this path (storage converts via
+    /// the stored_to_api mappers, not serde), and the frontend/CLI only
+    /// emit `type`, so the single spelling is correct — this test pins it
+    /// so nobody "fixes" the rename without updating the frontend.
+    #[test]
+    fn deserialization_accepts_type_and_rejects_rust_field_name() {
+        let rust_spelling = serde_json::json!({
+            "id": "dash-old",
+            "name": "Legacy",
+            "layout": {
+                "columns": 12, "rows": "auto",
+                "breakpoints": {"lg": 1200, "md": 996, "sm": 768, "xs": 480}
+            },
+            "components": [{
+                "id": "c1",
+                "component_type": "metric-card",
+                "position": {"x": 0, "y": 0, "w": 4, "h": 3}
+            }],
+            "created_at": 1,
+            "updated_at": 2
+        });
+        let err = serde_json::from_value::<Dashboard>(rust_spelling).unwrap_err();
+        assert!(
+            err.to_string().contains("type"),
+            "rejecting the Rust spelling must point at `type`, got: {err}"
+        );
+
+        let modern = serde_json::json!({
+            "id": "dash-new",
+            "name": "Modern",
+            "layout": {
+                "columns": 12, "rows": "auto",
+                "breakpoints": {"lg": 1200, "md": 996, "sm": 768, "xs": 480}
+            },
+            "components": [{
+                "id": "c1",
+                "type": "metric-card",
+                "position": {"x": 0, "y": 0, "w": 4, "h": 3}
+            }],
+            "created_at": 1,
+            "updated_at": 2
+        });
+        let dash: Dashboard = serde_json::from_value(modern).unwrap();
+        assert_eq!(dash.components[0].component_type, "metric-card");
+    }
+
+    /// The list response envelope: `dashboards` + `count`, with pagination
+    /// keys only when present — the frontend reads `dashboards` by name.
+    #[test]
+    fn list_response_envelope_shape() {
+        let resp = DashboardsResponse {
+            dashboards: vec![sample_dashboard()],
+            count: 1,
+            total: None,
+            limit: None,
+            offset: None,
+        };
+        let json = serde_json::to_value(resp).unwrap();
+        assert_eq!(
+            json.as_object()
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>(),
+            ["dashboards", "count"]
+                .into_iter()
+                .map(str::to_string)
+                .collect::<std::collections::BTreeSet<_>>()
+        );
+        assert!(json["dashboards"].is_array());
+    }
+}

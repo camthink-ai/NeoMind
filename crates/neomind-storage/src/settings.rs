@@ -1668,3 +1668,119 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod broker_security_tests {
+    use super::*;
+    use std::net::IpAddr;
+
+    fn broker_at(host: &str, tls: bool, user: Option<&str>, pass: Option<&str>) -> ExternalBroker {
+        let mut b = ExternalBroker::new("t".into(), "t".into(), host.into(), 1883);
+        b.tls = tls;
+        b.username = user.map(str::to_string);
+        b.password = pass.map(str::to_string);
+        b
+    }
+
+    fn levels(warnings: &[SecurityWarning]) -> Vec<&SecurityWarning> {
+        warnings.iter().collect()
+    }
+
+    /// Public broker + plaintext + credentials = the worst practical setup:
+    /// High (public no-TLS) AND Medium (creds in cleartext). Both warnings
+    /// must fire — dropping either hides a real exposure from the user.
+    #[test]
+    fn public_broker_without_tls_and_with_creds_warns_high_and_medium() {
+        let warnings = broker_at("broker.emqx.io", false, Some("u"), Some("p")).validate_security();
+        let lv: Vec<_> = warnings.iter().map(|w| &w.level).collect();
+        assert!(
+            lv.iter().any(|l| matches!(l, SecurityLevel::High)),
+            "public+no-TLS must be High: {warnings:?}"
+        );
+        assert!(
+            lv.iter().any(|l| matches!(l, SecurityLevel::Medium)),
+            "creds over plaintext must be Medium: {warnings:?}"
+        );
+    }
+
+    /// TLS on a public broker with auth configured = clean bill.
+    #[test]
+    fn public_broker_with_tls_and_auth_is_clean() {
+        assert!(broker_at("broker.emqx.io", true, Some("u"), Some("p"))
+            .validate_security()
+            .is_empty());
+    }
+
+    /// RFC1918 / loopback / link-local addresses are NOT public: a LAN
+    /// deployment without TLS must not be scared with the High warning
+    /// (it's the normal on-prem topology).
+    #[test]
+    fn private_addresses_are_not_public() {
+        for host in [
+            "localhost",
+            "127.0.0.1",
+            "::1",
+            "10.1.2.3",
+            "172.16.0.1",
+            "172.31.255.254",
+            "192.168.1.10",
+        ] {
+            let warnings = broker_at(host, false, Some("u"), Some("p")).validate_security();
+            assert!(
+                !warnings
+                    .iter()
+                    .any(|w| matches!(w.level, SecurityLevel::High)),
+                "{host} is private — must not warn High"
+            );
+        }
+        // Boundary checks: 172.15.x and 172.32.x are OUTSIDE 172.16/12 → public.
+        for host in ["172.15.0.1", "172.32.0.1", "8.8.8.8"] {
+            let warnings = broker_at(host, false, None, None).validate_security();
+            assert!(
+                warnings
+                    .iter()
+                    .any(|w| matches!(w.level, SecurityLevel::High)),
+                "{host} is public — must warn High"
+            );
+        }
+        // sanity: the parser really round-trips these
+        assert!("172.15.0.1".parse::<IpAddr>().is_ok());
+    }
+
+    /// mDNS/local hostnames are treated as private; dotted public-looking
+    /// hostnames as public; bare single-word hostnames as local.
+    #[test]
+    fn hostname_classification() {
+        for host in ["printer.local", "gateway.localhost", "nas.lan."] {
+            let warnings = broker_at(host, false, None, None).validate_security();
+            assert!(
+                !warnings
+                    .iter()
+                    .any(|w| matches!(w.level, SecurityLevel::High)),
+                "{host} is a local-suffix hostname — must not warn High"
+            );
+        }
+        let warnings = broker_at("my-broker.example.com", false, None, None).validate_security();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| matches!(w.level, SecurityLevel::High)),
+            "public hostname must warn High"
+        );
+        let warnings = broker_at("edgebox", false, None, None).validate_security();
+        assert!(
+            !warnings
+                .iter()
+                .any(|w| matches!(w.level, SecurityLevel::High)),
+            "bare hostname is likely local"
+        );
+        // no-auth always warns Low at minimum
+        assert!(
+            warnings
+                .iter()
+                .any(|w| matches!(w.level, SecurityLevel::Low)),
+            "no-auth must warn Low"
+        );
+        let _ = levels(&warnings);
+    }
+}

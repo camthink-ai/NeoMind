@@ -46,3 +46,4 @@ type_complexity = "allow"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["async_tokio"] }
+tempfile = { workspace = true }

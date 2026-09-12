@@ -153,6 +153,56 @@ jobs:
         # need no special environment beyond free ports on a fresh runner.
         run: cargo test --workspace --locked
 
+  desktop-checks:
+    name: Desktop (web/src-tauri) compile check
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # web/ is excluded from the root workspace, so `cargo test --workspace`
+      # above never reaches the Tauri app — refactor breakage there (e.g. a
+      # neomind-api re-export rename) only surfaced at release-packaging time.
+      # This job closes that gap with a plain compile check. System deps
+      # mirror build.yml's desktop job (same GLIBC baseline pin to 22.04).
+      - name: Install system dependencies (Ubuntu)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev \
+            build-essential \
+            cmake \
+            git \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            xdg-utils \
+            liblzma-dev
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            web/src-tauri/target/
+          key: tauri-check-${{ runner.os }}-${{ hashFiles('web/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            tauri-check-${{ runner.os }}-
+
+      # tauri.conf's frontendDist points at web/dist; plain `cargo check`
+      # never bundles, but create the dir so any build-script probe finds a
+      # well-formed tree.
+      - name: Placeholder frontend dist
+        run: mkdir -p web/dist
+
+      - name: Compile check (locked)
+        working-directory: web/src-tauri
+        run: cargo check --locked
+
   cargo-audit:
     name: Security advisory scan (cargo audit)
     runs-on: ubuntu-latest

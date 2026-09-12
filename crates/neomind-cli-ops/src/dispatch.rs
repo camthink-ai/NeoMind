@@ -198,3 +198,98 @@ pub async fn dispatch(argv: &[String]) -> Result<CliResponse, DispatchError> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn argv(parts: &[&str]) -> Vec<String> {
+        std::iter::once("neomind")
+            .chain(parts.iter().copied())
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// Side-effecting / interactive commands must return NotInProcess so the
+    /// agent's shell tool falls back to a real subprocess — running `serve`
+    /// in-process would wedge the host server forever.
+    #[tokio::test]
+    async fn side_effecting_commands_are_not_in_process() {
+        for args in [
+            vec!["serve"],
+            vec!["serve", "--port", "0"],
+            vec!["chat"],
+            vec!["logs", "--follow"],
+            vec!["upgrade"],
+            vec!["health"],
+        ] {
+            let err = dispatch(&argv(&args)).await.unwrap_err();
+            assert!(
+                matches!(err, DispatchError::NotInProcess),
+                "`neomind {:?}` must be NotInProcess, got {err:?}",
+                args
+            );
+        }
+    }
+
+    /// Local-only commands (redb-backed or stdout-printing) also stay out of
+    /// process.
+    #[tokio::test]
+    async fn local_only_commands_are_not_in_process() {
+        for args in [vec!["api-key", "list"], vec!["user", "list"]] {
+            let err = dispatch(&argv(&args)).await.unwrap_err();
+            assert!(
+                matches!(err, DispatchError::NotInProcess),
+                "`neomind {:?}` must be NotInProcess, got {err:?}",
+                args
+            );
+        }
+    }
+
+    /// Malformed input must yield Parse (so the caller can surface clap's
+    /// message to the model for a corrected retry), never panic and never
+    /// exit() the host process.
+    #[tokio::test]
+    async fn malformed_input_yields_parse_error() {
+        for args in [
+            vec!["device"],               // subcommand required
+            vec!["device", "frobnicate"], // unknown subcommand
+            vec!["--definitely-not-a-flag"],
+            vec!["dashboard", "get"], // missing required ID positional
+        ] {
+            let err = dispatch(&argv(&args)).await.unwrap_err();
+            assert!(
+                matches!(err, DispatchError::Parse(_)),
+                "`neomind {:?}` must be Parse, got {err:?}",
+                args
+            );
+        }
+    }
+
+    /// A well-formed DATA command routes into the handler layer, which
+    /// reports unreachability as a normal error CliResponse (not a dispatch
+    /// error) — exactly what the agent's shell tool renders. With no server
+    /// on the default base URL this is the "server down" path the incident
+    /// agent would have hit; it must degrade to a message, never a panic.
+    #[tokio::test]
+    async fn data_command_degrades_to_error_response_without_server() {
+        // Pin a port nothing listens on so the test never depends on (or
+        // races with) a locally running dev server.
+        std::env::set_var("NEOMIND_API_BASE", "http://127.0.0.1:9/test-api");
+        let result = dispatch(&argv(&["device", "list"])).await;
+        std::env::remove_var("NEOMIND_API_BASE");
+
+        match result {
+            Ok(resp) => {
+                assert!(
+                    !resp.success,
+                    "no-server call must not report success: {resp:?}"
+                );
+            }
+            Err(DispatchError::Api(msg)) => {
+                assert!(!msg.is_empty(), "api error must carry a message");
+            }
+            Err(other) => panic!("expected Ok(error-response) or Api, got {other:?}"),
+        }
+    }
+}

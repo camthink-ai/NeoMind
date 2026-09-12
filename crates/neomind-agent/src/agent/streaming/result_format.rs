@@ -626,3 +626,119 @@ pub fn format_tool_results(tool_results: &[(String, String)]) -> String {
     );
     response
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Empty result set gets a neutral completion line, never an empty bubble.
+    #[test]
+    fn empty_results_get_completion_line() {
+        assert_eq!(format_tool_results(&[]), "操作已完成。");
+    }
+
+    /// Shell/CliResponse JSON (command + stdout/exit_code) renders as a
+    /// command block with exit code and output — the main path for the
+    /// chat agent's `shell` tool.
+    #[test]
+    fn shell_response_renders_command_block() {
+        let result = serde_json::json!({
+            "success": true,
+            "command": "neomind device list",
+            "exit_code": 0,
+            "stdout": "total: 2\nonline: 1"
+        })
+        .to_string();
+        let out = format_tool_results(&[("shell".to_string(), result)]);
+        assert!(out.contains("neomind device list"), "cmd missing: {out}");
+        assert!(out.contains("Exit code**: 0"), "exit code missing: {out}");
+        assert!(out.contains("total: 2"), "stdout missing: {out}");
+    }
+
+    /// A failed shell call must surface stderr, not look like success.
+    #[test]
+    fn shell_failure_surfaces_stderr() {
+        let result = serde_json::json!({
+            "success": false,
+            "command": "neomind device get x",
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "API error (401): Authentication required"
+        })
+        .to_string();
+        let out = format_tool_results(&[("shell".to_string(), result)]);
+        assert!(out.contains("stderr"), "stderr marker missing: {out}");
+        assert!(out.contains("401"), "stderr content missing: {out}");
+    }
+
+    /// timed_out flag is reported — a hang must never read as a clean run.
+    #[test]
+    fn shell_timeout_is_flagged() {
+        let result = serde_json::json!({
+            "command": "long-task",
+            "exit_code": 124,
+            "stdout": "",
+            "timed_out": true
+        })
+        .to_string();
+        let out = format_tool_results(&[("shell".to_string(), result)]);
+        assert!(out.contains("Timed out"), "timeout flag missing: {out}");
+    }
+
+    /// Non-JSON text renders as a prefixed preview. Errors keep a LONG
+    /// preview (diagnostics survive); success output is truncated hard
+    /// (80 chars) to keep the bubble small.
+    #[test]
+    fn non_json_error_gets_long_preview_success_short() {
+        let err = format!("Error: {}", "x".repeat(600));
+        let out = format_tool_results(&[("t".to_string(), err.clone())]);
+        assert!(out.contains("[ToolResult:t]"), "prefix missing: {out}");
+        let kept_x = out.matches('x').count();
+        assert!(
+            (400..=500).contains(&kept_x),
+            "error preview should keep up to 500 chars, kept {kept_x}"
+        );
+
+        let ok = "y".repeat(600);
+        let out = format_tool_results(&[("t".to_string(), ok)]);
+        let kept_y = out.matches('y').count();
+        assert_eq!(kept_y, 80, "success preview must truncate at 80 chars");
+    }
+
+    /// Multi-byte safety: truncation is char-based, never panics or splits
+    /// a UTF-8 scalar mid-byte (CJK output is the norm, not the exception).
+    #[test]
+    fn multibyte_output_truncates_on_char_boundaries() {
+        let ok = "设".repeat(200);
+        let out = format_tool_results(&[("t".to_string(), ok)]);
+        assert!(out.contains('设'));
+        assert_eq!(out.matches('设').count(), 80);
+    }
+
+    /// Multiple tool calls render in order, all present.
+    #[test]
+    fn multiple_results_render_in_order() {
+        let a = serde_json::json!({"command": "cmd-a", "exit_code": 0}).to_string();
+        let b = serde_json::json!({"command": "cmd-b", "exit_code": 0}).to_string();
+        let out = format_tool_results(&[("shell".to_string(), a), ("shell".to_string(), b)]);
+        let (pos_a, pos_b) = (out.find("cmd-a").unwrap(), out.find("cmd-b").unwrap());
+        assert!(pos_a < pos_b, "results must preserve call order");
+    }
+
+    /// Domain JSON (non-shell) routes to the structured formatter: a real
+    /// `neomind device list` payload renders as a human-readable list.
+    #[test]
+    fn device_list_json_renders_device_list() {
+        let result = serde_json::json!({
+            "devices": [
+                {"name": "NE101-camera", "id": "dev-1", "device_type": "ne101", "status": "online"},
+                {"name": "AM102", "id": "dev-2", "device_type": "milesight_am102", "status": "offline"}
+            ]
+        })
+        .to_string();
+        let out = format_tool_results(&[("device".to_string(), result)]);
+        assert!(out.contains("Device List"), "header missing: {out}");
+        assert!(out.contains("NE101-camera"), "device missing: {out}");
+        assert!(out.contains("online"), "status missing: {out}");
+    }
+}

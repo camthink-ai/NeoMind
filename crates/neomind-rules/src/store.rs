@@ -318,3 +318,146 @@ impl Drop for RuleStore {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{RuleAction, RuleExecutionResult, RuleTrigger};
+    use chrono::Utc;
+
+    /// A minimal valid rule: schedule-triggered, unconditional, one notify
+    /// action. Exercises the serde round-trip through the store's bincode/
+    /// JSON encoding without pulling in engine evaluation.
+    fn sample_rule(name: &str) -> CompiledRule {
+        let mut rule = CompiledRule::new(name);
+        rule.trigger = RuleTrigger::Schedule {
+            cron: "*/5 * * * *".to_string(),
+        };
+        rule.actions = vec![RuleAction::Notify {
+            message: "temperature high".to_string(),
+            severity: Default::default(),
+        }];
+        rule
+    }
+
+    #[test]
+    fn save_load_roundtrip_preserves_rule() {
+        let store = RuleStore::memory().unwrap();
+        let rule = sample_rule("roundtrip");
+        let id = rule.id.clone();
+
+        store.save(&rule).unwrap();
+        let loaded = store.load(&id).unwrap().expect("rule must load back");
+
+        assert_eq!(loaded.name, "roundtrip");
+        assert!(loaded.enabled);
+        match (&loaded.trigger, &rule.trigger) {
+            (RuleTrigger::Schedule { cron: a }, RuleTrigger::Schedule { cron: b }) => {
+                assert_eq!(a, b)
+            }
+            _ => panic!("trigger variant changed across roundtrip"),
+        }
+        assert_eq!(loaded.actions.len(), 1);
+    }
+
+    #[test]
+    fn rules_persist_across_store_reopen() {
+        // The whole point of the redb store: a rule saved by one process
+        // instance must survive into the next (server restart).
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rules.redb");
+
+        let rule = sample_rule("survivor");
+        let id = rule.id.clone();
+        {
+            let store = RuleStore::open(&path).unwrap();
+            store.save(&rule).unwrap();
+        }
+        let reopened = RuleStore::open(&path).unwrap();
+        assert!(reopened.load(&id).unwrap().is_some());
+        assert_eq!(reopened.list_all().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn enabled_flag_persists_through_save_load() {
+        let store = RuleStore::memory().unwrap();
+        let mut rule = sample_rule("toggleable");
+        let id = rule.id.clone();
+        store.save(&rule).unwrap();
+
+        rule.enabled = false;
+        store.save(&rule).unwrap();
+        assert!(!store.load(&id).unwrap().unwrap().enabled);
+
+        // list_all reflects the latest state, and there is exactly one row.
+        let all = store.list_all().unwrap();
+        assert_eq!(all.len(), 1);
+        assert!(!all[0].enabled);
+    }
+
+    #[test]
+    fn delete_removes_once_and_load_missing_is_none() {
+        let store = RuleStore::memory().unwrap();
+        let rule = sample_rule("deletable");
+        let id = rule.id.clone();
+        store.save(&rule).unwrap();
+
+        assert!(store.delete(&id).unwrap(), "first delete must report hit");
+        assert!(!store.delete(&id).unwrap(), "second delete must miss");
+        assert!(store.load(&id).unwrap().is_none());
+    }
+
+    #[test]
+    fn history_save_load_counts_and_cleans_up() {
+        let store = RuleStore::memory().unwrap();
+        let rule = sample_rule("historical");
+        store.save(&rule).unwrap();
+
+        let now = Utc::now();
+        let mk_result = |at: chrono::DateTime<Utc>, executed: bool| RuleExecutionResult {
+            rule_id: rule.id.clone(),
+            rule_name: rule.name.clone(),
+            success: true,
+            actions_executed: if executed {
+                vec!["notify".to_string()]
+            } else {
+                vec![]
+            },
+            error: None,
+            duration_ms: 3,
+            triggered_at: at,
+        };
+
+        // Recent trigger WITH executed actions, old trigger with actions
+        // (outside the count window), recent no-op (never counted).
+        // Timestamps differ by ≥1 ms: the history key is
+        // {millis}:{rule_id}, so same-millis entries for one rule collide
+        // (last write wins) — deliberate here to exercise distinct rows.
+        store.save_history(&mk_result(now, true)).unwrap();
+        store
+            .save_history(&mk_result(now - chrono::Duration::days(30), true))
+            .unwrap();
+        store
+            .save_history(&mk_result(now - chrono::Duration::milliseconds(1), false))
+            .unwrap();
+
+        let history = store.load_history(&rule.id).unwrap();
+        assert_eq!(history.len(), 3, "load_history returns all entries");
+        assert!(
+            history[0].triggered_at >= history[1].triggered_at,
+            "history must sort most-recent-first"
+        );
+
+        let since = (now - chrono::Duration::days(1)).timestamp();
+        assert_eq!(
+            store.count_history_since(since).unwrap(),
+            1,
+            "only recent entries with executed actions count"
+        );
+
+        // Cleanup drops entries older than N days.
+        let removed = store.cleanup_history(7).unwrap();
+        assert_eq!(removed, 1, "the 30-day-old entry must be removed");
+        assert_eq!(store.load_history(&rule.id).unwrap().len(), 2);
+    }
+}
