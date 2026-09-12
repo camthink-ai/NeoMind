@@ -57,6 +57,18 @@ async fn process_stream_to_channel(
     // Track stream start time for progress reporting
     let stream_start = std::time::Instant::now();
 
+    // [detached-delivery] A failed channel send means the WS forwarding
+    // loop is gone — the client navigated away or the connection dropped.
+    // The turn must STILL run to completion: the stream itself appends the
+    // final assistant reply to the session, persist_history (below) makes
+    // it durable, and the user expects the conclusion when they switch
+    // back to the session. So a send failure stops DELIVERY, never
+    // CONSUMPTION. The old `break` here cancelled the agent's turn
+    // mid-flight on any page switch, losing the reply forever. The only
+    // legitimate cancellation path is the explicit __CANCEL__ frame,
+    // which reaches the stream through an independent watch channel.
+    let mut client_detached = false;
+
     // Stream timeout: 1200 seconds (20 minutes) to support thinking models
     // This is synchronized with StreamConfig::max_stream_duration_secs
     // qwen3-vl:2b with extended thinking can take significant time for complex queries
@@ -302,10 +314,15 @@ async fn process_stream_to_channel(
                     json: event_json.to_string(),
                 };
 
-                // Try to send, but don't block if channel is closed
-                if tx.send(stream_event).await.is_err() {
-                    tracing::warn!("Failed to send stream event through channel");
-                    break;
+                // Stop delivering once the client is gone; keep consuming
+                // (see [detached-delivery] above).
+                if !client_detached && tx.send(stream_event).await.is_err() {
+                    tracing::info!(
+                        session_id,
+                        "Stream client detached — continuing the turn to completion \
+                         so the final reply lands in history"
+                    );
+                    client_detached = true;
                 }
 
                 // If this was the End event, exit the loop
@@ -1528,5 +1545,69 @@ async fn handle_ws_socket(
         {
             tracing::warn!(category = "session", error = %e, "Failed to persist history on disconnect");
         }
+    }
+}
+
+#[cfg(test)]
+mod detached_delivery_tests {
+    use super::*;
+
+    /// [detached-delivery regression] The consumer must run the stream to its
+    /// End event even when the WS client is ALREADY gone: the turn's final
+    /// reply only lands in session history (and pending-stream state is only
+    /// cleaned up) if consumption reaches completion. The pre-fix code broke
+    /// out of the loop on the first failed channel send, cancelling the
+    /// agent mid-flight on every page switch.
+    #[tokio::test]
+    async fn stream_runs_to_completion_after_client_detaches() {
+        let consumed = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = consumed.clone();
+
+        let events = vec![
+            AgentEvent::Thinking {
+                content: "thinking…".to_string(),
+            },
+            AgentEvent::Content {
+                content: "partial".to_string(),
+            },
+            AgentEvent::Content {
+                content: "final answer".to_string(),
+            },
+            AgentEvent::End {
+                prompt_tokens: Some(42),
+                system_prompt_tokens: None,
+                tool_tokens: None,
+            },
+        ];
+        let total = events.len();
+
+        let stream: Pin<Box<dyn Stream<Item = AgentEvent> + Send>> =
+            Box::pin(async_stream::stream! {
+                for event in events {
+                    counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    yield event;
+                }
+            });
+
+        // Client detaches BEFORE the first event: drop the receiver.
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx);
+
+        let state = super::super::ServerState::new_for_testing().await;
+        process_stream_to_channel(
+            stream,
+            "detached-delivery-test".to_string(),
+            "hi".to_string(),
+            tx,
+            state,
+        )
+        .await;
+
+        assert_eq!(
+            consumed.load(std::sync::atomic::Ordering::SeqCst),
+            total,
+            "stream must be fully consumed after client detach — the final reply \
+             only reaches history if consumption reaches End"
+        );
     }
 }

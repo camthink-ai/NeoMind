@@ -194,13 +194,27 @@ export class ChatWebSocket {
       // Reconnect on everything else including normal close (server restart)
       // Code 4000 is used for token change - we DO want to reconnect
       if (event.code === 4001) {
-        // Auth error - stop reconnecting
+        // Auth error - stop reconnecting. Dropping queued messages is the
+        // right call (they will never authenticate), but it must be VISIBLE:
+        // the old silent clear left the user's bubble looking delivered
+        // forever. Surface what was lost through the state channel the UI
+        // already renders (same pattern as the pending-limit eviction).
         if (this.pendingMessages.length > 0) {
-          console.warn(`[WebSocket] Auth error, clearing ${this.pendingMessages.length} pending messages`)
+          const droppedCount = this.pendingMessages.length
+          const previews = this.pendingMessages
+            .map(m => (typeof m.message === 'string' ? m.message.slice(0, 50) : '(non-text)'))
+            .join('", "')
+          console.warn(`[WebSocket] Auth error, dropping ${droppedCount} queued message(s)`)
           this.pendingMessages = []
           storage.remove(STORAGE_KEY)
+          this.setState({
+            ...this.currentState,
+            status: 'disconnected',
+            errorMessage: `Authentication failed — ${droppedCount} queued message${droppedCount > 1 ? 's were' : ' was'} not sent: "${previews}"`,
+          })
+        } else {
+          this.setState({ status: 'disconnected' })
         }
-        this.setState({ status: 'disconnected' })
       } else {
         this.scheduleReconnect()
       }

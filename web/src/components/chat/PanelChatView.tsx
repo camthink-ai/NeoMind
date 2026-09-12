@@ -495,6 +495,34 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     return () => { void unsubscribe() }
   }, [addPanelMessage, t])
 
+  // Surface connection failures that would otherwise leave the streaming
+  // bubble spinning forever. The panel never subscribed to state changes
+  // (only the full chat page did), so an auth rejection (4001) or a
+  // mid-stream disconnect ended the input silently while the assistant
+  // "reply" never came. With server-side detached delivery the turn keeps
+  // running and lands in history — say that, don't imply the answer is lost.
+  useEffect(() => {
+    const unsubscribe = ws.onStateChange((state) => {
+      if (!isStreamingRef.current) return
+      if (state.status === 'error' || state.status === 'disconnected' || state.status === 'reconnecting') {
+        dispatch({ type: 'ERROR' })
+        isStreamingRef.current = false
+        setCurrentStreamMessageId(null)
+        currentStreamMessageIdRef.current = null
+        const content = state.errorMessage
+          ? `**${t("chat.connection.authFailed")}**\n\n${state.errorMessage}`
+          : `⚠️ ${t("chat.connection.interruptedSaved")}`
+        addPanelMessage({
+          id: generateId(),
+          role: "assistant",
+          content,
+          timestamp: Math.floor(Date.now() / 1000),
+        })
+      }
+    })
+    return () => { void unsubscribe() }
+  }, [addPanelMessage, t])
+
   // Multimodal gate — mirrors the chat page's composer input
   const activeBackend = llmBackends.find(b => b.id === activeBackendId)
   const supportsMultimodal = activeBackend?.capabilities?.supports_multimodal ?? false

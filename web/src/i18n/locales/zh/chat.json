@@ -78,7 +78,9 @@
     "retryAttempt": "第 {{count}} 次尝试",
     "retryProgress": "尝试 {{retry}}/{{max}}{{seconds, string}}",
     "retrySeconds": " · {{seconds}}s",
-    "reconnect": "重新连接"
+    "reconnect": "重新连接",
+    "authFailed": "连接中断（认证失败）",
+    "interruptedSaved": "连接中断 — 本轮回复仍会在后台完成并保存到会话历史，稍后返回本会话即可看到"
   },
   "quickActions": {
     "refreshDevices": "刷新设备状态",

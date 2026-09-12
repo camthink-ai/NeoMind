@@ -78,7 +78,9 @@
     "retryAttempt": "Attempt {{count}}",
     "retryProgress": "Attempt {{retry}}/{{max}}{{seconds, string}}",
     "retrySeconds": " · {{seconds}}s",
-    "reconnect": "Reconnect"
+    "reconnect": "Reconnect",
+    "authFailed": "Connection lost (authentication failed)",
+    "interruptedSaved": "Connection lost — this reply still completes in the background and is saved to the session history; return to this session later to see it"
   },
   "quickActions": {
     "refreshDevices": "Refresh devices",
