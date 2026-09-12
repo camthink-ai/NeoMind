@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Device/telemetry data-path fixes — the contract audit's P0/P1 batch
+- **Aggregate queries returned the average regardless of the requested function (P0):** `?aggregate=max|min|sum|last` all yielded `value: avg` — charts and agents silently got wrong data. `value` now reflects the requested function (unknown values are a 400, not a silent avg); raw fields stay alongside. Regression-tested.
+- **Cursor pagination returned every page-boundary point twice:** the cursor is the previous page's oldest timestamp and the storage range is inclusive, so page N+1 re-fetched that exact sample (duplicate chart points, inflated counts). Cursor mode now filters to strictly-older points on both query paths.
+- **`?hours=N` honored on `/api/devices/:id/telemetry`:** the parameter was accepted and silently ignored (defaulting to 24 h); it now derives the window when no explicit `start` is pinned (clamped 1 h–30 d).
+- **Device detail pages could never show "offline":** list emits three states but get/get-current collapsed to online|disconnected — a previously-seen timed-out device read "Never Connected" on its detail page while the list said "Offline". All four surfaces now share one `three_state_status` helper (tested).
+- **`PUT /devices/:id` absent-vs-null trap:** a partial update omitting `offline_timeout_secs` silently WIPED the override (serde read absent and explicit null identically). Double-option mapping now distinguishes absent (keep) / null (clear) / value (set) — tested on all three wire shapes. `POST /devices` also accepts the field the TS create type always declared (it was silently dropped).
+- **Webhook timestamps get unit detection:** raw ms/ns values were stored as-is (a ms epoch lands as year-58,000 seconds — invisible to every window query). Ingest now routes through the same magnitude normalizer + 5-min future guard the MQTT path uses; implausible values fall back to server time.
+- **Conversation summaries count against the history budget:** the injected `[Summary]` system message was exempt from budget enforcement and eviction, so long summary chains could push the context past the window it was derived from.
+- **data-push delivery-log persistence failures surfaced** (8 sites): every Success/Retrying/Failed transition was persisted best-effort with no trace — the audit trail now reports divergence.
+- **extension-stream pending queue bounded + evictions surfaced** (frontend): capability invocations queued during a disconnect were unbounded and silently droppable; now capped at 100 with error-channel notification, matching the chat websocket's discipline.
+
 ### Regression sweep round 2 — siblings of the fixed bug classes + one WS contract gap
 - **Multimodal budget floor (twin of the 8K bug):** `stream_multimodal.rs` carried the exact unfixed clone of the streaming budget floor — every image chat turn could construct an overflowing prompt on 8K-class models. It now uses the same capped `effective_history_budget` helper as the text path.
 - **WS `cancelled` contract gap:** the backend's cancel acknowledgement (`{"type":"cancelled"}`) was absent from the TS `ServerMessage` union and unhandled by both chat views, and no trailing `end` is guaranteed on that path — after a cross-tab `__CANCEL__` the composer stayed locked and the bubble spun forever. Both views now reset stream state on `cancelled`.

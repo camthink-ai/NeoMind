@@ -62,9 +62,18 @@ pub async fn get_device_telemetry_handler(
         validate_string_length(m, "metric", 1, 100)?;
     }
 
+    // `hours` window support: when the caller asks for ?hours=N and does NOT
+    // pin an explicit start, derive the window from now. The parameter was
+    // previously accepted and silently ignored here (a known bug class —
+    // explicit start/end callers are unaffected).
+    let hours = params
+        .get("hours")
+        .and_then(|s| s.parse::<i64>().ok())
+        .map(|h| h.clamp(1, 30 * 24));
     let start = params
         .get("start")
         .and_then(|s| s.parse::<i64>().ok())
+        .or_else(|| hours.map(|h| chrono::Utc::now().timestamp() - h * 3600))
         .unwrap_or_else(|| chrono::Utc::now().timestamp() - 86400); // 24 hours ago in seconds
     let end = params
         .get("end")
@@ -101,6 +110,21 @@ pub async fn get_device_telemetry_handler(
     let offset = offset as usize;
 
     let aggregate = params.get("aggregate").cloned();
+    // [aggregate contract] The requested function must drive `value` — it
+    // was hardcoded to avg, so ?aggregate=max returned the AVERAGE as the
+    // primary value (charts and agents silently got wrong data; min/max/sum
+    // only survived as side fields). Validate up front so an unknown value
+    // is a 400, not a silent avg.
+    const AGGREGATE_FNS: [&str; 5] = ["avg", "min", "max", "sum", "last"];
+    if let Some(ref requested) = aggregate {
+        if !AGGREGATE_FNS.contains(&requested.as_str()) {
+            return Err(ErrorResponse::bad_request(format!(
+                "Invalid aggregate '{}': expected one of {}",
+                requested,
+                AGGREGATE_FNS.join("/")
+            )));
+        }
+    }
 
     // Bucketed downsampling: when true, use server-side time-bucket aggregation
     // to return at most `limit` evenly-spaced points covering the full time range.
@@ -262,6 +286,7 @@ pub async fn get_device_telemetry_handler(
                 let device_source_id = device_source_id.clone();
                 let metric_name = metric_name.clone();
                 let semaphore = state.telemetry_query_semaphore.clone();
+                let aggregate = aggregate.clone();
                 async move {
                     let _permit = match semaphore.acquire().await {
                         Ok(p) => p,
@@ -279,9 +304,11 @@ pub async fn get_device_telemetry_handler(
                         .await
                     {
                         Ok(agg) => {
+                            // `value` reflects the REQUESTED aggregate (avg default);
+                            // all raw fields stay available alongside.
                             vec![json!({
                                 "timestamp": agg.start_timestamp,
-                                "value": agg.avg,
+                                "value": aggregate_value(&agg, aggregate.as_deref()),
                                 "count": agg.count,
                                 "min": agg.min,
                                 "max": agg.max,
@@ -395,7 +422,13 @@ pub async fn get_device_telemetry_handler(
                         }
                     };
 
-                    // Cursor-based pagination: use cursor as the scan start for O(1) seek
+                    // Cursor-based pagination: use cursor as the scan start for O(1) seek.
+                    // [boundary fix] The cursor is the OLDEST point of the previous page;
+                    // the storage range is INCLUSIVE, so scanning from `ct` re-fetches
+                    // that exact point — every page boundary was returned twice (chart
+                    // duplicates, inflated counts). Start the scan at ct but filter to
+                    // strictly-older points afterwards (the filter also keeps this correct
+                    // if fetch_limit ever truncates the start).
                     let (effective_start, effective_offset) = if let Some(ct) = cursor_ts {
                         (ct, 0) // Start from cursor, no offset skip needed
                     } else if offset > 100 {
@@ -466,9 +499,12 @@ pub async fn get_device_telemetry_handler(
                         Ok(all_points) => {
                             // DB returns points in timestamp-asc order.
                             // For "newest first" pagination, take from the end and reverse.
+                            // Cursor mode: drop points at-or-after the cursor (the boundary
+                            // point was already returned as the previous page's oldest).
                             let total = all_points.len();
                             let paginated: Vec<_> = all_points
                                 .into_iter()
+                                .filter(|(ts, _)| cursor_ts.map_or(true, |ct| *ts < ct))
                                 .rev() // newest first without sorting
                                 .skip(effective_offset)
                                 .take(limit)
@@ -507,8 +543,10 @@ pub async fn get_device_telemetry_handler(
                                     let total = total_from_db.unwrap_or(all_points.len());
                                     // DB returns points in timestamp-asc order.
                                     // Reverse for "newest first" without O(n log n) sort.
+                                    // Same cursor boundary filter as the primary path.
                                     let paginated: Vec<_> = all_points
                                         .into_iter()
+                                        .filter(|p| cursor_ts.map_or(true, |ct| p.timestamp < ct))
                                         .rev()
                                         .skip(effective_offset)
                                         .take(limit)
@@ -846,6 +884,27 @@ pub async fn get_device_telemetry_summary_handler(
     }))
 }
 
+/// Select the aggregate the caller asked for as the primary `value`.
+/// `requested` is validated upstream (one of avg/min/max/sum/last, default avg).
+/// Non-numeric windows (e.g. all-string metrics) yield null for the numeric
+/// fns — the caller still has `count` and the other fields to tell "no data"
+/// from "not numeric".
+fn aggregate_value(
+    agg: &neomind_devices::telemetry::AggregatedData,
+    requested: Option<&str>,
+) -> serde_json::Value {
+    match requested {
+        Some("min") => json!(agg.min),
+        Some("max") => json!(agg.max),
+        Some("sum") => json!(agg.sum),
+        Some("last") => match &agg.last {
+            Some(v) => metric_value_to_json(v),
+            None => json!(null),
+        },
+        _ => json!(agg.avg),
+    }
+}
+
 /// Convert MetricValue to JSON.
 fn metric_value_to_json(value: &neomind_devices::MetricValue) -> serde_json::Value {
     use neomind_devices::MetricValue;
@@ -1117,4 +1176,48 @@ pub async fn analyze_metric_timestamps_handler(
             })).collect::<Vec<_>>(),
         },
     }))
+}
+
+#[cfg(test)]
+mod aggregate_contract_tests {
+    use super::*;
+
+    fn sample_agg() -> neomind_devices::telemetry::AggregatedData {
+        neomind_devices::telemetry::AggregatedData {
+            start_timestamp: 1,
+            end_timestamp: 2,
+            count: 4,
+            avg: Some(25.0),
+            min: Some(10.0),
+            max: Some(40.0),
+            sum: Some(100.0),
+            first: None,
+            last: Some(neomind_devices::MetricValue::Float(31.5)),
+        }
+    }
+
+    /// The P0: `value` must reflect the REQUESTED aggregate — it was
+    /// hardcoded to avg, so ?aggregate=max returned the average.
+    #[test]
+    fn aggregate_value_reflects_requested_function() {
+        let agg = sample_agg();
+        assert_eq!(aggregate_value(&agg, None), json!(25.0), "default is avg");
+        assert_eq!(aggregate_value(&agg, Some("avg")), json!(25.0));
+        assert_eq!(aggregate_value(&agg, Some("min")), json!(10.0));
+        assert_eq!(aggregate_value(&agg, Some("max")), json!(40.0));
+        assert_eq!(aggregate_value(&agg, Some("sum")), json!(100.0));
+        assert_eq!(aggregate_value(&agg, Some("last")), json!(31.5));
+    }
+
+    #[test]
+    fn aggregate_value_null_on_non_numeric_window() {
+        let mut agg = sample_agg();
+        agg.avg = None;
+        agg.min = None;
+        agg.max = None;
+        agg.sum = None;
+        agg.last = None;
+        assert_eq!(aggregate_value(&agg, Some("avg")), json!(null));
+        assert_eq!(aggregate_value(&agg, Some("last")), json!(null));
+    }
 }

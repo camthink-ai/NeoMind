@@ -136,6 +136,11 @@ pub struct AddDeviceRequest {
     pub adapter_type: String,
     /// Connection configuration (protocol-specific)
     pub connection_config: serde_json::Value,
+    /// Per-device override for offline timeout (seconds); absent = the
+    /// template/global default. Accepted since the TS create type declares
+    /// it — it used to be silently dropped by serde.
+    #[serde(default)]
+    pub offline_timeout_secs: Option<u64>,
 }
 
 /// Request to update an existing device.
@@ -155,10 +160,29 @@ pub struct UpdateDeviceRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub adapter_id: Option<String>,
     /// Per-device override for offline timeout (seconds).
-    /// When `None`, falls back to template default, then global
-    /// `HeartbeatConfig::offline_timeout`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub offline_timeout_secs: Option<u64>,
+    ///
+    /// [absent-vs-null] `Option<Option<u64>>` + double_option distinguishes
+    /// the three wire shapes a partial-update API must tell apart:
+    /// key ABSENT → `None` (keep the existing override — the old
+    /// single-Option mapping read absent and explicit null identically, so
+    /// any PATCH that omitted the field silently WIPED the override);
+    /// explicit `null` → `Some(None)` (clear it, fall back to template);
+    /// a value → `Some(Some(v))` (set it).
+    #[serde(default, with = "double_option")]
+    pub offline_timeout_secs: Option<Option<u64>>,
+}
+
+/// Serde helper distinguishing an absent key from an explicit null.
+/// See `UpdateDeviceRequest::offline_timeout_secs`.
+mod double_option {
+    use serde::{Deserialize, Deserializer};
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Option<u64>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Deserialize::deserialize(deserializer).map(Some)
+    }
 }
 
 /// Pagination query parameters

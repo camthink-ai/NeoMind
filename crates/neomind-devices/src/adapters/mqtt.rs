@@ -2577,20 +2577,11 @@ fn sanitize_auto_device_id(id: String) -> Option<String> {
     }
 }
 
-/// Extract a client-supplied timestamp from an uplink JSON payload.
-///
-/// Recognizes the common field names (`timestamp`, `ts`, `ts_ms`, `ts_ns`,
-/// `time`) and auto-detects the epoch unit (seconds / milliseconds /
-/// nanoseconds) from the magnitude. Returns `None` when absent, malformed,
-/// or implausible (> 5 minutes in the future — a wildly wrong clock must
-/// not corrupt the series). This aligns MQTT ingest with the webhook
-/// path, which already honors `payload.timestamp` (DEF-001).
-fn extract_client_timestamp(json: &serde_json::Value) -> Option<i64> {
-    const FIELDS: [&str; 5] = ["timestamp", "ts", "ts_ms", "ts_ns", "time"];
-    let raw = FIELDS.iter().find_map(|f| {
-        json.get(f)
-            .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|x| x as i64)))
-    })?;
+/// Normalize a raw epoch value to SECONDS with unit auto-detection and a
+/// 5-minute future guard. Shared by MQTT and webhook ingestion — senders
+/// disagree on units (ns/ms/s), and an undetected ms timestamp lands as
+/// year-58,000 seconds, invisible to every time-window query.
+pub(crate) fn normalize_epoch_seconds(raw: i64) -> Option<i64> {
     // unit detection by magnitude: ns ~1e18 (>1e17), ms ~1e12 (>1e11),
     // s ~1e9 (>1e8). Thresholds sit well below current epochs and well
     // above the next-smaller unit, so boundary years can't cross.
@@ -2608,6 +2599,23 @@ fn extract_client_timestamp(json: &serde_json::Value) -> Option<i64> {
         return None; // > 5 min in the future — reject (clock skew / garbage)
     }
     Some(secs)
+}
+
+/// Extract a client-supplied timestamp from an uplink JSON payload.
+///
+/// Recognizes the common field names (`timestamp`, `ts`, `ts_ms`, `ts_ns`,
+/// `time`) and auto-detects the epoch unit (seconds / milliseconds /
+/// nanoseconds) from the magnitude. Returns `None` when absent, malformed,
+/// or implausible (> 5 minutes in the future — a wildly wrong clock must
+/// not corrupt the series). This aligns MQTT ingest with the webhook
+/// path, which already honors `payload.timestamp` (DEF-001).
+fn extract_client_timestamp(json: &serde_json::Value) -> Option<i64> {
+    const FIELDS: [&str; 5] = ["timestamp", "ts", "ts_ms", "ts_ns", "time"];
+    let raw = FIELDS.iter().find_map(|f| {
+        json.get(f)
+            .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|x| x as i64)))
+    })?;
+    normalize_epoch_seconds(raw)
 }
 
 fn extract_device_id_from_topic(topic: &str, config: &MqttAdapterConfig) -> Option<String> {

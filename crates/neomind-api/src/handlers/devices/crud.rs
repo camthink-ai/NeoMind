@@ -8,7 +8,7 @@ use serde_json::json;
 use std::sync::OnceLock;
 use uuid::Uuid;
 
-use super::compat::{config_to_device_instance, format_status_to_str};
+use super::compat::config_to_device_instance;
 use super::models::{
     AddDeviceRequest, BatchCurrentValuesRequest, DeviceDto, PaginationMeta, PaginationQuery,
     UpdateDeviceRequest,
@@ -65,6 +65,21 @@ fn get_plugin_info(adapter_id: &Option<String>) -> (Option<String>, Option<Strin
             (Some(id.clone()), Some(format!("External MQTT: {}", id)))
         }
         Some(id) => (Some(id.clone()), Some(id.clone())),
+    }
+}
+
+/// Three-state wire status shared by EVERY device surface (list filter,
+/// list rows, detail, current). The detail endpoints used to collapse to
+/// online|disconnected, so a previously-seen timed-out device read as
+/// "Never Connected" (从未上线) on its detail page while the list said
+/// "Offline" — wrong data for the same device from two endpoints.
+fn three_state_status(online: bool, config_last_seen: i64) -> &'static str {
+    if online {
+        "online"
+    } else if config_last_seen > 0 {
+        "offline"
+    } else {
+        "disconnected"
     }
 }
 
@@ -160,13 +175,7 @@ pub async fn list_devices_handler(
         // Support legacy filters: "connected" → "online", "disconnected" → "disconnected"
         if let Some(ref filter_status) = pagination.status {
             let is_connected = device_status.is_connected_within(effective_timeout(&config));
-            let device_status_str = if is_connected {
-                "online"
-            } else if config.last_seen > 0 {
-                "offline"
-            } else {
-                "disconnected"
-            };
+            let device_status_str = three_state_status(is_connected, config.last_seen);
             let matches = device_status_str == filter_status.as_str()
                 || (filter_status == "connected" && device_status_str == "online");
             if !matches {
@@ -205,13 +214,7 @@ pub async fn list_devices_handler(
         //   - online: currently connected and active (is_connected() && last_seen < 5min)
         //   - offline: was online before but timed out (config.last_seen > 0)
         //   - disconnected: never connected / never reported data (config.last_seen == 0)
-        let status_str = if online {
-            "online"
-        } else if config.last_seen > 0 {
-            "offline"
-        } else {
-            "disconnected"
-        };
+        let status_str = three_state_status(online, config.last_seen);
 
         // Use persisted last_seen (config.last_seen) for display — survives server restarts.
         // Fall back to in-memory last_seen_ts if config.last_seen is 0/1 but device is currently online.
@@ -328,6 +331,9 @@ pub async fn get_device_handler(
         MdlConnectionStatus::Disconnected
     };
     let status = convert_status(status);
+    // Wire status matches the list endpoint exactly (three states) — see
+    // three_state_status. The enum above feeds the instance object only.
+    let status_str = three_state_status(online, config.last_seen);
 
     // Use persisted last_seen (survives server restart) with in-memory fallback.
     // This MUST match the list handler's logic — otherwise the detail page shows
@@ -359,7 +365,7 @@ pub async fn get_device_handler(
         "device_type": config.device_type,
         "adapter_type": config.adapter_type,
         "connection_config": config.connection_config,
-        "status": format_status_to_str(&instance.status),
+        "status": status_str,
         "last_seen": last_seen,
         "online": online,
         "transport_connected": device_status.transport_connected,
@@ -412,6 +418,9 @@ pub async fn get_device_current_handler(
         MdlConnectionStatus::Disconnected
     };
     let status = convert_status(status);
+    // Wire status matches the list endpoint exactly (three states) — see
+    // three_state_status. The enum above feeds the instance object only.
+    let status_str = three_state_status(online, config.last_seen);
 
     // Use persisted last_seen (survives server restart) with in-memory fallback.
     // This MUST match the list handler's logic — otherwise the detail page shows
@@ -431,7 +440,7 @@ pub async fn get_device_current_handler(
     };
     let last_seen_dt =
         chrono::DateTime::from_timestamp(effective_last_seen, 0).unwrap_or_else(chrono::Utc::now);
-    let instance = config_to_device_instance(&config, status, last_seen_dt);
+    let _instance = config_to_device_instance(&config, status, last_seen_dt);
 
     // Get plugin info
     let (plugin_id, plugin_name) = get_plugin_info(&config.adapter_id);
@@ -568,7 +577,7 @@ pub async fn get_device_current_handler(
             "name": config.name,
             "device_type": config.device_type,
             "adapter_type": config.adapter_type,
-            "status": format_status_to_str(&instance.status),
+            "status": status_str,
             "last_seen": last_seen,
             "online": online,
             "transport_connected": device_status.transport_connected,
@@ -721,6 +730,11 @@ pub async fn add_device_handler(
         serde_json::from_value(req.connection_config)
             .map_err(|e| ErrorResponse::bad_request(format!("Invalid connection_config: {}", e)))?;
 
+    // Same range rules as the update path for a provided create override.
+    if let Some(secs) = req.offline_timeout_secs {
+        validate_offline_timeout(secs)?;
+    }
+
     // Create DeviceConfig
     let config = neomind_devices::DeviceConfig {
         device_id: device_id.clone(),
@@ -730,7 +744,7 @@ pub async fn add_device_handler(
         connection_config,
         adapter_id: None, // Will be set by adapter when registered
         last_seen: 0,
-        offline_timeout_secs: None,
+        offline_timeout_secs: req.offline_timeout_secs,
     };
 
     // Register device using new DeviceService
@@ -761,8 +775,9 @@ pub async fn update_device_handler(
         .get_device(&device_id)
         .ok_or_else(|| ErrorResponse::not_found("Device"))?;
 
-    // Validate offline_timeout_secs if provided
-    if let Some(secs) = req.offline_timeout_secs {
+    // Validate offline_timeout_secs if provided as a SET (absent keeps the
+    // existing value and is not validated; explicit null clears it).
+    if let Some(Some(secs)) = req.offline_timeout_secs {
         validate_offline_timeout(secs)?;
     }
 
@@ -783,9 +798,11 @@ pub async fn update_device_handler(
         connection_config,
         adapter_id: req.adapter_id.or(existing.adapter_id),
         last_seen: existing.last_seen,
-        // Direct assignment: frontend always sends this field explicitly.
-        // null/None = clear override (fall back to template/global), Some(n) = set.
-        offline_timeout_secs: req.offline_timeout_secs,
+        // absent (None) = keep the existing override; null (Some(None)) =
+        // clear it (fall back to template/global); value = set.
+        offline_timeout_secs: req
+            .offline_timeout_secs
+            .unwrap_or(existing.offline_timeout_secs),
     };
 
     // Update device using new DeviceService
@@ -1004,5 +1021,60 @@ mod crud_logic_tests {
         roundtrip(A::Disconnected, "disconnected");
         roundtrip(A::Reconnecting, "reconnecting");
         roundtrip(A::Error, "error");
+    }
+}
+
+#[cfg(test)]
+mod contract_fix_tests {
+    use super::*;
+
+    /// Three-state mapping must be identical everywhere a device status is
+    /// emitted — the detail endpoints used to collapse to two states.
+    #[test]
+    fn three_state_status_matches_list_semantics() {
+        assert_eq!(three_state_status(true, 0), "online");
+        assert_eq!(three_state_status(true, 999), "online");
+        // Previously-seen but timed out → offline (NOT "disconnected").
+        assert_eq!(three_state_status(false, 1), "offline");
+        assert_eq!(three_state_status(false, 1_700_000_000), "offline");
+        // Never reported → disconnected.
+        assert_eq!(three_state_status(false, 0), "disconnected");
+    }
+
+    /// The absent-vs-null contract of PUT /devices/:id: a partial update
+    /// omitting the field must KEEP the override; explicit null clears it;
+    /// a value sets it. The old single-Option mapping read absent and null
+    /// identically — any omission wiped the override.
+    #[test]
+    fn update_request_distinguishes_absent_null_and_value() {
+        let absent: super::super::models::UpdateDeviceRequest =
+            serde_json::from_str(r#"{"name": "renamed"}"#).unwrap();
+        assert_eq!(
+            absent.offline_timeout_secs, None,
+            "absent key must mean KEEP"
+        );
+
+        let nullified: super::super::models::UpdateDeviceRequest =
+            serde_json::from_str(r#"{"name": "renamed", "offline_timeout_secs": null}"#).unwrap();
+        assert_eq!(
+            nullified.offline_timeout_secs,
+            Some(None),
+            "explicit null must mean CLEAR"
+        );
+
+        let valued: super::super::models::UpdateDeviceRequest =
+            serde_json::from_str(r#"{"offline_timeout_secs": 300}"#).unwrap();
+        assert_eq!(valued.offline_timeout_secs, Some(Some(300)));
+    }
+
+    /// Create requests accept the override the TS type declares (it used to
+    /// be silently dropped by serde).
+    #[test]
+    fn add_request_accepts_offline_timeout() {
+        let req: super::super::models::AddDeviceRequest = serde_json::from_str(
+            r#"{"device_type":"t","name":"n","adapter_type":"mqtt","connection_config":{},"offline_timeout_secs":120}"#,
+        )
+        .unwrap();
+        assert_eq!(req.offline_timeout_secs, Some(120));
     }
 }

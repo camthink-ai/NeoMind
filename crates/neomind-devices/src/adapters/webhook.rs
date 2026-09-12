@@ -386,8 +386,15 @@ impl WebhookAdapter {
         // Check rate limit
         self.check_rate_limit(&device_id).await?;
 
+        // [unit detection] Senders disagree on epoch units — a raw ms value
+        // used to be stored as-is (year-58,000 seconds: the point became
+        // invisible to every window query). Route through the same
+        // magnitude-based normalizer + future guard the MQTT path uses;
+        // implausible values fall back to server time instead of poisoning
+        // the series.
         let timestamp = payload
             .timestamp
+            .and_then(crate::adapters::mqtt::normalize_epoch_seconds)
             .unwrap_or_else(|| chrono::Utc::now().timestamp());
 
         // Track device first sighting (for DeviceOnline emission on registered devices)

@@ -89,6 +89,7 @@ mod tests {
                 "address": "localhost:1883",
                 "topic": "test/topic",
             }),
+            offline_timeout_secs: None,
         };
 
         assert_eq!(request.device_id, Some(device_id));
@@ -192,6 +193,7 @@ mod tests {
             connection_config: json!({
                 "address": "localhost:1883",
             }),
+            offline_timeout_secs: None,
         };
 
         assert!(request.device_id.is_none());

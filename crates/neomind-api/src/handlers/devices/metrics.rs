@@ -320,6 +320,7 @@ mod event_publish_tests {
                 device_type: "rest-write-type".to_string(),
                 adapter_type: "webhook".to_string(),
                 connection_config: serde_json::json!({}),
+                offline_timeout_secs: None,
             }),
         )
         .await;

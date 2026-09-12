@@ -43,6 +43,9 @@ export class ExtensionStreamClient {
   private capability: StreamCapability | null = null
   private pendingMessages: ExtensionClientMessage[] = []
 
+  /** Cap for messages queued while disconnected (FIFO eviction past it). */
+  private static readonly MAX_PENDING_MESSAGES = 100
+
   constructor(extensionId: string) {
     this.extensionId = extensionId
   }
@@ -330,7 +333,23 @@ export class ExtensionStreamClient {
         console.error('[ExtensionStream] Failed to send message:', err)
       }
     } else {
-      // Queue message for when connected
+      // Queue message for when connected — bounded, and evictions are
+      // surfaced through the error channel (the same discipline the chat
+      // websocket applies): an unbounded queue on a long disconnect OOMs
+      // the tab, and a silent drop loses capability invocations without
+      // a trace.
+      if (this.pendingMessages.length >= ExtensionStreamClient.MAX_PENDING_MESSAGES) {
+        const dropped = this.pendingMessages.shift()
+        const preview = dropped ? JSON.stringify(dropped).slice(0, 120) : '(none)'
+        console.warn(`[ExtensionStream] Pending limit (${ExtensionStreamClient.MAX_PENDING_MESSAGES}) reached, dropping oldest: ${preview}…`)
+        this.errorHandlers.forEach(handler => {
+          try {
+            handler(new Error(`A queued extension message was dropped (connection issues): ${preview}…`))
+          } catch {
+            /* handler errors must not break the eviction loop */
+          }
+        })
+      }
       this.pendingMessages.push(message)
     }
   }

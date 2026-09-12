@@ -18,8 +18,18 @@ pub(crate) fn build_context_window_with_summary(
     summary: Option<&str>,
     summary_up_to_index: Option<u64>,
 ) -> Vec<AgentMessage> {
+    // [summary budget] The injected summary is part of the history payload
+    // and must COUNT against it — it used to be inserted after the budget
+    // was enforced (and system messages are exempt from the hard-budget
+    // eviction below), so a long summary chain could push the final context
+    // past the window it was derived from. Reserve its tokens up front.
+    let summary_tokens = summary
+        .map(|s| crate::agent::tokenizer::estimate_tokens(s))
+        .unwrap_or(0);
+    let history_budget = max_tokens.saturating_sub(summary_tokens);
+
     // Adapt compaction to model capacity — larger contexts get gentler treatment
-    let config = CompactionConfig::for_context_size(max_tokens);
+    let config = CompactionConfig::for_context_size(history_budget);
 
     // Filter out summarized messages if summary exists
     let filtered: Vec<AgentMessage> =
@@ -35,7 +45,7 @@ pub(crate) fn build_context_window_with_summary(
         };
 
     // Build context window from filtered messages
-    let mut result = build_context_window_with_config(&filtered, max_tokens, &config);
+    let mut result = build_context_window_with_config(&filtered, history_budget, &config);
 
     // Inject summary as a system message at the beginning (after any existing system messages)
     if let Some(summary_text) = summary {
