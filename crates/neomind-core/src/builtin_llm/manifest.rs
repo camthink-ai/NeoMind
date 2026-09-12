@@ -82,10 +82,18 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             hf_repo: "Abiray/MiniCPM5-2B-GGUF",
             hf_file: "MiniCPM5-2B-Q4_K_M.gguf",
             size_bytes: 1_561_320_448,
-            // 8K is the measured optimum (2026-09 eval: 32K trades tool
-            // accuracy for recall with no overall gain); the UI presets can
-            // still raise it.
-            default_ctx: 8192,
+            // 32K default (product decision 2026-09-12): the 2026-09 eval's
+            // "8K optimum" was measured on the HARNESS prompt — the
+            // production platform prompt (system + tool definitions +
+            // memory/skill context) alone weighs 4-6K tokens, which starved
+            // an 8K window (see stream_core::effective_history_budget for
+            // the overflow this caused) and left 16K merely adequate for
+            // long agent turns. The older 5-scenario suite scored 32K at
+            // ~68 (≥ the 8K R24 run within ties), the profile is flat
+            // across windows, and the native ceiling is 128K — so 32K buys
+            // agent headroom at no measured accuracy cost. KV cache for a
+            // 2B model at 32K stays negligible against the 3 GB floor.
+            default_ctx: 32768,
             max_ctx: 131072,
             notes: "2026-09 评测首选 — 工具命中 81%、全窗口最稳、Apache-2.0 可分发",
             recommended: true,

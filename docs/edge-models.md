@@ -18,7 +18,7 @@ vision slot stays `LFM2.5-VL-3B`.
 
 | Role | Model | Measured (2026-09 corrected harness) | Why |
 |---|---|---|---|
-| **Agent** (tool calling) | `MiniCPM5-2B` (text) | **64 overall 8K (81% tool accuracy)** — statistically ties cloud deepseek-v4-flash; best-in-class CLI domain selection at 2B and flat across context windows | 1.5 GB (Q4_K_M); native OpenAI-format tool calling incl. parallel calls; ~53 tok/s on M4 Pro. Serve at **8K context** — see trade-off below |
+| **Agent** (tool calling) | `MiniCPM5-2B` (text) | **64 overall 8K (81% tool accuracy)** — statistically ties cloud deepseek-v4-flash; best-in-class CLI domain selection at 2B and flat across context windows | 1.5 GB (Q4_K_M); native OpenAI-format tool calling incl. parallel calls; ~53 tok/s on M4 Pro. Serve at **32K context** (product default) — the harness's 8K optimum assumed a light prompt; the production platform prompt (system+tools+memory) weighs 4-6K tokens and starves anything below 16K (see streaming `effective_history_budget`) |
 | **Perception** (vision) | `LFM2.5-VL-3B` (vision) | 10% as an agent (2026-08) — **do not use it as the agent** | Strong vision (ScreenSpot 80.7, OCR-class benchmarks), but the vision training materially degraded its tool calling despite sharing the 2.6B backbone |
 
 Both models speak OpenAI-compatible function calling through llama.cpp's
@@ -29,7 +29,7 @@ Both models speak OpenAI-compatible function calling through llama.cpp's
 | Model | 8K | 16K | 32K | Context response profile |
 |---|---|---|---|---|
 | Qwen3.5-4B | 37.9 | **69.5** | 65.8 | Starved at 8K, peaks at 16K (tool 73.6%, recall 50%, context 82%). Serve 16K. |
-| MiniCPM5-2B | **64.0** (R24) | 61.4 | ~68* | Flat — most robust. Serve 8K (fastest, no loss). |
+| MiniCPM5-2B | **64.0** (R24) | 61.4 | ~68* | Flat — most robust. Product default serve 32K: flat across windows, and production prompt overhead (4-6K tokens) rules out 8K/16K for long agent turns. |
 | Ling-3.0-tiny | 61.7 (R24) | 47.8 | 44.9 | Cliff between 8K and 16K. 8K-only. |
 | gemma-4-E2B | 59.1* | — | 59.7 | Flat / long-context-stable. |
 | LFM2.5-2.6B | 41.3* | — | 53.5 | Improves with context. |

@@ -73,7 +73,12 @@ pub async fn bootstrap(
                 updated.capabilities.supports_streaming = true;
                 updated.capabilities.supports_tools = true;
                 updated.capabilities.supports_thinking = def.default_thinking;
-                updated.capabilities.max_context = def.default_ctx as usize;
+                // Record what the server ACTUALLY runs with: an explicit
+                // override (NEOMIND_BUILTIN_LLM_CTX / restart API) beats the
+                // per-model default — stamping the bare default here used to
+                // silently rewrite a raised ctx back down (and the agent's
+                // history budget shrank to match the phantom smaller window).
+                updated.capabilities.max_context = cfg.effective_ctx(def.default_ctx) as usize;
                 let _ = manager.upsert_instance(updated).await;
             }
         }

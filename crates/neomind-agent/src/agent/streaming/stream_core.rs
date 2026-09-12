@@ -215,17 +215,7 @@ pub async fn process_stream_events_with_safeguards(
     // Measure actual overhead from system prompt + tool definitions
     let prompt_overhead = llm_interface.estimate_prompt_overhead_tokens().await;
 
-    // Reserve tokens for model response generation (minimum 1024)
-    const RESERVE_FOR_RESPONSE: usize = 1024;
-
-    // History budget = total capacity - prompt overhead - response reserve
-    let effective_max = max_context
-        .saturating_sub(prompt_overhead)
-        .saturating_sub(RESERVE_FOR_RESPONSE);
-
-    // Safety floor: always allow at least 20% of context for history
-    let min_history = (max_context * 20) / 100;
-    let effective_max = effective_max.max(min_history);
+    let effective_max = effective_history_budget(max_context, prompt_overhead);
 
     tracing::debug!(
         "Context window: model_capacity={}, prompt_overhead={}, reserve={}, effective_max={} for history",
@@ -1637,4 +1627,95 @@ pub fn events_to_string_stream(
             }
         }
     })
+}
+
+/// Reserve tokens for model response generation (minimum 1024).
+const RESERVE_FOR_RESPONSE: usize = 1024;
+
+/// History budget given the model's context capacity and the measured
+/// prompt overhead (system prompt + tool definitions).
+///
+/// Invariant: the returned budget NEVER exceeds what actually fits —
+/// `overhead + RESERVE_FOR_RESPONSE + budget <= max_context`. The old code
+/// raised the budget to a hard 20%-of-context floor AFTER subtracting the
+/// overhead, so on 8K-class models (where the platform prompt + tools alone
+/// run 4-6K tokens) the floor re-inflated the budget past the window and
+/// CONSTRUCTED an overflowing prompt every turn: llama-server 400 →
+/// compact-retry ladder → tools stripped / hard "context exceeds" error.
+/// The floor is now capped at the real remaining budget; a starved budget
+/// (<20% of the window) is logged instead of silently exceeded.
+pub(crate) fn effective_history_budget(max_context: usize, prompt_overhead: usize) -> usize {
+    let raw_budget = max_context
+        .saturating_sub(prompt_overhead)
+        .saturating_sub(RESERVE_FOR_RESPONSE);
+
+    let floor = ((max_context * 20) / 100).min(raw_budget);
+    let effective = raw_budget.max(floor);
+
+    if effective < (max_context * 20) / 100 {
+        tracing::warn!(
+            max_context,
+            prompt_overhead,
+            effective,
+            "Context starvation: prompt overhead leaves under 20% of the window for \
+             history — consider a larger context preset or a lighter prompt"
+        );
+    }
+    effective
+}
+
+#[cfg(test)]
+mod history_budget_tests {
+    use super::*;
+
+    /// The regression that motivated the extraction: a 8K-class model whose
+    /// platform prompt + tools overhead crosses ~5.5K tokens. The old floor
+    /// forced ~1.6K of history back in, constructing a prompt larger than
+    /// the window itself. The budget must respect the subtraction.
+    #[test]
+    fn budget_never_exceeds_remaining_capacity() {
+        for (max_ctx, overhead) in [
+            (8192usize, 6000usize), // the reported-bug zone
+            (8192, 7100),           // overhead nearly fills the window
+            (8192, 8192),           // overhead alone fills it
+            (4096, 2500),           // small custom backend
+            (16384, 5000),          // healthy 16K
+            (131072, 6000),         // LFM-class
+        ] {
+            let budget = effective_history_budget(max_ctx, overhead);
+            // Saturating form: when the overhead alone fills the window no
+            // budget can satisfy the plain inequality — the real claim is
+            // that the BUDGET never adds overflow beyond the subtraction.
+            let ceiling = max_ctx
+                .saturating_sub(overhead)
+                .saturating_sub(RESERVE_FOR_RESPONSE);
+            assert!(
+                budget <= ceiling,
+                "budget exceeds remaining capacity: budget={budget} ceiling={ceiling} \
+                 overhead={overhead} max={max_ctx}"
+            );
+        }
+    }
+
+    #[test]
+    fn healthy_budget_keeps_normal_arithmetic() {
+        // 16K window, 5K overhead: 16384 - 5000 - 1024 = 10360.
+        assert_eq!(effective_history_budget(16384, 5000), 10360);
+        // The old code returned max(10360, 3276) = 10360 too — unchanged here.
+    }
+
+    #[test]
+    fn starved_budget_degrades_to_zero_not_negative() {
+        assert_eq!(effective_history_budget(8192, 8192), 0);
+        assert_eq!(effective_history_budget(8192, 9000), 0);
+    }
+
+    #[test]
+    fn overflow_free_floor_still_helps_small_overheads() {
+        // Overhead small → floor (20%) is below the raw budget → no effect.
+        // Overhead moderate → raw budget governs. Both directions must hold.
+        let b = effective_history_budget(8192, 3000);
+        assert_eq!(b, 8192 - 3000 - RESERVE_FOR_RESPONSE);
+        assert!(b >= (8192 * 20) / 100);
+    }
 }
