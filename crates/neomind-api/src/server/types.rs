@@ -126,6 +126,57 @@ pub const MAX_EXTENSION_UPLOAD_SIZE: usize = 512 * 1024 * 1024;
 /// reported) plus a running byte counter during streaming.
 pub const MAX_EXTENSION_DOWNLOAD_SIZE: u64 = 1024 * 1024 * 1024;
 
+/// Open the extension store, DEGRADING to an isolated temp store on any
+/// failure instead of panicking.
+///
+/// The previous `.expect()` here turned one unreadable `extensions.redb`
+/// (SD-card bit rot, partial write on power loss, read-only/full data disk)
+/// into a boot panic → systemd restart → panic loop: the WHOLE server died,
+/// including every subsystem whose stores were fine. Degrading costs
+/// extension records not persisting (and installed extensions not loading)
+/// until the operator repairs the file — strictly better than a brick, and
+/// the original store file is left untouched for manual inspection.
+fn open_extension_store_resilient(path: std::path::PathBuf) -> std::sync::Arc<ExtensionStore> {
+    match ExtensionStore::open(&path) {
+        Ok(store) => store,
+        Err(e) => {
+            tracing::error!(
+                category = "storage",
+                error = %e,
+                path = %path.display(),
+                "Failed to open extension store — falling back to an ISOLATED TEMP store. \
+                 Extension records will not persist and installed extensions will not \
+                 load until the store file above is inspected/repaired"
+            );
+            ExtensionStore::open(":memory:").expect("isolated temp extension store cannot fail")
+        }
+    }
+}
+
+/// Open the frontend component store, degrading to a temp dir on failure —
+/// same boot-resilience rationale as [`open_extension_store_resilient`].
+fn open_frontend_component_store_resilient(dir: std::path::PathBuf) -> FrontendComponentStore {
+    match FrontendComponentStore::open(&dir) {
+        Ok(store) => store,
+        Err(e) => {
+            let fallback = std::env::temp_dir().join(format!(
+                "neomind-frontend-components-fallback-{}",
+                std::process::id()
+            ));
+            tracing::error!(
+                category = "storage",
+                error = %e,
+                path = %dir.display(),
+                fallback = %fallback.display(),
+                "Failed to open frontend component store — falling back to a TEMP dir; \
+                 installed widgets will not persist until the data dir is repaired"
+            );
+            FrontendComponentStore::open(&fallback)
+                .expect("temp-dir frontend component store cannot fail")
+        }
+    }
+}
+
 /// Server state shared across all handlers.
 ///
 /// Organized into logical sub-states for better maintainability.
@@ -698,9 +749,7 @@ impl ServerState {
         );
         let frontend_component_store_h = tokio::task::spawn_blocking({
             let dir = data_dir.join("frontend-components");
-            move || {
-                FrontendComponentStore::open(dir).expect("Failed to init frontend component store")
-            }
+            move || open_frontend_component_store_resilient(dir)
         });
 
         // ========== Build CORE STATE ==========
@@ -855,8 +904,8 @@ impl ServerState {
         ));
 
         // Open extension store (singleton-cached internally)
-        let extension_store = ExtensionStore::open(crate::server::paths::extension_store_path())
-            .expect("Failed to open extension store — ensure data/ directory exists");
+        let extension_store =
+            open_extension_store_resilient(crate::server::paths::extension_store_path());
 
         // Create the extension state with registry, storage, and persistent store
         let extensions = ExtensionState::new(
@@ -3490,5 +3539,104 @@ impl neomind_messages::im_bridge::AgentRunner for SessionManagerAgentRunner {
             }
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod boot_resilience_tests {
+    use super::*;
+
+    /// A corrupt extensions.redb (SD-card rot, partial write on power loss)
+    /// must NOT panic the boot — the pre-fix `.expect()` here turned one bad
+    /// file into a systemd restart loop that killed the whole server. The
+    /// resilient open degrades to an isolated temp store that still works.
+    #[test]
+    fn corrupt_extension_store_degrades_instead_of_panicking() {
+        let dir = tempfile::tempdir().unwrap();
+        let corrupt = dir.path().join("extensions.redb");
+        // Garbage that exists but is not a redb file: open() must fail.
+        std::fs::write(&corrupt, b"this is definitely not a redb database").unwrap();
+
+        let store = open_extension_store_resilient(corrupt.clone());
+
+        // The fallback store is functional: save + read-back roundtrip.
+        let record = neomind_storage::extensions::ExtensionRecord {
+            id: "ext-1".into(),
+            name: "Test".into(),
+            file_path: "/tmp/x.nep".into(),
+            extension_type: "native".into(),
+            version: "1.0".into(),
+            description: None,
+            author: None,
+            auto_start: false,
+            enabled: true,
+            uninstalled: false,
+            disabled_commands: vec![],
+            config: None,
+            last_error: None,
+            last_error_at: None,
+            health_status: "healthy".into(),
+            updated_at: 0,
+            registered_at: 0,
+        };
+        store.save(&record).unwrap();
+        assert!(
+            store.load("ext-1").unwrap().is_some(),
+            "fallback store must be usable"
+        );
+
+        // The corrupt original must be left untouched for manual repair.
+        let bytes = std::fs::read(&corrupt).unwrap();
+        assert_eq!(bytes, b"this is definitely not a redb database");
+    }
+
+    /// Same contract for the frontend component store: an unusable base dir
+    /// (here: a FILE where the dir should be) degrades to a temp dir.
+    #[test]
+    fn unusable_frontend_dir_degrades_to_temp() {
+        let dir = tempfile::tempdir().unwrap();
+        let not_a_dir = dir.path().join("frontend-components");
+        std::fs::write(&not_a_dir, b"i am a file").unwrap();
+
+        let store = open_frontend_component_store_resilient(not_a_dir.clone());
+        // Functional check: the fallback answers queries (empty, not broken).
+        assert!(store.list_all().unwrap().is_empty());
+    }
+
+    /// Happy path must be unchanged: a healthy store opens at the requested
+    /// path (no silent temp fallback for good disks).
+    #[test]
+    fn healthy_extension_store_opens_in_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("extensions.redb");
+        let store = open_extension_store_resilient(path.clone());
+        // The healthy store persists at the requested path: save, then reopen
+        // through the same resilient helper and read back.
+        let record = neomind_storage::extensions::ExtensionRecord {
+            id: "ext-2".into(),
+            name: "Healthy".into(),
+            file_path: "/tmp/y.nep".into(),
+            extension_type: "native".into(),
+            version: "1.0".into(),
+            description: None,
+            author: None,
+            auto_start: false,
+            enabled: true,
+            uninstalled: false,
+            disabled_commands: vec![],
+            config: None,
+            last_error: None,
+            last_error_at: None,
+            health_status: "healthy".into(),
+            updated_at: 0,
+            registered_at: 0,
+        };
+        store.save(&record).unwrap();
+        drop(store);
+        let reopened = open_extension_store_resilient(path.clone());
+        assert!(
+            reopened.load("ext-2").unwrap().is_some(),
+            "record must persist at the requested path, not in a temp fallback"
+        );
     }
 }

@@ -534,9 +534,20 @@ impl TimeSeriesStorage {
         for metric in metrics {
             let source_id: Vec<&str> = metric.split(':').collect();
             if source_id.len() == 2 {
-                let _ = store
+                // A failed range delete must be visible: retention silently
+                // skipping work meant the disk was never reclaimed and the
+                // only symptom was a slowly-filling edge device.
+                if let Err(e) = store
                     .delete_range(source_id[0], source_id[1], i64::MIN, before_timestamp)
-                    .await;
+                    .await
+                {
+                    tracing::warn!(
+                        category = "telemetry",
+                        error = %e,
+                        metric = %metric,
+                        "Retention delete failed — disk space not reclaimed for this metric"
+                    );
+                }
             }
         }
 

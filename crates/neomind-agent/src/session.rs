@@ -1287,13 +1287,25 @@ Assistant: {ar}\n"
 
             let mut wrote_any = false;
             if let Some(content) = merged("user", &new_user) {
-                if store.write_file("user", &content).await.is_ok() {
-                    wrote_any = true;
+                match store.write_file("user", &content).await {
+                    Ok(()) => wrote_any = true,
+                    Err(e) => tracing::warn!(
+                        category = "memory",
+                        error = %e,
+                        "Failed to persist extracted user facts — this extraction's \
+                         facts are lost and the snapshot cache stays stale"
+                    ),
                 }
             }
             if let Some(content) = merged("knowledge", &new_knowledge) {
-                if store.write_file("knowledge", &content).await.is_ok() {
-                    wrote_any = true;
+                match store.write_file("knowledge", &content).await {
+                    Ok(()) => wrote_any = true,
+                    Err(e) => tracing::warn!(
+                        category = "memory",
+                        error = %e,
+                        "Failed to persist extracted knowledge facts — this \
+                         extraction's facts are lost and the snapshot cache stays stale"
+                    ),
                 }
             }
 

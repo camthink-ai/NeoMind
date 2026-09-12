@@ -595,12 +595,24 @@ impl AuthUserState {
     /// sessions table directly — covers rows not present in memory). Used by
     /// delete_user / change_password so a deleted or re-credentialed user's
     /// JWTs die immediately instead of surviving up to `session_duration`.
-    fn delete_user_sessions_from_db(path: &str, username: &str) {
+    ///
+    /// Returns whether the persisted revocation fully committed. The
+    /// in-memory map is always cleared by the caller; a `false` return means
+    /// the revoked rows SURVIVED on disk — after a restart they reload and
+    /// the tokens resurrect (the exact security gap this now reports).
+    fn delete_user_sessions_from_db(path: &str, username: &str) -> bool {
         if path == ":memory:" || !std::path::Path::new(path).exists() {
-            return;
+            return true;
         }
         let Ok(db) = Database::open(path) else {
-            return;
+            tracing::error!(
+                category = "auth",
+                path,
+                username,
+                "Revocation could not open the sessions DB — revoked tokens for this user \
+                 WILL RESURRECT after a restart until the DB is accessible"
+            );
+            return false;
         };
         // Collect matching keys (read), then delete (write) — redb cannot
         // mutate while iterating the same table.
@@ -621,16 +633,48 @@ impl AuthUserState {
             }
         }
         if keys_to_remove.is_empty() {
-            return;
+            return true;
         }
-        if let Ok(w) = db.begin_write() {
-            if let Ok(mut t) = w.open_table(SESSIONS_TABLE) {
-                for k in &keys_to_remove {
-                    let _ = t.remove(k.as_str());
+
+        // Commit with one retry: redb write failures are usually transient
+        // (lock contention, momentary IO pressure) but a dropped commit here
+        // used to be SILENT — the in-memory clear masked it until the next
+        // restart revived every revoked token.
+        for attempt in 0..2 {
+            let removed = (|| -> std::result::Result<(), redb::Error> {
+                let w = db.begin_write()?;
+                {
+                    let mut t = w.open_table(SESSIONS_TABLE)?;
+                    for k in &keys_to_remove {
+                        t.remove(k.as_str())?;
+                    }
+                }
+                w.commit()?;
+                Ok(())
+            })();
+            match removed {
+                Ok(()) => return true,
+                Err(e) if attempt == 0 => {
+                    tracing::warn!(
+                        category = "auth",
+                        error = %e,
+                        "Session revocation commit failed, retrying once"
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(
+                        category = "auth",
+                        error = %e,
+                        username,
+                        count = keys_to_remove.len(),
+                        "Session revocation FAILED to persist — these tokens WILL \
+                         RESURRECT after a restart; inspect the sessions DB"
+                    );
+                    return false;
                 }
             }
-            let _ = w.commit();
         }
+        false
     }
 
     /// Revoke all of `username`'s sessions — in-memory map AND persisted
@@ -650,13 +694,18 @@ impl AuthUserState {
                 .unwrap()
                 .retain(|_, info| info.username != username);
         }
-        Self::delete_user_sessions_from_db(self.db_path, username);
-        info!(
-            category = "auth",
-            username = username,
-            count = keys.len(),
-            "Revoked user sessions"
-        );
+        let persisted = Self::delete_user_sessions_from_db(self.db_path, username);
+        if persisted {
+            info!(
+                category = "auth",
+                username = username,
+                count = keys.len(),
+                "Revoked user sessions"
+            );
+        }
+        // The !persisted case is already logged at error level inside
+        // delete_user_sessions_from_db — no success-path log for a failure
+        // that handlers cannot act on beyond surfacing a 500.
     }
 
     fn delete_session_from_db(path: &str, key: &str) {
@@ -1849,5 +1898,107 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&data_dir);
+    }
+}
+
+/// Regression tests for the session-revocation persistence path. The
+/// pre-fix code discarded the redb commit result silently: when the commit
+/// failed, the in-memory clear masked the loss until the next restart
+/// reloaded the rows — reviving every token the operator believed revoked
+/// (deleted user, post-password-change). These pin the new contract:
+/// success commits AND failure is REPORTED (return value), never swallowed.
+#[cfg(test)]
+mod revocation_persistence_tests {
+    use super::*;
+
+    /// Seed a sessions db with one session for `alice` and one for `bob`.
+    fn seeded_db(tag: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "neomind_revoke_test_{}_{}.redb",
+            tag,
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let db = redb::Database::create(&path).unwrap();
+        let w = db.begin_write().unwrap();
+        {
+            let mut t = w.open_table(SESSIONS_TABLE).unwrap();
+            for (key, user) in [("alice-token-1", "alice"), ("bob-token-1", "bob")] {
+                let info = SessionInfo {
+                    user_id: format!("uid-{user}"),
+                    username: user.to_string(),
+                    role: UserRole::User,
+                    created_at: 0,
+                    expires_at: i64::MAX,
+                };
+                t.insert(key, bincode::serialize(&info).unwrap().as_slice())
+                    .unwrap();
+            }
+        }
+        w.commit().unwrap();
+        drop(db);
+        path
+    }
+
+    fn count_rows(path: &std::path::Path, username: &str) -> usize {
+        let db = redb::Database::open(path).unwrap();
+        let r = db.begin_read().unwrap();
+        let t = r.open_table(SESSIONS_TABLE).unwrap();
+        t.iter()
+            .unwrap()
+            .flatten()
+            .filter(|(_, v)| {
+                bincode::deserialize::<SessionInfo>(v.value())
+                    .map(|i| i.username == username)
+                    .unwrap_or(false)
+            })
+            .count()
+    }
+
+    #[test]
+    fn revocation_removes_only_target_user_and_reports_success() {
+        let path = seeded_db("happy");
+        let p = path.to_string_lossy().into_owned();
+
+        assert!(AuthUserState::delete_user_sessions_from_db(&p, "alice"));
+
+        assert_eq!(count_rows(&path, "alice"), 0, "alice rows must be gone");
+        assert_eq!(
+            count_rows(&path, "bob"),
+            1,
+            "other users' sessions must survive"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn revocation_on_corrupt_db_reports_failure_instead_of_swallowing() {
+        let path = seeded_db("corrupt");
+        // Overwrite with garbage after seeding: open() must now fail, and
+        // the function must return false so the caller KNOWS the revocation
+        // did not persist (pre-fix: silent no-op).
+        drop(redb::Database::open(&path));
+        std::fs::write(&path, b"not a redb file").unwrap();
+        let p = path.to_string_lossy().into_owned();
+
+        assert!(
+            !AuthUserState::delete_user_sessions_from_db(&p, "alice"),
+            "corrupt db must be reported as NOT persisted"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn revocation_on_missing_db_is_vacuous_success() {
+        // No db file yet (fresh install): nothing to revoke, not a failure.
+        let missing = std::env::temp_dir().join(format!(
+            "neomind_revoke_missing_{}.redb",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&missing);
+        assert!(AuthUserState::delete_user_sessions_from_db(
+            &missing.to_string_lossy(),
+            "ghost"
+        ));
     }
 }
