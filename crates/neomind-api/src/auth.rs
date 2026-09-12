@@ -73,7 +73,22 @@ impl AuthState {
     pub fn new() -> Self {
         let db_path = neomind_core::paths::store_path("api_keys.redb");
         let db_path_str = db_path.to_string_lossy().to_string();
-        let crypto = Arc::new(CryptoService::from_env_or_generate());
+        // The encryption key MUST pair with the directory the db actually
+        // resolved to. `store_path()` honors NEOMIND_DATA_DIR (plus a legacy
+        // cwd-relative fallback); the old `from_env_or_generate()` here always
+        // used the cwd-relative "data/" — under a custom NEOMIND_DATA_DIR the
+        // server encrypted keys with one directory's key file while persisting
+        // them into another, so the CLI (and the chat agent's shell tools,
+        // which read {data_dir}/encryption_key) could never decrypt any key:
+        // every `neomind` call 401'd while the web UI (JWT) kept working.
+        // Same class of bug as noted on from_env_or_generate_with_data_dir.
+        let crypto_dir = db_path
+            .parent()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "data".to_string());
+        let crypto = Arc::new(CryptoService::from_env_or_generate_with_data_dir(
+            &crypto_dir,
+        ));
 
         // Ensure data directory exists
         if let Some(parent) = db_path.parent() {
@@ -183,34 +198,46 @@ impl AuthState {
             for item in table.iter()? {
                 let (hash, value) = item?;
                 let hash_str = hash.value();
-                let encrypted = String::from_utf8(value.value().to_vec())?;
-
-                // Decrypt the key (verify it can be decrypted)
-                let _decrypted_key = crypto.decrypt(&encrypted)?;
-
-                // Load the metadata from the hashes table
-                let info = if let Ok(hash_table) = read_txn.open_table(API_KEY_HASHES_TABLE) {
-                    if let Ok(Some(value)) = hash_table.get(hash_str) {
-                        bincode::deserialize(value.value())?
-                    } else {
-                        // Fallback for old format
-                        ApiKeyInfo {
-                            id: Uuid::new_v4().to_string(),
-                            name: "Migrated Key".to_string(),
-                            created_at: chrono::Utc::now().timestamp(),
-                            permissions: vec!["*".to_string()],
-                            active: true,
-                        }
+                let encrypted = match String::from_utf8(value.value().to_vec()) {
+                    Ok(s) => s,
+                    Err(_) => {
+                        warn!(
+                            category = "auth",
+                            hash = hash_str,
+                            "Skipping non-UTF8 API key entry"
+                        );
+                        continue;
                     }
-                } else {
-                    ApiKeyInfo {
+                };
+
+                // Verify the entry decrypts under the current encryption key.
+                // Skip (don't abort) on failure: one stale entry — e.g. from an
+                // encryption key rotated out from under the store — used to
+                // fail the WHOLE load via `?`, wiping every usable key from
+                // memory on boot. Skipping also lets the boot-time save_to_db
+                // clear the dead row (self-heal) while good keys survive.
+                if let Err(e) = crypto.decrypt(&encrypted) {
+                    warn!(category = "auth", hash = hash_str, error = %e,
+                          "Skipping API key entry that fails to decrypt \
+                           (encryption key mismatch?)");
+                    continue;
+                }
+
+                // Load the metadata from the hashes table; a missing or
+                // corrupt row degrades to a permissive default rather than
+                // aborting the load.
+                let info = read_txn
+                    .open_table(API_KEY_HASHES_TABLE)
+                    .ok()
+                    .and_then(|ht| ht.get(hash_str).ok().flatten())
+                    .and_then(|v| bincode::deserialize::<ApiKeyInfo>(v.value()).ok())
+                    .unwrap_or_else(|| ApiKeyInfo {
                         id: Uuid::new_v4().to_string(),
                         name: "Migrated Key".to_string(),
                         created_at: chrono::Utc::now().timestamp(),
                         permissions: vec!["*".to_string()],
                         active: true,
-                    }
-                };
+                    });
 
                 keys.insert(hash_str.to_string(), (encrypted, info));
             }
@@ -793,5 +820,123 @@ mod tests {
 
         assert!(auth.delete_key(&key).await);
         assert!(!auth.validate_key(&key));
+    }
+
+    /// Serialize tests that touch the process-global NEOMIND_DATA_DIR env
+    /// (same discipline as neomind-cli-ops' auto_auth tests).
+    static DATA_DIR_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Removes NEOMIND_DATA_DIR when dropped, even on panic.
+    struct EnvDirGuard;
+    impl Drop for EnvDirGuard {
+        fn drop(&mut self) {
+            std::env::remove_var("NEOMIND_DATA_DIR");
+        }
+    }
+
+    /// Regression (v0.9.21 custom-data-dir breakage): `AuthState::new()` must
+    /// read the encryption key from the SAME directory `store_path()` resolved
+    /// the db to. The old code always used the cwd-relative `data/`, so under
+    /// NEOMIND_DATA_DIR the server encrypted keys with one directory's key and
+    /// persisted them into another — keys seeded by the aligned store could
+    /// never load back, and the CLI (reading {data_dir}/encryption_key) could
+    /// never decrypt what the server wrote: every `neomind` call 401'd while
+    /// the web UI (JWT) kept working.
+    #[tokio::test]
+    async fn test_new_pairs_crypto_with_resolved_db_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_str = dir.path().to_string_lossy().to_string();
+
+        // Seed a valid store at the canonical path first — this also pins
+        // store_path resolution to canonical (canonical-exists short-circuits
+        // the legacy cwd-relative fallback) and writes {dir}/encryption_key.
+        // (Done before taking the env lock: create_key awaits, and the std
+        // Mutex must not be held across an await point.)
+        let seed = AuthState::new_with_data_dir(&dir_str);
+        let (key, _) = seed
+            .create_key("pairing".to_string(), vec!["*".to_string()])
+            .await;
+        drop(seed);
+
+        // From here on: no awaits — the env lock guards the whole window.
+        let _lock = DATA_DIR_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("NEOMIND_DATA_DIR", &dir_str);
+        let _guard = EnvDirGuard;
+
+        let serve_state = AuthState::new();
+        // Old behavior: crypto came from cwd "data/" → decrypt of the seeded
+        // row failed → whole load aborted → regenerate+save wiped the key.
+        assert!(
+            serve_state.validate_key(&key),
+            "serve-path AuthState::new() must accept keys seeded by the aligned store"
+        );
+
+        // CLI-side pairing: the ciphertext persisted in {dir}/api_keys.redb
+        // must decrypt under {dir}/encryption_key — exactly what
+        // neomind-cli-ops' auto_auth (login / shell-tool key resolution) reads.
+        let cli_crypto = CryptoService::from_env_or_generate_with_data_dir(&dir_str);
+        let db = Database::open(dir.path().join("api_keys.redb")).unwrap();
+        let read_txn = db.begin_read().unwrap();
+        let table = read_txn.open_table(API_KEYS_TABLE).unwrap();
+        let mut found = false;
+        for item in table.iter().unwrap() {
+            let (_, value) = item.unwrap();
+            let encrypted = String::from_utf8(value.value().to_vec()).unwrap();
+            if cli_crypto
+                .decrypt_str(&encrypted)
+                .map(|p| p == key)
+                .unwrap_or(false)
+            {
+                found = true;
+            }
+        }
+        assert!(
+            found,
+            "key persisted in the data dir must decrypt under that dir's encryption_key"
+        );
+    }
+
+    /// Regression: one undecryptable row used to abort the WHOLE table load
+    /// (`?` on decrypt), wiping every usable key from memory on boot. It must
+    /// be skipped instead — and the boot-time save then drops the dead row.
+    #[tokio::test]
+    async fn test_load_skips_undecryptable_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_str = dir.path().to_string_lossy().to_string();
+
+        let state = AuthState::new_with_data_dir(&dir_str);
+        let (key, _) = state
+            .create_key("survivor".to_string(), vec!["*".to_string()])
+            .await;
+        drop(state);
+
+        // Poison the table with an entry that cannot decrypt (simulates an
+        // encryption key rotated out from under the store).
+        {
+            let db = Database::open(dir.path().join("api_keys.redb")).unwrap();
+            let write_txn = db.begin_write().unwrap();
+            {
+                let mut table = write_txn.open_table(API_KEYS_TABLE).unwrap();
+                table
+                    .insert("deadbeef-undecryptable", &b"garbage-ciphertext"[..])
+                    .unwrap();
+            }
+            write_txn.commit().unwrap();
+        }
+
+        let reloaded = AuthState::new_with_data_dir(&dir_str);
+        assert!(
+            reloaded.validate_key(&key),
+            "good key must survive a poisoned row in the same table"
+        );
+
+        // save_to_db at construction clears rows not in memory → self-heal.
+        let db = Database::open(dir.path().join("api_keys.redb")).unwrap();
+        let read_txn = db.begin_read().unwrap();
+        let table = read_txn.open_table(API_KEYS_TABLE).unwrap();
+        assert!(
+            table.get("deadbeef-undecryptable").unwrap().is_none(),
+            "boot-time save must clear the skipped row"
+        );
     }
 }
