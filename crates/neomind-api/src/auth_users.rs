@@ -335,15 +335,28 @@ impl AuthUserState {
             return Self::new_with_memory_store();
         }
 
-        let data_dir = neomind_core::paths::data_dir()
-            .to_string_lossy()
-            .to_string();
-        let db_path: &'static str = Box::leak(format!("{}/users.redb", data_dir).into_boxed_str());
+        // [path-pairing] Resolve users.redb through store_path() like every
+        // other store (api_keys.redb in auth.rs already does): the format!
+        // here bypassed the legacy cwd-relative fallback, so a legacy
+        // deployment under NEOMIND_DATA_DIR booted with an EMPTY canonical
+        // users file while api_keys still resolved the legacy one — setup
+        // wizard reappears / lockout. Same class as the crypto-dir fix.
+        let db_path: &'static str = Box::leak(
+            neomind_core::paths::store_path("users.redb")
+                .to_string_lossy()
+                .into_owned()
+                .into_boxed_str(),
+        );
         let jwt_secret = std::env::var("NEOMIND_JWT_SECRET").unwrap_or_else(|_| {
             // No env var: load or create a persisted secret so JWTs survive
             // restarts. (Previously generated a new random secret every restart
             // → every user logged out on every server restart.)
-            let secret_path = format!("{}/.jwt_secret", data_dir);
+            // Same path-pairing: the secret must live beside the SAME users
+            // store we opened above, or a legacy-layout restart silently
+            // regenerates it and invalidates every session.
+            let secret_path = neomind_core::paths::store_path(".jwt_secret")
+                .to_string_lossy()
+                .into_owned();
             if let Ok(persisted) = std::fs::read_to_string(&secret_path) {
                 let trimmed = persisted.trim();
                 if !trimmed.is_empty() {
@@ -549,7 +562,13 @@ impl AuthUserState {
                             let _ = t.remove(k.as_str());
                         }
                     }
-                    let _ = w.commit();
+                    if let Err(e) = w.commit() {
+                        tracing::warn!(
+                            category = "auth",
+                            error = %e,
+                            "Expired-session cleanup commit failed — stale rows persist"
+                        );
+                    }
                 }
             }
         }
@@ -585,7 +604,16 @@ impl AuthUserState {
                 inserted = t.insert(key, bytes.as_slice()).is_ok();
             }
             if inserted {
-                let _ = w.commit();
+                if let Err(e) = w.commit() {
+                    // Best-effort by design (session dies on restart), but it
+                    // must be VISIBLE — a persistently failing sessions DB
+                    // logged every user out on every restart with no trace.
+                    tracing::warn!(
+                        category = "auth",
+                        error = %e,
+                        "Session persist commit failed — this login will not survive a restart"
+                    );
+                }
             }
         }
     }
@@ -713,13 +741,28 @@ impl AuthUserState {
             return;
         }
         let Ok(db) = Database::open(path) else {
+            tracing::warn!(
+                category = "auth",
+                path,
+                "Logout could not open the sessions DB — the token stays valid \
+                 after a restart until it expires"
+            );
             return;
         };
         if let Ok(w) = db.begin_write() {
             if let Ok(mut t) = w.open_table(SESSIONS_TABLE) {
                 let _ = t.remove(key);
             }
-            let _ = w.commit();
+            if let Err(e) = w.commit() {
+                // The in-memory map is already cleared, so this session works
+                // until restart — but the persisted row survives, and the
+                // "logged out" token RESURRECTS after one. Say so.
+                tracing::warn!(
+                    category = "auth",
+                    error = %e,
+                    "Logout persist failed — this token will resurrect after a restart"
+                );
+            }
         }
     }
 

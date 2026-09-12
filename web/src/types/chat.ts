@@ -155,6 +155,9 @@ export type ServerMessage =
       systemPromptTokens?: number
       toolTokens?: number
     } }
+  // Cancel acknowledged (server-side reply to __CANCEL__); no trailing
+  // 'end' is guaranteed on this path, so stream state must reset HERE.
+  | { type: 'cancelled'; message?: string; sessionId?: string }
   // Intermediate end for multi-round tool calling (indicates more content coming)
   | { type: 'intermediate_end'; sessionId: string }
   // Non-streaming response (fallback)

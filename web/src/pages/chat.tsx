@@ -474,6 +474,28 @@ export function ChatPage() {
           break
         }
 
+        case "cancelled": {
+          // Server acknowledged __CANCEL__. No trailing 'end' is guaranteed
+          // on this path — reset ALL stream state here or the composer
+          // stays locked and the bubble spins forever. (The user-initiated
+          // path already rendered a local notice; this covers cancels from
+          // other tabs/devices on the same session.)
+          setIsStreaming(false)
+          setStreamingContent("")
+          setStreamingThinking("")
+          setStreamingToolCalls([])
+          setRoundContents({})
+          setStreamingRoundThinking({})
+          capturedStreamingRef.current = { content: "", thinking: "", toolCalls: [] }
+          streamStartRef.current = null
+          streamingMessageIdRef.current = null
+          currentRoundRef.current = 1
+          roundContentsAccumulatorRef.current = {}
+          thinkingAccumulatorRef.current = ""
+          roundThinkingAccumulatorRef.current = {}
+          break
+        }
+
         case "IntermediateEnd":
         case "intermediate_end": {
           // Save current round's content to roundContents

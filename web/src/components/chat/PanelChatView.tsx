@@ -429,6 +429,15 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
         case "Warning":
           dispatch({ type: 'WARNING', message: data.message })
           break
+        case "cancelled":
+          // Server acknowledged __CANCEL__; no trailing 'end' is guaranteed
+          // on this path — reset stream state HERE (the local cancel path
+          // already rendered its notice; this covers cross-tab cancels).
+          dispatch({ type: 'END_STREAM' })
+          setCurrentStreamMessageId(null)
+          currentStreamMessageIdRef.current = null
+          isStreamingRef.current = false
+          break
         case "end":
           if (streamingContentAcc || streamingThinkingAcc || streamingToolCallsAcc.length > 0) {
             if (streamingContentAcc) roundContentsAcc[currentRound] = streamingContentAcc

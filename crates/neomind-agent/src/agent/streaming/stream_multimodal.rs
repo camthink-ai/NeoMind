@@ -62,13 +62,15 @@ pub async fn process_multimodal_stream_events_with_safeguards(
     // === CHAT HISTORY DEPTH — same cap as the text-streaming path ===
     crate::agent::apply_chat_history_depth(&mut history_messages);
 
-    // Build context window — measure actual prompt overhead instead of guessing
+    // Build context window — measure actual prompt overhead instead of guessing.
+    // Same budget helper as the text path: the old inline version re-inflated
+    // the budget with a 20%-of-window floor AFTER subtracting the overhead,
+    // constructing overflowing prompts on 8K-class models (the exact bug
+    // fixed in stream_core — this is its multimodal twin, reached by every
+    // image chat turn).
     let max_context = llm_interface.max_context_length().await;
     let prompt_overhead = llm_interface.estimate_prompt_overhead_tokens().await;
-    let effective_max = max_context
-        .saturating_sub(prompt_overhead)
-        .saturating_sub(1024)
-        .max((max_context * 20) / 100);
+    let effective_max = super::stream_core::effective_history_budget(max_context, prompt_overhead);
 
     let history_for_llm: Vec<neomind_core::Message> = build_context_window_with_summary(
         &history_messages,
