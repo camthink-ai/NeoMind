@@ -122,7 +122,13 @@ dirs = "5"
 # Line tables only: zero runtime cost, restores stack traces/symbols in
 # perf/sample profiling — production was unprofilable without this
 # (fully-stripped binaries turned every profile into `???`). strip
-# downgraded none<-`true` accordingly; expect a modest size increase.
+# downgraded none<-`true` accordingly.
+# SIZE WARNING: on this workspace that DWARF is ~200 MB per Linux binary
+# (v0.9.23 server tarballs ballooned 30→91 MB), NOT modest. CI therefore
+# splits it out at packaging time (build.yml: objcopy --only-keep-debug +
+# --strip-debug into a separate *-debug-symbols.tar.gz; .symtab is kept so
+# panic backtraces still name functions). Local `cargo build --release`
+# binaries stay fat on purpose — that's the profileable dev artifact.
 debug = "line-tables-only"
 lto = "thin"
 codegen-units = 1

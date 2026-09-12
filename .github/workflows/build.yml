@@ -409,16 +409,50 @@ jobs:
           # Verify binaries exist
           ls -la target/${{ matrix.target }}/release/neomind target/${{ matrix.target }}/release/neomind-extension-runner
 
+      # Ship small binaries + an optional debug-symbol sidecar.
+      # [profile.release] keeps line-tables DWARF so on-device perf profiles
+      # symbolize (see Cargo.toml) — on this workspace that DWARF is ~200 MB
+      # per Linux binary (v0.9.23 tarballs ballooned 30→91 MB from it). Split
+      # it out at packaging time instead of making every edge device download
+      # it: --strip-debug removes the DWARF but keeps .symtab so panic
+      # backtraces still show function names, and .gnu_debuglink lets
+      # perf/gdb re-attach the symbols when the extracted .debug file sits
+      # next to the binary (or under /usr/lib/debug).
+      # Binaries are staged into release-stage/ BEFORE stripping — mutating
+      # target/ in place would poison the actions/cache above: a restored
+      # cache would hold stripped binaries, cargo would skip the rebuild,
+      # and later runs would silently produce empty sidecars.
+      # macOS needs no split: rustc leaves DWARF in the .o files there, so
+      # the linked binary only grew its symtab (~3 MB) — acceptable.
       - name: Create release archive
+        shell: bash
         run: |
-          cd target/${{ matrix.target }}/release
-          tar czf ../../../neomind-server-${{ matrix.os }}-${{ matrix.arch }}.tar.gz neomind neomind-extension-runner
+          set -e
+          STAGE=release-stage
+          mkdir -p "$STAGE"
+          cp target/${{ matrix.target }}/release/neomind \
+             target/${{ matrix.target }}/release/neomind-extension-runner "$STAGE/"
+          cd "$STAGE"
+
+          if [ "${{ matrix.os }}" = "linux" ]; then
+            for bin in neomind neomind-extension-runner; do
+              objcopy --only-keep-debug "$bin" "$bin.debug"
+              objcopy --strip-debug "$bin"
+              objcopy --add-gnu-debuglink="$bin.debug" "$bin"
+            done
+            tar czf "../neomind-server-${{ matrix.os }}-${{ matrix.arch }}-debug-symbols.tar.gz" \
+              neomind.debug neomind-extension-runner.debug
+          fi
+
+          tar czf "../neomind-server-${{ matrix.os }}-${{ matrix.arch }}.tar.gz" neomind neomind-extension-runner
 
       - name: Upload server artifact
         uses: actions/upload-artifact@v4
         with:
           name: neomind-server-${{ matrix.os }}-${{ matrix.arch }}
-          path: neomind-server-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
+          path: |
+            neomind-server-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
+            neomind-server-${{ matrix.os }}-${{ matrix.arch }}-debug-symbols.tar.gz
           retention-days: 30
 
   # ========== Release job ==========
@@ -566,6 +600,9 @@ jobs:
           1. **Backend Server**: Download `neomind-server-{os}-{arch}.tar.gz`
              - Extract and run: `./neomind serve`
              - Default port: 9375
+             - Optional `*-debug-symbols.tar.gz` (Linux): DWARF sidecars for perf
+               profiling / core-dump analysis. Not needed for normal operation;
+               extract next to the binaries to symbolize on-device.
 
           2. **Frontend Static Files**: Download `neomind-web.tar.gz`
 
