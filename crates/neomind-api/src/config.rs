@@ -456,7 +456,29 @@ pub fn load_embedded_broker_config() -> Option<EmbeddedBrokerConfig> {
 /// On first call, if no config exists in redb, the resolved config (from
 /// config.toml or defaults) is persisted to redb so that all subsequent
 /// reads — including the dynamic auth handler — return consistent values.
+///
+/// Session override: `NEOMIND_MQTT_BIND` (set by the desktop app's
+/// LAN-access toggle) overrides the listen address AFTER resolution and is
+/// deliberately NOT persisted — the env stays authoritative for the
+/// process, so the desktop can flip the binding per launch without
+/// fighting a value the server wrote to its own database. The standalone
+/// server never sets this var and is unaffected.
 pub fn get_embedded_broker_config() -> EmbeddedBrokerConfig {
+    let mut config = resolve_embedded_broker_config();
+    if let Ok(bind) = std::env::var("NEOMIND_MQTT_BIND") {
+        if !bind.is_empty() {
+            info!(
+                category = "mqtt",
+                bind = %bind,
+                "NEOMIND_MQTT_BIND override applied to broker listen address"
+            );
+            config.listen = bind;
+        }
+    }
+    config
+}
+
+fn resolve_embedded_broker_config() -> EmbeddedBrokerConfig {
     // Priority 1: redb database (set via API)
     if let Ok(store) = open_settings_store() {
         match store.load_embedded_broker_config() {

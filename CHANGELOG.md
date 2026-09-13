@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Desktop LAN access: loopback by default, one-toggle opt-in — upgrading installs keep working
+- The desktop app's embedded server now binds **127.0.0.1 by default on fresh installs** (a laptop roams onto untrusted networks and the pre-first-run setup endpoints are unauthenticated); the embedded MQTT broker follows the same binding via a new session-level `NEOMIND_MQTT_BIND` override (never persisted into the server's own settings — the desktop stays authoritative per launch). **Server deployments (`neomind serve` / install.sh) are completely unaffected.**
+- **Upgrade compatibility (zero breakage):** an install that has run before is detected (`users.redb` present) and keeps LAN ON as a compatibility default — devices keep connecting with no action; a one-time notice in Settings explains this and offers to turn it off. Fresh installs get the safe default with the toggle one click away.
+- **Where to toggle it:** Settings → Preferences (desktop) and the System page (mobile/Tauri) — a "允许局域网设备连接" section with current state, a one-time compat notice, a restart-required banner with a Restart-now button (binding changes apply on restart).
+
 ### Review wave 4 — whole-project FE/BE sweep, first fix batch
 - **Offline dashboard edits survive reload (P0):** the hybrid store's reload merge never compared `updatedAt`, so a stale server version overwrote newer local edits made while the backend was down — "local-first" was only "local-until-reload". The merge is newest-write-wins (recovered versions re-sync in the background to heal the server), and `load()` now RETURNS the merged list instead of the raw server list (local-only dashboards no longer wait for a cold start to appear).
 - **Cross-tab coordination (P0):** localStorage `storage` events now refresh the other tabs' local↔server id mapping (the duplicate-server-create path) and trigger a store refetch (skipped while that tab holds unsynced edits) instead of the second tab clobbering the first's dashboards on its next save.

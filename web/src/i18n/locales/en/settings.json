@@ -376,5 +376,13 @@
   "chatHistoryDepth": "Chat History Depth",
   "chatHistoryDepthDesc": "Recent conversation turns sent to the model in chat (scheduled agents use their own setting)",
   "chatTurnTimeout": "Chat Turn Time Budget",
-  "chatTurnTimeoutDesc": "Total wall-clock budget for one chat turn's multi-step tool loop; exceeding it forces a final summary (default 30 min; raise it for long tasks)"
+  "chatTurnTimeoutDesc": "Total wall-clock budget for one chat turn's multi-step tool loop; exceeding it forces a final summary (default 30 min; raise it for long tasks)",
+  "lan": {
+    "title": "Allow LAN devices to connect",
+    "description": "When on, devices on the same network can reach this machine by its IP (MQTT device ingest and web access). Off by default — loopback only — to stay safe on public networks.",
+    "restartRequired": "Takes effect after the app restarts",
+    "restartNow": "Restart now",
+    "compatNotice": "LAN access was kept ON for compatibility (your devices connected to this machine before the update). Turn it off here if you don't need it.",
+    "dismiss": "Got it"
+  }
 }

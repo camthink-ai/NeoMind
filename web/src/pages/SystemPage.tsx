@@ -38,6 +38,7 @@ import { ThemeToggle } from "@/components/layout/ThemeToggle"
 import { SystemHealthButton } from "@/components/layout/SystemHealthButton"
 import { InstanceManagerDialog } from "@/components/instances/InstanceManagerDialog"
 import { OnboardingDialog } from "@/components/onboarding/OnboardingDialog"
+import { LanAccessSection } from "@/components/settings/LanAccessSection"
 import { useOnboarding } from "@/hooks/useOnboarding"
 import { useBrand } from "@/hooks/useBrand"
 import { MobilePageHeader } from "@/components/layout/MobilePageHeader"
@@ -311,6 +312,9 @@ export default function SystemPage() {
           </div>
         ))}
       </div>
+
+      {/* Desktop LAN access (renders nothing in web builds) */}
+      <LanAccessSection compact />
 
       {/* Section 3 — About */}
       <SectionLabel>{t("system.sectionAbout")}</SectionLabel>

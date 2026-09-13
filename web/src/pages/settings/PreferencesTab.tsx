@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react"
 import { useTranslation } from "react-i18next"
+import { LanAccessSection } from "@/components/settings/LanAccessSection"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { logError } from "@/lib/errors"
 import { SettingsRow } from "./SettingsRow"
@@ -148,6 +149,9 @@ export function PreferencesTab() {
 
   return (
     <div className="space-y-8">
+      {/* Desktop-only LAN access control (renders nothing in web builds) */}
+      <LanAccessSection />
+
       {/* Actions */}
       {hasChanges && (
         <div className="flex items-center justify-between p-4 bg-muted-50 rounded-lg">
