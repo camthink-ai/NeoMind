@@ -68,6 +68,53 @@ pub async fn wait_healthy_loop(port: u16, timeout: Duration) -> bool {
     false
 }
 
+/// Like [`wait_healthy_loop`], but ALSO returns early (false) when OUR child
+/// exits before the port answers — the classic bind-failure case: a foreign
+/// server already holds the port, the health probe succeeds against IT while
+/// our llama-server died silently. Without the child check, `wait_healthy`
+/// reported success against a server that was never ours (the port
+/// misattribution the callers then guard with is_alive — a guard with a
+/// startup race: a slow-starting child hasn't attempted the bind yet, so
+/// try_wait() still says "running" and the misattribution slips through).
+async fn wait_healthy_loop_checking_child(
+    port: u16,
+    timeout: Duration,
+    child: &mut tokio::process::Child,
+) -> bool {
+    let deadline = tokio::time::Instant::now() + timeout;
+    while tokio::time::Instant::now() < deadline {
+        // Child died before the port answered → bind failure (or crash):
+        // fail immediately, never "succeed" against a foreign listener.
+        if let Ok(Some(_)) = child.try_wait() {
+            return false;
+        }
+        if health_check(port).await {
+            // Settle window: a healthy answer may come from a FOREIGN
+            // listener while our child is still starting and about to die
+            // on bind (python3-style startup can take hundreds of ms). Stay
+            // in the window long enough that a bind failure would surface
+            // (~500 ms), re-checking both child liveness and the port.
+            let settle = tokio::time::Instant::now() + Duration::from_millis(500);
+            let mut died = false;
+            while tokio::time::Instant::now() < settle {
+                if let Ok(Some(_)) = child.try_wait() {
+                    died = true;
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            if died {
+                return false;
+            }
+            // Our child survived the settle window with the port healthy —
+            // accept. (A legit llama-server never exits this fast.)
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    false
+}
+
 impl LlamaServerProcess {
     pub fn spawn(cfg: &LlamaServerConfig) -> anyhow::Result<Self> {
         let mut cmd = tokio::process::Command::new(&cfg.binary);
@@ -122,7 +169,11 @@ impl LlamaServerProcess {
     }
 
     pub async fn wait_healthy(&mut self, timeout: Duration) -> anyhow::Result<()> {
-        if wait_healthy_loop(self.port, timeout).await {
+        let mut child = match self.child.try_lock() {
+            Ok(c) => c,
+            Err(_) => anyhow::bail!("llama-server handle is being stopped concurrently"),
+        };
+        if wait_healthy_loop_checking_child(self.port, timeout, &mut *child).await {
             Ok(())
         } else {
             anyhow::bail!(

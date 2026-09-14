@@ -37,8 +37,13 @@ impl Fixture {
         // start_kill — a plain process works).
         let script = format!(
             r#"#!/bin/sh
+_script_dir="$(cd "$(dirname "$0")" && pwd)"
+export _script_dir
+echo "spawned: FX=$FX_FAST_FAIL dir=$_script_dir args=$*" >> /tmp/fake-spawns.log
 exec python3 -c '
-import http.server, socketserver, json
+import http.server, socketserver, json, sys
+import os.path as os_path
+_script_dir = globals().get("_script_dir", "")
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
@@ -53,7 +58,15 @@ class H(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
     def log_message(self, *a): pass
-socketserver.TCPServer.allow_reuse_address = True
+# NOTE: deliberately NO allow_reuse_address — on macOS it lets a second
+# bind to the same port SUCCEED silently (SO_REUSEADDR semantics), which
+# would defeat the port-squat test where the squatter must WIN the bind.
+# FAST-FAIL gate: if a marker file sits next to this script, exit(1)
+# immediately WITHOUT serving — a deterministic bind-failure simulation so
+# the port-squat test's OUR-spawn dies in milliseconds instead of racing
+# python3 startup against the health probe.
+if os_path.exists(os_path.join(_script_dir, "FAST_FAIL")):
+    sys.exit(1)
 with socketserver.TCPServer(("127.0.0.1", {port}), H) as httpd:
     httpd.serve_forever()
 '
@@ -111,8 +124,60 @@ with socketserver.TCPServer(("127.0.0.1", {port}), H) as httpd:
     }
 }
 
+/// Poll until a listener answers /health, or give up.
+///
+/// Fixed sleeps made the port-squat test racy: under full-workspace parallel
+/// load python3 can take longer than the sleep to bind, bootstrap then won
+/// the race (our fake binds successfully → ServerReady instead of the
+/// expected Failed) and the suite failed intermittently — observed in
+/// `cargo test --workspace`, green when the suite ran alone.
+async fn wait_port_ready(port: u16, timeout: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if neomind_api::builtin_llm::server::health_check(port).await {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    false
+}
+
 /// Env is process-global: serialize every test that touches PATH.
+/// THIS LOCK SERIALIZES THE WHOLE SUITE — all three tests mutate global
+/// process state (PATH, env vars, spawn children), and cargo runs test
+/// binaries' tests on separate threads. Without it, A's PATH/FX changes
+/// leak into B's spawn and C's assertions.
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// The fake llama-server is a `#!/bin/sh` wrapper around `python3 -c`, so
+/// these tests need a POSIX shell + python3 (both present on CI runners and
+/// any dev mac/linux box). Without them the suite would spend the 60s health
+/// timeout and then fail with a confusing "server unhealthy" — skip loudly
+/// instead. (Windows has no /bin/sh at all.)
+fn fake_server_available() -> bool {
+    if cfg!(windows) {
+        return false;
+    }
+    std::process::Command::new("python3")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Returns false (and prints a skip notice) when the harness can't run.
+macro_rules! require_fake_server {
+    () => {
+        if !fake_server_available() {
+            eprintln!(
+                "SKIP: builtin_llm_bootstrap needs /bin/sh + python3 (the fake llama-server)"
+            );
+            return;
+        }
+    };
+}
 
 fn pick_free_port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0")
@@ -129,6 +194,7 @@ fn pick_free_port() -> u16 {
 #[tokio::test]
 async fn bootstrap_full_chain_spawns_registers_activates() {
     let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    require_fake_server!();
     let port = pick_free_port();
     let model_path = "/tmp/whatever/minicpm5-2b-q4_k_m.gguf";
     let fx = Fixture::new(port, model_path);
@@ -174,19 +240,24 @@ async fn bootstrap_full_chain_spawns_registers_activates() {
 
     // kill_on_drop chain: dropping the registry handles must not kill the
     // child while THIS process lives — verify the server still answers.
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     assert!(
         neomind_api::builtin_llm::server::health_check(port).await,
         "spawned fake server must stay alive after bootstrap returns"
     );
 
-    // Graceful stop: the global registry must reach THIS child.
+    // Graceful stop: the global registry must reach THIS child. Poll for the
+    // death instead of sleeping (bind teardown latency varies under load).
     neomind_api::builtin_llm::server::stop_all_llama_servers();
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    assert!(
-        !neomind_api::builtin_llm::server::health_check(port).await,
-        "stop_all must kill the child spawned in this test"
-    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut died = false;
+    while std::time::Instant::now() < deadline {
+        if !neomind_api::builtin_llm::server::health_check(port).await {
+            died = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(died, "stop_all must kill the child spawned in this test");
 }
 
 /// A foreign server on our port (spawned OUTSIDE the registry) with the
@@ -194,6 +265,7 @@ async fn bootstrap_full_chain_spawns_registers_activates() {
 #[tokio::test]
 async fn port_squatted_by_foreign_server_is_rejected() {
     let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    require_fake_server!();
     let port = pick_free_port();
     // Foreign server: binds the port BEFORE bootstrap; our fake binary would
     // also try to bind it and die. Point /props at an outside path so the
@@ -211,18 +283,19 @@ async fn port_squatted_by_foreign_server_is_rejected() {
 
     // Start the foreign server manually (same fake, port pre-bound).
     let foreign = Fixture::new(port, foreign_model.to_str().unwrap());
-    let _ = foreign; // its binary is identical; start it via the script path:
     let script = foreign.bin_dir.path().join("neomind-llama-server");
     let mut child = std::process::Command::new(&script)
         .spawn()
         .expect("foreign server spawn");
-    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    assert!(
+        wait_port_ready(port, std::time::Duration::from_secs(20)).await,
+        "foreign server never became ready on {port}"
+    );
 
     let saved_path = std::env::var("PATH").unwrap_or_default();
-    std::env::set_var(
-        "PATH",
-        format!("{}:{}", fx.bin_dir.path().display(), saved_path),
-    );
+    // Deterministic bind-failure: drop the marker next to fx's fake binary;
+    // the gate in the fake template exits(1) on startup.
+    std::fs::write(fx.bin_dir.path().join("FAST_FAIL"), "1").unwrap();
     let outcome = bootstrap(&fx.data_dir.path().to_path_buf(), &fx.cfg(), &fx.manager).await;
     std::env::set_var("PATH", &saved_path);
 
@@ -245,6 +318,7 @@ async fn port_squatted_by_foreign_server_is_rejected() {
 #[tokio::test]
 async fn already_running_refresh_honors_ctx_override() {
     let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    require_fake_server!();
     let port = pick_free_port();
     let model_path = "/tmp/x/minicpm5-2b-q4_k_m.gguf";
     let fx = Fixture::new(port, model_path);
@@ -270,7 +344,10 @@ async fn already_running_refresh_honors_ctx_override() {
     let mut child = std::process::Command::new(fx.bin_dir.path().join("neomind-llama-server"))
         .spawn()
         .unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    assert!(
+        wait_port_ready(port, std::time::Duration::from_secs(20)).await,
+        "fake server never became ready on {port}"
+    );
 
     let mut cfg = fx.cfg();
     cfg.ctx = Some(65536); // explicit override beats the 32K registry default
