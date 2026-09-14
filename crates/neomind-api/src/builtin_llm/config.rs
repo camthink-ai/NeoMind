@@ -20,7 +20,14 @@ impl Default for BuiltinConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            port: 8081,
+            // [port choice] llama-server's OWN default is 8080 and 8081 is a
+            // hot dev port — spawning there collides with any llama.cpp /
+            // web-dev tooling the user already runs, and our port-conflict
+            // guard then kill_process_on_port()s an innocent process.
+            // 29375: deliberately obscure ("2" + the platform's 9375),
+            // clears every AI-tool default (llama.cpp 8080, Ollama 11434,
+            // LM Studio 1234, gradio 7860) and no known registered service.
+            port: 29375,
             ctx: None,
             ngl: None,
             model_path: None,
@@ -95,7 +102,7 @@ mod tests {
         }
         let c = BuiltinConfig::from_env();
         assert!(c.enabled);
-        assert_eq!(c.port, 8081);
+        assert_eq!(c.port, 29375);
         assert_eq!(c.ctx, None);
         assert!(c.ngl.is_none());
         assert!(c.model_path.is_none());

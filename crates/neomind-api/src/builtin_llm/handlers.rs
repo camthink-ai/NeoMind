@@ -1271,7 +1271,7 @@ async fn spawn_builtin_server(
 /// `lsof`, which is present on macOS and most Linux distros; if unavailable
 /// the subsequent spawn simply reports "address in use".
 #[cfg(unix)]
-fn kill_process_on_port(port: u16) {
+pub(crate) fn kill_process_on_port(port: u16) {
     use std::process::Command;
     if let Ok(out) = Command::new("lsof")
         .arg("-ti")
@@ -1291,7 +1291,7 @@ fn kill_process_on_port(port: u16) {
 }
 
 #[cfg(not(unix))]
-fn kill_process_on_port(_port: u16) {}
+pub(crate) fn kill_process_on_port(_port: u16) {}
 
 // ---------------------------------------------------------------------------
 // Delete

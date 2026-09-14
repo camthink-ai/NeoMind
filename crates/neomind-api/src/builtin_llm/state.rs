@@ -36,6 +36,60 @@ pub enum BootstrapOutcome {
     Failed(String),
 }
 
+/// Decide whether a llama-server /props `model_path` belongs to this
+/// install (file under our data dir). Canonicalized so symlinks (the
+/// persistent smoke env keeps /tmp alive via a symlink) compare correctly.
+fn props_model_is_ours(model_path: Option<&str>, data_dir: &Path) -> bool {
+    let Some(mp) = model_path else { return false };
+    let mp = std::path::Path::new(mp);
+    let mp = mp.canonicalize().unwrap_or_else(|_| mp.to_path_buf());
+    let dd = data_dir
+        .canonicalize()
+        .unwrap_or_else(|_| data_dir.to_path_buf());
+    mp.starts_with(dd)
+}
+
+/// Best-effort reclaim of a llama-server left on the OLD default port by a
+/// previous version. Kills ONLY if the listener's reported model path lives
+/// under our data dir (an unrelated service on the port is left alone).
+async fn reclaim_legacy_llama_port(port: u16, data_dir: &Path) {
+    if !super::server::health_check(port).await {
+        return; // nothing there — the common case
+    }
+    let body = match reqwest::Client::new()
+        .get(format!("http://127.0.0.1:{}/props", port))
+        .timeout(Duration::from_secs(2))
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(_) => {
+            tracing::debug!(
+                port,
+                "legacy-port listener has no /props — not ours, leaving it"
+            );
+            return;
+        }
+    };
+    let v: serde_json::Value = match body.json().await {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    let model_path = v.get("model_path").and_then(|m| m.as_str());
+    if props_model_is_ours(model_path, data_dir) {
+        tracing::info!(
+            port,
+            "Reclaiming legacy llama-server on the old default port"
+        );
+        super::handlers::kill_process_on_port(port);
+    } else {
+        tracing::debug!(
+            port,
+            "legacy-port listener serves a foreign model — untouched"
+        );
+    }
+}
+
 fn models_dir(data_dir: &Path) -> std::path::PathBuf {
     data_dir.join("models")
 }
@@ -94,6 +148,16 @@ pub async fn bootstrap(
     else {
         return BootstrapOutcome::ModelMissing;
     };
+
+    // [port migration] Upgrades from the old default (8081) can leave an
+    // orphaned llama-server there — our new spawn goes to the new port, the
+    // orphan keeps ~2 GB of model RAM hostage until reboot. Reclaim it, but
+    // ONLY when we can prove the listener is ours: 8081 is a hot dev port,
+    // so /props must report a model file that lives under OUR data dir
+    // before kill_process_on_port is allowed to touch it.
+    if cfg.port != 8081 {
+        reclaim_legacy_llama_port(8081, data_dir).await;
+    }
 
     let binary = match ensure_llama_server(data_dir).await {
         Ok(b) => b,
@@ -264,5 +328,39 @@ mod tests {
             "healthy server with instance record must short-circuit (got {:?})",
             outcome
         );
+    }
+}
+
+#[cfg(test)]
+mod legacy_port_tests {
+    use super::*;
+
+    #[test]
+    fn props_model_is_ours_bounds() {
+        let dir = tempfile::tempdir().unwrap();
+        let dd = dir.path().to_path_buf();
+        // Inside our data dir → ours. The file must EXIST for canonicalize
+        // to resolve macOS's /var → /private/var symlink (a /props
+        // model_path always points at a loaded, existing file).
+        let model = dd.join("models/minicpm5/file.gguf");
+        std::fs::create_dir_all(model.parent().unwrap()).unwrap();
+        std::fs::write(&model, b"gguf").unwrap();
+        assert!(props_model_is_ours(Some(model.to_str().unwrap()), &dd));
+        // Outside → foreign (the common-port innocent-process case).
+        assert!(!props_model_is_ours(Some("/opt/other/model.gguf"), &dd));
+        // Missing field / wrong type → never kill.
+        assert!(!props_model_is_ours(None, &dd));
+        assert!(!props_model_is_ours(Some(""), &dd));
+    }
+
+    /// Nothing listening on the legacy port → silent no-op (the common case
+    /// on fresh installs and already-migrated machines).
+    #[tokio::test]
+    async fn reclaim_is_noop_when_port_free() {
+        // Bind then drop to find a definitely-free port... instead use a
+        // port in the dynamic range nothing sane occupies; health_check
+        // failing is the contract being exercised.
+        let dir = tempfile::tempdir().unwrap();
+        reclaim_legacy_llama_port(59999, dir.path()).await; // must not panic
     }
 }
