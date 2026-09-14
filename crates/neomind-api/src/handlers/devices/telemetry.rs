@@ -454,17 +454,27 @@ pub async fn get_device_telemetry_handler(
                     // duplicates, inflated counts). Start the scan at ct but filter to
                     // strictly-older points afterwards (the filter also keeps this correct
                     // if fetch_limit ever truncates the start).
-                    let (effective_start, effective_offset) = if let Some(ct) = cursor_ts {
-                        (ct, 0) // Start from cursor, no offset skip needed
-                    } else if offset > 100 {
-                        // PERFORMANCE: For deep pagination (offset > 100), estimate start time
-                        // to avoid loading huge amounts of data. Assume 1 point per second as fallback.
-                        let estimated_skip_seconds = offset as i64;
-                        let estimated_start = end.saturating_sub(estimated_skip_seconds);
-                        (estimated_start, 0)
-                    } else {
-                        (start, offset) // Traditional offset pagination for small offsets
-                    };
+                    // [cursor bound] The cursor is the UPPER bound of the next
+                    // page, not its start: storage scans newest-first within
+                    // [start, end], so passing ct as `start` while `end` stayed
+                    // at now returned only points >= ct — every one of which the
+                    // strictly-older filter then dropped, yielding an EMPTY page
+                    // and a premature "end of data". (The pre-fix code had the
+                    // mirror-image bug: an inclusive boundary that looped.) With
+                    // the cursor as `end`, the reverse scan hands back the newest
+                    // points older than ct; the < ct filter trims the boundary row.
+                    let (effective_start, effective_end, effective_offset) =
+                        if let Some(ct) = cursor_ts {
+                            (start, ct, 0)
+                        } else if offset > 100 {
+                            // PERFORMANCE: For deep pagination (offset > 100), estimate start time
+                            // to avoid loading huge amounts of data. Assume 1 point per second as fallback.
+                            let estimated_skip_seconds = offset as i64;
+                            let estimated_start = end.saturating_sub(estimated_skip_seconds);
+                            (estimated_start, end, 0)
+                        } else {
+                            (start, end, offset) // Traditional offset pagination for small offsets
+                        };
 
                     // Fast path: server-side bucketed downsampling for chart rendering.
                     // When no pagination (cursor/offset) and bucketed=true, use a single
@@ -516,7 +526,7 @@ pub async fn get_device_telemetry_handler(
                             &device_id_for_service,
                             &metric_name,
                             Some(effective_start),
-                            Some(end),
+                            Some(effective_end),
                             Some(fetch_limit),
                         )
                         .await
@@ -558,7 +568,7 @@ pub async fn get_device_telemetry_handler(
                                     &device_source_id,
                                     &metric_name,
                                     effective_start,
-                                    end,
+                                    effective_end,
                                     Some(fetch_limit),
                                     0,
                                 )

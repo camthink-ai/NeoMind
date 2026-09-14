@@ -67,7 +67,7 @@ memory: 0% for ALL models at ALL windows — the ceiling is the platform-side
 extraction/window budget, not model choice. Non-shell tool breadth (file/web/skill/
 memory selection): 33–67% everywhere — a shared weak spot.
 
-Selection: **MiniCPM5-2B 8K** = default (1.5 GB, 3 GB floor, Apache-2.0, robust);
+Selection: **MiniCPM5-2B 32K** = default (1.5 GB, 3 GB floor, Apache-2.0, robust);
 **Qwen3.5-4B 16K** = strongest agent when 4 GB+ RAM and 16K ctx fit; **Ling 8K** =
 fast short-burst MoE (6 GB+); **gemma 32K** = long-session stability; cloud =
 deepseek-v4-flash.
@@ -82,8 +82,11 @@ is the highest-leverage fix.
 
 ```bash
 # Agent — MiniCPM5-2B (text)
+# Port 29375 is what the platform's builtin server uses (moved off 8081,
+# which collides with llama.cpp's own 8080-era tooling); a custom backend
+# registered at another port is fine — just keep `endpoint` in sync.
 llama-server -m MiniCPM5-2B-Q4_K_M.gguf \
-  --host 127.0.0.1 --port 8081 -ngl 99 -c 8192 \
+  --host 127.0.0.1 --port 29375 -ngl 99 -c 32768 \
   --jinja --alias MiniCPM5-2B --temp 1.0 --top-p 0.95
 
 # Perception — LFM2.5-VL-3B (vision; needs its mmproj)
@@ -96,11 +99,13 @@ Non-negotiable flags (MiniCPM5):
 
 - **`--jinja`** — MiniCPM5's function calling is template-rendered XML; without
   the Jinja handler the calls never round-trip into OpenAI `tool_calls`.
-- **`-c 8192`** — measured 8K vs 32K A/B (2026-09, corrected harness): overall
-  score is flat (66.2 vs 67.9) but 8K wins tool accuracy 81%→70%, keeps
-  parallel multi-tool calls (100%→33%), runs faster, and only loses memory
-  recall (0% vs 20%) — which the platform-side extractor should restore.
-  Take 8K.
+- **`-c 32768`** — the platform default (2026-09-12). The harness A/B showed
+  a flat overall score across 8K/32K (66.2 vs 67.9) with 8K ahead on tool
+  accuracy and parallel calls, BUT that measured a LIGHT prompt: the real
+  platform prompt (system + tool definitions + memory/skill context) weighs
+  4-6K tokens, which starves an 8K window and triggered constructed overflows
+  (see `stream_core::effective_history_budget`). 32K restores usable history
+  headroom at no measured accuracy cost.
 - **`--temp 1.0 --top-p 0.95`** — model-card recommendation, used server-side
   as default; NeoMind's requests carry their own sampler (temp 0.6) which
   overrides it — both were validated working.
@@ -117,7 +122,8 @@ matter (test aborted — effect below noise for the effort).
 
 1. **Agent backend (active)**: Settings → LLM Backends → add a
    **llama.cpp** backend pointing at the *text* server
-   (`http://<host>:8081`, no `/v1` suffix — the llamacpp client appends its
+   (`http://<host>:8081` for YOUR OWN manual llama.cpp, or `29375` for the
+   platform's builtin server; no `/v1` suffix — the llamacpp client appends its
    own path), then activate it. This is the model that drives chat and
    scheduled agents. (An OpenAI-compatible registration also works, but its
    endpoint must carry `/v1` — that protocol does not auto-append it.)

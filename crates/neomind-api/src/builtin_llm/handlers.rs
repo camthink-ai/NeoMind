@@ -329,7 +329,10 @@ pub fn installed_model_any(mdir: &Path) -> Option<InstalledModel> {
         top_p: None,
         top_k: None,
         default_thinking: false,
-        // Unknown provenance — assume the thinking toggle works.
+        // Genuinely unknown provenance (a GGUF dropped in models/ with no
+        // registry or catalog entry) — assume the thinking toggle works.
+        // The IMPORT path goes through `installed_model_by_id`, which
+        // resolves registry ids and keeps their integral-thinking property.
         thinking_is_integral: false,
         is_custom: true,
         manifest,
@@ -366,8 +369,13 @@ pub fn installed_model_by_id(mdir: &Path, id: &str) -> Option<InstalledModel> {
         top_p,
         top_k,
         default_thinking: false,
-        // Unknown provenance — assume the thinking toggle works.
-        thinking_is_integral: false,
+        // If this id names a registry model (importing an LFM/Ling GGUF
+        // under its real id), keep that model's integral-thinking property —
+        // otherwise the import recreates the "toggle that does nothing"
+        // state the registry field exists to prevent.
+        thinking_is_integral: model_def(id)
+            .map(|d| d.thinking_is_integral)
+            .unwrap_or(false),
         is_custom: true,
         manifest,
     })

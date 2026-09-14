@@ -34,18 +34,34 @@ struct BackpressureDropCounter {
 }
 
 impl BackpressureDropCounter {
-    /// Records a drop; returns true when a warning should be emitted (then
-    /// resets the window).
-    fn log_and_reset(&mut self) -> bool {
+    /// Records one drop; returns `Some(total_dropped_in_window)` when a
+    /// warning should be emitted, then starts a fresh window.
+    ///
+    /// Two bugs in the first version: (a) the window opened on the FIRST
+    /// drop and only logged if a LATER drop arrived ≥60s on — a burst that
+    /// ended inside the minute logged nothing at all, contradicting the
+    /// "dropped with a warn" contract; (b) the count was `take`n and thrown
+    /// away, so the operator could not size the loss. Now the first drop of
+    /// a window is reported immediately and each window reports its total.
+    fn record_drop(&mut self) -> Option<u64> {
         let now = tokio::time::Instant::now();
-        let window_start = *self.window_start.get_or_insert(now);
-        if now.duration_since(window_start).as_secs() >= 60 {
-            self.window_start = Some(now);
-            let dropped = std::mem::take(&mut self.dropped);
-            let _ = dropped;
-            return true;
+        match self.window_start {
+            None => {
+                // First drop — open the window and report it now.
+                self.window_start = Some(now);
+                self.dropped = 1;
+                Some(1)
+            }
+            Some(start) if now.duration_since(start).as_secs() >= 60 => {
+                let total = std::mem::replace(&mut self.dropped, 1);
+                self.window_start = Some(now);
+                Some(total) // total in the window that just closed
+            }
+            Some(_) => {
+                self.dropped += 1;
+                None // inside the window — one report per minute is enough
+            }
         }
-        false
     }
 }
 
@@ -297,14 +313,15 @@ impl PushScheduler {
                                                     });
                                                 }
                                                 Err(_) => {
-                                                    dropped_under_backpressure
-                                                        .dropped += 1;
-                                                    if dropped_under_backpressure
-                                                        .log_and_reset()
+                                                    if let Some(total) =
+                                                        dropped_under_backpressure
+                                                            .record_drop()
                                                     {
                                                         tracing::warn!(
                                                             target_id = %target.id,
-                                                            "Push backpressure: in-flight delivery cap reached — events dropped this window"
+                                                            dropped_in_window = total,
+                                                            in_flight_cap = DATA_PUSH_MAX_INFLIGHT_DELIVERIES,
+                                                            "Push backpressure: in-flight delivery cap reached — events dropped (count covers this window)"
                                                         );
                                                     }
                                                 }

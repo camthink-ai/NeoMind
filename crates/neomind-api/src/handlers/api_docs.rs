@@ -20,7 +20,8 @@ use axum::response::{Html, IntoResponse, Json, Response};
 pub struct RouteDoc {
     pub method: &'static str,
     pub path: &'static str,
-    /// public | jwt | api-key | webhook | ws
+    /// One of: `public`, `jwt-or-api-key` (hybrid middleware), `jwt-only`
+    /// (admin router — API keys are rejected), `webhook`, `ws`.
     pub auth: &'static str,
 }
 

@@ -177,6 +177,11 @@ pub async fn bootstrap(
                 updated.capabilities.supports_streaming = true;
                 updated.capabilities.supports_tools = true;
                 updated.capabilities.supports_thinking = def.default_thinking;
+                // Model property — refreshed alongside the rest: the spawn
+                // path sets it, so a short-circuited restart used to keep
+                // whatever a PREVIOUS build stamped (e.g. Ling imported
+                // before the registry field existed).
+                updated.thinking_is_integral = def.thinking_is_integral;
                 // Record what the server ACTUALLY runs with: an explicit
                 // override (NEOMIND_BUILTIN_LLM_CTX / restart API) beats the
                 // per-model default — stamping the bare default here used to
