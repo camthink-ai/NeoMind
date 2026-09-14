@@ -246,7 +246,7 @@ export const createDeviceSlice: StateCreator<
   addDevice: async (request: AddDeviceRequest) => {
     try {
       const result = await api.addDevice(request)
-      // Backend returns { device_id, added: true } after unwrap
+      // Backend returns { device_id, added: true, updated_existing } after unwrap
       if (result.added || result.device_id) {
         fetchCache.invalidate('devices')
         await get().fetchDevices()

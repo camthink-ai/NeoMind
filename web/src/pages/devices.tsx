@@ -359,6 +359,25 @@ export function DevicesPage() {
 
   // Handlers
   const handleAddDevice = async (request: import('@/types').AddDeviceRequest) => {
+    // [overwrite guard] The backend upserts on POST /devices — an existing
+    // device_id silently replaces the previous device. Confirm before that
+    // happens instead of reporting "added" after the fact.
+    if (request.device_id) {
+      const existing = devices.find((d) => d.device_id === request.device_id)
+      if (existing) {
+        const ok = await confirm({
+          title: t('devices:overwriteTitle', 'Replace existing device?'),
+          description: t(
+            'devices:overwriteConfirm',
+            'A device "{{id}}" ("{{name}}") already exists. Saving replaces its name and configuration.',
+            { id: existing.device_id, name: existing.name }
+          ),
+          confirmText: t('common:confirm'),
+          cancelText: t('common:cancel'),
+        })
+        if (!ok) return false
+      }
+    }
     setAddingDevice(true)
     try {
       return await addDevice(request)

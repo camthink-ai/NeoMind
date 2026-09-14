@@ -547,7 +547,10 @@ export const api = {
       signal,
     }),
   addDevice: (req: AddDeviceRequest) =>
-    fetchAPI<{ device_id: string; added: boolean }>('/devices', {
+    // updated_existing=true means an EXISTING device with this id was
+    // replaced (the backend upserts) — callers can warn before silently
+    // overwriting a device another client created.
+    fetchAPI<{ device_id: string; added: boolean; updated_existing?: boolean }>('/devices', {
       method: 'POST',
       body: JSON.stringify(req),
     }),
@@ -1252,7 +1255,16 @@ export const api = {
         ...(limit && { limit: limit.toString() }),
         ...(offset !== undefined && offset > 0 && { offset: offset.toString() }),
         ...(bucketed && { bucketed: 'true' }),
-      })}`
+      })}`,
+      {
+        // [deleted-device 404] A device removed by another client (CLI,
+        // second session) previously answered 200+empty here; since the
+        // backend's 404 contract change this fires on EVERY poll cycle and
+        // toasts forever. Dashboard code treats errors as empty data already
+        // (useDataSource/fetch.ts catch), so the chart degrades gracefully —
+        // only the global toast needs silencing.
+        skipErrorToast: true,
+      }
     ),
   getDeviceTelemetrySummary: (deviceId: string, hours?: number) =>
     fetchAPI<TelemetrySummaryResponse>(
