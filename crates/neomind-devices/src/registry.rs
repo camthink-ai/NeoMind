@@ -1082,14 +1082,28 @@ impl DeviceRegistry {
     /// Update only the `last_seen` field for a device.
     /// Lightweight alternative to `update_device` — no template validation or type index updates.
     pub async fn update_last_seen(&self, device_id: &str, last_seen: i64) {
-        // Update in-memory
-        if let Some(mut config) = self.devices.get_mut(device_id) {
-            config.last_seen = last_seen;
-        } else {
+        // [ingest hot path] This fires on EVERY DeviceMetric event — one
+        // redb write txn per metric per report (10-metric device at 1 Hz =
+        // 10 txns/s, each a read-modify-write of the whole DeviceConfig).
+        // Debounce the PERSIST side to ≥15s per device (in line with
+        // heartbeat granularity — is_connected_within works from the
+        // in-memory value, which still updates every event, so status
+        // semantics are unchanged; restart survival loses at most ~15s of
+        // last_seen precision, far inside any offline_timeout floor of 30s).
+        let should_persist = {
+            let mut entry = match self.devices.get_mut(device_id) {
+                Some(c) => c,
+                None => return,
+            };
+            let prev = entry.last_seen;
+            entry.last_seen = last_seen;
+            // First sighting (prev == 0), clock regression, or ≥15s advance.
+            prev == 0 || last_seen - prev >= 15
+        };
+
+        if !should_persist {
             return;
         }
-
-        // Persist to storage
         if let Some(store) = &self.storage {
             if let Err(e) = store.update_last_seen(device_id, last_seen) {
                 tracing::warn!("Failed to persist last_seen for {}: {}", device_id, e);

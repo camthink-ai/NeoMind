@@ -35,7 +35,7 @@ static LLAMA_SERVERS: std::sync::Mutex<Vec<LlamaServerProcess>> = std::sync::Mut
 pub fn stop_all_llama_servers() {
     let mut guard = LLAMA_SERVERS.lock().unwrap_or_else(|e| e.into_inner());
     let servers: Vec<LlamaServerProcess> = std::mem::take(&mut *guard);
-    for mut s in servers {
+    for s in servers {
         if let Ok(mut child) = s.child.try_lock() {
             // best-effort: kill_on_drop remains the backstop if locked
             let _ = child.start_kill();
@@ -154,7 +154,7 @@ impl LlamaServerProcess {
         }
     }
 
-    pub async fn stop(mut self) -> anyhow::Result<()> {
+    pub async fn stop(self) -> anyhow::Result<()> {
         if let Ok(mut child) = self.child.try_lock() {
             let _ = child.kill().await;
             let _ = child.wait().await;

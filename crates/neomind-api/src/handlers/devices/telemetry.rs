@@ -331,11 +331,13 @@ pub async fn get_device_telemetry_handler(
             .collect();
 
         let results = futures::future::join_all(aggregate_futures).await;
-        let data: HashMap<String, serde_json::Value> = results
-            .iter()
-            .map(|(k, v, _)| (k.clone(), v.clone()))
-            .collect();
-        let counts: HashMap<String, usize> = results.into_iter().map(|(k, _, c)| (k, c)).collect();
+        // [alloc] counts derived by reference FIRST, then the JSON values
+        // are MOVED into the data map — the old shape deep-cloned every
+        // points array (whole series in compress mode) per request.
+        let counts: HashMap<String, usize> =
+            results.iter().map(|(k, _, c)| (k.clone(), *c)).collect();
+        let data: HashMap<String, serde_json::Value> =
+            results.into_iter().map(|(k, v, _)| (k, v)).collect();
         (data, counts, None)
     } else if compress {
         // AI compression mode: lossless adaptive series (kept/fluctuated)
@@ -391,11 +393,13 @@ pub async fn get_device_telemetry_handler(
             .collect();
 
         let results = futures::future::join_all(compress_futures).await;
-        let data: HashMap<String, serde_json::Value> = results
-            .iter()
-            .map(|(k, v, _)| (k.clone(), v.clone()))
-            .collect();
-        let counts: HashMap<String, usize> = results.into_iter().map(|(k, _, c)| (k, c)).collect();
+        // [alloc] counts derived by reference FIRST, then the JSON values
+        // are MOVED into the data map — the old shape deep-cloned every
+        // points array (whole series in compress mode) per request.
+        let counts: HashMap<String, usize> =
+            results.iter().map(|(k, _, c)| (k.clone(), *c)).collect();
+        let data: HashMap<String, serde_json::Value> =
+            results.into_iter().map(|(k, v, _)| (k, v)).collect();
         (data, counts, None)
     } else {
         // Raw queries - run concurrently with pagination support
@@ -583,14 +587,12 @@ pub async fn get_device_telemetry_handler(
             .collect();
 
         let results = futures::future::join_all(query_futures).await;
-        let data: HashMap<String, serde_json::Value> = results
-            .iter()
-            .map(|(k, v, _, _)| (k.clone(), v.clone()))
-            .collect();
+        // [alloc] same move-not-clone discipline; cursor derived by ref first.
         let counts: HashMap<String, usize> =
             results.iter().map(|(k, _, c, _)| (k.clone(), *c)).collect();
-        // next_cursor from the first metric's oldest point
         let next_cursor: Option<i64> = results.first().and_then(|(_, _, _, nc)| *nc);
+        let data: HashMap<String, serde_json::Value> =
+            results.into_iter().map(|(k, v, _, _)| (k, v)).collect();
         (data, counts, next_cursor)
     };
 
@@ -703,13 +705,15 @@ pub async fn get_device_telemetry_summary_handler(
             .cloned()
             .collect();
 
-        // Debug: log all storage metrics
-        tracing::info!(
+        // [log spam] These dump full metric lists on EVERY summary request
+        // — info-level turned routine polling into log noise; the comment
+        // always said "Debug".
+        tracing::debug!(
             "Device {} storage metrics: {:?}",
             device_id,
             all_storage_metrics
         );
-        tracing::info!(
+        tracing::debug!(
             "Device {} template metrics: {:?}",
             device_id,
             template_metric_names
@@ -817,64 +821,41 @@ pub async fn get_device_telemetry_summary_handler(
     let metric_info: Vec<(String, (String, String, String, bool))> =
         metric_info_map.into_iter().collect();
 
-    let mut summary_data: HashMap<String, serde_json::Value> = HashMap::new();
+    let _summary_data: HashMap<String, serde_json::Value> = HashMap::new();
 
-    for (metric_name, (display_name, unit, data_type, is_virtual)) in metric_info.iter() {
-        // Get aggregated statistics - aggregate() returns AggregatedData directly
-        if let Ok(agg) = state
-            .devices
-            .telemetry
-            .aggregate(&device_source_id, metric_name, start, end)
-            .await
-        {
-            // Get latest value
-            let latest = state
-                .devices
-                .telemetry
-                .latest(&device_source_id, metric_name)
-                .await
-                .ok()
-                .flatten();
-
-            summary_data.insert(
-                metric_name.to_string(),
-                json!({
-                    "display_name": display_name,
-                    "unit": unit,
-                    "data_type": data_type,
-                    "is_virtual": is_virtual,
-                    "current": latest.as_ref().map(|p| metric_value_to_json(&p.value)),
-                    "current_timestamp": latest.map(|p| p.timestamp),
-                    "avg": agg.avg,
-                    "min": agg.min,
-                    "max": agg.max,
-                    "count": agg.count,
-                }),
-            );
-        } else {
-            // Try to get current value from DeviceService
-            if let Ok(current_values) = state.devices.service.get_current_metrics(&device_id).await
-            {
-                if let Some(val) = current_values.get(metric_name) {
-                    summary_data.insert(
-                        metric_name.to_string(),
-                        json!({
-                            "display_name": display_name,
-                            "unit": unit,
-                            "data_type": data_type,
-                            "is_virtual": is_virtual,
-                            "current": metric_value_to_json(val),
-                            "current_timestamp": chrono::Utc::now().timestamp(),
-                            "avg": null,
-                            "min": null,
-                            "max": null,
-                            "count": 0,
-                        }),
-                    );
-                }
+    // [fan-out] Per-metric work runs CONCURRENTLY: the sequential loop did
+    // 2N redb round-trips (aggregate + latest) — N×2×latency on every
+    // summary request. latest() stays per metric (it piggybacks the
+    // aggregate result branch below).
+    let metric_futures: Vec<_> = metric_info
+        .iter()
+        .map(|(metric_name, info)| {
+            let state = state.clone();
+            let device_source_id = device_source_id.clone();
+            let metric_name = metric_name.clone();
+            let info = info.clone();
+            let device_id = device_id.clone();
+            async move {
+                let entry = build_summary_entry(
+                    &state,
+                    &device_source_id,
+                    &device_id,
+                    &metric_name,
+                    &info,
+                    start,
+                    end,
+                )
+                .await;
+                (metric_name, entry)
             }
-        }
-    }
+        })
+        .collect();
+    let summary_data: HashMap<String, serde_json::Value> =
+        futures::future::join_all(metric_futures)
+            .await
+            .into_iter()
+            .filter_map(|(k, v)| v.map(|v| (k, v)))
+            .collect();
 
     ok(json!({
         "device_id": device_id,
@@ -1219,5 +1200,62 @@ mod aggregate_contract_tests {
         agg.last = None;
         assert_eq!(aggregate_value(&agg, Some("avg")), json!(null));
         assert_eq!(aggregate_value(&agg, Some("last")), json!(null));
+    }
+}
+
+/// One summary entry: telemetry aggregate+latest, else DeviceService cache.
+/// Returns None when neither source has data for the metric.
+#[allow(clippy::too_many_arguments)]
+async fn build_summary_entry(
+    state: &ServerState,
+    device_source_id: &str,
+    device_id: &str,
+    metric_name: &str,
+    (display_name, unit, data_type, is_virtual): &(String, String, String, bool),
+    start: i64,
+    end: i64,
+) -> Option<serde_json::Value> {
+    if let Ok(agg) = state
+        .devices
+        .telemetry
+        .aggregate(device_source_id, metric_name, start, end)
+        .await
+    {
+        let latest = state
+            .devices
+            .telemetry
+            .latest(device_source_id, metric_name)
+            .await
+            .ok()
+            .flatten();
+        Some(json!({
+            "display_name": display_name,
+            "unit": unit,
+            "data_type": data_type,
+            "is_virtual": is_virtual,
+            "current": latest.as_ref().map(|p| metric_value_to_json(&p.value)),
+            "current_timestamp": latest.map(|p| p.timestamp),
+            "avg": agg.avg,
+            "min": agg.min,
+            "max": agg.max,
+            "count": agg.count,
+        }))
+    } else if let Ok(current_values) = state.devices.service.get_current_metrics(device_id).await {
+        current_values.get(metric_name).map(|val| {
+            json!({
+                "display_name": display_name,
+                "unit": unit,
+                "data_type": data_type,
+                "is_virtual": is_virtual,
+                "current": metric_value_to_json(val),
+                "current_timestamp": chrono::Utc::now().timestamp(),
+                "avg": null,
+                "min": null,
+                "max": null,
+                "count": 0,
+            })
+        })
+    } else {
+        None
     }
 }

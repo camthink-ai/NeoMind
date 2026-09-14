@@ -22,7 +22,7 @@ static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 /// touch the developer's real `neomind login` credential.
 struct CredDir {
     _guard: tokio::sync::MutexGuard<'static, ()>,
-    dir: tempfile::TempDir,
+    _dir: tempfile::TempDir,
 }
 impl CredDir {
     async fn setup() -> Self {

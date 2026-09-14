@@ -1,7 +1,7 @@
 //! Device metric queries and commands.
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, State},
     Json,
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -10,116 +10,12 @@ use serde_json::json;
 
 use neomind_devices::{DataPoint, MetricValue};
 
-use super::models::{SendCommandRequest, TimeRangeQuery};
+use super::models::SendCommandRequest;
 use crate::handlers::{
     common::{ok, HandlerResult},
     ServerState,
 };
 use crate::models::ErrorResponse;
-
-/// Read a metric from a device.
-/// Uses new DeviceService
-pub async fn read_metric_handler(
-    State(state): State<ServerState>,
-    Path((device_id, metric)): Path<(String, String)>,
-) -> HandlerResult<serde_json::Value> {
-    // Get current metrics for the device (using default 48-hour window)
-    let current_values = state
-        .devices
-        .service
-        .get_current_metrics(&device_id)
-        .await
-        .map_err(|e| ErrorResponse::bad_request(format!("Failed to read metric: {:?}", e)))?;
-
-    let value = current_values.get(&metric).ok_or_else(|| {
-        ErrorResponse::not_found(format!("Metric '{}' not found for device", metric))
-    })?;
-
-    ok(json!({
-        "device_id": device_id,
-        "metric": metric,
-        "value": value_to_json(value),
-        "timestamp": chrono::Utc::now().to_rfc3339(),
-    }))
-}
-
-/// Query historical data for a device metric.
-/// Uses new DeviceService for querying telemetry
-pub async fn query_metric_handler(
-    State(state): State<ServerState>,
-    Path((device_id, metric)): Path<(String, String)>,
-    Query(query): Query<TimeRangeQuery>,
-) -> HandlerResult<serde_json::Value> {
-    let end = query.end.unwrap_or_else(|| chrono::Utc::now().timestamp());
-    let start = query.start.unwrap_or(end - 86400); // Default 24 hours
-
-    // Use DeviceService to query telemetry
-    let points = state
-        .devices
-        .service
-        .query_telemetry(&device_id, &metric, Some(start), Some(end), query.limit)
-        .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to query metric: {:?}", e)))?;
-
-    let data_points: Vec<serde_json::Value> = points
-        .iter()
-        // Storage layer already limits results when query.limit is Some;
-        // this take() is a safety cap for the limit=None case (max 1000 points)
-        .take(query.limit.unwrap_or(1000))
-        .map(|(timestamp, value)| {
-            json!({
-                "timestamp": timestamp,
-                "value": value_to_json(value),
-                "quality": None::<Option<u8>>, // DeviceService doesn't track quality yet
-            })
-        })
-        .collect();
-
-    ok(json!({
-        "device_id": device_id,
-        "metric": metric,
-        "start": start,
-        "end": end,
-        "count": data_points.len(),
-        "data": data_points,
-    }))
-}
-
-/// Get aggregated data for a device metric.
-/// Uses time_series_storage directly (DeviceService doesn't have aggregate method yet)
-pub async fn aggregate_metric_handler(
-    State(state): State<ServerState>,
-    Path((device_id, metric)): Path<(String, String)>,
-    Query(query): Query<TimeRangeQuery>,
-) -> HandlerResult<serde_json::Value> {
-    let end = query.end.unwrap_or_else(|| chrono::Utc::now().timestamp());
-    let start = query.start.unwrap_or(end - 86400); // Default 24 hours
-
-    // Use unified source_id for telemetry storage queries
-    let device_source_id = format!("device:{}", device_id);
-
-    // Use telemetry service for aggregation
-    let aggregated = state
-        .devices
-        .telemetry
-        .aggregate(&device_source_id, &metric, start, end)
-        .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to aggregate metric: {:?}", e)))?;
-
-    ok(json!({
-        "device_id": device_id,
-        "metric": metric,
-        "start": aggregated.start_timestamp,
-        "end": aggregated.end_timestamp,
-        "count": aggregated.count,
-        "avg": aggregated.avg,
-        "min": aggregated.min,
-        "max": aggregated.max,
-        "sum": aggregated.sum,
-        "first": aggregated.first.as_ref().map(value_to_json),
-        "last": aggregated.last.as_ref().map(value_to_json),
-    }))
-}
 
 /// Send a command to a device.
 /// Uses new DeviceService for command sending

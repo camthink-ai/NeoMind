@@ -44,14 +44,12 @@ pub use crate::server::ServerState;
 // Re-export commonly used handler functions
 pub use basic::health_handler;
 pub use devices::{
-    add_device_handler, aggregate_metric_handler, analyze_metric_timestamps_handler,
-    delete_device_handler, delete_device_type_handler, generate_mdl_handler,
-    get_device_command_history_handler, get_device_handler, get_device_telemetry_handler,
-    get_device_telemetry_summary_handler, get_device_type_handler,
-    import_cloud_device_types_handler, list_cloud_device_types_handler,
+    add_device_handler, analyze_metric_timestamps_handler, delete_device_handler,
+    delete_device_type_handler, generate_mdl_handler, get_device_command_history_handler,
+    get_device_handler, get_device_telemetry_handler, get_device_telemetry_summary_handler,
+    get_device_type_handler, import_cloud_device_types_handler, list_cloud_device_types_handler,
     list_device_metrics_debug_handler, list_device_types_handler, list_devices_handler,
-    query_metric_handler, read_metric_handler, register_device_type_handler, send_command_handler,
-    validate_device_type_handler,
+    register_device_type_handler, send_command_handler, validate_device_type_handler,
 };
 pub use events::{event_stream_handler, event_websocket_handler};
 pub use rules::{create_rule_handler, list_rules_handler};

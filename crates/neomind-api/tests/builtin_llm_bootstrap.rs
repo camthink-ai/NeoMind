@@ -12,8 +12,8 @@
 //! lifecycle changes all landed with unit tests per link — this pins the
 //! CHAIN.
 
-use neomind_api::builtin_llm::state::{bootstrap, BootstrapOutcome, BUILTIN_INSTANCE_ID};
 use neomind_agent::llm_backends::LlmBackendInstanceManager;
+use neomind_api::builtin_llm::state::{bootstrap, BootstrapOutcome, BUILTIN_INSTANCE_ID};
 use neomind_storage::LlmBackendStore;
 use std::io::Write;
 use std::sync::Arc;
@@ -95,13 +95,6 @@ with socketserver.TCPServer(("127.0.0.1", {port}), H) as httpd:
         }
     }
 
-    /// PATH with the fake binary first — drives find_llama_server().
-    fn push_path(&self) -> Vec<(String, String)> {
-        let old = std::env::var("PATH").unwrap_or_default();
-        let new = format!("{}:{}", self.bin_dir.path().display(), old);
-        vec![("PATH".to_string(), new)]
-    }
-
     fn seed_model(&self, id: &str, file: &str, sha: &str) {
         let dir = self.data_dir.path().join("models").join(id);
         std::fs::create_dir_all(&dir).unwrap();
@@ -146,7 +139,10 @@ async fn bootstrap_full_chain_spawns_registers_activates() {
     );
 
     let saved_path = std::env::var("PATH").unwrap_or_default();
-    std::env::set_var("PATH", format!("{}:{}", fx.bin_dir.path().display(), saved_path));
+    std::env::set_var(
+        "PATH",
+        format!("{}:{}", fx.bin_dir.path().display(), saved_path),
+    );
     let outcome = bootstrap(&fx.data_dir.path().to_path_buf(), &fx.cfg(), &fx.manager).await;
     std::env::set_var("PATH", &saved_path);
 
@@ -161,10 +157,16 @@ async fn bootstrap_full_chain_spawns_registers_activates() {
         .manager
         .get_instance(BUILTIN_INSTANCE_ID)
         .expect("instance registered");
-    assert_eq!(inst.endpoint.as_deref(), Some(format!("http://127.0.0.1:{}", port).as_str()));
+    assert_eq!(
+        inst.endpoint.as_deref(),
+        Some(format!("http://127.0.0.1:{}", port).as_str())
+    );
     assert!(inst.is_builtin);
     assert_eq!(inst.model, "minicpm5-2b");
-    assert_eq!(inst.capabilities.max_context, 32768, "registry default_ctx (32K) must land on the instance");
+    assert_eq!(
+        inst.capabilities.max_context, 32768,
+        "registry default_ctx (32K) must land on the instance"
+    );
     assert!(
         fx.manager.get_active_instance().is_some(),
         "no other backend existed — builtin must become active"
@@ -217,7 +219,10 @@ async fn port_squatted_by_foreign_server_is_rejected() {
     tokio::time::sleep(std::time::Duration::from_millis(400)).await;
 
     let saved_path = std::env::var("PATH").unwrap_or_default();
-    std::env::set_var("PATH", format!("{}:{}", fx.bin_dir.path().display(), saved_path));
+    std::env::set_var(
+        "PATH",
+        format!("{}:{}", fx.bin_dir.path().display(), saved_path),
+    );
     let outcome = bootstrap(&fx.data_dir.path().to_path_buf(), &fx.cfg(), &fx.manager).await;
     std::env::set_var("PATH", &saved_path);
 
@@ -271,7 +276,10 @@ async fn already_running_refresh_honors_ctx_override() {
     cfg.ctx = Some(65536); // explicit override beats the 32K registry default
 
     let saved_path = std::env::var("PATH").unwrap_or_default();
-    std::env::set_var("PATH", format!("{}:{}", fx.bin_dir.path().display(), saved_path));
+    std::env::set_var(
+        "PATH",
+        format!("{}:{}", fx.bin_dir.path().display(), saved_path),
+    );
     let outcome = bootstrap(&fx.data_dir.path().to_path_buf(), &cfg, &fx.manager).await;
     std::env::set_var("PATH", &saved_path);
 

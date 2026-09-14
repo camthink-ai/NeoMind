@@ -611,9 +611,40 @@ pub async fn get_devices_current_batch_handler(
     State(state): State<ServerState>,
     Json(req): Json<BatchCurrentValuesRequest>,
 ) -> HandlerResult<serde_json::Value> {
-    let mut devices = std::collections::HashMap::new();
+    // [fan-out] Devices polled CONCURRENTLY — dashboards hit this for every
+    // widget's device set; the sequential loop summed per-device latencies
+    // (the inner per-metric fallback was already join_all'd).
+    let per_device: Vec<_> = req
+        .device_ids
+        .into_iter()
+        .map(|device_id| {
+            let state = state.clone();
+            async move {
+                (
+                    device_id.clone(),
+                    one_device_current(&state, &device_id).await,
+                )
+            }
+        })
+        .collect();
+    let devices: std::collections::HashMap<String, serde_json::Value> =
+        futures::future::join_all(per_device)
+            .await
+            .into_iter()
+            .collect();
 
-    for device_id in req.device_ids {
+    let count = devices.len();
+
+    ok(json!({
+        "devices": devices,
+        "count": count,
+    }))
+}
+
+/// Current values for ONE device: in-memory cache first, telemetry-storage
+/// fallback (all template metrics concurrently) when the cache is cold.
+async fn one_device_current(state: &ServerState, device_id: &str) -> serde_json::Value {
+    {
         // Unified source_id for telemetry storage queries
         let device_source_id = format!("device:{}", device_id);
 
@@ -621,7 +652,7 @@ pub async fn get_devices_current_batch_handler(
         let current_values = state
             .devices
             .service
-            .get_current_metrics(&device_id)
+            .get_current_metrics(device_id)
             .await
             .unwrap_or_default();
 
@@ -635,7 +666,7 @@ pub async fn get_devices_current_batch_handler(
         // If cache is empty, try time_series_storage for recent data
         let current_values_json = if current_values_json.is_empty() {
             // Try to get the device template to know which metrics to fetch
-            let template = state.devices.service.get_template(&device_id);
+            let template = state.devices.service.get_template(device_id);
 
             if let Some(template) = template {
                 // PERFORMANCE FIX: Use batch query instead of sequential N+1 queries
@@ -670,21 +701,11 @@ pub async fn get_devices_current_batch_handler(
             current_values_json
         };
 
-        devices.insert(
-            device_id.clone(),
-            json!({
-                "device_id": device_id,
-                "current_values": current_values_json
-            }),
-        );
+        json!({
+            "device_id": device_id,
+            "current_values": current_values_json
+        })
     }
-
-    let count = devices.len();
-
-    ok(json!({
-        "devices": devices,
-        "count": count,
-    }))
 }
 
 /// Delete a device.

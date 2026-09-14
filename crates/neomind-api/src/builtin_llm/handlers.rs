@@ -32,7 +32,7 @@ use neomind_core::builtin_llm::manifest::{
     load_manifest, model_def, save_manifest, BuiltinModelDef, ModelManifest, BUILTIN_MODELS,
     BUILTIN_MODEL_ID,
 };
-use neomind_core::builtin_llm::variant::{model_file_name, Quant};
+use neomind_core::builtin_llm::variant::Quant;
 use neomind_core::NeoMindEvent;
 use neomind_storage::{LlmBackendInstance, LlmBackendType};
 
@@ -96,7 +96,6 @@ fn models_dir(data_dir: &Path) -> PathBuf {
 /// VERIFIED 2026-08-19 via the HF API (`/api/models/LiquidAI/LFM2.5-2.6B-GGUF/
 /// tree/main?expand=true`) + `curl -sIL` on each resolve URL. The LFS OID in
 /// the API response and the `x-linked-etag` header agree with the shas below.
-const HF_REPO: &str = "https://huggingface.co/LiquidAI/LFM2.5-2.6B-GGUF/resolve/main";
 
 /// Filename *in the HF repo*. Note: this differs from our local
 /// [`model_file_name`] (`lfm25-2.6b-q4_k_m.gguf`) — the repo names files
@@ -1768,9 +1767,10 @@ mod quant_override_tests {
     use super::*;
 
     fn cfg_with_quant(q: &str) -> BuiltinConfig {
-        let mut c = BuiltinConfig::default();
-        c.quant_override = Some(q.to_string());
-        c
+        BuiltinConfig {
+            quant_override: Some(q.to_string()),
+            ..Default::default()
+        }
     }
 
     fn minicpm_def() -> super::super::catalog::CatalogModel {
