@@ -161,6 +161,27 @@ pub async fn get_device_telemetry_handler(
         .get_device_with_template(&device_id)
         .await;
 
+    // [existence contract] Unknown device → 404, SAME as GET /devices/:id —
+    // the old fallthrough answered 200 with _raw queries for nonexistent
+    // ids, so clients could not write one existence/retry rule. Telemetry
+    // for a DELETED device stays reachable with ?history=true (the storage
+    // keys outlive the registry entry; dashboards archive old charts).
+    let allow_deleted_history = params
+        .get("history")
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false);
+    if !allow_deleted_history {
+        if let Err(ref e) = device_with_template {
+            if matches!(
+                e,
+                neomind_devices::DeviceError::NotFoundStr(_)
+                    | neomind_devices::DeviceError::NotFound(_)
+            ) {
+                return Err(ErrorResponse::not_found("Device"));
+            }
+        }
+    }
+
     // Get device template to find available metrics
     // Also include virtual metrics (metrics in storage but not in template)
     let template_metric_names: std::collections::HashSet<String> = match &device_with_template {
@@ -576,11 +597,21 @@ pub async fn get_device_telemetry_handler(
                         }
                     };
 
-                    // Extract next_cursor from the oldest point in the page (smallest timestamp)
-                    let next_cursor = points
-                        .last()
-                        .as_ref()
-                        .and_then(|p| p.get("timestamp").and_then(|t| t.as_i64()));
+                    // Extract next_cursor from the oldest point in the page
+                    // (smallest timestamp). [termination signal] A page
+                    // SHORTER than the limit is the last page — emit None so
+                    // clients can stop without probing for an empty page
+                    // (previously next_cursor was always Some, and the only
+                    // termination signal was receiving an empty page).
+                    let has_more = points.len() >= limit;
+                    let next_cursor = if has_more {
+                        points
+                            .last()
+                            .as_ref()
+                            .and_then(|p| p.get("timestamp").and_then(|t| t.as_i64()))
+                    } else {
+                        None
+                    };
                     (metric_name, json!(points), total, next_cursor)
                 }
             })
@@ -641,6 +672,29 @@ pub async fn get_device_telemetry_summary_handler(
 
     // Unified source_id for storage queries
     let device_source_id = format!("device:{}", device_id);
+
+    // [existence contract] Same 404 rule as the telemetry + detail
+    // endpoints (see the main handler's gate).
+    let allow_deleted_history = params
+        .get("history")
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false);
+    if !allow_deleted_history {
+        let probe = state
+            .devices
+            .service
+            .get_device_with_template(&device_id)
+            .await;
+        if let Err(ref e) = probe {
+            if matches!(
+                e,
+                neomind_devices::DeviceError::NotFoundStr(_)
+                    | neomind_devices::DeviceError::NotFound(_)
+            ) {
+                return Err(ErrorResponse::not_found("Device"));
+            }
+        }
+    }
 
     // Get device template to find available metrics
     // Also include virtual metrics from transforms

@@ -1,6 +1,7 @@
 //! API handlers organized by domain.
 
 pub mod agents;
+pub mod api_docs;
 pub mod auth;
 pub mod auth_users;
 pub mod automations;

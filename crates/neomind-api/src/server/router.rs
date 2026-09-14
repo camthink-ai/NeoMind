@@ -36,6 +36,15 @@ pub fn create_router_with_state(state: ServerState) -> Router {
     // - Health checks, auth, setup, and static metadata are safe.
     // - Device telemetry, data sources, and write operations MUST be in protected_routes.
     let public_routes = Router::new()
+        // API reference index — the route table the CLI help promises.
+        // Hand-maintained table lives in handlers/api_docs.rs; a drift test
+        // fails CI when the router and the table disagree.
+        .route("/api/docs", get(crate::handlers::api_docs::docs_handler))
+        .route(
+            "/api/docs/routes.json",
+            get(crate::handlers::api_docs::routes_json_handler),
+        )
+        .route("/api/docs/*rest", get(crate::handlers::api_docs::docs_404))
         // Health check endpoints
         .route("/api/health", get(basic::health_handler))
         .route("/api/health/status", get(basic::health_status_handler))

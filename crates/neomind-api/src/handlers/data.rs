@@ -39,7 +39,8 @@ pub struct UnifiedDataSourceInfo {
     pub description: Option<String>,
     /// Current value (if available)
     pub current_value: Option<serde_json::Value>,
-    /// Last update timestamp (Unix milliseconds)
+    /// Last update timestamp (Unix SECONDS — same unit as every telemetry
+    /// timestamp; the doc previously claimed milliseconds)
     pub last_update: Option<i64>,
     /// Data quality score (0.0 - 1.0)
     pub quality: Option<f32>,
@@ -582,13 +583,22 @@ pub async fn query_telemetry_handler(
             .await
             .map_err(|e| crate::models::error::ErrorResponse::internal(e.to_string()))?;
 
+        // [contract parity] Same parameter, same validation as the device
+        // telemetry endpoint: unknown aggregate values are a 400 here too
+        // (was a silent avg fallback). `count` remains this endpoint's own
+        // documented extra.
         let value = match agg.as_str() {
             "avg" => aggregated.avg,
             "min" => aggregated.min,
             "max" => aggregated.max,
             "sum" => aggregated.sum,
             "count" => Some(aggregated.count as f64),
-            _ => aggregated.avg,
+            other => {
+                return Err(crate::models::error::ErrorResponse::bad_request(format!(
+                    "Invalid aggregate '{}': expected one of avg/min/max/sum/count",
+                    other
+                )))
+            }
         };
 
         return ok(serde_json::json!({

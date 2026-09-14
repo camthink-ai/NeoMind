@@ -3560,6 +3560,7 @@ dependencies = [
  "rand 0.8.7",
  "rcgen",
  "redb",
+ "regex",
  "reqwest",
  "rust-embed",
  "rustls",
