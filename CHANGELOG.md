@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Optimization + consistency wave (post-0.9.24 bump)
+- **Ingest hot path:** `update_last_seen` no longer writes a redb txn per metric per report (10-metric device @1Hz was 10 txns/s of whole-config read-modify-write) — in-memory updates every event (status semantics unchanged), persistence debounced to ≥15s advances (restart survival loses ≤15s, far inside the 30s offline-timeout floor).
+- **Query hot paths:** telemetry responses move-not-clone the JSON points arrays (three blocks deep-copied every metric's full series per request); the current-values batch endpoint and the summary endpoint now fan out per-device/per-metric work concurrently (were N×latency sequential); summary's per-request metric-list dumps demoted info→debug.
+- **~400 lines of dead weight removed:** six unrouted device/metric handlers (incl. the hours-ignored TimeRangeQuery trio), the LiquidAI `HF_REPO` const orphaned by the openbmb switch, phantom WebSocket union variants in chat.ts (ExecutionPlanCreated/PlanStepStarted/PlanStepCompleted/Intent/device_update — never emitted) plus their orphaned PlanningMode/PlanStep/ExecutionPlan interfaces, the unused `.cargo/config-ci.toml` profiles + vestigial `CARGO_PROFILE` env, and two bare tempfile pins aligned to `{ workspace = true }`.
+- **`thinking_is_integral` is now a registry field** (minicpm false, lfm/ling true, others false) — bootstrap and the restart path both read it, killing the magic-string `"lfm25-2.6b"` comparisons that had already caused one default-flip regression.
+
 ## [0.9.24] - 2026-09-14
 
 ### Builtin-model pipeline: end-to-end integration tests (chain, not just links)

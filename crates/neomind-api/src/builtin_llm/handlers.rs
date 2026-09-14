@@ -250,6 +250,8 @@ pub struct InstalledModel {
     pub top_p: Option<f32>,
     pub top_k: Option<u32>,
     pub default_thinking: bool,
+    /// Model property (see the registry field): thinking cannot be disabled.
+    pub thinking_is_integral: bool,
     pub is_custom: bool,
 }
 
@@ -267,6 +269,7 @@ pub fn installed_model_any(mdir: &Path) -> Option<InstalledModel> {
             top_p: def.top_p,
             top_k: def.top_k,
             default_thinking: def.default_thinking,
+            thinking_is_integral: def.thinking_is_integral,
             is_custom: false,
         });
     }
@@ -326,6 +329,8 @@ pub fn installed_model_any(mdir: &Path) -> Option<InstalledModel> {
         top_p: None,
         top_k: None,
         default_thinking: false,
+        // Unknown provenance — assume the thinking toggle works.
+        thinking_is_integral: false,
         is_custom: true,
         manifest,
     })
@@ -361,6 +366,8 @@ pub fn installed_model_by_id(mdir: &Path, id: &str) -> Option<InstalledModel> {
         top_p,
         top_k,
         default_thinking: false,
+        // Unknown provenance — assume the thinking toggle works.
+        thinking_is_integral: false,
         is_custom: true,
         manifest,
     })
@@ -1284,7 +1291,7 @@ async fn spawn_builtin_server(
     // BUILTIN_MODEL_ID silently flipped when the default moved to MiniCPM,
     // mis-flagging LFM installs on the restart path (bootstrap hardcodes
     // the id correctly).
-    instance.thinking_is_integral = installed.manifest.id == "lfm25-2.6b";
+    instance.thinking_is_integral = installed.thinking_is_integral;
     instance.thinking_enabled = installed.default_thinking;
     instance.endpoint = Some(endpoint.clone());
     instance.model = installed.manifest.id.clone();

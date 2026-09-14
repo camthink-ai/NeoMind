@@ -51,6 +51,12 @@ pub struct BuiltinModelDef {
     /// non-thinking for agent tool calls (eval 76% cmd_ok was non-thinking);
     /// Gemma defaults to thinking.
     pub default_thinking: bool,
+
+    /// Thinking cannot be turned off for this model (LFM's template ignores
+    /// the toggle). A MODEL property — must never be derived from "is this
+    /// the default" (that comparison silently flipped when the default
+    /// moved to MiniCPM and mis-flagged LFM installs on the restart path).
+    pub thinking_is_integral: bool,
     /// Recommended MINIMUM available RAM (MB): weights + KV cache + runtime
     /// + OS headroom. The UI discourages (not blocks) installs below this.
     pub min_ram_mb: u64,
@@ -107,6 +113,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             notes: "2026-09 评测首选 — 工具命中 81%、全窗口最稳、Apache-2.0 可分发",
             recommended: true,
             default_thinking: true,
+            thinking_is_integral: false,
             min_ram_mb: 3_072,
         },
         BuiltinModelDef {
@@ -131,6 +138,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             notes: "原生 128K 上下文(hybrid KV 很省)— 长会话细分场景;默认首选已让位 MiniCPM5-2B",
             recommended: false,
             default_thinking: true,
+            thinking_is_integral: true,
             min_ram_mb: 3_072,
         },
         BuiltinModelDef {
@@ -158,6 +166,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
                 "16K 窗口下最强端侧 agent(2026-09 评测 70 分)— 8K 下会大幅退化;可挂 mmproj 加视觉",
             recommended: false,
             default_thinking: false,
+            thinking_is_integral: false,
             min_ram_mb: 4_096,
         },
         BuiltinModelDef {
@@ -182,6 +191,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             notes: "Google 官方 QAT 量化 — 可挂 mmproj 加视觉",
             recommended: false,
             default_thinking: true,
+            thinking_is_integral: false,
             min_ram_mb: 4_608,
         },
         BuiltinModelDef {
@@ -208,6 +218,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             notes: "高速 tiny MoE — 仅适合 8K 短会话(过 8K 滑坡),需 llama.cpp ≥ b10545",
             recommended: false,
             default_thinking: true,
+            thinking_is_integral: true,
             min_ram_mb: 6_144,
         },
     ]

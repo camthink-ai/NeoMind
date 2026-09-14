@@ -272,7 +272,7 @@ pub async fn bootstrap(
     // Integral thinking is a MODEL property (LFM's template ignores any
     // reasoning toggle), not "is this the default model" — the default
     // moving off LFM must not flip this flag for LFM installs.
-    instance.thinking_is_integral = def.manifest.id == "lfm25-2.6b";
+    instance.thinking_is_integral = def.thinking_is_integral;
     instance.thinking_enabled = def.default_thinking;
     instance.endpoint = Some(endpoint.clone());
     instance.model = def.manifest.id.clone();
