@@ -156,6 +156,13 @@ fn show_main_window(app: &AppHandle) {
 
 /// Properly shutdown the server before exiting
 fn clean_shutdown(app_handle: &AppHandle) {
+    // Stop the embedded llama-server children BEFORE tearing the runtime
+    // down: the embedded server runs on this runtime (never through the
+    // standalone serve shutdown path), and kill_on_drop alone would leave
+    // the process alive until app exit — force-quit paths could still leak
+    // a ~2 GB model process. Explicit, immediate, idempotent.
+    edge_api::builtin_llm::server::stop_all_llama_servers();
+
     // Try to get server state and shutdown
     if let Some(state) = app_handle.try_state::<ServerState>() {
         // Shutdown the tokio runtime

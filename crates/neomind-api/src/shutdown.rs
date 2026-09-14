@@ -78,7 +78,14 @@ pub async fn cleanup_resources(state: &ServerState) {
         manager.executor().abort_event_tasks();
     }
 
-    // 1. Stop MQTT adapter through DeviceService (with timeout)
+    // 1. Stop the builtin llama-server children EXPLICITLY. kill_on_drop
+    // covers abnormal exits; this makes graceful shutdown immediate and
+    // observable instead of waiting for process-exit reap. Without it, every
+    // `systemctl restart` left a model-loaded llama-server (~2 GB) orphaned
+    // and relied on the NEXT boot's port-conflict detection to reclaim it.
+    crate::builtin_llm::server::stop_all_llama_servers();
+
+    // 2. Stop MQTT adapter through DeviceService (with timeout)
     let device_service = state.devices.service.clone();
     let mqtt_task = tokio::spawn(async move {
         if let Some(adapter) = device_service.get_adapter("internal-mqtt").await {
@@ -89,7 +96,7 @@ pub async fn cleanup_resources(state: &ServerState) {
     });
     let _ = tokio::time::timeout(Duration::from_secs(5), mqtt_task).await;
 
-    // 2. Stop embedded broker (feature-gated)
+    // 3. Stop embedded broker (feature-gated)
     #[cfg(feature = "embedded-broker")]
     {
         let broker = state.devices.embedded_broker.read().unwrap().clone();
@@ -103,17 +110,17 @@ pub async fn cleanup_resources(state: &ServerState) {
         }
     }
 
-    // 3. Flush any pending database writes
+    // 4. Flush any pending database writes
     tracing::info!("Flushing storage...");
 
     // Note: TimeSeriesStorage doesn't have explicit flush/close
     // The redb database handles this via Drop
 
-    // 4. Log session counts
+    // 5. Log session counts
     let sessions = state.agents.session_manager.list_sessions().await;
     tracing::info!("Shutdown complete. Active sessions: {}", sessions.len());
 
-    // 5. Log uptime
+    // 6. Log uptime
     let uptime = chrono::Utc::now().timestamp() - state.started_at;
     tracing::info!("Server uptime: {} seconds", uptime);
 }

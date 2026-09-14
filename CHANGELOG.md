@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### llama-server lifecycle: deterministic cleanup on every exit path
+- **`kill_on_drop` on the spawn + a global handle registry**: every `systemctl restart` (and any crash / `kill -9` / desktop force-quit) used to orphan the model-loaded llama-server (~2 GB) — reclamation depended on the NEXT boot's port-conflict detection happening to match. The handle now lives in a process-global registry (`Arc<Mutex<Child>>`, both spawn sites register), so `kill_on_drop` guarantees the child dies with the server process on abnormal exits, and graceful paths stop it explicitly: the standalone serve shutdown calls `stop_all_llama_servers()` first, and the desktop `clean_shutdown` (previously dead code that never ran before runtime teardown) now stops the embedded llama-server before dropping the runtime.
+
 ### CLI exit-code contract + clean stdout; data-push backpressure
 - **CLI failures now exit non-zero:** every `CliResponse` with `success:false` used to print "❌ …" and exit 0 — scripts and the agent's shell tool could not distinguish failure from success. Soft failures (the command ran, the operation failed) now exit **3**, distinct from anyhow's exit 1 (transport/usage) and 0 (success). Verified empirically: help→0, no-server→1, unreadable-key login→3.
 - **CLI logging routed to stderr (all four subscriber branches):** tracing defaulted to stdout, interleaving log lines into the `NEOMIND_JSON=1` machine stream and breaking `serde_json` parsing of piped output. The on-disk log layer is untouched. `NEOMIND_JSON=1 RUST_LOG=info neomind …` stdout now parses as pure JSON.

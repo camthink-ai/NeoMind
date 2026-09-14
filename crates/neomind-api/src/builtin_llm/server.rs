@@ -20,9 +20,27 @@ pub struct LlamaServerConfig {
     pub top_k: Option<u32>,
 }
 
+#[derive(Clone)]
 pub struct LlamaServerProcess {
     pub port: u16,
-    child: tokio::process::Child,
+    child: std::sync::Arc<tokio::sync::Mutex<tokio::process::Child>>,
+}
+
+/// Live llama-server handles spawned by this process (for graceful stop).
+static LLAMA_SERVERS: std::sync::Mutex<Vec<LlamaServerProcess>> = std::sync::Mutex::new(Vec::new());
+
+/// Stop every llama-server this process spawned. Called on graceful
+/// shutdown; `kill_on_drop` covers the abnormal paths (crash, SIGKILL).
+/// Idempotent.
+pub fn stop_all_llama_servers() {
+    let mut guard = LLAMA_SERVERS.lock().unwrap_or_else(|e| e.into_inner());
+    let servers: Vec<LlamaServerProcess> = std::mem::take(&mut *guard);
+    for mut s in servers {
+        if let Ok(mut child) = s.child.try_lock() {
+            // best-effort: kill_on_drop remains the backstop if locked
+            let _ = child.start_kill();
+        }
+    }
 }
 
 pub async fn health_check(port: u16) -> bool {
@@ -80,11 +98,27 @@ impl LlamaServerProcess {
         if let Some(k) = cfg.top_k {
             cmd.arg("--top-k").arg(k.to_string());
         }
+        // [deterministic cleanup] The process must die with the server even
+        // on abnormal termination (crash, kill -9, force-quit): without
+        // kill_on_drop, a dropped handle leaked a model-loaded llama-server
+        // (~2 GB) until reboot on EVERY restart path that didn't go through
+        // an explicit stop(). Combined with the global registry below, the
+        // handle is kept alive as long as the server runs, and kill_on_drop
+        // makes process exit alone sufficient — SIGKILL included.
+        cmd.kill_on_drop(true);
         let child = cmd.spawn()?;
-        Ok(LlamaServerProcess {
+        let proc = LlamaServerProcess {
             port: cfg.port,
-            child,
-        })
+            child: std::sync::Arc::new(tokio::sync::Mutex::new(child)),
+        };
+        // Register globally so a graceful shutdown can stop it explicitly
+        // (faster and cleaner than waiting for process-exit reap) — see
+        // `stop_all_llama_servers`.
+        LLAMA_SERVERS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(proc.clone_handle());
+        Ok(proc)
     }
 
     pub async fn wait_healthy(&mut self, timeout: Duration) -> anyhow::Result<()> {
@@ -106,12 +140,25 @@ impl LlamaServerProcess {
     /// server. Callers must verify `is_alive()` after `wait_healthy` before
     /// trusting the child / registering an instance for it.
     pub fn is_alive(&mut self) -> bool {
-        matches!(self.child.try_wait(), Ok(None))
+        match self.child.try_lock() {
+            Ok(mut child) => matches!(child.try_wait(), Ok(None)),
+            Err(_) => true, // someone is stopping/waiting it — treat as alive
+        }
+    }
+
+    /// Handle for the global registry (shares the same child).
+    fn clone_handle(&self) -> LlamaServerProcess {
+        LlamaServerProcess {
+            port: self.port,
+            child: self.child.clone(),
+        }
     }
 
     pub async fn stop(mut self) -> anyhow::Result<()> {
-        let _ = self.child.kill().await;
-        let _ = self.child.wait().await;
+        if let Ok(mut child) = self.child.try_lock() {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+        }
         Ok(())
     }
 }
