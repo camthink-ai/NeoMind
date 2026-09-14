@@ -327,10 +327,10 @@ pub async fn market_install_handler(
     let client = match http_client() {
         Ok(c) => c,
         Err(e) => {
-            return ok(json!({
-                "success": false,
-                "error": format!("Failed to create HTTP client: {}", e)
-            }));
+            return Err(ErrorResponse::internal(format!(
+                "Failed to create HTTP client: {}",
+                e
+            )));
         }
     };
 
@@ -339,10 +339,10 @@ pub async fn market_install_handler(
         Ok(idx) => idx,
         Err(e) => {
             tracing::error!("Failed to fetch marketplace index: {}", e);
-            return ok(json!({
-                "success": false,
-                "error": format!("Network error: Unable to connect to component marketplace. {}", e)
-            }));
+            return Err(ErrorResponse::internal(format!(
+                "Network error: Unable to connect to component marketplace. {}",
+                e
+            )));
         }
     };
 
@@ -350,10 +350,10 @@ pub async fn market_install_handler(
     let entry = match index.components.iter().find(|c| c.id == component_id) {
         Some(e) => e,
         None => {
-            return ok(json!({
-                "success": false,
-                "error": format!("Component '{}' not found in marketplace", component_id)
-            }));
+            return Err(ErrorResponse::bad_request(format!(
+                "Component '{}' not found in marketplace",
+                component_id
+            )));
         }
     };
 
@@ -375,34 +375,28 @@ pub async fn market_install_handler(
     let manifest_resp = match manifest_result {
         Ok(r) if r.status().is_success() => r,
         Ok(r) => {
-            return ok(json!({
-                "success": false,
-                "error": format!("Failed to download manifest: HTTP {}", r.status())
-            }));
+            return Err(ErrorResponse::internal(format!(
+                "Failed to download manifest: HTTP {}",
+                r.status()
+            )));
         }
         Err(e) => {
             tracing::error!("Failed to download manifest: {}", e);
-            return ok(json!({
-                "success": false,
-                "error": "Network error: Unable to download component manifest. Please check your internet connection."
-            }));
+            return Err(ErrorResponse::internal("Network error: Unable to download component manifest. Please check your internet connection."));
         }
     };
 
     let bundle_resp = match bundle_result {
         Ok(r) if r.status().is_success() => r,
         Ok(r) => {
-            return ok(json!({
-                "success": false,
-                "error": format!("Failed to download bundle: HTTP {}", r.status())
-            }));
+            return Err(ErrorResponse::internal(format!(
+                "Failed to download bundle: HTTP {}",
+                r.status()
+            )));
         }
         Err(e) => {
             tracing::error!("Failed to download bundle: {}", e);
-            return ok(json!({
-                "success": false,
-                "error": "Network error: Unable to download component bundle. Please check your internet connection."
-            }));
+            return Err(ErrorResponse::internal("Network error: Unable to download component bundle. Please check your internet connection."));
         }
     };
 
@@ -410,27 +404,21 @@ pub async fn market_install_handler(
         Ok(bytes) => match String::from_utf8(bytes) {
             Ok(s) => s,
             Err(e) => {
-                return ok(json!({
-                    "success": false,
-                    "error": format!("Manifest is not valid UTF-8: {}", e)
-                }));
+                return Err(ErrorResponse::bad_request(format!(
+                    "Manifest is not valid UTF-8: {}",
+                    e
+                )));
             }
         },
         Err(e) => {
-            return ok(json!({
-                "success": false,
-                "error": e.to_string()
-            }));
+            return Err(ErrorResponse::internal(e.to_string()));
         }
     };
 
     let bundle_bytes = match collect_capped(bundle_resp, "bundle").await {
         Ok(b) => b,
         Err(e) => {
-            return ok(json!({
-                "success": false,
-                "error": e.to_string()
-            }));
+            return Err(ErrorResponse::internal(e.to_string()));
         }
     };
 
@@ -438,19 +426,19 @@ pub async fn market_install_handler(
     let mut manifest: ComponentManifest = match serde_json::from_str(&manifest_text) {
         Ok(m) => m,
         Err(e) => {
-            return ok(json!({
-                "success": false,
-                "error": format!("Invalid manifest JSON: {}", e)
-            }));
+            return Err(ErrorResponse::bad_request(format!(
+                "Invalid manifest JSON: {}",
+                e
+            )));
         }
     };
 
     // Validate manifest ID matches requested ID
     if manifest.id != component_id {
-        return ok(json!({
-            "success": false,
-            "error": format!("Manifest ID '{}' does not match requested component ID '{}'", manifest.id, component_id)
-        }));
+        return Err(ErrorResponse::bad_request(format!(
+            "Manifest ID '{}' does not match requested component ID '{}'",
+            manifest.id, component_id
+        )));
     }
 
     // Set install timestamp
@@ -467,16 +455,16 @@ pub async fn market_install_handler(
     match install_result {
         Ok(Ok(())) => {}
         Ok(Err(e)) => {
-            return ok(json!({
-                "success": false,
-                "error": format!("Failed to install component: {}", e)
-            }));
+            return Err(ErrorResponse::internal(format!(
+                "Failed to install component: {}",
+                e
+            )));
         }
         Err(e) => {
-            return ok(json!({
-                "success": false,
-                "error": format!("Install task failed: {}", e)
-            }));
+            return Err(ErrorResponse::internal(format!(
+                "Install task failed: {}",
+                e
+            )));
         }
     }
 

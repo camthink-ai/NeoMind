@@ -216,8 +216,16 @@ impl RateLimitExceeded {
 
 impl IntoResponse for RateLimitExceeded {
     fn into_response(self) -> Response {
+        // [envelope] Unified shape (success/error{code,message}); retry_after
+        // kept at top level alongside the Retry-After header for one release
+        // as a deprecated convenience.
         let body = serde_json::json!({
-            "error": "Rate limit exceeded",
+            "success": false,
+            "error": {
+                "code": "RATE_LIMITED",
+                "message": format!("Rate limit exceeded — retry after {}s", self.wait_seconds),
+                "request_id": serde_json::Value::Null,
+            },
             "retry_after": self.wait_seconds,
         });
         (

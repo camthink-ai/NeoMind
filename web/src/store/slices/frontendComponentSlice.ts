@@ -141,7 +141,11 @@ export const createFrontendComponentSlice: StateCreator<
 
   /**
    * Install a component from the marketplace
-   * Backend: POST /frontend-components/market/install -> { component } or { success: false, error }
+   * Backend: POST /frontend-components/market/install -> { component };
+   * failures now surface as real non-2xx (fetchAPI throws with the
+   * envelope's error.message). The old success:false-in-200 shape is kept
+   * only as a defensive fallback for mixed-version deployments (old server,
+   * new UI).
    */
   installFromMarket: async (componentId) => {
     set({ loading: true, error: null })
@@ -151,7 +155,8 @@ export const createFrontendComponentSlice: StateCreator<
         { component_id: componentId }
       )
 
-      // Handle graceful error from backend (network issues etc.)
+      // Defensive fallback: mixed-version deployments (old server) still
+      // answer 200 with { success: false, error }.
       if (res.success === false || !res.component) {
         const errMsg = res.error || 'Failed to install component'
         throw new Error(errMsg)

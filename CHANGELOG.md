@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### External-API consumer fixes — error envelopes, honest status codes, contract-change notices
+- **Unified error envelope on EVERY failure path:** the auth middleware's 401/403 (i.e. every protected route) used to answer `{error:"<string>"}` — error as a plain string, no `success` field — and 429 had a third shape; a client's typed deserializer broke on exactly the failures integrators hit first. Both now emit `{success:false, error:{code,message,request_id}}` (`UNAUTHORIZED`/`FORBIDDEN`/`RATE_LIMITED`); the old numeric `status` mirror and `retry_after` stay as deprecated top-level conveniences for one release. Envelope shape is regression-tested (401 + 403 render).
+- **Marketplace install no longer lies with HTTP 200:** all 14 failure branches of `POST /frontend-components/market/install` (component not found, marketplace unreachable, bad manifest/UTF-8, download failures) returned 200 with outer `success:true` and `data.success:false` — status-code-branching clients reported install failures as successes. They now return real 4xx/5xx through the standard ErrorResponse; the web UI keeps a defensive fallback for mixed-version (old-server) deployments.
+- **API contract changes in this release that external clients must know about** (correctness fixes landing in 0.9.24 — listed here explicitly because there is no API versioning):
+  - `GET /api/devices/:id` and `/current`: `status` is now strictly `online|offline|disconnected` (previously the detail endpoints collapsed to two states; `connecting`/`error` no longer appear).
+  - `GET /api/devices/:id/telemetry`: `?hours=N` now derives the time window when `start` is absent (was accepted-and-ignored); `?aggregate=` now drives the `value` field (was always avg) and unknown values are a 400; cursor pagination no longer returns the boundary point (inclusive→exclusive).
+  - `PUT /api/devices/:id`: `offline_timeout_secs` distinguishes absent (keep) / `null` (clear) / value (set) — a partial update omitting the field no longer wipes the override.
+  - Builtin llama-server moved to port 29375; the builtin LLM downloads from the official openbmb repo.
+
 ### Cleanup wave round 2 — shared channel send ladder + data-dir resolver
 - **`post_json` + `channel_http_client` in neomind-messages:** the five webhook-style channels (Slack/Telegram/DingTalk/WeCom/Feishu) carried byte-identical send ladders — post → transport-error map → non-2xx map → 200-with-error-body validation — and five copies of the 30s/10s client builder. One shared ladder + one shared client now; the IM-APIs-answer-200-with-error-bodies knowledge lives in exactly one place. All 189 message tests pass unchanged (the ladder was extracted, not altered).
 - **cli-ops data-dir resolution consolidated:** `device.rs`/`widget.rs` hand-rolled `env-or-"data"` and silently missed the platform-dir tier (hosts without `./data` resolved image/widget paths against a nonexistent cwd dir); both now use `auto_auth::data_dir_for_paths()` with env > platform-dir-with-store > "data" precedence.

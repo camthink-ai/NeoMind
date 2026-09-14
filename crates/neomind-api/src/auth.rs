@@ -569,8 +569,25 @@ pub struct AuthError {
 
 impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
+        // [envelope] Unified with ErrorResponse: {success:false, error:{code,
+        // message, request_id}}. This body answers EVERY protected route's
+        // 401/403 — the old {error:"<string>"} shape (error as a plain
+        // string, no success field) broke typed client deserializers on
+        // exactly the failures integrators hit first. Keep the numeric
+        // `status` mirror for one release as a deprecated convenience for
+        // any client that parsed it.
+        let code = if self.status == StatusCode::UNAUTHORIZED {
+            "UNAUTHORIZED"
+        } else {
+            "FORBIDDEN"
+        };
         let body = serde_json::json!({
-            "error": self.message,
+            "success": false,
+            "error": {
+                "code": code,
+                "message": self.message,
+                "request_id": serde_json::Value::Null,
+            },
             "status": self.status.as_u16(),
         });
         (self.status, Json(body)).into_response()
@@ -938,5 +955,39 @@ mod tests {
             table.get("deadbeef-undecryptable").unwrap().is_none(),
             "boot-time save must clear the skipped row"
         );
+    }
+}
+
+#[cfg(test)]
+mod envelope_tests {
+    use super::*;
+    use axum::body::to_bytes;
+
+    async fn render_body(err: AuthError) -> serde_json::Value {
+        let resp = err.into_response();
+        let bytes = to_bytes(resp.into_body(), 64 * 1024)
+            .await
+            .expect("collect body");
+        serde_json::from_slice(&bytes).expect("unified envelope must be valid JSON")
+    }
+
+    /// [envelope contract] EVERY 401/403 from the auth middleware (i.e. from
+    /// every protected route) must deserialize into the SAME shape a client
+    /// uses for ErrorResponse bodies: success:false + error{code,message}.
+    /// The old {error:"<string>"} shape broke typed deserializers on the
+    /// failures integrators hit first.
+    #[tokio::test]
+    async fn auth_error_uses_unified_envelope() {
+        for (err, code) in [
+            (AuthError::unauthorized("token required"), "UNAUTHORIZED"),
+            (AuthError::forbidden("role"), "FORBIDDEN"),
+        ] {
+            let v = render_body(err).await;
+            assert_eq!(v["success"], serde_json::json!(false), "{code}: {v}");
+            assert_eq!(v["error"]["code"], serde_json::json!(code), "{code}: {v}");
+            assert!(v["error"]["message"].is_string());
+            // deprecated mirror kept for one release
+            assert!(v["status"].is_u64());
+        }
     }
 }
