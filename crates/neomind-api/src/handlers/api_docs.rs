@@ -30,6 +30,21 @@ pub struct RouteDoc {
 pub static ROUTES: &[RouteDoc] = &[
     RouteDoc {
         method: "GET",
+        path: "/api/docs",
+        auth: "public",
+    },
+    RouteDoc {
+        method: "GET",
+        path: "/api/docs/routes.json",
+        auth: "public",
+    },
+    RouteDoc {
+        method: "GET",
+        path: "/api/docs/*rest",
+        auth: "public",
+    },
+    RouteDoc {
+        method: "GET",
         path: "/api/health",
         auth: "public",
     },
@@ -1638,6 +1653,76 @@ pub static ROUTES: &[RouteDoc] = &[
         path: "/api/frontend-components/:id",
         auth: "jwt-or-api-key",
     },
+    RouteDoc {
+        method: "GET",
+        path: "/api/users",
+        auth: "jwt-only",
+    },
+    RouteDoc {
+        method: "POST",
+        path: "/api/users",
+        auth: "jwt-only",
+    },
+    RouteDoc {
+        method: "DELETE",
+        path: "/api/users/:username",
+        auth: "jwt-only",
+    },
+    RouteDoc {
+        method: "GET",
+        path: "/api/settings/registration",
+        auth: "jwt-only",
+    },
+    RouteDoc {
+        method: "PUT",
+        path: "/api/settings/registration",
+        auth: "jwt-only",
+    },
+    RouteDoc {
+        method: "POST",
+        path: "/api/settings/backup",
+        auth: "jwt-only",
+    },
+    RouteDoc {
+        method: "GET",
+        path: "/api/settings/backups",
+        auth: "jwt-only",
+    },
+    RouteDoc {
+        method: "GET",
+        path: "/api/settings/market",
+        auth: "jwt-only",
+    },
+    RouteDoc {
+        method: "PUT",
+        path: "/api/settings/market",
+        auth: "jwt-only",
+    },
+    RouteDoc {
+        method: "GET",
+        path: "/api/system/upgrade/check",
+        auth: "jwt-only",
+    },
+    RouteDoc {
+        method: "POST",
+        path: "/api/system/upgrade",
+        auth: "jwt-only",
+    },
+    RouteDoc {
+        method: "GET",
+        path: "/api/system/upgrade/status",
+        auth: "jwt-only",
+    },
+    RouteDoc {
+        method: "POST",
+        path: "/api/extensions/upload/file",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
+        method: "POST",
+        path: "/api/frontend-components",
+        auth: "jwt-or-api-key",
+    },
 ];
 
 impl RouteDoc {
@@ -1660,7 +1745,7 @@ fn grouped_html() -> String {
          <p>Route index — see <code>/api/docs/routes.json</code> for the machine-readable form. \
          Responses use the <code>{success, data|error:{code,message}}</code> envelope.</p>",
     );
-    for group in ["public", "jwt", "api-key", "webhook", "ws"] {
+    for group in ["public", "jwt-or-api-key", "jwt-only", "webhook", "ws"] {
         let rows: Vec<String> = ROUTES
             .iter()
             .filter(|r| r.auth == group)

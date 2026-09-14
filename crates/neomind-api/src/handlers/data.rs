@@ -57,7 +57,9 @@ pub struct ListDataSourcesQuery {
     pub search: Option<String>,
     /// Pagination offset (0-based)
     pub offset: Option<usize>,
-    /// Page size (default 15, max 100)
+    /// Page size (default 15). Max depends on `skip_telemetry`:
+    /// 100 with telemetry values (avoids overloading the backend), 5000
+    /// when `skip_telemetry=true` (selector listings).
     pub limit: Option<usize>,
     /// Skip populating latest telemetry values (for bulk listing)
     #[serde(default)]

@@ -17,19 +17,46 @@ fn docs_table_matches_router_registrations() {
 
     // Same extraction as the generator: per named Router::new() segment,
     // regex every .route("path", method(handler)) — whitespace-tolerant.
+    //
+    // EVERY router must be listed, and the coverage assertion below enforces
+    // it. The first version of this test used only the five names the
+    // generator used — sharing its blind spot — so 14 routes registered in
+    // admin/upload routers were absent from /api/docs while this test passed.
     let auth_map = [
         ("public_routes", "public"),
         ("jwt_routes", "jwt-or-api-key"),
         ("websocket_routes", "ws"),
         ("webhook_routes", "webhook"),
         ("protected_routes", "jwt-or-api-key"),
+        ("admin_routes", "jwt-only"),
+        ("extension_upload_routes", "jwt-or-api-key"),
+        ("component_upload_routes", "jwt-or-api-key"),
+        ("debug_routes", "debug"),
+        ("limited_routes", "jwt-or-api-key"),
     ];
     let route_re =
         regex::Regex::new(r#"\.route\(\s*"([^"]+)"\s*,\s*(get|post|put|delete|patch|any)\("#)
             .unwrap();
 
+    // Any `let X = Router::new()` not in the map fails loudly.
+    let declared: Vec<String> = {
+        let re = regex::Regex::new(r"let (\w+)\s*=\s*Router::new\(\)").unwrap();
+        re.captures_iter(&src).map(|c| c[1].to_string()).collect()
+    };
+    let mapped: std::collections::HashSet<&str> = auth_map.iter().map(|(n, _)| *n).collect();
+    let unmapped: Vec<&String> = declared
+        .iter()
+        .filter(|n| !mapped.contains(n.as_str()))
+        .collect();
+    assert!(
+        unmapped.is_empty(),
+        "router(s) not covered by the docs table: {unmapped:?} — add them to auth_map \
+         here AND to the generator table in handlers/api_docs.rs"
+    );
+
     let mut expected: std::collections::HashSet<(String, String)> = Default::default();
-    for (var, _cls) in &auth_map {
+    let mut expected_auth: std::collections::HashMap<(String, String), String> = Default::default();
+    for (var, cls) in &auth_map {
         let marker = format!("let {var} = Router::new()");
         let Some(start) = src.find(&marker) else {
             continue;
@@ -40,7 +67,10 @@ fn docs_table_matches_router_registrations() {
             .map(|e| start + e)
             .unwrap_or(src.len());
         for cap in route_re.captures_iter(&src[start..end]) {
-            expected.insert((cap[2].to_uppercase(), cap[1].to_string()));
+            let key = (cap[2].to_uppercase(), cap[1].to_string());
+            expected.insert(key.clone());
+            // later router wins, mirroring axum merge order
+            expected_auth.insert(key, cls.to_string());
         }
     }
 
@@ -49,15 +79,21 @@ fn docs_table_matches_router_registrations() {
         .map(|r| (r.method.to_string(), r.path.to_string()))
         .collect();
 
-    // The /api/docs routes themselves: registered but deliberately absent
-    // from the table (self-reference noise).
-    for extra in [
-        ("GET".to_string(), "/api/docs".to_string()),
-        ("GET".to_string(), "/api/docs/routes.json".to_string()),
-        ("GET".to_string(), "/api/docs/*rest".to_string()),
-    ] {
-        expected.remove(&extra);
-    }
+    // Auth class must match too — method+path alone lets a wrong class ship.
+    let auth_mismatches: Vec<_> = ROUTES
+        .iter()
+        .filter_map(|r| {
+            let key = (r.method.to_string(), r.path.to_string());
+            expected_auth
+                .get(&key)
+                .filter(|want| want.as_str() != r.auth)
+                .map(|want| (key, want.clone(), r.auth))
+        })
+        .collect();
+    assert!(
+        auth_mismatches.is_empty(),
+        "auth class mismatches (route, expected, documented): {auth_mismatches:?}"
+    );
 
     let missing: Vec<_> = expected.difference(&documented).collect();
     let stale: Vec<_> = documented.difference(&expected).collect();
