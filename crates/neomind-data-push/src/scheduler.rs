@@ -264,6 +264,12 @@ impl PushScheduler {
                                             // exhausted the newest event is dropped with a
                                             // warn (visible, bounded loss — the same policy
                                             // the EventBus itself applies under lag).
+                                            // NOTE: deliveries are no longer strictly
+                                            // ordered per target (up to 4 concurrent) —
+                                            // event N+1 can overtake N while N retries.
+                                            // Consumers must tolerate reversals; state
+                                            // transitions should key on timestamps, not
+                                            // arrival order.
                                             // Owned permit: the spawned task outlives this
                                             // loop iteration, so the permit must be 'static.
                                             match delivery_permits.clone().try_acquire_owned() {

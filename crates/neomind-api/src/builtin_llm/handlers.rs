@@ -182,18 +182,29 @@ fn resolve_quant(
     let Some(q) = cfg.quant_override.as_deref() else {
         return Ok(None);
     };
-    if def.id != BUILTIN_MODEL_ID {
+    // Quant override is per-model, not "default-model only": the old
+    // def.id != BUILTIN_MODEL_ID gate silently broke the feature for LFM
+    // the day the default moved to MiniCPM (every override errored), and
+    // accepting QAD for non-LFM models produced a Q4_K_M download verified
+    // against the LFM QAD sha — a guaranteed 1.5 GB dead download per
+    // attempt. The supported set travels with the model.
+    let supported: &[&str] = if def.id == "lfm25-2.6b" {
+        &["q4_k_m", "q8_0", "qad_q4_0"]
+    } else {
+        &["q4_k_m", "q8_0"]
+    };
+    if !supported.contains(&q) {
         return Err(ErrorResponse::bad_request(format!(
-            "quant override is only supported for the default model ({BUILTIN_MODEL_ID})"
+            "unsupported quant '{q}' for {} (supported: {})",
+            def.id,
+            supported.join("/")
         )));
     }
     match q {
         "q4_k_m" => Ok(Some(Quant::Q4_K_M)),
         "q8_0" => Ok(Some(Quant::Q8_0)),
         "qad_q4_0" => Ok(Some(Quant::QAD_Q4_0)),
-        other => Err(ErrorResponse::bad_request(format!(
-            "unsupported builtin quant: {other}"
-        ))),
+        _ => unreachable!("filtered above"),
     }
 }
 
@@ -358,27 +369,25 @@ pub fn installed_model_by_id(mdir: &Path, id: &str) -> Option<InstalledModel> {
 
 /// Download source for a def: HF repo + file + sha. Every model downloads its
 /// registry entry directly; the env `quant_override` selects a different
-/// quant for the DEFAULT model. NOTE: the special branch below used to
-/// hardcode LiquidAI's repo — a leftover from when LFM was the default: a
-/// quant override on the MiniCPM default went looking for MiniCPM files in
-/// the LFM repo and 404'd. Per-quant sources now derive from the model's
-/// OWN registry entry shape (same repo, per-quant official files).
+/// quant. resolve_quant self-validates per model (supported-set gate), so no
+/// default-model-only gate here: this branch previously (a) hardcoded
+/// LiquidAI's repo — a MiniCPM override went looking for MiniCPM files in
+/// the LFM repo and 404'd — and (b) blocked quant overrides for every
+/// non-default model including catalog-only ones.
 fn resolve_source(
     cfg: &BuiltinConfig,
     def: &super::catalog::CatalogModel,
 ) -> (String, String, String) {
-    if def.id == BUILTIN_MODEL_ID {
-        if let Ok(Some(quant)) = resolve_quant(cfg, def) {
-            return (
-                format!(
-                    "https://huggingface.co/{}/resolve/main/{}",
-                    def.hf_repo,
-                    quant_file_name(&def.id, quant)
-                ),
-                quant_sha256(&def.id, quant).to_string(),
-                model_file_name(quant),
-            );
-        }
+    if let Ok(Some(quant)) = resolve_quant(cfg, def) {
+        return (
+            format!(
+                "https://huggingface.co/{}/resolve/main/{}",
+                def.hf_repo,
+                quant_file_name(&def.id, quant)
+            ),
+            quant_sha256(&def.id, quant).to_string(),
+            quant_local_file_name(&def.id, quant),
+        );
     }
     (
         format!(
@@ -390,17 +399,21 @@ fn resolve_source(
     )
 }
 
+/// Local file name for a quant-override download: the model's own prefix
+/// (the old shared helper hardcoded the LFM prefix — MiniCPM overrides
+/// landed in models/minicpm5-2b/ under lfm-named files).
+fn quant_local_file_name(model_id: &str, quant: Quant) -> String {
+    format!("{}-{}.gguf", model_id, quant.key())
+}
+
 /// Official per-quant file names for quant-override downloads of the
 /// default model (verified against the openbmb repo listing 2026-09-14).
 fn quant_file_name(model_id: &str, quant: Quant) -> String {
     match (model_id, quant) {
         ("minicpm5-2b", Quant::Q4_K_M) => "MiniCPM5-2B-Q4_K_M.gguf".to_string(),
         ("minicpm5-2b", Quant::Q8_0) => "MiniCPM5-2B-Q8_0.gguf".to_string(),
-        ("minicpm5-2b", Quant::QAD_Q4_0) => {
-            // No QAD quant exists for MiniCPM — fall through to the generic
-            // error path in resolve_quant's caller rather than invent a name.
-            "MiniCPM5-2B-Q4_K_M.gguf".to_string()
-        }
+        // LFM default (model_id "lfm25-2.6b") and any future default: the
+        // hf_* tables carry the official names.
         _ => hf_file_name(quant).to_string(),
     }
 }
@@ -1267,10 +1280,12 @@ async fn spawn_builtin_server(
         ),
     };
     instance.is_builtin = true;
-    // LFM2.5's thinking is integral (cannot be turned off); Qwen3.5 runs
-    // non-thinking by default (faster + strongest tool-calling eval); Gemma
-    // keeps its default thinking.
-    instance.thinking_is_integral = installed.manifest.id == BUILTIN_MODEL_ID;
+    // LFM2.5's thinking is integral (cannot be turned off); this is a MODEL
+    // property, not "is the default" — the comparison against
+    // BUILTIN_MODEL_ID silently flipped when the default moved to MiniCPM,
+    // mis-flagging LFM installs on the restart path (bootstrap hardcodes
+    // the id correctly).
+    instance.thinking_is_integral = installed.manifest.id == "lfm25-2.6b";
     instance.thinking_enabled = installed.default_thinking;
     instance.endpoint = Some(endpoint.clone());
     instance.model = installed.manifest.id.clone();
@@ -1745,5 +1760,75 @@ mod tests {
         let data = resp.data.unwrap();
         assert_eq!(data["started"], false);
         assert_eq!(data["already_running"], true);
+    }
+}
+
+#[cfg(test)]
+mod quant_override_tests {
+    use super::*;
+
+    fn cfg_with_quant(q: &str) -> BuiltinConfig {
+        let mut c = BuiltinConfig::default();
+        c.quant_override = Some(q.to_string());
+        c
+    }
+
+    fn minicpm_def() -> super::super::catalog::CatalogModel {
+        let def = model_def("minicpm5-2b").expect("registry entry");
+        builtin_to_catalog(def)
+    }
+
+    fn lfm_def() -> super::super::catalog::CatalogModel {
+        let def = model_def("lfm25-2.6b").expect("registry entry");
+        builtin_to_catalog(def)
+    }
+
+    /// QAD on the MiniCPM default used to sail through resolve_quant and
+    /// produce a Q4_K_M download verified against the LFM QAD sha — a
+    /// guaranteed 1.5 GB dead download per attempt. It must be REJECTED.
+    #[test]
+    fn qad_rejected_for_minicpm() {
+        let err = resolve_quant(&cfg_with_quant("qad_q4_0"), &minicpm_def()).unwrap_err();
+        assert!(
+            err.message.contains("unsupported quant"),
+            "got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn quant_set_follows_model() {
+        assert!(resolve_quant(&cfg_with_quant("qad_q4_0"), &lfm_def()).is_ok());
+        assert!(resolve_quant(&cfg_with_quant("q8_0"), &minicpm_def()).is_ok());
+        assert!(resolve_quant(&cfg_with_quant("q4_k_m"), &minicpm_def()).is_ok());
+    }
+
+    /// A MiniCPM quant override must verify against the OFFICIAL openbmb
+    /// sha (not the LFM table) and land under the model's OWN local name
+    /// (the old shared helper hardcoded the lfm25 prefix).
+    #[test]
+    fn minicpm_override_source_and_name() {
+        let (url, sha, file) = resolve_source(&cfg_with_quant("q8_0"), &minicpm_def());
+        assert!(url.contains("openbmb/MiniCPM5-2B-GGUF"), "url: {url}");
+        assert!(url.ends_with("MiniCPM5-2B-Q8_0.gguf"), "url: {url}");
+        assert_eq!(
+            sha,
+            "c5415f8989bf88a8288f1b55a3cc371af53c07b0faa220a63bd7a990cfaba078"
+        );
+        assert!(
+            file.starts_with("minicpm5-2b-") && file.ends_with(".gguf"),
+            "local name must follow the model, got: {file}"
+        );
+    }
+
+    /// LFM remains on its own official repo + shas through the override path.
+    #[test]
+    fn lfm_override_source_unchanged() {
+        let (url, sha, _) = resolve_source(&cfg_with_quant("q8_0"), &lfm_def());
+        assert!(url.contains("LiquidAI/LFM2.5-2.6B-GGUF"), "url: {url}");
+        assert_eq!(
+            sha,
+            "36587fdf27bdfc69caf2637273679a0870ec155162161bde6fd16e8c70bdb757"
+        );
     }
 }

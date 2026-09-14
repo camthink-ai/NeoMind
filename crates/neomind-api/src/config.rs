@@ -535,7 +535,30 @@ fn resolve_embedded_broker_config() -> EmbeddedBrokerConfig {
 /// Load server configuration (config.toml > env > default).
 ///
 /// Priority: config.toml > environment variables > default (0.0.0.0:9375)
+/// — with one carve-out: `NEOMIND_BIND_OVERRIDE` (set only by the desktop
+/// app's LAN-access toggle) WINS over config.toml. Without it the desktop's
+/// UI lied about the effective binding whenever a config.toml sat in the
+/// working directory: the toggle reported loopback while the server bound
+/// the toml's host (or vice versa). The standalone server never sets the
+/// override, so its precedence is unchanged.
 pub fn get_server_config() -> (String, u16) {
+    // 0. Desktop LAN-policy session override beats everything.
+    if let Ok(bind) = std::env::var("NEOMIND_BIND_OVERRIDE") {
+        if !bind.is_empty() {
+            let port = std::env::var("NEOMIND_PORT")
+                .ok()
+                .and_then(|p| p.parse().ok())
+                .unwrap_or(9375);
+            info!(
+                category = "config",
+                host = %bind,
+                port,
+                "Loading server config from desktop bind override"
+            );
+            return (bind, port);
+        }
+    }
+
     // 1. Try config.toml
     if let Ok(content) = std::fs::read_to_string("config.toml") {
         if let Ok(config) = toml::from_str::<TomlConfig>(&content) {

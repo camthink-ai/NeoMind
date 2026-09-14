@@ -72,6 +72,7 @@ async fn main() -> Result<()> {
         let stdout_layer = if json_logging {
             tracing_subscriber::fmt::layer()
                 .json()
+                .with_writer(std::io::stderr)
                 .with_target(true)
                 .with_filter(env_filter.clone())
                 .boxed()

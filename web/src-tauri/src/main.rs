@@ -485,7 +485,11 @@ fn resolve_lan_policy(app_handle: &AppHandle) -> (bool, &'static str) {
 /// so this side stays authoritative per launch).
 fn apply_lan_binding(enabled: bool) {
     let bind = if enabled { "0.0.0.0" } else { "127.0.0.1" };
+    // NEOMIND_HOST alone loses to a config.toml in the working directory
+    // (the app-data dir); NEOMIND_BIND_OVERRIDE is checked FIRST in
+    // get_server_config so the toggle is actually authoritative.
     env::set_var("NEOMIND_HOST", bind);
+    env::set_var("NEOMIND_BIND_OVERRIDE", bind);
     env::set_var("NEOMIND_MQTT_BIND", bind);
     info!(bind, lan = enabled, "LAN access policy applied to embedded server");
 }
