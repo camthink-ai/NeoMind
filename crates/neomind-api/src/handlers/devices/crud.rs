@@ -111,6 +111,25 @@ fn effective_offline_timeout(
     device_override.or(template_default).unwrap_or(global)
 }
 
+/// Map a DeviceService error to the right HTTP class. The register/update
+/// paths used to funnel EVERYTHING through ErrorResponse::internal — a
+/// device_type that isn't a registered template (a plain client mistake)
+/// answered 500 INTERNAL_ERROR, so integrators could not tell "I sent
+/// something wrong" from "the server broke".
+fn device_error_to_response(context: &str, e: neomind_devices::DeviceError) -> ErrorResponse {
+    use neomind_devices::DeviceError as DE;
+    let msg = format!("{context}: {e}");
+    match e {
+        DE::NotFoundStr(_) | DE::NotFound(_) => ErrorResponse::bad_request(msg),
+        DE::AlreadyExists(_) => ErrorResponse::conflict(msg),
+        DE::InvalidParameter(_)
+        | DE::InvalidMetric(_)
+        | DE::InvalidCommand(_)
+        | DE::Serialization(_) => ErrorResponse::bad_request(msg),
+        _ => ErrorResponse::internal(msg),
+    }
+}
+
 /// List devices with pagination and filtering support.
 /// Uses new DeviceService with real device status from event tracking
 ///
@@ -768,17 +787,28 @@ pub async fn add_device_handler(
         offline_timeout_secs: req.offline_timeout_secs,
     };
 
+    // [upsert visibility] The service's register_device upserts by design
+    // (internal adapter/auto-onboard paths re-register idempotently), so a
+    // public POST with an EXISTING id silently REPLACED the previous
+    // device's name/config and still answered `added: true`. The upsert
+    // stays (internal callers depend on it), but the response now says
+    // which happened so a client can tell "created" from "overwrote".
+    let existed = state.devices.service.get_device(&device_id).is_some();
+
     // Register device using new DeviceService
     state
         .devices
         .service
         .register_device(config)
         .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to add device: {}", e)))?;
+        .map_err(|e| device_error_to_response("Failed to add device", e))?;
 
     ok(json!({
         "device_id": device_id,
         "added": true,
+        // Additive field: true when an existing device with this id was
+        // replaced instead of created.
+        "updated_existing": existed,
     }))
 }
 
@@ -832,7 +862,7 @@ pub async fn update_device_handler(
         .service
         .update_device(&device_id, config)
         .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to update device: {}", e)))?;
+        .map_err(|e| device_error_to_response("Failed to update device", e))?;
 
     ok(json!({
         "device_id": device_id,
@@ -1097,5 +1127,50 @@ mod contract_fix_tests {
         )
         .unwrap();
         assert_eq!(req.offline_timeout_secs, Some(120));
+    }
+}
+
+#[cfg(test)]
+mod device_error_mapping_tests {
+    use super::*;
+    use neomind_devices::DeviceError;
+
+    /// [live-caught] An unregistered device_type reached the client as 500
+    /// INTERNAL_ERROR — a plain client mistake reported as a server fault.
+    /// Client-input variants must map to 4xx.
+    #[test]
+    fn client_input_errors_map_to_4xx() {
+        let resp = device_error_to_response(
+            "Failed to add device",
+            DeviceError::NotFoundStr("Device type template 'nope' not found".into()),
+        );
+        assert_eq!(
+            resp.status,
+            axum::http::StatusCode::BAD_REQUEST,
+            "unknown template must be 400"
+        );
+
+        let resp = device_error_to_response(
+            "Failed to add device",
+            DeviceError::AlreadyExists("dev-1".into()),
+        );
+        assert_eq!(resp.status, axum::http::StatusCode::CONFLICT);
+
+        let resp = device_error_to_response(
+            "Failed to add device",
+            DeviceError::InvalidParameter("empty id".into()),
+        );
+        assert_eq!(resp.status, axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    /// Infrastructure failures still surface as 500 — the mapper must not
+    /// swallow real server-side faults into 4xx.
+    #[test]
+    fn infrastructure_errors_stay_5xx() {
+        let resp = device_error_to_response(
+            "Failed to add device",
+            DeviceError::Storage("redb: disk full".into()),
+        );
+        assert_eq!(resp.status, axum::http::StatusCode::INTERNAL_SERVER_ERROR);
     }
 }
