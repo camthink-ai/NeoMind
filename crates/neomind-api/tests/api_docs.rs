@@ -104,3 +104,24 @@ fn docs_table_matches_router_registrations() {
          → regenerate the ROUTES table in handlers/api_docs.rs"
     );
 }
+
+#[test]
+fn openapi_spec_paths_are_all_routed() {
+    let src = std::fs::read_to_string("src/server/router.rs")
+        .or_else(|_| std::fs::read_to_string("crates/neomind-api/src/server/router.rs"))
+        .expect("router.rs readable");
+    let spec = <neomind_api::handlers::openapi::ApiDoc as utoipa::OpenApi>::openapi();
+    let mut missing: Vec<String> = Vec::new();
+    for (path, _item) in spec.paths.paths.iter() {
+        let utoipa_path = path.clone(); // annotations already carry the /api prefix
+                                        // utoipa emits {param}; the router uses :param — normalize for the check.
+        let router_style = utoipa_path.replace('{', ":").replace('}', "");
+        if !src.contains(&router_style) {
+            missing.push(utoipa_path);
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "annotated paths not found in router.rs: {missing:?}"
+    );
+}

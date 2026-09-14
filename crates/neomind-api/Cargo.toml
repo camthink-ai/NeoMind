@@ -3,6 +3,13 @@ name = "neomind-api"
 version.workspace = true
 edition.workspace = true
 
+# OpenAPI schema generation (utoipa) — first batch covers auth + devices +
+# telemetry, the domains third parties integrate against. The spec is served
+# at /api/docs/openapi.json and rendered by the Scalar console at /api/docs.
+[dependencies.utoipa]
+version = "4"
+features = ["axum_extras", "chrono", "uuid"]
+
 [dev-dependencies]
 regex = { workspace = true }
 # Enable testing feature when running tests

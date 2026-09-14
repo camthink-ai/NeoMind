@@ -6,6 +6,7 @@ use axum::{
     response::{IntoResponse, Json},
 };
 use serde::{Deserialize, Serialize};
+use utoipa::path;
 
 use crate::auth::{ApiKeyInfo, AuthError};
 use crate::server::ServerState;
@@ -95,6 +96,15 @@ impl IntoResponse for ApiResponse {
 }
 
 /// List all API keys (requires authentication).
+#[utoipa::path(
+    get,
+    path = "/api/auth/keys",
+    tag = "auth",
+    responses(
+        (status = 200, description = "List of the caller's API keys (masked previews)"),
+        (status = 401, description = "Not authenticated (unified envelope)"),
+    )
+)]
 pub async fn list_keys_handler(
     State(state): State<ServerState>,
     headers: HeaderMap,
@@ -116,6 +126,15 @@ pub async fn list_keys_handler(
 /// NOTE: the `permissions` field is informational only and never enforced —
 /// every API key grants full administrator access. Create keys only for
 /// parties you would trust with the admin account.
+#[utoipa::path(
+    post,
+    path = "/api/auth/keys",
+    tag = "auth",
+    responses(
+        (status = 200, description = "Key created (full value shown once)"),
+        (status = 401, description = "Not authenticated"),
+    )
+)]
 pub async fn create_key_handler(
     State(state): State<ServerState>,
     headers: HeaderMap,

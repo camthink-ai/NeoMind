@@ -6,6 +6,7 @@ use axum::{
 };
 use serde_json::json;
 use std::sync::OnceLock;
+use utoipa::path;
 use uuid::Uuid;
 
 use super::compat::config_to_device_instance;
@@ -135,6 +136,21 @@ fn device_error_to_response(context: &str, e: neomind_devices::DeviceError) -> E
 ///
 /// Performance optimization: Queries device status once per device and reuses it
 /// for both filtering and DTO conversion, eliminating duplicate status queries.
+#[utoipa::path(
+    get,
+    path = "/api/devices",
+    tag = "devices",
+    params(
+        ("page" = Option<usize>, Query, description = "1-indexed page"),
+        ("limit" = Option<usize>, Query, description = "Per page (capped 1000)"),
+        ("device_type" = Option<String>, Query, description = "Filter by type"),
+        ("status" = Option<String>, Query, description = "online | offline | disconnected (legacy 'connected' = online)"),
+    ),
+    responses(
+        (status = 200, description = "Device list with pagination"),
+        (status = 401, description = "Not authenticated"),
+    )
+)]
 pub async fn list_devices_handler(
     State(state): State<ServerState>,
     Query(pagination): Query<PaginationQuery>,
@@ -304,6 +320,16 @@ pub async fn list_devices_handler(
 
 /// Get device details.
 /// Uses new DeviceService with real device status from event tracking
+#[utoipa::path(
+    get,
+    path = "/api/devices/{id}",
+    tag = "devices",
+    params(("id" = String, Path, description = "Device id")),
+    responses(
+        (status = 200, description = "Device detail; status three-state online/offline/disconnected"),
+        (status = 404, description = "Unknown device"),
+    )
+)]
 pub async fn get_device_handler(
     State(state): State<ServerState>,
     Path(device_id): Path<String>,
@@ -411,6 +437,16 @@ pub async fn get_device_handler(
 ///
 /// Returns device info + all metrics with current values in one call.
 /// This is the recommended endpoint for UI components that need device state.
+#[utoipa::path(
+    get,
+    path = "/api/devices/{id}/current",
+    tag = "devices",
+    params(("id" = String, Path, description = "Device id")),
+    responses(
+        (status = 200, description = "Current values of every metric"),
+        (status = 404, description = "Unknown device"),
+    )
+)]
 pub async fn get_device_current_handler(
     State(state): State<ServerState>,
     Path(device_id): Path<String>,
@@ -729,6 +765,16 @@ async fn one_device_current(state: &ServerState, device_id: &str) -> serde_json:
 
 /// Delete a device.
 /// Uses new DeviceService
+#[utoipa::path(
+    delete,
+    path = "/api/devices/{id}",
+    tag = "devices",
+    params(("id" = String, Path, description = "Device id")),
+    responses(
+        (status = 200, description = "Deleted"),
+        (status = 404, description = "Unknown device"),
+    )
+)]
 pub async fn delete_device_handler(
     State(state): State<ServerState>,
     Path(device_id): Path<String>,
@@ -747,6 +793,17 @@ pub async fn delete_device_handler(
 
 /// Add a new device manually.
 /// Uses new DeviceService
+#[utoipa::path(
+    post,
+    path = "/api/devices",
+    tag = "devices",
+    request_body = AddDeviceRequest,
+    responses(
+        (status = 200, description = "Created — or REPLACED an existing device with the same id (upsert; check updated_existing)"),
+        (status = 400, description = "Unknown device_type / invalid params"),
+        (status = 409, description = "Already exists"),
+    )
+)]
 pub async fn add_device_handler(
     State(state): State<ServerState>,
     Json(req): Json<AddDeviceRequest>,
@@ -814,6 +871,18 @@ pub async fn add_device_handler(
 
 /// Update a device.
 /// Only updates the fields provided in the request.
+#[utoipa::path(
+    put,
+    path = "/api/devices/{id}",
+    tag = "devices",
+    params(("id" = String, Path, description = "Device id")),
+    request_body = UpdateDeviceRequest,
+    responses(
+        (status = 200, description = "Updated. offline_timeout_secs tri-state: absent=keep, null=clear, number=set (30-86400)"),
+        (status = 400, description = "Invalid offline_timeout_secs or params"),
+        (status = 404, description = "Unknown device"),
+    )
+)]
 pub async fn update_device_handler(
     State(state): State<ServerState>,
     Path(device_id): Path<String>,

@@ -16,9 +16,24 @@ use crate::handlers::{
     ServerState,
 };
 use crate::models::ErrorResponse;
+use utoipa::path;
 
 /// Send a command to a device.
 /// Uses new DeviceService for command sending
+#[utoipa::path(
+    post,
+    path = "/api/devices/{id}/command/{command}",
+    tag = "telemetry",
+    params(
+        ("id" = String, Path, description = "Device id"),
+        ("command" = String, Path, description = "Command name (see device detail commands)"),
+    ),
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Command dispatched"),
+        (status = 404, description = "Unknown device or command"),
+    )
+)]
 pub async fn send_command_handler(
     State(state): State<ServerState>,
     Path((device_id, command)): Path<(String, String)>,
@@ -80,6 +95,17 @@ pub struct WriteMetricRequest {
 /// Write a metric data point for a device.
 ///
 /// POST /api/devices/:id/metrics
+#[utoipa::path(
+    post,
+    path = "/api/devices/{id}/metrics",
+    tag = "telemetry",
+    params(("id" = String, Path, description = "Device id")),
+    request_body = WriteMetricRequest,
+    responses(
+        (status = 200, description = "Point written (timestamp in the response is milliseconds; storage uses seconds)"),
+        (status = 400, description = "Invalid metric/value"),
+    )
+)]
 pub async fn write_metric_handler(
     Path(device_id): Path<String>,
     State(state): State<ServerState>,

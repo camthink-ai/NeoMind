@@ -12,12 +12,23 @@ use crate::auth_users::{
     RegisterRequest, SessionInfo, UserRole,
 };
 use crate::server::ServerState;
+use utoipa::path;
 
 /// Login handler - authenticate user and return JWT token.
 ///
 /// Brute-force throttled: the request is checked (per username AND per client
 /// IP) before the password is verified, and only credential failures count —
 /// a successful login clears both keys.
+#[utoipa::path(
+    post,
+    path = "/api/auth/login",
+    tag = "auth",
+    request_body = LoginRequest,
+    responses(
+        (status = 200, description = "JWT issued", body = LoginResponse),
+        (status = 401, description = "Invalid credentials or throttled (unified error envelope, code UNAUTHORIZED/FORBIDDEN)"),
+    )
+)]
 pub async fn login_handler(
     State(state): State<ServerState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -66,6 +77,17 @@ pub async fn login_handler(
 ///
 /// Every attempt counts against the per-IP signup throttle — each call
 /// creates a user, so there is no honest high-volume caller.
+#[utoipa::path(
+    post,
+    path = "/api/auth/register",
+    tag = "auth",
+    request_body = RegisterRequest,
+    responses(
+        (status = 200, description = "Account created (role is always User; the role field is ignored)"),
+        (status = 403, description = "Self-registration disabled"),
+        (status = 429, description = "Signup throttle (per IP)"),
+    )
+)]
 pub async fn register_handler(
     State(state): State<ServerState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,

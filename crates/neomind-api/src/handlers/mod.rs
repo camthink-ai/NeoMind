@@ -27,6 +27,7 @@ pub mod message_channels;
 pub mod messages;
 pub mod mqtt;
 pub mod onboarding;
+pub mod openapi;
 pub mod rules;
 pub mod sessions;
 pub mod settings;

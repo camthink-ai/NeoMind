@@ -41,6 +41,11 @@ pub static ROUTES: &[RouteDoc] = &[
     },
     RouteDoc {
         method: "GET",
+        path: "/api/docs/openapi.json",
+        auth: "public",
+    },
+    RouteDoc {
+        method: "GET",
         path: "/api/docs/*rest",
         auth: "public",
     },
@@ -1795,21 +1800,8 @@ fn scalar_html() -> String {
 <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
 <script>
 Scalar.createApiReference('#app', {
-  // routes.json is a compact {method,path,auth} index, not full OpenAPI —
-  // adapt client-side into a minimal OpenAPI 3 document so Scalar can
-  // render every route as an expandable entry with try-it-out.
-  data: fetch('/api/docs/routes.json').then(r => r.json()).then(routes => {
-    const paths = {};
-    for (const r of routes) {
-      const p = (paths[r.path] = paths[r.path] || {});
-      p[r.method.toLowerCase()] = {
-        summary: r.method + ' ' + r.path,
-        tags: [r.auth],
-        description: 'Auth class: ' + r.auth
-      };
-    }
-    return { openapi: '3.1.0', info: { title: 'NeoMind API', version: '0.9.24' }, paths };
-  })
+  // The utoipa-generated spec (auth + devices + telemetry first batch).
+  url: '/api/docs/openapi.json
 });
 </script>
 </body>

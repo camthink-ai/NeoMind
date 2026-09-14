@@ -44,6 +44,10 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/docs/routes.json",
             get(crate::handlers::api_docs::routes_json_handler),
         )
+        .route(
+            "/api/docs/openapi.json",
+            get(crate::handlers::openapi::openapi_json_handler),
+        )
         .route("/api/docs/*rest", get(crate::handlers::api_docs::docs_404))
         // Health check endpoints
         .route("/api/health", get(basic::health_handler))

@@ -5,6 +5,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::OnceLock;
+use utoipa::path;
 
 use crate::handlers::{
     common::{ok, HandlerResult},
@@ -40,6 +41,28 @@ fn get_transform_namespaces() -> &'static [&'static str; 5] {
 /// - limit: optional limit on number of data points (default: 100, max: 5000)
 /// - offset: optional offset for pagination (default: 0)
 /// - aggregate: optional aggregation type (avg, min, max, sum, last)
+#[utoipa::path(
+    get,
+    path = "/api/devices/{id}/telemetry",
+    tag = "telemetry",
+    params(
+        ("id" = String, Path, description = "Device id"),
+        ("metric" = Option<String>, Query, description = "Single metric; omit for all"),
+        ("start" = Option<i64>, Query, description = "Unix seconds"),
+        ("end" = Option<i64>, Query, description = "Unix seconds"),
+        ("hours" = Option<i64>, Query, description = "Window (1-720) when start absent"),
+        ("aggregate" = Option<String>, Query, description = "avg|min|max|sum|last — drives the value field; unknown = 400"),
+        ("limit" = Option<usize>, Query, description = "Points per page (1-5000, default 100)"),
+        ("offset" = Option<usize>, Query, description = "Skip newest N"),
+        ("cursor" = Option<i64>, Query, description = "Previous page's oldest ts; next page is strictly older; next_cursor null = last page"),
+        ("history" = Option<bool>, Query, description = "true = read a deleted device's archive"),
+        ("bucketed" = Option<bool>, Query, description = "Server-side downsampling for charts"),
+    ),
+    responses(
+        (status = 200, description = "Telemetry series with pagination {offset,limit,total,next_cursor}"),
+        (status = 404, description = "Unknown device (use history=true for deleted-device archives)"),
+    )
+)]
 pub async fn get_device_telemetry_handler(
     State(state): State<ServerState>,
     Path(device_id): Path<String>,
@@ -667,6 +690,19 @@ pub async fn get_device_telemetry_handler(
 /// GET /api/devices/:id/telemetry/summary
 ///
 /// Returns summary statistics for all device metrics over a time range.
+#[utoipa::path(
+    get,
+    path = "/api/devices/{id}/telemetry/summary",
+    tag = "telemetry",
+    params(
+        ("id" = String, Path, description = "Device id"),
+        ("hours" = Option<i64>, Query, description = "Summary window in hours (default 24)"),
+    ),
+    responses(
+        (status = 200, description = "Per-metric summary {current, avg, min, max, count}"),
+        (status = 404, description = "Unknown device"),
+    )
+)]
 pub async fn get_device_telemetry_summary_handler(
     State(state): State<ServerState>,
     Path(device_id): Path<String>,
