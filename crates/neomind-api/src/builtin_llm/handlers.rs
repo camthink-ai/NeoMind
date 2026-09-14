@@ -357,8 +357,12 @@ pub fn installed_model_by_id(mdir: &Path, id: &str) -> Option<InstalledModel> {
 }
 
 /// Download source for a def: HF repo + file + sha. Every model downloads its
-/// registry entry directly (LFM's entry is now QAD Q4_0, the default); the
-/// env `quant_override` swaps LFM to q8_0/q4_k_m for power users.
+/// registry entry directly; the env `quant_override` selects a different
+/// quant for the DEFAULT model. NOTE: the special branch below used to
+/// hardcode LiquidAI's repo — a leftover from when LFM was the default: a
+/// quant override on the MiniCPM default went looking for MiniCPM files in
+/// the LFM repo and 404'd. Per-quant sources now derive from the model's
+/// OWN registry entry shape (same repo, per-quant official files).
 fn resolve_source(
     cfg: &BuiltinConfig,
     def: &super::catalog::CatalogModel,
@@ -366,8 +370,12 @@ fn resolve_source(
     if def.id == BUILTIN_MODEL_ID {
         if let Ok(Some(quant)) = resolve_quant(cfg, def) {
             return (
-                format!("{}/{}", HF_REPO, hf_file_name(quant)),
-                hf_sha256(quant).to_string(),
+                format!(
+                    "https://huggingface.co/{}/resolve/main/{}",
+                    def.hf_repo,
+                    quant_file_name(&def.id, quant)
+                ),
+                quant_sha256(&def.id, quant).to_string(),
                 model_file_name(quant),
             );
         }
@@ -380,6 +388,36 @@ fn resolve_source(
         def.sha256.clone(),
         def.file_name.clone(),
     )
+}
+
+/// Official per-quant file names for quant-override downloads of the
+/// default model (verified against the openbmb repo listing 2026-09-14).
+fn quant_file_name(model_id: &str, quant: Quant) -> String {
+    match (model_id, quant) {
+        ("minicpm5-2b", Quant::Q4_K_M) => "MiniCPM5-2B-Q4_K_M.gguf".to_string(),
+        ("minicpm5-2b", Quant::Q8_0) => "MiniCPM5-2B-Q8_0.gguf".to_string(),
+        ("minicpm5-2b", Quant::QAD_Q4_0) => {
+            // No QAD quant exists for MiniCPM — fall through to the generic
+            // error path in resolve_quant's caller rather than invent a name.
+            "MiniCPM5-2B-Q4_K_M.gguf".to_string()
+        }
+        _ => hf_file_name(quant).to_string(),
+    }
+}
+
+/// Official LFS SHA256 per quant for the default model (captured from the
+/// repo's LFS pointers 2026-09-14; blobs are content-addressed so these
+/// hold unless the owner re-uploads under the same name).
+fn quant_sha256(model_id: &str, quant: Quant) -> &'static str {
+    match (model_id, quant) {
+        ("minicpm5-2b", Quant::Q4_K_M) => {
+            "ec2d5801640099e97d8d7e8003ad4d81f336e757811f03a26173dddf386602fd"
+        }
+        ("minicpm5-2b", Quant::Q8_0) => {
+            "c5415f8989bf88a8288f1b55a3cc371af53c07b0faa220a63bd7a990cfaba078"
+        }
+        _ => hf_sha256(quant),
+    }
 }
 
 // ---------------------------------------------------------------------------

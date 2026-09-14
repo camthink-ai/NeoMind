@@ -68,7 +68,13 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
                 id: "minicpm5-2b".to_string(),
                 version: "1.0".to_string(),
                 file_name: "minicpm5-2b-q4_k_m.gguf".to_string(),
-                sha256: "9252669758794f5ec0a0f2919a7d7507fd90748ffb75983ad7ff6c940a827b50"
+                // Official openbmb LFS oid (captured 2026-09-14 via the
+                // repo's LFS pointer). NOTE: the previous pin pointed at a
+                // THIRD-PARTY mirror (Abiray) whose bytes differ (2080-byte
+                // size delta — a repack); switching sources means switching
+                // hashes. Already-downloaded installs keep their file: the
+                // sha only gates NEW downloads.
+                sha256: "ec2d5801640099e97d8d7e8003ad4d81f336e757811f03a26173dddf386602fd"
                     .to_string(),
                 quant: "q4_k_m".to_string(),
             },
@@ -79,7 +85,10 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             temperature: Some(0.6),
             top_p: Some(0.85),
             top_k: Some(40),
-            hf_repo: "Abiray/MiniCPM5-2B-GGUF",
+            // Official model-author repo — the previous third-party mirror
+            // (Abiray) served a byte-different repack and personal repos
+            // vanish; openbmb is the durable, authoritative source.
+            hf_repo: "openbmb/MiniCPM5-2B-GGUF",
             hf_file: "MiniCPM5-2B-Q4_K_M.gguf",
             size_bytes: 1_561_320_448,
             // 32K default (product decision 2026-09-12): the 2026-09 eval's

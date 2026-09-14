@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### MiniCPM5-2B download source: third-party mirror → official openbmb repo
+- The default model downloaded from `Abiray/MiniCPM5-2B-GGUF` (a personal-account mirror) whose bytes are a **repack** — LFS pointer comparison: official 1,561,318,368 B / `ec2d58…02fd` vs mirror 1,561,320,448 B / `9252…7b50` (2,080-byte delta). Personal mirrors vanish and their re-uploads silently invalidate pinned hashes; `openbmb` is the model author's authoritative, durable source. Both the pinned sha256 (Q4_K_M) and the repo switched; already-downloaded installs keep their files (the hash only gates new downloads).
+- **Fixed the LFM leftover in `resolve_source`:** the quant-override special branch still hardcoded LiquidAI's repo from when LFM was the default — a MiniCPM quant override went looking for MiniCPM files in the LFM repo and 404'd. Per-quant sources now derive from the model's own registry entry (official openbmb file names + LFS-verified sha256s for Q4_K_M and Q8_0, captured from the repo pointers 2026-09-14).
+
 ### llama-server lifecycle: deterministic cleanup on every exit path
 - **`kill_on_drop` on the spawn + a global handle registry**: every `systemctl restart` (and any crash / `kill -9` / desktop force-quit) used to orphan the model-loaded llama-server (~2 GB) — reclamation depended on the NEXT boot's port-conflict detection happening to match. The handle now lives in a process-global registry (`Arc<Mutex<Child>>`, both spawn sites register), so `kill_on_drop` guarantees the child dies with the server process on abnormal exits, and graceful paths stop it explicitly: the standalone serve shutdown calls `stop_all_llama_servers()` first, and the desktop `clean_shutdown` (previously dead code that never ran before runtime teardown) now stops the embedded llama-server before dropping the runtime.
 
