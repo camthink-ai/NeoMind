@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.24] - 2026-09-14
+
 ### Builtin-model pipeline: end-to-end integration tests (chain, not just links)
 - New `builtin_llm_bootstrap` integration suite pins the full chain with REAL code paths and minimal fakes: a PATH-injected shell/python `neomind-llama-server` (serves /health + /props, real spawned child) drives discovery→spawn→health→is_alive→registration. Three scenarios: **(A) happy chain** — seeded model → bootstrap → `ServerReady` with the real port, instance registered with the registry's 32K ctx, set active, spawned server STAYS alive after bootstrap returns (kill_on_drop keeps the handle-released child alive), and `stop_all_llama_servers()` kills it (graceful registry path reaches this child); **(B) port-squat guard** — a foreign server pre-binding the port (our child dies on bind, health passes against the foreigner) → bootstrap `Failed`, NO instance registered pointing at the foreign server; **(C) idempotent restart** — stale instance record + healthy server short-circuits `ServerAlreadyRunning`, and the refresh stamps `cfg.effective_ctx` (a 64K override beats the 32K default — the regression where refresh rewrote it down is pinned). Env-mutating tests serialize on one lock and restore PATH.
 
