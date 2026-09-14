@@ -1743,7 +1743,13 @@ fn grouped_html() -> String {
          code{background:#f4f4f4;padding:1px 4px;border-radius:3px}</style></head>\
          <body><h1>NeoMind API</h1>\
          <p>Route index — see <code>/api/docs/routes.json</code> for the machine-readable form. \
-         Responses use the <code>{success, data|error:{code,message}}</code> envelope.</p>",
+         Responses use the <code>{success, data|error:{code,message}}</code> envelope.</p>\
+         <p><strong>Scope:</strong> this index is authoritative for METHOD, PATH and the AUTH \
+         CLASS only (a CI test fails when it drifts from the router). It does <em>not</em> \
+         document request/response schemas, parameter types, ranges or per-endpoint error \
+         codes — for those, read the handler source (each route's docs live in \
+         <code>crates/neomind-api/src/handlers/</code>). A full OpenAPI document is not yet \
+         generated.</p>",
     );
     for group in ["public", "jwt-or-api-key", "jwt-only", "webhook", "ws"] {
         let rows: Vec<String> = ROUTES
