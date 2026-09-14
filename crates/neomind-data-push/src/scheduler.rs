@@ -18,6 +18,37 @@ struct ScheduledHandle {
     join_handle: tokio::task::JoinHandle<()>,
 }
 
+/// Per-target concurrent in-flight deliveries for the immediate push path.
+const DATA_PUSH_MAX_INFLIGHT_DELIVERIES: usize = 4;
+
+/// Hard entry cap for the batched push buffer (independent of the configured
+/// batch_size) — bounds memory under event bursts with image-inlined values.
+const DATA_PUSH_MAX_BUFFER_ENTRIES: usize = 1000;
+
+/// Rate-limits backpressure-drop warnings: log once per window instead of
+/// once per dropped event (a storm would otherwise flood the logs).
+#[derive(Default)]
+struct BackpressureDropCounter {
+    dropped: u64,
+    window_start: Option<tokio::time::Instant>,
+}
+
+impl BackpressureDropCounter {
+    /// Records a drop; returns true when a warning should be emitted (then
+    /// resets the window).
+    fn log_and_reset(&mut self) -> bool {
+        let now = tokio::time::Instant::now();
+        let window_start = *self.window_start.get_or_insert(now);
+        if now.duration_since(window_start).as_secs() >= 60 {
+            self.window_start = Some(now);
+            let dropped = std::mem::take(&mut self.dropped);
+            let _ = dropped;
+            return true;
+        }
+        false
+    }
+}
+
 impl ScheduledHandle {
     async fn stop(self) {
         let _ = self.cancel.send(true);
@@ -130,8 +161,11 @@ impl PushScheduler {
 
             let mut rx = bus.subscribe();
             let mut matcher = DataSourceMatcher::new(target.data_filter.clone());
-            let dest = match create_destination(&target.target_type, &target.config) {
-                Ok(d) => d,
+            let dest: std::sync::Arc<dyn crate::targets::PushDestination> = match create_destination(
+                &target.target_type,
+                &target.config,
+            ) {
+                Ok(d) => std::sync::Arc::from(d),
                 Err(e) => {
                     tracing::error!(target_id = %target.id, error = %e, "Failed to create destination");
                     return;
@@ -153,6 +187,11 @@ impl PushScheduler {
 
             // Buffer for batched events
             let mut buffer: Vec<(String, serde_json::Value, i64)> = Vec::new();
+            // Immediate-path concurrency cap (see [backpressure] below).
+            let delivery_permits = std::sync::Arc::new(tokio::sync::Semaphore::new(
+                DATA_PUSH_MAX_INFLIGHT_DELIVERIES,
+            ));
+            let mut dropped_under_backpressure = BackpressureDropCounter::default();
             let mut flush_timer = tokio::time::Instant::now() + batch_interval;
             // Per-target dedup of transform's double-published virtual metrics.
             let mut recent_virtual: std::collections::HashMap<
@@ -212,18 +251,57 @@ impl PushScheduler {
                                         }
                                         resolve_image_urls_in_value(&mut value);
                                         if !batch_enabled {
-                                            // Immediate delivery (batch_size=1)
-                                            if let Err(e) = deliver_with_retry(
-                                                &target,
-                                                &store,
-                                                &renderer,
-                                                dest.as_ref(),
-                                                &source_id,
-                                                &value,
-                                                ts,
-                                                Some(&cancel),
-                                            ).await {
-                                                tracing::warn!(target_id = %target.id, error = %e, "Delivery failed after retries");
+                                            // [backpressure] Immediate delivery used to be
+                                            // awaited INLINE: one dead endpoint (4 attempts ×
+                                            // 30s timeout + 5/10/20s backoffs, worst case
+                                            // ~12 min) stalled rx.recv() for the whole window,
+                                            // the 1000-slot broadcast bus lagged, and the
+                                            // telemetry being pushed was silently DROPPED —
+                                            // the push subsystem lost data exactly when the
+                                            // endpoint was down. Deliver in a spawned task
+                                            // under a per-target in-flight cap instead: the
+                                            // consumer keeps draining; when the cap is
+                                            // exhausted the newest event is dropped with a
+                                            // warn (visible, bounded loss — the same policy
+                                            // the EventBus itself applies under lag).
+                                            // Owned permit: the spawned task outlives this
+                                            // loop iteration, so the permit must be 'static.
+                                            match delivery_permits.clone().try_acquire_owned() {
+                                                Ok(_permit) => {
+                                                    let target = target.clone();
+                                                    let store = store.clone();
+                                                    let renderer = renderer.clone();
+                                                    let dest = dest.clone();
+                                                    let cancel = cancel.clone();
+                                                    let source_id = source_id.clone();
+                                                    tokio::spawn(async move {
+                                                        let _permit = _permit;
+                                                        if let Err(e) = deliver_with_retry(
+                                                            &target,
+                                                            &store,
+                                                            &renderer,
+                                                            dest.as_ref(),
+                                                            &source_id,
+                                                            &value,
+                                                            ts,
+                                                            Some(&cancel),
+                                                        ).await {
+                                                            tracing::warn!(target_id = %target.id, error = %e, "Delivery failed after retries");
+                                                        }
+                                                    });
+                                                }
+                                                Err(_) => {
+                                                    dropped_under_backpressure
+                                                        .dropped += 1;
+                                                    if dropped_under_backpressure
+                                                        .log_and_reset()
+                                                    {
+                                                        tracing::warn!(
+                                                            target_id = %target.id,
+                                                            "Push backpressure: in-flight delivery cap reached — events dropped this window"
+                                                        );
+                                                    }
+                                                }
                                             }
                                         } else {
                                             // Buffer for batch. Restart the interval timer on the first
@@ -237,7 +315,15 @@ impl PushScheduler {
                                             if was_empty {
                                                 flush_timer = tokio::time::Instant::now() + batch_interval;
                                             }
-                                            if buffer.len() >= batch_size {
+                                            // [buffer cap] A large configured batch_size
+                                            // with a high event rate (and image-inlined
+                                            // values) used to grow the buffer without
+                                            // bound until batch_size was reached —
+                                            // memory pressure on the edge box. Flush at
+                                            // a hard entry cap as well.
+                                            if buffer.len() >= batch_size
+                                                || buffer.len() >= DATA_PUSH_MAX_BUFFER_ENTRIES
+                                            {
                                                 flush_batch(&target, &store, &renderer, dest.as_ref(), &mut buffer, Some(&cancel)).await;
                                                 flush_timer = tokio::time::Instant::now() + batch_interval;
                                             }

@@ -66,6 +66,9 @@ async fn main() -> Result<()> {
         let log_dir = neomind_core::paths::data_dir().join("logs");
         let file_appender = tracing_appender::rolling::daily(log_dir, "neomind.log");
 
+        // [stdout hygiene] Console tracing goes to STDERR: the layer used to
+        // default to stdout, interleaving log lines into the NEOMIND_JSON=1
+        // stream (breaking serde parsing for the agent's machine reads).
         let stdout_layer = if json_logging {
             tracing_subscriber::fmt::layer()
                 .json()
@@ -74,6 +77,7 @@ async fn main() -> Result<()> {
                 .boxed()
         } else {
             tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
                 .with_target(false)
                 .with_thread_ids(false)
                 .with_file(false)
@@ -101,11 +105,13 @@ async fn main() -> Result<()> {
     } else if json_logging {
         tracing_subscriber::fmt()
             .json()
+            .with_writer(std::io::stderr)
             .with_env_filter(env_filter)
             .with_target(true)
             .init();
     } else {
         tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
             .with_env_filter(env_filter)
             .with_target(false)
             .with_thread_ids(false)
@@ -214,6 +220,14 @@ fn print_result(
 ) -> Result<()> {
     let (resp, fmt) = result?;
     neomind_cli_ops::output::format_output(&resp, fmt);
+    // [exit-code contract] A CliResponse that reports failure IS a failure:
+    // scripts and the agent's shell tool key on the process exit status, and
+    // every error path used to print "❌ …" and exit 0 — indistinguishable
+    // from success. Exit 3 = the command ran but the operation failed
+    // (distinct from anyhow's exit 1 = transport/usage-level failure).
+    if !resp.success {
+        std::process::exit(3);
+    }
     Ok(())
 }
 
