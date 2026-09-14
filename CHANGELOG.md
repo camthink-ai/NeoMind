@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Cleanup wave round 2 — shared channel send ladder + data-dir resolver
+- **`post_json` + `channel_http_client` in neomind-messages:** the five webhook-style channels (Slack/Telegram/DingTalk/WeCom/Feishu) carried byte-identical send ladders — post → transport-error map → non-2xx map → 200-with-error-body validation — and five copies of the 30s/10s client builder. One shared ladder + one shared client now; the IM-APIs-answer-200-with-error-bodies knowledge lives in exactly one place. All 189 message tests pass unchanged (the ladder was extracted, not altered).
+- **cli-ops data-dir resolution consolidated:** `device.rs`/`widget.rs` hand-rolled `env-or-"data"` and silently missed the platform-dir tier (hosts without `./data` resolved image/widget paths against a nonexistent cwd dir); both now use `auto_auth::data_dir_for_paths()` with env > platform-dir-with-store > "data" precedence.
+
 ### Optimization + consistency wave (post-0.9.24 bump)
 - **Ingest hot path:** `update_last_seen` no longer writes a redb txn per metric per report (10-metric device @1Hz was 10 txns/s of whole-config read-modify-write) — in-memory updates every event (status semantics unchanged), persistence debounced to ≥15s advances (restart survival loses ≤15s, far inside the 30s offline-timeout floor).
 - **Query hot paths:** telemetry responses move-not-clone the JSON points arrays (three blocks deep-copied every metric's full series per request); the current-values batch endpoint and the summary endpoint now fan out per-device/per-metric work concurrently (were N×latency sequential); summary's per-request metric-list dumps demoted info→debug.

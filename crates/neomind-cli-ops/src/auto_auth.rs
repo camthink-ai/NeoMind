@@ -133,6 +133,27 @@ fn set_file_mode_0600(_path: &std::path::Path) {}
 /// This lets the CLI auto-authenticate regardless of working directory on
 /// macOS / Linux / Windows, without depending on platform keychains (which are
 /// unavailable on headless edge devices).
+/// Best-effort data-dir for path-joining call sites (images, widget
+/// bundles): env override, else the platform dir when it holds a store,
+/// else the cwd-relative "data". This is `resolve_data_dir`'s precedence
+/// without the legacy-fallback subtleties of store_path (these sites
+/// historically hand-rolled env-or-"data" and silently missed the
+/// platform-dir tier on hosts without ./data).
+pub fn data_dir_for_paths() -> String {
+    if let Ok(dir) = std::env::var("NEOMIND_DATA_DIR") {
+        if !dir.is_empty() {
+            return dir;
+        }
+    }
+    if let Some(local) = dirs::data_local_dir() {
+        let candidate = local.join("neomind");
+        if candidate.join("api_keys.redb").exists() {
+            return candidate.to_string_lossy().into_owned();
+        }
+    }
+    "data".to_string()
+}
+
 pub fn resolve_data_dir() -> String {
     // 1. Explicit override
     if let Ok(dir) = std::env::var("NEOMIND_DATA_DIR") {

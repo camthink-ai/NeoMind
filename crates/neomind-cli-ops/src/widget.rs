@@ -65,7 +65,7 @@ pub fn create_widget(
     let dir_path = if let Some(custom) = output_dir {
         Path::new(custom).to_path_buf()
     } else {
-        let data_dir = std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "data".to_string());
+        let data_dir = crate::auto_auth::data_dir_for_paths();
         Path::new(&data_dir)
             .join("frontend-components")
             .join(&widget_id)

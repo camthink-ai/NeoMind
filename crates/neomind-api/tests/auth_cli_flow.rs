@@ -29,7 +29,10 @@ impl CredDir {
         let guard = ENV_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         std::env::set_var("NEOMIND_CONFIG_DIR", dir.path());
-        Self { _guard: guard, _dir: dir }
+        Self {
+            _guard: guard,
+            _dir: dir,
+        }
     }
 }
 impl Drop for CredDir {

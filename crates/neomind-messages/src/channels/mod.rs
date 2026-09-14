@@ -1189,6 +1189,53 @@ pub fn get_channel_schema(channel_type: &str) -> Option<serde_json::Value> {
 /// token). Checking HTTP status alone hides these as false "success" — the
 /// channel-test reports success but no message actually arrives. Returns
 /// `Some(error description)` when the body signals an error, `None` otherwise.
+/// The channel HTTP client: 30s total / 10s connect — one place so a
+/// future policy change (proxy, TLS pins, longer streams budget) can't
+/// drift across the seven senders.
+pub(crate) fn channel_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
+/// Shared JSON POST for the webhook-style channels: send → transport-error
+/// map → non-2xx map → 200-with-error-body validation (detect_error_body).
+/// The five senders used to carry byte-identical copies of this ladder with
+/// only the channel name differing.
+pub(crate) async fn post_json(
+    channel: &str,
+    client: &reqwest::Client,
+    url: &str,
+    body: &serde_json::Value,
+) -> super::Result<()> {
+    let response = client
+        .post(url)
+        .json(body)
+        .send()
+        .await
+        .map_err(|e| super::Error::SendFailed(format!("{channel} request failed: {e}")))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        return Err(super::Error::SendFailed(format!(
+            "{channel} error {status}: {text}"
+        )));
+    }
+
+    // IM APIs often answer HTTP 200 with an error body (WeCom errcode,
+    // Feishu code, Slack ok:false) — validate the payload, not just 200.
+    let text = response.text().await.unwrap_or_default();
+    if let Some(err) = detect_error_body(&text) {
+        return Err(super::Error::SendFailed(format!(
+            "{channel} reported error: {err}"
+        )));
+    }
+    Ok(())
+}
+
 pub(crate) fn detect_error_body(body: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(body.trim()).ok()?;
     let obj = v.as_object()?;

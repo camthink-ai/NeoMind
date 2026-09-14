@@ -41,11 +41,7 @@ pub struct FeishuChannel {
 #[cfg(feature = "feishu")]
 impl FeishuChannel {
     pub fn new(name: String, hook_id: String, secret: Option<String>) -> Self {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+        let client = super::channel_http_client();
         Self {
             name,
             enabled: true,
@@ -130,32 +126,7 @@ impl MessageChannel for FeishuChannel {
 
         let body = self.format_body(message);
 
-        let response = self
-            .client
-            .post(self.webhook_url())
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| Error::SendFailed(format!("Feishu request failed: {}", e)))?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            return Err(Error::SendFailed(format!(
-                "Feishu API error {}: {}",
-                status, text
-            )));
-        }
-
-        // Feishu returns HTTP 200 with a JSON body {"code": N, "msg": "..."} even
-        // for semantic errors (invalid msg_type, disabled bot, bad hook). Don't
-        // report success on HTTP 200 alone — validate the body's code.
-        let text = response.text().await.unwrap_or_default();
-        if let Some(err) = super::detect_error_body(&text) {
-            return Err(Error::SendFailed(format!("Feishu API error: {err}")));
-        }
-
-        Ok(())
+        super::post_json("Feishu", &self.client, &self.webhook_url(), &body).await
     }
 }
 

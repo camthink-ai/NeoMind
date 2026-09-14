@@ -323,7 +323,7 @@ fn materialize_data_url(s: &str, device_id: &str, metric_name: &str) -> Option<S
     };
 
     // Resolve data_dir from env (set by the server/dispatch context)
-    let data_dir = std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "data".to_string());
+    let data_dir = crate::auto_auth::data_dir_for_paths();
     let images_dir = std::path::Path::new(&data_dir).join("images");
     // Create device/metric subdirectory to match the URL structure:
     // /api/images/{device_id}/{metric_name}/{filename}
