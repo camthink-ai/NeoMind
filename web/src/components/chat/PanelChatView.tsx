@@ -505,15 +505,35 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
   }, [addPanelMessage, t])
 
   // Surface connection failures that would otherwise leave the streaming
-  // bubble spinning forever. The panel never subscribed to state changes
-  // (only the full chat page did), so an auth rejection (4001) or a
-  // mid-stream disconnect ended the input silently while the assistant
-  // "reply" never came. With server-side detached delivery the turn keeps
-  // running and lands in history — say that, don't imply the answer is lost.
+  // bubble spinning forever. With server-side detached delivery the turn
+  // keeps running and lands in history — say that, don't imply the answer
+  // is lost. Two guards against FALSE kills:
+  // - the subscription's immediate callback replays STALE state (a remount
+  //   while a long-dead error lingers) — skip the first invocation;
+  // - a 2-second network blip mid-reconnect must not end the stream UI
+  //   while the message is safely queued and the turn still runs — require
+  //   the bad state to PERSIST for 3s (cleared the moment we reconnect).
   useEffect(() => {
+    let firstInvocation = true
+    let killTimer: ReturnType<typeof setTimeout> | null = null
+    const clearKillTimer = () => {
+      if (killTimer) { clearTimeout(killTimer); killTimer = null }
+    }
     const unsubscribe = ws.onStateChange((state) => {
+      if (firstInvocation) {
+        firstInvocation = false
+        return
+      }
       if (!isStreamingRef.current) return
-      if (state.status === 'error' || state.status === 'disconnected' || state.status === 'reconnecting') {
+      const bad = state.status === 'error' || state.status === 'disconnected' || state.status === 'reconnecting'
+      if (!bad) {
+        clearKillTimer()
+        return
+      }
+      if (killTimer) return // already counting down
+      killTimer = setTimeout(() => {
+        killTimer = null
+        if (!isStreamingRef.current) return
         dispatch({ type: 'ERROR' })
         isStreamingRef.current = false
         setCurrentStreamMessageId(null)
@@ -527,9 +547,12 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
           content,
           timestamp: Math.floor(Date.now() / 1000),
         })
-      }
+      }, 3000)
     })
-    return () => { void unsubscribe() }
+    return () => {
+      clearKillTimer()
+      void unsubscribe()
+    }
   }, [addPanelMessage, t])
 
   // Multimodal gate — mirrors the chat page's composer input

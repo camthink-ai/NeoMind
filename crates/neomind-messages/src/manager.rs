@@ -902,7 +902,7 @@ pub(crate) fn scrub_credentials(text: &str) -> String {
             };
             let start = pos + needle.len();
             let end = out[start..]
-                .find(|c: char| c == '&' || c == '\'' || c == '"' || c.is_whitespace())
+                .find(|c: char| c == '&' || c == '\'' || c == '"' || c == ')' || c.is_whitespace())
                 .map(|e| start + e)
                 .unwrap_or(out.len());
             if !boundary_ok || start >= end {
@@ -923,6 +923,29 @@ pub(crate) fn scrub_credentials(text: &str) -> String {
             if userinfo.contains(':') && !userinfo.contains('/') {
                 out.replace_range(rest_start..rest_start + at, "***:***");
             }
+        }
+    }
+    // Feishu webhook: the secret is the LAST path segment after /hook/.
+    if let Some(pos) = out.find("/hook/") {
+        let start = pos + "/hook/".len();
+        let end = out[start..]
+            .find(|c: char| c == '/' || c == ')' || c.is_whitespace() || c == '\'' || c == '"')
+            .map(|e| start + e)
+            .unwrap_or(out.len());
+        if start < end {
+            out.replace_range(start..end, "***");
+        }
+    }
+    // Slack webhook: hooks.slack.com/services/T/B/X — the whole tail is the
+    // secret (three path segments).
+    if let Some(pos) = out.find("hooks.slack.com/services/") {
+        let start = pos + "hooks.slack.com/services/".len();
+        let end = out[start..]
+            .find(|c: char| c == ')' || c.is_whitespace() || c == '\'' || c == '"')
+            .map(|e| start + e)
+            .unwrap_or(out.len());
+        if start < end {
+            out.replace_range(start..end, "***");
         }
     }
     // Telegram bot-token path form: /bot<digits>:<hash>
@@ -1874,5 +1897,40 @@ mod credential_scrub_tests {
     fn leaves_non_credential_text_intact() {
         let msg = "connection refused by 10.0.0.5:443 after 30s (topic=devices)";
         assert_eq!(scrub_credentials(msg), msg);
+    }
+}
+
+#[cfg(test)]
+mod credential_scrub_path_tests {
+    use super::*;
+
+    #[test]
+    fn scrubs_feishu_hook_path() {
+        let out = scrub_credentials(
+            "error for url (https://open.feishu.cn/open-apis/bot/v2/hook/a1b2c3d4-e5f6) timeout",
+        );
+        assert!(!out.contains("a1b2c3d4"), "feishu key leaked: {out}");
+        assert!(out.contains("/hook/***"), "feishu mask missing: {out}");
+        assert!(
+            out.ends_with(") timeout") || out.contains(") timeout"),
+            "closing paren mangled: {out}"
+        );
+    }
+
+    #[test]
+    fn scrubs_slack_services_path() {
+        let out = scrub_credentials(
+            "error for url (https://hooks.slack.com/services/T000AAA/B000BBB/XXXXXXXXXXXXXXXX) dns failure",
+        );
+        assert!(!out.contains("T000AAA"), "slack token leaked: {out}");
+        assert!(out.contains("services/***"), "slack mask missing: {out}");
+    }
+
+    #[test]
+    fn query_mask_preserves_closing_paren() {
+        let out =
+            scrub_credentials("(https://oapi.dingtalk.com/robot/send?access_token=abc123) refused");
+        assert!(!out.contains("abc123"));
+        assert!(out.contains("access_token=***)"), "paren eaten: {out}");
     }
 }

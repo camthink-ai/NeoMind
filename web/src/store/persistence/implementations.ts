@@ -571,6 +571,22 @@ export class HybridDashboardStorage implements DashboardStorage {
    * 3. Dashboards whose mapped server ID is absent from the server list were
    *    deleted from another client (and not edited locally since) — dropped.
    */
+  /**
+   * Normalize a timestamp to milliseconds for comparisons ONLY.
+   *
+   * The server persists `updated_at` as Unix SECONDS (chrono timestamp())
+   * while the frontend writes `updatedAt` as Date.now() MILLISECONDS, and
+   * fromDashboardDTO passes the value through unchanged. Comparing raw
+   * values made every local copy "newer" than every server copy (~1.7e12 vs
+   * ~1.7e9) — the merge then "recovered" everything on every load, healing
+   * forever and silently reverting other clients' edits. Threshold 1e12
+   * (Sep 2001 in ms) cleanly separates the two regimes.
+   */
+  private static normalizeToMs(ts: number | undefined): number {
+    if (typeof ts !== 'number' || !Number.isFinite(ts)) return 0
+    return ts < 1e12 ? ts * 1000 : ts
+  }
+
   private mergeServerWithLocalOnly(serverDashboards: Dashboard[]): Dashboard[] {
     try {
       const stored = localStorage.getItem(LOCAL_STORAGE_KEY)
@@ -586,7 +602,10 @@ export class HybridDashboardStorage implements DashboardStorage {
         const serverId = serverIds.has(d.id) ? d.id : this.localToServerId.get(d.id)
         if (!serverId || !serverIds.has(serverId)) continue
         const prev = localByServerId.get(serverId)
-        if (!prev || (d.updatedAt ?? 0) > (prev.updatedAt ?? 0)) {
+        if (
+          !prev ||
+          HybridDashboardStorage.normalizeToMs(d.updatedAt) > HybridDashboardStorage.normalizeToMs(prev.updatedAt)
+        ) {
           localByServerId.set(serverId, d)
         }
       }
@@ -596,9 +615,8 @@ export class HybridDashboardStorage implements DashboardStorage {
         const ld = localByServerId.get(sd.id)
         if (
           ld &&
-          typeof ld.updatedAt === 'number' &&
-          typeof sd.updatedAt === 'number' &&
-          ld.updatedAt > sd.updatedAt
+          HybridDashboardStorage.normalizeToMs(ld.updatedAt) >
+            HybridDashboardStorage.normalizeToMs(sd.updatedAt)
         ) {
           const winner = { ...ld, id: sd.id }
           recovered.push(winner)

@@ -314,7 +314,9 @@ export default function SystemPage() {
       </div>
 
       {/* Desktop LAN access (renders nothing in web builds) */}
-      <LanAccessSection compact />
+      <div className="mt-4">
+        <LanAccessSection compact />
+      </div>
 
       {/* Section 3 — About */}
       <SectionLabel>{t("system.sectionAbout")}</SectionLabel>

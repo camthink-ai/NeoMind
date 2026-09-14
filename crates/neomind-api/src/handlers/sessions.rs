@@ -1391,6 +1391,28 @@ async fn handle_ws_socket(
                                                         .await;
                                                     }
                                                     Err(e) => {
+                                                        // [single-stream mutex] A rejection because a turn is
+                                                        // already running (e.g. the previous turn is still
+                                                        // completing in the background after the client
+                                                        // detached) must NOT fall into the non-streaming
+                                                        // fallback: that path bypasses the per-session mutex
+                                                        // and would run CONCURRENTLY on the same internal
+                                                        // state — interleaved history writes, out-of-order
+                                                        // replies. Surface an actionable error instead.
+                                                        let err_str = e.to_string();
+                                                        if err_str.contains("already being generated") {
+                                                            let _ = task_tx
+                                                                .send(StreamEvent {
+                                                                    json: json!({
+                                                                        "type": "Error",
+                                                                        "message": err_str,
+                                                                        "sessionId": task_session_id,
+                                                                    })
+                                                                    .to_string(),
+                                                                })
+                                                                .await;
+                                                            return;
+                                                        }
                                                         // Fallback to non-streaming on error
                                                         tracing::error!(error = %e, session_id = %task_session_id, backend_id = ?task_req_backend, "Streaming text failed, falling back to non-streaming");
                                                         let response = match task_state
@@ -1521,22 +1543,15 @@ async fn handle_ws_socket(
     // Cleanup: persist session history AFTER loop ends (when connection closes)
     let session_id_opt = current_session_id.read().await.clone();
     if let Some(session_id) = session_id_opt.as_ref() {
-        // Cancel any in-flight LLM stream for this session.
-        // Without this, a client disconnect leaves the stream running in its
-        // spawned task (burning tokens) and the cancel_senders entry leaks
-        // because the wrapped cleanup_stream never reaches its end-of-loop remove.
-        let cancelled = state
-            .agents
-            .session_manager
-            .cancel_session(session_id)
-            .await;
-        if cancelled {
-            tracing::info!(
-                category = "session",
-                session_id = %session_id,
-                "Cancelled in-flight LLM stream on WebSocket disconnect"
-            );
-        }
+        // [detached delivery] Do NOT cancel the in-flight stream on
+        // disconnect: the turn must complete in the background and land in
+        // history (the product contract the frontend's "回复将在后台完成"
+        // notice promises). The old cancel existed because the consumer
+        // task used to die on the first failed channel send, leaking the
+        // cancel-sender registration — the consumer now runs to End (or its
+        // 1200s timeout), and the stream's own end-of-loop cleanup removes
+        // the registration. Explicit __CANCEL__ from the user is the only
+        // legitimate interruption path.
         if let Err(e) = state
             .agents
             .session_manager
