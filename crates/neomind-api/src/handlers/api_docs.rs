@@ -1771,9 +1771,50 @@ fn grouped_html() -> String {
     out
 }
 
-/// GET /api/docs — human-readable index.
+/// GET /api/docs — Swagger-style interactive docs (Scalar UI) fed by the
+/// CI-enforced route table. Scalar is a single-file CDN load — no build
+/// step, no vendored assets; a future full OpenAPI spec can drop in by
+/// pointing the spec URL at a real openapi.json instead of routes.json.
 pub async fn docs_handler() -> Html<String> {
-    Html(grouped_html())
+    Html(scalar_html())
+}
+
+/// Scalar UI shell referencing /api/docs/routes.json. The data spec is the
+/// same table the drift test enforces — one source of truth.
+fn scalar_html() -> String {
+    r#"<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NeoMind API</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@scalar/api-reference.css">
+</head>
+<body>
+<div id="app"></div>
+<script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
+<script>
+Scalar.createApiReference('#app', {
+  // routes.json is a compact {method,path,auth} index, not full OpenAPI —
+  // adapt client-side into a minimal OpenAPI 3 document so Scalar can
+  // render every route as an expandable entry with try-it-out.
+  data: fetch('/api/docs/routes.json').then(r => r.json()).then(routes => {
+    const paths = {};
+    for (const r of routes) {
+      const p = (paths[r.path] = paths[r.path] || {});
+      p[r.method.toLowerCase()] = {
+        summary: r.method + ' ' + r.path,
+        tags: [r.auth],
+        description: 'Auth class: ' + r.auth
+      };
+    }
+    return { openapi: '3.1.0', info: { title: 'NeoMind API', version: '0.9.24' }, paths };
+  })
+});
+</script>
+</body>
+</html>"#
+        .to_string()
 }
 
 /// GET /api/docs/routes.json — machine-readable index.
