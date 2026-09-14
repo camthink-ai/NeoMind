@@ -39,6 +39,48 @@ pub enum BootstrapOutcome {
 /// Decide whether a llama-server /props `model_path` belongs to this
 /// install (file under our data dir). Canonicalized so symlinks (the
 /// persistent smoke env keeps /tmp alive via a symlink) compare correctly.
+
+/// True when an endpoint string points at the given loopback port, e.g.
+/// "http://127.0.0.1:8081/v1" for port 8081. Accepts localhost / 127.0.0.1 /
+/// [::1] and ignores scheme/path.
+fn endpoint_is_loopback_port(endpoint: &str, port: u16) -> bool {
+    let rest = endpoint
+        .strip_prefix("https://")
+        .or_else(|| endpoint.strip_prefix("http://"))
+        .unwrap_or(endpoint);
+    let host_port = rest.split(['/', '?']).next().unwrap_or("");
+    let (host, p) = match host_port.rsplit_once(':') {
+        Some(hp) => hp,
+        None => return false,
+    };
+    if p != port.to_string() {
+        return false;
+    }
+    matches!(host, "127.0.0.1" | "localhost" | "[::1]")
+}
+
+/// One warn per affected custom backend per process start.
+fn warn_custom_backends_on_legacy_port(manager: &LlmBackendInstanceManager) {
+    for inst in manager.list_instances() {
+        if inst.is_builtin {
+            continue;
+        }
+        if let Some(ep) = inst.endpoint.as_deref() {
+            if endpoint_is_loopback_port(ep, 8081) {
+                tracing::warn!(
+                    category = "llm",
+                    backend_id = %inst.id,
+                    endpoint = %ep,
+                    "Custom backend points at the builtin llama-server's OLD default \
+                     port. The builtin now serves on 29375 (or NEOMIND_BUILTIN_LLM_PORT); \
+                     update this backend's endpoint or it will fail once the pre-upgrade \
+                     process is gone"
+                );
+            }
+        }
+    }
+}
+
 fn props_model_is_ours(model_path: Option<&str>, data_dir: &Path) -> bool {
     let Some(mp) = model_path else { return false };
     let mp = std::path::Path::new(mp);
@@ -109,6 +151,14 @@ pub async fn bootstrap(
     if !cfg.enabled {
         return BootstrapOutcome::Disabled;
     }
+
+    // [legacy-port advisory] Custom (non-builtin) backends pointing at the
+    // OLD builtin port keep working only while the pre-upgrade orphan lives,
+    // then fail with connection-refused after the next reboot — a delayed,
+    // hard-to-trace breakage. We deliberately do NOT auto-rewrite: an 8081
+    // endpoint may be the user's own llama.cpp instance (loopback-only
+    // match narrows it, but proof is impossible). Warn with the fix instead.
+    warn_custom_backends_on_legacy_port(manager);
 
     // 幂等:已有 builtin 实例 → 先探测端口。服务器仍健康 → 视为已就绪;
     // 服务器已死(重启后进程不在)→ 不短路,落入下方正常流程重新拉起。
@@ -362,5 +412,38 @@ mod legacy_port_tests {
         // failing is the contract being exercised.
         let dir = tempfile::tempdir().unwrap();
         reclaim_legacy_llama_port(59999, dir.path()).await; // must not panic
+    }
+}
+
+#[cfg(test)]
+mod legacy_endpoint_tests {
+    use super::*;
+
+    #[test]
+    fn loopback_port_matching() {
+        // The shapes a user actually pastes into a custom backend:
+        for ep in [
+            "http://127.0.0.1:8081",
+            "http://127.0.0.1:8081/v1",
+            "http://localhost:8081",
+            "http://localhost:8081/v1",
+            "http://[::1]:8081",
+        ] {
+            assert!(endpoint_is_loopback_port(ep, 8081), "should match: {ep}");
+        }
+        // Non-matches: other ports, non-loopback hosts (a user's own
+        // llama.cpp on a LAN box must NOT be flagged), no port.
+        for ep in [
+            "http://127.0.0.1:29375",
+            "http://127.0.0.1:8080",
+            "http://192.168.1.5:8081",
+            "http://127.0.0.1",
+            "ollama",
+        ] {
+            assert!(
+                !endpoint_is_loopback_port(ep, 8081),
+                "should NOT match: {ep}"
+            );
+        }
     }
 }
