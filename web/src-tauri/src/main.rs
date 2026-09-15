@@ -455,27 +455,19 @@ fn write_desktop_settings(app_handle: &AppHandle, settings: &DesktopSettings) {
 
 /// Resolve this launch's LAN policy.
 ///
-/// Explicit choice wins. A NEVER-SET choice splits by install age:
-/// - the server has run before (users.redb in the data dir) → keep LAN ON
-///   as a COMPATIBILITY default — upgrading users' devices keep connecting
-///   with zero action; the UI shows a one-time notice offering to disable.
-/// - fresh install → LAN OFF (loopback). A laptop roams onto untrusted
-///   networks and the pre-first-run setup endpoints are unauthenticated;
-///   enabling is one explicit toggle away.
+/// Explicit choice wins. With no explicit choice, LAN is ON — edge
+/// devices must keep connecting out of the box (product call
+/// 2026-09-15, superseding the fresh-install-loopback plan that never
+/// shipped). Turning it off is one explicit toggle and sticky.
 fn resolve_lan_policy(app_handle: &AppHandle) -> (bool, &'static str) {
     let settings = read_desktop_settings(app_handle);
     if let Some(explicit) = settings.allow_lan {
         return (explicit, "user");
     }
-    let ran_before = get_app_data_dir(app_handle)
-        .join("data")
-        .join("users.redb")
-        .exists();
-    if ran_before {
-        (true, "compat")
-    } else {
-        (false, "default")
-    }
+    // Product call (2026-09-15): LAN stays ON by default everywhere —
+    // edge devices must keep connecting out of the box. The user can
+    // turn it off explicitly; that choice is sticky ("user" source).
+    (true, "default")
 }
 
 /// Apply the LAN decision to the embedded server for THIS process. Session
@@ -497,7 +489,7 @@ fn apply_lan_binding(enabled: bool) {
 #[tauri::command]
 fn get_lan_access(app_handle: AppHandle) -> serde_json::Value {
     let settings = read_desktop_settings(&app_handle);
-    let desired = settings.allow_lan.unwrap_or(false);
+    let desired = settings.allow_lan.unwrap_or(true);
     let effective = env::var("NEOMIND_HOST")
         .map(|h| h != "127.0.0.1")
         .unwrap_or(true);

@@ -1,11 +1,9 @@
 /**
  * LanAccessSection — desktop-only "allow LAN devices to connect" control.
  *
- * The embedded server binds 127.0.0.1 by default on fresh installs (a
- * laptop roams onto untrusted networks and pre-first-run setup endpoints
- * are unauthenticated); enabling LAN here rebinds HTTP + the MQTT broker
- * to 0.0.0.0 after an app restart. Upgrading installs start ON (compat —
- * devices keep connecting with zero action) and show a one-time notice.
+ * The embedded server binds 0.0.0.0 by default — edge devices connect
+ * out of the box; disabling LAN here rebinds HTTP + the MQTT broker to
+ * 127.0.0.1 after an app restart. The choice is sticky per install.
  * Renders nothing outside the Tauri desktop app.
  */
 
