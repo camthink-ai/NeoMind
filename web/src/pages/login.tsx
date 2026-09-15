@@ -13,7 +13,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { BrandLogoHorizontal } from "@/components/shared/BrandName"
-import { AuroraBackground } from "@/components/shared/AuroraBackground"
+import { NetworkBackground } from "@/components/shared/NetworkBackground"
 import { LoadingState } from "@/components/shared/LoadingState"
 import { forceViewportReset } from "@/hooks/useVisualViewport"
 import { textNano } from '@/design-system/tokens/typography'
@@ -371,10 +371,10 @@ export function LoginPage() {
       <div className="fixed inset-0">
         {/* Base gradient */}
         <div className="absolute inset-0 bg-gradient-to-br from-background via-background to-muted" />
-        {/* Aurora field — drifting brand-orange/ember/purple blobs over a
-            dot grid. Shared component; see AuroraBackground for the why
-            (it replaced the imperceptible honeycomb breathe). */}
-        <AuroraBackground />
+        {/* Device-network field — nodes (devices/agents), links (data
+            paths) and travelling brand-orange telemetry pulses. The
+            product as its own backdrop; see NetworkBackground. */}
+        <NetworkBackground />
       </div>
 
       {/* Top Header — doubles as the Tauri window drag region (the shell's

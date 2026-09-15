@@ -1,9 +1,9 @@
 /**
  * Shared background for setup pages — matches the login page so the whole
- * auth flow (login → setup) reads as one surface: base gradient + drifting
- * aurora field (brand orange / ember / purple whisper) over a dot grid.
+ * auth flow (login → setup) reads as one surface: base gradient + the
+ * device-network field (nodes, links, telemetry pulses).
  */
-import { AuroraBackground } from "@/components/shared/AuroraBackground"
+import { NetworkBackground } from "@/components/shared/NetworkBackground"
 
 export function SetupBackground() {
   return (
@@ -11,7 +11,7 @@ export function SetupBackground() {
       {/* Base gradient */}
       <div className="absolute inset-0 bg-gradient-to-br from-background via-background to-muted" />
       {/* Aurora field — shared with login */}
-      <AuroraBackground />
+      <NetworkBackground />
     </div>
   )
 }
