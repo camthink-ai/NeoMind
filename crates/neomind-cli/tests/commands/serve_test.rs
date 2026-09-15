@@ -133,8 +133,24 @@ fn test_address_parsing() {
     }
 }
 
+/// `neomind serve` with NO args binds the default port 9375. On a dev
+/// machine the real instance is often already running on it (exactly that
+/// failed a full workspace run while the machine served a live 9375
+/// listener) — skip loudly instead of reporting a startup failure. CI
+/// holds nothing on 9375, so there the test still runs its full course.
+/// Probe by CONNECTING, not binding: std TcpListener::bind sets
+/// SO_REUSEADDR, which on macOS lets a 127.0.0.1 bind succeed next to a
+/// foreign wildcard listener — the bind-based probe missed the conflict.
+fn default_port_occupied() -> bool {
+    std::net::TcpStream::connect("127.0.0.1:9375").is_ok()
+}
+
 /// Test that missing required arguments starts a server with defaults.
 #[test]
 fn test_serve_with_defaults() {
+    if default_port_occupied() {
+        eprintln!("SKIP: port 9375 already bound — a neomind instance is running");
+        return;
+    }
     assert_serve_starts(&[]);
 }
