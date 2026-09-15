@@ -83,6 +83,44 @@ fn read_user_from_db(path: &str, username: &str) -> anyhow::Result<Option<User>>
     }
 }
 
+/// Find a user by name, tolerating case differences, and return the record
+/// together with its CANONICAL stored name.
+///
+/// Why: the setup wizard stores whatever the operator typed (`Admin`), but
+/// people type `admin` at the CLI. The original exact-match lookup answered
+/// "not found" for a user that plainly exists — indistinguishable from a
+/// wrong data dir. Writes still use the canonical name, so the row is
+/// updated in place rather than duplicated under a second spelling.
+///
+/// Ambiguity is refused: two accounts differing only in case would make a
+/// case-insensitive pick a guess, and guessing here changes a password.
+fn find_user_canonical(path: &str, username: &str) -> anyhow::Result<Option<(String, User)>> {
+    if let Some(u) = read_user_from_db(path, username)? {
+        return Ok(Some((username.to_string(), u)));
+    }
+    let target = username.to_lowercase();
+    let mut hits: Vec<(String, User)> = Vec::new();
+    for (name, _role) in list_users_in_db(path)? {
+        if name.to_lowercase() == target {
+            if let Some(u) = read_user_from_db(path, &name)? {
+                hits.push((name, u));
+            }
+        }
+    }
+    match hits.len() {
+        0 => Ok(None),
+        1 => Ok(hits.pop()),
+        _ => {
+            let names = hits
+                .iter()
+                .map(|(n, _)| n.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            anyhow::bail!("'{username}' matches several accounts ({names}); use the exact name")
+        }
+    }
+}
+
 /// Write one user row to `users.redb`, creating the database if absent.
 /// Mirrors `save_user_to_db` in `neomind-api/src/auth_users.rs`.
 fn write_user_to_db(path: &str, user: &User) -> anyhow::Result<()> {
@@ -112,7 +150,7 @@ pub fn reset_user_password(
     data_dir: &str,
     username: &str,
     new_password: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<String> {
     // Same policy as the setup wizard (neomind-api/src/handlers/setup.rs):
     // ≥8 chars, at least one letter and one number. Keeps a reset password from
     // being weaker than one the UI would accept.
@@ -126,32 +164,72 @@ pub fn reset_user_password(
     }
 
     let path = users_db_path(data_dir);
-    let Some(mut user) = read_user_from_db(&path, username)? else {
-        let known = list_users_in_db(&path)?;
-        let hint = if known.is_empty() {
-            format!(
-                "no users found in {} — is this the right data dir? \
-                 Try: neomind user reset-password {} --data-dir <server-data-dir>",
-                path, username
-            )
-        } else {
-            format!(
-                "available users in {}: {}",
-                path,
-                known
-                    .iter()
-                    .map(|(u, r)| format!("{} ({})", u, r))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        };
-        anyhow::bail!("User '{}' not found — {}", username, hint);
+    let Some((canonical, mut user)) = find_user_canonical(&path, username)? else {
+        return Err(username_not_found(username, &path));
     };
 
     let new_hash = bcrypt::hash(new_password, bcrypt::DEFAULT_COST)?;
     user.password_hash = new_hash;
     write_user_to_db(&path, &user)?;
-    Ok(())
+    // Return the CANONICAL name: the operator may have typed a different
+    // case ("admin" vs the stored "Admin"), and the confirmation should
+    // name the account that actually changed.
+    Ok(canonical)
+}
+
+/// Message for "this store does not have that username".
+///
+/// Self-healing for the multi-store case: if the user exists in ANOTHER
+/// store on this machine, name it, so the operator is not left guessing a
+/// `--data-dir` value. Resetting a role/password must never touch the wrong
+/// account, so this only ever SUGGESTS — it never switches stores silently.
+fn username_not_found(username: &str, path: &str) -> anyhow::Error {
+    let known = list_users_in_db(path).unwrap_or_default();
+    let mut msg = if known.is_empty() {
+        format!("no users found in {path}")
+    } else {
+        format!(
+            "available users in {path}: {}",
+            known
+                .iter()
+                .map(|(u, r)| format!("{u} ({r})"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    let elsewhere = users_elsewhere(username, path);
+    if !elsewhere.is_empty() {
+        msg.push_str(&format!(
+            "; user '{username}' exists in: {}. Re-run with --data-dir <that dir> to target it.",
+            elsewhere
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    } else {
+        msg.push_str("; pass --data-dir <dir> to target another store");
+    }
+    anyhow::anyhow!("User '{username}' not found — {msg}")
+}
+
+/// Which OTHER candidate stores on this machine hold `username`? Used only
+/// to make a not-found error actionable — never to pick a store silently.
+fn users_elsewhere(username: &str, chosen_dir: &str) -> Vec<std::path::PathBuf> {
+    let chosen = std::path::Path::new(chosen_dir);
+    crate::data_dir::all_candidates()
+        .into_iter()
+        .filter(|c| c != chosen)
+        .filter(|c| {
+            std::fs::metadata(users_db_path(&c.to_string_lossy()))
+                .map(|m| m.len() > 0)
+                .unwrap_or(false)
+                && find_user_canonical(&users_db_path(&c.to_string_lossy()), username)
+                    .ok()
+                    .flatten()
+                    .is_some()
+        })
+        .collect()
 }
 
 /// Read a new password from stdin twice (with confirmation).
@@ -202,8 +280,8 @@ pub fn prompt_new_password(username: &str) -> anyhow::Result<String> {
 /// always-User self-registration). Requires shell/filesystem access.
 pub(crate) fn set_user_role(data_dir: &str, username: &str, role: UserRole) -> anyhow::Result<()> {
     let path = users_db_path(data_dir);
-    let mut user = read_user_from_db(&path, username)?
-        .ok_or_else(|| anyhow::anyhow!("user '{}' not found in {}", username, path))?;
+    let (_canonical, mut user) =
+        find_user_canonical(&path, username)?.ok_or_else(|| username_not_found(username, &path))?;
     user.role = role;
     write_user_to_db(&path, &user)
 }
@@ -269,15 +347,15 @@ pub async fn run_reset_password(
 ) -> anyhow::Result<CliResponse> {
     let resolved_dir = crate::auth_cmd::resolve_login_data_dir(data_dir)?;
     let new_password = prompt_new_password(username)?;
-    reset_user_password(&resolved_dir, username, &new_password)?;
+    let canonical = reset_user_password(&resolved_dir, username, &new_password)?;
     // Name the store in the SUCCESS path too: with several candidate data
     // dirs on one machine (desktop app + a repo/server ./data), an
     // unqualified "reset" leaves the user unsure which account changed.
     Ok(CliResponse::success(
-        serde_json::json!({ "username": username, "data_dir": resolved_dir }),
+        serde_json::json!({ "username": canonical, "data_dir": resolved_dir }),
         format!(
             "Password for '{}' has been reset (store: {}).",
-            username, resolved_dir
+            canonical, resolved_dir
         ),
     ))
 }

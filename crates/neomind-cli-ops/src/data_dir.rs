@@ -37,6 +37,51 @@ fn desktop_data_dirs() -> Vec<PathBuf> {
     out
 }
 
+/// Server-deployment data dirs, discovered from the systemd units the
+/// installer writes plus the two documented DATA_DIR defaults.
+///
+/// Why this matters: on a server install the store lives under the unit's
+/// `WorkingDirectory` (install.sh defaults DATA_DIR=/var/lib/neomind, and
+/// the server resolves `data/` relative to it), yet the CLI runs from
+/// whatever directory the operator happens to be in. Without these
+/// candidates, a plain `neomind user reset-password` on such a host could
+/// not find the store and would demand `--data-dir` — exactly the manual
+/// step this module exists to remove.
+fn server_data_dirs() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    // 1. Ask the installed units where they work: the unit file is
+    //    world-readable and is the authoritative answer for that host.
+    for unit in [
+        "/etc/systemd/system/neomind.service",
+        "/etc/systemd/system/neomind-upgrade-apply.service",
+        "/lib/systemd/system/neomind.service",
+    ] {
+        if let Ok(text) = std::fs::read_to_string(unit) {
+            for line in text.lines() {
+                let line = line.trim();
+                if let Some(dir) = line.strip_prefix("WorkingDirectory=") {
+                    let dir = dir.trim();
+                    if !dir.is_empty() {
+                        let d = PathBuf::from(dir).join("data");
+                        if !out.contains(&d) {
+                            out.push(d);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // 2. Documented defaults, for hosts whose units are not readable from
+    //    here (containers, non-root users, hand-written units).
+    for d in ["/var/lib/neomind/data", "/opt/neomind/data"] {
+        let p = PathBuf::from(d);
+        if !out.contains(&p) {
+            out.push(p);
+        }
+    }
+    out
+}
+
 /// A directory "is a NeoMind store" when it holds either bootstrap DB.
 /// `api_keys.redb` alone is not enough — a stale legacy dir can hold only
 /// that — so `users.redb` also qualifies.
@@ -51,8 +96,11 @@ fn looks_like_store(dir: &Path) -> bool {
 /// 1. explicit `--data-dir`
 /// 2. `NEOMIND_DATA_DIR`
 /// 3. desktop app data dir (the live store on a desktop install)
-/// 4. `./data` (legacy: running from an install root)
-/// 5. `dirs::data_local_dir()/neomind` (legacy single-user name)
+/// 4. server deployment dirs (systemd unit WorkingDirectory + the
+///    documented /var/lib, /opt defaults) — so a plain command works on a
+///    server host too, with no flag
+/// 5. `./data` (legacy: running from an install root)
+/// 6. `dirs::data_local_dir()/neomind` (legacy single-user name)
 pub fn resolve(explicit: Option<String>) -> Result<PathBuf, Vec<PathBuf>> {
     let mut examined: Vec<PathBuf> = Vec::new();
 
@@ -67,6 +115,12 @@ pub fn resolve(explicit: Option<String>) -> Result<PathBuf, Vec<PathBuf>> {
         }
     }
     for cand in desktop_data_dirs() {
+        examined.push(cand.clone());
+        if looks_like_store(&cand) {
+            return Ok(cand);
+        }
+    }
+    for cand in server_data_dirs() {
         examined.push(cand.clone());
         if looks_like_store(&cand) {
             return Ok(cand);
@@ -103,6 +157,19 @@ pub fn resolve_or_message(explicit: Option<String>) -> anyhow::Result<PathBuf> {
     })
 }
 
+/// Every directory the resolver knows how to look at, in precedence order.
+/// Callers use this to reason about a machine with several stores (e.g.
+/// "this user exists in a different one") without duplicating the list.
+pub fn all_candidates() -> Vec<PathBuf> {
+    let mut v = desktop_data_dirs();
+    v.extend(server_data_dirs());
+    v.push(PathBuf::from("data"));
+    if let Some(local) = dirs::data_local_dir() {
+        v.push(local.join("neomind"));
+    }
+    v
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,6 +192,19 @@ mod tests {
                 c.display()
             );
         }
+    }
+
+    /// Server hosts: the unit's WorkingDirectory (plus "/data") and the
+    /// documented defaults must be probed, or `neomind user ...` on a
+    /// server still needs --data-dir.
+    #[test]
+    fn server_deployment_dirs_are_probed() {
+        let cands = server_data_dirs();
+        assert!(
+            cands.iter().any(|c| c.ends_with("neomind/data")),
+            "expected a <root>/neomind/data candidate, got {:?}",
+            cands
+        );
     }
 
     #[test]
