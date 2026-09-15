@@ -27,8 +27,8 @@
 <br/>
 
 <div align="center">
-  <img src="https://resources.camthink.ai/NeoMind/dashboardDemo.png" alt="Dashboard" width="800" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);" />
-  <br/><sub><b>Dashboard</b></sub>
+  <img src="docs/img/dashboard-demo.gif" alt="Visual Dashboard demo" width="800" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);" />
+  <br/><sub><b>Visual Dashboard — real-time AI analytics</b></sub>
 </div>
 
 <br/>

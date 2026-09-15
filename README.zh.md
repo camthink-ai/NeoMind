@@ -23,8 +23,8 @@
 <br/>
 
 <div align="center">
-  <img src="https://resources.camthink.ai/NeoMind/dashboardDemo.png" alt="仪表板" width="800" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);" />
-  <br/><sub><b>仪表板</b></sub>
+  <img src="docs/img/dashboard-demo.gif" alt="可视化仪表板演示" width="800" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);" />
+  <br/><sub><b>可视化仪表板 — 实时 AI 分析</b></sub>
 </div>
 
 <br/>
