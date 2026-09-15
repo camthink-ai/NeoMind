@@ -12,6 +12,12 @@
 //! lifecycle changes all landed with unit tests per link — this pins the
 //! CHAIN.
 
+// ENV_LOCK (std::sync::Mutex) is held across awaits by design: each test
+// mutates process-global state (PATH) and each #[tokio::test] owns its own
+// runtime, so the guard only ever blocks OS threads BETWEEN tests — it
+// cannot deadlock inside one.
+#![allow(clippy::await_holding_lock)]
+
 use neomind_agent::llm_backends::LlmBackendInstanceManager;
 use neomind_api::builtin_llm::state::{bootstrap, BootstrapOutcome, BUILTIN_INSTANCE_ID};
 use neomind_storage::LlmBackendStore;
@@ -38,12 +44,18 @@ impl Fixture {
         let script = format!(
             r#"#!/bin/sh
 _script_dir="$(cd "$(dirname "$0")" && pwd)"
-export _script_dir
-echo "spawned: FX=$FX_FAST_FAIL dir=$_script_dir args=$*" >> /tmp/fake-spawns.log
+echo "spawned: dir=$_script_dir args=$*" >> /tmp/fake-spawns.log
+# FAST-FAIL gate, SHELL-level on purpose: the port-squat test needs our
+# spawn to die in ~milliseconds so the health settle window in
+# wait_healthy_loop_checking_child observes the exit. When this gate lived
+# in python, a loaded machine could start python slower than the 500ms
+# window — the child looked alive, bootstrap accepted the foreign
+# squatter, and the test flapped.
+if [ -f "$_script_dir/FAST_FAIL" ]; then
+    exit 1
+fi
 exec python3 -c '
 import http.server, socketserver, json, sys
-import os.path as os_path
-_script_dir = globals().get("_script_dir", "")
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
@@ -61,12 +73,13 @@ class H(http.server.BaseHTTPRequestHandler):
 # NOTE: deliberately NO allow_reuse_address — on macOS it lets a second
 # bind to the same port SUCCEED silently (SO_REUSEADDR semantics), which
 # would defeat the port-squat test where the squatter must WIN the bind.
-# FAST-FAIL gate: if a marker file sits next to this script, exit(1)
-# immediately WITHOUT serving — a deterministic bind-failure simulation so
-# the port-squat test's OUR-spawn dies in milliseconds instead of racing
-# python3 startup against the health probe.
-if os_path.exists(os_path.join(_script_dir, "FAST_FAIL")):
-    sys.exit(1)
+# WARNING — keep this python payload free of APOSTROPHES. It rides inside
+# a single-quoted `python3 -c` shell string, so one apostrophe anywhere
+# (even in a comment) ends the string early: python receives a truncated
+# program (imports + class def only), exits 0, and every spawned fake
+# dies instantly. That exact bug masqueraded as sandbox flakiness for
+# days — tests failed fast with "server unhealthy" while the same payload
+# worked when run by hand with double quotes.
 with socketserver.TCPServer(("127.0.0.1", {port}), H) as httpd:
     httpd.serve_forever()
 '
@@ -209,7 +222,7 @@ async fn bootstrap_full_chain_spawns_registers_activates() {
         "PATH",
         format!("{}:{}", fx.bin_dir.path().display(), saved_path),
     );
-    let outcome = bootstrap(&fx.data_dir.path().to_path_buf(), &fx.cfg(), &fx.manager).await;
+    let outcome = bootstrap(fx.data_dir.path(), &fx.cfg(), &fx.manager).await;
     std::env::set_var("PATH", &saved_path);
 
     match &outcome {
@@ -282,21 +295,42 @@ async fn port_squatted_by_foreign_server_is_rejected() {
     );
 
     // Start the foreign server manually (same fake, port pre-bound).
+    // Kill-on-drop: on an assertion panic the foreign python would leak,
+    // keep serving forever AND hold the test binary's inherited stdio
+    // pipes open — which hangs the whole `cargo test` invocation (the
+    // runner waits for EOF that never comes).
     let foreign = Fixture::new(port, foreign_model.to_str().unwrap());
     let script = foreign.bin_dir.path().join("neomind-llama-server");
-    let mut child = std::process::Command::new(&script)
-        .spawn()
-        .expect("foreign server spawn");
+    struct KillOnDrop(std::process::Child);
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let _foreign_child = KillOnDrop(
+        std::process::Command::new(&script)
+            .spawn()
+            .expect("foreign server spawn"),
+    );
     assert!(
         wait_port_ready(port, std::time::Duration::from_secs(20)).await,
         "foreign server never became ready on {port}"
     );
 
     let saved_path = std::env::var("PATH").unwrap_or_default();
+    // PUT fx's fake on PATH explicitly: this test used to rely on the PATH a
+    // previously-run sibling test had left behind (env is process-global),
+    // so it passed or failed depending on test order. The marker + this
+    // PATH entry make the spawn deterministic: shell gate exits in ~10ms.
+    std::env::set_var(
+        "PATH",
+        format!("{}:{}", fx.bin_dir.path().display(), saved_path),
+    );
     // Deterministic bind-failure: drop the marker next to fx's fake binary;
-    // the gate in the fake template exits(1) on startup.
+    // the shell-level gate in the fake template exits(1) on startup.
     std::fs::write(fx.bin_dir.path().join("FAST_FAIL"), "1").unwrap();
-    let outcome = bootstrap(&fx.data_dir.path().to_path_buf(), &fx.cfg(), &fx.manager).await;
+    let outcome = bootstrap(fx.data_dir.path(), &fx.cfg(), &fx.manager).await;
     std::env::set_var("PATH", &saved_path);
 
     assert!(
@@ -307,10 +341,6 @@ async fn port_squatted_by_foreign_server_is_rejected() {
         fx.manager.get_instance(BUILTIN_INSTANCE_ID).is_none(),
         "must not register an instance pointing at a foreign server"
     );
-
-    // Cleanup the foreign server ourselves.
-    let _ = child.kill();
-    let _ = child.wait();
 }
 
 /// Stale instance record + healthy server → idempotent short-circuit, and
@@ -357,7 +387,7 @@ async fn already_running_refresh_honors_ctx_override() {
         "PATH",
         format!("{}:{}", fx.bin_dir.path().display(), saved_path),
     );
-    let outcome = bootstrap(&fx.data_dir.path().to_path_buf(), &cfg, &fx.manager).await;
+    let outcome = bootstrap(fx.data_dir.path(), &cfg, &fx.manager).await;
     std::env::set_var("PATH", &saved_path);
 
     assert!(
