@@ -25,31 +25,11 @@ fn mask_key(key: &str) -> String {
 /// 4. Platform default `dirs::data_local_dir()/neomind` (if it exists)
 /// 5. Error
 pub fn resolve_login_data_dir(explicit: Option<String>) -> Result<String> {
-    if let Some(d) = explicit {
-        return Ok(d);
-    }
-    if let Ok(dir) = std::env::var("NEOMIND_DATA_DIR") {
-        if !dir.is_empty() {
-            return Ok(dir);
-        }
-    }
-    if neomind_core::paths::store_path("api_keys.redb")
-        .as_path()
-        .exists()
-    {
-        return Ok("data".to_string());
-    }
-    if let Some(local) = dirs::data_local_dir() {
-        let candidate = local.join("neomind");
-        if candidate.join("api_keys.redb").exists() {
-            return Ok(candidate.to_string_lossy().into_owned());
-        }
-    }
-    anyhow::bail!(
-        "No NeoMind server data directory found. \
-         Start the server first with: neomind serve\n\
-         Or specify the data directory with --data-dir"
-    )
+    // Delegates to the shared resolver (crate::data_dir), which probes the
+    // DESKTOP app data dir as well — the old logic here only looked at
+    // `./data` and `~/Library/Application Support/neomind` and so could
+    // never find a desktop install's store.
+    crate::data_dir::resolve_or_message(explicit).map(|p| p.to_string_lossy().into_owned())
 }
 
 /// `neomind login` — read a key from the server's auth DB and persist it to

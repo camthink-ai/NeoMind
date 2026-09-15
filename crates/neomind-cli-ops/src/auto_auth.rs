@@ -140,40 +140,25 @@ fn set_file_mode_0600(_path: &std::path::Path) {}
 /// historically hand-rolled env-or-"data" and silently missed the
 /// platform-dir tier on hosts without ./data).
 pub fn data_dir_for_paths() -> String {
-    if let Ok(dir) = std::env::var("NEOMIND_DATA_DIR") {
-        if !dir.is_empty() {
-            return dir;
-        }
+    match crate::data_dir::resolve(None) {
+        Ok(p) => p.to_string_lossy().into_owned(),
+        // Nothing found: keep the historical relative default so first-run
+        // creation still lands somewhere predictable.
+        Err(_) => "data".to_string(),
     }
-    if let Some(local) = dirs::data_local_dir() {
-        let candidate = local.join("neomind");
-        if candidate.join("api_keys.redb").exists() {
-            return candidate.to_string_lossy().into_owned();
-        }
-    }
-    "data".to_string()
 }
 
 pub fn resolve_data_dir() -> String {
-    // 1. Explicit override
-    if let Ok(dir) = std::env::var("NEOMIND_DATA_DIR") {
-        if !dir.is_empty() {
-            return dir;
-        }
+    // Shared precedence: env → desktop app dir → ./data → platform default.
+    // The desktop tier matters: `neomind login` on a machine whose only
+    // store is the desktop app's must find THAT store, not a stale ./data.
+    // (dirs::data_local_dir() alone is unsafe here: on macOS it equals
+    // ~/Library/Application Support, where our own credential file lives —
+    // hence the store-file checks the shared resolver performs.)
+    match crate::data_dir::resolve(None) {
+        Ok(p) => p.to_string_lossy().into_owned(),
+        Err(_) => "data".to_string(),
     }
-    // 2. Platform user-level default (only if it has api_keys.redb).
-    //    On macOS, data_local_dir() == config_dir() == ~/Library/Application Support/,
-    //    so `neomind login` creating ~/Library/Application Support/neomind/ for the
-    //    credential file would make resolve_data_dir() wrongly return it as the
-    //    data dir. Checking for api_keys.redb prevents this false positive.
-    if let Some(local) = dirs::data_local_dir() {
-        let candidate = local.join("neomind");
-        if candidate.join("api_keys.redb").exists() {
-            return candidate.to_string_lossy().into_owned();
-        }
-    }
-    // 3. Legacy fallback (relative to CWD)
-    "data".to_string()
 }
 
 /// Try to read the default API key.

@@ -304,18 +304,21 @@ pub enum ApiKeyCommand {
         /// Name for the key.
         #[arg(short, long, default_value = "default")]
         name: String,
-        /// Data directory path.
-        #[arg(long, default_value = "data")]
-        data_dir: String,
+        /// Data directory path. Omit to auto-detect the install's store
+        /// (env, desktop app dir, ./data) — a literal "data" default used
+        /// to write the key into $CWD/data, which the running server never
+        /// reads, while still reporting success.
+        #[arg(long)]
+        data_dir: Option<String>,
     },
     /// List all API keys.
     ///
     /// Shows all registered API key names (values are masked).
     /// Example: `neomind api-key list`
     List {
-        /// Data directory path.
-        #[arg(long, default_value = "data")]
-        data_dir: String,
+        /// Data directory path. Omit to auto-detect the install's store.
+        #[arg(long)]
+        data_dir: Option<String>,
     },
     /// Delete an API key by name.
     ///
@@ -324,9 +327,9 @@ pub enum ApiKeyCommand {
     Delete {
         /// Key name to delete.
         name: String,
-        /// Data directory path.
-        #[arg(long, default_value = "data")]
-        data_dir: String,
+        /// Data directory path. Omit to auto-detect the install's store.
+        #[arg(long)]
+        data_dir: Option<String>,
     },
 }
 

@@ -270,9 +270,15 @@ pub async fn run_reset_password(
     let resolved_dir = crate::auth_cmd::resolve_login_data_dir(data_dir)?;
     let new_password = prompt_new_password(username)?;
     reset_user_password(&resolved_dir, username, &new_password)?;
+    // Name the store in the SUCCESS path too: with several candidate data
+    // dirs on one machine (desktop app + a repo/server ./data), an
+    // unqualified "reset" leaves the user unsure which account changed.
     Ok(CliResponse::success(
-        serde_json::json!({ "username": username }),
-        format!("Password for '{}' has been reset.", username),
+        serde_json::json!({ "username": username, "data_dir": resolved_dir }),
+        format!(
+            "Password for '{}' has been reset (store: {}).",
+            username, resolved_dir
+        ),
     ))
 }
 

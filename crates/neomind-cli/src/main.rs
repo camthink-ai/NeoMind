@@ -749,9 +749,13 @@ async fn run_health() -> Result<()> {
 
     println!();
 
-    // Check database files
+    // Check database files — resolved, not CWD-relative: running `neomind
+    // health` from any other directory used to report "Data directory not
+    // found" for a perfectly healthy install.
     println!("🔍 Checking databases...");
-    let data_dir = std::path::PathBuf::from("./data");
+    let data_dir = neomind_cli_ops::data_dir::resolve(None)
+        .unwrap_or_else(|_| std::path::PathBuf::from("./data"));
+    println!("  (data dir: {})", data_dir.display());
     if data_dir.exists() {
         let db_files = [
             "telemetry.redb",
@@ -1735,14 +1739,28 @@ fn walk_dir(dir: &std::path::Path) -> Result<Vec<std::path::PathBuf>> {
     Ok(out)
 }
 
+/// Resolve the data directory for local (non-server) key management.
+///
+/// `--data-dir` still wins; otherwise this auto-detects the install's
+/// store (env → desktop app dir → ./data → platform default). The old
+/// `default_value = "data"` meant running the command from any other
+/// directory created a SECOND, unused key store there — and printed
+/// success for a key the server would never accept.
+fn api_key_data_dir(explicit: Option<String>) -> Result<String> {
+    Ok(neomind_cli_ops::data_dir::resolve_or_message(explicit)?
+        .to_string_lossy()
+        .into_owned())
+}
+
 /// Run API key management commands.
-/// Run LLM backend management commands.
 async fn run_api_key_cmd(cmd: ApiKeyCommand) -> Result<()> {
     match cmd {
         ApiKeyCommand::Create { name, data_dir } => {
-            std::fs::create_dir_all(&data_dir)?;
+            let dir = api_key_data_dir(data_dir)?;
+            println!("Using data directory: {}", dir);
+            std::fs::create_dir_all(&dir)?;
 
-            let auth = neomind_api::auth::AuthState::new_with_data_dir(&data_dir);
+            let auth = neomind_api::auth::AuthState::new_with_data_dir(&dir);
             let (key, info) = auth.create_key(name.clone(), vec!["*".to_string()]).await;
 
             println!("API Key created successfully!");
@@ -1754,7 +1772,9 @@ async fn run_api_key_cmd(cmd: ApiKeyCommand) -> Result<()> {
             println!("IMPORTANT: Save this key now. It will not be shown again.");
         }
         ApiKeyCommand::List { data_dir } => {
-            let auth = neomind_api::auth::AuthState::new_with_data_dir(&data_dir);
+            let dir = api_key_data_dir(data_dir)?;
+            println!("Using data directory: {}", dir);
+            let auth = neomind_api::auth::AuthState::new_with_data_dir(&dir);
             let keys = auth.list_keys().await;
 
             if keys.is_empty() {
@@ -1785,6 +1805,7 @@ async fn run_api_key_cmd(cmd: ApiKeyCommand) -> Result<()> {
             }
         }
         ApiKeyCommand::Delete { name, data_dir } => {
+            let data_dir = api_key_data_dir(data_dir)?;
             let auth = neomind_api::auth::AuthState::new_with_data_dir(&data_dir);
             let keys = auth.list_keys().await;
             let target = keys.iter().find(|(_, info)| info.name == name);
