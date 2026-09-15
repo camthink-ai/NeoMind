@@ -51,6 +51,21 @@ export const AuroraBackground = memo(function AuroraBackground() {
         @media (prefers-reduced-motion: reduce) {
           .aurora-blob { animation: none !important; }
         }
+        /* Theme-tuned dot strength — see the dot-grid comment below. */
+        .aurora-dots {
+          background-image: radial-gradient(
+            circle,
+            color-mix(in oklch, var(--accent-orange) 26%, transparent) 1px,
+            transparent 1px
+          );
+        }
+        .light .aurora-dots {
+          background-image: radial-gradient(
+            circle,
+            color-mix(in oklch, var(--accent-orange) 42%, transparent) 1px,
+            transparent 1px
+          );
+        }
       `}</style>
 
       {/* Dominant brand-orange field — sits behind the card, a little
@@ -95,12 +110,15 @@ export const AuroraBackground = memo(function AuroraBackground() {
 
       {/* Dot grid — the tech texture the honeycomb used to carry, at a
           level that is actually visible: dots every 28px, masked to fade
-          toward the edges so it frames rather than tiles. */}
+          toward the edges so it frames rather than tiles. Dots are
+          accent-orange in BOTH themes but at theme-tuned strength: a mix
+          that reads on dark (26%) vanishes on the warm near-white light
+          base, so the light theme raises it (42%) via the class override
+          in the style block below. A `--foreground` mix was tried first
+          and failed the same way on light. */}
       <div
-        className="absolute inset-0"
+        className="aurora-dots absolute inset-0"
         style={{
-          backgroundImage:
-            "radial-gradient(circle, color-mix(in oklch, var(--foreground) 22%, transparent) 1px, transparent 1px)",
           backgroundSize: "28px 28px",
           maskImage:
             "radial-gradient(ellipse 75% 65% at 50% 45%, black 25%, transparent 80%)",
