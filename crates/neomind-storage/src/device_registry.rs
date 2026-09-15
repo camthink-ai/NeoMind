@@ -25,7 +25,7 @@ const COMMAND_HISTORY_TABLE: TableDefinition<(&str, &str), &str> =
     TableDefinition::new("command_history");
 
 /// Device type mode: simple (raw data + LLM) or full (structured definitions)
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum DeviceTypeMode {
     #[default]
@@ -34,7 +34,7 @@ pub enum DeviceTypeMode {
 }
 
 /// Device type template (simplified version matching neomind_devices::mdl_format::DeviceTypeTemplate)
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DeviceTypeTemplate {
     pub device_type: String,
     pub name: String,
@@ -73,7 +73,7 @@ pub struct DeviceTypeTemplate {
 }
 
 /// Metric definition (matches neomind_devices::mdl_format::MetricDefinition)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 pub struct MetricDefinition {
     pub name: String,
     #[serde(default)]
@@ -93,7 +93,7 @@ pub struct MetricDefinition {
 /// Metric data type.
 /// Accepts both lowercase ("integer") and PascalCase ("Integer") forms.
 /// "Array" is mapped to String (stored as JSON string).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
 pub enum MetricDataType {
@@ -114,7 +114,7 @@ pub enum MetricDataType {
 }
 
 /// Command definition (matches neomind_devices::mdl_format::CommandDefinition)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 pub struct CommandDefinition {
     pub name: String,
     #[serde(default)]
@@ -137,7 +137,7 @@ pub struct CommandDefinition {
 }
 
 /// Parameter definition (matches neomind_devices::mdl_format::ParameterDefinition)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 pub struct ParameterDefinition {
     pub name: String,
     #[serde(default)]
@@ -174,7 +174,7 @@ pub struct ParameterDefinition {
 }
 
 /// Validation rule for parameter values
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ValidationRule {
     /// Pattern validation for strings (regex)
@@ -202,7 +202,7 @@ pub enum ValidationRule {
 }
 
 /// Parameter group for organizing parameters in the UI
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 pub struct ParameterGroup {
     pub id: String,
     pub display_name: String,
@@ -216,7 +216,7 @@ pub struct ParameterGroup {
 }
 
 /// Metric value for parameter defaults (renamed to avoid conflict with device_state::MetricValue)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 pub enum ParamMetricValue {
     #[serde(rename = "integer")]
     Integer(i64),

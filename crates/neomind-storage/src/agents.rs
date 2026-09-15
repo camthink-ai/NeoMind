@@ -108,7 +108,7 @@ pub struct AiAgent {
 }
 
 /// Tool configuration for AI Agent function calling mode.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 pub struct AgentToolConfig {
     /// Whether tool mode is enabled (default true). When false, the agent gets
     /// NO tools (forced to text-only responses).

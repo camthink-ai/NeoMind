@@ -729,7 +729,7 @@ pub trait LlmRuntime: Send + Sync {
 /// `None` (the enum variant, not the Option) means "explicitly disable
 /// thinking". The previous boolean control is a subset: `true` ≈ `Some(High)`,
 /// `false` ≈ `Some(None)` — kept working via a compatibility mapping.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThinkingEffort {
     /// Explicitly disable thinking/reasoning.

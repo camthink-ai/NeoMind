@@ -55,3 +55,8 @@ type_complexity = "allow"
 [dev-dependencies]
 criterion = { version = "0.5", features = ["async_tokio"] }
 tempfile = { workspace = true }
+
+# Schema-only dependency: DTO types referenced by neomind-api's OpenAPI spec.
+[dependencies.utoipa]
+version = "4"
+features = ["chrono", "uuid"]

@@ -1,5 +1,6 @@
 //! AI Agents handlers for user-defined automation agents.
 
+use crate::models::AgentToolConfigMirror;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -396,7 +397,7 @@ struct AgentExecutionDetailDto {
 }
 
 /// Request body for creating a new AI Agent.
-#[derive(Debug, serde::Deserialize)]
+#[derive(utoipa::ToSchema, Debug, serde::Deserialize)]
 pub struct CreateAgentRequest {
     pub name: String,
     #[serde(default)]
@@ -436,11 +437,12 @@ pub struct CreateAgentRequest {
     /// `allowed_tools: []`) for all tools — the default. Scoping the tool set
     /// per task is the highest-leverage fix for small-model tool selection.
     #[serde(default)]
+    #[schema(value_type = Option<AgentToolConfigMirror>)]
     pub tool_config: Option<neomind_storage::AgentToolConfig>,
 }
 
 /// Resource request in the new unified format.
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[derive(utoipa::ToSchema, Debug, serde::Deserialize, serde::Serialize)]
 pub struct ResourceRequest {
     pub resource_id: String,
     pub resource_type: String,
@@ -451,7 +453,7 @@ pub struct ResourceRequest {
 }
 
 /// Metric selection in create request.
-#[derive(Debug, serde::Deserialize)]
+#[derive(utoipa::ToSchema, Debug, serde::Deserialize)]
 pub struct MetricSelectionRequest {
     pub device_id: String,
     pub metric_name: String,
@@ -462,7 +464,7 @@ pub struct MetricSelectionRequest {
 }
 
 /// Command selection in create request.
-#[derive(Debug, serde::Deserialize)]
+#[derive(utoipa::ToSchema, Debug, serde::Deserialize)]
 pub struct CommandSelectionRequest {
     pub device_id: String,
     pub command_name: String,
@@ -471,7 +473,7 @@ pub struct CommandSelectionRequest {
 }
 
 /// Agent schedule in create request.
-#[derive(Debug, serde::Deserialize)]
+#[derive(utoipa::ToSchema, Debug, serde::Deserialize)]
 pub struct AgentScheduleRequest {
     pub schedule_type: String,
     #[serde(default)]
@@ -485,7 +487,7 @@ pub struct AgentScheduleRequest {
 }
 
 /// Request body for updating an agent.
-#[derive(Debug, serde::Deserialize)]
+#[derive(utoipa::ToSchema, Debug, serde::Deserialize)]
 pub struct UpdateAgentRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -525,11 +527,12 @@ pub struct UpdateAgentRequest {
     /// Tool scoping override. Send an object to set/replace it; omit to leave
     /// unchanged. Set `allowed_tools: []` to mean "all tools".
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<AgentToolConfigMirror>)]
     pub tool_config: Option<neomind_storage::AgentToolConfig>,
 }
 
 /// Resource in update request (new format).
-#[derive(Debug, serde::Deserialize)]
+#[derive(utoipa::ToSchema, Debug, serde::Deserialize)]
 pub struct AgentResourceRequest {
     pub resource_id: String,
     pub resource_type: String, // "Device", "Metric", "Command", etc.
@@ -539,7 +542,7 @@ pub struct AgentResourceRequest {
 }
 
 /// Request body for triggering an agent execution.
-#[derive(Debug, serde::Deserialize)]
+#[derive(utoipa::ToSchema, Debug, serde::Deserialize)]
 pub struct ExecuteAgentRequest {
     #[serde(default)]
     pub trigger_type: Option<String>,
@@ -2016,7 +2019,7 @@ pub async fn get_execution(
 }
 
 /// Request body for batch execution details.
-#[derive(Debug, serde::Deserialize)]
+#[derive(utoipa::ToSchema, Debug, serde::Deserialize)]
 pub struct BatchExecutionIds {
     pub ids: Vec<String>,
 }
@@ -2302,7 +2305,7 @@ pub async fn get_agent_stats(
 // ============================================================================
 
 /// Request body for adding a user message.
-#[derive(Debug, serde::Deserialize)]
+#[derive(utoipa::ToSchema, Debug, serde::Deserialize)]
 pub struct AddUserMessageRequest {
     /// Message content
     content: String,
@@ -2357,7 +2360,7 @@ pub async fn add_user_message(
     let message = store
         .add_user_message(&id, request.content, request.message_type)
         .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to add message: {}", e)))?;
+        .map_err(|e| store_error_to_response("Failed to add message", e))?;
 
     tracing::debug!("Added user message {} to agent {}", message.id, id);
 
@@ -2474,7 +2477,7 @@ pub async fn clear_user_messages(
 // ============================================================================
 
 /// Request to validate a cron expression.
-#[derive(Debug, serde::Deserialize)]
+#[derive(utoipa::ToSchema, Debug, serde::Deserialize)]
 pub struct ValidateCronRequest {
     /// Cron expression to validate (e.g., "0 8 * * *")
     pub expression: String,
@@ -2626,7 +2629,7 @@ pub async fn validate_llm_backend(
 }
 
 /// Request body for validating an LLM backend.
-#[derive(Debug, serde::Deserialize)]
+#[derive(utoipa::ToSchema, Debug, serde::Deserialize)]
 pub struct ValidateLlmRequest {
     /// Backend ID to validate (if not specified, validates the active/default backend)
     #[serde(skip_serializing_if = "Option::is_none")]

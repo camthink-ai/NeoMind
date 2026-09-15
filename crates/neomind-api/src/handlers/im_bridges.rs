@@ -56,7 +56,7 @@ use neomind_messages::im_bridge::{
 /// All credential fields are `Option` precisely because they are platform-
 /// specific — serde maps a missing JSON key to `None`, and the per-platform
 /// check turns the relevant `None`/empty into a descriptive `400`.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct CreateBridgeRequest {
     /// Platform id; `"telegram"` or `"feishu"`.
     pub platform: String,

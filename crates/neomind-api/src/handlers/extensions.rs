@@ -213,7 +213,7 @@ pub struct ListExtensionsQuery {
 }
 
 /// Request to register an extension.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct RegisterExtensionRequest {
     /// Path to the extension file
     pub file_path: String,
@@ -223,7 +223,7 @@ pub struct RegisterExtensionRequest {
 }
 
 /// Request to execute an extension command.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct ExecuteCommandRequest {
     /// Command name
     pub command: String,
@@ -1132,7 +1132,7 @@ async fn publish_extension_metrics_safe(
 // ============================================================================
 
 /// Request to invoke an extension.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct InvokeExtensionRequest {
     /// Command/function to invoke
     pub command: String,
@@ -1367,7 +1367,7 @@ pub async fn list_extension_commands_handler(
 }
 
 /// Request body for tool-enable toggles.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct SetToolEnabledRequest {
     pub enabled: bool,
 }
@@ -2335,7 +2335,7 @@ pub struct MarketplaceListResponse {
 }
 
 /// Request to install an extension from marketplace
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct MarketplaceInstallRequest {
     pub id: String,
     #[serde(default)]
@@ -4766,7 +4766,7 @@ pub async fn uninstall_extension_handler(
 ///   -H "Content-Type: application/json" \
 ///   -d "{\"data\": \"$BASE64_DATA\"}"
 /// ```
-#[derive(Debug, serde::Deserialize)]
+#[derive(utoipa::ToSchema, Debug, serde::Deserialize)]
 pub struct UploadExtensionFileRequest {
     /// Base64-encoded .nep file data
     pub data: String,

@@ -10,7 +10,6 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
 
 use super::{
     common::{ok, HandlerResult},
@@ -105,7 +104,7 @@ fn emit_dashboard_event(state: &ServerState, dashboard_id: &str, action: &str) {
 // ============================================================================
 
 /// Dashboard layout configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 pub struct DashboardLayout {
     pub columns: u32,
     #[serde(alias = "rows", rename = "rows")]
@@ -124,14 +123,14 @@ impl Default for DashboardLayout {
 }
 
 /// Rows value - can be "auto" string or a number
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum RowsValue {
     String(String),
     Number(u32),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 pub struct LayoutBreakpoints {
     pub lg: u32,
     pub md: u32,
@@ -151,7 +150,7 @@ impl Default for LayoutBreakpoints {
 }
 
 /// Component position on the grid
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 pub struct ComponentPosition {
     pub x: u32,
     pub y: u32,
@@ -185,25 +184,25 @@ pub struct DashboardComponent {
         alias = "data_source",
         rename = "data_source"
     )]
-    pub data_source: Option<JsonValue>,
+    pub data_source: Option<serde_json::Value>,
     #[serde(
         skip_serializing_if = "Option::is_none",
         alias = "display",
         rename = "display"
     )]
-    pub display: Option<JsonValue>,
+    pub display: Option<serde_json::Value>,
     #[serde(
         skip_serializing_if = "Option::is_none",
         alias = "config",
         rename = "config"
     )]
-    pub config: Option<JsonValue>,
+    pub config: Option<serde_json::Value>,
     #[serde(
         skip_serializing_if = "Option::is_none",
         alias = "actions",
         rename = "actions"
     )]
-    pub actions: Option<JsonValue>,
+    pub actions: Option<serde_json::Value>,
 }
 
 /// Dashboard
@@ -235,7 +234,7 @@ pub struct Dashboard {
 }
 
 /// Request to create a dashboard
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct CreateDashboardRequest {
     pub name: String,
     #[serde(default)]
@@ -246,7 +245,7 @@ pub struct CreateDashboardRequest {
     pub components: Vec<CreateDashboardComponent>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 pub struct CreateDashboardComponent {
     /// Optional client-provided ID; if absent, server generates one
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -265,29 +264,29 @@ pub struct CreateDashboardComponent {
         alias = "data_source",
         rename = "data_source"
     )]
-    pub data_source: Option<JsonValue>,
+    pub data_source: Option<serde_json::Value>,
     #[serde(
         skip_serializing_if = "Option::is_none",
         alias = "display",
         rename = "display"
     )]
-    pub display: Option<JsonValue>,
+    pub display: Option<serde_json::Value>,
     #[serde(
         skip_serializing_if = "Option::is_none",
         alias = "config",
         rename = "config"
     )]
-    pub config: Option<JsonValue>,
+    pub config: Option<serde_json::Value>,
     #[serde(
         skip_serializing_if = "Option::is_none",
         alias = "actions",
         rename = "actions"
     )]
-    pub actions: Option<JsonValue>,
+    pub actions: Option<serde_json::Value>,
 }
 
-/// Request to update a dashboard - use JsonValue to accept flexible formats
-#[derive(Debug, Deserialize)]
+/// Request to update a dashboard - use serde_json::Value to accept flexible formats
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct UpdateDashboardRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -296,7 +295,7 @@ pub struct UpdateDashboardRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub layout: Option<DashboardLayout>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub components: Option<Vec<JsonValue>>,
+    pub components: Option<Vec<serde_json::Value>>,
 }
 
 /// Dashboard template
@@ -309,7 +308,7 @@ pub struct DashboardTemplate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
     pub layout: DashboardLayout,
-    pub components: Vec<JsonValue>,
+    pub components: Vec<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub required_resources: Option<RequiredResources>,
 }
@@ -847,32 +846,32 @@ pub async fn remove_components_handler(
 }
 
 /// Request to add components
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct AddComponentsRequest {
-    pub components: Vec<JsonValue>,
+    pub components: Vec<serde_json::Value>,
 }
 
 /// Request to remove components by ID
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct RemoveComponentsRequest {
     pub ids: Vec<String>,
 }
 
 /// Request to patch a single component (deep merge)
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct UpdateComponentRequest {
     /// Partial component JSON, DEEP-MERGED into the stored component:
     /// objects merge recursively, everything else (scalars, arrays) replaces.
     /// `id` and `type` are immutable and ignored.
-    pub set: Option<JsonValue>,
+    pub set: Option<serde_json::Value>,
 }
 
 /// Recursive JSON merge: objects merge key-by-key, everything else replaces.
-fn deep_merge_json(target: &mut JsonValue, patch: &JsonValue) {
-    if let (JsonValue::Object(t), JsonValue::Object(p)) = (target, patch) {
+fn deep_merge_json(target: &mut serde_json::Value, patch: &serde_json::Value) {
+    if let (serde_json::Value::Object(t), serde_json::Value::Object(p)) = (target, patch) {
         for (k, v) in p {
             match t.get_mut(k) {
-                Some(JsonValue::Object(_)) if v.is_object() => {
+                Some(serde_json::Value::Object(_)) if v.is_object() => {
                     if let Some(child) = t.get_mut(k) {
                         deep_merge_json(child, v);
                     }
@@ -907,7 +906,7 @@ pub async fn update_component_handler(
     Path((id, component_id)): Path<(String, String)>,
     Json(req): Json<UpdateComponentRequest>,
 ) -> HandlerResult<serde_json::Value> {
-    let set = req.set.unwrap_or(JsonValue::Null);
+    let set = req.set.unwrap_or(serde_json::Value::Null);
     if !set.is_object() {
         return Err(ErrorResponse::bad_request(
             "`set` must be a JSON object of partial component fields",
@@ -931,11 +930,11 @@ pub async fn update_component_handler(
     let mut value = serde_json::to_value(&*component)
         .map_err(|e| ErrorResponse::internal(format!("Failed to serialize component: {}", e)))?;
     // id and type identify the component — never let a patch move/retype it.
-    if let JsonValue::Object(patch) = &set {
+    if let serde_json::Value::Object(patch) = &set {
         let mut sanitized = patch.clone();
         sanitized.remove("id");
         sanitized.remove("type");
-        deep_merge_json(&mut value, &JsonValue::Object(sanitized));
+        deep_merge_json(&mut value, &serde_json::Value::Object(sanitized));
     }
     let patched: StoredComponent = serde_json::from_value(value)
         .map_err(|e| ErrorResponse::bad_request(format!("Patched component is invalid: {}", e)))?;
@@ -956,7 +955,7 @@ pub async fn update_component_handler(
         "component_id": patched_id,
         "component": serde_json::to_value(
             dashboard.components.iter().find(|c| c.id == patched_id)
-        ).unwrap_or(JsonValue::Null),
+        ).unwrap_or(serde_json::Value::Null),
     }))
 }
 
@@ -1030,7 +1029,7 @@ pub async fn set_default_dashboard_handler(
 
 /// Request body for `PUT /api/dashboards/reorder`.
 /// `dashboard_ids` is the desired full ordering (index 0 = top).
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct ReorderDashboardsRequest {
     pub dashboard_ids: Vec<String>,
 }
@@ -1078,7 +1077,12 @@ pub async fn reorder_dashboards_handler(
     state
         .dashboard_store
         .set_sort_orders(&items)
-        .map_err(|e| ErrorResponse::internal(format!("Failed to reorder dashboards: {}", e)))?;
+        .map_err(|e| match e {
+            neomind_storage::Error::NotFound(msg) => {
+                ErrorResponse::not_found(format!("Failed to reorder dashboards: {msg}"))
+            }
+            other => ErrorResponse::internal(format!("Failed to reorder dashboards: {other}")),
+        })?;
 
     // Notify other clients. Use the first id as the event target — the SSE
     // consumer refetches the full list on receipt regardless of which id.
@@ -1136,13 +1140,13 @@ pub async fn get_template_handler(
 // ============================================================================
 
 /// Share permissions
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 pub struct SharePermissions {
     pub allow_interactive: bool,
 }
 
 /// Request to create a share link
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct CreateShareRequest {
     pub permissions: SharePermissions,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1617,7 +1621,7 @@ fn rewrite_component_transform_refs(
     if let Some(cfg) = component.config.as_mut().and_then(|c| c.as_object_mut()) {
         cfg.insert(
             "_transformId".to_string(),
-            JsonValue::String(new_id.to_string()),
+            serde_json::Value::String(new_id.to_string()),
         );
     }
 
@@ -1629,23 +1633,26 @@ fn rewrite_component_transform_refs(
     {
         ds.insert(
             "transformId".to_string(),
-            JsonValue::String(new_id.to_string()),
+            serde_json::Value::String(new_id.to_string()),
         );
         ds.insert(
             "sourceId".to_string(),
-            JsonValue::String(format!("transform:{}", new_id)),
+            serde_json::Value::String(format!("transform:{}", new_id)),
         );
-        ds.insert("id".to_string(), JsonValue::String(new_id.to_string()));
+        ds.insert(
+            "id".to_string(),
+            serde_json::Value::String(new_id.to_string()),
+        );
 
         let prefix_replacements = ["metricId", "field"];
         let old_prefix_dot = format!("{}.", old_prefix);
         for key in prefix_replacements {
-            if let Some(JsonValue::String(s)) = ds.get(key).cloned() {
+            if let Some(serde_json::Value::String(s)) = ds.get(key).cloned() {
                 if s.starts_with(&old_prefix_dot) {
                     let suffix = &s[old_prefix_dot.len()..];
                     ds.insert(
                         key.to_string(),
-                        JsonValue::String(format!("{}.{}", new_prefix, suffix)),
+                        serde_json::Value::String(format!("{}.{}", new_prefix, suffix)),
                     );
                 }
             }
@@ -1675,7 +1682,7 @@ fn build_duplicate_dashboard(
         .components
         .iter()
         .map(|c| {
-            serde_json::from_value(serde_json::to_value(c).unwrap_or(JsonValue::Null))
+            serde_json::from_value(serde_json::to_value(c).unwrap_or(serde_json::Value::Null))
                 .unwrap_or_else(|_| c.clone())
         })
         .collect();

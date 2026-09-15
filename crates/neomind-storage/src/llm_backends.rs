@@ -87,7 +87,7 @@ pub struct LlmBackendInstance {
 }
 
 /// Backend capabilities description
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BackendCapabilities {
     /// Supports streaming responses
     #[serde(default)]
@@ -144,7 +144,7 @@ pub struct BackendCapabilities {
 /// Mirrors `neomind_core::ReasoningCapabilities`; kept storage-local to avoid
 /// a core dependency in the serialized schema. Populated from the runtime's
 /// `capabilities().reasoning` so the UI can render the right control.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ReasoningCapabilities {
     /// Effort levels this backend can honor. Empty = unknown.
     #[serde(default)]

@@ -38,7 +38,7 @@ pub struct MemoryFileContentResponse {
 }
 
 /// Request to update file content
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct UpdateMemoryRequest {
     pub content: String,
 }
@@ -63,7 +63,7 @@ pub struct StatsResponse {
 }
 
 /// Request to update config
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct UpdateConfigRequest {
     pub config: MemoryConfig,
 }

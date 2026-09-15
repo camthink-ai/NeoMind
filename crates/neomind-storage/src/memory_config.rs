@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Simplified memory system configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryConfig {
     /// Whether the memory system is enabled
     #[serde(default = "default_enabled")]

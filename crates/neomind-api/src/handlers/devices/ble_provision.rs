@@ -20,7 +20,7 @@ use crate::server::types::ServerState;
 // ---------------------------------------------------------------------------
 
 /// BLE provision request body.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct BleProvisionRequest {
     /// Device model identifier (e.g. "NE101").
     pub model: String,

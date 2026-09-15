@@ -72,7 +72,7 @@ struct RuleDto {
 }
 
 /// Request body for enabling/disabling a rule.
-#[derive(Debug, serde::Deserialize)]
+#[derive(utoipa::ToSchema, Debug, serde::Deserialize)]
 pub struct SetRuleStatusRequest {
     pub enabled: bool,
 }

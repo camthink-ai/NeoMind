@@ -102,14 +102,14 @@ pub struct AutomationDto {
 }
 
 /// Request body for analyzing intent.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct AnalyzeIntentRequest {
     /// Natural language description
     pub description: String,
 }
 
 /// Request body for creating an automation.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct CreateAutomationRequest {
     /// Automation name
     pub name: String,
@@ -130,7 +130,7 @@ fn default_enabled() -> bool {
 }
 
 /// Request body for updating an automation.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct UpdateAutomationRequest {
     /// New name
     pub name: Option<String>,
@@ -143,7 +143,7 @@ pub struct UpdateAutomationRequest {
 }
 
 /// Request body for enabling/disabling an automation.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct SetAutomationStatusRequest {
     /// Whether to enable the automation
     pub enabled: bool,
@@ -806,7 +806,7 @@ pub async fn import_automations_handler(
 // ========== Transform-Specific Handlers ==========
 
 /// Request body for processing data through transforms.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct ProcessDataRequest {
     /// Device ID that produced the data
     pub device_id: String,
@@ -1181,7 +1181,7 @@ pub async fn get_transform_data_source_handler(
 // ============================================================================
 
 /// Request body for testing transform code directly.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct TestTransformCodeRequest {
     /// JavaScript code to test
     pub code: String,

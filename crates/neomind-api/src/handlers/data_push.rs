@@ -32,6 +32,9 @@ fn push_error_to_response(e: anyhow::Error) -> ErrorResponse {
     let msg = e.to_string();
     if msg.starts_with("Target not found") {
         ErrorResponse::not_found(msg)
+    } else if msg.starts_with("Unknown target type") {
+        // an unrecognized `type` discriminator is a client mistake
+        ErrorResponse::bad_request(msg)
     } else {
         ErrorResponse::internal(msg)
     }
@@ -111,7 +114,7 @@ pub async fn create_push_target_handler(
     let target = manager
         .create_target(request)
         .await
-        .map_err(|e| ErrorResponse::internal(e.to_string()))?;
+        .map_err(push_error_to_response)?;
 
     ok(json!({
         "id": target.id,

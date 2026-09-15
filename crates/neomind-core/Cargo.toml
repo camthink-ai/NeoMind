@@ -62,3 +62,8 @@ clone_on_copy = "allow"
 derivable_impls = "allow"
 collapsible_if = "allow"
 map_clone = "allow"
+
+# Schema-only dependency: DTO types referenced by neomind-api's OpenAPI spec.
+[dependencies.utoipa]
+version = "4"
+features = ["chrono", "uuid"]

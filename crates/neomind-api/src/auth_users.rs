@@ -95,7 +95,7 @@ fn token_key(token: &str) -> String {
 const JWT_CLOCK_SKEW_SECS: i64 = 30;
 
 /// User roles for RBAC
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum UserRole {
     /// Admin user - full access
@@ -160,21 +160,21 @@ pub struct SessionInfo {
 }
 
 /// Login request.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct LoginRequest {
     pub username: String,
     pub password: String,
 }
 
 /// Login response.
-#[derive(Debug, Serialize)]
+#[derive(utoipa::ToSchema, Debug, Serialize)]
 pub struct LoginResponse {
     pub token: String,
     pub user: UserInfo,
 }
 
 /// User information (without password).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 pub struct UserInfo {
     pub id: String,
     pub username: String,
@@ -183,7 +183,7 @@ pub struct UserInfo {
 }
 
 /// Register request.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct RegisterRequest {
     pub username: String,
     pub password: String,
@@ -192,7 +192,7 @@ pub struct RegisterRequest {
 }
 
 /// Change password request.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct ChangePasswordRequest {
     pub old_password: String,
     pub new_password: String,

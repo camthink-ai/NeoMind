@@ -11,7 +11,7 @@ use super::{
 use crate::models::ErrorResponse;
 
 /// Request body for LLM generation.
-#[derive(serde::Deserialize)]
+#[derive(utoipa::ToSchema, serde::Deserialize)]
 pub struct LlmGenerateRequest {
     pub prompt: String,
 }
@@ -178,7 +178,7 @@ pub async fn llm_generate_handler(
 // ============================================================================
 
 /// Request body for updating timezone.
-#[derive(serde::Deserialize)]
+#[derive(utoipa::ToSchema, serde::Deserialize)]
 pub struct TimezoneRequest {
     pub timezone: String,
 }
@@ -379,7 +379,7 @@ pub async fn update_retention_config(
     }))
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(utoipa::ToSchema, Debug, serde::Deserialize)]
 pub struct AgentDefaultsRequest {
     #[serde(default)]
     pub max_rounds: u32,
@@ -496,7 +496,7 @@ pub async fn update_agent_defaults(
     }))
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(utoipa::ToSchema, Debug, serde::Deserialize)]
 pub struct DeviceDefaultsRequest {
     #[serde(default)]
     pub default_offline_timeout_secs: u64,
@@ -625,7 +625,7 @@ pub async fn trigger_retention_cleanup(
 }
 
 /// Request body for updating retention configuration.
-#[derive(serde::Deserialize)]
+#[derive(utoipa::ToSchema, serde::Deserialize)]
 pub struct RetentionConfigRequest {
     pub enabled: bool,
     pub interval_hours: u64,
@@ -720,7 +720,7 @@ pub async fn list_backups_handler(
 /// Backup schedule configuration (Settings → Preferences in the web UI).
 /// The scheduler and the manual admin trigger both read this; env vars only
 /// seed the default until something is saved here.
-#[derive(Debug, serde::Deserialize)]
+#[derive(utoipa::ToSchema, Debug, serde::Deserialize)]
 pub struct BackupConfigRequest {
     pub enabled: bool,
     pub interval_secs: u64,
@@ -843,7 +843,7 @@ pub async fn get_market_source_handler(
 /// `https://ghfast.top/https://raw.githubusercontent.com/camthink-ai/...`.
 /// NOTE the trust boundary: after switching, sha256 verification checks the
 /// MIRROR's artifacts, not the upstream ones.
-#[derive(Debug, serde::Deserialize)]
+#[derive(utoipa::ToSchema, Debug, serde::Deserialize)]
 pub struct MarketSourceRequest {
     /// Empty string = reset to default.
     pub market_url: String,

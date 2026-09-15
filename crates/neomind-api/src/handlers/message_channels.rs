@@ -52,7 +52,7 @@ use crate::models::ErrorResponse;
 use serde_json::json;
 
 /// Create channel request.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct CreateChannelRequest {
     pub name: String,
     pub channel_type: String,
@@ -348,7 +348,7 @@ pub async fn test_channel_handler(
 }
 
 /// Request to update a channel.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct UpdateChannelRequest {
     pub config: serde_json::Value,
 }
@@ -492,7 +492,7 @@ pub async fn update_channel_handler(
 }
 
 /// Request to toggle channel enabled state.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct ToggleEnabledRequest {
     pub enabled: bool,
 }
@@ -523,7 +523,10 @@ pub async fn toggle_enabled_handler(
     registry_guard
         .set_enabled(&name, req.enabled)
         .await
-        .map_err(|e| ErrorResponse::internal(e.to_string()))?;
+        .map_err(|e| match e {
+            neomind_messages::Error::NotFound(msg) => ErrorResponse::not_found(msg),
+            other => ErrorResponse::internal(other.to_string()),
+        })?;
 
     // Get updated info
     let info = registry_guard
@@ -561,7 +564,7 @@ pub async fn get_channel_stats_handler(
 // ========== Recipient Management ==========
 
 /// Add recipient request.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct AddRecipientRequest {
     pub email: String,
 }
@@ -718,7 +721,7 @@ pub async fn get_channel_filter_handler(
 }
 
 /// Request to update channel filter.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct UpdateFilterRequest {
     pub source_types: Vec<String>,
     pub categories: Vec<String>,

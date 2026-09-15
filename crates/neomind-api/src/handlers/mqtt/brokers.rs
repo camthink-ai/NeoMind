@@ -91,7 +91,7 @@ impl From<ExternalBroker> for ExternalBrokerDto {
 }
 
 /// Request body for creating/updating an external broker.
-#[derive(Debug, serde::Deserialize)]
+#[derive(utoipa::ToSchema, Debug, serde::Deserialize)]
 pub struct ExternalBrokerRequest {
     pub id: Option<String>,
     pub name: String,

@@ -3515,6 +3515,7 @@ dependencies = [
  "toml 0.8.23",
  "tracing",
  "tracing-subscriber",
+ "utoipa",
  "uuid",
  "windows-sys 0.59.0",
 ]
@@ -3666,6 +3667,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "utoipa",
  "uuid",
  "zip",
 ]
@@ -3690,6 +3692,7 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tracing",
+ "utoipa",
  "uuid",
 ]
 
@@ -3859,6 +3862,7 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tracing",
+ "utoipa",
  "uuid",
 ]
 

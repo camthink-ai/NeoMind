@@ -369,7 +369,7 @@ pub struct EventStreamParams {
 ///
 /// Publish a custom event to the event bus.
 /// Requires authentication (API key or JWT).
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct PublishEventRequest {
     /// Event type identifier (e.g., "my_extension.my_event")
     pub event_type: String,

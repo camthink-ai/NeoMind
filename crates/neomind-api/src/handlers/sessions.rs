@@ -728,7 +728,7 @@ pub async fn clear_pending_stream_handler(
 }
 
 /// Request body for updating session.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct UpdateSessionRequest {
     /// Session title (optional)
     pub title: Option<String>,
@@ -771,7 +771,7 @@ pub async fn update_session_handler(
 }
 
 /// Request body for toggling memory.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct ToggleMemoryRequest {
     /// Whether memory should be enabled
     pub enabled: bool,
@@ -801,7 +801,10 @@ pub async fn toggle_memory_handler(
         .session_manager
         .toggle_memory(&id, req.enabled)
         .await
-        .map_err(|e| ErrorResponse::with_message(e.to_string()))?;
+        .map_err(|e| match e {
+            neomind_core::error::Error::NotFound(msg) => ErrorResponse::not_found(msg),
+            other => ErrorResponse::with_message(other.to_string()),
+        })?;
 
     Ok(Json(ApiResponse::success(json!({
         "sessionId": id,

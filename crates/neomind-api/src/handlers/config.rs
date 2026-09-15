@@ -8,7 +8,7 @@ use super::ServerState;
 use crate::models::{common::ApiResponse, ErrorResponse};
 
 /// Exported configuration bundle.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigExport {
     /// Export format version
     pub version: String,
@@ -29,7 +29,7 @@ pub struct ConfigExport {
 }
 
 /// LLM settings for export.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 pub struct LlmSettingsExport {
     pub backend: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -42,13 +42,13 @@ pub struct LlmSettingsExport {
 }
 
 /// Device configurations for export.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 pub struct DevicesExport {
     pub devices: Vec<DeviceConfigExport>,
 }
 
 /// Single device configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceConfigExport {
     pub device_id: String,
     pub device_type: String,
@@ -59,13 +59,13 @@ pub struct DeviceConfigExport {
 }
 
 /// Rules configuration for export.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 pub struct RulesExport {
     pub rules: Vec<RuleConfigExport>,
 }
 
 /// Single rule configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 pub struct RuleConfigExport {
     pub id: String,
     pub name: String,
@@ -76,13 +76,13 @@ pub struct RuleConfigExport {
 }
 
 /// Alerts configuration for export.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 pub struct AlertsExport {
     pub alert_rules: Vec<AlertRuleExport>,
 }
 
 /// Alert rule configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 pub struct AlertRuleExport {
     pub id: String,
     pub name: String,
@@ -94,7 +94,7 @@ pub struct AlertRuleExport {
 }
 
 /// Import options.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct ConfigImportOptions {
     /// What to import
     #[serde(default)]
@@ -105,7 +105,7 @@ pub struct ConfigImportOptions {
 }
 
 /// Import sections selector.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Default, Deserialize)]
 pub struct ImportSections {
     #[serde(default)]
     pub llm_settings: bool,
@@ -126,7 +126,7 @@ pub struct ConfigImportResult {
 }
 
 /// Configuration import request.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct ConfigImport {
     pub config: ConfigExport,
     #[serde(default)]

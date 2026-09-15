@@ -263,7 +263,7 @@ impl AgentEvent {
 }
 
 /// Agent configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     /// Agent name
     pub name: String,

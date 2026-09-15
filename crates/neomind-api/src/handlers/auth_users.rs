@@ -350,7 +350,7 @@ pub async fn delete_user_handler(
 }
 
 /// Request body for the registration-settings admin endpoint.
-#[derive(Debug, serde::Deserialize)]
+#[derive(utoipa::ToSchema, Debug, serde::Deserialize)]
 pub struct UpdateRegistrationSettingsRequest {
     /// Whether unauthenticated self-registration (`POST /api/auth/register`)
     /// should be allowed.

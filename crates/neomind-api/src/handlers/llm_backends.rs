@@ -2,6 +2,7 @@
 //!
 //! This module provides REST API endpoints for managing multiple LLM backend instances.
 
+use crate::models::ThinkingEffortMirror;
 use axum::{
     extract::{Path, Query, State},
     Json,
@@ -32,7 +33,7 @@ pub struct ListBackendsQuery {
 }
 
 /// Request to create/update an LLM backend instance
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct CreateBackendRequest {
     /// Display name
     pub name: String,
@@ -67,6 +68,7 @@ pub struct CreateBackendRequest {
 
     /// Unified thinking/reasoning effort (preferred over `thinking_enabled`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<ThinkingEffortMirror>)]
     pub thinking_effort: Option<neomind_core::ThinkingEffort>,
 
     /// Model capabilities (optional, from Ollama model detection)
@@ -97,7 +99,7 @@ fn default_thinking_enabled() -> bool {
 }
 
 /// Request to update an LLM backend instance
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct UpdateBackendRequest {
     /// Display name
     pub name: Option<String>,
@@ -129,6 +131,7 @@ pub struct UpdateBackendRequest {
     pub thinking_enabled: Option<bool>,
 
     /// Unified thinking/reasoning effort (preferred over `thinking_enabled`).
+    #[schema(value_type = Option<ThinkingEffortMirror>)]
     pub thinking_effort: Option<neomind_core::ThinkingEffort>,
 
     /// Model capabilities (optional, from Ollama model detection)
@@ -141,7 +144,7 @@ pub struct UpdateBackendRequest {
 }
 
 /// Backend instance DTO for API responses
-#[derive(Debug, Serialize)]
+#[derive(utoipa::ToSchema, Debug, Serialize)]
 pub struct BackendInstanceDto {
     pub id: String,
     pub name: String,
@@ -157,6 +160,7 @@ pub struct BackendInstanceDto {
     pub top_k: usize,
     pub max_tokens: usize,
     pub thinking_enabled: bool,
+    #[schema(value_type = Option<ThinkingEffortMirror>)]
     pub thinking_effort: Option<neomind_core::ThinkingEffort>,
     pub capabilities: BackendCapabilities,
     pub updated_at: i64,
@@ -726,7 +730,7 @@ pub async fn delete_backend_handler(
 ///
 /// All fields are optional. `multimodal: null` clears the override (returns
 /// to auto-detection); `multimodal: true/false` pins the value.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct UpdateCapabilitiesOverrideRequest {
     /// Override the multimodal/vision capability.
     ///

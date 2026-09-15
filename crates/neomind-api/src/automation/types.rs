@@ -12,7 +12,7 @@ use std::collections::HashMap;
 pub type Automation = TransformAutomation;
 
 /// Automation type discriminator (kept for API compatibility)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum AutomationType {
     Transform,

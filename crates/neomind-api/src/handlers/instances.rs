@@ -17,7 +17,7 @@ use crate::models::ErrorResponse;
 use neomind_storage::InstanceRecord;
 
 /// Request to create a remote instance
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct CreateInstanceRequest {
     /// Display name
     pub name: String,
@@ -28,7 +28,7 @@ pub struct CreateInstanceRequest {
 }
 
 /// Request to update a remote instance
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct UpdateInstanceRequest {
     /// Display name
     pub name: Option<String>,

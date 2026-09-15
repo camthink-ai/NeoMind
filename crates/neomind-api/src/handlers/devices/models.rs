@@ -123,7 +123,7 @@ pub struct TimeRangeQuery {
 }
 
 /// Request to add a new device.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct AddDeviceRequest {
     /// Device type (must be registered)
     pub device_type: String,
@@ -145,7 +145,7 @@ pub struct AddDeviceRequest {
 
 /// Request to update an existing device.
 /// All fields are optional - only provided fields will be updated.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct UpdateDeviceRequest {
     /// Device name
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -239,7 +239,7 @@ pub struct SendCommandRequest {
 }
 
 /// Request body for MDL generation from sample data.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct GenerateMdlRequest {
     /// Device name (used to generate device_type)
     pub device_name: String,
@@ -255,7 +255,7 @@ pub struct GenerateMdlRequest {
 }
 
 /// Request to fetch current values for multiple devices.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct BatchCurrentValuesRequest {
     /// List of device IDs to fetch current values for
     pub device_ids: Vec<String>,

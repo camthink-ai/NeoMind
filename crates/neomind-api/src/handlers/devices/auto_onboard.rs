@@ -1088,7 +1088,7 @@ pub struct ApproveDraftResponse {
 }
 
 /// Request to approve a draft device (with optional existing type)
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct ApproveDraftDeviceRequest {
     /// Optional existing device type to reuse instead of creating a new one
     pub existing_type: Option<String>,
@@ -1100,7 +1100,7 @@ pub struct ApproveDraftDeviceRequest {
 }
 
 /// Details for creating a new device type
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct NewTypeDetails {
     /// Device type ID (user-specified)
     pub device_type: String,
@@ -1154,14 +1154,14 @@ pub struct CleanupResponse {
 }
 
 /// Request to update a draft device
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct UpdateDraftDeviceRequest {
     pub name: Option<String>,
     pub description: Option<String>,
 }
 
 /// Request to reject a draft device
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct RejectDraftDeviceRequest {
     pub reason: String,
 }
@@ -1173,7 +1173,7 @@ pub struct SuccessResponse {
 }
 
 /// Request to upload device data for auto-onboarding
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct UploadDeviceDataRequest {
     /// Optional device ID (will be generated if not provided)
     pub device_id: Option<String>,

@@ -18,7 +18,7 @@ pub use pagination::{
 // ============================================================================
 
 /// Image data in a chat message (for multimodal LLMs).
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Deserialize, Serialize)]
 pub struct ChatImage {
     /// Base64-encoded image data with data URL scheme (e.g., "data:image/png;base64,...")
     pub data: String,
@@ -28,7 +28,7 @@ pub struct ChatImage {
 }
 
 /// Chat request from the web client.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Deserialize)]
 pub struct ChatRequest {
     /// The user's message text.
     pub message: String,
@@ -65,7 +65,7 @@ pub struct ChatRequest {
 /// "inherit the platform default". Translated into a
 /// `CreateSessionOptions` on the agent side. Field names use camelCase to
 /// match the JS/TS client convention expected by NeoMind's REST/WS API.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Default, Deserialize)]
 pub struct SessionConfigPatch {
     /// Override the agent's system prompt.
     #[serde(rename = "systemPrompt")]
@@ -119,7 +119,7 @@ pub struct ChatResponse {
 }
 
 /// Create session request.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct CreateSessionRequest {
     /// Optional agent configuration (legacy full-struct form; only the four
     /// commonly-overridden fields flow through).
@@ -317,4 +317,39 @@ pub enum WsServerMessage {
     Error { error: String },
     /// Pong message.
     Pong,
+}
+
+// ---------------------------------------------------------------------------
+// OpenAPI mirrors of cross-crate DTO field types.
+//
+// utoipa 4 names refs to FOREIGN field types "crate.Type" but registers the
+// same type under its bare name — the ref can never resolve, so codegen
+// clients break. Mirroring the two affected small types here (kept in sync
+// with their originals) gives the fields a resolvable local schema.
+// ---------------------------------------------------------------------------
+
+/// OpenAPI mirror of `neomind_core::ThinkingEffort`.
+#[derive(
+    utoipa::ToSchema, Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize,
+)]
+pub enum ThinkingEffortMirror {
+    None,
+    Low,
+    Medium,
+    High,
+    XHigh,
+    Max,
+}
+
+/// OpenAPI mirror of `neomind_storage::AgentToolConfig`.
+#[derive(utoipa::ToSchema, Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AgentToolConfigMirror {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
+}
+
+fn default_true() -> bool {
+    true
 }

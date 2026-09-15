@@ -81,7 +81,7 @@ pub fn value_to_json(value: &MetricValue) -> serde_json::Value {
 }
 
 /// Request body for writing a metric data point.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct WriteMetricRequest {
     /// Metric name.
     pub metric: String,

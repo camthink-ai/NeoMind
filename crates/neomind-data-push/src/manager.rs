@@ -430,7 +430,7 @@ async fn latest_context_for_metric(
 // ========== Request DTOs ==========
 
 /// Request to create a new push target.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CreateTargetRequest {
     pub name: String,
     pub target_type: String,
@@ -444,7 +444,7 @@ pub struct CreateTargetRequest {
 }
 
 /// Request to update an existing push target.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+#[derive(utoipa::ToSchema, Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct UpdateTargetRequest {
     pub name: Option<String>,
     pub target_type: Option<String>,

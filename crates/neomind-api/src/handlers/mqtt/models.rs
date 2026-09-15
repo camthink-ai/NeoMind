@@ -79,7 +79,7 @@ pub struct MqttSubscriptionDto {
 }
 
 /// Request body for subscribing to a custom topic.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct MqttSubscribeRequest {
     pub topic: String,
     #[serde(default = "default_qos")]
@@ -91,7 +91,7 @@ fn default_qos() -> u8 {
 }
 
 /// Request body for unsubscribing from a custom topic.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct MqttUnsubscribeRequest {
     pub topic: String,
 }

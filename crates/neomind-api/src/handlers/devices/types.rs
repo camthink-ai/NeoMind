@@ -383,7 +383,7 @@ pub struct CloudDeviceTypesResponse {
 }
 
 /// Request for importing selected device types
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct CloudImportRequest {
     pub device_types: Vec<String>,
     #[serde(default)]

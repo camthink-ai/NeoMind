@@ -37,7 +37,7 @@ pub struct SetupStatusResponse {
 }
 
 /// Initialize admin request.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct InitializeAdminRequest {
     /// Admin username
     pub username: String,
@@ -69,7 +69,7 @@ pub struct AdminUserInfo {
 }
 
 /// LLM configuration for setup.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct LlmConfigRequest {
     /// LLM provider (ollama, openai, anthropic, etc.)
     pub provider: String,

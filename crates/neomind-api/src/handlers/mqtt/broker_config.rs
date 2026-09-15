@@ -75,7 +75,7 @@ impl From<MqttCredential> for CredentialDto {
 }
 
 /// Request body for updating broker configuration.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct UpdateBrokerConfigRequest {
     /// Listening address
     #[serde(default)]
@@ -97,7 +97,7 @@ pub struct UpdateBrokerConfigRequest {
 }
 
 /// Request body for adding a new credential.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct AddCredentialRequest {
     /// Username (1-64 chars, cannot start with "__neomind")
     pub username: String,
@@ -106,7 +106,7 @@ pub struct AddCredentialRequest {
 }
 
 /// Request body for uploading TLS certificates.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct UploadTlsRequest {
     /// Certificate PEM content
     pub cert_pem: String,

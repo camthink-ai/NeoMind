@@ -26,7 +26,7 @@ fn extract_api_key(headers: &HeaderMap) -> Result<String, AuthError> {
 }
 
 /// Request to create a new API key.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct CreateKeyRequest {
     /// Human-readable name for the key
     pub name: String,

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 pub type PushTargetId = String;
 
 /// Scheduling configuration for a push target.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PushSchedule {
     /// Event-driven: subscribe to EventBus, push immediately when data matches.
@@ -22,7 +22,7 @@ pub enum PushSchedule {
 }
 
 /// Retry configuration for failed deliveries.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 pub struct RetryConfig {
     pub max_retries: u32,
     /// Exponential backoff base in seconds.
@@ -42,7 +42,7 @@ impl Default for RetryConfig {
 }
 
 /// Output shape for a batched payload.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(utoipa::ToSchema, Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum BatchFormat {
     /// Flat list: `{ batch, count, items: [{source_id, value, timestamp}, ...] }`.
@@ -55,7 +55,7 @@ pub enum BatchFormat {
 }
 
 /// Batch/aggregation configuration for push delivery.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 pub struct BatchConfig {
     /// Maximum number of events to aggregate before flushing.
     /// Default: 1 (no batching, send immediately).
@@ -113,7 +113,7 @@ impl std::fmt::Display for PushTargetType {
 }
 
 /// Filter for selecting which data sources to push.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 pub struct DataSourceFilter {
     /// Prefix patterns to match DataSourceId (e.g. "device:sensor1:" matches all fields).
     pub source_patterns: Vec<String>,

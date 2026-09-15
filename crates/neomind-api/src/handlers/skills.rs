@@ -185,14 +185,14 @@ pub struct SkillListResponse {
 }
 
 /// Request to create or update a skill.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct CreateSkillRequest {
     /// Full skill file content (YAML frontmatter + Markdown body).
     pub content: String,
 }
 
 /// Request to test skill matching.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct MatchTestRequest {
     pub query: String,
     pub context_size: Option<usize>,

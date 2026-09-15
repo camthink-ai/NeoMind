@@ -111,7 +111,7 @@ impl TypeSignature {
 /// - Fast analysis without LLM
 /// - Manual LLM enhancement trigger
 /// - No auto-registration based on confidence
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 pub struct AutoOnboardConfig {
     /// Enable/disable auto-onboarding
     pub enabled: bool,

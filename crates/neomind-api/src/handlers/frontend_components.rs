@@ -194,7 +194,7 @@ async fn fetch_market_index(client: &reqwest::Client) -> Result<MarketIndex, Err
 // Request / Response types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct MarketInstallRequest {
     pub component_id: String,
 }
@@ -597,7 +597,7 @@ pub async fn install_component_handler(
     install_from_parts(&state, manifest_text, bundle_bytes, "manual upload").await
 }
 
-#[derive(serde::Deserialize)]
+#[derive(utoipa::ToSchema, serde::Deserialize)]
 pub struct InstallFromPathRequest {
     pub file_path: String,
 }

@@ -151,7 +151,7 @@ pub async fn list_messages_handler(
 }
 
 /// Create message request.
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct CreateMessageRequest {
     pub category: String, // alert | system | business
     pub severity: String, // info | warning | critical | emergency
@@ -417,7 +417,7 @@ pub async fn message_stats_handler(
 
 /// Bulk acknowledge messages.
 /// POST /api/messages/acknowledge
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct BulkAcknowledgeRequest {
     pub message_ids: Vec<String>,
 }
@@ -521,7 +521,7 @@ pub async fn bulk_delete_handler(
 
 /// Cleanup old messages.
 /// POST /api/messages/cleanup
-#[derive(Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct CleanupRequest {
     pub older_than_days: u32,
 }
