@@ -392,18 +392,18 @@ impl AgentExecutor {
                                 break;
                             }
                         }
-                        ResourceType::ExtensionTool => {
-                            if parts.len() >= 3 && parts[0] == "extension" {
-                                if let Some(action_executed) = self
-                                    .execute_extension_command_for_agent(
-                                        agent, parts[1], parts[2], decision,
-                                    )
-                                    .await
-                                {
-                                    actions.push(action_executed);
-                                }
-                                break;
+                        ResourceType::ExtensionTool
+                            if parts.len() >= 3 && parts[0] == "extension" =>
+                        {
+                            if let Some(action_executed) = self
+                                .execute_extension_command_for_agent(
+                                    agent, parts[1], parts[2], decision,
+                                )
+                                .await
+                            {
+                                actions.push(action_executed);
                             }
+                            break;
                         }
                         _ => {}
                     }

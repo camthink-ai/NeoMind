@@ -24,7 +24,7 @@ pub(crate) fn build_context_window_with_summary(
     // eviction below), so a long summary chain could push the final context
     // past the window it was derived from. Reserve its tokens up front.
     let summary_tokens = summary
-        .map(|s| crate::agent::tokenizer::estimate_tokens(s))
+        .map(crate::agent::tokenizer::estimate_tokens)
         .unwrap_or(0);
     let history_budget = max_tokens.saturating_sub(summary_tokens);
 

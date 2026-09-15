@@ -165,8 +165,8 @@ impl AgentExecutor {
         let mut data: Vec<DataCollected> = Vec::new();
         for item in metric_data
             .into_iter()
-            .chain(device_data.into_iter())
-            .chain(extension_data.into_iter())
+            .chain(device_data)
+            .chain(extension_data)
         {
             let key = (item.source.clone(), item.data_type.clone());
             if seen.insert(key) {

@@ -17,10 +17,9 @@ pub fn parse_time_range(input: &str) -> Option<i64> {
         (rest.parse::<i64>().ok()?, "w")
     } else if let Some(rest) = s.strip_suffix("mo") {
         (rest.parse::<i64>().ok()?, "mo") // explicit month suffix
-    } else if let Some(rest) = s.strip_suffix('m') {
-        (rest.parse::<i64>().ok()?, "m") // m = months (use min for minutes)
     } else {
-        return None;
+        let rest = s.strip_suffix('m')?;
+        (rest.parse::<i64>().ok()?, "m") // m = months (use min for minutes)
     };
     Some(match unit {
         "min" => num * 60,

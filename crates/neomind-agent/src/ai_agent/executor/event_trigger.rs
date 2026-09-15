@@ -103,7 +103,7 @@ impl AgentExecutor {
         self.cleanup_stale_dedup_entries().await;
         let now = chrono::Utc::now().timestamp();
 
-        for (_agent_id, agent) in event_agents.iter() {
+        for agent in event_agents.values() {
             // Check if this agent has event-based schedule
             if matches!(
                 agent.schedule.schedule_type,
@@ -283,7 +283,7 @@ impl AgentExecutor {
         self.cleanup_stale_dedup_entries().await;
         let now = chrono::Utc::now().timestamp();
 
-        for (_agent_id, agent) in event_agents.iter() {
+        for agent in event_agents.values() {
             // Check if this agent has event-based schedule
             if !matches!(
                 agent.schedule.schedule_type,

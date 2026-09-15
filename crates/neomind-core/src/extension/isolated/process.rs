@@ -1904,18 +1904,16 @@ impl IsolatedExtension {
             .map_err(|_| IsolatedExtensionError::ChannelClosed)?;
 
         match response {
-            IpcResponse::StreamSessionClosed {
-                total_frames,
-                duration_ms: _,
-                ..
-            } => Ok(super::super::stream::SessionStats {
-                output_chunks: total_frames,
-                // [unit fix] this wrote a DURATION into a timestamp field —
-                // the API computes now_millis - last_activity for duration_ms,
-                // so stats.last_activity must be a MILLIS timestamp.
-                last_activity: chrono::Utc::now().timestamp_millis(),
-                ..Default::default()
-            }),
+            IpcResponse::StreamSessionClosed { total_frames, .. } => {
+                Ok(super::super::stream::SessionStats {
+                    output_chunks: total_frames,
+                    // [unit fix] this wrote a DURATION into a timestamp field —
+                    // the API computes now_millis - last_activity for duration_ms,
+                    // so stats.last_activity must be a MILLIS timestamp.
+                    last_activity: chrono::Utc::now().timestamp_millis(),
+                    ..Default::default()
+                })
+            }
             IpcResponse::Error { error, .. } => Err(IsolatedExtensionError::ExecutionFailed(error)),
             _ => Err(IsolatedExtensionError::IpcError(
                 "Unexpected response to CloseStreamSession".to_string(),

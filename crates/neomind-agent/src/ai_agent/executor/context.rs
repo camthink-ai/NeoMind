@@ -81,7 +81,7 @@ pub(crate) fn build_history_context(
 
     // 2. Knowledge Files — inline content when available, index otherwise
     if !agent.memory.knowledge_files.is_empty() {
-        let kc = knowledge_content.and_then(|m| if m.is_empty() { None } else { Some(m) });
+        let kc = knowledge_content.filter(|&m| !m.is_empty());
         if let Some(content_map) = kc {
             // Inline mode: embed actual file contents directly
             let mut sections = Vec::new();

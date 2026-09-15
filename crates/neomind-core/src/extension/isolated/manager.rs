@@ -598,7 +598,7 @@ impl IsolatedExtensionManager {
 
         // Update all existing extensions
         let extensions = self.extensions.read().await;
-        for (_, ext) in extensions.iter() {
+        for ext in extensions.values() {
             ext.set_capability_provider(provider.clone());
         }
     }

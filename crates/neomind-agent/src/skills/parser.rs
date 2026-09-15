@@ -183,11 +183,9 @@ fn parse_frontmatter(yaml: &str) -> Result<SkillMetadata, ParseError> {
                         });
                     }
                 }
-                "actions" => {
-                    if current_section == "tool_target" {
-                        if let Some(last) = tool_targets.last_mut() {
-                            last.actions = parse_list_value(value);
-                        }
+                "actions" if current_section == "tool_target" => {
+                    if let Some(last) = tool_targets.last_mut() {
+                        last.actions = parse_list_value(value);
                     }
                 }
                 _ => {}

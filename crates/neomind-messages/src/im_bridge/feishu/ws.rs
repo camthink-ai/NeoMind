@@ -162,7 +162,7 @@ impl DataCache {
         if expected > 0 && (entry.len() as u64) >= expected {
             // Collect ordered by seq, concatenate.
             let mut merged = Vec::new();
-            for (_seq, chunk) in entry.iter() {
+            for chunk in entry.values() {
                 merged.extend_from_slice(chunk);
             }
             let message_id = message_id.to_string();

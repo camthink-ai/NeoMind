@@ -2902,7 +2902,7 @@ END"#
         let args_preview = if semantically_mapped.to_string().len() > 200 {
             format!(
                 "{}...",
-                &semantically_mapped
+                semantically_mapped
                     .to_string()
                     .chars()
                     .take(200)

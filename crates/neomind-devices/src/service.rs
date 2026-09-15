@@ -1589,13 +1589,11 @@ impl DeviceService {
                             )));
                         }
                     }
-                    MetricValue::Float(f) => {
-                        if *f < min || *f > max {
-                            return Err(DeviceError::InvalidParameter(format!(
-                                "Parameter '{}' value {} out of range [{}, {}]",
-                                param_def.name, f, min, max
-                            )));
-                        }
+                    MetricValue::Float(f) if (*f < min || *f > max) => {
+                        return Err(DeviceError::InvalidParameter(format!(
+                            "Parameter '{}' value {} out of range [{}, {}]",
+                            param_def.name, f, min, max
+                        )));
                     }
                     _ => {}
                 }
@@ -2097,7 +2095,7 @@ impl DeviceService {
         if let Some(device_commands) = history.get(device_id) {
             let mut commands = device_commands.clone();
             // Sort by created_at descending (newest first)
-            commands.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+            commands.sort_by_key(|c| std::cmp::Reverse(c.created_at));
             if let Some(limit) = limit {
                 commands.truncate(limit);
             }

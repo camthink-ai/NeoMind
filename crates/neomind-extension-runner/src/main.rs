@@ -1693,7 +1693,7 @@ impl SyncIpcClient {
                     }
                     _ => {
                         warn!("SyncIpcClient: unexpected response type");
-                        json!({"success": false, "error": format!("Unexpected response type")})
+                        json!({"success": false, "error": "Unexpected response type".to_string()})
                     }
                 }
             }

@@ -361,9 +361,7 @@ fn extract_images_from_content(content: &Content) -> Vec<String> {
                     );
                 }
             }
-            ContentPart::ImageBase64 {
-                data, mime_type: _, ..
-            } => {
+            ContentPart::ImageBase64 { data, .. } => {
                 // Already base64 encoded, just remove the mime type prefix if present
                 let base64_data = if data.contains(',') {
                     data.split(',').next_back().unwrap_or(data).to_string()
