@@ -1439,7 +1439,7 @@ Assistant: {ar}\n"
         }
 
         // Sort by created_at descending (newest first)
-        infos.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        infos.sort_by_key(|i| std::cmp::Reverse(i.created_at));
 
         infos
     }
@@ -1492,7 +1492,7 @@ Assistant: {ar}\n"
         }
 
         // Sort by created_at descending (newest first)
-        infos.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        infos.sort_by_key(|i| std::cmp::Reverse(i.created_at));
 
         infos
     }

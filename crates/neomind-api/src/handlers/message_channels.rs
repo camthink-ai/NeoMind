@@ -56,7 +56,12 @@ use serde_json::json;
 pub struct CreateChannelRequest {
     pub name: String,
     pub channel_type: String,
+    /// Channel-specific configuration. NOTE the serde `flatten`: these
+    /// fields are flattened into the request TOP LEVEL — a webhook channel
+    /// is `{"name","channel_type","url"}` with `url` at the root, NOT
+    /// nested under a `config` object.
     #[serde(flatten)]
+    #[schema(value_type = Object)]
     pub config: serde_json::Value,
 }
 

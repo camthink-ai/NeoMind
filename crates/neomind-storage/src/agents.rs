@@ -687,7 +687,7 @@ impl AgentStore {
         }
 
         // Sort by updated_at descending
-        agents.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        agents.sort_by_key(|a| std::cmp::Reverse(a.updated_at));
 
         // Apply pagination
         if let Some(offset) = filter.offset {
@@ -1027,7 +1027,7 @@ impl AgentStore {
         };
         let mut executions = self.query_executions(filter).await?;
         // Sort by timestamp descending and return the first
-        executions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        executions.sort_by_key(|e| std::cmp::Reverse(e.timestamp));
         Ok(executions.into_iter().next())
     }
 
@@ -1057,7 +1057,7 @@ impl AgentStore {
         }
 
         // Sort by timestamp descending
-        executions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        executions.sort_by_key(|e| std::cmp::Reverse(e.timestamp));
 
         // Apply pagination
         if let Some(offset) = filter.offset {

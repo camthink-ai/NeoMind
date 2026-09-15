@@ -360,11 +360,12 @@ async fn scenario_1_smart_building_hvac() -> anyhow::Result<()> {
     println!("   总执行次数: {}", agent_after.stats.total_executions);
     println!(
         "   成功率: {}%",
-        if agent_after.stats.total_executions > 0 {
-            agent_after.stats.successful_executions * 100 / agent_after.stats.total_executions
-        } else {
-            0
-        }
+        agent_after
+            .stats
+            .successful_executions
+            .checked_mul(100)
+            .and_then(|p| p.checked_div(agent_after.stats.total_executions))
+            .unwrap_or(0)
     );
     println!("   平均耗时: {}ms", agent_after.stats.avg_duration_ms);
 

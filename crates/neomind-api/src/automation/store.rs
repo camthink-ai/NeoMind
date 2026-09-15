@@ -191,7 +191,7 @@ impl AutomationStore {
         }
 
         // Sort by started_at descending
-        executions.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+        executions.sort_by_key(|e| std::cmp::Reverse(e.started_at));
         executions.truncate(limit);
 
         Ok(executions)

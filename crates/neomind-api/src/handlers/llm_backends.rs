@@ -2,7 +2,6 @@
 //!
 //! This module provides REST API endpoints for managing multiple LLM backend instances.
 
-use crate::models::ThinkingEffortMirror;
 use axum::{
     extract::{Path, Query, State},
     Json,

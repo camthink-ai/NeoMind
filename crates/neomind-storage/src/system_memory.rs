@@ -1570,7 +1570,7 @@ impl MarkdownMemoryStore {
             .collect();
 
         // Sort by importance (descending)
-        matches.sort_by(|a, b| b.importance.cmp(&a.importance));
+        matches.sort_by_key(|m| std::cmp::Reverse(m.importance));
 
         Ok(matches)
     }
@@ -1587,7 +1587,7 @@ impl MarkdownMemoryStore {
         }
 
         // Sort by importance (descending)
-        entries.sort_by(|a, b| b.importance.cmp(&a.importance));
+        entries.sort_by_key(|e| std::cmp::Reverse(e.importance));
 
         let removed = entries.len() - max_items;
         entries.truncate(max_items);
@@ -1725,7 +1725,7 @@ impl MarkdownMemoryStore {
         }
 
         // Sort by modified time, newest first
-        files.sort_by(|a, b| b.modified_at.cmp(&a.modified_at));
+        files.sort_by_key(|f| std::cmp::Reverse(f.modified_at));
 
         Ok(files)
     }

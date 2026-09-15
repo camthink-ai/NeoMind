@@ -126,7 +126,7 @@ impl DataPushStore {
         // LOGS_TABLE is keyed by UUID (not time), so iteration order is
         // unrelated to recency. Sort newest-first by `created_at` so pagination
         // (skip/take) returns the most recent deliveries first.
-        all.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        all.sort_by_key(|t| std::cmp::Reverse(t.created_at));
         let total = all.len();
         let logs: Vec<DeliveryLog> = all.into_iter().skip(offset).take(limit).collect();
         Ok((logs, total))

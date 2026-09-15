@@ -136,7 +136,7 @@ impl SmartFollowUpManager {
         }
 
         // 6. 按优先级排序
-        followups.sort_by(|a, b| b.priority.cmp(&a.priority));
+        followups.sort_by_key(|f| std::cmp::Reverse(f.priority));
 
         // 7. 限制追问数量
         if followups.len() > self.max_followups {

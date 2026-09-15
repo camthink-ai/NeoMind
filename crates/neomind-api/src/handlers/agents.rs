@@ -1,6 +1,5 @@
 //! AI Agents handlers for user-defined automation agents.
 
-use crate::models::AgentToolConfigMirror;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,

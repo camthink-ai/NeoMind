@@ -1076,10 +1076,10 @@ fn apply_blur_rect(
                     }
                     if n > 0 {
                         let mean = image::Rgba([
-                            (rs / n) as u8,
-                            (gs / n) as u8,
-                            (bs / n) as u8,
-                            (as_ / n) as u8,
+                            (rs.checked_div(n).unwrap_or(0)) as u8,
+                            (gs.checked_div(n).unwrap_or(0)) as u8,
+                            (bs.checked_div(n).unwrap_or(0)) as u8,
+                            (as_.checked_div(n).unwrap_or(0)) as u8,
                         ]);
                         for yy in by..by_end {
                             for xx in bx..bx_end {

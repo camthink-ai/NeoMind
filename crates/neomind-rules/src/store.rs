@@ -250,7 +250,7 @@ impl RuleStore {
         }
 
         // Sort by triggered_at descending (most recent first)
-        results.sort_by(|a, b| b.triggered_at.cmp(&a.triggered_at));
+        results.sort_by_key(|r| std::cmp::Reverse(r.triggered_at));
         Ok(results)
     }
 

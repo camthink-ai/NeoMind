@@ -498,17 +498,13 @@ mod tests {
 
     /// Restores both env vars on drop, even on panic.
     struct HintEnvGuard {
-        had_api_key: bool,
         api_key_value: Option<std::ffi::OsString>,
-        had_config_dir: bool,
         config_dir_value: Option<std::ffi::OsString>,
     }
     impl HintEnvGuard {
         fn take() -> Self {
             Self {
-                had_api_key: std::env::var_os("NEOMIND_API_KEY").is_some(),
                 api_key_value: std::env::var_os("NEOMIND_API_KEY"),
-                had_config_dir: std::env::var_os("NEOMIND_CONFIG_DIR").is_some(),
                 config_dir_value: std::env::var_os("NEOMIND_CONFIG_DIR"),
             }
         }

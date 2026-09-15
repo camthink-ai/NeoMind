@@ -170,6 +170,7 @@ pub struct ComponentPosition {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashboardComponent {
     pub id: String,
+    /// Widget type: `value-card` | `line-chart` | `bar-chart` | `gauge` | `markdown-display`
     #[serde(alias = "type", rename = "type")]
     pub component_type: String,
     pub position: ComponentPosition,
@@ -250,6 +251,7 @@ pub struct CreateDashboardComponent {
     /// Optional client-provided ID; if absent, server generates one
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    /// Widget type: `value-card` | `line-chart` | `bar-chart` | `gauge` | `markdown-display`
     #[serde(alias = "type", rename = "type")]
     pub component_type: String,
     pub position: ComponentPosition,

@@ -668,6 +668,7 @@ impl AuthUserState {
         // (lock contention, momentary IO pressure) but a dropped commit here
         // used to be SILENT — the in-memory clear masked it until the next
         // restart revived every revoked token.
+        #[allow(clippy::result_large_err)] // local 2-shot closure; boxing is noise
         for attempt in 0..2 {
             let removed = (|| -> std::result::Result<(), redb::Error> {
                 let w = db.begin_write()?;

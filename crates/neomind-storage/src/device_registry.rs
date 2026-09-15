@@ -827,7 +827,7 @@ impl DeviceRegistryStore {
         }
 
         // Sort by created_at descending (newest first)
-        commands.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        commands.sort_by_key(|c| std::cmp::Reverse(c.created_at));
 
         Ok(commands)
     }
@@ -850,7 +850,7 @@ impl DeviceRegistryStore {
         }
 
         // Sort by created_at descending (newest first)
-        commands.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        commands.sort_by_key(|c| std::cmp::Reverse(c.created_at));
 
         Ok(commands)
     }

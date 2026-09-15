@@ -1020,7 +1020,10 @@ fn truncate_output(stdout: &str, stderr: &str, max_total: usize) -> (String, Str
 
     let total = stdout_len + stderr_len;
     let stdout_budget = if total > 0 {
-        (usable * stdout_len / total).min(stdout_len)
+        usable
+            .checked_mul(stdout_len)
+            .map(|p| (p / total).min(stdout_len))
+            .unwrap_or(stdout_len)
     } else {
         usable / 2
     };

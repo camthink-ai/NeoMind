@@ -1005,7 +1005,7 @@ impl SettingsStore {
         }
 
         // Sort by timestamp descending (newest first)
-        entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        entries.sort_by_key(|e| std::cmp::Reverse(e.timestamp));
 
         // Apply limit
         entries.truncate(limit);
@@ -1028,7 +1028,7 @@ impl SettingsStore {
         }
 
         // Sort by timestamp descending
-        entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        entries.sort_by_key(|e| std::cmp::Reverse(e.timestamp));
 
         entries.truncate(limit);
 
@@ -1053,7 +1053,7 @@ impl SettingsStore {
         drop(read_txn);
 
         // Sort by timestamp descending
-        entries.sort_by(|a, b| b.1.cmp(&a.1));
+        entries.sort_by_key(|&(_, t)| std::cmp::Reverse(t));
 
         // Delete entries beyond keep_count
         let mut deleted = 0;

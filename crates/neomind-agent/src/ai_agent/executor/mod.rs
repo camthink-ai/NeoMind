@@ -1165,7 +1165,7 @@ impl AgentExecutor {
 
         // Sort agents by priority (higher priority first)
         let mut sorted_agents = agents;
-        sorted_agents.sort_by(|a, b| b.priority.cmp(&a.priority));
+        sorted_agents.sort_by_key(|a| std::cmp::Reverse(a.priority));
 
         let executor_ref = self;
         let futures: Vec<_> = sorted_agents
