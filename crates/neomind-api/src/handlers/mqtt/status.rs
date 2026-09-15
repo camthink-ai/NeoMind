@@ -14,6 +14,14 @@ use crate::models::ErrorResponse;
 /// Get MQTT connection status.
 ///
 /// GET /api/mqtt/status
+#[utoipa::path(
+    get,
+    path = "/api/mqtt/status",
+    tag = "mqtt",
+    responses(
+        (status = 200, description = "Embedded broker status and counters"),
+    )
+)]
 pub async fn get_mqtt_status_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {

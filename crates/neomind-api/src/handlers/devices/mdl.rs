@@ -28,6 +28,15 @@ use crate::models::ErrorResponse;
 /// 3. Infers unit from field name patterns
 /// 4. Generates basic display_name from field names
 /// 5. Returns complete MDL JSON for user to edit
+#[utoipa::path(
+    post,
+    path = "/api/devices/generate-mdl",
+    tag = "devices",
+    request_body = GenerateMdlRequest,
+    responses(
+        (status = 200, description = "MDL device description generated (LLM-assisted)"),
+    )
+)]
 pub async fn generate_mdl_handler(
     State(_state): State<ServerState>,
     Json(req): Json<GenerateMdlRequest>,

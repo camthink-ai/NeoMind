@@ -786,6 +786,18 @@ fn parse_json_payload(
 /// Auth options (checked by the adapter, all optional individually):
 /// - `Authorization: Bearer <token>` or `?token=xxx` — per-device webhook token
 /// - `X-API-Key: <key>` — adapter-level pre-shared key (only enforced if configured)
+#[utoipa::path(
+    post,
+    path = "/api/devices/{id}/webhook",
+    tag = "devices",
+    params(
+        ("id" = String, Path, description = "Device id"),
+    ),
+    responses(
+        (status = 200, description = "Payload accepted (telemetry/images ingested; device-token auth)"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn webhook_handler(
     State(state): State<ServerState>,
     Path(device_id): Path<String>,
@@ -874,6 +886,14 @@ pub async fn webhook_handler(
 /// need strong device identity should configure either per-device `webhook_token`s
 /// or an adapter-level `X-API-Key`. On closed LAN deployments, leave both unset —
 /// the route's rate limit plus per-IP discovery throttle is the only defense.
+#[utoipa::path(
+    post,
+    path = "/api/devices/webhook",
+    tag = "devices",
+    responses(
+        (status = 200, description = "Payload accepted (device resolved from body/token; 8MB limit)"),
+    )
+)]
 pub async fn webhook_generic_handler(
     State(state): State<ServerState>,
     headers: HeaderMap,
@@ -963,6 +983,18 @@ pub async fn webhook_generic_handler(
 /// middleware (moved out of `public_routes`) — it's an admin/UI lookup, not
 /// something devices call, and the previous public placement leaked device
 /// existence (404 vs 200) plus the server's configured `NEOMIND_SERVER_URL`.
+#[utoipa::path(
+    get,
+    path = "/api/devices/{id}/webhook-url",
+    tag = "devices",
+    params(
+        ("id" = String, Path, description = "Device id"),
+    ),
+    responses(
+        (status = 200, description = "Absolute webhook URL a device should POST to"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_webhook_url_handler(
     State(state): State<ServerState>,
     Path(device_id): Path<String>,

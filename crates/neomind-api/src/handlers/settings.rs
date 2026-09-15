@@ -19,6 +19,15 @@ pub struct LlmGenerateRequest {
 /// Generate LLM response (one-shot, no session required).
 /// This bypasses the agent's tool calling pipeline and calls LLM directly.
 /// Useful for features like AI-assisted MDL generation.
+#[utoipa::path(
+    post,
+    path = "/api/llm/generate",
+    tag = "llm-backends",
+    request_body = LlmGenerateRequest,
+    responses(
+        (status = 200, description = "One-shot LLM completion (no session)"),
+    )
+)]
 pub async fn llm_generate_handler(
     State(_state): State<ServerState>,
     Json(req): Json<LlmGenerateRequest>,
@@ -182,6 +191,14 @@ pub struct TimezoneResponse {
 }
 
 /// Get the current global timezone setting.
+#[utoipa::path(
+    get,
+    path = "/api/settings/timezone",
+    tag = "settings",
+    responses(
+        (status = 200, description = "Configured timezone (IANA name)"),
+    )
+)]
 pub async fn get_timezone(State(_state): State<ServerState>) -> HandlerResult<TimezoneResponse> {
     use neomind_storage::SettingsStore;
 
@@ -198,6 +215,15 @@ pub async fn get_timezone(State(_state): State<ServerState>) -> HandlerResult<Ti
 }
 
 /// Update the global timezone setting.
+#[utoipa::path(
+    put,
+    path = "/api/settings/timezone",
+    tag = "settings",
+    request_body = TimezoneRequest,
+    responses(
+        (status = 200, description = "Timezone saved"),
+    )
+)]
 pub async fn update_timezone(
     State(_state): State<ServerState>,
     Json(req): Json<TimezoneRequest>,
@@ -228,6 +254,14 @@ pub async fn update_timezone(
 }
 
 /// Get available timezone options.
+#[utoipa::path(
+    get,
+    path = "/api/settings/timezones",
+    tag = "settings",
+    responses(
+        (status = 200, description = "Valid IANA timezone names"),
+    )
+)]
 pub async fn list_timezones() -> HandlerResult<serde_json::Value> {
     // Common IANA timezones with display names
     let timezones = vec![
@@ -265,6 +299,14 @@ pub async fn list_timezones() -> HandlerResult<serde_json::Value> {
 // ============================================================================
 
 /// Get the current retention configuration.
+#[utoipa::path(
+    get,
+    path = "/api/settings/retention",
+    tag = "settings",
+    responses(
+        (status = 200, description = "Data-retention windows"),
+    )
+)]
 pub async fn get_retention_config(
     State(_state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -284,6 +326,15 @@ pub async fn get_retention_config(
 }
 
 /// Update the retention configuration.
+#[utoipa::path(
+    put,
+    path = "/api/settings/retention",
+    tag = "settings",
+    request_body = RetentionConfigRequest,
+    responses(
+        (status = 200, description = "Retention windows saved"),
+    )
+)]
 pub async fn update_retention_config(
     State(_state): State<ServerState>,
     Json(req): Json<RetentionConfigRequest>,
@@ -349,6 +400,14 @@ pub struct AgentDefaultsRequest {
 }
 
 /// Get agent execution defaults (max_rounds, timeout, concurrency, sampling).
+#[utoipa::path(
+    get,
+    path = "/api/settings/agent",
+    tag = "settings",
+    responses(
+        (status = 200, description = "Default agent runtime settings"),
+    )
+)]
 pub async fn get_agent_defaults(
     State(_state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -372,6 +431,15 @@ pub async fn get_agent_defaults(
 
 /// Update agent execution defaults. Values are clamped to sane ranges.
 /// Applies to the NEXT agent execution (not mid-flight).
+#[utoipa::path(
+    put,
+    path = "/api/settings/agent",
+    tag = "settings",
+    request_body = AgentDefaultsRequest,
+    responses(
+        (status = 200, description = "Agent defaults saved"),
+    )
+)]
 pub async fn update_agent_defaults(
     State(_state): State<ServerState>,
     Json(req): Json<AgentDefaultsRequest>,
@@ -437,6 +505,14 @@ pub struct DeviceDefaultsRequest {
 }
 
 /// Get device defaults (offline timeout, auto-onboarding).
+#[utoipa::path(
+    get,
+    path = "/api/settings/device",
+    tag = "settings",
+    responses(
+        (status = 200, description = "Default device settings (heartbeat, offline timeout)"),
+    )
+)]
 pub async fn get_device_defaults(
     State(_state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -453,6 +529,15 @@ pub async fn get_device_defaults(
 }
 
 /// Update device defaults. offline_timeout is live; auto_onboard applies on next restart.
+#[utoipa::path(
+    put,
+    path = "/api/settings/device",
+    tag = "settings",
+    request_body = DeviceDefaultsRequest,
+    responses(
+        (status = 200, description = "Device defaults saved"),
+    )
+)]
 pub async fn update_device_defaults(
     State(_state): State<ServerState>,
     Json(req): Json<DeviceDefaultsRequest>,
@@ -484,6 +569,14 @@ pub async fn update_device_defaults(
 }
 
 /// Manually trigger a retention cleanup.
+#[utoipa::path(
+    post,
+    path = "/api/settings/retention/cleanup",
+    tag = "settings",
+    responses(
+        (status = 200, description = "Retention purge executed now"),
+    )
+)]
 pub async fn trigger_retention_cleanup(
     State(_state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -546,6 +639,14 @@ pub struct RetentionConfigRequest {
 /// verifies each copied database opens (redb crash-recovery check), and
 /// prunes old backups down to the retention limit. The periodic scheduler
 /// (`NEOMIND_BACKUP_INTERVAL_SECS`, default 24h) calls the same path.
+#[utoipa::path(
+    post,
+    path = "/api/settings/backup",
+    tag = "backups",
+    responses(
+        (status = 200, description = "Backup archive created (admin only)"),
+    )
+)]
 pub async fn create_backup_handler(
     State(state): State<ServerState>,
     axum::extract::Extension(admin): axum::extract::Extension<crate::auth_users::SessionInfo>,
@@ -596,6 +697,14 @@ pub async fn create_backup_handler(
 ///
 /// Restoring is deliberately manual: stop the server, copy the files from
 /// `data/backups/<id>/` back into the data dir, start the server.
+#[utoipa::path(
+    get,
+    path = "/api/settings/backups",
+    tag = "backups",
+    responses(
+        (status = 200, description = "Backup archive listing"),
+    )
+)]
 pub async fn list_backups_handler(
     State(state): State<ServerState>,
     axum::extract::Extension(admin): axum::extract::Extension<crate::auth_users::SessionInfo>,
@@ -619,6 +728,14 @@ pub struct BackupConfigRequest {
 }
 
 /// Get the effective backup schedule configuration.
+#[utoipa::path(
+    get,
+    path = "/api/settings/backup-config",
+    tag = "settings",
+    responses(
+        (status = 200, description = "Scheduled-backup configuration"),
+    )
+)]
 pub async fn get_backup_config(
     State(_state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -641,6 +758,15 @@ pub async fn get_backup_config(
 
 /// Update the backup schedule configuration (takes effect within a minute —
 /// the scheduler re-reads this every tick).
+#[utoipa::path(
+    put,
+    path = "/api/settings/backup-config",
+    tag = "settings",
+    request_body = BackupConfigRequest,
+    responses(
+        (status = 200, description = "Backup schedule saved"),
+    )
+)]
 pub async fn update_backup_config(
     State(_state): State<ServerState>,
     Json(req): Json<BackupConfigRequest>,
@@ -682,6 +808,14 @@ pub async fn update_backup_config(
 }
 
 /// GET /api/settings/market (admin): effective extension-marketplace source.
+#[utoipa::path(
+    get,
+    path = "/api/settings/market",
+    tag = "settings",
+    responses(
+        (status = 200, description = "Extension marketplace source URL"),
+    )
+)]
 pub async fn get_market_source_handler(
     State(_state): State<ServerState>,
     axum::extract::Extension(admin): axum::extract::Extension<crate::auth_users::SessionInfo>,
@@ -715,6 +849,15 @@ pub struct MarketSourceRequest {
     pub market_url: String,
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/settings/market",
+    tag = "settings",
+    request_body = MarketSourceRequest,
+    responses(
+        (status = 200, description = "Marketplace source saved"),
+    )
+)]
 pub async fn update_market_source_handler(
     State(_state): State<ServerState>,
     axum::extract::Extension(admin): axum::extract::Extension<crate::auth_users::SessionInfo>,

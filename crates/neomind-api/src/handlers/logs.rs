@@ -94,6 +94,17 @@ const MAX_FILES: usize = 60;
 /// appender itself.
 const MAX_TOTAL_BYTES_READ: u64 = 512 * 1024 * 1024; // 512 MiB
 
+#[utoipa::path(
+    get,
+    path = "/api/logs/download",
+    tag = "logs",
+    params(
+        ("days" = Option<u32>, Query, description = "Include the last N days"),
+    ),
+    responses(
+        (status = 200, description = "Diagnostic log archive (zip)"),
+    )
+)]
 pub async fn download_logs_handler(
     State(state): State<ServerState>,
     Query(params): Query<LogsDownloadParams>,
@@ -173,7 +184,7 @@ pub async fn download_logs_handler(
         entries.push((path, mtime));
     }
 
-    entries.sort_by(|a, b| b.1.cmp(&a.1));
+    entries.sort_by_key(|&(_, t)| std::cmp::Reverse(t));
     entries.truncate(MAX_FILES);
 
     if entries.is_empty() {

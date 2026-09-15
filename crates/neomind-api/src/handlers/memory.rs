@@ -105,6 +105,18 @@ fn error_response(status: StatusCode, message: impl Into<String>) -> Response {
 
 /// GET /api/memory/category/:category - Get category content
 #[allow(deprecated)]
+#[utoipa::path(
+    get,
+    path = "/api/memory/category/{category}",
+    tag = "memory",
+    params(
+        ("category" = String, Path, description = "Memory category"),
+    ),
+    responses(
+        (status = 200, description = "Markdown of one memory category"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_category(
     State(state): State<ServerState>,
     Path(category): Path<String>,
@@ -146,6 +158,19 @@ pub async fn get_category(
 
 /// PUT /api/memory/category/:category - Update category content
 #[allow(deprecated)]
+#[utoipa::path(
+    put,
+    path = "/api/memory/category/{category}",
+    tag = "memory",
+    params(
+        ("category" = String, Path, description = "Memory category"),
+    ),
+    request_body = UpdateMemoryRequest,
+    responses(
+        (status = 200, description = "Category markdown saved"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn update_category(
     State(state): State<ServerState>,
     Path(category): Path<String>,
@@ -183,6 +208,14 @@ pub async fn update_category(
 }
 
 /// GET /api/memory/stats - Get all file statistics (unified response)
+#[utoipa::path(
+    get,
+    path = "/api/memory/stats",
+    tag = "memory",
+    responses(
+        (status = 200, description = "Memory size/entry counters"),
+    )
+)]
 pub async fn get_stats(State(state): State<ServerState>) -> Response {
     let store = get_memory_store(&state);
     if let Err(e) = store.init() {
@@ -243,12 +276,29 @@ pub async fn get_stats(State(state): State<ServerState>) -> Response {
 }
 
 /// GET /api/memory/config - Get memory configuration
+#[utoipa::path(
+    get,
+    path = "/api/memory/config",
+    tag = "memory",
+    responses(
+        (status = 200, description = "Memory subsystem configuration"),
+    )
+)]
 pub async fn get_config(State(_state): State<ServerState>) -> Response {
     let config = MemoryConfig::load();
     Json(config).into_response()
 }
 
 /// PUT /api/memory/config - Update memory configuration
+#[utoipa::path(
+    put,
+    path = "/api/memory/config",
+    tag = "memory",
+    request_body = UpdateConfigRequest,
+    responses(
+        (status = 200, description = "Memory configuration saved"),
+    )
+)]
 pub async fn update_config(
     State(_state): State<ServerState>,
     Json(req): Json<UpdateConfigRequest>,
@@ -327,6 +377,14 @@ pub async fn add_memory_entry(
 }
 
 /// POST /api/memory/compress - Trigger manual eviction
+#[utoipa::path(
+    post,
+    path = "/api/memory/compress",
+    tag = "memory",
+    responses(
+        (status = 200, description = "Memory compression triggered"),
+    )
+)]
 pub async fn trigger_compress(State(state): State<ServerState>) -> Response {
     use neomind_agent::memory::compressor::evict_to_limit;
 
@@ -394,6 +452,14 @@ pub async fn trigger_compress(State(state): State<ServerState>) -> Response {
 
 /// GET /api/memory/export - Export all categories as Markdown
 #[allow(deprecated)]
+#[utoipa::path(
+    get,
+    path = "/api/memory/export",
+    tag = "memory",
+    responses(
+        (status = 200, description = "Full memory export (JSON)"),
+    )
+)]
 pub async fn export_all(State(state): State<ServerState>) -> Response {
     let store = get_memory_store(&state);
     if let Err(e) = store.init() {
@@ -423,6 +489,14 @@ pub async fn export_all(State(state): State<ServerState>) -> Response {
 
 /// GET /api/memory - List all memory files
 #[allow(deprecated)]
+#[utoipa::path(
+    get,
+    path = "/api/memory",
+    tag = "memory",
+    responses(
+        (status = 200, description = "All memory files by category"),
+    )
+)]
 pub async fn get_all_memory(State(state): State<ServerState>) -> Response {
     let store = get_memory_store(&state);
 
@@ -448,6 +522,19 @@ pub async fn get_all_memory(State(state): State<ServerState>) -> Response {
 
 /// GET /api/memory/:source_type/:id - Get raw markdown content
 #[allow(deprecated)]
+#[utoipa::path(
+    get,
+    path = "/api/memory/{source_type}/{id}",
+    tag = "memory",
+    params(
+        ("source_type" = String, Path, description = "Memory source type (agent | session | skill)"),
+        ("id" = String, Path, description = "Resource id"),
+    ),
+    responses(
+        (status = 200, description = "Markdown content of one memory entry"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_memory_content(
     State(state): State<ServerState>,
     Path((source_type, id)): Path<(String, String)>,
@@ -470,6 +557,20 @@ pub async fn get_memory_content(
 
 /// PUT /api/memory/:source_type/:id - Update markdown content
 #[allow(deprecated)]
+#[utoipa::path(
+    put,
+    path = "/api/memory/{source_type}/{id}",
+    tag = "memory",
+    params(
+        ("source_type" = String, Path, description = "Memory source type (agent | session | skill)"),
+        ("id" = String, Path, description = "Resource id"),
+    ),
+    request_body = UpdateMemoryRequest,
+    responses(
+        (status = 200, description = "Memory entry markdown saved"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn update_memory_content(
     State(state): State<ServerState>,
     Path((source_type, id)): Path<(String, String)>,
@@ -492,6 +593,19 @@ pub async fn update_memory_content(
 
 /// DELETE /api/memory/:source_type/:id - Delete a memory file
 #[allow(deprecated)]
+#[utoipa::path(
+    delete,
+    path = "/api/memory/{source_type}/{id}",
+    tag = "memory",
+    params(
+        ("source_type" = String, Path, description = "Memory source type (agent | session | skill)"),
+        ("id" = String, Path, description = "Resource id"),
+    ),
+    responses(
+        (status = 200, description = "Memory entry deleted"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn delete_memory_file(
     State(state): State<ServerState>,
     Path((source_type, id)): Path<(String, String)>,
@@ -518,6 +632,18 @@ pub async fn export_memory(State(state): State<ServerState>) -> Response {
 }
 
 /// GET /api/memory/file/:target - Get memory file content (user, knowledge, or procedures)
+#[utoipa::path(
+    get,
+    path = "/api/memory/file/{target}",
+    tag = "memory",
+    params(
+        ("target" = String, Path, description = "Memory file target"),
+    ),
+    responses(
+        (status = 200, description = "One memory file (2-file layout)"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_memory_file(
     State(state): State<ServerState>,
     Path(target): Path<String>,
@@ -556,6 +682,19 @@ pub async fn get_memory_file(
 }
 
 /// PUT /api/memory/file/:target - Update memory file content (user, knowledge, or procedures)
+#[utoipa::path(
+    put,
+    path = "/api/memory/file/{target}",
+    tag = "memory",
+    params(
+        ("target" = String, Path, description = "Memory file target"),
+    ),
+    request_body = UpdateMemoryRequest,
+    responses(
+        (status = 200, description = "Memory file saved"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn update_memory_file(
     State(state): State<ServerState>,
     Path(target): Path<String>,
@@ -601,6 +740,14 @@ pub async fn update_memory_file(
 // ============================================================================
 
 /// GET /api/memory/custom - List all custom files
+#[utoipa::path(
+    get,
+    path = "/api/memory/custom",
+    tag = "memory",
+    responses(
+        (status = 200, description = "Custom memory files"),
+    )
+)]
 pub async fn list_custom_files(State(state): State<ServerState>) -> Response {
     let store = get_memory_store(&state);
     if let Err(e) = store.init() {
@@ -635,6 +782,18 @@ pub async fn list_custom_files(State(state): State<ServerState>) -> Response {
 }
 
 /// GET /api/memory/custom/:name - Read a custom file
+#[utoipa::path(
+    get,
+    path = "/api/memory/custom/{name}",
+    tag = "memory",
+    params(
+        ("name" = String, Path, description = "Custom memory file name"),
+    ),
+    responses(
+        (status = 200, description = "One custom memory file"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_custom_file(
     State(state): State<ServerState>,
     Path(name): Path<String>,
@@ -657,6 +816,19 @@ pub async fn get_custom_file(
 }
 
 /// PUT /api/memory/custom/:name - Create or update a custom file
+#[utoipa::path(
+    put,
+    path = "/api/memory/custom/{name}",
+    tag = "memory",
+    params(
+        ("name" = String, Path, description = "Custom memory file name"),
+    ),
+    request_body = UpdateMemoryRequest,
+    responses(
+        (status = 200, description = "Custom memory file saved"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn update_custom_file(
     State(state): State<ServerState>,
     Path(name): Path<String>,
@@ -682,6 +854,18 @@ pub async fn update_custom_file(
 }
 
 /// DELETE /api/memory/custom/:name - Delete a custom file
+#[utoipa::path(
+    delete,
+    path = "/api/memory/custom/{name}",
+    tag = "memory",
+    params(
+        ("name" = String, Path, description = "Custom memory file name"),
+    ),
+    responses(
+        (status = 200, description = "Custom memory file deleted"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn delete_custom_file(
     State(state): State<ServerState>,
     Path(name): Path<String>,

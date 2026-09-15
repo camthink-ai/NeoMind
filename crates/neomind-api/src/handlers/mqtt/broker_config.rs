@@ -124,6 +124,14 @@ pub struct UploadTlsRequest {
 /// Returns the current broker configuration with credentials.
 /// Passwords are masked. Internal system credentials (starting with `__neomind`)
 /// are filtered out from the credentials list.
+#[utoipa::path(
+    get,
+    path = "/api/mqtt/broker-config",
+    tag = "mqtt",
+    responses(
+        (status = 200, description = "Embedded broker configuration"),
+    )
+)]
 pub async fn get_broker_config_handler() -> HandlerResult<serde_json::Value> {
     let config = config::get_embedded_broker_config();
 
@@ -167,6 +175,15 @@ pub async fn get_broker_config_handler() -> HandlerResult<serde_json::Value> {
 /// Port must be in range 1024-65535. If TLS is enabled, certificates must
 /// already be uploaded. When enabling authentication for the first time,
 /// a system credential is auto-generated if none exists.
+#[utoipa::path(
+    put,
+    path = "/api/mqtt/broker-config",
+    tag = "mqtt",
+    request_body = UpdateBrokerConfigRequest,
+    responses(
+        (status = 200, description = "Embedded broker configuration saved (restart may apply)"),
+    )
+)]
 pub async fn update_broker_config_handler(
     #[cfg(feature = "embedded-broker")] State(_state): State<ServerState>,
     #[cfg(not(feature = "embedded-broker"))] State(_state): State<ServerState>,
@@ -323,6 +340,15 @@ pub async fn update_broker_config_handler(
 /// Validates username (1-64 chars, cannot start with `__neomind`),
 /// password (min 4 chars), and maximum credential count (100).
 /// Passwords are hashed with bcrypt before storage.
+#[utoipa::path(
+    post,
+    path = "/api/mqtt/broker-config/credentials",
+    tag = "mqtt",
+    request_body = AddCredentialRequest,
+    responses(
+        (status = 200, description = "MQTT username/password added"),
+    )
+)]
 pub async fn add_credential_handler(
     #[cfg(feature = "embedded-broker")] State(state): State<crate::server::types::ServerState>,
     #[cfg(not(feature = "embedded-broker"))] State(_state): State<
@@ -409,6 +435,15 @@ pub async fn add_credential_handler(
 ///
 /// Deletes a credential by username. Returns 404 if not found.
 /// System credentials (starting with `__neomind`) cannot be deleted via this API.
+#[utoipa::path(
+    post,
+    path = "/api/mqtt/broker-config/credentials/delete",
+    tag = "mqtt",
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "MQTT credential removed"),
+    )
+)]
 pub async fn delete_credential_handler(
     #[cfg(feature = "embedded-broker")] State(state): State<crate::server::types::ServerState>,
     #[cfg(not(feature = "embedded-broker"))] State(_state): State<
@@ -468,6 +503,15 @@ pub async fn delete_credential_handler(
 ///
 /// Validates PEM format and writes certificates to `data/tls/`.
 /// Updates broker configuration with certificate paths.
+#[utoipa::path(
+    put,
+    path = "/api/mqtt/broker-config/tls",
+    tag = "mqtt",
+    request_body = UploadTlsRequest,
+    responses(
+        (status = 200, description = "TLS certificate/key uploaded"),
+    )
+)]
 pub async fn upload_tls_handler(
     Json(req): Json<UploadTlsRequest>,
 ) -> HandlerResult<serde_json::Value> {
@@ -597,16 +641,15 @@ fn validate_pem(pem: &str, label: &str) -> Result<(), ErrorResponse> {
                 )));
             }
         }
-        "private key" => {
+        "private key"
             if !lower.contains("-----begin private key-----")
                 && !lower.contains("-----begin rsa private key-----")
-                && !lower.contains("-----begin ec private key-----")
-            {
-                return Err(ErrorResponse::bad_request(format!(
+                && !lower.contains("-----begin ec private key-----") =>
+        {
+            return Err(ErrorResponse::bad_request(format!(
                     "{} must contain a valid private key block (-----BEGIN PRIVATE KEY-----, RSA PRIVATE KEY, or EC PRIVATE KEY)",
                     label
                 )));
-            }
         }
         _ => {}
     }
@@ -633,6 +676,14 @@ fn generate_random_password(length: usize) -> String {
 ///
 /// Generates a CA certificate and a server certificate signed by it.
 /// Writes PEM files to `data/tls/` and updates the broker configuration.
+#[utoipa::path(
+    post,
+    path = "/api/mqtt/broker-config/tls/generate",
+    tag = "mqtt",
+    responses(
+        (status = 200, description = "Self-signed CA + server certificate generated"),
+    )
+)]
 pub async fn generate_tls_handler() -> HandlerResult<serde_json::Value> {
     let paths = cert_gen::generate_self_signed_certs()
         .map_err(|e| ErrorResponse::internal(format!("Certificate generation failed: {}", e)))?;
@@ -687,6 +738,14 @@ pub async fn generate_tls_handler() -> HandlerResult<serde_json::Value> {
 /// GET /api/mqtt/broker-config/tls/ca-cert
 ///
 /// Returns the CA certificate PEM file as a downloadable attachment.
+#[utoipa::path(
+    get,
+    path = "/api/mqtt/broker-config/tls/ca-cert",
+    tag = "mqtt",
+    responses(
+        (status = 200, description = "CA certificate PEM"),
+    )
+)]
 pub async fn download_ca_cert_handler() -> Result<axum::response::Response, ErrorResponse> {
     let store = config::open_settings_store()
         .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;

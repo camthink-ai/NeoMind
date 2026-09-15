@@ -16,6 +16,14 @@ use crate::handlers::{
 /// - Average read/write latency
 /// - Cache hit rates
 /// - Query performance by metric type
+#[utoipa::path(
+    get,
+    path = "/api/telemetry/stats",
+    tag = "telemetry",
+    responses(
+        (status = 200, description = "Storage/series counters for telemetry"),
+    )
+)]
 pub async fn get_telemetry_stats_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {

@@ -333,6 +333,18 @@ struct ClientInfoMessage {
 /// GET /api/extensions/:id/stream
 ///
 /// WebSocket endpoint for extension streaming.
+#[utoipa::path(
+    get,
+    path = "/api/extensions/{id}/stream",
+    tag = "extensions",
+    params(
+        ("id" = String, Path, description = "Extension id"),
+    ),
+    responses(
+        (status = 101, description = "WebSocket upgrade; streams extension push output"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn extension_stream_ws(
     Path(extension_id): Path<String>,
     ws: WebSocketUpgrade,
@@ -1426,6 +1438,18 @@ const PUSH_STALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3
 /// GET /api/extensions/:id/stream/capability
 ///
 /// Get streaming capability without establishing WebSocket connection.
+#[utoipa::path(
+    get,
+    path = "/api/extensions/{id}/stream/capability",
+    tag = "extensions",
+    params(
+        ("id" = String, Path, description = "Extension id"),
+    ),
+    responses(
+        (status = 200, description = "Whether the extension can stream push output"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_stream_capability_handler(
     State(state): State<ServerState>,
     Path(extension_id): Path<String>,
@@ -1464,6 +1488,18 @@ pub async fn get_stream_capability_handler(
 /// GET /api/extensions/:id/stream/sessions
 ///
 /// List active stream sessions for an extension.
+#[utoipa::path(
+    get,
+    path = "/api/extensions/{id}/stream/sessions",
+    tag = "extensions",
+    params(
+        ("id" = String, Path, description = "Extension id"),
+    ),
+    responses(
+        (status = 200, description = "Live streaming sessions of an extension"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn list_stream_sessions_handler(
     State(state): State<ServerState>,
     Path(extension_id): Path<String>,

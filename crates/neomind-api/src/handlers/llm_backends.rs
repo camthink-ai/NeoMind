@@ -267,6 +267,18 @@ async fn get_backend_stats() -> Result<serde_json::Value, ErrorResponse> {
 /// Query parameters:
 /// - type: Filter by backend type (e.g., "ollama", "openai")
 /// - active_only: Show only the active backend
+#[utoipa::path(
+    get,
+    path = "/api/llm-backends",
+    tag = "llm-backends",
+    params(
+        ("type" = Option<String>, Query, description = "Filter by backend type"),
+        ("active_only" = Option<bool>, Query, description = "Only the active backend"),
+    ),
+    responses(
+        (status = 200, description = "Configured LLM backends"),
+    )
+)]
 pub async fn list_backends_handler(
     State(_state): State<ServerState>,
     Query(query): Query<ListBackendsQuery>,
@@ -313,6 +325,18 @@ pub async fn list_backends_handler(
 /// Get a specific LLM backend instance
 ///
 /// GET /api/llm-backends/:id
+#[utoipa::path(
+    get,
+    path = "/api/llm-backends/{id}",
+    tag = "llm-backends",
+    params(
+        ("id" = String, Path, description = "Backend id"),
+    ),
+    responses(
+        (status = 200, description = "One configured backend"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_backend_handler(
     State(_state): State<ServerState>,
     Path(id): Path<String>,
@@ -356,6 +380,15 @@ fn parse_backend_type(s: &str) -> Option<LlmBackendType> {
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/llm-backends",
+    tag = "llm-backends",
+    request_body = CreateBackendRequest,
+    responses(
+        (status = 200, description = "Backend created"),
+    )
+)]
 pub async fn create_backend_handler(
     State(_state): State<ServerState>,
     Json(req): Json<CreateBackendRequest>,
@@ -453,6 +486,19 @@ pub async fn create_backend_handler(
 /// Update an LLM backend instance
 ///
 /// PUT /api/llm-backends/:id
+#[utoipa::path(
+    put,
+    path = "/api/llm-backends/{id}",
+    tag = "llm-backends",
+    params(
+        ("id" = String, Path, description = "Backend id"),
+    ),
+    request_body = UpdateBackendRequest,
+    responses(
+        (status = 200, description = "Backend updated"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn update_backend_handler(
     State(_state): State<ServerState>,
     Path(id): Path<String>,
@@ -648,6 +694,18 @@ pub async fn update_backend_handler(
 /// Delete an LLM backend instance
 ///
 /// DELETE /api/llm-backends/:id
+#[utoipa::path(
+    delete,
+    path = "/api/llm-backends/{id}",
+    tag = "llm-backends",
+    params(
+        ("id" = String, Path, description = "Backend id"),
+    ),
+    responses(
+        (status = 200, description = "Backend deleted"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn delete_backend_handler(
     State(_state): State<ServerState>,
     Path(id): Path<String>,
@@ -688,6 +746,19 @@ pub struct UpdateCapabilitiesOverrideRequest {
 /// Currently only the `multimodal` (vision) capability is overridable — this
 /// is the main source of false positives in auto-detection, and is the field
 /// users most commonly need to correct manually.
+#[utoipa::path(
+    patch,
+    path = "/api/llm-backends/{id}/capabilities",
+    tag = "llm-backends",
+    params(
+        ("id" = String, Path, description = "Backend id"),
+    ),
+    request_body = UpdateCapabilitiesOverrideRequest,
+    responses(
+        (status = 200, description = "Per-backend capability overrides (vision, tools, ...) saved"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn update_capabilities_override_handler(
     State(_state): State<ServerState>,
     Path(id): Path<String>,
@@ -756,6 +827,18 @@ pub async fn update_capabilities_override_handler(
 /// Set a backend as active
 ///
 /// POST /api/llm-backends/:id/activate
+#[utoipa::path(
+    post,
+    path = "/api/llm-backends/{id}/activate",
+    tag = "llm-backends",
+    params(
+        ("id" = String, Path, description = "Backend id"),
+    ),
+    responses(
+        (status = 200, description = "Backend marked active for the agent runtime"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn activate_backend_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -1027,6 +1110,18 @@ pub async fn activate_backend_handler(
 /// Test connection to a backend
 ///
 /// POST /api/llm-backends/:id/test
+#[utoipa::path(
+    post,
+    path = "/api/llm-backends/{id}/test",
+    tag = "llm-backends",
+    params(
+        ("id" = String, Path, description = "Backend id"),
+    ),
+    responses(
+        (status = 200, description = "Round-trip chat completion against the backend"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn test_backend_handler(
     State(_state): State<ServerState>,
     Path(id): Path<String>,
@@ -1047,6 +1142,14 @@ pub async fn test_backend_handler(
 /// Get available backend types
 ///
 /// GET /api/llm-backends/types
+#[utoipa::path(
+    get,
+    path = "/api/llm-backends/types",
+    tag = "llm-backends",
+    responses(
+        (status = 200, description = "Static metadata for every supported backend type"),
+    )
+)]
 pub async fn list_backend_types_handler(
     State(_state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -1069,6 +1172,18 @@ pub async fn list_backend_types_handler(
 /// Get configuration schema for a backend type
 ///
 /// GET /api/llm-backends/types/:type/schema
+#[utoipa::path(
+    get,
+    path = "/api/llm-backends/types/{type}/schema",
+    tag = "llm-backends",
+    params(
+        ("type" = String, Path, description = "Backend type key"),
+    ),
+    responses(
+        (status = 200, description = "JSON-schema of the config object for a backend type"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_backend_schema_handler(
     State(_state): State<ServerState>,
     Path(backend_type): Path<String>,
@@ -1085,6 +1200,14 @@ pub async fn get_backend_schema_handler(
 /// Get backend statistics
 ///
 /// GET /api/llm-backends/stats
+#[utoipa::path(
+    get,
+    path = "/api/llm-backends/stats",
+    tag = "llm-backends",
+    responses(
+        (status = 200, description = "Usage counters per backend"),
+    )
+)]
 pub async fn get_backend_stats_handler(
     State(_state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -1104,6 +1227,17 @@ pub async fn get_backend_stats_handler(
 ///
 /// Uses /api/show endpoint to get accurate capabilities from Ollama's response.
 /// The capabilities field contains "vision" for multimodal models.
+#[utoipa::path(
+    get,
+    path = "/api/llm-backends/ollama/models",
+    tag = "llm-backends",
+    params(
+        ("endpoint" = Option<String>, Query, description = "Ollama base URL (defaults to the active backend)"),
+    ),
+    responses(
+        (status = 200, description = "Models exposed by a live Ollama server"),
+    )
+)]
 pub async fn list_ollama_models_handler(
     Query(params): Query<OllamaModelsQuery>,
 ) -> HandlerResult<serde_json::Value> {
@@ -1725,6 +1859,18 @@ struct LlamaCppServerInfoResponse {
 ///
 /// Fetches health check and server properties from a llama.cpp server,
 /// returns combined info with auto-detected capabilities.
+#[utoipa::path(
+    get,
+    path = "/api/llm-backends/llamacpp/server-info",
+    tag = "llm-backends",
+    params(
+        ("endpoint" = Option<String>, Query, description = "llama.cpp server base URL"),
+        ("api_key" = Option<String>, Query, description = "Bearer token for the server"),
+    ),
+    responses(
+        (status = 200, description = "Runtime info from a llama.cpp server (/health + /props)"),
+    )
+)]
 pub async fn list_llamacpp_server_info_handler(
     Query(params): Query<LlamaCppServerInfoQuery>,
 ) -> HandlerResult<serde_json::Value> {

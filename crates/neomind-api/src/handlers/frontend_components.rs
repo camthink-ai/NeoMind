@@ -207,6 +207,14 @@ pub struct MarketInstallRequest {
 ///
 /// Fetch the community component index from GitHub.
 /// Public endpoint — no authentication required.
+#[utoipa::path(
+    get,
+    path = "/api/frontend-components/market/list",
+    tag = "frontend-components",
+    responses(
+        (status = 200, description = "Marketplace component catalog"),
+    )
+)]
 pub async fn market_list_handler(
     State(_state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -246,6 +254,14 @@ pub async fn market_list_handler(
 /// Protected endpoint — requires authentication.
 /// Tolerates network failures: returns `{ updates: [], count: 0, error: "network_error" }`
 /// rather than an HTTP error so the UI can degrade gracefully.
+#[utoipa::path(
+    get,
+    path = "/api/frontend-components/updates",
+    tag = "frontend-components",
+    responses(
+        (status = 200, description = "Available component updates"),
+    )
+)]
 pub async fn check_updates_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -317,6 +333,15 @@ pub async fn check_updates_handler(
 ///
 /// Download and install a component from the community marketplace.
 /// Protected endpoint — requires authentication.
+#[utoipa::path(
+    post,
+    path = "/api/frontend-components/market/install",
+    tag = "frontend-components",
+    request_body = MarketInstallRequest,
+    responses(
+        (status = 200, description = "Marketplace component installed"),
+    )
+)]
 pub async fn market_install_handler(
     State(state): State<ServerState>,
     Json(req): Json<MarketInstallRequest>,
@@ -490,6 +515,14 @@ pub async fn market_install_handler(
 /// 2. **Separate files**: `manifest` (JSON text) + `bundle` (JS bytes) fields
 ///
 /// Protected endpoint with 5 MB body limit.
+#[utoipa::path(
+    post,
+    path = "/api/frontend-components",
+    tag = "frontend-components",
+    responses(
+        (status = 200, description = "Multipart bundle upload installed (5MB limit)"),
+    )
+)]
 pub async fn install_component_handler(
     State(state): State<ServerState>,
     mut multipart: Multipart,
@@ -576,6 +609,15 @@ pub struct InstallFromPathRequest {
 /// upload API's `file_path` pattern: edge deployments often receive
 /// packages via scp/USB, and a phone browser has no way to pick a file
 /// that lives on the box.
+#[utoipa::path(
+    post,
+    path = "/api/frontend-components/from-path",
+    tag = "frontend-components",
+    request_body = InstallFromPathRequest,
+    responses(
+        (status = 200, description = "Component installed from a local path"),
+    )
+)]
 pub async fn install_component_from_path_handler(
     State(state): State<ServerState>,
     Json(req): Json<InstallFromPathRequest>,
@@ -734,6 +776,14 @@ fn extract_zip_contents(zip_data: &[u8]) -> Result<(String, Vec<u8>), ErrorRespo
 ///
 /// List all installed community components.
 /// Protected endpoint — requires authentication.
+#[utoipa::path(
+    get,
+    path = "/api/frontend-components",
+    tag = "frontend-components",
+    responses(
+        (status = 200, description = "Installed frontend components"),
+    )
+)]
 pub async fn list_components_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -770,6 +820,18 @@ pub async fn list_components_handler(
 /// Get a single component manifest by ID.
 /// Checks built-in components first, then installed community components.
 /// Protected endpoint — requires authentication.
+#[utoipa::path(
+    get,
+    path = "/api/frontend-components/{id}",
+    tag = "frontend-components",
+    params(
+        ("id" = String, Path, description = "Component id"),
+    ),
+    responses(
+        (status = 200, description = "One installed component"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_component_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -1531,6 +1593,18 @@ fn builtin_component_list() -> Vec<ComponentManifest> {
 ///
 /// Serve a component's bundle.js file.
 /// Public endpoint — allows unauthenticated loading of component bundles.
+#[utoipa::path(
+    get,
+    path = "/api/frontend-components/{id}/bundle",
+    tag = "frontend-components",
+    params(
+        ("id" = String, Path, description = "Component id"),
+    ),
+    responses(
+        (status = 200, description = "Component JS bundle (public so <script> can load it)"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_bundle_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -1564,6 +1638,18 @@ pub async fn get_bundle_handler(
 ///
 /// Uninstall (delete) a community component.
 /// Protected endpoint — requires authentication.
+#[utoipa::path(
+    delete,
+    path = "/api/frontend-components/{id}",
+    tag = "frontend-components",
+    params(
+        ("id" = String, Path, description = "Component id"),
+    ),
+    responses(
+        (status = 200, description = "Component uninstalled"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn uninstall_component_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,

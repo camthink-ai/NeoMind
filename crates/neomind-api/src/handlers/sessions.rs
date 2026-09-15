@@ -418,6 +418,15 @@ pub struct SessionListItem {
 /// `{"config": { ...AgentConfig }}` (legacy field, kept for compat) or the
 /// more granular patch form understood by `CreateSessionRequest`/`ChatRequest`
 /// to override per-session fields like `system_prompt`.
+#[utoipa::path(
+    post,
+    path = "/api/sessions",
+    tag = "sessions",
+    request_body = CreateSessionRequest,
+    responses(
+        (status = 200, description = "Chat session created"),
+    )
+)]
 pub async fn create_session_handler(
     State(state): State<ServerState>,
     body: Option<Json<Option<CreateSessionRequest>>>,
@@ -498,6 +507,18 @@ fn default_page_size() -> u32 {
 ///
 /// Performance optimization: Uses lightweight session info (without message count/preview)
 /// to avoid N+1 database queries. For detailed session info, use individual session endpoints.
+#[utoipa::path(
+    get,
+    path = "/api/sessions",
+    tag = "sessions",
+    params(
+        ("page" = Option<u32>, Query, description = "1-indexed page"),
+        ("page_size" = Option<u32>, Query, description = "Items per page"),
+    ),
+    responses(
+        (status = 200, description = "Chat sessions"),
+    )
+)]
 pub async fn list_sessions_handler(
     State(state): State<ServerState>,
     Query(query): Query<ListSessionsQuery>,
@@ -531,6 +552,18 @@ pub async fn list_sessions_handler(
 }
 
 /// Get session info.
+#[utoipa::path(
+    get,
+    path = "/api/sessions/{id}",
+    tag = "sessions",
+    params(
+        ("id" = String, Path, description = "Session id"),
+    ),
+    responses(
+        (status = 200, description = "One chat session"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_session_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -549,6 +582,18 @@ pub async fn get_session_handler(
 }
 
 /// Get session history.
+#[utoipa::path(
+    get,
+    path = "/api/sessions/{id}/history",
+    tag = "sessions",
+    params(
+        ("id" = String, Path, description = "Session id"),
+    ),
+    responses(
+        (status = 200, description = "Message history of a session"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_session_history_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -575,6 +620,18 @@ pub async fn get_session_history_handler(
 }
 
 /// Delete a session.
+#[utoipa::path(
+    delete,
+    path = "/api/sessions/{id}",
+    tag = "sessions",
+    params(
+        ("id" = String, Path, description = "Session id"),
+    ),
+    responses(
+        (status = 200, description = "Session and its history deleted"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn delete_session_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -601,6 +658,18 @@ pub async fn delete_session_handler(
 }
 
 /// P0.3: Get pending stream state for a session (for recovery after disconnection).
+#[utoipa::path(
+    get,
+    path = "/api/sessions/{id}/pending",
+    tag = "sessions",
+    params(
+        ("id" = String, Path, description = "Session id"),
+    ),
+    responses(
+        (status = 200, description = "Pending streamed reply for reconnect recovery"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_pending_stream_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -630,6 +699,18 @@ pub async fn get_pending_stream_handler(
 }
 
 /// P0.3: Clear pending stream state for a session (user chose to discard).
+#[utoipa::path(
+    delete,
+    path = "/api/sessions/{id}/pending",
+    tag = "sessions",
+    params(
+        ("id" = String, Path, description = "Session id"),
+    ),
+    responses(
+        (status = 200, description = "Pending stream state cleared"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn clear_pending_stream_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -654,6 +735,19 @@ pub struct UpdateSessionRequest {
 }
 
 /// Update a session (e.g., rename).
+#[utoipa::path(
+    put,
+    path = "/api/sessions/{id}",
+    tag = "sessions",
+    params(
+        ("id" = String, Path, description = "Session id"),
+    ),
+    request_body = UpdateSessionRequest,
+    responses(
+        (status = 200, description = "Session (title etc.) updated"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn update_session_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -680,6 +774,19 @@ pub struct ToggleMemoryRequest {
 }
 
 /// Toggle memory enabled state for a session.
+#[utoipa::path(
+    put,
+    path = "/api/sessions/{id}/memory-toggle",
+    tag = "sessions",
+    params(
+        ("id" = String, Path, description = "Session id"),
+    ),
+    request_body = ToggleMemoryRequest,
+    responses(
+        (status = 200, description = "Memory recording toggled"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn toggle_memory_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -700,6 +807,14 @@ pub async fn toggle_memory_handler(
 
 /// Clean up invalid sessions (dirty data).
 /// Removes sessions that appear in the list but don't have valid data.
+#[utoipa::path(
+    post,
+    path = "/api/sessions/cleanup",
+    tag = "sessions",
+    responses(
+        (status = 200, description = "Expired sessions removed"),
+    )
+)]
 pub async fn cleanup_sessions_handler(
     State(state): State<ServerState>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
@@ -716,6 +831,19 @@ pub async fn cleanup_sessions_handler(
 }
 
 /// Chat handler (REST).
+#[utoipa::path(
+    post,
+    path = "/api/sessions/{id}/chat",
+    tag = "sessions",
+    params(
+        ("id" = String, Path, description = "Session id"),
+    ),
+    request_body = ChatRequest,
+    responses(
+        (status = 200, description = "One-shot (non-streaming) chat turn"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn chat_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -910,6 +1038,14 @@ pub async fn chat_handler(
 /// Supports two authentication methods:
 /// - JWT token via `?token=xxx` parameter (local instance)
 /// - API key via `?api_key=xxx` parameter (remote instance)
+#[utoipa::path(
+    get,
+    path = "/api/chat",
+    tag = "sessions",
+    responses(
+        (status = 101, description = "WebSocket upgrade; JWT via ?token= query param"),
+    )
+)]
 pub async fn ws_chat_handler(
     ws: WebSocketUpgrade,
     State(state): State<ServerState>,

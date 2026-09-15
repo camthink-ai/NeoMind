@@ -6,7 +6,6 @@ use axum::{
 };
 use serde_json::json;
 use std::sync::OnceLock;
-use utoipa::path;
 use uuid::Uuid;
 
 use super::compat::config_to_device_instance;
@@ -662,6 +661,15 @@ pub async fn get_device_current_handler(
 ///
 /// Efficiently fetches current metric values for multiple devices in one request.
 /// This is optimized for dashboard components that need data from multiple devices.
+#[utoipa::path(
+    post,
+    path = "/api/devices/current-batch",
+    tag = "devices",
+    request_body = BatchCurrentValuesRequest,
+    responses(
+        (status = 200, description = "Current values for many devices in one call"),
+    )
+)]
 pub async fn get_devices_current_batch_handler(
     State(state): State<ServerState>,
     Json(req): Json<BatchCurrentValuesRequest>,

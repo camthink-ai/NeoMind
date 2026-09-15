@@ -45,6 +45,14 @@ pub struct StepStatus {
 // ── Handlers ──
 
 /// GET /api/onboarding/status
+#[utoipa::path(
+    get,
+    path = "/api/onboarding/status",
+    tag = "onboarding",
+    responses(
+        (status = 200, description = "Which onboarding steps are done"),
+    )
+)]
 pub async fn get_onboarding_status_handler(
     State(state): State<ServerState>,
 ) -> Result<Json<OnboardingStatusResponse>, StatusCode> {
@@ -85,6 +93,14 @@ pub async fn get_onboarding_status_handler(
 }
 
 /// POST /api/onboarding/dismiss
+#[utoipa::path(
+    post,
+    path = "/api/onboarding/dismiss",
+    tag = "onboarding",
+    responses(
+        (status = 200, description = "Onboarding banner dismissed"),
+    )
+)]
 pub async fn dismiss_onboarding_handler(
     State(_state): State<ServerState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
@@ -96,6 +112,14 @@ pub async fn dismiss_onboarding_handler(
 }
 
 /// POST /api/onboarding/reset
+#[utoipa::path(
+    post,
+    path = "/api/onboarding/reset",
+    tag = "onboarding",
+    responses(
+        (status = 200, description = "Onboarding state reset"),
+    )
+)]
 pub async fn reset_onboarding_handler(
     State(_state): State<ServerState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {

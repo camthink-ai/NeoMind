@@ -517,12 +517,11 @@ impl StatisticsAnalyzer {
                     score *= 0.8;
                 }
             }
-            ValueStatistics::String(str_stats) => {
+            ValueStatistics::String(str_stats)
                 // Too many unique values might be IDs, not metrics
-                if str_stats.unique_count as f64 > str_stats.count as f64 * 0.9 {
+                if str_stats.unique_count as f64 > str_stats.count as f64 * 0.9 => {
                     score *= 0.7;
                 }
-            }
             _ => {}
         }
 

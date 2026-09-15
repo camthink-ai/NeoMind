@@ -28,6 +28,17 @@ pub struct UpgradeCheckQuery {
     pub force: Option<bool>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/system/upgrade/check",
+    tag = "upgrades",
+    params(
+        ("force" = Option<bool>, Query, description = "Bypass the check cache"),
+    ),
+    responses(
+        (status = 200, description = "Latest GitHub release info"),
+    )
+)]
 pub async fn upgrade_check_handler(
     State(state): State<ServerState>,
     Extension(admin): Extension<SessionInfo>,
@@ -55,6 +66,15 @@ pub async fn upgrade_check_handler(
 ///
 /// Returns immediately; progress flows via `SystemUpgradeProgress` events
 /// (WS `category=all`) and `GET /api/system/upgrade/status`.
+#[utoipa::path(
+    post,
+    path = "/api/system/upgrade",
+    tag = "upgrades",
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Staged self-upgrade started"),
+    )
+)]
 pub async fn start_upgrade_handler(
     State(state): State<ServerState>,
     Extension(admin): Extension<SessionInfo>,
@@ -90,6 +110,14 @@ pub async fn start_upgrade_handler(
 }
 
 /// `GET /api/system/upgrade/status` — snapshot of the in-flight task.
+#[utoipa::path(
+    get,
+    path = "/api/system/upgrade/status",
+    tag = "upgrades",
+    responses(
+        (status = 200, description = "Upgrade progress"),
+    )
+)]
 pub async fn upgrade_status_handler(
     State(state): State<ServerState>,
     Extension(admin): Extension<SessionInfo>,

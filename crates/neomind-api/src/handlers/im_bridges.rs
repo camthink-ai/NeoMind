@@ -90,6 +90,15 @@ pub struct CreateBridgeRequest {
 /// the router's reply path can find it for outbound `reply()`), and spawns
 /// `bridge.start(bus)` so it begins long-polling Telegram. The spawned task
 /// lives until `stop()` flips the running flag (see `delete_bridge_handler`).
+#[utoipa::path(
+    post,
+    path = "/api/im-bridges",
+    tag = "im-bridges",
+    request_body = CreateBridgeRequest,
+    responses(
+        (status = 200, description = "Bridge created"),
+    )
+)]
 pub async fn create_bridge_handler(
     State(state): State<ServerState>,
     Json(req): Json<CreateBridgeRequest>,
@@ -156,6 +165,14 @@ pub async fn create_bridge_handler(
 /// per-bridge health probe (no pings to the platform API); `"running"` means
 /// "registered + start task spawned", which is the best information the
 /// server has without adding a round-trip to Telegram on every list call.
+#[utoipa::path(
+    get,
+    path = "/api/im-bridges",
+    tag = "im-bridges",
+    responses(
+        (status = 200, description = "Running IM bridges"),
+    )
+)]
 pub async fn list_bridges_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -192,6 +209,18 @@ pub async fn list_bridges_handler(
 /// the DELETE returns promptly. A `stop()` error is logged but does not fail
 /// the DELETE — the registry entry is already gone, so reporting success is
 /// accurate; the task will still exit on its next loop.
+#[utoipa::path(
+    delete,
+    path = "/api/im-bridges/{id}",
+    tag = "im-bridges",
+    params(
+        ("id" = String, Path, description = "Bridge id"),
+    ),
+    responses(
+        (status = 200, description = "Bridge deleted"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn delete_bridge_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -242,6 +271,18 @@ pub async fn delete_bridge_handler(
 /// one-tap URL when the bridge can be identified (e.g. `https://t.me/<bot>?start=<token>`),
 /// or `null` when no bridge is registered for the platform or the bridge
 /// cannot construct a link — callers fall back to handing out the raw token.
+#[utoipa::path(
+    post,
+    path = "/api/im-bridges/{id}/invites",
+    tag = "im-bridges",
+    params(
+        ("id" = String, Path, description = "Bridge id"),
+    ),
+    responses(
+        (status = 200, description = "Invite created; link returned"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn create_invite_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -265,6 +306,18 @@ pub async fn create_invite_handler(
 ///
 /// `GET /api/im-bridges/:id/invites`. Returns the full set so an operator can
 /// audit which tokens are pending vs. bound. Order is unspecified (redb iter).
+#[utoipa::path(
+    get,
+    path = "/api/im-bridges/{id}/invites",
+    tag = "im-bridges",
+    params(
+        ("id" = String, Path, description = "Bridge id"),
+    ),
+    responses(
+        (status = 200, description = "Invite links of a bridge"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn list_invites_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -295,6 +348,19 @@ pub async fn list_invites_handler(
 /// `DELETE /api/im-bridges/:id/invites/:token`. Idempotent — revoking an
 /// already-removed token still reports `revoked: true` (the store's
 /// `revoke_invite` treats missing as success).
+#[utoipa::path(
+    delete,
+    path = "/api/im-bridges/{id}/invites/{token}",
+    tag = "im-bridges",
+    params(
+        ("id" = String, Path, description = "Bridge id"),
+        ("token" = String, Path, description = "Invite token"),
+    ),
+    responses(
+        (status = 200, description = "Invite revoked"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn revoke_invite_handler(
     State(state): State<ServerState>,
     Path((id, token)): Path<(String, String)>,
@@ -312,6 +378,18 @@ pub async fn revoke_invite_handler(
 /// `GET /api/im-bridges/:id/allowlist`. This is the source-of-truth set the
 /// router re-reads on boot (see `start_im_router`); the runtime gate may
 /// diverge transiently after a `set_allowlist` but is reconciled on restart.
+#[utoipa::path(
+    get,
+    path = "/api/im-bridges/{id}/allowlist",
+    tag = "im-bridges",
+    params(
+        ("id" = String, Path, description = "Bridge id"),
+    ),
+    responses(
+        (status = 200, description = "Allowlisted chats of a bridge"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn list_allowlist_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -330,6 +408,19 @@ pub async fn list_allowlist_handler(
 /// drops the chat immediately (no restart needed). Correct now that the router
 /// boots in `Some`-mode (Part A) — the rebuilt set is what actually gates
 /// inbound messages.
+#[utoipa::path(
+    delete,
+    path = "/api/im-bridges/{id}/allowlist/{chat_id}",
+    tag = "im-bridges",
+    params(
+        ("id" = String, Path, description = "Bridge id"),
+        ("chat_id" = String, Path, description = "Chat id"),
+    ),
+    responses(
+        (status = 200, description = "Chat removed from allowlist"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn remove_allowlist_handler(
     State(state): State<ServerState>,
     Path((id, chat_id)): Path<(String, String)>,
@@ -351,6 +442,18 @@ pub async fn remove_allowlist_handler(
 /// `GET /api/im-bridges/:id/sessions`. Filters the store's full session table
 /// to this platform by composite-key prefix (`<platform>:`), then strips the
 /// prefix to recover the bare chat_id.
+#[utoipa::path(
+    get,
+    path = "/api/im-bridges/{id}/sessions",
+    tag = "im-bridges",
+    params(
+        ("id" = String, Path, description = "Bridge id"),
+    ),
+    responses(
+        (status = 200, description = "Chat sessions of a bridge"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn list_sessions_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -393,6 +496,19 @@ pub async fn list_sessions_handler(
 ///
 /// `POST /api/im-bridges/:id/sessions/:chat_id/reset`. The next inbound from
 /// this chat re-binds via `get_or_create` with a fresh NeoMind session.
+#[utoipa::path(
+    post,
+    path = "/api/im-bridges/{id}/sessions/{chat_id}/reset",
+    tag = "im-bridges",
+    params(
+        ("id" = String, Path, description = "Bridge id"),
+        ("chat_id" = String, Path, description = "Chat id"),
+    ),
+    responses(
+        (status = 200, description = "Per-chat session context reset"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn reset_session_handler(
     State(state): State<ServerState>,
     Path((id, chat_id)): Path<(String, String)>,

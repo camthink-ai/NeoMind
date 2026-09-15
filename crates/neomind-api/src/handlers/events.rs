@@ -381,6 +381,15 @@ pub struct PublishEventRequest {
     pub source: Option<String>,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/events",
+    tag = "events",
+    request_body = PublishEventRequest,
+    responses(
+        (status = 200, description = "Event published to subscribers"),
+    )
+)]
 pub async fn publish_event_handler(
     State(state): State<ServerState>,
     Json(req): Json<PublishEventRequest>,
@@ -499,6 +508,21 @@ fn assemble_batch(events: &[std::sync::Arc<str>]) -> String {
 /// Streams real-time events from the event bus using Server-Sent Events.
 /// Clients can filter by event type or category.
 /// Supports JWT token (`?token=xxx`) or API key (`?api_key=xxx`) authentication.
+#[utoipa::path(
+    get,
+    path = "/api/events/stream",
+    tag = "events",
+    params(
+        ("event_type" = Vec<String>, Query, description = "Event types to subscribe to"),
+        ("category" = Option<String>, Query, description = "Event category filter"),
+        ("last_event_id" = Option<String>, Query, description = "Resume after this event id"),
+        ("token" = Option<String>, Query, description = "JWT for the stream"),
+        ("api_key" = Option<String>, Query, description = "API key alternative to token"),
+    ),
+    responses(
+        (status = 200, description = "SSE event stream (text/event-stream)"),
+    )
+)]
 pub async fn event_stream_handler(
     State(state): State<ServerState>,
     Query(params): Query<EventStreamParams>,
@@ -596,6 +620,21 @@ fn create_filtered_receiver(
 /// Alternative to SSE using WebSocket for bidirectional communication.
 /// Authentication is done via Auth message after connection is established
 /// (more secure than putting token in URL parameter).
+#[utoipa::path(
+    get,
+    path = "/api/events/ws",
+    tag = "events",
+    params(
+        ("event_type" = Vec<String>, Query, description = "Event types to subscribe to"),
+        ("category" = Option<String>, Query, description = "Event category filter"),
+        ("last_event_id" = Option<String>, Query, description = "Resume after this event id"),
+        ("token" = Option<String>, Query, description = "JWT (also accepted as first message)"),
+        ("api_key" = Option<String>, Query, description = "API key alternative to token"),
+    ),
+    responses(
+        (status = 101, description = "WebSocket upgrade; auth via first message"),
+    )
+)]
 pub async fn event_websocket_handler(
     State(state): State<ServerState>,
     ws: WebSocketUpgrade,

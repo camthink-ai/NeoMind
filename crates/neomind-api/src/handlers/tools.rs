@@ -13,6 +13,14 @@ use crate::models::ErrorResponse;
 ///
 /// Returns a JSON array of tool definitions including name, description,
 /// category, and parameters for each registered tool.
+#[utoipa::path(
+    get,
+    path = "/api/tools",
+    tag = "tools",
+    responses(
+        (status = 200, description = "Static tool catalog"),
+    )
+)]
 pub async fn list_tools_handler(State(state): State<ServerState>) -> HandlerResult<Value> {
     let registry = state
         .session_manager()
@@ -44,6 +52,18 @@ pub async fn list_tools_handler(State(state): State<ServerState>) -> HandlerResu
 /// GET /api/tools/:name - Get details for a specific tool.
 ///
 /// Returns the full tool definition for the named tool.
+#[utoipa::path(
+    get,
+    path = "/api/tools/{name}",
+    tag = "tools",
+    params(
+        ("name" = String, Path, description = "Tool name"),
+    ),
+    responses(
+        (status = 200, description = "One tool descriptor"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_tool_handler(
     State(state): State<ServerState>,
     Path(name): Path<String>,

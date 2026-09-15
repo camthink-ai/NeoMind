@@ -2345,8 +2345,6 @@ impl ServerState {
                     device_id,
                     metric,
                     value,
-                    timestamp: _,
-                    quality: _,
                     ..
                 } = event
                 {

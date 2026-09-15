@@ -36,10 +36,6 @@ pub enum BootstrapOutcome {
     Failed(String),
 }
 
-/// Decide whether a llama-server /props `model_path` belongs to this
-/// install (file under our data dir). Canonicalized so symlinks (the
-/// persistent smoke env keeps /tmp alive via a symlink) compare correctly.
-
 /// True when an endpoint string points at the given loopback port, e.g.
 /// "http://127.0.0.1:8081/v1" for port 8081. Accepts localhost / 127.0.0.1 /
 /// [::1] and ignores scheme/path.
@@ -81,6 +77,9 @@ fn warn_custom_backends_on_legacy_port(manager: &LlmBackendInstanceManager) {
     }
 }
 
+/// Decide whether a llama-server /props `model_path` belongs to this
+/// install (file under our data dir). Canonicalized so symlinks (the
+/// persistent smoke env keeps /tmp alive via a symlink) compare correctly.
 fn props_model_is_ours(model_path: Option<&str>, data_dir: &Path) -> bool {
     let Some(mp) = model_path else { return false };
     let mp = std::path::Path::new(mp);
@@ -187,7 +186,7 @@ pub async fn bootstrap(
                 // per-model default — stamping the bare default here used to
                 // silently rewrite a raised ctx back down (and the agent's
                 // history budget shrank to match the phantom smaller window).
-                updated.capabilities.max_context = cfg.effective_ctx(def.default_ctx) as usize;
+                updated.capabilities.max_context = cfg.effective_ctx(def.default_ctx);
                 let _ = manager.upsert_instance(updated).await;
             }
         }

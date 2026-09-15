@@ -774,6 +774,17 @@ pub struct ListAgentsQuery {
     view: Option<String>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/agents",
+    tag = "agents",
+    params(
+        ("view" = Option<String>, Query, description = "summary = lightweight rows"),
+    ),
+    responses(
+        (status = 200, description = "User-defined agents"),
+    )
+)]
 pub async fn list_agents(
     State(state): State<ServerState>,
     Query(query): Query<ListAgentsQuery>,
@@ -809,6 +820,18 @@ pub async fn list_agents(
 }
 
 /// Get an AI Agent by ID.
+#[utoipa::path(
+    get,
+    path = "/api/agents/{id}",
+    tag = "agents",
+    params(
+        ("id" = String, Path, description = "Agent id"),
+    ),
+    responses(
+        (status = 200, description = "One agent"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_agent(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -826,6 +849,15 @@ pub async fn get_agent(
 }
 
 /// Create a new AI Agent.
+#[utoipa::path(
+    post,
+    path = "/api/agents",
+    tag = "agents",
+    request_body = CreateAgentRequest,
+    responses(
+        (status = 200, description = "Agent created"),
+    )
+)]
 pub async fn create_agent(
     State(state): State<ServerState>,
     Json(request): Json<CreateAgentRequest>,
@@ -1255,6 +1287,19 @@ async fn init_agent_knowledge_file(state: &crate::server::ServerState, agent: &A
 }
 
 /// Update an AI Agent.
+#[utoipa::path(
+    put,
+    path = "/api/agents/{id}",
+    tag = "agents",
+    params(
+        ("id" = String, Path, description = "Agent id"),
+    ),
+    request_body = UpdateAgentRequest,
+    responses(
+        (status = 200, description = "Agent updated"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn update_agent(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -1580,6 +1625,18 @@ pub async fn update_agent(
 }
 
 /// Delete an AI Agent.
+#[utoipa::path(
+    delete,
+    path = "/api/agents/{id}",
+    tag = "agents",
+    params(
+        ("id" = String, Path, description = "Agent id"),
+    ),
+    responses(
+        (status = 200, description = "Agent deleted"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn delete_agent(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -1633,6 +1690,19 @@ pub async fn delete_agent(
 }
 
 /// Execute an AI Agent immediately (async — returns execution_id right away).
+#[utoipa::path(
+    post,
+    path = "/api/agents/{id}/execute",
+    tag = "agents",
+    params(
+        ("id" = String, Path, description = "Agent id"),
+    ),
+    request_body = ExecuteAgentRequest,
+    responses(
+        (status = 200, description = "Synchronous agent run; result returned"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn execute_agent(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -1709,6 +1779,19 @@ pub async fn execute_agent(
 }
 
 /// Invoke an AI Agent synchronously — waits for execution to complete and returns results.
+#[utoipa::path(
+    post,
+    path = "/api/agents/{id}/invoke",
+    tag = "agents",
+    params(
+        ("id" = String, Path, description = "Agent id"),
+    ),
+    request_body = ExecuteAgentRequest,
+    responses(
+        (status = 200, description = "Agent invoked via the tool interface"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn invoke_agent(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -1840,6 +1923,18 @@ pub async fn invoke_agent(
 }
 
 /// Get execution history for an agent.
+#[utoipa::path(
+    get,
+    path = "/api/agents/{id}/executions",
+    tag = "agents",
+    params(
+        ("id" = String, Path, description = "Agent id"),
+    ),
+    responses(
+        (status = 200, description = "Execution history of an agent"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_agent_executions(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -1875,6 +1970,19 @@ pub async fn get_agent_executions(
 }
 
 /// Get a specific execution record.
+#[utoipa::path(
+    get,
+    path = "/api/agents/{id}/executions/{execution_id}",
+    tag = "agents",
+    params(
+        ("id" = String, Path, description = "Agent id"),
+        ("execution_id" = String, Path, description = "Execution id"),
+    ),
+    responses(
+        (status = 200, description = "One execution record"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_execution(
     State(state): State<ServerState>,
     Path((_id, execution_id)): Path<(String, String)>,
@@ -1907,6 +2015,19 @@ pub struct BatchExecutionIds {
 /// Body: { "ids": ["exec-id-1", "exec-id-2", ...] }
 ///
 /// Returns a map of execution_id -> execution detail.
+#[utoipa::path(
+    post,
+    path = "/api/agents/{id}/executions/details",
+    tag = "agents",
+    params(
+        ("id" = String, Path, description = "Agent id"),
+    ),
+    request_body = BatchExecutionIds,
+    responses(
+        (status = 200, description = "Execution records for a list of ids"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn batch_get_executions(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -1965,6 +2086,19 @@ pub async fn batch_get_executions(
 }
 
 /// Update agent status.
+#[utoipa::path(
+    post,
+    path = "/api/agents/{id}/status",
+    tag = "agents",
+    params(
+        ("id" = String, Path, description = "Agent id"),
+    ),
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Agent enabled/disabled"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn set_agent_status(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -2009,6 +2143,18 @@ pub async fn set_agent_status(
 }
 
 /// Get agent memory.
+#[utoipa::path(
+    get,
+    path = "/api/agents/{id}/memory",
+    tag = "agents",
+    params(
+        ("id" = String, Path, description = "Agent id"),
+    ),
+    responses(
+        (status = 200, description = "Memory entries of an agent"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_agent_memory(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -2065,6 +2211,18 @@ pub async fn get_agent_memory(
 }
 
 /// Clear agent memory.
+#[utoipa::path(
+    delete,
+    path = "/api/agents/{id}/memory",
+    tag = "agents",
+    params(
+        ("id" = String, Path, description = "Agent id"),
+    ),
+    responses(
+        (status = 200, description = "Agent memory cleared"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn clear_agent_memory(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -2095,6 +2253,18 @@ pub async fn clear_agent_memory(
 }
 
 /// Get agent statistics.
+#[utoipa::path(
+    get,
+    path = "/api/agents/{id}/stats",
+    tag = "agents",
+    params(
+        ("id" = String, Path, description = "Agent id"),
+    ),
+    responses(
+        (status = 200, description = "Run counters of an agent"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_agent_stats(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -2152,6 +2322,19 @@ impl From<UserMessage> for UserMessageDto {
 /// Add a user message to an agent.
 ///
 /// POST /api/agents/{id}/messages
+#[utoipa::path(
+    post,
+    path = "/api/agents/{id}/messages",
+    tag = "agents",
+    params(
+        ("id" = String, Path, description = "Agent id"),
+    ),
+    request_body = AddUserMessageRequest,
+    responses(
+        (status = 200, description = "User message added"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn add_user_message(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -2172,6 +2355,18 @@ pub async fn add_user_message(
 /// Get user messages for an agent.
 ///
 /// GET /api/agents/{id}/messages
+#[utoipa::path(
+    get,
+    path = "/api/agents/{id}/messages",
+    tag = "agents",
+    params(
+        ("id" = String, Path, description = "Agent id"),
+    ),
+    responses(
+        (status = 200, description = "Custom user messages of an agent"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_user_messages(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -2192,6 +2387,19 @@ pub async fn get_user_messages(
 /// Delete a specific user message.
 ///
 /// DELETE /api/agents/{id}/messages/{message_id}
+#[utoipa::path(
+    delete,
+    path = "/api/agents/{id}/messages/{message_id}",
+    tag = "agents",
+    params(
+        ("id" = String, Path, description = "Agent id"),
+        ("message_id" = String, Path, description = "Message id"),
+    ),
+    responses(
+        (status = 200, description = "One user message removed"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn delete_user_message(
     State(state): State<ServerState>,
     Path((id, message_id)): Path<(String, String)>,
@@ -2218,6 +2426,18 @@ pub async fn delete_user_message(
 /// Clear all user messages for an agent.
 ///
 /// DELETE /api/agents/{id}/messages
+#[utoipa::path(
+    delete,
+    path = "/api/agents/{id}/messages",
+    tag = "agents",
+    params(
+        ("id" = String, Path, description = "Agent id"),
+    ),
+    responses(
+        (status = 200, description = "All user messages removed"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn clear_user_messages(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -2270,6 +2490,15 @@ pub struct ValidateCronResponse {
 /// Validate a cron expression.
 ///
 /// POST /api/agents/validate-cron
+#[utoipa::path(
+    post,
+    path = "/api/agents/validate-cron",
+    tag = "agents",
+    request_body = ValidateCronRequest,
+    responses(
+        (status = 200, description = "Cron expression validated (next fires returned)"),
+    )
+)]
 pub async fn validate_cron_expression(
     State(state): State<ServerState>,
     Json(request): Json<ValidateCronRequest>,
@@ -2328,6 +2557,15 @@ fn validate_with_scheduler(
 /// Validate that an LLM backend is available and working.
 ///
 /// POST /api/agents/validate-llm
+#[utoipa::path(
+    post,
+    path = "/api/agents/validate-llm",
+    tag = "agents",
+    request_body = ValidateLlmRequest,
+    responses(
+        (status = 200, description = "Backend reachable and usable"),
+    )
+)]
 pub async fn validate_llm_backend(
     State(_state): State<ServerState>,
     Json(request): Json<ValidateLlmRequest>,
@@ -2428,6 +2666,18 @@ fn describe_cron_expression(expr: &str) -> Option<String> {
 /// can potentially use for its operations.
 ///
 /// GET /api/agents/:id/available-resources
+#[utoipa::path(
+    get,
+    path = "/api/agents/{id}/available-resources",
+    tag = "agents",
+    params(
+        ("id" = String, Path, description = "Agent id"),
+    ),
+    responses(
+        (status = 200, description = "Devices/metrics/tools an agent may reference"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_available_resources(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -2515,6 +2765,14 @@ pub async fn get_available_resources(
 /// - `"built-in"`   — shipped with the server, compiled into the binary
 /// - `"extension"`  — contributed by an installed `.nep` package
 /// - `"custom"`     — reserved for the future HTTP-tool feature (name prefix `custom:`)
+#[utoipa::path(
+    get,
+    path = "/api/agents/tools",
+    tag = "agents",
+    responses(
+        (status = 200, description = "Server tool registry (read-only catalog)"),
+    )
+)]
 pub async fn list_agent_tools(State(state): State<ServerState>) -> HandlerResult<Value> {
     let registry_opt = state.agents.session_manager.get_tool_registry().await;
 

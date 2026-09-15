@@ -80,6 +80,22 @@ pub struct ListDataSourcesResponse {
 ///
 /// List all data sources across devices, extensions, and transforms.
 /// Supports server-side filtering, search, and pagination.
+#[utoipa::path(
+    get,
+    path = "/api/data/sources",
+    tag = "telemetry",
+    params(
+        ("source_type" = Option<String>, Query, description = "Filter by source type"),
+        ("source" = Option<String>, Query, description = "Filter by source id"),
+        ("search" = Option<String>, Query, description = "Name substring"),
+        ("offset" = Option<usize>, Query, description = "Skip items"),
+        ("limit" = Option<usize>, Query, description = "Max items"),
+        ("skip_telemetry" = Option<bool>, Query, description = "Omit telemetry availability info"),
+    ),
+    responses(
+        (status = 200, description = "Every data source (devices, transforms, extensions)"),
+    )
+)]
 pub async fn list_all_data_sources_handler(
     State(state): State<ServerState>,
     Query(params): Query<ListDataSourcesQuery>,
@@ -518,6 +534,24 @@ pub struct TelemetryQueryParams {
 /// - `GET /api/telemetry?source=ai:demo&metric=score&start=1713360000&end=1713446400`
 /// - `GET /api/telemetry?source=extension:weather&metric=temp_c&limit=50`
 /// - `GET /api/telemetry?source=transform:converter&metric=output&aggregate=avg`
+#[utoipa::path(
+    get,
+    path = "/api/telemetry",
+    tag = "telemetry",
+    params(
+        ("source" = Option<String>, Query, description = "Device id"),
+        ("metric" = Option<String>, Query, description = "Metric name"),
+        ("start" = Option<i64>, Query, description = "Unix-seconds range start"),
+        ("end" = Option<i64>, Query, description = "Unix-seconds range end"),
+        ("limit" = Option<usize>, Query, description = "Max points"),
+        ("offset" = Option<usize>, Query, description = "Skip points"),
+        ("aggregate" = Option<String>, Query, description = "Aggregation function"),
+        ("bucketed" = Option<bool>, Query, description = "Bucket by interval"),
+    ),
+    responses(
+        (status = 200, description = "Time-series points across devices"),
+    )
+)]
 pub async fn query_telemetry_handler(
     State(state): State<ServerState>,
     Query(params): Query<TelemetryQueryParams>,

@@ -16,7 +16,6 @@ use crate::handlers::{
     ServerState,
 };
 use crate::models::ErrorResponse;
-use utoipa::path;
 
 /// Send a command to a device.
 /// Uses new DeviceService for command sending

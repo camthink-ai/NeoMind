@@ -173,7 +173,7 @@ impl LlamaServerProcess {
             Ok(c) => c,
             Err(_) => anyhow::bail!("llama-server handle is being stopped concurrently"),
         };
-        if wait_healthy_loop_checking_child(self.port, timeout, &mut *child).await {
+        if wait_healthy_loop_checking_child(self.port, timeout, &mut child).await {
             Ok(())
         } else {
             anyhow::bail!(

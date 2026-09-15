@@ -93,6 +93,15 @@ fn resolve_broker_config(broker_id: &str) -> Result<(String, u16, String, String
 ///     Does NOT register the device. Returns MQTT config for BLE write.
 ///   Phase 2 (resolve_only=false, default): Register the device after BLE write succeeds.
 ///     If device already exists, returns its config (idempotent).
+#[utoipa::path(
+    post,
+    path = "/api/devices/ble-provision",
+    tag = "devices",
+    request_body = BleProvisionRequest,
+    responses(
+        (status = 200, description = "BLE provisioning session driven; result returned"),
+    )
+)]
 pub async fn ble_provision_handler(
     State(state): State<ServerState>,
     Json(req): Json<BleProvisionRequest>,

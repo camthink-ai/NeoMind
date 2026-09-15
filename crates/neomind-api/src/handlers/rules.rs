@@ -300,6 +300,14 @@ impl From<&CompiledRule> for RuleDetailDto {
 /// List rules.
 ///
 /// GET /api/rules
+#[utoipa::path(
+    get,
+    path = "/api/rules",
+    tag = "rules",
+    responses(
+        (status = 200, description = "All rules"),
+    )
+)]
 pub async fn list_rules_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -360,6 +368,18 @@ pub async fn list_rules_handler(
 /// Get a rule by ID.
 ///
 /// GET /api/rules/:id
+#[utoipa::path(
+    get,
+    path = "/api/rules/{id}",
+    tag = "rules",
+    params(
+        ("id" = String, Path, description = "Rule id"),
+    ),
+    responses(
+        (status = 200, description = "One rule"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_rule_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -390,6 +410,19 @@ pub async fn get_rule_handler(
 /// Update a rule.
 ///
 /// PUT /api/rules/:id
+#[utoipa::path(
+    put,
+    path = "/api/rules/{id}",
+    tag = "rules",
+    params(
+        ("id" = String, Path, description = "Rule id"),
+    ),
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Rule updated"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn update_rule_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -575,6 +608,18 @@ pub async fn update_rule_handler(
 /// Delete a rule.
 ///
 /// DELETE /api/rules/:id
+#[utoipa::path(
+    delete,
+    path = "/api/rules/{id}",
+    tag = "rules",
+    params(
+        ("id" = String, Path, description = "Rule id"),
+    ),
+    responses(
+        (status = 200, description = "Rule deleted"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn delete_rule_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -612,6 +657,19 @@ pub async fn delete_rule_handler(
 /// Enable or disable a rule.
 ///
 /// POST /api/rules/:id/enable
+#[utoipa::path(
+    post,
+    path = "/api/rules/{id}/enable",
+    tag = "rules",
+    params(
+        ("id" = String, Path, description = "Rule id"),
+    ),
+    request_body = SetRuleStatusRequest,
+    responses(
+        (status = 200, description = "Rule enabled/disabled"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn set_rule_status_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -654,6 +712,19 @@ pub async fn set_rule_status_handler(
 /// Test a rule.
 ///
 /// POST /api/rules/:id/test
+#[utoipa::path(
+    post,
+    path = "/api/rules/{id}/test",
+    tag = "rules",
+    params(
+        ("id" = String, Path, description = "Rule id"),
+    ),
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Dry-run evaluation against current data"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn test_rule_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -983,6 +1054,18 @@ pub async fn test_rule_handler(
 ///
 /// POST /api/rules/:id/trigger — evaluates the rule condition and executes actions
 /// if the condition is met. This is the entry point for `RuleTrigger::Manual` rules.
+#[utoipa::path(
+    post,
+    path = "/api/rules/{id}/trigger",
+    tag = "rules",
+    params(
+        ("id" = String, Path, description = "Rule id"),
+    ),
+    responses(
+        (status = 200, description = "Manual execution recorded"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn trigger_rule_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -1006,6 +1089,15 @@ pub async fn trigger_rule_handler(
 /// Create rule.
 ///
 /// POST /api/rules — accepts a JSON body representing a CompiledRule.
+#[utoipa::path(
+    post,
+    path = "/api/rules",
+    tag = "rules",
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Rule created"),
+    )
+)]
 pub async fn create_rule_handler(
     State(state): State<ServerState>,
     Json(mut req): Json<serde_json::Value>,
@@ -1138,6 +1230,18 @@ pub async fn create_rule_handler(
 /// Get rule execution history.
 ///
 /// GET /api/rules/:id/history
+#[utoipa::path(
+    get,
+    path = "/api/rules/{id}/history",
+    tag = "rules",
+    params(
+        ("id" = String, Path, description = "Rule id"),
+    ),
+    responses(
+        (status = 200, description = "Execution history of a rule"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_rule_history_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -1182,6 +1286,14 @@ pub async fn get_rule_history_handler(
 /// Export all rules as JSON.
 ///
 /// GET /api/rules/export
+#[utoipa::path(
+    get,
+    path = "/api/rules/export",
+    tag = "rules",
+    responses(
+        (status = 200, description = "All rules as an importable JSON document"),
+    )
+)]
 pub async fn export_rules_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -1202,6 +1314,15 @@ pub async fn export_rules_handler(
 /// Import rules from JSON.
 ///
 /// POST /api/rules/import
+#[utoipa::path(
+    post,
+    path = "/api/rules/import",
+    tag = "rules",
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Rules imported (merged or replaced)"),
+    )
+)]
 pub async fn import_rules_handler(
     State(state): State<ServerState>,
     Json(req): Json<serde_json::Value>,
@@ -1256,6 +1377,14 @@ pub async fn import_rules_handler(
 /// Now uses DeviceTypeTemplate for actual device capabilities instead of hardcoded mappings.
 ///
 /// GET /api/rules/resources
+#[utoipa::path(
+    get,
+    path = "/api/rules/resources",
+    tag = "rules",
+    responses(
+        (status = 200, description = "Devices/metrics available as rule trigger resources"),
+    )
+)]
 pub async fn get_resources_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -1568,6 +1697,15 @@ fn validate_rule_cron(rule: &CompiledRule) -> Result<(), ErrorResponse> {
 /// Validate a rule against available resources.
 ///
 /// POST /api/rules/validate
+#[utoipa::path(
+    post,
+    path = "/api/rules/validate",
+    tag = "rules",
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Validation report (nothing saved)"),
+    )
+)]
 pub async fn validate_rule_handler(
     State(state): State<ServerState>,
     Json(req): Json<serde_json::Value>,

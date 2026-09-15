@@ -1247,10 +1247,9 @@ impl SemanticInference {
                 let rest = &part[bracket_idx..];
 
                 // First navigate to the field
-                if let Some(obj) = current.as_object() {
+                {
+                    let obj = current.as_object()?;
                     current = obj.get(field_name)?;
-                } else {
-                    return None;
                 }
 
                 // Then handle array indices
@@ -1261,20 +1260,18 @@ impl SemanticInference {
                     }
                     let idx_str = bracket.trim_start_matches('[');
                     if let Ok(idx) = idx_str.parse::<usize>() {
-                        if let Some(arr) = current_arr.as_array() {
+                        {
+                            let arr = current_arr.as_array()?;
                             current_arr = arr.get(idx)?;
-                        } else {
-                            return None;
                         }
                     }
                 }
                 current = current_arr;
             } else {
                 // Simple field access
-                if let Some(obj) = current.as_object() {
+                {
+                    let obj = current.as_object()?;
                     current = obj.get(part)?;
-                } else {
-                    return None;
                 }
             }
         }

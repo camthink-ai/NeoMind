@@ -20,6 +20,14 @@ use crate::models::ErrorResponse;
 
 /// List device types.
 /// Uses new DeviceService - now includes metrics and commands
+#[utoipa::path(
+    get,
+    path = "/api/device-types",
+    tag = "device-types",
+    responses(
+        (status = 200, description = "Registered device-type templates"),
+    )
+)]
 pub async fn list_device_types_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -91,6 +99,18 @@ pub async fn list_device_types_handler(
 
 /// Get device type details.
 /// Uses new DeviceService - returns simplified format (direct metrics/commands)
+#[utoipa::path(
+    get,
+    path = "/api/device-types/{id}",
+    tag = "device-types",
+    params(
+        ("id" = String, Path, description = "Device type id"),
+    ),
+    responses(
+        (status = 200, description = "One device-type template"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_device_type_handler(
     State(state): State<ServerState>,
     Path(device_type): Path<String>,
@@ -127,6 +147,15 @@ pub async fn get_device_type_handler(
 
 /// Register a new device type.
 /// Uses new DeviceService - accepts simplified format (direct metrics/commands)
+#[utoipa::path(
+    post,
+    path = "/api/device-types",
+    tag = "device-types",
+    request_body = DeviceTypeTemplate,
+    responses(
+        (status = 200, description = "Template registered"),
+    )
+)]
 pub async fn register_device_type_handler(
     State(state): State<ServerState>,
     Json(template): Json<DeviceTypeTemplate>,
@@ -155,6 +184,18 @@ pub async fn register_device_type_handler(
 
 /// Delete a device type.
 /// Uses new DeviceService
+#[utoipa::path(
+    delete,
+    path = "/api/device-types/{id}",
+    tag = "device-types",
+    params(
+        ("id" = String, Path, description = "Device type id"),
+    ),
+    responses(
+        (status = 200, description = "Template deleted"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn delete_device_type_handler(
     State(state): State<ServerState>,
     Path(device_type): Path<String>,
@@ -175,6 +216,15 @@ pub async fn delete_device_type_handler(
 
 /// Validate a device type definition without registering it.
 /// Accepts simplified format (direct metrics/commands)
+#[utoipa::path(
+    put,
+    path = "/api/device-types",
+    tag = "device-types",
+    request_body = DeviceTypeTemplate,
+    responses(
+        (status = 200, description = "Validation report for a template (nothing saved)"),
+    )
+)]
 pub async fn validate_device_type_handler(
     Json(template): Json<DeviceTypeTemplate>,
 ) -> HandlerResult<serde_json::Value> {
@@ -361,6 +411,14 @@ pub struct CloudImportResponse {
 /// Uses raw.githubusercontent.com to read index.json (avoids GitHub API rate limits)
 ///
 /// GET /api/device-types/cloud/list
+#[utoipa::path(
+    get,
+    path = "/api/device-types/cloud/list",
+    tag = "device-types",
+    responses(
+        (status = 200, description = "Cloud device-type repository listing"),
+    )
+)]
 pub async fn list_cloud_device_types_handler(
     State(_state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -494,6 +552,15 @@ async fn fetch_device_type(
 /// Import selected device types from cloud
 ///
 /// POST /api/device-types/cloud/import
+#[utoipa::path(
+    post,
+    path = "/api/device-types/cloud/import",
+    tag = "device-types",
+    request_body = CloudImportRequest,
+    responses(
+        (status = 200, description = "Templates imported from the cloud repository"),
+    )
+)]
 pub async fn import_cloud_device_types_handler(
     State(state): State<ServerState>,
     Json(request): Json<CloudImportRequest>,

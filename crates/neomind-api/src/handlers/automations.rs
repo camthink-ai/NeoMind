@@ -172,6 +172,21 @@ impl From<Automation> for AutomationDto {
 /// GET /api/automations?type=transform|rule|all&enabled=true|false&search=query&limit=50&offset=0
 ///
 /// Performance optimization: Supports pagination to avoid loading all automations into memory.
+#[utoipa::path(
+    get,
+    path = "/api/automations",
+    tag = "automations",
+    params(
+        ("type" = Option<String>, Query, description = "Filter: rule | agent | transform"),
+        ("enabled" = Option<bool>, Query, description = "Filter by enabled"),
+        ("search" = Option<String>, Query, description = "Name substring"),
+        ("limit" = Option<usize>, Query, description = "Max items"),
+        ("offset" = Option<usize>, Query, description = "Skip items"),
+    ),
+    responses(
+        (status = 200, description = "Rules, agents and transforms in one list"),
+    )
+)]
 pub async fn list_automations_handler(
     Query(filter): Query<AutomationFilter>,
     State(state): State<ServerState>,
@@ -221,7 +236,7 @@ pub async fn list_automations_handler(
         .collect();
 
     // Sort by updated_at descending
-    filtered.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    filtered.sort_by_key(|a| std::cmp::Reverse(a.updated_at));
 
     let total = filtered.len();
     let has_more = offset + limit < total;
@@ -256,6 +271,18 @@ pub async fn list_automations_handler(
 /// Get a specific automation by ID.
 ///
 /// GET /api/automations/:id
+#[utoipa::path(
+    get,
+    path = "/api/automations/{id}",
+    tag = "automations",
+    params(
+        ("id" = String, Path, description = "Automation id"),
+    ),
+    responses(
+        (status = 200, description = "One automation"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_automation_handler(
     Path(id): Path<String>,
     State(state): State<ServerState>,
@@ -288,6 +315,15 @@ pub async fn get_automation_handler(
 /// Create a new automation.
 ///
 /// POST /api/automations
+#[utoipa::path(
+    post,
+    path = "/api/automations",
+    tag = "automations",
+    request_body = CreateAutomationRequest,
+    responses(
+        (status = 200, description = "Automation created"),
+    )
+)]
 pub async fn create_automation_handler(
     State(state): State<ServerState>,
     Json(req): Json<CreateAutomationRequest>,
@@ -348,6 +384,19 @@ pub async fn create_automation_handler(
 /// Update an automation.
 ///
 /// PUT /api/automations/:id
+#[utoipa::path(
+    put,
+    path = "/api/automations/{id}",
+    tag = "automations",
+    params(
+        ("id" = String, Path, description = "Automation id"),
+    ),
+    request_body = UpdateAutomationRequest,
+    responses(
+        (status = 200, description = "Automation updated"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn update_automation_handler(
     Path(id): Path<String>,
     State(state): State<ServerState>,
@@ -433,6 +482,18 @@ pub async fn update_automation_handler(
 /// Delete an automation.
 ///
 /// DELETE /api/automations/:id
+#[utoipa::path(
+    delete,
+    path = "/api/automations/{id}",
+    tag = "automations",
+    params(
+        ("id" = String, Path, description = "Automation id"),
+    ),
+    responses(
+        (status = 200, description = "Automation deleted"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn delete_automation_handler(
     Path(id): Path<String>,
     State(state): State<ServerState>,
@@ -458,6 +519,19 @@ pub async fn delete_automation_handler(
 /// Set automation enabled status.
 ///
 /// POST /api/automations/:id/enable
+#[utoipa::path(
+    post,
+    path = "/api/automations/{id}/enable",
+    tag = "automations",
+    params(
+        ("id" = String, Path, description = "Automation id"),
+    ),
+    request_body = SetAutomationStatusRequest,
+    responses(
+        (status = 200, description = "Automation enabled/disabled"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn set_automation_status_handler(
     Path(id): Path<String>,
     State(state): State<ServerState>,
@@ -502,6 +576,15 @@ pub async fn set_automation_status_handler(
 /// Analyze intent to recommend automation type.
 ///
 /// POST /api/automations/analyze-intent
+#[utoipa::path(
+    post,
+    path = "/api/automations/analyze-intent",
+    tag = "automations",
+    request_body = AnalyzeIntentRequest,
+    responses(
+        (status = 200, description = "Natural-language intent mapped to an automation draft"),
+    )
+)]
 pub async fn analyze_intent_handler(
     State(_state): State<ServerState>,
     Json(req): Json<AnalyzeIntentRequest>,
@@ -567,6 +650,18 @@ fn heuristic_analysis(description: &str) -> IntentResult {
 /// Get execution history for an automation.
 ///
 /// GET /api/automations/:id/executions?limit=10
+#[utoipa::path(
+    get,
+    path = "/api/automations/{id}/executions",
+    tag = "automations",
+    params(
+        ("id" = String, Path, description = "Automation id"),
+    ),
+    responses(
+        (status = 200, description = "Execution history of an automation"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_automations_executions_handler(
     Path(id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
@@ -599,6 +694,14 @@ pub async fn get_automations_executions_handler(
 /// List all automation templates.
 ///
 /// GET /api/automations/templates
+#[utoipa::path(
+    get,
+    path = "/api/automations/templates",
+    tag = "automations",
+    responses(
+        (status = 200, description = "Built-in automation templates"),
+    )
+)]
 pub async fn list_templates_handler(State(state): State<ServerState>) -> HandlerResult<Value> {
     let Some(store) = &state.automation.automation_store else {
         return ok(json!({
@@ -622,6 +725,14 @@ pub async fn list_templates_handler(State(state): State<ServerState>) -> Handler
 /// Export all automations.
 ///
 /// GET /api/automations/export
+#[utoipa::path(
+    get,
+    path = "/api/automations/export",
+    tag = "automations",
+    responses(
+        (status = 200, description = "All automations as an importable document"),
+    )
+)]
 pub async fn export_automations_handler(State(state): State<ServerState>) -> HandlerResult<Value> {
     let Some(store) = &state.automation.automation_store else {
         return ok(json!({
@@ -646,6 +757,15 @@ pub async fn export_automations_handler(State(state): State<ServerState>) -> Han
 /// Import automations.
 ///
 /// POST /api/automations/import
+#[utoipa::path(
+    post,
+    path = "/api/automations/import",
+    tag = "automations",
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Automations imported"),
+    )
+)]
 pub async fn import_automations_handler(
     State(state): State<ServerState>,
     Json(data): Json<Value>,
@@ -706,6 +826,15 @@ fn default_timestamp() -> i64 {
 /// Process device data through all applicable transforms.
 ///
 /// POST /api/automations/transforms/process
+#[utoipa::path(
+    post,
+    path = "/api/automations/transforms/process",
+    tag = "transforms",
+    request_body = ProcessDataRequest,
+    responses(
+        (status = 200, description = "Data run through a transform; output returned"),
+    )
+)]
 pub async fn process_data_handler(
     State(state): State<ServerState>,
     Json(req): Json<ProcessDataRequest>,
@@ -779,6 +908,19 @@ pub async fn process_data_handler(
 /// Test a transform with sample data.
 ///
 /// POST /api/automations/transforms/:id/test
+#[utoipa::path(
+    post,
+    path = "/api/automations/transforms/{id}/test",
+    tag = "transforms",
+    params(
+        ("id" = String, Path, description = "Transform id"),
+    ),
+    request_body = ProcessDataRequest,
+    responses(
+        (status = 200, description = "Saved transform dry-run against sample input"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn test_transform_handler(
     Path(id): Path<String>,
     State(state): State<ServerState>,
@@ -837,6 +979,14 @@ pub async fn test_transform_handler(
 /// Get list of all transforms (filtering by type).
 ///
 /// GET /api/automations/transforms
+#[utoipa::path(
+    get,
+    path = "/api/automations/transforms",
+    tag = "transforms",
+    responses(
+        (status = 200, description = "Saved transforms"),
+    )
+)]
 pub async fn list_transforms_handler(State(state): State<ServerState>) -> HandlerResult<Value> {
     let Some(store) = &state.automation.automation_store else {
         return ok(json!({
@@ -860,6 +1010,14 @@ pub async fn list_transforms_handler(State(state): State<ServerState>) -> Handle
 /// Get virtual metrics generated by transforms.
 ///
 /// GET /api/automations/transforms/metrics
+#[utoipa::path(
+    get,
+    path = "/api/automations/transforms/metrics",
+    tag = "transforms",
+    responses(
+        (status = 200, description = "Virtual metrics produced by transforms"),
+    )
+)]
 pub async fn list_virtual_metrics_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<Value> {
@@ -923,6 +1081,14 @@ pub async fn list_virtual_metrics_handler(
 /// Extension data sources, allowing the frontend to use them interchangeably.
 ///
 /// GET /api/automations/transforms/data-sources
+#[utoipa::path(
+    get,
+    path = "/api/automations/transforms/data-sources",
+    tag = "transforms",
+    responses(
+        (status = 200, description = "Data sources auto-registered from transform outputs"),
+    )
+)]
 pub async fn list_transform_data_sources_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<Value> {
@@ -945,6 +1111,18 @@ pub async fn list_transform_data_sources_handler(
 /// Get data sources for a specific Transform.
 ///
 /// GET /api/automations/transforms/:id/data-sources
+#[utoipa::path(
+    get,
+    path = "/api/automations/transforms/{id}/data-sources",
+    tag = "transforms",
+    params(
+        ("id" = String, Path, description = "Transform id"),
+    ),
+    responses(
+        (status = 200, description = "Data sources of one transform"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_transform_data_sources_handler(
     Path(id): Path<String>,
     State(state): State<ServerState>,
@@ -969,6 +1147,18 @@ pub async fn get_transform_data_sources_handler(
 /// Get a specific Transform output data source.
 ///
 /// GET /api/automations/transforms/data-sources/:data_source_id
+#[utoipa::path(
+    get,
+    path = "/api/automations/transforms/data-sources/{data_source_id}",
+    tag = "transforms",
+    params(
+        ("data_source_id" = String, Path, description = "Data source id"),
+    ),
+    responses(
+        (status = 200, description = "One transform output data source"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_transform_data_source_handler(
     Path(data_source_id): Path<String>,
     State(state): State<ServerState>,
@@ -1012,6 +1202,15 @@ fn default_output_prefix() -> String {
 /// It executes the code in a sandboxed environment and returns the result.
 ///
 /// POST /api/automations/transforms/test-code
+#[utoipa::path(
+    post,
+    path = "/api/automations/transforms/test-code",
+    tag = "transforms",
+    request_body = TestTransformCodeRequest,
+    responses(
+        (status = 200, description = "Unsaved transform code dry-run"),
+    )
+)]
 pub async fn test_transform_code_handler(
     State(state): State<ServerState>,
     Json(req): Json<TestTransformCodeRequest>,

@@ -58,6 +58,19 @@ pub struct SuggestionsQuery {
 }
 
 /// Generate intelligent, dynamic suggestions
+#[utoipa::path(
+    get,
+    path = "/api/suggestions",
+    tag = "suggestions",
+    params(
+        ("input" = Option<String>, Query, description = "Partial user input"),
+        ("category" = Option<String>, Query, description = "Restrict to a category"),
+        ("limit" = Option<usize>, Query, description = "Max suggestions"),
+    ),
+    responses(
+        (status = 200, description = "Input-completion suggestions"),
+    )
+)]
 pub async fn get_suggestions_handler(
     State(state): State<ServerState>,
     Query(params): Query<SuggestionsQuery>,
@@ -108,7 +121,7 @@ pub async fn get_suggestions_handler(
     }
 
     // Sort by priority (descending) and limit
-    suggestions.sort_by(|a, b| b.priority.unwrap_or(0).cmp(&a.priority.unwrap_or(0)));
+    suggestions.sort_by_key(|s| std::cmp::Reverse(s.priority.unwrap_or(0)));
     suggestions.truncate(limit);
 
     let context = SuggestionContext {
@@ -360,7 +373,7 @@ async fn generate_recent_operation_suggestions(state: &ServerState) -> Vec<Sugge
 
     // Generate suggestions from common operations (top 3)
     let mut ops: Vec<_> = operation_counts.into_iter().collect();
-    ops.sort_by(|a, b| b.1.cmp(&a.1));
+    ops.sort_by_key(|&(_, c)| std::cmp::Reverse(c));
 
     for (operation, count) in ops.into_iter().take(3) {
         if count > 1 {
@@ -483,6 +496,14 @@ fn generate_system_suggestions() -> Vec<SuggestionItem> {
 }
 
 /// Get suggestions categories
+#[utoipa::path(
+    get,
+    path = "/api/suggestions/categories",
+    tag = "suggestions",
+    responses(
+        (status = 200, description = "Suggestion category keys"),
+    )
+)]
 pub async fn get_suggestions_categories_handler() -> ResponseJson<Vec<String>> {
     ResponseJson(vec![
         "device".to_string(),

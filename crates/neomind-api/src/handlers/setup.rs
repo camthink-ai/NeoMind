@@ -88,6 +88,14 @@ pub struct LlmConfigRequest {
 /// Returns whether the system needs initial setup (no users exist).
 /// This endpoint is public and used by the frontend to decide whether
 /// to show the login page or setup wizard.
+#[utoipa::path(
+    get,
+    path = "/api/setup/status",
+    tag = "setup",
+    responses(
+        (status = 200, description = "Whether first-run setup is required"),
+    )
+)]
 pub async fn setup_status_handler(
     State(state): State<ServerState>,
 ) -> Result<Json<SetupStatusResponse>, ErrorResponse> {
@@ -109,6 +117,15 @@ pub async fn setup_status_handler(
 /// Per-IP throttled (every attempt counts): an unconfigured device exposes
 /// this endpoint to the network, and racing to claim the admin account is
 /// the highest-value brute-force target on the box.
+#[utoipa::path(
+    post,
+    path = "/api/setup/initialize",
+    tag = "setup",
+    request_body = InitializeAdminRequest,
+    responses(
+        (status = 200, description = "Admin account created and setup marked started"),
+    )
+)]
 pub async fn initialize_admin_handler(
     State(state): State<ServerState>,
     axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
@@ -232,6 +249,14 @@ pub async fn initialize_admin_handler(
 /// Complete setup.
 ///
 /// Marks setup as complete. Called after all setup steps are done.
+#[utoipa::path(
+    post,
+    path = "/api/setup/complete",
+    tag = "setup",
+    responses(
+        (status = 200, description = "Setup wizard finished"),
+    )
+)]
 pub async fn complete_setup_handler(
     State(state): State<ServerState>,
 ) -> Result<Json<serde_json::Value>, ErrorResponse> {
@@ -258,6 +283,15 @@ pub async fn complete_setup_handler(
 /// Save LLM configuration during setup.
 ///
 /// Allows configuring the LLM backend during the setup wizard.
+#[utoipa::path(
+    post,
+    path = "/api/setup/llm-config",
+    tag = "setup",
+    request_body = LlmConfigRequest,
+    responses(
+        (status = 200, description = "Wizard LLM choice saved and activated"),
+    )
+)]
 pub async fn save_llm_config_handler(
     State(state): State<ServerState>,
     Json(req): Json<LlmConfigRequest>,

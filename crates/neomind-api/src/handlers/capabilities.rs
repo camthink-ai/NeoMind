@@ -84,6 +84,14 @@ fn json_to_device_metric_value(value: serde_json::Value) -> DeviceMetricValue {
 ///
 /// Returns the list of standard capabilities that extensions can request
 /// and information about their availability.
+#[utoipa::path(
+    get,
+    path = "/api/capabilities",
+    tag = "capabilities",
+    responses(
+        (status = 200, description = "Static capability registry"),
+    )
+)]
 pub async fn list_capabilities_handler(
     State(_state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -110,6 +118,18 @@ pub async fn list_capabilities_handler(
 /// Query a specific capability.
 ///
 /// Returns detailed information about a specific capability.
+#[utoipa::path(
+    get,
+    path = "/api/capabilities/{name}",
+    tag = "capabilities",
+    params(
+        ("name" = String, Path, description = "Capability name"),
+    ),
+    responses(
+        (status = 200, description = "One capability descriptor"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_capability_handler(
     State(_state): State<ServerState>,
     axum::extract::Path(capability_name): axum::extract::Path<String>,

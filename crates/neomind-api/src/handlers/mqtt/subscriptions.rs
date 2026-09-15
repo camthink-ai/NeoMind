@@ -19,6 +19,14 @@ use neomind_devices::adapters::mqtt::MqttAdapter;
 /// List MQTT subscriptions.
 ///
 /// GET /api/mqtt/subscriptions
+#[utoipa::path(
+    get,
+    path = "/api/mqtt/subscriptions",
+    tag = "mqtt",
+    responses(
+        (status = 200, description = "Active device telemetry subscriptions"),
+    )
+)]
 pub async fn list_subscriptions_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -62,6 +70,15 @@ pub async fn list_subscriptions_handler(
 /// Subscribe to a topic.
 ///
 /// POST /api/mqtt/subscribe
+#[utoipa::path(
+    post,
+    path = "/api/mqtt/subscribe",
+    tag = "mqtt",
+    request_body = MqttSubscribeRequest,
+    responses(
+        (status = 200, description = "Topic filter subscribed"),
+    )
+)]
 pub async fn subscribe_handler(
     State(state): State<ServerState>,
     Json(req): Json<MqttSubscribeRequest>,
@@ -140,6 +157,15 @@ pub async fn subscribe_handler(
 /// Unsubscribe from a topic.
 ///
 /// POST /api/mqtt/unsubscribe
+#[utoipa::path(
+    post,
+    path = "/api/mqtt/unsubscribe",
+    tag = "mqtt",
+    request_body = MqttUnsubscribeRequest,
+    responses(
+        (status = 200, description = "Topic filter unsubscribed"),
+    )
+)]
 pub async fn unsubscribe_handler(
     State(state): State<ServerState>,
     Json(req): Json<MqttUnsubscribeRequest>,
@@ -211,6 +237,18 @@ pub async fn unsubscribe_handler(
 /// Subscribe to a device's metrics.
 ///
 /// POST /api/mqtt/subscribe/:device_id
+#[utoipa::path(
+    post,
+    path = "/api/mqtt/subscribe/{device_id}",
+    tag = "mqtt",
+    params(
+        ("device_id" = String, Path, description = "Device id"),
+    ),
+    responses(
+        (status = 200, description = "Device marked for telemetry ingestion"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn subscribe_device_handler(
     State(state): State<ServerState>,
     Path(device_id): Path<String>,
@@ -239,6 +277,18 @@ pub async fn subscribe_device_handler(
 /// Unsubscribe from a device's metrics.
 ///
 /// POST /api/mqtt/unsubscribe/:device_id
+#[utoipa::path(
+    post,
+    path = "/api/mqtt/unsubscribe/{device_id}",
+    tag = "mqtt",
+    params(
+        ("device_id" = String, Path, description = "Device id"),
+    ),
+    responses(
+        (status = 200, description = "Device telemetry ingestion stopped"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn unsubscribe_device_handler(
     State(state): State<ServerState>,
     Path(device_id): Path<String>,

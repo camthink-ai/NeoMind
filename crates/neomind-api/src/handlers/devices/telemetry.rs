@@ -5,7 +5,6 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::OnceLock;
-use utoipa::path;
 
 use crate::handlers::{
     common::{ok, HandlerResult},
@@ -562,7 +561,7 @@ pub async fn get_device_telemetry_handler(
                             let total = all_points.len();
                             let paginated: Vec<_> = all_points
                                 .into_iter()
-                                .filter(|(ts, _)| cursor_ts.map_or(true, |ct| *ts < ct))
+                                .filter(|(ts, _)| cursor_ts.is_none_or(|ct| *ts < ct))
                                 .rev() // newest first without sorting
                                 .skip(effective_offset)
                                 .take(limit)
@@ -604,7 +603,7 @@ pub async fn get_device_telemetry_handler(
                                     // Same cursor boundary filter as the primary path.
                                     let paginated: Vec<_> = all_points
                                         .into_iter()
-                                        .filter(|p| cursor_ts.map_or(true, |ct| p.timestamp < ct))
+                                        .filter(|p| cursor_ts.is_none_or(|ct| p.timestamp < ct))
                                         .rev()
                                         .skip(effective_offset)
                                         .take(limit)
@@ -1027,6 +1026,18 @@ fn metric_value_to_json(value: &neomind_devices::MetricValue) -> serde_json::Val
 ///
 /// Query parameters:
 /// - limit: maximum number of commands to return (default: 50)
+#[utoipa::path(
+    get,
+    path = "/api/devices/{id}/commands",
+    tag = "telemetry",
+    params(
+        ("id" = String, Path, description = "Device id"),
+    ),
+    responses(
+        (status = 200, description = "Command history for a device"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_device_command_history_handler(
     State(state): State<ServerState>,
     Path(device_id): Path<String>,
@@ -1259,50 +1270,6 @@ pub async fn analyze_metric_timestamps_handler(
     }))
 }
 
-#[cfg(test)]
-mod aggregate_contract_tests {
-    use super::*;
-
-    fn sample_agg() -> neomind_devices::telemetry::AggregatedData {
-        neomind_devices::telemetry::AggregatedData {
-            start_timestamp: 1,
-            end_timestamp: 2,
-            count: 4,
-            avg: Some(25.0),
-            min: Some(10.0),
-            max: Some(40.0),
-            sum: Some(100.0),
-            first: None,
-            last: Some(neomind_devices::MetricValue::Float(31.5)),
-        }
-    }
-
-    /// The P0: `value` must reflect the REQUESTED aggregate — it was
-    /// hardcoded to avg, so ?aggregate=max returned the average.
-    #[test]
-    fn aggregate_value_reflects_requested_function() {
-        let agg = sample_agg();
-        assert_eq!(aggregate_value(&agg, None), json!(25.0), "default is avg");
-        assert_eq!(aggregate_value(&agg, Some("avg")), json!(25.0));
-        assert_eq!(aggregate_value(&agg, Some("min")), json!(10.0));
-        assert_eq!(aggregate_value(&agg, Some("max")), json!(40.0));
-        assert_eq!(aggregate_value(&agg, Some("sum")), json!(100.0));
-        assert_eq!(aggregate_value(&agg, Some("last")), json!(31.5));
-    }
-
-    #[test]
-    fn aggregate_value_null_on_non_numeric_window() {
-        let mut agg = sample_agg();
-        agg.avg = None;
-        agg.min = None;
-        agg.max = None;
-        agg.sum = None;
-        agg.last = None;
-        assert_eq!(aggregate_value(&agg, Some("avg")), json!(null));
-        assert_eq!(aggregate_value(&agg, Some("last")), json!(null));
-    }
-}
-
 /// One summary entry: telemetry aggregate+latest, else DeviceService cache.
 /// Returns None when neither source has data for the metric.
 #[allow(clippy::too_many_arguments)]
@@ -1357,5 +1324,49 @@ async fn build_summary_entry(
         })
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod aggregate_contract_tests {
+    use super::*;
+
+    fn sample_agg() -> neomind_devices::telemetry::AggregatedData {
+        neomind_devices::telemetry::AggregatedData {
+            start_timestamp: 1,
+            end_timestamp: 2,
+            count: 4,
+            avg: Some(25.0),
+            min: Some(10.0),
+            max: Some(40.0),
+            sum: Some(100.0),
+            first: None,
+            last: Some(neomind_devices::MetricValue::Float(31.5)),
+        }
+    }
+
+    /// The P0: `value` must reflect the REQUESTED aggregate — it was
+    /// hardcoded to avg, so ?aggregate=max returned the average.
+    #[test]
+    fn aggregate_value_reflects_requested_function() {
+        let agg = sample_agg();
+        assert_eq!(aggregate_value(&agg, None), json!(25.0), "default is avg");
+        assert_eq!(aggregate_value(&agg, Some("avg")), json!(25.0));
+        assert_eq!(aggregate_value(&agg, Some("min")), json!(10.0));
+        assert_eq!(aggregate_value(&agg, Some("max")), json!(40.0));
+        assert_eq!(aggregate_value(&agg, Some("sum")), json!(100.0));
+        assert_eq!(aggregate_value(&agg, Some("last")), json!(31.5));
+    }
+
+    #[test]
+    fn aggregate_value_null_on_non_numeric_window() {
+        let mut agg = sample_agg();
+        agg.avg = None;
+        agg.min = None;
+        agg.max = None;
+        agg.sum = None;
+        agg.last = None;
+        assert_eq!(aggregate_value(&agg, Some("avg")), json!(null));
+        assert_eq!(aggregate_value(&agg, Some("last")), json!(null));
     }
 }

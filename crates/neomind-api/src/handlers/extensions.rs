@@ -234,6 +234,17 @@ pub struct ExecuteCommandRequest {
 
 /// GET /api/extensions
 /// List all registered extensions (including failed to load).
+#[utoipa::path(
+    get,
+    path = "/api/extensions",
+    tag = "extensions",
+    params(
+        ("state" = Option<String>, Query, description = "Filter by lifecycle state"),
+    ),
+    responses(
+        (status = 200, description = "Registered extensions"),
+    )
+)]
 pub async fn list_extensions_handler(
     State(state): State<ServerState>,
     Query(query): Query<ListExtensionsQuery>,
@@ -433,6 +444,18 @@ fn extension_info_to_dto(
 
 /// GET /api/extensions/:id
 /// Get a specific extension.
+#[utoipa::path(
+    get,
+    path = "/api/extensions/{id}",
+    tag = "extensions",
+    params(
+        ("id" = String, Path, description = "Extension id"),
+    ),
+    responses(
+        (status = 200, description = "Extension metadata"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_extension_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -450,6 +473,14 @@ pub async fn get_extension_handler(
 
 /// GET /api/extensions/types
 /// List available extension types.
+#[utoipa::path(
+    get,
+    path = "/api/extensions/types",
+    tag = "extensions",
+    responses(
+        (status = 200, description = "Static list of built-in extension types"),
+    )
+)]
 pub async fn list_extension_types_handler() -> HandlerResult<Vec<ExtensionTypeDto>> {
     let types = vec![
         ExtensionTypeDto {
@@ -555,6 +586,15 @@ pub(crate) fn resolve_confined_package_path(raw: &str) -> Result<PathBuf, ErrorR
 
 /// POST /api/extensions
 /// Register a new extension from file path.
+#[utoipa::path(
+    post,
+    path = "/api/extensions",
+    tag = "extensions",
+    request_body = RegisterExtensionRequest,
+    responses(
+        (status = 200, description = "Extension registered from a path"),
+    )
+)]
 pub async fn register_extension_handler(
     State(state): State<ServerState>,
     Json(req): Json<RegisterExtensionRequest>,
@@ -622,6 +662,18 @@ pub async fn register_extension_handler(
 
 /// DELETE /api/extensions/:id
 /// Unregister an extension.
+#[utoipa::path(
+    delete,
+    path = "/api/extensions/{id}",
+    tag = "extensions",
+    params(
+        ("id" = String, Path, description = "Extension id"),
+    ),
+    responses(
+        (status = 200, description = "Extension unregistered (files kept)"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn unregister_extension_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -706,6 +758,18 @@ async fn cleanup_extension_metrics(state: &ServerState, extension_id: &str) {
 ///
 /// Note: In the new extension system, extensions are always active once registered.
 /// This endpoint exists for API compatibility only.
+#[utoipa::path(
+    post,
+    path = "/api/extensions/{id}/start",
+    tag = "extensions",
+    params(
+        ("id" = String, Path, description = "Extension id"),
+    ),
+    responses(
+        (status = 200, description = "Extension started"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn start_extension_handler(
     State(_state): State<ServerState>,
     Path(id): Path<String>,
@@ -723,6 +787,18 @@ pub async fn start_extension_handler(
 ///
 /// Note: In the new extension system, extensions cannot be stopped.
 /// They remain active until unregistered. This endpoint exists for API compatibility only.
+#[utoipa::path(
+    post,
+    path = "/api/extensions/{id}/stop",
+    tag = "extensions",
+    params(
+        ("id" = String, Path, description = "Extension id"),
+    ),
+    responses(
+        (status = 200, description = "Extension stopped"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn stop_extension_handler(
     State(_state): State<ServerState>,
     Path(id): Path<String>,
@@ -737,6 +813,18 @@ pub async fn stop_extension_handler(
 
 /// GET /api/extensions/:id/health
 /// Check extension health.
+#[utoipa::path(
+    get,
+    path = "/api/extensions/{id}/health",
+    tag = "extensions",
+    params(
+        ("id" = String, Path, description = "Extension id"),
+    ),
+    responses(
+        (status = 200, description = "Extension health snapshot"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn extension_health_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -773,6 +861,18 @@ pub struct ExtensionLogEntryDto {
 
 /// GET /api/extensions/:id/logs
 /// Get extension log entries.
+#[utoipa::path(
+    get,
+    path = "/api/extensions/{id}/logs",
+    tag = "extensions",
+    params(
+        ("id" = String, Path, description = "Extension id"),
+    ),
+    responses(
+        (status = 200, description = "Recent extension log lines"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_extension_logs_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -804,6 +904,18 @@ pub async fn get_extension_logs_handler(
 
 /// DELETE /api/extensions/:id/logs
 /// Clear extension log entries.
+#[utoipa::path(
+    delete,
+    path = "/api/extensions/{id}/logs",
+    tag = "extensions",
+    params(
+        ("id" = String, Path, description = "Extension id"),
+    ),
+    responses(
+        (status = 200, description = "Extension logs cleared"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn clear_extension_logs_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -921,6 +1033,19 @@ async fn publish_extension_metrics(
 /// Execute a command on an extension.
 ///
 /// Includes panic protection to prevent server crashes from buggy extensions.
+#[utoipa::path(
+    post,
+    path = "/api/extensions/{id}/command",
+    tag = "extensions",
+    params(
+        ("id" = String, Path, description = "Extension id"),
+    ),
+    request_body = ExecuteCommandRequest,
+    responses(
+        (status = 200, description = "Command dispatched; result payload returned"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn execute_extension_command_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -1021,6 +1146,19 @@ pub struct InvokeExtensionRequest {
 ///
 /// This is a simplified version of execute_extension_command_handler
 /// that returns results in a more JSON-friendly format for AI agents.
+#[utoipa::path(
+    post,
+    path = "/api/extensions/{id}/invoke",
+    tag = "extensions",
+    params(
+        ("id" = String, Path, description = "Extension id"),
+    ),
+    request_body = InvokeExtensionRequest,
+    responses(
+        (status = 200, description = "Tool-style invocation of an extension entry point"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn invoke_extension_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -1176,6 +1314,18 @@ pub struct DataSourceInfoDto {
 /// GET /api/extensions/:id/commands
 ///
 /// List all commands for an extension (V2 format)
+#[utoipa::path(
+    get,
+    path = "/api/extensions/{id}/commands",
+    tag = "extensions",
+    params(
+        ("id" = String, Path, description = "Extension id"),
+    ),
+    responses(
+        (status = 200, description = "Toolbox commands exposed by an extension"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn list_extension_commands_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -1265,6 +1415,19 @@ async fn refresh_tool_registry_disabled(state: &ServerState) {
 /// extension's tools from the LLM-facing list; `enabled=true` restores them
 /// (subject to per-command disables). Storage is the source of truth; the
 /// live ToolRegistry is refreshed from storage after the write.
+#[utoipa::path(
+    patch,
+    path = "/api/extensions/{id}/enabled",
+    tag = "extensions",
+    params(
+        ("id" = String, Path, description = "Extension id"),
+    ),
+    request_body = SetToolEnabledRequest,
+    responses(
+        (status = 200, description = "Master enable flag updated"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn set_extension_enabled_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -1302,6 +1465,20 @@ pub async fn set_extension_enabled_handler(
 /// `disabled_commands`; `enabled=true` removes it. Master `enabled` flag is
 /// untouched. Storage is the source of truth; the live ToolRegistry is
 /// refreshed from storage after the write.
+#[utoipa::path(
+    patch,
+    path = "/api/extensions/{id}/commands/{cmd}/enabled",
+    tag = "extensions",
+    params(
+        ("id" = String, Path, description = "Extension id"),
+        ("cmd" = String, Path, description = "Command name"),
+    ),
+    request_body = SetToolEnabledRequest,
+    responses(
+        (status = 200, description = "Per-command enable flag updated"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn set_extension_command_enabled_handler(
     State(state): State<ServerState>,
     Path((id, cmd)): Path<(String, String)>,
@@ -1346,6 +1523,18 @@ pub async fn set_extension_command_enabled_handler(
 /// GET /api/extensions/:id/event-subscriptions
 ///
 /// Get event subscriptions for an extension.
+#[utoipa::path(
+    get,
+    path = "/api/extensions/{id}/event-subscriptions",
+    tag = "extensions",
+    params(
+        ("id" = String, Path, description = "Extension id"),
+    ),
+    responses(
+        (status = 200, description = "Server events an extension subscribes to"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_event_subscriptions_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -1365,6 +1554,18 @@ pub async fn get_event_subscriptions_handler(
 /// GET /api/extensions/:id/descriptor
 ///
 /// Get the full extension descriptor (metadata, commands, metrics, capabilities).
+#[utoipa::path(
+    get,
+    path = "/api/extensions/{id}/descriptor",
+    tag = "extensions",
+    params(
+        ("id" = String, Path, description = "Extension id"),
+    ),
+    responses(
+        (status = 200, description = "Raw extension descriptor (manifest)"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_extension_descriptor_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -1397,6 +1598,23 @@ pub async fn get_extension_descriptor_handler(
 /// Query historical data for an extension metric
 ///
 /// Uses typed DataSourceId for data source identification.
+#[utoipa::path(
+    get,
+    path = "/api/extensions/{id}/metrics/{metric}/data",
+    tag = "extensions",
+    params(
+        ("id" = String, Path, description = "Extension id"),
+        ("metric" = String, Path, description = "Metric name"),
+        ("start" = Option<i64>, Query, description = "Unix-seconds range start"),
+        ("end" = Option<i64>, Query, description = "Unix-seconds range end"),
+        ("limit" = Option<usize>, Query, description = "Max points"),
+        ("hours" = Option<i64>, Query, description = "Lookback window in hours (alternative to start/end)"),
+    ),
+    responses(
+        (status = 200, description = "Time-range points for an extension metric"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn query_extension_metric_data_handler(
     State(state): State<ServerState>,
     Path((extension_id, metric)): Path<(String, String)>,
@@ -1480,6 +1698,19 @@ pub async fn query_extension_metric_data_handler(
 /// enabling real-time data updates without waiting for the next poll cycle.
 ///
 /// Body: `{ "metrics": { "temperature_c": 23.2, "humidity": 80 } }`
+#[utoipa::path(
+    post,
+    path = "/api/extensions/{id}/push-metrics",
+    tag = "extensions",
+    params(
+        ("id" = String, Path, description = "Extension id"),
+    ),
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Metrics accepted for persistence"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn push_extension_metrics_handler(
     State(state): State<ServerState>,
     Path(extension_id): Path<String>,
@@ -1595,6 +1826,18 @@ pub async fn push_extension_metrics_handler(
 /// List data sources (metrics) provided by an extension
 ///
 /// Uses typed DataSourceId for clean data source identification.
+#[utoipa::path(
+    get,
+    path = "/api/extensions/{id}/data-sources",
+    tag = "extensions",
+    params(
+        ("id" = String, Path, description = "Extension id"),
+    ),
+    responses(
+        (status = 200, description = "Data sources contributed by an extension"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn list_extension_data_sources_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -1672,6 +1915,14 @@ pub struct ExtensionToolDto {
 /// Get all extension capabilities for dashboard/automation integration
 ///
 /// V2: Uses extension metrics and command parameters schema
+#[utoipa::path(
+    get,
+    path = "/api/extensions/capabilities",
+    tag = "extensions",
+    responses(
+        (status = 200, description = "Capabilities contributed by every extension"),
+    )
+)]
 pub async fn list_extension_capabilities_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<Vec<ExtensionCapabilityDto>> {
@@ -2107,6 +2358,14 @@ pub struct MarketplaceInstallResponse {
 /// GET /api/extensions/market/list
 ///
 /// List available extensions from the marketplace
+#[utoipa::path(
+    get,
+    path = "/api/extensions/market/list",
+    tag = "extensions",
+    responses(
+        (status = 200, description = "Marketplace catalog"),
+    )
+)]
 pub async fn list_marketplace_extensions_handler(
     State(_state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -2185,6 +2444,18 @@ pub async fn list_marketplace_extensions_handler(
 /// GET /api/extensions/market/:id
 ///
 /// Get detailed metadata for a specific extension from marketplace
+#[utoipa::path(
+    get,
+    path = "/api/extensions/market/{id}",
+    tag = "extensions",
+    params(
+        ("id" = String, Path, description = "Extension id"),
+    ),
+    responses(
+        (status = 200, description = "Marketplace listing detail"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_marketplace_extension_handler(
     State(_state): State<ServerState>,
     Path(id): Path<String>,
@@ -2237,6 +2508,18 @@ pub struct ExtensionReadmeResponse {
 /// Returns `{ content: null }` when the README does not exist or the fetch
 /// fails — README is optional, so this best-effort endpoint never reports a
 /// hard error (the frontend just hides the README section).
+#[utoipa::path(
+    get,
+    path = "/api/extensions/market/{id}/readme",
+    tag = "extensions",
+    params(
+        ("id" = String, Path, description = "Extension id"),
+    ),
+    responses(
+        (status = 200, description = "Marketplace listing README (markdown)"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_marketplace_extension_readme_handler(
     State(_state): State<ServerState>,
     Path(id): Path<String>,
@@ -2444,6 +2727,15 @@ fn compute_sha256_of_file(path: &std::path::Path) -> std::io::Result<String> {
 /// POST /api/extensions/market/install
 ///
 /// Download and install an extension from the marketplace
+#[utoipa::path(
+    post,
+    path = "/api/extensions/market/install",
+    tag = "extensions",
+    request_body = MarketplaceInstallRequest,
+    responses(
+        (status = 200, description = "Marketplace extension downloaded and installed"),
+    )
+)]
 pub async fn install_marketplace_extension_handler(
     State(state): State<ServerState>,
     Json(req): Json<MarketplaceInstallRequest>,
@@ -3129,6 +3421,14 @@ pub async fn install_marketplace_extension_handler(
 /// GET /api/extensions/market/updates
 ///
 /// Check for updates for installed extensions
+#[utoipa::path(
+    get,
+    path = "/api/extensions/market/updates",
+    tag = "extensions",
+    responses(
+        (status = 200, description = "Available updates for installed extensions"),
+    )
+)]
 pub async fn check_marketplace_updates_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -3201,6 +3501,18 @@ pub async fn check_marketplace_updates_handler(
 /// GET /api/extensions/:id/config
 ///
 /// Get the configuration schema and current values for an extension.
+#[utoipa::path(
+    get,
+    path = "/api/extensions/{id}/config",
+    tag = "extensions",
+    params(
+        ("id" = String, Path, description = "Extension id"),
+    ),
+    responses(
+        (status = 200, description = "Extension config panel values"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_extension_config_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -3244,6 +3556,19 @@ pub async fn get_extension_config_handler(
 ///
 /// Note: This updates the stored configuration. The extension will need to be
 /// reloaded for the new configuration to take effect.
+#[utoipa::path(
+    put,
+    path = "/api/extensions/{id}/config",
+    tag = "extensions",
+    params(
+        ("id" = String, Path, description = "Extension id"),
+    ),
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Config panel values saved"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn update_extension_config_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -3321,6 +3646,18 @@ pub async fn update_extension_config_handler(
 /// Uses the unified extension service which handles both native and WASM extensions
 /// via process isolation.
 #[axum::debug_handler]
+#[utoipa::path(
+    post,
+    path = "/api/extensions/{id}/reload",
+    tag = "extensions",
+    params(
+        ("id" = String, Path, description = "Extension id"),
+    ),
+    responses(
+        (status = 200, description = "Extension reloaded from disk"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn reload_extension_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -3788,6 +4125,18 @@ pub struct FrontendConfigDef {
 
 /// GET /api/extensions/:id/components
 /// Get dashboard components provided by an extension.
+#[utoipa::path(
+    get,
+    path = "/api/extensions/{id}/components",
+    tag = "extensions",
+    params(
+        ("id" = String, Path, description = "Extension id"),
+    ),
+    responses(
+        (status = 200, description = "Frontend components contributed by an extension"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_extension_components_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -4097,6 +4446,14 @@ pub async fn serve_extension_asset_handler(
 ///
 /// This endpoint only returns components from extensions that are currently registered.
 /// When an extension is unregistered, its components will no longer appear.
+#[utoipa::path(
+    get,
+    path = "/api/extensions/dashboard-components",
+    tag = "extensions",
+    responses(
+        (status = 200, description = "Dashboard components contributed by every extension"),
+    )
+)]
 pub async fn get_all_dashboard_components_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<Vec<DashboardComponentDto>> {
@@ -4292,6 +4649,18 @@ pub struct ValidatePackageRequest {
 
 /// DELETE /api/extensions/:id/uninstall
 /// Completely uninstall an extension (remove all files).
+#[utoipa::path(
+    delete,
+    path = "/api/extensions/{id}/uninstall",
+    tag = "extensions",
+    params(
+        ("id" = String, Path, description = "Extension id"),
+    ),
+    responses(
+        (status = 200, description = "Extension uninstalled and files removed"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn uninstall_extension_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -4406,6 +4775,15 @@ pub struct UploadExtensionFileRequest {
 }
 
 #[axum::debug_handler]
+#[utoipa::path(
+    post,
+    path = "/api/extensions/upload/file",
+    tag = "extensions",
+    request_body = UploadExtensionFileRequest,
+    responses(
+        (status = 200, description = "Package file accepted for staging (100MB limit)"),
+    )
+)]
 pub async fn upload_extension_file_handler(
     State(state): State<ServerState>,
     Json(req): Json<UploadExtensionFileRequest>,
@@ -4675,6 +5053,14 @@ pub(crate) async fn register_installed_package(
     Ok(())
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/extensions/sync",
+    tag = "extensions",
+    responses(
+        (status = 200, description = "Extensions directory re-scanned"),
+    )
+)]
 pub async fn sync_extensions_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -4721,6 +5107,14 @@ pub async fn sync_extensions_handler(
 }
 
 /// GET /api/extensions/sync-status
+#[utoipa::path(
+    get,
+    path = "/api/extensions/sync-status",
+    tag = "extensions",
+    responses(
+        (status = 200, description = "Last sync result"),
+    )
+)]
 pub async fn get_sync_status_handler(
     State(_state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {

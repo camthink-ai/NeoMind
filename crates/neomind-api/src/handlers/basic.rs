@@ -42,6 +42,14 @@ pub struct ReadinessStatus {
 }
 
 /// Basic health check handler (public endpoint).
+#[utoipa::path(
+    get,
+    path = "/api/health",
+    tag = "health",
+    responses(
+        (status = 200, description = "Basic service health"),
+    )
+)]
 pub async fn health_handler() -> Json<serde_json::Value> {
     Json(json!({
         "status": "ok",
@@ -51,6 +59,14 @@ pub async fn health_handler() -> Json<serde_json::Value> {
 }
 
 /// Detailed health check with uptime.
+#[utoipa::path(
+    get,
+    path = "/api/health/status",
+    tag = "health",
+    responses(
+        (status = 200, description = "Detailed component health (devices, storage, brokers)"),
+    )
+)]
 pub async fn health_status_handler(State(state): State<ServerState>) -> Json<HealthStatus> {
     let uptime = chrono::Utc::now().timestamp() - state.started_at;
 
@@ -63,6 +79,14 @@ pub async fn health_status_handler(State(state): State<ServerState>) -> Json<Hea
 }
 
 /// Liveness probe - simple check if server is running.
+#[utoipa::path(
+    get,
+    path = "/api/health/live",
+    tag = "health",
+    responses(
+        (status = 200, description = "Liveness probe"),
+    )
+)]
 pub async fn liveness_handler() -> Json<serde_json::Value> {
     Json(json!({
         "status": "alive",
@@ -90,6 +114,14 @@ pub async fn liveness_handler() -> Json<serde_json::Value> {
 /// `ready` gates on what can be truly verified: database && llm (a chat
 /// platform minimally needs storage + a configured model). MQTT status is
 /// surfaced for diagnosis but does not gate readiness in external mode.
+#[utoipa::path(
+    get,
+    path = "/api/health/ready",
+    tag = "health",
+    responses(
+        (status = 200, description = "Readiness probe"),
+    )
+)]
 pub async fn readiness_handler(State(state): State<ServerState>) -> Json<ReadinessStatus> {
     // Database: a real redb open + read proves storage is accessible.
     let database = crate::config::open_settings_store()
@@ -140,6 +172,14 @@ pub async fn readiness_handler(State(state): State<ServerState>) -> Json<Readine
 /// Get local network info (WiFi SSID, LAN IP) for BLE provisioning.
 ///
 /// `GET /api/system/network-info`
+#[utoipa::path(
+    get,
+    path = "/api/system/network-info",
+    tag = "system",
+    responses(
+        (status = 200, description = "Server network interfaces and addresses"),
+    )
+)]
 pub async fn network_info_handler(
     headers: axum::http::HeaderMap,
 ) -> HandlerResult<serde_json::Value> {
@@ -225,6 +265,14 @@ fn get_wifi_ssid() -> Option<String> {
 /// Counters only (HTTP totals, EventBus drops, uptime, build info) — no
 /// per-user/device data, so it stays unauthenticated like the health checks.
 /// See `crate::metrics` for the rationale behind each metric.
+#[utoipa::path(
+    get,
+    path = "/api/metrics",
+    tag = "system",
+    responses(
+        (status = 200, description = "Prometheus-format process metrics"),
+    )
+)]
 pub async fn metrics_handler(
     State(state): State<ServerState>,
 ) -> axum::http::Response<axum::body::Body> {

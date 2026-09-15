@@ -6,7 +6,6 @@ use axum::{
     response::{IntoResponse, Json},
 };
 use serde::{Deserialize, Serialize};
-use utoipa::path;
 
 use crate::auth::{ApiKeyInfo, AuthError};
 use crate::server::ServerState;
@@ -162,6 +161,18 @@ pub async fn create_key_handler(
 }
 
 /// Delete an API key by ID (requires authentication).
+#[utoipa::path(
+    delete,
+    path = "/api/auth/keys/{id}",
+    tag = "auth",
+    params(
+        ("id" = String, Path, description = "API key id"),
+    ),
+    responses(
+        (status = 200, description = "Key revoked; it can no longer authenticate requests"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn delete_key_handler(
     State(state): State<ServerState>,
     headers: HeaderMap,
@@ -200,6 +211,14 @@ pub async fn delete_key_handler(
 }
 
 /// Get authentication status (public endpoint - no auth required).
+#[utoipa::path(
+    get,
+    path = "/api/auth/status",
+    tag = "auth",
+    responses(
+        (status = 200, description = "Whether API-key auth is enabled (no credentials required)"),
+    )
+)]
 pub async fn auth_status_handler(State(state): State<ServerState>) -> Json<AuthStatusResponse> {
     let keys = state.auth.api_key_state.list_keys().await;
     let key_count = keys.len();

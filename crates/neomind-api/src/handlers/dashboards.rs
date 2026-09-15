@@ -475,6 +475,18 @@ fn stored_template_to_api(template: &StoredTemplate) -> DashboardTemplate {
 ///
 /// Performance optimization: Supports pagination via limit/offset query parameters.
 /// Example: GET /api/dashboards?limit=10&offset=20
+#[utoipa::path(
+    get,
+    path = "/api/dashboards",
+    tag = "dashboards",
+    params(
+        ("limit" = Option<usize>, Query, description = "Max items"),
+        ("offset" = Option<usize>, Query, description = "Skip items"),
+    ),
+    responses(
+        (status = 200, description = "Dashboards in display order"),
+    )
+)]
 pub async fn list_dashboards_handler(
     State(state): State<ServerState>,
     Query(params): Query<PaginationParams>,
@@ -514,6 +526,18 @@ pub async fn list_dashboards_handler(
 }
 
 /// Get a dashboard by ID
+#[utoipa::path(
+    get,
+    path = "/api/dashboards/{id}",
+    tag = "dashboards",
+    params(
+        ("id" = String, Path, description = "Dashboard id"),
+    ),
+    responses(
+        (status = 200, description = "One dashboard with components"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_dashboard_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -546,6 +570,15 @@ pub async fn get_dashboard_handler(
 }
 
 /// Create a new dashboard
+#[utoipa::path(
+    post,
+    path = "/api/dashboards",
+    tag = "dashboards",
+    request_body = CreateDashboardRequest,
+    responses(
+        (status = 200, description = "Dashboard created"),
+    )
+)]
 pub async fn create_dashboard_handler(
     State(state): State<ServerState>,
     Json(req): Json<CreateDashboardRequest>,
@@ -593,6 +626,19 @@ pub async fn create_dashboard_handler(
 }
 
 /// Update a dashboard
+#[utoipa::path(
+    put,
+    path = "/api/dashboards/{id}",
+    tag = "dashboards",
+    params(
+        ("id" = String, Path, description = "Dashboard id"),
+    ),
+    request_body = UpdateDashboardRequest,
+    responses(
+        (status = 200, description = "Dashboard updated"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn update_dashboard_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -664,6 +710,19 @@ pub async fn update_dashboard_handler(
 }
 
 /// Add components to a dashboard (append mode)
+#[utoipa::path(
+    post,
+    path = "/api/dashboards/{id}/components",
+    tag = "dashboards",
+    params(
+        ("id" = String, Path, description = "Dashboard id"),
+    ),
+    request_body = AddComponentsRequest,
+    responses(
+        (status = 200, description = "Components appended"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn add_components_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -748,6 +807,19 @@ pub async fn add_components_handler(
 }
 
 /// Remove components from a dashboard by ID
+#[utoipa::path(
+    delete,
+    path = "/api/dashboards/{id}/components",
+    tag = "dashboards",
+    params(
+        ("id" = String, Path, description = "Dashboard id"),
+    ),
+    request_body = RemoveComponentsRequest,
+    responses(
+        (status = 200, description = "Components removed"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn remove_components_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -816,6 +888,20 @@ fn deep_merge_json(target: &mut JsonValue, patch: &JsonValue) {
 /// Patch ONE component of a dashboard (deep merge) — the cheap way to tweak a
 /// single field (e.g. a data_source timeWindow) without round-tripping the
 /// whole component array through `dashboard update --components`.
+#[utoipa::path(
+    patch,
+    path = "/api/dashboards/{id}/components/{component_id}",
+    tag = "dashboards",
+    params(
+        ("id" = String, Path, description = "Dashboard id"),
+        ("component_id" = String, Path, description = "Component id"),
+    ),
+    request_body = UpdateComponentRequest,
+    responses(
+        (status = 200, description = "Component updated"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn update_component_handler(
     State(state): State<ServerState>,
     Path((id, component_id)): Path<(String, String)>,
@@ -875,6 +961,18 @@ pub async fn update_component_handler(
 }
 
 /// Delete a dashboard
+#[utoipa::path(
+    delete,
+    path = "/api/dashboards/{id}",
+    tag = "dashboards",
+    params(
+        ("id" = String, Path, description = "Dashboard id"),
+    ),
+    responses(
+        (status = 200, description = "Dashboard deleted"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn delete_dashboard_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -899,6 +997,18 @@ pub async fn delete_dashboard_handler(
 }
 
 /// Set default dashboard
+#[utoipa::path(
+    post,
+    path = "/api/dashboards/{id}/default",
+    tag = "dashboards",
+    params(
+        ("id" = String, Path, description = "Dashboard id"),
+    ),
+    responses(
+        (status = 200, description = "Dashboard set as default"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn set_default_dashboard_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -938,6 +1048,15 @@ pub struct ReorderDashboardsResponse {
 /// assign each its index as the new `sort_order` and persist them in a single
 /// transaction. Emits a single `DashboardUpdated` event with action `"reorder"`
 /// so other clients refetch.
+#[utoipa::path(
+    put,
+    path = "/api/dashboards/reorder",
+    tag = "dashboards",
+    request_body = ReorderDashboardsRequest,
+    responses(
+        (status = 200, description = "Display order saved"),
+    )
+)]
 pub async fn reorder_dashboards_handler(
     State(state): State<ServerState>,
     Json(req): Json<ReorderDashboardsRequest>,
@@ -971,6 +1090,14 @@ pub async fn reorder_dashboards_handler(
 }
 
 /// List dashboard templates
+#[utoipa::path(
+    get,
+    path = "/api/dashboards/templates",
+    tag = "dashboards",
+    responses(
+        (status = 200, description = "Built-in dashboard templates"),
+    )
+)]
 pub async fn list_templates_handler(
     State(_state): State<ServerState>,
 ) -> HandlerResult<Vec<DashboardTemplate>> {
@@ -979,6 +1106,18 @@ pub async fn list_templates_handler(
 }
 
 /// Get a template by ID
+#[utoipa::path(
+    get,
+    path = "/api/dashboards/templates/{id}",
+    tag = "dashboards",
+    params(
+        ("id" = String, Path, description = "Template id"),
+    ),
+    responses(
+        (status = 200, description = "One dashboard template"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_template_handler(
     State(_state): State<ServerState>,
     Path(id): Path<String>,
@@ -1034,6 +1173,19 @@ pub struct SharedDashboardResponse {
 // ============================================================================
 
 /// Create a share link for a dashboard
+#[utoipa::path(
+    post,
+    path = "/api/dashboards/{id}/share",
+    tag = "shares",
+    params(
+        ("id" = String, Path, description = "Dashboard id"),
+    ),
+    request_body = CreateShareRequest,
+    responses(
+        (status = 200, description = "Share link created"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn create_share_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -1082,6 +1234,18 @@ pub async fn create_share_handler(
 }
 
 /// List all share links for a dashboard
+#[utoipa::path(
+    get,
+    path = "/api/dashboards/{id}/share",
+    tag = "shares",
+    params(
+        ("id" = String, Path, description = "Dashboard id"),
+    ),
+    responses(
+        (status = 200, description = "Active share links of a dashboard"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn list_shares_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -1111,6 +1275,19 @@ pub async fn list_shares_handler(
 }
 
 /// Revoke a share link
+#[utoipa::path(
+    delete,
+    path = "/api/dashboards/{id}/share/{token}",
+    tag = "shares",
+    params(
+        ("id" = String, Path, description = "Dashboard id"),
+        ("token" = String, Path, description = "Share token"),
+    ),
+    responses(
+        (status = 200, description = "Share link revoked"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn revoke_share_handler(
     State(state): State<ServerState>,
     Path((id, token)): Path<(String, String)>,
@@ -1150,6 +1327,18 @@ fn validate_share_token(
 }
 
 /// Get shared dashboard data (public, no auth)
+#[utoipa::path(
+    get,
+    path = "/api/share/{token}",
+    tag = "shares",
+    params(
+        ("token" = String, Path, description = "Share token"),
+    ),
+    responses(
+        (status = 200, description = "Shared dashboard snapshot (no auth; token grant)"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_shared_dashboard_handler(
     State(state): State<ServerState>,
     Path(token): Path<String>,
@@ -1570,6 +1759,18 @@ fn build_duplicate_dashboard(
 /// are deep-cloned with fresh IDs and output_prefix; their references in the
 /// cloned components are rewritten. Device/agent/extension references stay
 /// shared (they are global resources).
+#[utoipa::path(
+    post,
+    path = "/api/dashboards/{id}/duplicate",
+    tag = "dashboards",
+    params(
+        ("id" = String, Path, description = "Dashboard id"),
+    ),
+    responses(
+        (status = 200, description = "Dashboard copied"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn duplicate_dashboard_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,

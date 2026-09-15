@@ -91,12 +91,6 @@ fn models_dir(data_dir: &Path) -> PathBuf {
 // Pinned download source (HuggingFace)
 // ---------------------------------------------------------------------------
 
-/// HuggingFace repo + `resolve/main` prefix for the builtin LFM2.5-2.6B model.
-///
-/// VERIFIED 2026-08-19 via the HF API (`/api/models/LiquidAI/LFM2.5-2.6B-GGUF/
-/// tree/main?expand=true`) + `curl -sIL` on each resolve URL. The LFS OID in
-/// the API response and the `x-linked-etag` header agree with the shas below.
-
 /// Filename *in the HF repo*. Note: this differs from our local
 /// [`model_file_name`] (`lfm25-2.6b-q4_k_m.gguf`) — the repo names files
 /// `LFM2.5-2.6B-Q4_K_M.gguf`. We download from the HF name but store under
@@ -492,6 +486,15 @@ fn sha256_of_file(path: &Path) -> Result<String, String> {
 /// model directory (validated + header-parsed), then participate in the
 /// single-model switch exactly like a downloaded builtin — other model dirs are
 /// removed, the port freed, and the server respawned for the imported model.
+#[utoipa::path(
+    post,
+    path = "/api/builtin-llm/import-local",
+    tag = "builtin-llm",
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Existing local model imported"),
+    )
+)]
 pub async fn import_local_handler(
     State(state): State<crate::server::types::ServerState>,
     Json(req): Json<serde_json::Value>,
@@ -513,6 +516,14 @@ pub async fn import_local_handler(
 /// import itself copies into `data/models/<id>/`.
 ///
 /// POST /api/builtin-llm/upload-model (multipart, field "file")
+#[utoipa::path(
+    post,
+    path = "/api/builtin-llm/upload-model",
+    tag = "builtin-llm",
+    responses(
+        (status = 200, description = "GGUF uploaded multipart (12GB limit)"),
+    )
+)]
 pub async fn upload_model_handler(
     State(state): State<crate::server::types::ServerState>,
     mut multipart: axum::extract::Multipart,
@@ -758,6 +769,14 @@ async fn import_gguf_from_path(
 // ---------------------------------------------------------------------------
 
 /// GET /api/builtin-llm/status
+#[utoipa::path(
+    get,
+    path = "/api/builtin-llm/status",
+    tag = "builtin-llm",
+    responses(
+        (status = 200, description = "Bundled LLM download/runtime status"),
+    )
+)]
 pub async fn status_handler(
     State(state): State<crate::server::types::ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -848,6 +867,14 @@ pub async fn status_handler(
 
 /// GET /api/builtin-llm/models — the installable builtin models with
 /// per-entry install state.
+#[utoipa::path(
+    get,
+    path = "/api/builtin-llm/models",
+    tag = "builtin-llm",
+    responses(
+        (status = 200, description = "Catalog entries for the bundled model"),
+    )
+)]
 pub async fn models_handler(
     State(state): State<crate::server::types::ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -963,6 +990,14 @@ pub async fn models_handler(
 /// download. The partial file is kept, so re-downloading the same model
 /// resumes; the lock is released once the task winds down, and a different
 /// model can be downloaded immediately after.
+#[utoipa::path(
+    post,
+    path = "/api/builtin-llm/download/cancel",
+    tag = "builtin-llm",
+    responses(
+        (status = 200, description = "Download cancelled"),
+    )
+)]
 pub async fn download_cancel_handler(
     State(_state): State<crate::server::types::ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -973,6 +1008,15 @@ pub async fn download_cancel_handler(
     ok(json!({ "cancelled": true }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/builtin-llm/download",
+    tag = "builtin-llm",
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Model download started (optional selection body)"),
+    )
+)]
 pub async fn download_handler(
     State(state): State<crate::server::types::ServerState>,
     payload: Option<axum::Json<serde_json::Value>>,
@@ -1310,7 +1354,7 @@ async fn spawn_builtin_server(
     instance.capabilities.supports_streaming = true;
     instance.capabilities.supports_tools = true;
     instance.capabilities.supports_thinking = installed.default_thinking;
-    instance.capabilities.max_context = ctx as usize;
+    instance.capabilities.max_context = ctx;
     // Per-model sampling: applies both as server-side defaults (above) and
     // on the request side (the instance fields are what chat sends).
     if let Some(t) = installed.temperature {
@@ -1365,6 +1409,14 @@ pub(crate) fn kill_process_on_port(_port: u16) {}
 // ---------------------------------------------------------------------------
 
 /// DELETE /api/builtin-llm/model
+#[utoipa::path(
+    delete,
+    path = "/api/builtin-llm/model",
+    tag = "builtin-llm",
+    responses(
+        (status = 200, description = "Bundled model files deleted"),
+    )
+)]
 pub async fn delete_model_handler(
     State(state): State<crate::server::types::ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -1421,6 +1473,14 @@ pub async fn delete_model_handler(
 /// already healthy it reports `already_running` and does nothing (never
 /// destroys a working server). If it is down/wedged, it frees the port
 /// (best-effort) and spawns a fresh one.
+#[utoipa::path(
+    post,
+    path = "/api/builtin-llm/restart",
+    tag = "builtin-llm",
+    responses(
+        (status = 200, description = "llama.cpp server restarted"),
+    )
+)]
 pub async fn restart_handler(
     State(state): State<crate::server::types::ServerState>,
     Query(params): Query<HashMap<String, String>>,
@@ -1518,6 +1578,14 @@ pub async fn restart_handler(
 // ---------------------------------------------------------------------------
 
 /// POST /api/builtin-llm/activate
+#[utoipa::path(
+    post,
+    path = "/api/builtin-llm/activate",
+    tag = "builtin-llm",
+    responses(
+        (status = 200, description = "Bundled backend marked active"),
+    )
+)]
 pub async fn activate_handler(
     State(state): State<crate::server::types::ServerState>,
 ) -> HandlerResult<serde_json::Value> {

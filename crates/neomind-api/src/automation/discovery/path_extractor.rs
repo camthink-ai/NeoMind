@@ -295,10 +295,9 @@ impl DataPathExtractor {
                 let bracket_part = &part[bracket_start..];
 
                 // First navigate to the key
-                if let Some(obj) = current.as_object() {
+                {
+                    let obj = current.as_object()?;
                     current = obj.get(key)?;
-                } else {
-                    return None;
                 }
 
                 // Then handle array indices or wildcards
@@ -324,28 +323,26 @@ impl DataPathExtractor {
                         }
                         // If not an array, keep current as-is
                     } else if let Ok(index) = index_str.parse::<usize>() {
-                        if let Some(arr) = current.as_array() {
+                        {
+                            let arr = current.as_array()?;
                             if index < arr.len() {
                                 current = &arr[index];
                             } else {
                                 return None;
                             }
-                        } else {
-                            return None;
                         }
                     }
                 }
             } else if part.chars().all(|c: char| c.is_ascii_digit() || c == '-') {
                 // Handle numeric array index in dot notation: sensors.0.type
                 if let Ok(index) = part.parse::<usize>() {
-                    if let Some(arr) = current.as_array() {
+                    {
+                        let arr = current.as_array()?;
                         if index < arr.len() {
                             current = &arr[index];
                         } else {
                             return None;
                         }
-                    } else {
-                        return None;
                     }
                 } else {
                     return None;

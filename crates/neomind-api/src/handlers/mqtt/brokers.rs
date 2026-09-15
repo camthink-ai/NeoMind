@@ -376,6 +376,14 @@ async fn update_broker_connection_status_no_store(
 /// List all external brokers.
 ///
 /// GET /api/brokers
+#[utoipa::path(
+    get,
+    path = "/api/brokers",
+    tag = "mqtt",
+    responses(
+        (status = 200, description = "Configured external MQTT brokers"),
+    )
+)]
 pub async fn list_brokers_handler(
     State(state): State<crate::server::types::ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -426,6 +434,18 @@ pub async fn list_brokers_handler(
 /// Get a specific external broker.
 ///
 /// GET /api/brokers/:id
+#[utoipa::path(
+    get,
+    path = "/api/brokers/{id}",
+    tag = "mqtt",
+    params(
+        ("id" = String, Path, description = "Broker id"),
+    ),
+    responses(
+        (status = 200, description = "One external broker"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_broker_handler(Path(id): Path<String>) -> HandlerResult<serde_json::Value> {
     let store = config::open_settings_store()
         .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;
@@ -446,6 +466,15 @@ pub async fn get_broker_handler(Path(id): Path<String>) -> HandlerResult<serde_j
 /// Create a new external broker.
 ///
 /// POST /api/brokers
+#[utoipa::path(
+    post,
+    path = "/api/brokers",
+    tag = "mqtt",
+    request_body = ExternalBrokerRequest,
+    responses(
+        (status = 200, description = "External broker created"),
+    )
+)]
 pub async fn create_broker_handler(
     State(state): State<ServerState>,
     Json(req): Json<ExternalBrokerRequest>,
@@ -593,6 +622,19 @@ pub async fn create_broker_handler(
 /// Update an existing external broker.
 ///
 /// PUT /api/brokers/:id
+#[utoipa::path(
+    put,
+    path = "/api/brokers/{id}",
+    tag = "mqtt",
+    params(
+        ("id" = String, Path, description = "Broker id"),
+    ),
+    request_body = ExternalBrokerRequest,
+    responses(
+        (status = 200, description = "External broker updated"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn update_broker_handler(
     Path(id): Path<String>,
     State(state): State<ServerState>,
@@ -713,6 +755,18 @@ pub async fn update_broker_handler(
 /// Delete an external broker.
 ///
 /// DELETE /api/brokers/:id
+#[utoipa::path(
+    delete,
+    path = "/api/brokers/{id}",
+    tag = "mqtt",
+    params(
+        ("id" = String, Path, description = "Broker id"),
+    ),
+    responses(
+        (status = 200, description = "External broker deleted"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn delete_broker_handler(
     Path(id): Path<String>,
     State(state): State<ServerState>,
@@ -746,6 +800,18 @@ pub async fn delete_broker_handler(
 /// Test connection to an external broker using real MQTT CONNECT/CONNACK.
 ///
 /// POST /api/brokers/:id/test
+#[utoipa::path(
+    post,
+    path = "/api/brokers/{id}/test",
+    tag = "mqtt",
+    params(
+        ("id" = String, Path, description = "Broker id"),
+    ),
+    responses(
+        (status = 200, description = "Connection test against the broker"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn test_broker_handler(Path(id): Path<String>) -> HandlerResult<serde_json::Value> {
     let store = config::open_settings_store()
         .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;

@@ -150,6 +150,14 @@ impl Default for ConfigImportOptions {
 /// Export configuration.
 ///
 /// GET /api/config/export
+#[utoipa::path(
+    get,
+    path = "/api/config/export",
+    tag = "config",
+    responses(
+        (status = 200, description = "Full configuration export"),
+    )
+)]
 pub async fn export_config_handler(
     State(state): State<ServerState>,
 ) -> Result<Json<ApiResponse<ConfigExport>>, ErrorResponse> {
@@ -213,6 +221,15 @@ pub async fn export_config_handler(
 /// Import configuration.
 ///
 /// POST /api/config/import
+#[utoipa::path(
+    post,
+    path = "/api/config/import",
+    tag = "config",
+    request_body = ConfigImport,
+    responses(
+        (status = 200, description = "Configuration imported and applied"),
+    )
+)]
 pub async fn import_config_handler(
     State(state): State<ServerState>,
     Json(import): Json<ConfigImport>,
@@ -296,6 +313,15 @@ pub async fn import_config_handler(
 /// Validate configuration without importing.
 ///
 /// POST /api/config/validate
+#[utoipa::path(
+    post,
+    path = "/api/config/validate",
+    tag = "config",
+    request_body = ConfigExport,
+    responses(
+        (status = 200, description = "Validation report (nothing applied)"),
+    )
+)]
 pub async fn validate_config_handler(
     State(_state): State<ServerState>,
     Json(config): Json<ConfigExport>,

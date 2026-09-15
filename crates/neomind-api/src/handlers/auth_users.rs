@@ -12,7 +12,6 @@ use crate::auth_users::{
     RegisterRequest, SessionInfo, UserRole,
 };
 use crate::server::ServerState;
-use utoipa::path;
 
 /// Login handler - authenticate user and return JWT token.
 ///
@@ -126,6 +125,14 @@ pub async fn register_handler(
 }
 
 /// Logout handler - invalidate the current session.
+#[utoipa::path(
+    post,
+    path = "/api/auth/logout",
+    tag = "auth",
+    responses(
+        (status = 200, description = "Session token invalidated"),
+    )
+)]
 pub async fn logout_handler(
     State(state): State<ServerState>,
     Extension(user): Extension<SessionInfo>,
@@ -149,6 +156,14 @@ pub async fn logout_handler(
 
 /// Get current user info handler.
 /// Requires JWT authentication (API key auth is not supported for user info).
+#[utoipa::path(
+    get,
+    path = "/api/auth/me",
+    tag = "auth",
+    responses(
+        (status = 200, description = "Current user profile from the JWT"),
+    )
+)]
 pub async fn get_current_user_handler(
     Extension(user): Extension<SessionInfo>,
 ) -> Result<Json<serde_json::Value>, AuthError> {
@@ -162,6 +177,14 @@ pub async fn get_current_user_handler(
 
 /// Get auth status handler for API key auth.
 /// Returns basic info when authenticated via API key (no user session).
+#[utoipa::path(
+    get,
+    path = "/api/auth/verify",
+    tag = "auth",
+    responses(
+        (status = 200, description = "Credential check (validates the presented Authorization header)"),
+    )
+)]
 pub async fn get_auth_status_handler(
     State(state): State<ServerState>,
     headers: HeaderMap,
@@ -199,6 +222,15 @@ pub async fn get_auth_status_handler(
 }
 
 /// Change password handler.
+#[utoipa::path(
+    post,
+    path = "/api/auth/change-password",
+    tag = "auth",
+    request_body = ChangePasswordRequest,
+    responses(
+        (status = 200, description = "Password changed; other sessions stay valid"),
+    )
+)]
 pub async fn change_password_handler(
     State(state): State<ServerState>,
     Extension(user): Extension<SessionInfo>,
@@ -215,6 +247,14 @@ pub async fn change_password_handler(
 }
 
 /// List all users handler (admin only).
+#[utoipa::path(
+    get,
+    path = "/api/users",
+    tag = "auth",
+    responses(
+        (status = 200, description = "All user accounts (admin only)"),
+    )
+)]
 pub async fn list_users_handler(
     State(state): State<ServerState>,
     Extension(user): Extension<SessionInfo>,
@@ -229,6 +269,15 @@ pub async fn list_users_handler(
 }
 
 /// Create a new user handler (admin only).
+#[utoipa::path(
+    post,
+    path = "/api/users",
+    tag = "auth",
+    request_body = RegisterRequest,
+    responses(
+        (status = 200, description = "User created"),
+    )
+)]
 pub async fn create_user_handler(
     State(state): State<ServerState>,
     Extension(admin_user): Extension<SessionInfo>,
@@ -258,6 +307,18 @@ pub async fn create_user_handler(
 }
 
 /// Delete user handler (admin only).
+#[utoipa::path(
+    delete,
+    path = "/api/users/{username}",
+    tag = "auth",
+    params(
+        ("username" = String, Path, description = "Username"),
+    ),
+    responses(
+        (status = 200, description = "User deleted"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn delete_user_handler(
     State(state): State<ServerState>,
     Extension(admin_user): Extension<SessionInfo>,
@@ -297,6 +358,14 @@ pub struct UpdateRegistrationSettingsRequest {
 }
 
 /// Get registration settings (admin only).
+#[utoipa::path(
+    get,
+    path = "/api/settings/registration",
+    tag = "settings",
+    responses(
+        (status = 200, description = "Whether public self-registration is open (admin only)"),
+    )
+)]
 pub async fn get_registration_settings_handler(
     State(state): State<ServerState>,
     Extension(admin_user): Extension<SessionInfo>,
@@ -314,6 +383,15 @@ pub async fn get_registration_settings_handler(
 ///
 /// When registration is closed, the only account-creation paths are the
 /// first-run setup wizard (admin) and `POST /api/users` (admin).
+#[utoipa::path(
+    put,
+    path = "/api/settings/registration",
+    tag = "settings",
+    request_body = UpdateRegistrationSettingsRequest,
+    responses(
+        (status = 200, description = "Registration gate updated"),
+    )
+)]
 pub async fn update_registration_settings_handler(
     State(state): State<ServerState>,
     Extension(admin_user): Extension<SessionInfo>,

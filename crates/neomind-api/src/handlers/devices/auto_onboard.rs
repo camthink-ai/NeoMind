@@ -132,6 +132,14 @@ async fn get_auto_onboard_manager(
 }
 
 /// List all draft devices
+#[utoipa::path(
+    get,
+    path = "/api/devices/drafts",
+    tag = "drafts",
+    responses(
+        (status = 200, description = "Auto-discovered draft devices awaiting approval"),
+    )
+)]
 pub async fn list_draft_devices(
     State(state): State<ServerState>,
 ) -> HandlerResult<DraftDevicesResponse> {
@@ -147,6 +155,18 @@ pub async fn list_draft_devices(
 }
 
 /// Get a specific draft device by ID
+#[utoipa::path(
+    get,
+    path = "/api/devices/drafts/{device_id}",
+    tag = "drafts",
+    params(
+        ("device_id" = String, Path, description = "Draft device id"),
+    ),
+    responses(
+        (status = 200, description = "One draft device with its analysis"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_draft_device(
     State(state): State<ServerState>,
     Path(device_id): Path<String>,
@@ -160,6 +180,19 @@ pub async fn get_draft_device(
 }
 
 /// Update a draft device (user edits)
+#[utoipa::path(
+    put,
+    path = "/api/devices/drafts/{device_id}",
+    tag = "drafts",
+    params(
+        ("device_id" = String, Path, description = "Draft device id"),
+    ),
+    request_body = UpdateDraftDeviceRequest,
+    responses(
+        (status = 200, description = "Draft fields updated"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn update_draft_device(
     State(state): State<ServerState>,
     Path(device_id): Path<String>,
@@ -184,6 +217,19 @@ pub async fn update_draft_device(
 /// 3. Registers the device type with DeviceService
 /// 4. Creates and registers a DeviceConfig
 /// 5. Updates the draft status to Registered
+#[utoipa::path(
+    post,
+    path = "/api/devices/drafts/{device_id}/approve",
+    tag = "drafts",
+    params(
+        ("device_id" = String, Path, description = "Draft device id"),
+    ),
+    request_body = ApproveDraftDeviceRequest,
+    responses(
+        (status = 200, description = "Draft approved; device registered"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn approve_draft_device(
     State(state): State<ServerState>,
     Path(device_id): Path<String>,
@@ -480,6 +526,19 @@ fn convert_metrics_to_template(metrics: &[DiscoveredMetric]) -> Vec<MetricDefini
 }
 
 /// Reject a draft device
+#[utoipa::path(
+    post,
+    path = "/api/devices/drafts/{device_id}/reject",
+    tag = "drafts",
+    params(
+        ("device_id" = String, Path, description = "Draft device id"),
+    ),
+    request_body = RejectDraftDeviceRequest,
+    responses(
+        (status = 200, description = "Draft rejected and removed"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn reject_draft_device(
     State(state): State<ServerState>,
     Path(device_id): Path<String>,
@@ -497,6 +556,18 @@ pub async fn reject_draft_device(
 }
 
 /// Trigger manual analysis of a draft device
+#[utoipa::path(
+    post,
+    path = "/api/devices/drafts/{device_id}/analyze",
+    tag = "drafts",
+    params(
+        ("device_id" = String, Path, description = "Draft device id"),
+    ),
+    responses(
+        (status = 200, description = "Analysis re-run for the draft"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn trigger_draft_analysis(
     State(state): State<ServerState>,
     Path(device_id): Path<String>,
@@ -533,6 +604,18 @@ pub async fn trigger_draft_analysis(
 ///
 /// This endpoint is called when user explicitly requests LLM enhancement
 /// for a draft device. It generates Chinese display names, descriptions, and units.
+#[utoipa::path(
+    post,
+    path = "/api/devices/drafts/{device_id}/enhance",
+    tag = "drafts",
+    params(
+        ("device_id" = String, Path, description = "Draft device id"),
+    ),
+    responses(
+        (status = 200, description = "LLM enrichment of the draft MDL"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn enhance_draft_with_llm(
     State(state): State<ServerState>,
     Path(device_id): Path<String>,
@@ -593,6 +676,14 @@ pub async fn enhance_draft_with_llm(
 }
 
 /// Clean up old draft devices
+#[utoipa::path(
+    post,
+    path = "/api/devices/drafts/cleanup",
+    tag = "drafts",
+    responses(
+        (status = 200, description = "Expired drafts removed"),
+    )
+)]
 pub async fn cleanup_draft_devices(
     State(state): State<ServerState>,
 ) -> HandlerResult<CleanupResponse> {
@@ -610,6 +701,14 @@ pub async fn cleanup_draft_devices(
 /// Returns a mapping of signature hashes to device type IDs.
 /// This is used for type reusability - devices with matching signatures
 /// can reuse the same device type.
+#[utoipa::path(
+    get,
+    path = "/api/devices/drafts/type-signatures",
+    tag = "drafts",
+    responses(
+        (status = 200, description = "Observed telemetry type signatures (draft input hints)"),
+    )
+)]
 pub async fn get_type_signatures(
     State(state): State<ServerState>,
 ) -> HandlerResult<TypeSignaturesResponse> {
@@ -625,6 +724,18 @@ pub async fn get_type_signatures(
 /// Analyzes the draft's metrics and finds existing device types
 /// that match based on metric signatures. Returns a list of
 /// suggested types with match scores.
+#[utoipa::path(
+    get,
+    path = "/api/devices/drafts/{device_id}/suggest-types",
+    tag = "drafts",
+    params(
+        ("device_id" = String, Path, description = "Draft device id"),
+    ),
+    responses(
+        (status = 200, description = "Candidate device types for the draft"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn suggest_device_types(
     State(state): State<ServerState>,
     Path(device_id): Path<String>,
@@ -713,7 +824,7 @@ pub async fn suggest_device_types(
     }
 
     // Sort by match score descending
-    suggestions.sort_by(|a, b| b.match_score.cmp(&a.match_score));
+    suggestions.sort_by_key(|a| std::cmp::Reverse(a.match_score));
 
     ok(SuggestedTypesResponse {
         suggestions,
@@ -722,6 +833,14 @@ pub async fn suggest_device_types(
 }
 
 /// Get auto-onboarding configuration
+#[utoipa::path(
+    get,
+    path = "/api/devices/drafts/config",
+    tag = "drafts",
+    responses(
+        (status = 200, description = "Auto-onboarding configuration"),
+    )
+)]
 pub async fn get_onboard_config(
     State(state): State<ServerState>,
 ) -> HandlerResult<AutoOnboardConfig> {
@@ -731,6 +850,15 @@ pub async fn get_onboard_config(
 }
 
 /// Update auto-onboarding configuration
+#[utoipa::path(
+    put,
+    path = "/api/devices/drafts/config",
+    tag = "drafts",
+    request_body = AutoOnboardConfig,
+    responses(
+        (status = 200, description = "Auto-onboarding configuration saved"),
+    )
+)]
 pub async fn update_onboard_config(
     State(state): State<ServerState>,
     Json(config): Json<AutoOnboardConfig>,
@@ -747,6 +875,15 @@ pub async fn update_onboard_config(
 /// This endpoint allows directly uploading device data samples to be analyzed
 /// and added to the pending devices list. Useful for testing or when you have
 /// sample data from an unknown device.
+#[utoipa::path(
+    post,
+    path = "/api/devices/drafts/upload",
+    tag = "drafts",
+    request_body = UploadDeviceDataRequest,
+    responses(
+        (status = 200, description = "Sample payload uploaded; draft created from it"),
+    )
+)]
 pub async fn upload_device_data(
     State(state): State<ServerState>,
     Json(request): Json<UploadDeviceDataRequest>,

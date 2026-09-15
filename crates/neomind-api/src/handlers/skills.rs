@@ -218,6 +218,19 @@ pub struct MatchResult {
 // ============================================================================
 
 /// List all skills with pagination and optional origin filter.
+#[utoipa::path(
+    get,
+    path = "/api/skills",
+    tag = "skills",
+    params(
+        ("page" = Option<u32>, Query, description = "1-indexed page"),
+        ("page_size" = Option<u32>, Query, description = "Items per page"),
+        ("origin" = Option<String>, Query, description = "Filter by origin (builtin | custom)"),
+    ),
+    responses(
+        (status = 200, description = "Installed skills"),
+    )
+)]
 pub async fn list_skills_handler(
     State(state): State<ServerState>,
     Query(params): Query<SkillListQuery>,
@@ -261,6 +274,18 @@ pub async fn list_skills_handler(
 }
 
 /// Get a single skill by ID.
+#[utoipa::path(
+    get,
+    path = "/api/skills/{id}",
+    tag = "skills",
+    params(
+        ("id" = String, Path, description = "Skill id"),
+    ),
+    responses(
+        (status = 200, description = "One skill with its prompt"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn get_skill_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -279,6 +304,15 @@ pub async fn get_skill_handler(
 }
 
 /// Create a new user skill.
+#[utoipa::path(
+    post,
+    path = "/api/skills",
+    tag = "skills",
+    request_body = CreateSkillRequest,
+    responses(
+        (status = 200, description = "Skill created"),
+    )
+)]
 pub async fn create_skill_handler(
     State(state): State<ServerState>,
     Json(req): Json<CreateSkillRequest>,
@@ -311,6 +345,19 @@ pub async fn create_skill_handler(
 }
 
 /// Update a user skill.
+#[utoipa::path(
+    put,
+    path = "/api/skills/{id}",
+    tag = "skills",
+    params(
+        ("id" = String, Path, description = "Skill id"),
+    ),
+    request_body = CreateSkillRequest,
+    responses(
+        (status = 200, description = "Skill updated"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn update_skill_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -357,6 +404,18 @@ pub async fn update_skill_handler(
 }
 
 /// Delete a user skill.
+#[utoipa::path(
+    delete,
+    path = "/api/skills/{id}",
+    tag = "skills",
+    params(
+        ("id" = String, Path, description = "Skill id"),
+    ),
+    responses(
+        (status = 200, description = "Skill deleted"),
+        (status = 404, description = "Not found"),
+    )
+)]
 pub async fn delete_skill_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -398,6 +457,14 @@ pub async fn delete_skill_handler(
 }
 
 /// Reload all skills from disk.
+#[utoipa::path(
+    post,
+    path = "/api/skills/reload",
+    tag = "skills",
+    responses(
+        (status = 200, description = "Skills re-scanned from disk"),
+    )
+)]
 pub async fn reload_skills_handler(State(state): State<ServerState>) -> Response {
     let new_registry = SkillRegistry::load_all(Some(&state.data_dir));
 
@@ -418,6 +485,15 @@ pub async fn reload_skills_handler(State(state): State<ServerState>) -> Response
 }
 
 /// Test skill matching against a query.
+#[utoipa::path(
+    post,
+    path = "/api/skills/match",
+    tag = "skills",
+    request_body = MatchTestRequest,
+    responses(
+        (status = 200, description = "Dry-run match of a prompt against skills"),
+    )
+)]
 pub async fn match_skills_handler(
     State(state): State<ServerState>,
     Json(req): Json<MatchTestRequest>,

@@ -141,6 +141,14 @@ pub struct NetInfo {
 /// Get overall system statistics.
 ///
 /// GET /api/stats/system
+#[utoipa::path(
+    get,
+    path = "/api/stats/system",
+    tag = "stats",
+    responses(
+        (status = 200, description = "Host/system statistics"),
+    )
+)]
 pub async fn get_system_stats_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -537,6 +545,14 @@ pub fn detect_gpus() -> Vec<GpuInfo> {
 /// Get device-specific statistics.
 ///
 /// GET /api/stats/devices
+#[utoipa::path(
+    get,
+    path = "/api/stats/devices",
+    tag = "stats",
+    responses(
+        (status = 200, description = "Device counts by status/type"),
+    )
+)]
 pub async fn get_device_stats_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -594,6 +610,14 @@ pub async fn get_device_stats_handler(
 /// Get rule-specific statistics.
 ///
 /// GET /api/stats/rules
+#[utoipa::path(
+    get,
+    path = "/api/stats/rules",
+    tag = "stats",
+    responses(
+        (status = 200, description = "Rule counts and recent executions"),
+    )
+)]
 pub async fn get_rule_stats_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
