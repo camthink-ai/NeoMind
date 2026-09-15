@@ -13,7 +13,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { BrandLogoHorizontal } from "@/components/shared/BrandName"
-import { NetworkBackground } from "@/components/shared/NetworkBackground"
 import { LoadingState } from "@/components/shared/LoadingState"
 import { forceViewportReset } from "@/hooks/useVisualViewport"
 import { textNano } from '@/design-system/tokens/typography'
@@ -367,15 +366,10 @@ export function LoginPage() {
 
   return (
     <div className="flex flex-col bg-background relative overflow-hidden viewport-full">
-      {/* Background Effects */}
-      <div className="fixed inset-0">
-        {/* Base gradient */}
-        <div className="absolute inset-0 bg-gradient-to-br from-background via-background to-muted" />
-        {/* Device-network field — nodes (devices/agents), links (data
-            paths) and travelling brand-orange telemetry pulses. The
-            product as its own backdrop; see NetworkBackground. */}
-        <NetworkBackground />
-      </div>
+      {/* Background — flat color. After four decorated attempts
+          (honeycomb → aurora → network → horizon) the cleanest read is
+          none at all: the page IS the background, the card carries the
+          depth. No gradients, no texture, nothing to get tired of. */}
 
       {/* Top Header — doubles as the Tauri window drag region (the shell's
           TopBar has the same contract; overlay titlebar means nothing native
