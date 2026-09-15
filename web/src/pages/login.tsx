@@ -13,7 +13,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { BrandLogoHorizontal } from "@/components/shared/BrandName"
-import { HoneycombBackground } from "@/components/shared/HoneycombBackground"
+import { AuroraBackground } from "@/components/shared/AuroraBackground"
 import { LoadingState } from "@/components/shared/LoadingState"
 import { forceViewportReset } from "@/hooks/useVisualViewport"
 import { textNano } from '@/design-system/tokens/typography'
@@ -371,15 +371,10 @@ export function LoginPage() {
       <div className="fixed inset-0">
         {/* Base gradient */}
         <div className="absolute inset-0 bg-gradient-to-br from-background via-background to-muted" />
-        {/* Honeycomb mesh — shared component. Pointy-top tight tiling,
-            brand-orange, ripple-from-center breathe. Mask fades edges. */}
-        <HoneycombBackground />
-        {/* One soft brand glow — restrained, just enough warmth to avoid
-            feeling flat. Brand orange ties to the logo. */}
-        <div
-          className="absolute top-[45%] left-1/2 -translate-x-1/2 w-[42rem] h-[42rem] rounded-full blur-3xl"
-          style={{ background: 'color-mix(in oklch, var(--accent-orange) 8%, transparent)' }}
-        />
+        {/* Aurora field — drifting brand-orange/ember/purple blobs over a
+            dot grid. Shared component; see AuroraBackground for the why
+            (it replaced the imperceptible honeycomb breathe). */}
+        <AuroraBackground />
       </div>
 
       {/* Top Header — doubles as the Tauri window drag region (the shell's
