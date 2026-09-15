@@ -758,7 +758,11 @@ pub async fn update_session_handler(
         .session_manager
         .update_session_title(&id, req.title)
         .await
-        .map_err(|e| ErrorResponse::with_message(e.to_string()))?;
+        .map_err(|e| match e {
+            // Missing session is a 404 per the endpoint contract above.
+            neomind_core::error::Error::NotFound(msg) => ErrorResponse::not_found(msg),
+            other => ErrorResponse::with_message(other.to_string()),
+        })?;
 
     Ok(Json(ApiResponse::success(json!({
         "sessionId": id,

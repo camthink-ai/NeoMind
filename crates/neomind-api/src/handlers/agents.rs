@@ -14,6 +14,18 @@ use neomind_storage::{
     AiAgent, ExecutionMode, ExecutionStatus, ResourceType, ScheduleType, UserMessage,
 };
 
+/// Map a store error to a response WITHOUT lying about the status: a
+/// NotFound (e.g. "Agent X not found") is a 404, not a 500 — third-party
+/// consumers branch on status codes.
+fn store_error_to_response(context: &str, e: neomind_storage::Error) -> ErrorResponse {
+    match e {
+        neomind_storage::Error::NotFound(msg) => {
+            ErrorResponse::not_found(format!("{context}: {msg}"))
+        }
+        other => ErrorResponse::internal(format!("{context}: {other}")),
+    }
+}
+
 use super::{
     common::{ok, HandlerResult},
     ServerState,
@@ -2376,7 +2388,7 @@ pub async fn get_user_messages(
     let messages = store
         .get_user_messages(&id, Some(50))
         .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to get messages: {}", e)))?;
+        .map_err(|e| store_error_to_response("Failed to get messages", e))?;
 
     ok(json!(messages
         .into_iter()
@@ -2409,7 +2421,7 @@ pub async fn delete_user_message(
     let deleted = store
         .delete_user_message(&id, &message_id)
         .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to delete message: {}", e)))?;
+        .map_err(|e| store_error_to_response("Failed to delete message", e))?;
 
     if !deleted {
         return Err(ErrorResponse::not_found(format!(
@@ -2447,7 +2459,7 @@ pub async fn clear_user_messages(
     let count = store
         .clear_user_messages(&id)
         .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to clear messages: {}", e)))?;
+        .map_err(|e| store_error_to_response("Failed to clear messages", e))?;
 
     tracing::debug!("Cleared {} user messages from agent {}", count, id);
 

@@ -1566,10 +1566,21 @@ pub async fn restart_handler(
             }
             ok(json!({ "restarted": true, "already_running": false, "endpoint": endpoint }))
         }
-        Err(e) => Err(ErrorResponse::internal(format!(
-            "builtin LLM restart failed: {}",
-            e
-        ))),
+        Err(e) => {
+            let msg = e.to_string();
+            // "no manifest" / "model file missing" mean the model was never
+            // (successfully) downloaded — a 404 pointing the caller at the
+            // download flow, not a 500.
+            if msg.contains("no manifest") || msg.contains("model file missing") {
+                Err(ErrorResponse::not_found(format!(
+                    "builtin LLM restart failed: {msg}"
+                )))
+            } else {
+                Err(ErrorResponse::internal(format!(
+                    "builtin LLM restart failed: {msg}"
+                )))
+            }
+        }
     }
 }
 

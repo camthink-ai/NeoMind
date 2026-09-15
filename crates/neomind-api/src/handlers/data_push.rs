@@ -26,6 +26,17 @@ use super::{
 };
 use crate::models::ErrorResponse;
 
+/// The manager reports a missing target as anyhow "Target not found: X" —
+/// map it to 404 so consumers don't see 500s for plain not-found ids.
+fn push_error_to_response(e: anyhow::Error) -> ErrorResponse {
+    let msg = e.to_string();
+    if msg.starts_with("Target not found") {
+        ErrorResponse::not_found(msg)
+    } else {
+        ErrorResponse::internal(msg)
+    }
+}
+
 /// Query parameters for listing push targets.
 #[derive(Debug, Deserialize)]
 pub struct ListTargetsQuery {
@@ -206,7 +217,7 @@ pub async fn update_push_target_handler(
     let target = manager
         .update_target(&id, request)
         .await
-        .map_err(|e| ErrorResponse::internal(e.to_string()))?;
+        .map_err(push_error_to_response)?;
 
     ok(json!({
         "id": target.id,
@@ -241,7 +252,7 @@ pub async fn delete_push_target_handler(
     let deleted = manager
         .delete_target(&id)
         .await
-        .map_err(|e| ErrorResponse::internal(e.to_string()))?;
+        .map_err(push_error_to_response)?;
 
     if !deleted {
         return Err(ErrorResponse::not_found(format!(
@@ -279,7 +290,7 @@ pub async fn test_push_target_handler(
     let log = manager
         .test_target(&id)
         .await
-        .map_err(|e| ErrorResponse::internal(e.to_string()))?;
+        .map_err(push_error_to_response)?;
 
     ok(json!(log))
 }
@@ -310,7 +321,7 @@ pub async fn start_push_target_handler(
     manager
         .start_target(&id)
         .await
-        .map_err(|e| ErrorResponse::internal(e.to_string()))?;
+        .map_err(push_error_to_response)?;
 
     ok(json!({"message": "Push target started"}))
 }
@@ -341,7 +352,7 @@ pub async fn stop_push_target_handler(
     manager
         .stop_target(&id)
         .await
-        .map_err(|e| ErrorResponse::internal(e.to_string()))?;
+        .map_err(push_error_to_response)?;
 
     ok(json!({"message": "Push target stopped"}))
 }

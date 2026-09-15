@@ -1128,10 +1128,17 @@ pub async fn test_backend_handler(
 ) -> HandlerResult<serde_json::Value> {
     let manager = get_manager()?;
 
-    let result = manager
-        .test_connection(&id)
-        .await
-        .map_err(|e| ErrorResponse::internal(e.to_string()))?;
+    let result = manager.test_connection(&id).await.map_err(|e| match &e {
+        // A missing instance surfaces as BackendUnavailable("Backend
+        // instance X") — a 404, not a 500. Other unavailability
+        // (runtime creation failing for an EXISTING backend) stays 500.
+        neomind_core::llm::backend::LlmError::BackendUnavailable(msg)
+            if msg.starts_with("Backend instance") =>
+        {
+            ErrorResponse::not_found(e.to_string())
+        }
+        _ => ErrorResponse::internal(e.to_string()),
+    })?;
 
     ok(json!({
         "backend_id": id,

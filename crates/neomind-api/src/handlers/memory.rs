@@ -618,10 +618,27 @@ pub async fn delete_memory_file(
             "message": "Memory file deleted"
         }))
         .into_response(),
-        Err(e) => error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to delete memory: {}", e),
-        ),
+        Err(e) => {
+            use neomind_storage::Error as StoreError;
+            match e {
+                // "system" (and any other non-agent/chat source_type) is a
+                // client mistake — 400, not 500.
+                StoreError::Storage(ref msg) if msg.contains("Cannot delete system memory") => {
+                    error_response(
+                        StatusCode::BAD_REQUEST,
+                        format!("Failed to delete memory: {e}"),
+                    )
+                }
+                StoreError::NotFound(ref msg) => error_response(
+                    StatusCode::NOT_FOUND,
+                    format!("Failed to delete memory: {msg}"),
+                ),
+                other => error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to delete memory: {other}"),
+                ),
+            }
+        }
     }
 }
 

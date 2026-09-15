@@ -339,10 +339,10 @@ pub async fn test_channel_handler(
     let registry = state.core.message_manager.channels().await;
     let registry_guard = registry.read().await;
 
-    let result = registry_guard
-        .test(&name)
-        .await
-        .map_err(|e| ErrorResponse::internal(e.to_string()))?;
+    let result = registry_guard.test(&name).await.map_err(|e| match e {
+        neomind_messages::Error::NotFound(msg) => ErrorResponse::not_found(msg),
+        other => ErrorResponse::internal(other.to_string()),
+    })?;
 
     ok(json!(result))
 }

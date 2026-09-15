@@ -10,6 +10,19 @@ use crate::automation::discovery::auto_onboard::AutoOnboardConfig;
 use crate::automation::discovery::types::DataType;
 use crate::automation::SemanticType;
 use crate::automation::{AutoOnboardManager, DiscoveredMetric};
+
+/// The manager reports a missing draft as InvalidData("Draft not found: X")
+/// (stringly typed) — surface it as 404 instead of 500.
+fn draft_error_to_response(
+    e: crate::automation::discovery::types::DiscoveryError,
+) -> ErrorResponse {
+    let msg = e.to_string();
+    if msg.contains("Draft not found") {
+        ErrorResponse::not_found(msg)
+    } else {
+        ErrorResponse::internal(msg)
+    }
+}
 use neomind_agent::llm_backends::backends::{OllamaConfig, OllamaRuntime};
 use neomind_core::llm::backend::LlmRuntime;
 use neomind_devices::{
@@ -202,7 +215,7 @@ pub async fn update_draft_device(
     manager
         .update_draft(&device_id, request.name, request.description)
         .await
-        .map_err(|e| ErrorResponse::internal(e.to_string()))?;
+        .map_err(draft_error_to_response)?;
 
     ok(SuccessResponse {
         message: format!("Draft device '{}' updated", device_id),
@@ -443,7 +456,7 @@ pub async fn approve_draft_device(
     manager
         .remove_draft(&device_id)
         .await
-        .map_err(|e| ErrorResponse::internal(e.to_string()))?;
+        .map_err(draft_error_to_response)?;
 
     ok(ApproveDraftResponse {
         original_device_id: device_id.clone(),
@@ -548,7 +561,7 @@ pub async fn reject_draft_device(
     manager
         .reject_device(&device_id, &request.reason)
         .await
-        .map_err(|e| ErrorResponse::internal(e.to_string()))?;
+        .map_err(draft_error_to_response)?;
 
     ok(SuccessResponse {
         message: format!("Draft device '{}' rejected", device_id),

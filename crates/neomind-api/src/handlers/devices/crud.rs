@@ -120,7 +120,7 @@ fn device_error_to_response(context: &str, e: neomind_devices::DeviceError) -> E
     use neomind_devices::DeviceError as DE;
     let msg = format!("{context}: {e}");
     match e {
-        DE::NotFoundStr(_) | DE::NotFound(_) => ErrorResponse::bad_request(msg),
+        DE::NotFoundStr(_) | DE::NotFound(_) => ErrorResponse::not_found(msg),
         DE::AlreadyExists(_) => ErrorResponse::conflict(msg),
         DE::InvalidParameter(_)
         | DE::InvalidMetric(_)
@@ -792,7 +792,7 @@ pub async fn delete_device_handler(
         .service
         .unregister_device(&device_id)
         .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to delete device: {}", e)))?;
+        .map_err(|e| device_error_to_response("Failed to delete device", e))?;
     ok(json!({
         "device_id": device_id,
         "deleted": true,
@@ -1214,7 +1214,9 @@ mod device_error_mapping_tests {
 
     /// [live-caught] An unregistered device_type reached the client as 500
     /// INTERNAL_ERROR — a plain client mistake reported as a server fault.
-    /// Client-input variants must map to 4xx.
+    /// Client-input variants must map to 4xx. NotFound* is 404: REST-wise
+    /// (and per the utoipa annotations, which document "Unknown device" as
+    /// 404) a missing resource is not-found, not a malformed request.
     #[test]
     fn client_input_errors_map_to_4xx() {
         let resp = device_error_to_response(
@@ -1223,8 +1225,8 @@ mod device_error_mapping_tests {
         );
         assert_eq!(
             resp.status,
-            axum::http::StatusCode::BAD_REQUEST,
-            "unknown template must be 400"
+            axum::http::StatusCode::NOT_FOUND,
+            "unknown template must be 404"
         );
 
         let resp = device_error_to_response(
