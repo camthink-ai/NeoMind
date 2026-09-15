@@ -200,6 +200,11 @@ pub static ROUTES: &[RouteDoc] = &[
         auth: "public",
     },
     RouteDoc {
+        method: "PATCH",
+        path: "/api/extensions/:id/commands/:cmd/enabled",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
         method: "GET",
         path: "/api/extensions/:id/components",
         auth: "public",
@@ -455,6 +460,11 @@ pub static ROUTES: &[RouteDoc] = &[
         auth: "jwt-or-api-key",
     },
     RouteDoc {
+        method: "DELETE",
+        path: "/api/extensions/:id/logs",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
         method: "GET",
         path: "/api/extensions/:id/descriptor",
         auth: "jwt-or-api-key",
@@ -551,6 +561,11 @@ pub static ROUTES: &[RouteDoc] = &[
     },
     RouteDoc {
         method: "PUT",
+        path: "/api/skills/:id",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
+        method: "DELETE",
         path: "/api/skills/:id",
         auth: "jwt-or-api-key",
     },
@@ -1035,7 +1050,17 @@ pub static ROUTES: &[RouteDoc] = &[
         auth: "jwt-or-api-key",
     },
     RouteDoc {
+        method: "PUT",
+        path: "/api/settings/agent",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
         method: "GET",
+        path: "/api/settings/device",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
+        method: "PUT",
         path: "/api/settings/device",
         auth: "jwt-or-api-key",
     },
@@ -1265,6 +1290,11 @@ pub static ROUTES: &[RouteDoc] = &[
         auth: "jwt-or-api-key",
     },
     RouteDoc {
+        method: "PUT",
+        path: "/api/memory/config",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
         method: "POST",
         path: "/api/memory/compress",
         auth: "jwt-or-api-key",
@@ -1275,12 +1305,32 @@ pub static ROUTES: &[RouteDoc] = &[
         auth: "jwt-or-api-key",
     },
     RouteDoc {
+        method: "PUT",
+        path: "/api/memory/category/:category",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
         method: "GET",
         path: "/api/memory/:source_type/:id",
         auth: "jwt-or-api-key",
     },
     RouteDoc {
+        method: "PUT",
+        path: "/api/memory/:source_type/:id",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
+        method: "DELETE",
+        path: "/api/memory/:source_type/:id",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
         method: "GET",
+        path: "/api/memory/file/:target",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
+        method: "PUT",
         path: "/api/memory/file/:target",
         auth: "jwt-or-api-key",
     },
@@ -1291,6 +1341,16 @@ pub static ROUTES: &[RouteDoc] = &[
     },
     RouteDoc {
         method: "GET",
+        path: "/api/memory/custom/:name",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
+        method: "PUT",
+        path: "/api/memory/custom/:name",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
+        method: "DELETE",
         path: "/api/memory/custom/:name",
         auth: "jwt-or-api-key",
     },
@@ -1455,6 +1515,11 @@ pub static ROUTES: &[RouteDoc] = &[
         auth: "jwt-or-api-key",
     },
     RouteDoc {
+        method: "PATCH",
+        path: "/api/dashboards/:id/components/:component_id",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
         method: "POST",
         path: "/api/dashboards/:id/default",
         auth: "jwt-or-api-key",
@@ -1535,6 +1600,11 @@ pub static ROUTES: &[RouteDoc] = &[
         auth: "jwt-or-api-key",
     },
     RouteDoc {
+        method: "PATCH",
+        path: "/api/extensions/:id/enabled",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
         method: "POST",
         path: "/api/extensions/market/install",
         auth: "jwt-or-api-key",
@@ -1557,6 +1627,11 @@ pub static ROUTES: &[RouteDoc] = &[
     RouteDoc {
         method: "PUT",
         path: "/api/llm-backends/:id",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
+        method: "PATCH",
+        path: "/api/llm-backends/:id/capabilities",
         auth: "jwt-or-api-key",
     },
     RouteDoc {
@@ -1600,6 +1675,11 @@ pub static ROUTES: &[RouteDoc] = &[
         auth: "jwt-or-api-key",
     },
     RouteDoc {
+        method: "POST",
+        path: "/api/builtin-llm/upload-model",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
         method: "DELETE",
         path: "/api/builtin-llm/model",
         auth: "jwt-or-api-key",
@@ -1630,6 +1710,16 @@ pub static ROUTES: &[RouteDoc] = &[
         auth: "jwt-or-api-key",
     },
     RouteDoc {
+        method: "PUT",
+        path: "/api/instances/:id",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
+        method: "DELETE",
+        path: "/api/instances/:id",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
         method: "POST",
         path: "/api/instances/:id/test",
         auth: "jwt-or-api-key",
@@ -1656,6 +1746,11 @@ pub static ROUTES: &[RouteDoc] = &[
     },
     RouteDoc {
         method: "GET",
+        path: "/api/frontend-components/:id",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
+        method: "DELETE",
         path: "/api/frontend-components/:id",
         auth: "jwt-or-api-key",
     },
@@ -1731,55 +1826,17 @@ pub static ROUTES: &[RouteDoc] = &[
     },
 ];
 
-impl RouteDoc {
-    fn line(&self) -> String {
-        format!(
-            "<tr><td><code>{}</code></td><td><code>{}</code></td><td>{}</td></tr>",
-            self.method, self.path, self.auth
-        )
-    }
-}
-
-fn grouped_html() -> String {
-    let mut out = String::from(
-        "<!doctype html><html><head><meta charset='utf-8'><title>NeoMind API</title>\
-         <style>body{font-family:system-ui;margin:2rem}\
-         table{border-collapse:collapse;margin:1rem 0}\
-         td,th{border:1px solid #ccc;padding:4px 10px;text-align:left}\
-         code{background:#f4f4f4;padding:1px 4px;border-radius:3px}</style></head>\
-         <body><h1>NeoMind API</h1>\
-         <p>Route index — see <code>/api/docs/routes.json</code> for the machine-readable form. \
-         Responses use the <code>{success, data|error:{code,message}}</code> envelope.</p>\
-         <p><strong>Scope:</strong> this index is authoritative for METHOD, PATH and the AUTH \
-         CLASS only (a CI test fails when it drifts from the router). It does <em>not</em> \
-         document request/response schemas, parameter types, ranges or per-endpoint error \
-         codes — for those, read the handler source (each route's docs live in \
-         <code>crates/neomind-api/src/handlers/</code>). A full OpenAPI document is not yet \
-         generated.</p>",
-    );
-    for group in ["public", "jwt-or-api-key", "jwt-only", "webhook", "ws"] {
-        let rows: Vec<String> = ROUTES
-            .iter()
-            .filter(|r| r.auth == group)
-            .map(|r| r.line())
-            .collect();
-        if rows.is_empty() {
-            continue;
-        }
-        out.push_str(&format!(
-            "<h2>{}</h2><table><tr><th>Method</th><th>Path</th><th>Auth</th></tr>{}</table>",
-            group,
-            rows.join("")
-        ));
-    }
-    out.push_str("</body></html>");
-    out
-}
-
 /// GET /api/docs — Swagger-style interactive docs (Scalar UI) fed by the
-/// CI-enforced route table. Scalar is a single-file CDN load — no build
-/// step, no vendored assets; a future full OpenAPI spec can drop in by
-/// pointing the spec URL at a real openapi.json instead of routes.json.
+/// OpenAPI spec at `/api/docs/openapi.json`. Scalar is a single-file CDN
+/// load — no build step, no vendored assets.
+#[utoipa::path(
+    get,
+    path = "/api/docs",
+    tag = "system",
+    responses(
+        (status = 200, description = "Scalar API console (HTML)"),
+    )
+)]
 pub async fn docs_handler() -> Html<String> {
     Html(scalar_html())
 }
@@ -1810,6 +1867,14 @@ Scalar.createApiReference('#app', {
 }
 
 /// GET /api/docs/routes.json — machine-readable index.
+#[utoipa::path(
+    get,
+    path = "/api/docs/routes.json",
+    tag = "system",
+    responses(
+        (status = 200, description = "Machine-readable route index (method, path, auth class)"),
+    )
+)]
 pub async fn routes_json_handler() -> Json<&'static [RouteDoc]> {
     Json(ROUTES)
 }

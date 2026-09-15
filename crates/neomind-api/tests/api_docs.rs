@@ -6,8 +6,78 @@
 //!
 //! Regenerate the table with the extractor snippet in the PR that added
 //! this test (regex over router.rs, dedupe, paste into ROUTES).
+//!
+//! The extraction must be chain-aware: axum allows several methods on one
+//! registration — `.route("/x/:id", put(h).delete(h))` — and the original
+//! single-method regex only saw `put`. That is how 19 routed operations
+//! (every `delete`/`patch`/second `put` in a chain) went missing from
+//! /api/docs while this guard still passed.
 
 use neomind_api::handlers::api_docs::ROUTES;
+
+/// Depth-aware `.route("path", METHOD(h)…METHOD(h))` extraction: returns the
+/// path plus EVERY method chained on that registration, not just the first.
+/// Parentheses inside string literals and `//` comments are skipped so
+/// chained handlers and annotating comments don't confuse the scan.
+fn route_calls(section: &str) -> Vec<(String, Vec<String>)> {
+    let bytes = section.as_bytes();
+    let method_re = regex::Regex::new(r"\b(get|post|put|delete|patch|any)\s*\(").unwrap();
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while let Some(rel) = section[i..].find(".route(") {
+        let open = i + rel + ".route(".len();
+        i = open;
+        // path string follows the opening paren (whitespace-tolerant)
+        let mut j = open;
+        while j < bytes.len() && matches!(bytes[j], b' ' | b'\n' | b'\t' | b'\r') {
+            j += 1;
+        }
+        if j >= bytes.len() || bytes[j] != b'"' {
+            continue;
+        }
+        let Some(path_end) = section[j + 1..].find('"') else {
+            break;
+        };
+        let path = section[j + 1..j + 1 + path_end].to_string();
+        // scan to the matching ')' of this .route() call
+        let mut depth = 1i32;
+        let mut k = j + 1 + path_end + 1;
+        while k < bytes.len() && depth > 0 {
+            match bytes[k] {
+                b'"' => match section[k + 1..].find('"') {
+                    Some(e) => k += e + 1,
+                    None => break,
+                },
+                b'/' if k > 0 && bytes[k - 1] == b'/' => {
+                    if let Some(e) = section[k..].find('\n') {
+                        k += e; // sit on the newline; k += 1 below moves past
+                    } else {
+                        break;
+                    }
+                }
+                b'(' => depth += 1,
+                b')' => depth -= 1,
+                _ => {}
+            }
+            k += 1;
+        }
+        let span = &section[j + 1 + path_end + 1..k.saturating_sub(1)];
+        let methods: Vec<String> = {
+            let mut ms: Vec<String> = span
+                .lines()
+                .map(|l| l.split("//").next().unwrap_or(l))
+                .flat_map(|l| method_re.captures_iter(l).map(|c| c[1].to_uppercase()))
+                .collect();
+            ms.sort();
+            ms.dedup();
+            ms
+        };
+        if !methods.is_empty() {
+            out.push((path, methods));
+        }
+    }
+    out
+}
 
 #[test]
 fn docs_table_matches_router_registrations() {
@@ -15,8 +85,8 @@ fn docs_table_matches_router_registrations() {
         .or_else(|_| std::fs::read_to_string("crates/neomind-api/src/server/router.rs"))
         .expect("router.rs readable");
 
-    // Same extraction as the generator: per named Router::new() segment,
-    // regex every .route("path", method(handler)) — whitespace-tolerant.
+    // Same extraction as the generator, but chain-aware: every method
+    // chained on one .route() registration counts.
     //
     // EVERY router must be listed, and the coverage assertion below enforces
     // it. The first version of this test used only the five names the
@@ -34,9 +104,6 @@ fn docs_table_matches_router_registrations() {
         ("debug_routes", "debug"),
         ("limited_routes", "jwt-or-api-key"),
     ];
-    let route_re =
-        regex::Regex::new(r#"\.route\(\s*"([^"]+)"\s*,\s*(get|post|put|delete|patch|any)\("#)
-            .unwrap();
 
     // Any `let X = Router::new()` not in the map fails loudly.
     let declared: Vec<String> = {
@@ -66,11 +133,13 @@ fn docs_table_matches_router_registrations() {
             .find("\n    let ")
             .map(|e| start + e)
             .unwrap_or(src.len());
-        for cap in route_re.captures_iter(&src[start..end]) {
-            let key = (cap[2].to_uppercase(), cap[1].to_string());
-            expected.insert(key.clone());
-            // later router wins, mirroring axum merge order
-            expected_auth.insert(key, cls.to_string());
+        for (path, methods) in route_calls(&src[start..end]) {
+            for method in methods {
+                let key = (method, path.clone());
+                expected.insert(key.clone());
+                // later router wins, mirroring axum merge order
+                expected_auth.insert(key, cls.to_string());
+            }
         }
     }
 
@@ -112,7 +181,7 @@ fn openapi_spec_paths_are_all_routed() {
         .expect("router.rs readable");
     let spec = <neomind_api::handlers::openapi::ApiDoc as utoipa::OpenApi>::openapi();
     let mut missing: Vec<String> = Vec::new();
-    for (path, _item) in spec.paths.paths.iter() {
+    for path in spec.paths.paths.keys() {
         let utoipa_path = path.clone(); // annotations already carry the /api prefix
                                         // utoipa emits {param}; the router uses :param — normalize for the check.
         let router_style = utoipa_path.replace('{', ":").replace('}', "");
