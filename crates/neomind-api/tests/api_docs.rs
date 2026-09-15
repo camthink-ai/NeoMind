@@ -194,3 +194,30 @@ fn openapi_spec_paths_are_all_routed() {
         "annotated paths not found in router.rs: {missing:?}"
     );
 }
+
+/// The Scalar console shell is inline JS: one unbalanced quote and the
+/// whole script is a syntax error — the browser shows a BLANK page while
+/// every curl-based check stays green (exactly how a blank /api/docs
+/// shipped). Guard the rendered HTML structurally.
+#[tokio::test]
+async fn docs_html_boots_scalar() {
+    let axum::response::Html(body) = neomind_api::handlers::api_docs::docs_handler().await;
+    assert!(
+        body.contains("Scalar.createApiReference"),
+        "Scalar bootstrap call missing"
+    );
+    assert!(
+        body.contains("url: '/api/docs/openapi.json'"),
+        "spec URL must be a CLOSED string literal — an unterminated one \
+         blanks the console"
+    );
+    assert_eq!(
+        body.matches('\'').count() % 2,
+        0,
+        "unbalanced single quotes in the Scalar shell (syntax error → blank page)"
+    );
+    assert!(
+        body.contains("@scalar/api-reference"),
+        "Scalar runtime not loaded from CDN"
+    );
+}

@@ -1841,8 +1841,7 @@ pub async fn docs_handler() -> Html<String> {
     Html(scalar_html())
 }
 
-/// Scalar UI shell referencing /api/docs/routes.json. The data spec is the
-/// same table the drift test enforces — one source of truth.
+/// Scalar UI shell fed by the OpenAPI spec at /api/docs/openapi.json.
 fn scalar_html() -> String {
     r#"<!doctype html>
 <html>
@@ -1857,8 +1856,11 @@ fn scalar_html() -> String {
 <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
 <script>
 Scalar.createApiReference('#app', {
-  // The utoipa-generated spec (auth + devices + telemetry first batch).
-  url: '/api/docs/openapi.json
+  // The utoipa-generated spec (all annotated handlers, CI-enforced
+  // against the router). NOTE: this inline script is raw JS — a single
+  // unbalanced quote silently kills the whole console (that exact bug
+  // shipped a blank /api/docs page).
+  url: '/api/docs/openapi.json'
 });
 </script>
 </body>
