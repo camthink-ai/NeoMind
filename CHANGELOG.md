@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### refactor(agent): agent/mod.rs (3406 lines) — the seventh giant
+- The 2350-line `impl Agent` cut into per-domain impl blocks: construction/config/accessors (mod.rs), context-compaction free functions (context.rs — `pub use` keeps streaming's `super::super::` paths intact), the process/multimodal/stream entry points (process.rs), the LLM loop + tool batching (execution.rs), tool execution/sanitization (tools.rs). 728 agent tests green. Hardest cut yet — method-boundary doc comments repeatedly landed on the wrong side (several orphan-doc relocation rounds) and six cross-file helpers became pub(crate).
+
 ### refactor: two more giants split — openai.rs and mqtt.rs
 - **llm_backends/backends/openai.rs (3162 → 6 files)**: provider/runtime/LlmRuntime-impl stay in mod.rs; the 1430-line `impl CloudRuntime` moved whole to runtime.rs; OpenAI + Anthropic wire types to protocol.rs (fields pub(crate)); config and vision-model detection get their own files. External paths stable.
 - **devices/adapters/mqtt.rs (3456 → 7 files)**: config; the ~1100-line connection lifecycle impl; the DeviceAdapter trait impl; the ~870-line message-handling impl; topic/device-id extraction helpers. Adapter/inner-client fields became pub(crate); config/topics are pub(crate) mods with explicit imports (glob re-export cycles were the failure mode of the first attempt). 32 mqtt tests green.
