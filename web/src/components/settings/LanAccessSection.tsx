@@ -55,15 +55,15 @@ export function LanAccessSection({ compact = false }: { compact?: boolean }) {
   return (
     <div className={cn("overflow-hidden rounded-xl border border-border bg-surface", compact && "mx-3")}>
       {state.compatNoticePending && (
-        <div className="flex items-start gap-2 border-b border-border bg-accent-orange-light/40 px-3 py-2.5">
-          <Wifi className="mt-0.5 h-4 w-4 shrink-0 text-accent-orange" />
+        <div className="flex items-center gap-2 border-b border-border bg-accent-orange-light/40 px-3 py-2.5">
+          <Wifi className="h-4 w-4 shrink-0 text-accent-orange" />
           <div className="min-w-0 flex-1 text-xs leading-relaxed text-foreground">
             {t("lan.compatNotice")}
           </div>
           <button
             type="button"
             aria-label={t("lan.dismiss")}
-            className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+            className="shrink-0 rounded-sm p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             onClick={() => void dismissNotice()}
           >
             <X className="h-3.5 w-3.5" />
