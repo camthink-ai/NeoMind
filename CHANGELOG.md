@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### ops: fresh-install agent auth bootstrap
+- Server startup now guarantees at least one ACTIVE wildcard API key exists (`AuthState::ensure_internal_api_key`, idempotent — no-op once any `*` key is present). The chat agent's HTTP-path CLI commands authenticate via the default-key file; fresh installs previously had a window where the agent's own platform commands 401'd. End-to-end guarantee test: the server-provisioned key round-trips through cli-ops `auto_auth` and validates. (Root-cause of any residual live 401s needs a focused repro — the dir-pairing fix in `AuthState::new()` predates this; the bootstrap + test close the remaining gap.)
+
+### storage: chat-session retention (opt-in)
+- `GET/PUT /api/settings/retention` gains `session_retention_hours` (default **None = keep forever**), exposed in Settings → Preferences → Data Management (zh/en). Live PUT/GET round-trip verified. An hourly server task prunes whole sessions (history + metadata) whose last update falls outside the window — sessions.redb previously grew without bound on long-lived edge boxes. `SessionStore::cleanup_old_sessions` keeps undated sessions by design; 2 storage tests (expired-only removal, idempotence).
+
+### verification: fresh-install agent-auth 401 case closed
+- Reproduced the agent's exact subprocess path against a fresh isolated instance (`NEOMIND_DATA_DIR` + `neomind message channel-list`): **succeeds, zero 401s** — key provisioning → auto_auth read-back → API acceptance all healthy. The historical live 401s are attributed to the split-brain first smoke server (settings in one tree, agents in another), not a code defect; `ensure_internal_api_key` remains as the guarantee layer.
+
+### web: eslint debt −365 total this iteration (ratchet 1079 → 714)
+- Pass 1-2: ~230 unused import specifiers removed (~90 files). Pass 3: 132 unused locals/args underscore-prefixed (declaration-only renames; the 15 destructured-property sites repaired to `{ x: _x }` form). Both scripted passes briefly broke syntax at a handful of sites — all caught by tsc and repaired before landing. Remaining: `no-explicit-any` (~490, needs per-case typing) and `exhaustive-deps` (~100, behavior-risky).
+
+### web: automation-builder smoke tests
+- First rendering tests for the two highest-regression-cost forms: `SimpleRuleBuilderSplit` and `TransformBuilder` (open/create, closed-hidden, edit pre-fill). Frontend suite: 216.
+
+### web: eslint debt −233 (ratchet 1079 → 846)
+- Batch-removed ~230 unused import specifiers across ~90 files (two scripted passes; the second pass briefly mangled 10 files' import lines — all repaired, tsc clean, 216/216 green). Remaining top clusters: `no-explicit-any` (~490), `no-unused-vars` non-import (~180), `exhaustive-deps` (~100, behavior-risky — left for deliberate passes).
+
+### refactor: extension-runner host module extracted
+- First slice of the runner-monolith split (ADR-worthy pattern): `HostState` + `SyncIpcClient` + `wasm_store_limits` moved to `src/host.rs` (main.rs 3908 → 3748), cross-module visibility made explicit (`pub(crate)`), all 121 runner tests green. Methodology proven: identify seams → block-extract → let rustc drive import/visibility fixes → full test gate. WasmRuntime/main-loop extraction is the next slice, deliberately not rushed in this batch.
+
+### ops: data-dir split made loud + strict-override escape hatch
+- **The trap**: setting `NEOMIND_DATA_DIR` does not fully override store placement — when a store file exists ONLY at the legacy cwd-relative `./data/`, the upgrade-compat fallback silently redirects it there (found the hard way during a live verification run: temp canonical dir + a repo checkout cwd split half the stores across two trees).
+- **Now**: server startup logs ONE error-level banner listing every redirected store with the remediation; and `NEOMIND_STRICT_DATA_DIR` (any non-empty value) disables the fallback entirely for tests/tooling/operators who want exactly the env-specified location. Both behaviors live-verified. (`neomind-core/src/paths.rs`, +3 tests)
+
+### fix(web): WebSocket connect livelock — both stream layers
+- `lib/websocket.ts` (chat): a second `connect()` while a socket to the same URL was still CONNECTING killed it mid-handshake; its `onclose` scheduled a reconnect that killed the NEXT one — under React StrictMode double-mount none ever reached OPEN and both layers cycled at reconnect cadence forever (observed live as a ~1s "Disconnected" spin with every backend auth succeeding). Fix: in-flight dedup + replace-time handler detach + stale-socket guards in onclose/onerror/onmessage (only the current socket drives state). 3 regression tests with a controllable fake WebSocket.
+- `lib/events.ts` (event stream): same stale-socket pattern — a replaced socket firing close late scheduled phantom reconnects; the old socket also leaked (replaced without close/detach). Same guard + detach applied; live-verified (0 closes in a 10s window vs ~2/10s before).
+- **Live end-to-end re-run after the fix**: isolated instance + real Ollama backend — login → session → send → streamed reply rendered through the shared `useChatStream` machine, connection badge clean, context estimate live. The last verification gap from the review rounds is closed.
+
+### chat: cross-talk fixed — stream events filtered by session
+- Both chat surfaces share one WebSocket, and every server event already carries `sessionId` — but neither view's state machine ever checked it: a turn streaming in the side panel also drove the chat page's machine (phantom bubble), and vice versa. `useChatStream` now drops events whose session differs from its bound `sessionId` (both views pass theirs), with `session_created`/`session_switched` exempt — they are control-plane events whose sessionId names the session to switch TO. Covered by a dedicated hook test.
+
+### ci: ESLint warning ratchet
+- The ~1100 legacy ESLint warnings are frozen in `web/.eslint-baseline` (currently 1095 after this iteration's cleanup); CI fails if the count grows, and cleanup PRs lower the baseline one line at a time. Errors were already fatal; now warning drift is too.
+
+### web: api.ts split into domain modules
+- The 2685-line `src/lib/api.ts` is now 17 domain modules under `src/lib/api/` (client/devices/sessions/agents/…) composed by a thin barrel at the same `@/lib/api` import path — zero consumer changes. Verified by script: all 266 API members conserved, none lost or added; `FetchOptions` is now properly exported from the client module. Net effect: no file over ~700 lines in the API surface, conflicts and navigation cost down.
+
+### web: first component/hook tests for the chat core
+- 16 new tests: `useChatStream` (full turn lifecycle, multi-round semantics, session filter, cancellation, token usage), `sessionSlice` history pagination (newest-page load, backward cursor, guards), `ChatMessages` rendering (user bubble, assistant three-layer layout, streaming synthetic message, load-earlier affordance), `ChatComposer` interactions (controlled input, send/cancel). Frontend suite: 188 → 207 (incl. the api-split runtime smoke below).
+
+### docs: Architecture Decision Records
+- `docs/adr/` — 18 one-page ADRs (Chinese) + index capturing the *why* behind EventBus, per-domain redb, edge single-box, dual extension isolation, ABI lock, in-process CLI dispatch, dual memory systems, DTO conversion layer, JSON rule tree, 4-state device model, JSON device types, design tokens, OpenAPI drift guard, LLM capability chain, and the 2026-09 decisions (shared stream machine, history pagination, BuildCard removal, WASM resource limits). CLAUDE.md/CHANGELOG record what — the ADRs record the trade-offs, lowering the bus-factor cost of a single-maintainer codebase.
+
+### chat: BuildCard / build_meta removed — speculative feature, zero observable behavior change
+- The "AI Build Mode" rich result card (introduced 2026-05 as part of the AI-Build-CLI plan) is deleted end-to-end: `BuildCard.tsx` + `parseBuildResponse`, the hand-duplicated `BuildMeta`/`CliBuildResponse` frontend types, the `onSendCommand` prop threading, the i18n `build.*` keys, and on the backend the `BuildMeta` struct, `CliResponse.build_meta` field, `success_with_meta`, and the 14 construction sites across 10 CLI command files (plus the meta-only variable extractions they existed to feed).
+- **Why**: the card rendered only inside a collapsed tool-call drawer (two clicks deep) and only for write-type CLI results — in four months nobody ever saw it. Its coupling was three hand-sewn string contracts: Rust↔TS type double-write, a frontend-hardcoded entity→route map, and backend-generated undo shell strings (widget undo was literally `rm -rf`). Chat-driven building itself is unaffected: every `neomind` command, the in-process dispatch and the agent's CLI abilities remain — results now display as standard JSON like every other command. Fully reversible from git history if the feature is ever revived with a real product mandate.
+
+### chat: one shared stream state machine (useChatStream) — both surfaces, zero duplication
+- **The "frontend pair fix" tax is gone.** The chat page (1204→1003 lines) and the side panel (854→647 lines) each hand-maintained a full WebSocket-event state machine that had already drifted (thinking accumulation, error/reset semantics, progress handling). Both now consume `useChatStream` (`web/src/hooks/useChatStream.ts`): the page's semantics as the superset (cross-round thinking accumulation, intermediate-rounds-only roundContents, generationMs, token-usage callback), with view-specific behavior — the panel's post-end server-history reconciliation, reset-on-error, and the page's message persistence/token persistence — riding explicit callbacks. Progress/Plan events and session_created/switched flow through `onRawEvent`. The panel's write-only `streamProgress`/`currentPlanStep` reducer state (never rendered) was dropped with it.
+- **Streaming updates are now frame-throttled.** Content/Thinking chunks accumulate in refs and flush to React state at most once per animation frame (epoch-guarded so a scheduled flush can never resurrect state after a reset). Previously every WS chunk re-parsed the entire streaming markdown — a real jank source on weak edge hardware with long code blocks. Tool-call/round/end events still flush immediately.
+- **Panel context ring now uses the CJK-weighted estimator** (shared `web/src/lib/tokens.ts`) instead of chars/3, which underestimated Chinese ~5×; the page's copy moved to the same module.
+
+### sessions: history pagination (opt-in, backward-compatible)
+- `GET /api/sessions/{id}/history` accepts `limit` + `before` (exclusive raw-index cursor): returns the most recent `limit` messages ending at `before`, plus `total` and `has_more`. No params = full history, byte-identical to before. A **fragment guard** walks each page's start back to the last `user` record so an assistant turn (thinking+tools / tool results / content-only records) is never split across a page boundary — the frontend's `mergeMessagesForDisplay` groups stay whole. OpenAPI annotations updated; 5 unit tests cover tail slicing, the fragment guard, backward paging without overlap, and clamping.
+- The chat page loads the newest **200** records on session switch (`sessionSlice.switchSession`) and exposes a "load earlier" pill at the top of the message list (`hasEarlierHistory`/`loadEarlierHistory`), scroll-anchored so prepending doesn't yank the viewport. The raw-index cursor is stable under tail appends (new messages never shift older indexes). The side panel keeps full-history loads (page-scoped sessions are short; its end-reconciliation needs the canonical list).
+
+### cleanup
+- **Dead code removed**: `IntentIndicator.tsx` (zero imports since the tool-loop progress indicator superseded it) and its orphan `chat.intent.*` i18n keys (zh/en).
+
+### extension-runner: WASM linear memory truly capped (per-store ResourceLimiter)
+- Every WASM store now carries a `wasmtime::StoreLimits` limiter (`store.limiter(...)` at all three `Store::new` sites — descriptor read, command execution, capability invocation): `memory.grow` beyond the cap fails instead of letting a runaway extension consume host RAM unbounded. Default **256 MB per store**, override via the restored **`NEOMIND_WASM_MEMORY_MB`** env var (same name and default as the pre-wasmtime-36 code).
+- The wasmtime 26→36 bump (ac3e9883, for RUSTSEC-2026-0096) had to drop `Config::static_memory_maximum_size` — which only ever bounded the static-allocation *virtual* memory (a protection-slicing optimization), not real growth — and left a TODO behind. Fuel (CPU) and the 50 MB module-size check already existed; this adds the missing third bound. Regression test grows a wat module's memory: succeeds within the limit, `memory.grow` returns -1 beyond it.
+
+### cli: `neomind widget create --widget-type chart` generates a real chart, not a placeholder
+- The chart scaffold's `useEffect` was a TODO stub rendering only a label. The template now draws a canvas line chart over `props.dataSource` (`{value, timestamp}` rows): DPR-aware bitmap, design-token colors resolved from the container (`--color-primary/-border/-text-muted`), four gridlines with value labels, data polyline, latest-value dot + corner label, ResizeObserver redraw on dashboard-grid resize, and the muted placeholder when there is no data. Verified by generating a scaffold and running the bundle: `node --check` plus a stub-DOM smoke run (bitmap 800×400 for a 400×200 container @2× DPR, data path drawn, empty state shows the placeholder).
+
+### deferred (unchanged)
+- The `#[ignore]`d `scheduler_stop_aborts_long_running_execution` test still awaits the scheduler+executor test-harness abstraction its TODO names. Feasibility re-verified: `AgentStore::open(tempdir)`, `MockLlmRuntime` (`test-utils` feature) and the executor's injectable `llm_runtime` all exist — the harness is buildable when someone takes it on.
+
 ## [0.9.24] - 2026-09-14
 
 ### OpenAPI: every operation annotated, spec fully codegen-ready (final state)
