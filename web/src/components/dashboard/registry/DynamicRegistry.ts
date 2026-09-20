@@ -13,12 +13,25 @@ import { ComponentMeta } from './types'
 import type { DashboardComponentDto } from '@/types'
 import { isTauriEnv, getServerOrigin } from '@/lib/api'
 
+
+/**
+ * The registry installs loaded community components + the React runtime on
+ * window so that bundled component code (evaluated in-page) can reach them.
+ * Modeled once here; every access goes through this view.
+ */
+type RegistryWindow = Window & typeof globalThis & Record<string, unknown>
+
+/** Structural check for a React component-ish value (forwardRef/memo markers). */
+type MaybeComponent = { $$typeof?: unknown; render?: unknown; propTypes?: unknown }
+
+const registryWindow = () => window as RegistryWindow
+
 // Make React and ReactDOM available globally for extension components
 // Extension bundles are built with React as an external dependency
 if (typeof window !== 'undefined') {
-  (window as any).React = React
-  ;(window as any).ReactDOM = ReactDOM
-  ;(window as any).jsxRuntime = jsxRuntime
+  registryWindow().React = React
+  ;registryWindow().ReactDOM = ReactDOM
+  ;registryWindow().jsxRuntime = jsxRuntime
 }
 
 /**
@@ -124,7 +137,7 @@ export class DynamicComponentRegistry {
     if (extInfo.globalNames) {
       for (const globalName of extInfo.globalNames) {
         try {
-          delete (window as any)[globalName]
+          delete registryWindow()[globalName]
         } catch (e) {
           console.warn(`[DynamicRegistry] Failed to clear global ${globalName}:`, e)
         }
@@ -239,7 +252,7 @@ export class DynamicComponentRegistry {
         // - object with render function: some wrapped components
         const isValidComponent = typeof Component === 'function' ||
           (typeof Component === 'object' && Component !== null &&
-           ((Component as any).$$typeof || typeof (Component as any).render === 'function'))
+           (((Component as MaybeComponent).$$typeof) || typeof (Component as MaybeComponent).render === 'function'))
 
         if (isValidComponent) {
           return Component
@@ -252,7 +265,7 @@ export class DynamicComponentRegistry {
             const prop = (Component as Record<string, unknown>)[key]
             if (typeof prop === 'function' ||
                 (typeof prop === 'object' && prop !== null &&
-                 ((prop as any)?.$$typeof || typeof (prop as any).render === 'function'))) {
+                 (((prop as MaybeComponent | null)?.$$typeof) || typeof (prop as MaybeComponent | null)?.render === 'function'))) {
               return prop
             }
           }
@@ -327,19 +340,22 @@ export class DynamicComponentRegistry {
   private async loadViaScriptTag(bundleUrl: string, globalName: string, exportName?: string): Promise<unknown> {
     return new Promise((resolve, reject) => {
       // Check if the global variable already exists (bundle already loaded)
-      const existingGlobal = (window as any)[globalName]
+      const existingGlobal = registryWindow()[globalName] as
+        | (Record<string, unknown> & { default?: unknown })
+        | ((...args: unknown[]) => unknown)
+        | undefined
       if (existingGlobal) {
         // Get the export from the global
         const exportKey = exportName || 'default'
-        let Component = existingGlobal[exportKey]
+        let Component = typeof existingGlobal === 'function' ? undefined : existingGlobal[exportKey]
 
         // If exportName is specified, look for it as a named export
         if (!Component && exportName) {
           // IIFE with exports: 'named' puts named exports directly on global
           if (typeof existingGlobal === 'function') {
             Component = existingGlobal
-          } else if (existingGlobal.default && typeof existingGlobal.default === 'function') {
-            Component = existingGlobal.default
+          } else if (typeof existingGlobal !== 'function' && typeof existingGlobal.default === 'function') {
+            Component = existingGlobal.default as unknown
           }
         }
 
@@ -357,7 +373,7 @@ export class DynamicComponentRegistry {
       // Set up load handler
       script.onload = () => {
         // Access the global variable
-        const global = (window as any)[globalName]
+        const global = registryWindow()[globalName]
 
         // Clean up
         document.head.removeChild(script)
@@ -367,23 +383,24 @@ export class DynamicComponentRegistry {
 
         if (global) {
           // First try: named export (IIFE with exports: 'named')
-          if (exportName && global[exportName]) {
-            Component = global[exportName]
+          const globalRecord = global as Record<string, unknown> | undefined
+          if (exportName && globalRecord?.[exportName]) {
+            Component = globalRecord[exportName]
           }
           // Second try: default export
-          else if (global.default && typeof global.default === 'function') {
-            Component = global.default
+          else if (typeof globalRecord?.default === 'function') {
+            Component = globalRecord.default
           }
           // Third try: global itself is the component
           else if (typeof global === 'function') {
             Component = global
           }
           // Fourth try: find any function or React component export
-          else {
-            for (const key of Object.keys(global)) {
-              const val = global[key]
+          else if (globalRecord) {
+            for (const key of Object.keys(globalRecord)) {
+              const val = globalRecord[key]
               if (typeof val === 'function' ||
-                  (typeof val === 'object' && val !== null && val.$$typeof)) {
+                  (typeof val === 'object' && val !== null && Boolean((val as MaybeComponent)?.$$typeof))) {
                 Component = val
                 break
               }
@@ -396,8 +413,8 @@ export class DynamicComponentRegistry {
           // - function: regular component
           // - object with $$typeof: forwardRef, memo, etc.
           const typeofComponent = typeof Component
-          const hasTypeof = (Component as any)?.$$typeof
-          const hasRender = typeof (Component as any)?.render === 'function'
+          const hasTypeof = (Component as MaybeComponent | null)?.$$typeof
+          const hasRender = typeof (Component as MaybeComponent | null)?.render === 'function'
           const isValidComponent = typeofComponent === 'function' ||
             (typeofComponent === 'object' && Component !== null &&
              (hasTypeof || hasRender))
@@ -541,7 +558,7 @@ export class DynamicComponentRegistry {
         if (extInfo.globalNames) {
           for (const globalName of extInfo.globalNames) {
             try {
-              delete (window as any)[globalName]
+              delete registryWindow()[globalName]
             } catch (e) {
               console.warn(`[DynamicRegistry] Failed to clear global ${globalName}:`, e)
             }
