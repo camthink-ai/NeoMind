@@ -39,28 +39,6 @@ export interface ToolCall {
   round?: number // 1-based round number for multi-round tool calling
 }
 
-// Build Meta types for AI Build Mode rich cards
-export type BuildEntityType = 'device' | 'dashboard' | 'rule' | 'extension' | 'widget' | 'transform' | 'agent' | 'message'
-export type BuildAction = 'create' | 'update' | 'delete' | 'install'
-
-export interface BuildMeta {
-  type: BuildEntityType
-  action: BuildAction
-  entity_id: string
-  entity_name?: string
-  undo_command: string
-}
-
-/** CLI JSON response structure with optional build_meta */
-export interface CliBuildResponse {
-  success: boolean
-  data?: Record<string, unknown>
-  message?: string
-  error?: string
-  code?: string
-  build_meta?: BuildMeta
-}
-
 // Session Types
 export interface ChatSession {
   sessionId: string
@@ -89,6 +67,10 @@ export interface SessionListResponse {
 export interface SessionHistoryResponse {
   messages: Message[]
   count: number
+  /** Full-history length in raw records; equals count when unpaginated. */
+  total?: number
+  /** Older records exist beyond the loaded window (paginated request only). */
+  has_more?: boolean
 }
 
 // Server WebSocket message types (matching backend)

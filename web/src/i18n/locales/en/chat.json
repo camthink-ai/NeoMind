@@ -122,57 +122,6 @@
     "stepLabel": "Step {{step}}",
     "automationCreated": "Automation created successfully!"
   },
-  "intent": {
-    "queryData": {
-      "label": "Query data",
-      "description": "Query device status or historical data"
-    },
-    "analyzeData": {
-      "label": "Analyze data",
-      "description": "Analyze trends, anomalies, or statistics"
-    },
-    "controlDevice": {
-      "label": "Control device",
-      "description": "Toggle devices or adjust parameters"
-    },
-    "createAutomation": {
-      "label": "Create automation",
-      "description": "Create rules or workflows"
-    },
-    "sendMessage": {
-      "label": "Send message",
-      "description": "Send notifications or reports"
-    },
-    "summarize": {
-      "label": "Summarize",
-      "description": "Summarize information"
-    },
-    "clarify": {
-      "label": "Needs clarification",
-      "description": "More information needed"
-    },
-    "outOfScope": {
-      "label": "Out of scope",
-      "description": "Beyond system capabilities"
-    },
-    "confidence": "Confidence",
-    "type": "Type",
-    "path": {
-      "fast": "Fast path",
-      "standard": "Standard",
-      "quality": "High quality",
-      "multiTurn": "Multi-turn",
-      "fallback": "Fallback"
-    },
-    "entity": {
-      "device": "Device",
-      "location": "Location",
-      "value": "Value",
-      "time": "Time",
-      "action": "Action",
-      "unknown": "Unknown"
-    }
-  },
   "loading": "Loading...",
   "errors": {
     "sendMessage": "Failed to send message",
@@ -191,28 +140,6 @@
     "description": "Download the built-in model (~1.5GB, offline, no API key) — or configure your own LLM backend.",
     "goToSettings": "Go to Settings",
     "downloadBuiltin": "Download Built-in Model (Recommended)"
-  },
-  "build": {
-    "view": "View",
-    "undo": "Undo",
-    "showDetails": "Details",
-    "hideDetails": "Hide details",
-    "types": {
-      "device": "Device",
-      "dashboard": "Dashboard",
-      "rule": "Rule",
-      "extension": "Extension",
-      "widget": "Widget",
-      "transform": "Transform",
-      "agent": "Agent",
-      "message": "Message"
-    },
-    "actions": {
-      "create": "Created",
-      "update": "Updated",
-      "delete": "Deleted",
-      "install": "Installed"
-    }
   },
   "newChat": "New Chat",
   "chat": {
@@ -241,5 +168,7 @@
     "history": "Conversation history",
     "estimatedHint": "Character-based estimate — updates after the next reply",
     "msgCount": " · {{count}} msgs"
-  }
+  },
+  "loadEarlier": "Load earlier messages",
+  "loadEarlierLoading": "Loading…"
 }

@@ -73,9 +73,16 @@ mod tests {
     #[tokio::test]
     async fn test_get_session_history_handler_not_found() {
         let state = create_test_server_state().await;
-        let result =
-            get_session_history_handler(State(state), Path("nonexistent_session".to_string()))
-                .await;
+        let query = HistoryQuery {
+            limit: None,
+            before: None,
+        };
+        let result = get_session_history_handler(
+            State(state),
+            Path("nonexistent_session".to_string()),
+            Query(query),
+        )
+        .await;
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.status, axum::http::StatusCode::NOT_FOUND);

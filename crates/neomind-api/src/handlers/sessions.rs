@@ -16,7 +16,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::info;
 
-use neomind_agent::AgentEvent;
+use neomind_agent::{AgentEvent, AgentMessage};
 use neomind_storage::{PendingStreamState, StreamStage};
 
 /// Stream event sent from the LLM processing task to the WebSocket handler.
@@ -581,22 +581,64 @@ pub async fn get_session_handler(
     }))))
 }
 
+/// Query parameters for paging session history (backward-compatible:
+/// absent params return the full history).
+#[derive(Debug, Deserialize)]
+pub struct HistoryQuery {
+    /// Page size — returns the most recent `limit` messages ending at `before`.
+    pub limit: Option<u32>,
+    /// Exclusive end index (0-based, chronological) into the full history.
+    pub before: Option<u32>,
+}
+
+/// Slice a full history for pagination: with `limit`, the most recent
+/// `limit` messages ending at exclusive index `before` (default: end).
+/// Returns the slice (chronological) and whether older messages remain.
+///
+/// Fragment guard: an assistant turn is stored as several adjacent records
+/// (thinking+tools, tool results, content-only). A page boundary inside such
+/// a group would render a broken partial turn until the next full reload —
+/// the start walks back to the last user message (bounded so a pathological
+/// all-assistant history cannot degenerate into a full scan).
+fn slice_history(history: &[AgentMessage], limit: Option<u32>, before: Option<u32>) -> (Vec<AgentMessage>, bool) {
+    let total = history.len();
+    let Some(limit) = limit.filter(|l| *l > 0) else {
+        return (history.to_vec(), false);
+    };
+    let end = before.map_or(total, |b| (b as usize).min(total));
+    let mut start = end.saturating_sub(limit as usize);
+    let floor = start.saturating_sub(50);
+    while start > floor && !history[start].role.eq_ignore_ascii_case("user") {
+        start -= 1;
+    }
+    (history[start..end].to_vec(), start > 0)
+}
+
 /// Get session history.
+///
+/// Pagination is opt-in and backward-compatible: with no query params the
+/// full history is returned (count == total). With `limit`, the MOST RECENT
+/// `limit` messages ending at the exclusive index `before` (default: end of
+/// history) are returned, plus `total` and `has_more` so the client can page
+/// backwards (`before = total - loaded_so_far`).
 #[utoipa::path(
     get,
     path = "/api/sessions/{id}/history",
     tag = "sessions",
     params(
         ("id" = String, Path, description = "Session id"),
+        ("limit" = Option<u32>, Query, description = "Page size — most recent N messages ending at `before`"),
+        ("before" = Option<u32>, Query, description = "Exclusive end index (0-based, chronological) into the full history; default = end"),
     ),
     responses(
-        (status = 200, description = "Message history of a session"),
+        (status = 200, description = "Message history of a session (paginated slice when `limit` is given)"),
         (status = 404, description = "Not found"),
     )
 )]
 pub async fn get_session_history_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
+    Query(query): Query<HistoryQuery>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
     // First check if session exists (get_history returns empty for NotFound)
     let _agent = state
@@ -613,9 +655,13 @@ pub async fn get_session_history_handler(
         .await
         .map_err(|e| ErrorResponse::internal(format!("Failed to get history: {}", e)))?;
 
+    let (slice, has_more) = slice_history(&history, query.limit, query.before);
+
     Ok(Json(ApiResponse::success(json!({
-        "messages": history,
-        "count": history.len(),
+        "messages": slice,
+        "count": slice.len(),
+        "total": history.len(),
+        "has_more": has_more,
     }))))
 }
 
@@ -1767,5 +1813,93 @@ mod detached_delivery_tests {
             "stream must be fully consumed after client detach — the final reply \
              only reaches history if consumption reaches End"
         );
+    }
+}
+
+#[cfg(test)]
+mod history_pagination_tests {
+    use super::*;
+
+    fn msg(role: &str, content: &str) -> AgentMessage {
+        match role {
+            "user" => AgentMessage::user(content),
+            _ => AgentMessage::assistant(content),
+        }
+    }
+
+    /// A realistic alternating history: user turn followed by an assistant
+    /// turn stored as THREE adjacent records (thinking+tools / tool result /
+    /// content-only) — the fragmentation `mergeMessagesForDisplay` heals on
+    /// the frontend and the fragment guard must not split here.
+    fn history(turns: usize) -> Vec<AgentMessage> {
+        let mut h = Vec::new();
+        for i in 0..turns {
+            h.push(msg("user", &format!("q{}", i)));
+            h.push(msg("assistant", &format!("a{}-tools", i)));
+            h.push(msg("assistant", &format!("a{}-result", i)));
+            h.push(msg("assistant", &format!("a{}-content", i)));
+        }
+        h
+    }
+
+    #[test]
+    fn no_params_returns_full_history() {
+        let h = history(3); // 12 records
+        let (slice, has_more) = slice_history(&h, None, None);
+        assert_eq!(slice.len(), 12);
+        assert!(!has_more);
+    }
+
+    #[test]
+    fn limit_returns_most_recent_tail() {
+        let h = history(3); // 12 records
+        let (slice, has_more) = slice_history(&h, Some(4), None);
+        // Last turn exactly (its user message sits 4 from the end)
+        assert_eq!(slice.len(), 4);
+        assert_eq!(slice[0].content.to_string(), "q2");
+        assert!(has_more);
+    }
+
+    #[test]
+    fn fragment_guard_never_splits_an_assistant_turn() {
+        let h = history(3);
+        // Raw boundary 6-from-the-end lands on the tool-result record of
+        // turn 1 — the guard walks back to that turn's user message.
+        let (slice, has_more) = slice_history(&h, Some(6), None);
+        assert_eq!(slice[0].role, "user");
+        assert_eq!(slice[0].content.to_string(), "q1");
+        // Walked-back boundary: turn 1 complete (4 records) + turn 2 complete (4)
+        assert_eq!(slice.len(), 8);
+        assert!(has_more);
+    }
+
+    #[test]
+    fn before_pages_backwards_without_overlap() {
+        let h = history(10); // 40 records
+        // Page 1: newest 8 (two whole turns)
+        let (p1, more1) = slice_history(&h, Some(8), None);
+        assert_eq!(p1.len(), 8);
+        assert!(more1);
+        // Page 2: before = total - loaded = 32 → records [24, 32)
+        let (p2, more2) = slice_history(&h, Some(8), Some(32));
+        assert_eq!(p2.len(), 8);
+        assert!(more2);
+        // No overlap between pages
+        assert_ne!(p1[0].content.to_string(), p2[0].content.to_string());
+        assert_eq!(p2[7].content.to_string(), "a7-content");
+        // Final page walks to the very start
+        let (p5, more5) = slice_history(&h, Some(8), Some(8));
+        assert_eq!(p5[0].content.to_string(), "q0");
+        assert!(!more5);
+    }
+
+    #[test]
+    fn before_clamps_past_end_and_zero_limit_means_full() {
+        let h = history(2);
+        let (slice, _) = slice_history(&h, Some(10), Some(9999)); // before > total
+        assert_eq!(slice.len(), 8); // everything (limit 10 > 8)
+        let (full, has_more) = slice_history(&h, Some(0), None); // 0 = no paging
+        assert_eq!(full.len(), 8);
+        assert!(!has_more);
     }
 }

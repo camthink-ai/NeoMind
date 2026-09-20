@@ -43,6 +43,12 @@ export interface SessionState {
   sessionsLoading: boolean
   // Loading state for switching sessions
   isLoadingSession: boolean
+  // History pagination — the loaded window is the newest `earlierCursor`-to-
+  // end slice of the RAW server history. 0 = everything loaded.
+  hasEarlierHistory: boolean
+  earlierCursor: number
+  // An older page is being fetched (store-level in-flight guard + spinner)
+  isLoadingEarlier: boolean
 }
 
 // ============================================================================

@@ -8,16 +8,17 @@
  * session history).
  */
 
-import { useState, useRef, useEffect, useCallback, useReducer, useMemo } from "react"
+import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import { useTranslation } from "react-i18next"
 import { useStore } from "@/store"
 import { BuiltinModelWizard } from "@/components/llm/BuiltinModelWizard"
 import { generateId } from "@/lib/id"
 import { ws } from "@/lib/websocket"
 import { api } from "@/lib/api"
-import type { ServerMessage, Message } from "@/types"
-import type { StreamProgress as StreamProgressType } from "@/types"
+import type { Message } from "@/types"
 import { filterPartialMessages, mergeMessagesForDisplay as mergeAssistantMessages } from "@/lib/messageUtils"
+import { useChatStream } from "@/hooks/useChatStream"
+import { estimateTokens } from "@/lib/tokens"
 import {
   selectLlmBackendState,
   selectChatActions,
@@ -55,133 +56,6 @@ interface PanelChatViewProps {
   onNavigateToSettings?: () => void
 }
 
-// Stream state - same structure as ChatContainer
-interface StreamState {
-  isStreaming: boolean
-  streamingContent: string
-  streamingThinking: string
-  // Per-round thinking for grouped rendering (completed rounds, keyed by round)
-  streamingRoundThinking: Record<number, string>
-  streamingToolCalls: any[]
-  streamProgress: StreamProgressType
-  currentPlanStep: string
-  roundContents: Record<number, string>
-  currentRound: number
-}
-
-type StreamAction =
-  | { type: 'START_STREAM' }
-  | { type: 'THINKING'; content: string }
-  | { type: 'CONTENT'; content: string }
-  | { type: 'TOOL_START'; tool: string; arguments?: any; round?: number }
-  | { type: 'TOOL_END'; tool: string; result: any }
-  | { type: 'PROGRESS'; progress: Partial<StreamProgressType> }
-  | { type: 'PLAN'; step: string }
-  | { type: 'WARNING'; message: string }
-  | { type: 'ROUND_END' }
-  | { type: 'END_STREAM' }
-  | { type: 'ERROR' }
-  | { type: 'RESET' }
-
-const initialStreamState: StreamState = {
-  isStreaming: false,
-  streamingContent: "",
-  streamingThinking: "",
-  streamingRoundThinking: {},
-  streamingToolCalls: [],
-  streamProgress: {
-    elapsed: 0,
-    stage: 'thinking',
-    warnings: [],
-    remainingTime: 300,
-  },
-  currentPlanStep: "",
-  roundContents: {},
-  currentRound: 1,
-}
-
-function streamReducer(state: StreamState, action: StreamAction): StreamState {
-  switch (action.type) {
-    case 'START_STREAM':
-      return { ...state, isStreaming: true }
-    case 'THINKING':
-      return {
-        ...state,
-        isStreaming: true,
-        streamingThinking: state.streamingThinking + action.content,
-        streamingRoundThinking: {
-          ...state.streamingRoundThinking,
-          [state.currentRound]: (state.streamingRoundThinking[state.currentRound] || "") + action.content,
-        },
-        streamProgress: { ...state.streamProgress, stage: 'thinking' },
-      }
-    case 'CONTENT':
-      return {
-        ...state,
-        isStreaming: true,
-        streamingContent: state.streamingContent + action.content,
-        streamProgress: { ...state.streamProgress, stage: 'generating' },
-      }
-    case 'TOOL_START':
-      return {
-        ...state,
-        isStreaming: true,
-        streamingToolCalls: [
-          ...state.streamingToolCalls,
-          { id: generateId(), name: action.tool, arguments: action.arguments, result: null, round: action.round },
-        ],
-        streamProgress: { ...state.streamProgress, stage: 'tool_execution' },
-      }
-    case 'TOOL_END': {
-      const idx = state.streamingToolCalls.findIndex(
-        tc => tc.name === action.tool && tc.result === null
-      )
-      if (idx === -1) return state
-      const updated = [...state.streamingToolCalls]
-      updated[idx] = { ...updated[idx], result: action.result }
-      return { ...state, streamingToolCalls: updated }
-    }
-    case 'PROGRESS':
-      return {
-        ...state,
-        streamProgress: {
-          ...state.streamProgress,
-          ...action.progress,
-          warnings: action.progress.warnings ?? state.streamProgress.warnings,
-        },
-      }
-    case 'PLAN':
-      return { ...state, currentPlanStep: action.step }
-    case 'WARNING':
-      return {
-        ...state,
-        streamProgress: {
-          ...state.streamProgress,
-          warnings: [...state.streamProgress.warnings, action.message],
-        },
-      }
-    case 'ROUND_END':
-      return {
-        ...state,
-        roundContents: {
-          ...state.roundContents,
-          [state.currentRound]: state.streamingContent,
-        },
-        streamingContent: "",
-        streamingThinking: "",
-        currentRound: state.currentRound + 1,
-      }
-    case 'END_STREAM':
-      return { ...initialStreamState, isStreaming: false }
-    case 'ERROR':
-      return { ...initialStreamState, isStreaming: false }
-    case 'RESET':
-      return initialStreamState
-    default:
-      return state
-  }
-}
-
 export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavigateToSettings }: PanelChatViewProps) {
   const { t } = useTranslation(["chat", "common"])
   const { toast } = useToast()
@@ -208,11 +82,77 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
   const [isHistoryLoading, setIsHistoryLoading] = useState(true)
   const [attachedImages, setAttachedImages] = useState<ChatImage[]>([])
   const panelSessionIdRef = useRef<string | null>(null)
+  // Session-filter binding for useChatStream. Unlike panelSessionIdRef this
+  // is NEVER nulled on page change: while a page switch finds the next
+  // session, the PREVIOUS page's turn may still be streaming on the shared
+  // socket — binding to the stale id keeps those events filtered out
+  // (null would mean "accept everything" and drive a phantom bubble).
+  const filterSessionIdRef = useRef<string | null>(null)
 
-  // Streaming state
-  const [streamState, dispatch] = useReducer(streamReducer, initialStreamState)
-  const [currentStreamMessageId, setCurrentStreamMessageId] = useState<string | null>(null)
-  const currentStreamMessageIdRef = useRef<string | null>(null)
+  // Shared stream state machine (the same one the chat page uses) — the
+  // panel's view-specific behavior rides the callbacks: local-message
+  // persistence (seconds-precision timestamps), reset-on-error, and the
+  // post-end reconciliation against the server's canonical history.
+  const {
+    isStreaming,
+    isStreamingRef,
+    streamingMessageId,
+    streamingContent,
+    streamingThinking,
+    streamingToolCalls,
+    roundContents,
+    streamingRoundThinking,
+    currentRound,
+    beginTurn,
+    hardReset,
+  } = useChatStream({
+    // Drop events from other sessions — the chat page shares this socket.
+    // See filterSessionIdRef: intentionally never cleared on page change.
+    sessionId: filterSessionIdRef.current,
+    onEnd: (result) => {
+      addPanelMessage({
+        id: result.id,
+        role: "assistant",
+        content: result.content,
+        timestamp: Math.floor(Date.now() / 1000),
+        thinking: result.thinking,
+        tool_calls: result.toolCalls.length > 0 ? result.toolCalls : undefined,
+        round_contents: result.roundContents,
+        round_thinking: result.roundThinking,
+      })
+      // Reconcile with the server's canonical history. The live assembly
+      // above can diverge from what the server persisted (interleaved
+      // turns, replayed round events, mid-stream remounts) — reloading
+      // converges the panel to exactly what /chat renders.
+      const sid = panelSessionIdRef.current
+      if (sid) {
+        api.getSessionHistory(sid, undefined, { skipErrorToast: true }).then(r => {
+          // A new stream started while the fetch was in flight — keep
+          // the live state; the next end reconciles again.
+          if (isStreamingRef.current) return
+          const merged = mergeAssistantMessages(r.messages || [])
+          setPanelMessages(prev =>
+            // Same turn count → the live assembly is already correct AND
+            // holds stable local ids. Adopting server ids here would
+            // change every React key and remount the whole list (the
+            // visible "snap to one message" at completion). Only take
+            // server truth when it actually diverges.
+            merged.length === prev.length ? prev : merged
+          )
+        }).catch(() => { /* keep the live assembly */ })
+      }
+    },
+    onError: (message) => {
+      addPanelMessage({
+        id: generateId(),
+        role: "assistant",
+        content: `**${t("errors.llmError")}**\n\n${message}`,
+        timestamp: Math.floor(Date.now() / 1000),
+      })
+      hardReset()
+    },
+  })
+
   const [input, setInput] = useState("")
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -277,22 +217,20 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
-  const isStreamingRef = useRef(false)
   const onStreamingChangeRef = useRef(onStreamingChange)
   useEffect(() => { onStreamingChangeRef.current = onStreamingChange }, [onStreamingChange])
 
   // Sync streaming state to parent
   useEffect(() => {
-    isStreamingRef.current = streamState.isStreaming
-    onStreamingChangeRef.current(streamState.isStreaming)
-  }, [streamState.isStreaming])
+    onStreamingChangeRef.current(isStreaming)
+  }, [isStreaming])
 
   // Auto-scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({
-      behavior: streamState.isStreaming ? "smooth" : "instant",
+      behavior: isStreaming ? "smooth" : "instant",
     })
-  }, [panelMessages, streamState.streamingContent, streamState.isStreaming])
+  }, [panelMessages, streamingContent, isStreaming])
 
   // Add message to local panel state (NOT global store)
   const addPanelMessage = useCallback((msg: Message) => {
@@ -312,6 +250,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
       const result = await api.createSession(cfg)
       if (result?.sessionId) {
         panelSessionIdRef.current = result.sessionId
+        filterSessionIdRef.current = result.sessionId
         writeStoredPanelSession(currentPageKeyRef.current, result.sessionId, profileFingerprint(baseAssistant))
         ws.setSessionId(result.sessionId)
         setPanelMessages([])
@@ -334,7 +273,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     panelSessionIdRef.current = null
     setPanelMessages([])
     setIsHistoryLoading(true)
-    dispatch({ type: 'RESET' })
+    hardReset()
 
     // Fingerprint-aware: a session whose creation-time profile (prompt
     // suffix / tool allowlist / language) no longer matches is dropped —
@@ -344,8 +283,9 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     const persistedId = readStoredPanelSession(pageKey, sessionFingerprint)
     if (persistedId) {
       // Load history for this page's persisted session
-      api.getSessionHistory(persistedId, { skipErrorToast: true }).then(result => {
+      api.getSessionHistory(persistedId, undefined, { skipErrorToast: true }).then(result => {
         panelSessionIdRef.current = persistedId
+        filterSessionIdRef.current = persistedId
         ws.setSessionId(persistedId)
         const merged = mergeAssistantMessages(result.messages || [])
         setPanelMessages(merged)
@@ -371,138 +311,13 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
 
   // New conversation handler — resets the CURRENT page's bucket
   const handleNewConversation = useCallback(async () => {
-    if (streamState.isStreaming) return
+    if (isStreaming) return
     localStorage.removeItem(panelSessionKey(currentPageKeyRef.current))
     panelSessionIdRef.current = null
     setPanelMessages([])
-    dispatch({ type: 'RESET' })
+    hardReset()
     await createPanelSession()
-  }, [streamState.isStreaming, createPanelSession])
-
-  // Handle WebSocket events — all messages go to local panel state
-  useEffect(() => {
-    let streamingContentAcc = ""
-    let streamingThinkingAcc = ""
-    let streamingToolCallsAcc: any[] = []
-    let roundContentsAcc: Record<number, string> = {}
-    let currentRound = 1
-
-    const handleMessage = (data: ServerMessage) => {
-      switch (data.type) {
-        case "Thinking":
-          streamingThinkingAcc += (data.content || "")
-          dispatch({ type: 'THINKING', content: data.content || "" })
-          break
-        case "Content":
-          streamingContentAcc += (data.content || "")
-          dispatch({ type: 'CONTENT', content: data.content || "" })
-          break
-        case "ToolCallStart":
-          dispatch({ type: 'TOOL_START', tool: data.tool, arguments: data.arguments, round: data.round ?? currentRound })
-          streamingToolCallsAcc.push({
-            id: generateId(), name: data.tool, arguments: data.arguments, result: null, round: data.round ?? currentRound,
-          })
-          break
-        case "ToolCallEnd": {
-          const idx = streamingToolCallsAcc.findIndex(tc => tc.name === data.tool && tc.result === null)
-          if (idx !== -1) {
-            streamingToolCallsAcc[idx] = { ...streamingToolCallsAcc[idx], result: data.result }
-          }
-          dispatch({ type: 'TOOL_END', tool: data.tool, result: data.result })
-          break
-        }
-        case "IntermediateEnd":
-        case "intermediate_end":
-          if (streamingContentAcc) roundContentsAcc[currentRound] = streamingContentAcc
-          streamingContentAcc = ""
-          streamingThinkingAcc = ""
-          currentRound += 1
-          dispatch({ type: 'ROUND_END' })
-          break
-        case "Progress":
-          dispatch({ type: 'PROGRESS', progress: { elapsed: data.elapsed, stage: data.stage, remainingTime: data.remainingTime ?? 300 } })
-          if (data.message) dispatch({ type: 'PLAN', step: data.message })
-          break
-        case "Plan":
-          dispatch({ type: 'PLAN', step: data.step })
-          break
-        case "Warning":
-          dispatch({ type: 'WARNING', message: data.message })
-          break
-        case "cancelled":
-          // Server acknowledged __CANCEL__; no trailing 'end' is guaranteed
-          // on this path — reset stream state HERE (the local cancel path
-          // already rendered its notice; this covers cross-tab cancels).
-          dispatch({ type: 'END_STREAM' })
-          setCurrentStreamMessageId(null)
-          currentStreamMessageIdRef.current = null
-          isStreamingRef.current = false
-          break
-        case "end":
-          if (streamingContentAcc || streamingThinkingAcc || streamingToolCallsAcc.length > 0) {
-            if (streamingContentAcc) roundContentsAcc[currentRound] = streamingContentAcc
-            const hasMultipleRounds = Object.keys(roundContentsAcc).length > 1
-            // Use currentStreamMessageId as the message ID so the streaming block
-            // transitions smoothly to the saved message without flash
-            const msgId = currentStreamMessageIdRef.current || generateId()
-            addPanelMessage({
-              id: msgId,
-              role: "assistant",
-              content: streamingContentAcc,
-              timestamp: Math.floor(Date.now() / 1000),
-              thinking: streamingThinkingAcc || undefined,
-              tool_calls: streamingToolCallsAcc.length > 0 ? streamingToolCallsAcc : undefined,
-              round_contents: hasMultipleRounds ? roundContentsAcc : undefined,
-            })
-          }
-          dispatch({ type: 'END_STREAM' })
-          setCurrentStreamMessageId(null)
-          currentStreamMessageIdRef.current = null
-          streamingContentAcc = ""
-          streamingThinkingAcc = ""
-          streamingToolCallsAcc = []
-          roundContentsAcc = {}
-          currentRound = 1
-          // Reconcile with the server's canonical history. The live assembly
-          // above can diverge from what the server persisted (interleaved
-          // turns, replayed round events, mid-stream remounts) — reloading
-          // converges the panel to exactly what /chat renders.
-          const sid = panelSessionIdRef.current
-          if (sid) {
-            isStreamingRef.current = false
-            api.getSessionHistory(sid, { skipErrorToast: true }).then(result => {
-              // A new stream started while the fetch was in flight — keep
-              // the live state; the next end reconciles again.
-              if (isStreamingRef.current) return
-              const merged = mergeAssistantMessages(result.messages || [])
-              setPanelMessages(prev =>
-                // Same turn count → the live assembly is already correct AND
-                // holds stable local ids. Adopting server ids here would
-                // change every React key and remount the whole list (the
-                // visible "snap to one message" at completion). Only take
-                // server truth when it actually diverges (interleaved turns,
-                // replayed rounds).
-                merged.length === prev.length ? prev : merged
-              )
-            }).catch(() => { /* keep the live assembly */ })
-          }
-          break
-        case "Error":
-          addPanelMessage({
-            id: generateId(),
-            role: "assistant",
-            content: `**${t("errors.llmError")}**\n\n${data.message}`,
-            timestamp: Math.floor(Date.now() / 1000),
-          })
-          dispatch({ type: 'ERROR' })
-          isStreamingRef.current = false
-          break
-      }
-    }
-
-    const unsubscribe = ws.onMessage(handleMessage)
-    return () => { void unsubscribe() }
-  }, [addPanelMessage, t])
+  }, [isStreaming, createPanelSession, hardReset])
 
   // Surface connection failures that would otherwise leave the streaming
   // bubble spinning forever. With server-side detached delivery the turn
@@ -534,10 +349,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
       killTimer = setTimeout(() => {
         killTimer = null
         if (!isStreamingRef.current) return
-        dispatch({ type: 'ERROR' })
-        isStreamingRef.current = false
-        setCurrentStreamMessageId(null)
-        currentStreamMessageIdRef.current = null
+        hardReset()
         const content = state.errorMessage
           ? `**${t("chat.connection.authFailed")}**\n\n${state.errorMessage}`
           : `⚠️ ${t("chat.connection.interruptedSaved")}`
@@ -553,7 +365,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
       clearKillTimer()
       void unsubscribe()
     }
-  }, [addPanelMessage, t])
+  }, [addPanelMessage, t, hardReset])
 
   // Multimodal gate — mirrors the chat page's composer input
   const activeBackend = llmBackends.find(b => b.id === activeBackendId)
@@ -562,7 +374,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
   // Send message — ensure session is ready before sending
   const handleSend = useCallback(async () => {
     const text = input.trim()
-    if ((!text && attachedImages.length === 0) || streamState.isStreaming) return
+    if ((!text && attachedImages.length === 0) || isStreaming) return
 
     // Images need a vision-capable backend
     if (attachedImages.length > 0 && !supportsMultimodal) {
@@ -587,44 +399,40 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     setAttachedImages([])
     setInput("")
     if (inputRef.current) inputRef.current.style.height = "auto"
-    dispatch({ type: 'START_STREAM' })
-    isStreamingRef.current = true
-    const streamMsgId = generateId()
-    setCurrentStreamMessageId(streamMsgId)
-    currentStreamMessageIdRef.current = streamMsgId
+    beginTurn()
     // Page-matched skills ride every send (backend pins them per message);
     // the page's system focus already lives in the session's system prompt.
     const skillIds = matchedSkillIdsRef.current.length > 0 ? [...matchedSkillIdsRef.current] : undefined
     ws.sendMessage(text, sentImages, skillIds, undefined)
     requestAnimationFrame(() => inputRef.current?.focus())
-  }, [input, attachedImages, streamState.isStreaming, addPanelMessage, createPanelSession, supportsMultimodal, toast, t])
+  }, [input, attachedImages, isStreaming, addPanelMessage, createPanelSession, supportsMultimodal, toast, t, beginTurn])
 
   const filteredMessages = useMemo(() => filterPartialMessages(panelMessages), [panelMessages])
 
-  // Context estimate — mirrors the chat page's composer input
+  // Context estimate — the shared CJK-weighted estimator (the old chars/3
+  // underestimated Chinese ~5x). The panel has no measured token usage, so
+  // this is always an estimate, computed cheaply per streaming delta.
   const contextUsage = useMemo(() => {
     if (filteredMessages.length === 0) return null
     const maxContext = activeBackend?.capabilities?.max_context ?? 8192
-    const msgChars = panelMessages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0)
-    const streamChars = (streamState.streamingContent?.length ?? 0) + (streamState.streamingThinking?.length ?? 0)
-      + streamState.streamingToolCalls.reduce((s, tc) => s + (tc.arguments?.length ?? 0) + (tc.result?.length ?? 0), 0)
-    return { used: Math.ceil((msgChars + streamChars) / 3), max: maxContext }
-  }, [filteredMessages.length, panelMessages, activeBackend, streamState.streamingContent, streamState.streamingThinking, streamState.streamingToolCalls])
+    const msgTokens = panelMessages.reduce((sum, m) => sum + estimateTokens(m.content ?? ""), 0)
+    const streamCorpus = (streamingContent ?? '') + (streamingThinking ?? '')
+      + streamingToolCalls.map(tc => String(tc.arguments ?? '') + String(tc.result ?? '')).join('')
+    return { used: msgTokens + estimateTokens(streamCorpus), max: maxContext }
+  }, [filteredMessages.length, panelMessages, activeBackend, streamingContent, streamingThinking, streamingToolCalls])
 
   // Cancel the in-flight request (same channel the chat page uses)
   const handleCancelRequest = useCallback(() => {
-    if (!streamState.isStreaming) return
+    if (!isStreaming) return
     ws.sendMessage("__CANCEL__", undefined)
-    dispatch({ type: 'ERROR' })
-    setCurrentStreamMessageId(null)
-    currentStreamMessageIdRef.current = null
+    hardReset()
     addPanelMessage({
       id: generateId(),
       role: "assistant",
       content: "⚠️ Request cancelled by user",
       timestamp: Math.floor(Date.now() / 1000),
     })
-  }, [streamState.isStreaming, addPanelMessage])
+  }, [isStreaming, addPanelMessage, hardReset])
 
   return (
     <div className="flex flex-col h-full bg-background">
@@ -636,7 +444,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
           </div>
           <div>
             <span className="text-sm font-semibold leading-tight">{t("panelTitle")}</span>
-            {isStreamingRef.current && (
+            {isStreaming && (
               <span className="ml-2 inline-flex items-center gap-1 text-xs text-muted-foreground">
                 <span className="w-1.5 h-1.5 rounded-full bg-info animate-pulse" />
               </span>
@@ -648,7 +456,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
             variant="ghost"
             size="icon"
             onClick={handleNewConversation}
-            disabled={streamState.isStreaming}
+            disabled={isStreaming}
             className="h-8 w-8 rounded-lg text-muted-foreground hover:text-foreground"
             aria-label={t("newChat", "New conversation")}
           >
@@ -746,7 +554,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
                 </div>
               </div>
             </div>
-          ) : filteredMessages.length === 0 && !streamState.isStreaming ? (
+          ) : filteredMessages.length === 0 && !isStreaming ? (
             <div className="flex flex-col items-center justify-center h-full gap-3 px-2">
               <div className="w-12 h-12 rounded-xl bg-muted flex items-center justify-center">
                 <Bot className="h-6 w-6 text-foreground" />
@@ -776,14 +584,14 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
             <ChatMessages
               messages={filteredMessages}
               user={user}
-              isStreaming={streamState.isStreaming && !(currentStreamMessageId && filteredMessages.some(m => m.id === currentStreamMessageId))}
-              streamingContent={streamState.streamingContent}
-              streamingThinking={streamState.streamingThinking}
-              streamingRoundThinking={streamState.streamingRoundThinking}
-              streamingToolCalls={streamState.streamingToolCalls}
-              roundContents={streamState.roundContents}
-              currentRound={streamState.currentRound}
-              streamingMessageId={currentStreamMessageId}
+              isStreaming={isStreaming && !(streamingMessageId && filteredMessages.some(m => m.id === streamingMessageId))}
+              streamingContent={streamingContent}
+              streamingThinking={streamingThinking}
+              streamingRoundThinking={streamingRoundThinking}
+              streamingToolCalls={streamingToolCalls}
+              roundContents={roundContents}
+              currentRound={currentRound}
+              streamingMessageId={streamingMessageId}
               onScrollToBottom={() => {
                 const el = scrollContainerRef.current
                 if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
@@ -811,7 +619,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
           }}
           textareaRef={inputRef}
           placeholder={t("input.placeholder")}
-          isStreaming={streamState.isStreaming}
+          isStreaming={isStreaming}
           onCancel={handleCancelRequest}
           attachments={attachedImages}
           onAttachmentsChange={setAttachedImages}

@@ -3,17 +3,6 @@ export { ConnectionStatus } from './ConnectionStatus'
 export { ThinkingBlock } from './ThinkingBlock'
 export { ToolCallVisualization } from './ToolCallVisualization'
 export {
-  IntentIndicator,
-  CompactIntentBadge,
-  IntentFlow,
-  IntentConfidenceBar,
-  type IntentCategory,
-  type ProcessingStrategy,
-  type EntityType,
-  type Entity,
-  type IntentClassification
-} from './IntentIndicator'
-export {
   TaskProgress,
   CompactTaskProgress,
   TaskWizard,

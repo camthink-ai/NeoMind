@@ -12,10 +12,10 @@
 
 import { useMemo, type RefObject } from "react"
 import { useTranslation } from "react-i18next"
-import { ChevronDown, Sparkles } from "lucide-react"
+import { ChevronDown, Loader2, Sparkles } from "lucide-react"
 import type { ChatImage, Message, UserInfo } from "@/types"
 import { cn } from "@/lib/utils"
-import { textNano } from "@/design-system/tokens/typography"
+import { textMini, textNano } from "@/design-system/tokens/typography"
 import { formatTimestamp } from "@/lib/utils/format"
 import { cleanToolCallJson, mergeMessagesForDisplay } from "@/lib/messageUtils"
 import { isThinkingDuplicate } from "./ToolCallVisualization"
@@ -43,6 +43,11 @@ interface ChatMessagesProps {
   streamingMessageId?: string | null
   onScrollToBottom?: () => void
   endRef?: RefObject<HTMLDivElement>
+  /** Older history exists beyond the loaded window — renders the
+   *  "load earlier" affordance at the top of the list. */
+  hasEarlierHistory?: boolean
+  loadingEarlier?: boolean
+  onLoadEarlier?: () => void
 }
 
 /** Image gallery for user messages */
@@ -77,6 +82,9 @@ export function ChatMessages({
   streamingMessageId,
   onScrollToBottom,
   endRef,
+  hasEarlierHistory,
+  loadingEarlier,
+  onLoadEarlier,
 }: ChatMessagesProps) {
   const { t } = useTranslation("chat")
   const getUserInitials = (username: string) => username.slice(0, 2).toUpperCase()
@@ -122,6 +130,30 @@ export function ChatMessages({
 
   return (
     <div className="max-w-3xl mx-auto space-y-4 sm:space-y-6">
+      {hasEarlierHistory && onLoadEarlier && (
+        <div className="flex justify-center">
+          <button
+            onClick={onLoadEarlier}
+            disabled={loadingEarlier}
+            className={cn(
+              "inline-flex items-center gap-1.5 px-3 py-1 rounded-full",
+              "border border-border bg-card text-muted-foreground",
+              "hover:text-foreground hover:bg-muted-50 transition-colors",
+              "disabled:opacity-60",
+              textMini
+            )}
+          >
+            {loadingEarlier ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                {t("loadEarlierLoading")}
+              </>
+            ) : (
+              t("loadEarlier")
+            )}
+          </button>
+        </div>
+      )}
       {allMessages.map((message, idx) => {
         const isCurrentlyStreaming = !!(message as any)._isStreaming
         // Copy the message as the user sees it: user messages verbatim;

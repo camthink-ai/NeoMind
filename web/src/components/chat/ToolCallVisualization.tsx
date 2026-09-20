@@ -12,13 +12,12 @@
  *   Markdown content (the final answer)        ← rendered separately in chat.tsx
  */
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Wrench, ChevronDown, CheckCircle2, Loader2, Code, FileText } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { textMini, textCode } from "@/design-system/tokens/typography"
 import type { ToolCall } from "@/types"
-import { BuildCard, parseBuildResponse } from "@/components/chat/BuildCard"
 
 // ─── Helpers ───
 
@@ -30,7 +29,7 @@ function getToolStatus(hasResult: boolean, isStreaming: boolean): ToolStatus {
   return "pending"
 }
 
-function formatDuration(ms?: number): string {
+function _formatDuration(ms?: number): string {
   if (!ms) return ""
   if (ms < 1000) return `${ms}ms`
   return `${(ms / 1000).toFixed(1)}s`
@@ -131,7 +130,7 @@ export function ToolProcessBlock({
   const steps = Array.from(toolGroups.keys()).sort((a, b) => a - b)
   const completedCount = toolCalls.filter(tc => tc.result != null).length
   const allComplete = completedCount === toolCalls.length && !isStreaming
-  const manyCalls = toolCalls.length > 4
+  const _manyCalls = toolCalls.length > 4
 
   return (
     <div className="mb-4 overflow-hidden rounded-lg bg-muted/40">
@@ -256,10 +255,6 @@ function ToolCallItem({
   const hasResult = toolCall.result !== undefined && toolCall.result !== null
   const hasDetails = hasArguments || hasResult
 
-  // Check if result contains build_meta for rich card rendering
-  const buildResponse = hasResult ? parseBuildResponse(toolCall.result) : null
-  const isBuildCard = buildResponse !== null
-
   const statusLabels = {
     pending: t("toolCall.status.pending"),
     running: t("toolCall.status.running"),
@@ -316,9 +311,7 @@ function ToolCallItem({
               </pre>
             </div>
           )}
-          {hasResult && isBuildCard ? (
-            <BuildCard response={buildResponse} />
-          ) : hasResult && (
+          {hasResult && (
             <div className="rounded bg-muted-30 p-1.5">
               <div className={cn(textMini, "text-muted-foreground mb-0.5 flex items-center gap-1")}>
                 <CheckCircle2 className="h-3 w-3" />{t("toolCall.result")}

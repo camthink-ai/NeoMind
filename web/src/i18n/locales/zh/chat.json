@@ -122,57 +122,6 @@
     "stepLabel": "第 {{step}} 步",
     "automationCreated": "自动化已成功创建！"
   },
-  "intent": {
-    "queryData": {
-      "label": "查询数据",
-      "description": "查询设备状态或历史数据"
-    },
-    "analyzeData": {
-      "label": "分析数据",
-      "description": "分析趋势、异常或统计"
-    },
-    "controlDevice": {
-      "label": "控制设备",
-      "description": "控制设备开关或调节参数"
-    },
-    "createAutomation": {
-      "label": "创建自动化",
-      "description": "创建规则或工作流"
-    },
-    "sendMessage": {
-      "label": "发送消息",
-      "description": "发送通知或报告"
-    },
-    "summarize": {
-      "label": "汇总信息",
-      "description": "汇总或总结信息"
-    },
-    "clarify": {
-      "label": "需要澄清",
-      "description": "需要更多信息"
-    },
-    "outOfScope": {
-      "label": "超出范围",
-      "description": "超出系统能力范围"
-    },
-    "confidence": "置信度",
-    "type": "类型",
-    "path": {
-      "fast": "快速路径",
-      "standard": "标准",
-      "quality": "高质量",
-      "multiTurn": "多轮对话",
-      "fallback": "降级"
-    },
-    "entity": {
-      "device": "设备",
-      "location": "位置",
-      "value": "数值",
-      "time": "时间",
-      "action": "动作",
-      "unknown": "未知"
-    }
-  },
   "loading": "加载中...",
   "errors": {
     "sendMessage": "发送消息失败",
@@ -191,28 +140,6 @@
     "description": "下载内置模型（约 1.5GB，离线可用、无需 API key），或配置你自己的 LLM 后端",
     "goToSettings": "前往设置",
     "downloadBuiltin": "下载内置 AI 模型（推荐）"
-  },
-  "build": {
-    "view": "查看",
-    "undo": "撤销",
-    "showDetails": "详情",
-    "hideDetails": "收起",
-    "types": {
-      "device": "设备",
-      "dashboard": "仪表盘",
-      "rule": "规则",
-      "extension": "扩展",
-      "widget": "组件",
-      "transform": "转换",
-      "agent": "智能体",
-      "message": "消息"
-    },
-    "actions": {
-      "create": "已创建",
-      "update": "已更新",
-      "delete": "已删除",
-      "install": "已安装"
-    }
   },
   "newChat": "新对话",
   "chat": {
@@ -241,5 +168,7 @@
     "history": "对话历史",
     "estimatedHint": "基于字符估算——下次回复后更新为精确值",
     "msgCount": " · {{count}} 条"
-  }
+  },
+  "loadEarlier": "加载更早的消息",
+  "loadEarlierLoading": "加载中…"
 }

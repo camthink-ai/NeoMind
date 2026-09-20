@@ -6,7 +6,7 @@ import { useStore } from "@/store"
 import { shallow } from "zustand/shallow"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { generateId } from "@/lib/id"
-import { Settings, Sparkles, MessageSquare, Loader2, RotateCcw, Plus } from "lucide-react"
+import { Sparkles, MessageSquare, Loader2, RotateCcw, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SessionSidebar } from "@/components/session/SessionSidebar"
 import { WelcomeArea } from "@/components/chat/WelcomeArea"
@@ -16,7 +16,7 @@ import { ConnectionStatus } from "@/components/chat/ConnectionStatus"
 import { MobilePageHeader } from "@/components/layout/MobilePageHeader"
 import { ws, type ConnectionState } from "@/lib/websocket"
 import { api } from "@/lib/api"
-import type { Message, ServerMessage, ChatImage } from "@/types"
+import type { Message, ChatImage } from "@/types"
 import { cn } from "@/lib/utils"
 import { getPortalRoot } from "@/lib/portal"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
@@ -24,25 +24,12 @@ import { LoadingState } from "@/components/shared"
 import { forceViewportReset } from "@/hooks/useVisualViewport"
 import { useToast } from "@/hooks/use-toast"
 import { LlmSetupGuide } from "@/components/llm/LlmSetupGuide"
+import { useChatStream } from "@/hooks/useChatStream"
+import { estimateTokens } from "@/lib/tokens"
 
 // Hook to detect desktop breakpoint — md: 768px, matching the app-wide
 // breakpoint (useIsMobile < 768). The old 1024 left the 768–1024 band in a
 // hybrid state.
-// Character estimator with the backend's weights (CJK ≈1.8 tokens/char,
-// ASCII ≈0.25/char, ×1.1 buffer) — the old chars/3 underestimated Chinese
-// ~5x, which made the ring look like it RESET on every send.
-function estimateTokens(text: string): number {
-  let cjk = 0, ascii = 0, digits = 0, special = 0
-  for (const ch of text) {
-    const cp = ch.codePointAt(0) ?? 0
-    if ((cp >= 0x4e00 && cp <= 0x9fff) || (cp >= 0x3400 && cp <= 0x4dbf) || (cp >= 0x3000 && cp <= 0x303f) || (cp >= 0xff00 && cp <= 0xffef)) cjk++
-    else if (ch >= '0' && ch <= '9') digits++
-    else if (/[a-zA-Z]/.test(ch)) ascii++
-    else special++
-  }
-  return Math.ceil((cjk * 1.8 + ascii * 0.25 + digits * 0.3 + special * 0.5) * 1.1)
-}
-
 function useIsDesktop() {
   const [isDesktop, setIsDesktop] = useState(() => {
     if (typeof window === 'undefined') return false
@@ -72,7 +59,7 @@ export function ChatPage() {
   const { toast } = useToast()
   const { sessionId: urlSessionId } = useParams<{ sessionId?: string }>()
   const navigate = useNavigate()
-  const openSettings = useStore((s) => s.openSettings)
+  const _openSettings = useStore((s) => s.openSettings)
   const [searchParams, setSearchParams] = useSearchParams()
   const { handleError } = useErrorHandler()
   const llmBackends = useStore((state) => state.llmBackends)
@@ -104,14 +91,13 @@ export function ChatPage() {
   const addMessage = useStore((s) => s.addMessage)
   const createSession = useStore((s) => s.createSession)
   const switchSession = useStore((s) => s.switchSession)
+  const hasEarlierHistory = useStore((s) => s.hasEarlierHistory)
+  const loadEarlierHistory = useStore((s) => s.loadEarlierHistory)
   const user = useStore((s) => s.user)
+  const [loadingEarlier, setLoadingEarlier] = useState(false)
 
   // Local state
   const [input, setInput] = useState("")
-  const [isStreaming, setIsStreaming] = useState(false)
-  const [streamingContent, setStreamingContent] = useState("")
-  const [streamingThinking, setStreamingThinking] = useState("")
-  const [streamingToolCalls, setStreamingToolCalls] = useState<any[]>([])
   const [lastTokenUsage, setLastTokenUsage] = useState<{ promptTokens: number; systemPromptTokens?: number; toolTokens?: number } | null>(null)
 
   // Token usage survives reloads/session switches — the context it measured
@@ -135,8 +121,7 @@ export function ChatPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const pageSidebarSlot = usePageSidebarSlot()
   // Track the ID of the last assistant message for tool call result updates
-  const [lastAssistantMessageId, setLastAssistantMessageId] = useState<string | null>(null)
-
+  const [_lastAssistantMessageId, setLastAssistantMessageId] = useState<string | null>(null)
   // Pending stream recovery state (for reconnect)
   const [pendingStream, setPendingStream] = useState<{
     hasPending: boolean
@@ -157,23 +142,78 @@ export function ChatPage() {
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
-  const streamingMessageIdRef = useRef<string | null>(null)
-  // Captured streaming state for use in end event (state updates are async)
-  const capturedStreamingRef = useRef({ content: "", thinking: "", toolCalls: [] as any[] })
-  // Round tracking for multi-round tool calling
-  const [roundContents, setRoundContents] = useState<Record<number, string>>({})
-  const [streamingRoundThinking, setStreamingRoundThinking] = useState<Record<number, string>>({})
+
+  // Shared stream state machine (also drives the side panel) — view-specific
+  // behaviors ride the callbacks below. See hooks/useChatStream.ts.
+  const {
+    isStreaming,
+    streamingMessageId,
+    streamingContent,
+    streamingThinking,
+    streamingToolCalls,
+    roundContents,
+    streamingRoundThinking,
+    currentRound,
+    beginTurn,
+    hardReset,
+    restore,
+  } = useChatStream({
+    // Drop events from other sessions — the side panel shares this socket.
+    sessionId,
+    onEnd: (result) => {
+      const completeMessage: Message = {
+        id: result.id,
+        role: "assistant",
+        content: result.content,
+        timestamp: Date.now(),
+        generationMs: result.generationMs,
+        thinking: result.thinking,
+        tool_calls: result.toolCalls.length > 0 ? result.toolCalls : undefined,
+        round_contents: result.roundContents,
+        round_thinking: result.roundThinking,
+      }
+      addMessage(completeMessage)
+      setLastAssistantMessageId(result.id)
+    },
+    onError: (message) => {
+      // Render immediately — the backend may still send a fallback summary
+      // before `end` finalizes the turn.
+      addMessage({
+        id: generateId(),
+        role: "assistant",
+        content: `❌ **Error**: ${message}`,
+        timestamp: Date.now(),
+      })
+    },
+    onWarning: (message) => {
+      addMessage({
+        id: generateId(),
+        role: "assistant",
+        content: `⚠️ **Warning**: ${message}`,
+        timestamp: Date.now(),
+        isPartial: true, // Mark as temporary/partial
+      })
+    },
+    onTokenUsage: (usage, sid) => {
+      setLastTokenUsage(usage)
+      persistTokenUsage(sid || urlSessionId, usage)
+    },
+    onRawEvent: (data) => {
+      // Only switch if it's a different session to avoid unnecessary API calls
+      if (
+        (data.type === "session_created" || data.type === "session_switched") &&
+        data.sessionId && data.sessionId !== sessionId
+      ) {
+        switchSession(data.sessionId)
+      }
+    },
+  })
+
   // Active tool-loop round, derived from the last in-flight tool call — no
   // own state to reset (all streaming resets clear streamingToolCalls).
   const activeToolRound = streamingToolCalls.length > 0
     ? (streamingToolCalls[streamingToolCalls.length - 1].round ?? null)
     : null
-  const currentRoundRef = useRef(1)
-  const roundContentsAccumulatorRef = useRef<Record<number, string>>({})
-  // Accumulate thinking across all rounds (interleaved thinking pattern)
-  const thinkingAccumulatorRef = useRef("")
-  // Per-round thinking for grouped rendering
-  const roundThinkingAccumulatorRef = useRef<Record<number, string>>({})
 
   // Load LLM backends and sessions on mount
   useEffect(() => {
@@ -299,9 +339,6 @@ export function ChatPage() {
   // list. We only auto-scroll on new content while pinned. If the user has
   // scrolled up to read history, auto-scrolling would yank them back down —
   // extremely annoying when waiting for a long response while reviewing context.
-  // First streamed-event timestamp of the current reply — used at `end`
-  // to report wall time + an estimated tok/s figure on the message.
-  const streamStartRef = useRef<number | null>(null)
   const isPinnedToBottomRef = useRef(true)
 
   const handleScroll = useCallback(() => {
@@ -352,216 +389,6 @@ export function ChatPage() {
     }
   }, [messages, streamingContent, scrollToBottom])
 
-  // Handle WebSocket events
-  useEffect(() => {
-    const handleMessage = (data: ServerMessage) => {
-      switch (data.type) {
-        case "Thinking":
-          if (streamStartRef.current === null) streamStartRef.current = Date.now()
-          setIsStreaming(true)
-          // Immediately update ref synchronously before setState
-          capturedStreamingRef.current.thinking += (data.content || "")
-          setStreamingThinking(prev => prev + (data.content || ""))
-          break
-
-        case "Content":
-          if (streamStartRef.current === null) streamStartRef.current = Date.now()
-          setIsStreaming(true)
-          // Immediately update ref synchronously before setState
-          capturedStreamingRef.current.content += (data.content || "")
-          setStreamingContent(prev => prev + (data.content || ""))
-          break
-
-        case "ToolCallStart": {
-          const toolCall = {
-            id: generateId(),
-            name: data.tool,
-            arguments: data.arguments,
-            result: null,
-            round: data.round ?? currentRoundRef.current
-          }
-          // Immediately update ref synchronously before setState
-          capturedStreamingRef.current.toolCalls = [...capturedStreamingRef.current.toolCalls, toolCall]
-          setStreamingToolCalls(prev => [...prev, toolCall])
-          break
-        }
-
-        case "ToolCallEnd": {
-          // Match FIRST unresolved tool call with same name (not all)
-          const tcIdx = capturedStreamingRef.current.toolCalls.findIndex(
-            tc => tc.name === data.tool && tc.result === null
-          )
-          if (tcIdx !== -1) {
-            const updated = [...capturedStreamingRef.current.toolCalls]
-            updated[tcIdx] = { ...updated[tcIdx], result: data.result }
-            capturedStreamingRef.current.toolCalls = updated
-          }
-          setStreamingToolCalls(prev => {
-            const idx = prev.findIndex(
-              tc => tc.name === data.tool && tc.result === null
-            )
-            if (idx === -1) return prev
-            const updated = [...prev]
-            updated[idx] = { ...updated[idx], result: data.result }
-            return updated
-          })
-          break
-        }
-
-        case "end": {
-          // Capture token usage from backend
-          if (data.tokenUsage?.promptTokens) {
-            const usage = {
-              promptTokens: data.tokenUsage.promptTokens,
-              systemPromptTokens: data.tokenUsage.systemPromptTokens,
-              toolTokens: data.tokenUsage.toolTokens,
-            }
-            setLastTokenUsage(usage)
-            persistTokenUsage(data.sessionId || urlSessionId, usage)
-          }
-          const toolCalls = capturedStreamingRef.current.toolCalls
-          // Accumulate thinking from current round into total
-          // Store all raw data; PerRoundBlocks handles dedup during rendering
-          if (capturedStreamingRef.current.thinking) {
-            thinkingAccumulatorRef.current += capturedStreamingRef.current.thinking
-            roundThinkingAccumulatorRef.current[currentRoundRef.current] = capturedStreamingRef.current.thinking
-          }
-          const thinking = thinkingAccumulatorRef.current
-          // Last round's content becomes the final message content
-          const lastRoundContent = capturedStreamingRef.current.content
-          // NOTE: Do NOT save last round's content to roundContents — it is the
-          // final message content and will be shown as the main response.
-          // Only intermediate rounds' content (saved in IntermediateEnd) goes into round_contents.
-          const hasRoundContents = Object.keys(roundContentsAccumulatorRef.current).length > 0
-          const hasRoundThinking = Object.keys(roundThinkingAccumulatorRef.current).length > 0
-          const messageContent = lastRoundContent
-          if (messageContent || thinking || toolCalls.length > 0) {
-            const messageId = streamingMessageIdRef.current || generateId()
-            // Reply metric: wall time from the first streamed event. The
-            // per-second figure shown next to it is chars/s (exact — the
-            // frontend has the full text; token counts would be a guess).
-            const generationMs = streamStartRef.current !== null
-              ? Date.now() - streamStartRef.current
-              : undefined
-            const completeMessage: Message = {
-              id: messageId,
-              role: "assistant",
-              content: messageContent,
-              timestamp: Date.now(),
-              generationMs,
-              thinking: thinking || undefined,
-              tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
-              round_contents: hasRoundContents ? roundContentsAccumulatorRef.current : undefined,
-              round_thinking: hasRoundThinking ? roundThinkingAccumulatorRef.current : undefined,
-            }
-            addMessage(completeMessage)
-            setLastAssistantMessageId(messageId)
-          }
-          setIsStreaming(false)
-          setStreamingContent("")
-          setStreamingThinking("")
-          setStreamingToolCalls([])
-          setRoundContents({})
-          setStreamingRoundThinking({})
-          // Reset captured ref
-          capturedStreamingRef.current = { content: "", thinking: "", toolCalls: [] }
-          streamStartRef.current = null
-          streamingMessageIdRef.current = null
-          currentRoundRef.current = 1
-          roundContentsAccumulatorRef.current = {}
-          thinkingAccumulatorRef.current = ""
-          roundThinkingAccumulatorRef.current = {}
-          break
-        }
-
-        case "cancelled": {
-          // Server acknowledged __CANCEL__. No trailing 'end' is guaranteed
-          // on this path — reset ALL stream state here or the composer
-          // stays locked and the bubble spins forever. (The user-initiated
-          // path already rendered a local notice; this covers cancels from
-          // other tabs/devices on the same session.)
-          setIsStreaming(false)
-          setStreamingContent("")
-          setStreamingThinking("")
-          setStreamingToolCalls([])
-          setRoundContents({})
-          setStreamingRoundThinking({})
-          capturedStreamingRef.current = { content: "", thinking: "", toolCalls: [] }
-          streamStartRef.current = null
-          streamingMessageIdRef.current = null
-          currentRoundRef.current = 1
-          roundContentsAccumulatorRef.current = {}
-          thinkingAccumulatorRef.current = ""
-          roundThinkingAccumulatorRef.current = {}
-          break
-        }
-
-        case "IntermediateEnd":
-        case "intermediate_end": {
-          // Save current round's content to roundContents
-          if (capturedStreamingRef.current.content) {
-            roundContentsAccumulatorRef.current[currentRoundRef.current] = capturedStreamingRef.current.content
-          }
-          // Save per-round thinking for grouped rendering
-          if (capturedStreamingRef.current.thinking) {
-            thinkingAccumulatorRef.current += capturedStreamingRef.current.thinking
-            roundThinkingAccumulatorRef.current[currentRoundRef.current] = capturedStreamingRef.current.thinking
-          }
-          // Reset captured content for next round
-          // NOTE: Don't reset streamingThinking — keep showing all rounds' thinking continuously
-          // streamingThinking already has all thinking via cumulative appends in "Thinking" handler
-          capturedStreamingRef.current.content = ""
-          capturedStreamingRef.current.thinking = ""
-          currentRoundRef.current += 1
-          setRoundContents({ ...roundContentsAccumulatorRef.current })
-          setStreamingRoundThinking({ ...roundThinkingAccumulatorRef.current })
-          setStreamingContent("")
-          break
-        }
-
-        case "Error":
-          // Don't immediately stop streaming — the backend may send a fallback
-          // summary after the error (e.g., when tool calls failed). The End
-          // event will finalize the streaming state.
-          // Display error message to user with error styling
-          {
-            const errorMessage = data.message || "An error occurred during processing"
-            const errorMsg: Message = {
-              id: generateId(),
-              role: "assistant",
-              content: `❌ **Error**: ${errorMessage}`,
-              timestamp: Date.now(),
-            }
-            addMessage(errorMsg)
-          }
-          break
-
-        case "Warning":
-          // Display warning message (non-blocking)
-          const warningMessage = data.message || "Warning"
-          const warningMsg: Message = {
-            id: generateId(),
-            role: "assistant",
-            content: `⚠️ **Warning**: ${warningMessage}`,
-            timestamp: Date.now(),
-            isPartial: true,  // Mark as temporary/partial
-          }
-          addMessage(warningMsg)
-          break
-
-        case "session_created":
-        case "session_switched":
-          // Only switch if it's a different session to avoid unnecessary API calls
-          if (data.sessionId && data.sessionId !== sessionId) {
-            switchSession(data.sessionId)
-          }
-          break
-      }
-    }
-
-    const unsubscribe = ws.onMessage(handleMessage)
-    return () => { void unsubscribe() }
-  }, [addMessage, switchSession, sessionId])
 
   // Check for pending stream after reconnection
   useEffect(() => {
@@ -577,9 +404,7 @@ export function ChatPage() {
               userMessage: result.userMessage || "",
             })
             // Restore streaming state
-            setStreamingContent(result.content || "")
-            setStreamingThinking(result.thinking || "")
-            setIsStreaming(true)
+            restore(result.content || "", result.thinking || "")
           }
         }).catch(() => {
           // Ignore errors checking pending stream
@@ -596,7 +421,7 @@ export function ChatPage() {
   }, [])
 
   // Send message - in welcome mode, create session and navigate
-  const handleSend = async (e?: React.MouseEvent | React.KeyboardEvent) => {
+  const handleSend = async (_e?: React.MouseEvent | React.KeyboardEvent) => {
     const trimmedInput = input.trim()
     if ((!trimmedInput && attachedImages.length === 0) || isStreaming || isLoadingSession) return
 
@@ -650,15 +475,8 @@ export function ChatPage() {
     }
 
     ws.setSessionId(targetSessionId)
-    setIsStreaming(true)
-    streamingMessageIdRef.current = generateId()
+    beginTurn()
     setLastAssistantMessageId(null)
-    // Reset round tracking
-    currentRoundRef.current = 1
-    roundContentsAccumulatorRef.current = {}
-    thinkingAccumulatorRef.current = ""
-    roundThinkingAccumulatorRef.current = {}
-    setRoundContents({})
 
     ws.sendMessage(trimmedInput, attachedImages.length > 0 ? attachedImages : undefined)
 
@@ -688,6 +506,27 @@ export function ChatPage() {
     }
   }, [searchParams, setSearchParams])
 
+  // Load the next older history page. The scroll container is anchored: the
+  // user's viewport stays on the same messages — prepending without this
+  // yanks them to the "new" top of the list.
+  const handleLoadEarlier = async () => {
+    if (loadingEarlier) return
+    setLoadingEarlier(true)
+    const container = scrollContainerRef.current
+    const prevHeight = container?.scrollHeight ?? 0
+    const prevTop = container?.scrollTop ?? 0
+    try {
+      const loaded = await loadEarlierHistory()
+      if (loaded && container) {
+        requestAnimationFrame(() => {
+          container.scrollTop = prevTop + (container.scrollHeight - prevHeight)
+        })
+      }
+    } finally {
+      setLoadingEarlier(false)
+    }
+  }
+
   // Handle pending stream recovery - restore
   const handleRestorePendingStream = () => {
     if (pendingStream) {
@@ -702,11 +541,7 @@ export function ChatPage() {
       // Clear pending stream from server
       await api.clearPendingStream(sessionId).catch(() => {})
       // Reset streaming state
-      setIsStreaming(false)
-      setStreamingContent("")
-      setStreamingThinking("")
-      setStreamingToolCalls([])
-      capturedStreamingRef.current = { content: "", thinking: "", toolCalls: [] }
+      hardReset()
     }
     setPendingStream(null)
   }
@@ -723,13 +558,9 @@ export function ChatPage() {
     // Send cancel message to backend
     ws.sendMessage("__CANCEL__", undefined)
 
-    // Reset streaming state
-    setIsStreaming(false)
-    setStreamingContent("")
-    setStreamingThinking("")
-    setStreamingToolCalls([])
-    capturedStreamingRef.current = { content: "", thinking: "", toolCalls: [] }
-    streamingMessageIdRef.current = null
+    // Reset streaming state (local path — the server's `cancelled` ack
+    // covers cross-tab cancels via the hook)
+    hardReset()
 
     // Add a message to indicate cancellation
     const cancelMsg: Message = {
@@ -757,7 +588,7 @@ export function ChatPage() {
     }
   }
 
-  const getUserInitials = (username: string) => {
+  const _getUserInitials = (username: string) => {
     return username.slice(0, 2).toUpperCase()
   }
 
@@ -1075,8 +906,11 @@ export function ChatPage() {
               streamingRoundThinking={streamingRoundThinking}
               streamingToolCalls={streamingToolCalls}
               roundContents={roundContents}
-              currentRound={currentRoundRef.current}
-              streamingMessageId={streamingMessageIdRef.current}
+              currentRound={currentRound}
+              streamingMessageId={streamingMessageId}
+              hasEarlierHistory={hasEarlierHistory}
+              loadingEarlier={loadingEarlier}
+              onLoadEarlier={handleLoadEarlier}
               onScrollToBottom={scrollToBottom}
               endRef={messagesEndRef}
             />

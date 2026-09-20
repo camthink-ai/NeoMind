@@ -16,8 +16,12 @@ import { api } from '@/lib/api'
 // Must match PANEL_SESSION_PREFIX in pageAssistant.ts — panel sessions are
 // stored per page (each carries its own system-prompt suffix / tool profile)
 import { PANEL_SESSION_PREFIX } from '@/components/chat/pageAssistant'
-import { normalizeSessions, normalizeSessionsResponse } from '@/lib/api/transforms'
+import { normalizeSessionsResponse } from '@/lib/api/transforms'
 import { fetchCache } from '@/lib/utils/async'
+import type { SessionHistoryResponse } from '@/types'
+
+/** Initial history load: the most recent N raw records (see loadEarlierHistory). */
+const HISTORY_PAGE_SIZE = 200
 
 export interface SessionSlice extends SessionState {
   // Actions
@@ -26,12 +30,30 @@ export interface SessionSlice extends SessionState {
   clearMessages: () => void
   createSession: () => Promise<string | null>
   switchSession: (sessionId: string) => Promise<void>
+  /** Prepends the next older page of the current session's history.
+   *  Returns true when new messages were loaded. */
+  loadEarlierHistory: () => Promise<boolean>
   deleteSession: (sessionId: string) => Promise<void>
   clearAllSessions: () => Promise<void>
   updateSessionTitle: (sessionId: string, title: string) => Promise<void>
   loadSessions: () => Promise<void>
   loadMoreSessions: () => Promise<void>
   fetchSessionHistory: (sessionId: string) => Promise<void>
+}
+
+/** History fields derived from a fetch — shared by every load path. */
+function historyFields(historyResult: SessionHistoryResponse) {
+  const hasMore = historyResult.has_more ?? false
+  return {
+    hasEarlierHistory: hasMore,
+    isLoadingEarlier: false,
+    // The loaded window ends at the raw-history end; `total - count` raw
+    // records sit above it. (Cursor semantics: raw indexes are stable for
+    // appends, so new messages arriving after this load do not shift it.)
+    earlierCursor: hasMore
+      ? Math.max(0, (historyResult.total ?? historyResult.count) - historyResult.count)
+      : 0,
+  }
 }
 
 export const createSessionSlice: StateCreator<
@@ -48,6 +70,9 @@ export const createSessionSlice: StateCreator<
   sessionsHasMore: true,
   sessionsLoading: false,
   isLoadingSession: false,
+  hasEarlierHistory: false,
+  earlierCursor: 0,
+  isLoadingEarlier: false,
 
   // Actions
   setSessionId: (id: string) => {
@@ -102,7 +127,7 @@ export const createSessionSlice: StateCreator<
   },
 
   clearMessages: () => {
-    set({ messages: [] })
+    set({ messages: [], hasEarlierHistory: false, earlierCursor: 0, isLoadingEarlier: false })
   },
 
   createSession: async () => {
@@ -119,6 +144,9 @@ export const createSessionSlice: StateCreator<
         sessionId: result.sessionId,
         messages: [],
         sessions,
+        hasEarlierHistory: false,
+        earlierCursor: 0,
+        isLoadingEarlier: false,
       })
 
       // Update WebSocket to use the new session
@@ -149,13 +177,14 @@ export const createSessionSlice: StateCreator<
     ws.setSessionId(sessionId)
 
     try {
-      // Fetch the session history — skip global error toast since we handle recovery below
-      const historyResult = await api.getSessionHistory(sessionId, { skipErrorToast: true })
+      // Fetch the newest page of history — skip global error toast since we
+      // handle recovery below. Older pages load on demand (loadEarlierHistory).
+      const historyResult = await api.getSessionHistory(sessionId, { limit: HISTORY_PAGE_SIZE }, { skipErrorToast: true })
 
       // Validate the response before processing
       if (!historyResult) {
         console.warn(`Session ${sessionId} returned empty result from API`)
-        set({ sessionId, messages: [], isLoadingSession: false })
+        set({ sessionId, messages: [], isLoadingSession: false, hasEarlierHistory: false, earlierCursor: 0 })
         return
       }
 
@@ -169,6 +198,7 @@ export const createSessionSlice: StateCreator<
         sessionId,
         messages: mergedMessages,
         isLoadingSession: false,
+        ...historyFields(historyResult),
       })
     } catch (error: any) {
       logError(error, { operation: 'Switch session' })
@@ -214,6 +244,37 @@ export const createSessionSlice: StateCreator<
     }
   },
 
+  loadEarlierHistory: async () => {
+    const { sessionId, earlierCursor, hasEarlierHistory, isLoadingSession, isLoadingEarlier } = get()
+    // isLoadingEarlier guards racing callers (the view also disables its
+    // button; this is the store-level backstop).
+    if (!sessionId || !hasEarlierHistory || earlierCursor <= 0 || isLoadingSession || isLoadingEarlier) {
+      return false
+    }
+    set({ isLoadingEarlier: true })
+    try {
+      const result = await api.getSessionHistory(
+        sessionId,
+        { limit: HISTORY_PAGE_SIZE, before: earlierCursor },
+        { skipErrorToast: true },
+      )
+      const olderMerged = mergeAssistantMessages(result.messages || [])
+      const fetchedRaw = result.count || olderMerged.length
+      set((state) => ({
+        messages: [...olderMerged, ...state.messages],
+        hasEarlierHistory: !!result.has_more,
+        earlierCursor: Math.max(0, earlierCursor - fetchedRaw),
+        isLoadingEarlier: false,
+      }))
+      return olderMerged.length > 0
+    } catch (error) {
+      // Transient failure must not disable paging — cursor untouched.
+      set({ isLoadingEarlier: false })
+      logError(error, { operation: 'Load earlier history' })
+      return false
+    }
+  },
+
   deleteSession: async (sessionIdToDelete: string) => {
     fetchCache.invalidate('sessions')
 
@@ -256,13 +317,13 @@ export const createSessionSlice: StateCreator<
           import('@/lib/websocket').then(({ ws }) => {
             ws.setSessionId(firstSessionId)
           })
-          // Load history for the first session asynchronously
-          api.getSessionHistory(firstSessionId, { skipErrorToast: true }).then(historyResult => {
+          // Load history for the first session asynchronously (newest page)
+          api.getSessionHistory(firstSessionId, { limit: HISTORY_PAGE_SIZE }, { skipErrorToast: true }).then(historyResult => {
             const mergedMessages = mergeAssistantMessages(historyResult.messages || [])
             set((state) => {
               // Only update if we're still on the same session
               if (state.sessionId === firstSessionId) {
-                return { messages: mergedMessages }
+                return { messages: mergedMessages, ...historyFields(historyResult) }
               }
               return {}
             })
@@ -315,6 +376,8 @@ export const createSessionSlice: StateCreator<
       sessions: [],
       sessionId: null,
       messages: [],
+      hasEarlierHistory: false,
+      earlierCursor: 0,
     })
 
     // Create a new session for continued use
@@ -421,7 +484,7 @@ export const createSessionSlice: StateCreator<
       const result = await api.getSessionHistory(sessionId)
       // Merge fragmented assistant messages from backend
       const mergedMessages = mergeAssistantMessages(result.messages || [])
-      set({ messages: mergedMessages })
+      set({ messages: mergedMessages, ...historyFields(result) })
       fetchCache.markFetched(cacheKey)
     } catch (error) {
       logError(error, { operation: 'Fetch session history' })
