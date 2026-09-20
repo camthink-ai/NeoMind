@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### refactor(agent): agent/mod.rs (3406 lines) — the seventh giant
+- The 2350-line `impl Agent` cut into per-domain impl blocks: construction/config/accessors (mod.rs), context-compaction free functions (context.rs — `pub use` keeps streaming's `super::super::` paths intact), the process/multimodal/stream entry points (process.rs), the LLM loop + tool batching (execution.rs), tool execution/sanitization (tools.rs). 728 agent tests green.
+
+### chore(web): any-debt down payment — 45 sites typed at the seams (ratchet 614 → 573)
+- `useComponentConfigDialog` (28 sites): the hook read/wrote DashboardComponent's persisted `config`/`dataSource` extras through `as any` everywhere; two local view types (ConfigurableComponent, ComponentUpdate) + three unknown→DataSourceOrList narrowings clear the file. `DynamicRegistry` (17 sites): RegistryWindow/MaybeComponent view types model the window-globals + React duck-typing seam. Method for the remaining ~440: type the seam once, not every expression — top files next: ComponentRenderer (19), spatial.tsx (19), CommunityRegistry (17), automation.tsx (15).
+
+### refactor(agent): agent/mod.rs (3406 lines) — the seventh giant
 - The 2350-line `impl Agent` cut into per-domain impl blocks: construction/config/accessors (mod.rs), context-compaction free functions (context.rs — `pub use` keeps streaming's `super::super::` paths intact), the process/multimodal/stream entry points (process.rs), the LLM loop + tool batching (execution.rs), tool execution/sanitization (tools.rs). 728 agent tests green. Hardest cut yet — method-boundary doc comments repeatedly landed on the wrong side (several orphan-doc relocation rounds) and six cross-file helpers became pub(crate).
 
 ### refactor: two more giants split — openai.rs and mqtt.rs
