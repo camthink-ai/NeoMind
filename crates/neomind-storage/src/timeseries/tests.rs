@@ -1,7 +1,6 @@
 // Integration tests — split from the former timeseries.rs monolith.
 use super::*;
 
-
 #[test]
 fn test_write_buffer_requeue_respects_hard_cap() {
     // requeue bounds memory under persistent write failure: hard cap =
