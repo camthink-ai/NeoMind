@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### refactor: extensions.rs (5233 lines) split into 10 domain modules
+- `handlers/extensions.rs` → `handlers/extensions/{mod,lifecycle,commands,metrics,capabilities,config,logs,marketplace,components,packages}.rs`. Pure move: same items, same `handlers::extensions::*` paths (mod.rs re-exports submodules), router/openapi/re-export lists untouched. Largest module is marketplace.rs at 1655 lines (the install flow alone is ~700); every other is ≤ 715. Method: line-range splitter with a tiling assertion over the original file, then rustc/cargo-fix drove visibility (`pub(crate)` for cross-module helpers) and import pruning. All 369+ api tests green, workspace clippy `-D warnings` clean.
+
 ### robustness: lock-poison recovery on runtime paths — one panic can no longer cascade
 - Audited all 83 non-test `unwrap()` sites across the four core server crates. Most were provably safe (guarded Options, const-pattern regexes, cfg(test) constructors); the dangerous class was ~45 std-lock `.unwrap()`s on request/lifecycle paths — any panic while holding one poisons the lock and every later acquisition panics too, permanently taking down auth, the MQTT credential validator, or the upgrade flow on an unattended box. All converted to `unwrap_or_else(|e| e.into_inner())` (auth_users session/throttle maps, embedded-broker swap + credential cache incl. the validator closure, upgrade state, shutdown, broker lifecycle, builtin-llm download lock). Plus: extension-load semaphore acquire de-panicked (graceful skip), `DevicePresenceHook` registration no longer re-locks `event_bus` twice with `.expect`, and the OpenAI backend's per-call regex compilation became fn-local `LazyLock` statics.
 
