@@ -232,7 +232,7 @@ function VariablesRail({
   onExtensionSourcesChange,
   onInsertVariable,
   tBuilder,
-  t,
+  t: _t,
 }: VariablesRailProps) {
   const isMobile = useIsMobile()
   const [extensions, setExtensions] = useState<ExtensionDataSourceGroup[]>([])

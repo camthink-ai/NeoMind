@@ -74,7 +74,7 @@ describe('ResponsiveTable (desktop)', () => {
   })
 
   it('headers carry the text-nano token (10px ladder)', () => {
-    const { container } = render(
+    const { container: _container } = render(
       <ThemeProvider>
         <ResponsiveTable
           columns={columns}

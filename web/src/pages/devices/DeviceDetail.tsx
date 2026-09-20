@@ -163,7 +163,7 @@ export function DeviceDetail({
   telemetryLoading,
   selectedMetric,
   onBack,
-  onRefresh,
+  onRefresh: _onRefresh,
   onMetricClick,
   onMetricBack,
   onSendCommand,

@@ -144,7 +144,7 @@ export const ValueCard = memo(function ValueCard({
   prefix = '',
   icon,
   iconType = 'entity',
-  description,
+  description: _description,
   showTrend = false,
   size = 'md',
   variant = 'default',

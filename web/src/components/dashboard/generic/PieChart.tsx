@@ -179,7 +179,7 @@ export const PieChart = memo(function PieChart({
   dataSource,
   data: propData,
   title,
-  height = 'auto',
+  height: _height = 'auto',
   showLegend = false,
   showTooltip = true,
   showLabels = false,
@@ -189,7 +189,7 @@ export const PieChart = memo(function PieChart({
   limit = 10,
   timeRange = 1,
   aggregate = 'latest',  // Default to latest value for pie charts
-  timeWindow,
+  timeWindow: _timeWindow,
   dataMapping,
   colors,
   size = 'md',
@@ -201,7 +201,7 @@ export const PieChart = memo(function PieChart({
   // Shared data pipeline — same pattern as LineChart/AreaChart
   const {
     sources, data, loading, effectiveAggregate,
-    hasData, showLoading, getSeriesName, getDeviceName,
+    hasData: _hasData, showLoading, getSeriesName, getDeviceName,
   } = useChartPipeline<PieData[] | number[] | number[][]>({
     dataSource,
     aggregate,

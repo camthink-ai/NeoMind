@@ -21,7 +21,7 @@ import {
   ChevronUp,
   Wrench,
   Sparkles,
-  Image as ImageIcon,
+  Image as _ImageIcon,
   Maximize2,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -163,7 +163,7 @@ export function AgentExecutionTimeline({
   executions,
   loading,
   agentId,
-  onViewExecutionDetail,
+  onViewExecutionDetail: _onViewExecutionDetail,
 }: AgentExecutionTimelineProps) {
   const { t } = useTranslation(['common', 'agents'])
   const { handleError } = useErrorHandler()

@@ -20,7 +20,7 @@ export function MobileMetricsList({
   deviceMetricsMap,
   summaries,
   availability,
-  checkingData,
+  checkingData: _checkingData,
   getDeviceInfoProperties,
   selectedItems,
   onSelectItem,

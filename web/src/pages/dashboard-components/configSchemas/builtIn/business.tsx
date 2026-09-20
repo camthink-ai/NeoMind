@@ -15,7 +15,7 @@ import type { ComponentConfigSchema } from '@/components/dashboard/config/Compon
 import type { SchemaContext, Updaters } from '../types'
 export function getAgentMonitorSchema(config: any, ctx: SchemaContext, u: Updaters): ComponentConfigSchema {
   const { t, agents, agentsLoading } = ctx
-  const { updateConfig, updateDataSource } = u
+  const { updateConfig: _updateConfig, updateDataSource } = u
   return {
           displaySections: [
             {

@@ -129,7 +129,7 @@ describe('Skeleton Screen Implementation', () => {
     }
 
     // Verify all components have appropriate skeletons
-    Object.entries(componentToSkeleton).forEach(([component, skeleton]) => {
+    Object.entries(componentToSkeleton).forEach(([_component, skeleton]) => {
       expect(skeleton).toBeTruthy()
       expect(['ChartSkeleton', 'MiniComponentSkeleton', 'ComponentSkeleton']).toContain(skeleton)
     })

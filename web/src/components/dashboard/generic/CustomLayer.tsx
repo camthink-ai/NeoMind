@@ -798,7 +798,7 @@ export function CustomLayer({
   backgroundImage,
   gridSize = 20,
   size = 'md',
-  interactive = true,
+  interactive: _interactive = true,
   showControls = true,
   editable = false,
   showFullscreen = true,
@@ -806,7 +806,7 @@ export function CustomLayer({
   aspectRatio,
   onItemsChange,
   onBindingsChange,
-  onLayerClick,
+  onLayerClick: _onLayerClick,
   className,
   title,
 }: CustomLayerProps & { title?: string }) {

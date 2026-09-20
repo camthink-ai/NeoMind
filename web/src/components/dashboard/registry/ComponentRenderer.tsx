@@ -261,7 +261,7 @@ const ComponentRenderer = memo(function ComponentRenderer({
   component,
   className,
   style,
-  onError,
+  onError: _onError,
   onDataSourceChange,
   onConfigChange,
   openFullscreen,

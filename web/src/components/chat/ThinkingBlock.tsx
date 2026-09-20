@@ -133,7 +133,7 @@ export function ThinkingBlock({
 function PerRoundThinking({
   rounds,
   isStreaming,
-  compact = false,
+  compact: _compact = false,
 }: {
   rounds: Record<number, string>
   isStreaming: boolean

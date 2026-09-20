@@ -256,7 +256,7 @@ interface ExecutionDetailDialogProps {
 }
 
 function ExecutionDetailDialog({ execution, open, onClose, agentId }: ExecutionDetailDialogProps) {
-  const { t } = useTranslation('agents')
+  const { t: _t } = useTranslation('agents')
   const [detail, setDetail] = useState<any>(null)
   const [loading, setLoading] = useState(false)
   const [fullscreenImage, setFullscreenImage] = useState<string | null>(null)

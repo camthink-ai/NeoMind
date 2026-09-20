@@ -22,7 +22,7 @@ import {
 
   ZoomIn,
   ZoomOut,
-  Map as MapIcon,
+  Map as _MapIcon,
   Maximize2,
 
   X,
@@ -828,7 +828,7 @@ export function MapDisplay({
   showFullscreen = true,
   interactive = true,
   tileLayer = 'osm',
-  markerColor,
+  markerColor: _markerColor,
   className,
   deviceBinding,
   onMapClick,

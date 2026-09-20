@@ -32,7 +32,7 @@ import { Slider } from '@/components/ui/slider'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Dialog } from '@/components/ui/dialog'
+import { } from '@/components/ui/dialog'
 import {
   Loader2,
   Clock,
@@ -119,7 +119,7 @@ export function AgentEditorFullScreen({
   devices,
   deviceTypes,
   extensions = [],
-  extensionDataSources = [],
+  extensionDataSources: _extensionDataSources = [],
   unifiedDataSources = [],
   onSave,
 }: AgentEditorFullScreenProps) {

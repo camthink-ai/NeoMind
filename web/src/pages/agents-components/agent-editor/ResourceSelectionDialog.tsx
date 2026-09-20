@@ -45,7 +45,7 @@ export function ResourceSelectionDialog({
   setSearchQuery,
   toggleResource,
   toggleRecommendation,
-  scheduleType,
+  scheduleType: _scheduleType,
 }: ResourceSelectionDialogProps) {
   const { t: tAgent } = useTranslation('agents')
   const isMobile = useIsMobile()

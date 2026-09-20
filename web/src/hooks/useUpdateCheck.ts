@@ -61,9 +61,9 @@ export function useUpdateCheck(options: UpdateCheckOptions = {}): UseUpdateCheck
 
   const { t } = useTranslation(['common', 'settings'])
   const {
-    updateStatus,
-    updateInfo,
-    downloadProgress,
+    updateStatus: _updateStatus,
+    updateInfo: _updateInfo,
+    downloadProgress: _downloadProgress,
     setUpdateStatus,
     setUpdateInfo,
     setDownloadProgress,

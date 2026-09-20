@@ -34,13 +34,13 @@ export interface MarkdownDisplayProps {
 // Custom components for react-markdown
 const markdownComponents: Components = {
   // Custom code block rendering
-  pre: ({ node, className, children, ...props }) => (
+  pre: ({ node: _node, className, children, ...props }) => (
     <pre className={cn("overflow-x-auto bg-muted p-2 rounded-md my-2", className)} {...(props as any)}>
       {children}
     </pre>
   ),
   // Custom inline code
-  code: ({ node, className, children, ...props }) => {
+  code: ({ node: _node, className, children, ...props }) => {
     // In react-markdown v9+, inline code has no className while block code inside <pre> has "language-xxx"
     const isBlock = !!className
     if (!isBlock) {
@@ -57,7 +57,7 @@ const markdownComponents: Components = {
     )
   },
   // Custom link rendering
-  a: ({ node, className, children, href, ...props }) => (
+  a: ({ node: _node, className, children, href, ...props }) => (
     <a
       className={cn("text-primary hover:underline", className)}
       href={href as string}
@@ -107,7 +107,7 @@ export function MarkdownDisplay({
   content: propContent,
   size = 'md',
   variant = 'default',
-  allowHtml = false,
+  allowHtml: _allowHtml = false,
   maxLines,
   className,
 }: MarkdownDisplayProps) {

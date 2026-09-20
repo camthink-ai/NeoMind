@@ -90,12 +90,12 @@ function CodeBlock({ children, ...props }: React.ComponentProps<'pre'>) {
 // Static component overrides — hoisted to module scope to avoid re-allocating
 // a new object (and new closure functions) on every render / streaming chunk.
 const MARKDOWN_COMPONENTS: Components = {
-  pre: ({ node, className, children, ...props }) => (
+  pre: ({ node: _node, className, children, ...props }) => (
     <CodeBlock className={className} {...(props as any)}>
       {children}
     </CodeBlock>
   ),
-  code: ({ node, className, children, ...props }) => {
+  code: ({ node: _node, className, children, ...props }) => {
     const isBlock = !!className
     if (!isBlock) {
       return (
@@ -110,7 +110,7 @@ const MARKDOWN_COMPONENTS: Components = {
       </code>
     )
   },
-  a: ({ node, className, children, href, ...props }) => (
+  a: ({ node: _node, className, children, href, ...props }) => (
     <a
       // Inherit color from the surrounding text so links stay readable on
       // every bubble background. In light theme `--primary` is near-white,
@@ -128,7 +128,7 @@ const MARKDOWN_COMPONENTS: Components = {
   ),
   // Tables scroll horizontally WITHIN the message instead of pushing the
   // whole chat panel into horizontal scroll (float chat is only 380-400px).
-  table: ({ node, children, ...props }) => (
+  table: ({ node: _node, children, ...props }) => (
     <div className="overflow-x-auto">
       <table className="w-full" {...(props as any)}>{children}</table>
     </div>

@@ -239,7 +239,7 @@ export const ImageHistory = memo(function ImageHistory({
   title,
   size = 'md',
   fit = 'fill',
-  rounded = true,
+  rounded: _rounded = true,
   showTitle = true,
   limit = 200,
   timeRange = 48,

@@ -85,7 +85,7 @@ export function ColorPicker({
   onChange,
   label,
   presets = 'primary',
-  showAlpha = false,
+  showAlpha: _showAlpha = false,
   disabled = false,
   className,
 }: ColorPickerProps) {

@@ -151,7 +151,7 @@ const LineChartInner = function LineChart({
   series: propSeries,
   labels: propLabels,
   title,
-  height = 'auto',
+  height: _height = 'auto',
   showGrid = false,
   showLegend = false,
   showTooltip = true,
@@ -165,13 +165,13 @@ const LineChartInner = function LineChart({
   dataMapping,
   className,
 }: LineChartProps) {
-  const { t } = useTranslation('dashboardComponents')
+  const { t: _t } = useTranslation('dashboardComponents')
   const config = dashboardComponentSize[size]
 
   // Shared data pipeline
   const {
     sources, data, loading, error,
-    hasData, showLoading, getSeriesName,
+    hasData: _hasData, showLoading, getSeriesName,
   } = useChartPipeline<any>({
     dataSource,
     aggregate,
@@ -222,7 +222,7 @@ const LineChartInner = function LineChart({
     if (dataSource && Array.isArray(data) && data.length > 0 && !isSeriesDataArray(data)) {
 
       // Single source - transform telemetry points
-      const { labels, values } = transformTelemetryToChartData(data, dataMapping)
+      const { labels: _labels, values } = transformTelemetryToChartData(data, dataMapping)
       if (values.length > 0) {
         const singleSource = sources[0]
         const seriesName = singleSource ? getSeriesName(singleSource, 0) : 'Value'
@@ -542,13 +542,13 @@ export const AreaChart = memo(function AreaChart({
   dataMapping,
   className,
 }: AreaChartProps) {
-  const { t } = useTranslation('dashboardComponents')
+  const { t: _t } = useTranslation('dashboardComponents')
   const config = dashboardComponentSize[size]
 
   // Shared data pipeline — same pattern as LineChart
   const {
     sources, data, loading, error,
-    hasData, showLoading, getSeriesName,
+    hasData: _hasData, showLoading, getSeriesName,
   } = useChartPipeline<any>({
     dataSource,
     aggregate,
@@ -599,7 +599,7 @@ export const AreaChart = memo(function AreaChart({
     if (dataSource && Array.isArray(data) && data.length > 0 && !isSeriesDataArray(data)) {
 
       // Single source - transform telemetry points
-      const { labels: telemetryLabels, values } = transformTelemetryToChartData(data, dataMapping)
+      const { labels: _telemetryLabels, values } = transformTelemetryToChartData(data, dataMapping)
       if (values.length > 0) {
         const singleSource = sources[0]
         const seriesName = singleSource ? getSeriesName(singleSource, 0) : 'Value'

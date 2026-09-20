@@ -90,7 +90,7 @@ export function PageLayout({
   className,
   borderedHeader = false,
   hideFooterOnMobile = false,
-  fixedActionsOnMobile = false,
+  fixedActionsOnMobile: _fixedActionsOnMobile = false,
   noPadding = false,
   hasBottomNav = false,
   mobileHeader,

@@ -258,7 +258,7 @@ interface ThinkingStepProps {
 }
 
 function ThinkingStep({ step }: ThinkingStepProps) {
-  const { t } = useTranslation(['common', 'agents'])
+  const { t: _t } = useTranslation(['common', 'agents'])
 
   const getStepTypeColor = (stepType: string) => {
     switch (stepType.toLowerCase()) {
@@ -330,7 +330,7 @@ interface DecisionProps {
 }
 
 function Decision({ decision }: DecisionProps) {
-  const { t } = useTranslation(['common', 'agents'])
+  const { t: _t } = useTranslation(['common', 'agents'])
 
   return (
     <Card className="p-2.5">

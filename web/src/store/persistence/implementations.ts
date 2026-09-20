@@ -315,7 +315,7 @@ export class ApiDashboardStorage implements DashboardStorage {
       if (isLocalDashboard) {
         try {
           // Don't include the local ID - let server generate it
-          const { id, createdAt: _createdAt, updatedAt: _updatedAt, ...dashboardForCreate } = dashboard
+          const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, ...dashboardForCreate } = dashboard
           const createDto = toCreateDashboardDTO(dashboardForCreate as any)
           const result = await api.createDashboard(createDto)
           // Backend returns full Dashboard

@@ -29,16 +29,16 @@ interface DeviceTypeListProps {
 }
 
 export function DeviceTypeList({
-  deviceTypes,
+  deviceTypes: _deviceTypes,
   loading,
   paginatedDeviceTypes,
-  deviceTypePage,
-  deviceTypesPerPage,
+  deviceTypePage: _deviceTypePage,
+  deviceTypesPerPage: _deviceTypesPerPage,
   onRefresh,
   onViewDetails,
   onEdit,
   onDelete,
-  onPageChange,
+  onPageChange: _onPageChange,
   addTypeDialog,
 }: DeviceTypeListProps) {
   const { t } = useTranslation(['common', 'devices'])

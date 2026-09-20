@@ -18,8 +18,8 @@ export interface ComponentSkeletonProps {
 
 export function ComponentSkeleton({
   className,
-  title = 'Loading...',
-  height = 200,
+  title: _title = 'Loading...',
+  height: _height = 200,
   style
 }: ComponentSkeletonProps) {
   return (

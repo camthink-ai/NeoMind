@@ -25,7 +25,7 @@ import {
 export function toTelemetrySource(
   dataSource?: DataSource,
   limit: number = 50,
-  timeRange: number = 1
+  _timeRange: number = 1
 ): DataSource | undefined {
   if (!dataSource) return undefined
 

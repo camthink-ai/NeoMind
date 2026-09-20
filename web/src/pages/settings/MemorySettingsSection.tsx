@@ -75,7 +75,7 @@ export function MemorySettingsSection() {
     field: keyof MemorySystemConfig,
     min: number,
     max: number,
-    fallback: number,
+    _fallback: number,
   ) => (
     <SettingsRow label={label} description={desc}>
       <Input

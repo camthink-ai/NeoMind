@@ -147,9 +147,9 @@ export function StyledBrandName({
  */
 export function BrandLogoWithName({
   logoClassName,
-  nameClassName,
-  showLogo = false,
-  styled = true
+  nameClassName: _nameClassName,
+  showLogo: _showLogo = false,
+  styled: _styled = true
 }: {
   logoClassName?: string
   nameClassName?: string

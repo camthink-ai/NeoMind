@@ -36,7 +36,7 @@ type DeviceTabValue = "devices" | "types" | "drafts"
 export function DevicesPage() {
   const { t } = useTranslation(['common', 'devices'])
   const { toast } = useToast()
-  const { handleError, withErrorHandling } = useErrorHandler()
+  const { handleError: _handleError, withErrorHandling } = useErrorHandler()
   const { id: urlDeviceId } = useParams<{ id?: string }>()
   const isMobile = useIsMobile()
 

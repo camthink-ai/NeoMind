@@ -33,7 +33,7 @@ export function PushTargetsTab() {
     stopPushTarget,
     testPushTarget,
     setEditingPushTarget,
-    setPushTargetDialogOpen,
+    setPushTargetDialogOpen: _setPushTargetDialogOpen,
   } = useStore()
 
   const [logsTargetId, setLogsTargetId] = useState<string | null>(null)

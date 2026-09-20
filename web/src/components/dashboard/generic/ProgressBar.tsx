@@ -70,7 +70,7 @@ export const ProgressBar = memo(function ProgressBar({
   variant = 'default',
   icon,
   iconColor,
-  backgroundColor,
+  backgroundColor: _backgroundColor,
   className,
 }: ProgressBarProps) {
   const stableId = useId()

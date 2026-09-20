@@ -33,16 +33,16 @@ interface DeviceListProps {
 }
 
 export function DeviceList({
-  devices,
+  devices: _devices,
   loading,
   paginatedDevices,
-  devicePage,
-  devicesPerPage,
+  devicePage: _devicePage,
+  devicesPerPage: _devicesPerPage,
   onRefresh,
   onViewDetails,
   onEdit,
   onDelete,
-  onPageChange,
+  onPageChange: _onPageChange,
   onAddDevice: _onAddDevice,
   addDeviceDialog,
 }: DeviceListProps) {

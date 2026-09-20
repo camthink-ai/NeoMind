@@ -67,8 +67,8 @@ const _ROLE_CONFIG: Record<string, { icon: typeof Activity; color: string }> = {
 
 export function AgentDetailPanel({
   agent,
-  onEdit,
-  onExecute,
+  onEdit: _onEdit,
+  onExecute: _onExecute,
   onViewExecutionDetail,
   onRefresh,
   inlineMode = false,

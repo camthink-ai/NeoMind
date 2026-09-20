@@ -506,9 +506,9 @@ interface ExtensionDetailViewProps {
 
 function ExtensionDetailView({
   extension,
-  installing,
-  onInstall,
-  onBack,
+  installing: _installing,
+  onInstall: _onInstall,
+  onBack: _onBack,
   isMobile,
 }: ExtensionDetailViewProps) {
   const { t } = useTranslation(["extensions", "common"])

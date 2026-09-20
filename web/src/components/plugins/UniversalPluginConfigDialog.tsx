@@ -472,7 +472,7 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
 
     // For Ollama backends, exclude endpoint and model fields since they're handled separately
     if (isOllamaBackend && schema.properties) {
-      const { model, _endpoint, ...restProperties } = schema.properties
+      const { model: _model, _endpoint, ...restProperties } = schema.properties
       schema.properties = restProperties
       if (schema.required) {
         schema.required = schema.required.filter((field: string) => field !== 'model' && field !== 'endpoint')
@@ -484,7 +484,7 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
 
     // For llama.cpp backends, exclude endpoint and model fields since they're handled by the server info UI
     if (isLlamaCppBackend && schema.properties) {
-      const { endpoint, _model, ...restProperties } = schema.properties
+      const { endpoint: _endpoint, _model, ...restProperties } = schema.properties
       schema.properties = restProperties
       if (schema.required) {
         schema.required = schema.required.filter((field: string) => field !== 'endpoint' && field !== 'model')

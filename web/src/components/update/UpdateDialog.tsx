@@ -27,7 +27,7 @@ import { cn } from '@/lib/utils'
 // tab so the GitHub release page opens in the browser instead of navigating
 // the desktop webview.
 const releaseNotesComponents: Components = {
-  a: ({ node, className, children, href, ...props }) => (
+  a: ({ node: _node, className, children, href, ...props }) => (
     <a
       className={cn('text-primary underline underline-offset-2 hover:opacity-80', className)}
       href={href as string}

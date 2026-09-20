@@ -193,17 +193,17 @@ export const BarChart = memo(function BarChart({
   dataSource,
   data: propData,
   title,
-  height = 'auto',
+  height: _height = 'auto',
   showGrid = false,
   showLegend = false,
   showTooltip = true,
-  layout = 'vertical',
+  layout: _layout = 'vertical',
   color,
   size = 'md',
   limit = 24,
   timeRange = 1,
   aggregate = 'raw',  // Default to raw for bar charts (show time series)
-  timeWindow,
+  timeWindow: _timeWindow,
   dataMapping,
   className,
 }: BarChartProps) {
@@ -213,7 +213,7 @@ export const BarChart = memo(function BarChart({
   // Shared data pipeline
   const {
     sources, data, loading, effectiveAggregate,
-    hasData, showLoading, getSeriesName,
+    hasData: _hasData, showLoading, getSeriesName,
   } = useChartPipeline<BarData[] | number[] | number[][]>({
     dataSource,
     aggregate,

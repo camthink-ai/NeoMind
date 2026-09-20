@@ -76,7 +76,7 @@ function savePreferences(pref: Preferences) {
 
 export function PreferencesTab() {
   const { t, i18n } = useTranslation(["common", "settings"])
-  const { handleError } = useErrorHandler()
+  const { handleError: _handleError } = useErrorHandler()
   const { toast } = useToast()
   const [preferences, setPreferences] = useState<Preferences>(() => ({
     ...loadPreferences(),
@@ -96,7 +96,7 @@ export function PreferencesTab() {
     isLoading: timezoneLoading,
     updateTimezone,
     availableTimezones,
-    refresh: refreshTimezone,
+    refresh: _refreshTimezone,
   } = useGlobalTimezone()
 
   // Update preferences

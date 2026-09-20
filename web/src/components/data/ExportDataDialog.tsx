@@ -408,7 +408,7 @@ async function generateZip(
 ) {
   const JSZip = (await import('jszip')).default
   const zip = new JSZip()
-  let imageCount = 0
+  let _imageCount = 0
 
   // manifest.json with metadata
   zip.file('manifest.json', JSON.stringify({
@@ -435,7 +435,7 @@ async function generateZip(
       if (resolved) {
         const filename = `${String(i + 1).padStart(4, '0')}_${timeStr}.${resolved.ext}`
         zip.file(`images/${filename}`, resolved.bytes)
-        imageCount++
+        _imageCount += 1
         csvRows.push(`${i + 1},${filename},${formatTimestamp(p.timestamp)},${q},${resolved.bytes.length} bytes`)
       } else {
         csvRows.push(`${i + 1},-,${formatTimestamp(p.timestamp)},${q},"${valStr.replace(/"/g, '""')}"`)

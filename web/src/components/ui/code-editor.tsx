@@ -241,7 +241,7 @@ export interface LegacyCodeEditorProps {
 export function LegacyCodeEditor({
   value,
   onChange,
-  language = "json",
+  language: _language = "json",
   placeholder = "",
   className,
   readOnly = false,
