@@ -161,9 +161,9 @@ export function SharedDashboard() {
           // Install global fetch proxy AFTER dashboard data is loaded
           proxyCleanupRef.current = installShareProxy(token)
         }
-      } catch (e: any) {
+      } catch (e) {
         if (mounted) {
-          const msg = e.message || ''
+          const msg = e instanceof Error ? e.message : ''
           if (msg.includes('doctype') || msg.includes('Unexpected token')) {
             setError(t('sharedDashboard.serverError'))
           } else {

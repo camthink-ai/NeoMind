@@ -5,6 +5,7 @@
  */
 
 export * from './ChartContainer'
+export * from './chartHooks'
 export * from './ChartTooltip'
 export * from './DefaultStates'
 export * from './useChartPipeline'

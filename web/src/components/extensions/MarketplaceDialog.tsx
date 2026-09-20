@@ -261,11 +261,11 @@ export function MarketplaceDialog({
           variant: "destructive",
         })
       }
-    } catch (e: any) {
+    } catch (e) {
       console.error("Failed to install extension:", e)
       toast({
         title: t("extensions:market.installFailed", "Installation failed"),
-        description: e?.message || t("extensions:market.installFailedDesc", "Failed to install extension"),
+        description: (e instanceof Error ? e.message : null) || t("extensions:market.installFailedDesc", "Failed to install extension"),
         variant: "destructive",
       })
     } finally {

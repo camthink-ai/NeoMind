@@ -219,8 +219,8 @@ export function DeviceDetail({
     try {
       await onSendCommand(selectedCommandDef.name, JSON.stringify(dialogParams))
       setCommandResult({ success: true })
-    } catch (e: any) {
-      setCommandResult({ success: false, error: e?.message || String(e) })
+    } catch (e) {
+      setCommandResult({ success: false, error: e instanceof Error ? e.message : String(e) })
     } finally {
       setCommandExecuting(false)
     }

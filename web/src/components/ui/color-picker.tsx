@@ -4,6 +4,7 @@
  * Color picker with preset palette, custom color input, and transparency support.
  * Follows system UI standards.
  */
+import { COLOR_PRESETS } from './color-picker.presets'
 
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -29,35 +30,7 @@ function isThemeColor(color: string): boolean {
 }
 
 // Preset color palettes — harmonized with design system
-export const COLOR_PRESETS = {
-  primary: [
-    THEME_FOREGROUND, // Theme foreground (black in light, white in dark)
-    '#6360ef', // Indigo-Blue
-    '#36b37e', // Emerald
-    '#e8a735', // Amber
-    '#e07838', // Orange
-    '#d86098', // Rose
-    '#4ca8c8', // Sky Blue
-    '#4aba6a', // Green
-  ],
-  neutral: [
-    THEME_FOREGROUND, // Theme foreground (black in light, white in dark)
-    '#171717', // Zinc 950
-    '#404040', // Zinc 700
-    '#737373', // Zinc 500
-    '#a3a3a3', // Zinc 400
-    '#d4d4d4', // Zinc 300
-    '#e5e5e5', // Zinc 200
-    '#f5f5f5', // Zinc 100
-  ],
-  semantic: [
-    '#36b37e', // Success (Emerald)
-    '#e8a735', // Warning (Amber)
-    '#e07838', // Error (Orange)
-    '#6360ef', // Info (Indigo-Blue)
-    '#4ca8c8', // Sky Blue
-  ],
-}
+
 
 export interface ColorPickerProps {
   value?: string

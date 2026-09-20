@@ -7,7 +7,7 @@
  * vertical room.
  */
 import { describe, it, expect } from 'vitest'
-import { buildMobileLayout, MOBILE_COLS } from '../DashboardGrid'
+import { buildMobileLayout, MOBILE_COLS } from '../DashboardGrid.layout'
 
 const mk = (id: string, type: string, w = 4, h = 2) => ({
   id,

@@ -20,7 +20,7 @@ import {
 } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 // Icon categories with their icons (no duplicates across categories)
-export const ICON_CATEGORIES = {
+const ICON_CATEGORIES = {
   common: [
     'Settings', 'Home', 'User', 'Users', 'Search', 'Bell', 'Heart',
     'Star', 'Check', 'X', 'Plus', 'Minus', 'Filter', 'Menu',

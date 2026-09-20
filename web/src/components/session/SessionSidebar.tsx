@@ -225,7 +225,7 @@ export function SessionSidebar({
       toast({
         title: t('session.sessionDeleted'),
       })
-    } catch (error: any) {
+    } catch (error) {
       showErrorToast(toast, error, t('error'))
     } finally {
       setDeletingId(null)

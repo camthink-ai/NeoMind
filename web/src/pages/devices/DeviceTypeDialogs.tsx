@@ -2313,10 +2313,10 @@ export function CloudImportDialog({ open, onOpenChange, onImportComplete }: Clou
         onOpenChange(false)
         setSelectedIds(new Set())
       }, 1000)
-    } catch (e: any) {
+    } catch (e) {
       toast({
         title: t('devices:cloud.importFailed', "导入失败"),
-        description: e?.message || t('devices:cloud.importFailedDesc', "导入设备类型失败"),
+        description: (e instanceof Error ? e.message : null) || t('devices:cloud.importFailedDesc', "导入设备类型失败"),
         variant: "destructive"
       })
     } finally {
