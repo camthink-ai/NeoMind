@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### chore(web): lint batch — ratchet 626 → 614
+- 5× `catch (e: any)` narrowed to `unknown` with instanceof guards; 6 component files stopped exporting non-components (ChartContainer's chart hooks/factory → `shared/chartHooks.ts` via the barrel, DashboardGrid's mobile layout + its unit test, color-picker presets, ConfigFormBuilder's MQTT validators, icon-picker categories). Three further splits (SettingsNav sections, DataSourceIndicator summary, DefaultStates consts) were attempted and rolled back — anchor-based block extraction landed on the wrong spans; left as follow-ups rather than hand-patching mangled JSX. Remaining: any 486 (240 `as any` — needs per-site typing), exhaustive-deps 102 (behavior-risky), refresh 21 (hooks/context + shadcn boilerplate).
+
 ### refactor: the monolith-splitting batch — timeseries, transform, runner (3 of the 4 remaining giants)
 - **storage/timeseries.rs (3652 → 8 files)**: the 1850-line single `impl TimeSeriesStore` cut into per-domain impls (write/query/aggregation/retention) across files; types + constructors in mod.rs; the 960-line test module became `tests.rs`. 167+21+18 storage tests green.
 - **api/automation/transform.rs (3584 → 8 files)**: both impl blocks (JsTransformExecutor ~740, TransformEngine ~1760) split into js_executor/pipeline/operations/aggregation; the free-function tail became image/value helpers. api tests 87+3+4 green. Encoded lessons: a `mod image` shadows the `image` crate inside the subtree (`::image::` disambiguation), cargo fix prunes use-names a test glob depended on, and the file-level inner `allow(too_many_arguments)` must move with the methods.
