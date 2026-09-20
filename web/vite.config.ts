@@ -145,30 +145,37 @@ export default defineConfig({
         // Simplified chunking strategy to avoid circular dependencies
         // The key is to group all interdependent packages together
         manualChunks: (id) => {
-          // Page-level code splitting - these are safe to split
-          if (id.includes('/pages/dashboard-components/VisualDashboard')) {
-            return 'page-dashboard'
-          }
-          if (id.includes('/pages/agents')) {
-            return 'page-agents'
-          }
-          if (id.includes('/pages/devices')) {
-            return 'page-devices'
-          }
-          if (id.includes('/pages/automation')) {
-            return 'page-automation'
-          }
-          if (id.includes('/pages/chat')) {
-            return 'page-chat'
-          }
-          if (id.includes('/pages/messages')) {
-            return 'page-messages'
-          }
-          if (id.includes('/pages/settings')) {
-            return 'page-settings'
-          }
-          if (id.includes('/pages/login') || id.includes('/pages/setup')) {
-            return 'page-auth'
+          // Page-level grouping is OFF by default. lazy() routes already
+          // split naturally per dynamic import; forcing page-path groups
+          // instead created static entry→page-chunk edges (the whole export
+          // surface of five page chunks + every heavy vendor landed in the
+          // eager preload set — see the CHANGELOG perf(web) audit). Set
+          // VITE_PAGE_CHUNKS=1 to restore the old grouping for comparison.
+          if (process.env.VITE_PAGE_CHUNKS === '1') {
+            if (id.includes('/pages/dashboard-components/VisualDashboard')) {
+              return 'page-dashboard'
+            }
+            if (id.includes('/pages/agents')) {
+              return 'page-agents'
+            }
+            if (id.includes('/pages/devices')) {
+              return 'page-devices'
+            }
+            if (id.includes('/pages/automation')) {
+              return 'page-automation'
+            }
+            if (id.includes('/pages/chat')) {
+              return 'page-chat'
+            }
+            if (id.includes('/pages/messages')) {
+              return 'page-messages'
+            }
+            if (id.includes('/pages/settings')) {
+              return 'page-settings'
+            }
+            if (id.includes('/pages/login') || id.includes('/pages/setup')) {
+              return 'page-auth'
+            }
           }
 
           // React core - stable, rarely changes between deploys
@@ -188,27 +195,66 @@ export default defineConfig({
             return 'vendor-radix'
           }
 
-          // Recharts - large charting library (~150KB)
-          if (
-            id.includes('node_modules/recharts') ||
-            id.includes('node_modules/d3-') ||
-            id.includes('node_modules/victory-vendor')
-          ) {
-            return 'vendor-recharts'
-          }
-
-          // CodeMirror - editor used in extension code editing
-          if (
-            id.includes('node_modules/@codemirror/') ||
-            id.includes('node_modules/codemirror/') ||
-            id.includes('node_modules/@uiw/react-codemirror') ||
-            id.includes('node_modules/@marijn/') ||
-            id.includes('node_modules/@lezer/') ||
-            id.includes('node_modules/crelt/') ||
-            id.includes('node_modules/w3c-keyname/') ||
-            id.includes('node_modules/style-mod/')
-          ) {
-            return 'vendor-codemirror'
+          // Lazy-vendor grouping (codemirror/recharts/markdown/hls/export)
+          // is also OFF by default: same mechanism as the page groups —
+          // once manualChunks force-splits a lazy-only dependency into its
+          // own chunk, Rollup adds it to the entry's STATIC import list
+          // (observed: vendor-codemirror 494K eager even with a provably
+          // clean source-level static graph). Without the rules these
+          // libraries land inside the lazy chunks that import them.
+          if (process.env.VITE_PAGE_CHUNKS === '1') {
+            if (
+              id.includes('node_modules/recharts') ||
+              id.includes('node_modules/d3-') ||
+              id.includes('node_modules/victory-vendor')
+            ) {
+              return 'vendor-recharts'
+            }
+            if (
+              id.includes('node_modules/@codemirror/') ||
+              id.includes('node_modules/codemirror/') ||
+              id.includes('node_modules/@uiw/react-codemirror') ||
+              id.includes('node_modules/@marijn/') ||
+              id.includes('node_modules/@lezer/') ||
+              id.includes('node_modules/crelt/') ||
+              id.includes('node_modules/w3c-keyname/') ||
+              id.includes('node_modules/style-mod/')
+            ) {
+              return 'vendor-codemirror'
+            }
+            if (id.includes('node_modules/hls.js')) {
+              return 'vendor-hls'
+            }
+            if (id.includes('node_modules/jszip')) {
+              return 'vendor-export'
+            }
+            if (
+              id.includes('node_modules/react-markdown') ||
+              id.includes('node_modules/remark') ||
+              id.includes('node_modules/rehype') ||
+              id.includes('node_modules/unified') ||
+              id.includes('node_modules/micromark') ||
+              id.includes('node_modules/mdast-') ||
+              id.includes('node_modules/hast-') ||
+              id.includes('node_modules/unist-') ||
+              id.includes('node_modules/vfile') ||
+              id.includes('node_modules/property-information') ||
+              id.includes('node_modules/space-separated-tokens') ||
+              id.includes('node_modules/trim-lines') ||
+              id.includes('node_modules/trough') ||
+              id.includes('node_modules/bail') ||
+              id.includes('node_modules/devlop') ||
+              id.includes('node_modules/zwitch') ||
+              id.includes('node_modules/esc') ||
+              id.includes('node_modules/web-namespaces') ||
+              id.includes('node_modules/html-url-entities') ||
+              id.includes('node_modules/decode-named-character-reference') ||
+              id.includes('node_modules/character-') ||
+              id.includes('node_modules/highlight.js') ||
+              id.includes('node_modules/lowlight')
+            ) {
+              return 'vendor-markdown'
+            }
           }
 
           // Lucide icons - tree-shakeable but still sizable
@@ -216,52 +262,51 @@ export default defineConfig({
             return 'vendor-icons'
           }
 
-          // HLS.js — lazy loaded via dynamic import() in VideoDisplay
-          if (id.includes('node_modules/hls.js')) {
-            return 'vendor-hls'
-          }
-
-          // jszip — lazy loaded via dynamic import()
-          if (id.includes('node_modules/jszip')) {
-            return 'vendor-export'
-          }
-
-          // Markdown + syntax-highlight stack (react-markdown / remark /
-          // rehype / micromark / lowlight / highlight.js) — only the chat
-          // pages import it; keeping it out of the catch-all vendor means
-          // the initial shell doesn't pay for it.
-          if (
-            id.includes('node_modules/react-markdown') ||
-            id.includes('node_modules/remark') ||
-            id.includes('node_modules/rehype') ||
-            id.includes('node_modules/unified') ||
-            id.includes('node_modules/micromark') ||
-            id.includes('node_modules/mdast-') ||
-            id.includes('node_modules/hast-') ||
-            id.includes('node_modules/unist-') ||
-            id.includes('node_modules/vfile') ||
-            id.includes('node_modules/property-information') ||
-            id.includes('node_modules/space-separated-tokens') ||
-            id.includes('node_modules/trim-lines') ||
-            id.includes('node_modules/trough') ||
-            id.includes('node_modules/bail') ||
-            id.includes('node_modules/devlop') ||
-            id.includes('node_modules/zwitch') ||
-            id.includes('node_modules/esc') ||
-            id.includes('node_modules/web-namespaces') ||
-            id.includes('node_modules/html-url-entities') ||
-            id.includes('node_modules/decode-named-character-reference') ||
-            id.includes('node_modules/character-') ||
-            id.includes('node_modules/highlight.js') ||
-            id.includes('node_modules/lowlight') ||
-            false
-          ) {
-            return 'vendor-markdown'
-          }
-
-          // All other node_modules go into a single vendor bundle
-          // This avoids circular dependency issues between vendor chunks
+          // All other node_modules go into a single vendor bundle — EXCEPT
+          // the heavy lazy-only libraries above, which are left to Rollup's
+          // natural splitting (undefined): they land inside the lazy chunks
+          // that import them instead of bloating the eager vendor bundle.
           if (id.includes('node_modules')) {
+            if (
+              id.includes('node_modules/recharts') ||
+              id.includes('node_modules/d3-') ||
+              id.includes('node_modules/victory-vendor') ||
+              id.includes('node_modules/@codemirror/') ||
+              id.includes('node_modules/codemirror/') ||
+              id.includes('node_modules/@uiw/react-codemirror') ||
+              id.includes('node_modules/@marijn/') ||
+              id.includes('node_modules/@lezer/') ||
+              id.includes('node_modules/crelt/') ||
+              id.includes('node_modules/w3c-keyname/') ||
+              id.includes('node_modules/style-mod/') ||
+              id.includes('node_modules/hls.js') ||
+              id.includes('node_modules/jszip') ||
+              id.includes('node_modules/react-markdown') ||
+              id.includes('node_modules/remark') ||
+              id.includes('node_modules/rehype') ||
+              id.includes('node_modules/unified') ||
+              id.includes('node_modules/micromark') ||
+              id.includes('node_modules/mdast-') ||
+              id.includes('node_modules/hast-') ||
+              id.includes('node_modules/unist-') ||
+              id.includes('node_modules/vfile') ||
+              id.includes('node_modules/property-information') ||
+              id.includes('node_modules/space-separated-tokens') ||
+              id.includes('node_modules/trim-lines') ||
+              id.includes('node_modules/trough') ||
+              id.includes('node_modules/bail') ||
+              id.includes('node_modules/devlop') ||
+              id.includes('node_modules/zwitch') ||
+              id.includes('node_modules/esc') ||
+              id.includes('node_modules/web-namespaces') ||
+              id.includes('node_modules/html-url-entities') ||
+              id.includes('node_modules/decode-named-character-reference') ||
+              id.includes('node_modules/character-') ||
+              id.includes('node_modules/highlight.js') ||
+              id.includes('node_modules/lowlight')
+            ) {
+              return undefined
+            }
             return 'vendor'
           }
 

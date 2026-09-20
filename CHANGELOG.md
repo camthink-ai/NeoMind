@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### perf(web): eager bundle 3.6MB → 1.9MB — manualChunks was defeating route lazy()
+- **The mechanism, finally proven**: `manualChunks` groups for pages AND lazy-only vendors (codemirror/recharts/markdown/hls) turned each into a named chunk that Rollup added to the entry's STATIC import list — even with a provably clean source-level static graph (esbuild metafile, import-statement edges: zero `/pages/` modules, zero codemirror modules reachable). Result: `index.html` modulepreloaded ~3.6MB and route `lazy()` was decorative.
+- **Fix**: page-level and lazy-vendor groups are now opt-in (`VITE_PAGE_CHUNKS=1` restores them for comparison); the catch-all `vendor` rule passes heavy lazy-only libraries through to Rollup's natural splitting, so they land inside the lazy chunks that import them. Core eager set is now entry 703K + vendor 842K + react/radix/icons ≈ **1.94MB raw**, and a live `vite preview` check confirms the login page fetches **616KB over the wire** (previously ~1.2MB compressed) with zero page chunks and zero codemirror/markdown/recharts/hls in the boot set; the login page renders fully (browser-verified).
+- One guard condition was briefly inverted during the work (`!==` vs `===`) — the no-change build result (identical chunk hash) is what exposed it; worth remembering that an unchanged hash after a config edit means the edit didn't take.
+
 ### perf(web): bundle audit — route lazy is real but first-load eats everything; first bridge fixed
 - Measured: the 9 MB asset dir is fine (on-demand), but `dist/index.html` modulepreloads **~3.6 MB of JS** on first load — entry statically imports the page-settings/chat/auth/dashboard/devices chunks plus ALL heavy vendors (codemirror 506K, vendor 474K, markdown 325K, recharts 327K). Route-level `lazy()` works at runtime, but the eager preload defeats it.
 - **Fixed one bridge**: SettingsDialog statically imported the `pages/settings/*` tab components, dragging the 617K page-settings chunk into the eager graph. It is now itself lazy (entry −93K, tsc/tests/ratchet all green, dialog renders nothing when closed so `fallback={null}` is invisible).
