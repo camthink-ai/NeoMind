@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### perf(web): bundle audit — route lazy is real but first-load eats everything; first bridge fixed
+- Measured: the 9 MB asset dir is fine (on-demand), but `dist/index.html` modulepreloads **~3.6 MB of JS** on first load — entry statically imports the page-settings/chat/auth/dashboard/devices chunks plus ALL heavy vendors (codemirror 506K, vendor 474K, markdown 325K, recharts 327K). Route-level `lazy()` works at runtime, but the eager preload defeats it.
+- **Fixed one bridge**: SettingsDialog statically imported the `pages/settings/*` tab components, dragging the 617K page-settings chunk into the eager graph. It is now itself lazy (entry −93K, tsc/tests/ratchet all green, dialog renders nothing when closed so `fallback={null}` is invisible).
+- **Root cause of the remaining edges** (diagnosed, deliberately not rushed): a source-level scan (esbuild metafile, import-statement edges only) finds ZERO statically-reachable `/pages/` modules after the fix — yet Rollup still emits entry→page-chunk static imports with the pages' entire export surface. That signature points at manualChunks grouping + chunk-cycle hoisting, not at stray imports. Full fix needs a dedicated pass: audit which exports entry actually consumes (build with `manifest:true`), move those shared page-level modules to neutral paths, or rework the page chunk rules. The audit method (esbuild metafile BFS + dist chunk-edge graph) is recorded here for that session.
+
 ### test(data-push): scheduler-loop integration — interval cadence + bounded teardown
 - First end-to-end test of `PushScheduler`'s interval loop (the existing 26 tests were pure-function): a real TcpListener HTTP sink, a 1s-interval webhook target, and EventBus DeviceMetric publishes prove (a) buffered metrics flush on tick — not on event — with the batch payload carrying `device:<id>:<metric>` source ids, and (b) `stop()` delivers the still-buffered remainder instead of dropping it. Two harness gotchas documented inline: publish-before-subscribe silently drops on the broadcast bus (200ms warm-up), and stop()'s cancel arm can win the select race against a just-published event (300ms beat). A paused-clock variant was abandoned — real sockets and auto-advancing time don't mix under the current-thread test runtime.
 

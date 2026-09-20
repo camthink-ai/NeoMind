@@ -23,7 +23,6 @@ import { useExtensionComponents } from "@/hooks/useExtensionComponents"
 import { UpdateDialog, ServerUpgradeDialog } from '@/components/update'
 import { InstanceSwitchOverlay } from '@/components/layout/InstanceSwitchOverlay'
 import { GlobalChatFab } from '@/components/chat/GlobalChatFab'
-import { SettingsDialog } from "@/components/settings/SettingsDialog"
 import { useUpdateCheck } from '@/hooks/useUpdateCheck'
 import { listen } from "@tauri-apps/api/event"
 import type { ConnectionState } from "@/lib/websocket"
@@ -31,6 +30,12 @@ import { BackendUnavailableOverlay } from "@/components/BackendUnavailableOverla
 
 // Performance optimization: Lazy load route components to reduce initial bundle size
 // Each page is loaded on-demand, reducing Time to Interactive by ~70%
+// The settings dialog is lazy for the same reason: it statically imports
+// the pages/settings/* tab components, which would otherwise drag the
+// entire 600K page-settings chunk (and its vendor deps) into the eager
+// first load — defeating the route-level lazy() above.
+const SettingsDialog = lazy(() =>
+  import("@/components/settings/SettingsDialog").then(m => ({ default: m.SettingsDialog })))
 const LoginPage = lazy(() => import('@/pages/login').then(m => ({ default: m.LoginPage })))
 const SetupPage = lazy(() => import('@/pages/setup').then(m => ({ default: m.SetupPage })))
 const ChatPage = lazy(() => import('@/pages/chat').then(m => ({ default: m.ChatPage })))
@@ -645,7 +650,9 @@ function App() {
                     </ErrorBoundary>
                     </div>
                   </main>
-                  <SettingsDialog />
+                  <Suspense fallback={null}>
+                    <SettingsDialog />
+                  </Suspense>
                   <SwipeNavigation />
                   {/* Wide screens: the chat FAB docks as an in-flow right
                       column beside main (squeezing the page content) */}
