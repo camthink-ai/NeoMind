@@ -7,13 +7,13 @@
  * extension UMD bundle fetch calls alike.
  */
 
-import { useEffect, useState, useMemo, useRef, useCallback, Component } from 'react'
+import { useEffect, useState, useMemo, useRef, Component } from 'react'
 import type { ReactNode, ErrorInfo } from 'react'
 import { useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import i18n from '@/i18n/config'
 import { fetchAPI } from '@/lib/api'
-import { Loader2, AlertTriangle, Eye, Zap, EyeOff } from 'lucide-react'
+import { AlertTriangle, Eye, Zap, EyeOff } from 'lucide-react'
 import { LoadingState } from '@/components/shared/LoadingState'
 import { ThemeToggle } from '@/components/layout/ThemeToggle'
 import { DashboardGrid } from '@/components/dashboard/DashboardGrid'
@@ -46,7 +46,7 @@ class ComponentErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundary
     return { hasError: true }
   }
 
-  componentDidCatch(error: Error, info: ErrorInfo) {
+  componentDidCatch(error: Error, _info: ErrorInfo) {
     console.warn('[SharedDashboard] Component failed to render:', error.message)
   }
 

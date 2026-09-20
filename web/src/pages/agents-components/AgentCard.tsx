@@ -3,7 +3,7 @@
  */
 
 import { useTranslation } from "react-i18next"
-import { Button, IconButton } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { useConfirm } from "@/components/ui/use-confirm"
 import {
@@ -88,7 +88,7 @@ export function AgentCard({
     : 0
 
   // Get status label from i18n
-  const getStatusLabel = (status: string) => {
+  const _getStatusLabel = (status: string) => {
     const key = status.toLowerCase() as 'active' | 'paused' | 'error' | 'executing'
     return t(`agents:status.${key}`)
   }

@@ -13,12 +13,11 @@ import { Switch } from '@/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Field } from '@/components/ui/field'
 import { ColorPicker, CompactColorPicker, COLOR_PRESETS } from '@/components/ui/color-picker'
-import { cn } from '@/lib/utils'
 import { chartColorsHex } from '@/design-system/tokens/color'
 import { DataMappingConfig } from './UIConfigSections'
 import type {
   ConfigSection as ConfigSectionType,
-  DataSourceSection,
+
   ValueSection,
   RangeSection,
   SizeSection,

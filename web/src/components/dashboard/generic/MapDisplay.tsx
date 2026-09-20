@@ -17,22 +17,20 @@ import { normalizeImageUrl } from '@/lib/imageUtils'
 import { findDevice } from '@/lib/deviceUtils'
 import { dashboardCardBase, dashboardComponentSize } from '@/design-system/tokens/size'
 import { useDataSource } from '@/hooks/useDataSource'
-import { toast } from '@/components/ui/use-toast'
 import {
   MapPin,
-  Navigation,
+
   ZoomIn,
   ZoomOut,
   Map as MapIcon,
   Maximize2,
-  Minimize2,
+
   X,
   Activity,
   Zap,
   Monitor,
 } from 'lucide-react'
 import type { DataSource } from '@/types/dashboard'
-import { EmptyState } from '../shared'
 import type { MapBinding } from './MapEditorDialog'
 import { useStore } from '@/store'
 import { shallow } from 'zustand/shallow'
@@ -604,14 +602,14 @@ function SimpleSvgMap({
   }
 
   const handleMouseUp = (e: React.MouseEvent) => {
-    const wasDragging = isDragging
+    const _wasDragging = isDragging
     const hadDragOffset = dragOffset.x !== 0 || dragOffset.y !== 0
     setIsDragging(false)
 
     // Check if this was a click (not a drag)
     const mouseUpPos = { x: e.clientX, y: e.clientY }
     const mouseDownPos = mouseDownRef.current
-    const distance = Math.sqrt(
+    const _distance = Math.sqrt(
       Math.pow(mouseUpPos.x - mouseDownPos.x, 2) +
       Math.pow(mouseUpPos.y - mouseDownPos.y, 2)
     )
@@ -619,8 +617,8 @@ function SimpleSvgMap({
     // Update center position based on drag offset
     if (onCenterChange && hadDragOffset) {
       const n = Math.pow(2, zoom)
-      const containerWidth = actualSize.width || width
-      const containerHeight = actualSize.height || height
+      const _containerWidth = actualSize.width || width
+      const _containerHeight = actualSize.height || height
 
       // Convert pixel offset to lat/lng offset
       // Each pixel at zoom level Z represents 360 / (2^Z * 256) degrees of longitude
@@ -837,7 +835,7 @@ export function MapDisplay({
   title,
 }: MapDisplayProps & { title?: string }) {
   const { t } = useTranslation('dashboardComponents')
-  const sendCommand = useSendCommand()
+  const _sendCommand = useSendCommand()
 
   // Get devices from store for real-time metric updates
   const devices = useStore(state => state.devices)

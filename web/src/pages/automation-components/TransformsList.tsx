@@ -39,7 +39,7 @@ const SCOPE_CONFIG: Record<string, { label: string; icon: typeof Globe; color: s
 export const ITEMS_PER_PAGE = 10
 
 // Get code summary for display
-function getCodeSummary(jsCode: string): string {
+function _getCodeSummary(jsCode: string): string {
   if (!jsCode) return '-'
 
   const TRUNCATE_LEN = 45
@@ -119,9 +119,9 @@ export function TransformsList({
 
   // Use props if provided, otherwise use internal state (backward compatibility)
   const page = propsPage ?? internalPage
-  const setPage = onPageChange ?? setInternalPage
+  const _setPage = onPageChange ?? setInternalPage
 
-  const totalPages = Math.ceil(transforms.length / ITEMS_PER_PAGE) || 1
+  const _totalPages = Math.ceil(transforms.length / ITEMS_PER_PAGE) || 1
   const startIndex = (page - 1) * ITEMS_PER_PAGE
   const endIndex = startIndex + ITEMS_PER_PAGE
   const paginatedTransforms = propsPaginatedTransforms ?? transforms.slice(startIndex, endIndex)

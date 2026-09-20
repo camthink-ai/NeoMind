@@ -22,7 +22,7 @@ import {
   Factory,
   Wifi,
   Camera,
-  Home,
+  
   Brain,
   MonitorPlay,
   ScanText,
@@ -31,7 +31,7 @@ import {
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
-import { textNano, textMini, textMicro } from "@/design-system/tokens/typography"
+import { textNano, textMini } from "@/design-system/tokens/typography"
 import type { Extension } from "@/types"
 
 /// Pick a scannable category icon from the extension id/name keywords.

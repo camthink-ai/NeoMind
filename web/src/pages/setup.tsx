@@ -12,7 +12,6 @@ import { useTranslation } from "react-i18next"
 import { useStore } from "@/store"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { getApiBase, isTauriEnv } from '@/lib/api'
-import { Loader2 } from "lucide-react"
 import { LoadingState } from "@/components/shared/LoadingState"
 import { AccountStep } from "./setup/AccountStep"
 import { CompleteStep } from "./setup/CompleteStep"

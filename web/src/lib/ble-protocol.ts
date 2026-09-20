@@ -176,7 +176,7 @@ function encodeBytesField(field: number, payload: Uint8Array): Uint8Array {
 }
 
 /** Encode a protobuf string field (field_number, UTF-8 value) */
-function encodeStringField(field: number, value: string): Uint8Array {
+function _encodeStringField(field: number, value: string): Uint8Array {
   return encodeBytesField(field, new TextEncoder().encode(value))
 }
 

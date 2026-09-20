@@ -629,7 +629,7 @@ export function AgentMonitorWidget({
   // State
   const [agent, setAgent] = useState<AiAgent | null>(null)
   const [loading, setLoading] = useState(true)
-  const [agentNotFound, setAgentNotFound] = useState(false)
+  const [_agentNotFound, setAgentNotFound] = useState(false)
   const agentNotFoundRef = useRef(false)
 
   // Prevent loading flash: only show loading spinner when loading AND no agent data exists yet

@@ -4,7 +4,6 @@ import { ExtensionCard } from "./ExtensionCard"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
 import { EmptyState } from "@/components/shared/EmptyState"
 import {
   Search,

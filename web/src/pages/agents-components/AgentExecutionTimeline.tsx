@@ -1,8 +1,7 @@
-import { useState, useCallback, useEffect, useMemo } from "react"
+import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { LoadingState } from "@/components/shared/LoadingState"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Card } from "@/components/ui/card"
 import {
@@ -12,7 +11,7 @@ import {
   AlertCircle,
   Brain,
   Database,
-  Play,
+
   FileText,
   ChevronDown,
   ChevronRight,
@@ -602,7 +601,7 @@ function TimelineSection({ icon, title, subtitle, children }: TimelineSectionPro
   )
 }
 
-function DataCollectedItem({ data }: { data: DataCollected }) {
+function _DataCollectedItem({ data }: { data: DataCollected }) {
   const { t } = useTranslation(['common', 'agents'])
   const [expanded, setExpanded] = useState(false)
 
@@ -767,7 +766,7 @@ function ReasoningStepItem({ step, showRoundSeparator, roundNumber }: { step: Re
 
   const numberBg = isError ? 'bg-error text-primary-foreground' :
                     'bg-primary text-primary-foreground'
-  const borderColor = isError ? 'border-error' :
+  const _borderColor = isError ? 'border-error' :
                       'border-border'
 
   return (
@@ -839,7 +838,7 @@ function ReasoningStepItem({ step, showRoundSeparator, roundNumber }: { step: Re
   )
 }
 
-function DecisionItem({ decision }: { decision: Decision }) {
+function _DecisionItem({ decision }: { decision: Decision }) {
   const { t } = useTranslation(['common', 'agents'])
   return (
     <Card className="p-2 min-w-0">

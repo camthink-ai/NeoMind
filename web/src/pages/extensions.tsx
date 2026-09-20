@@ -120,7 +120,7 @@ export function ExtensionsPage() {
     setPendingActionExtension(null)
   }
 
-  const handleUploadComplete = (extensionId: string) => {
+  const handleUploadComplete = (_extensionId: string) => {
     fetchExtensions()
     toast({
       title: t("extensions:extensionUploaded"),
@@ -187,7 +187,7 @@ export function ExtensionsPage() {
       <MarketplaceDialog
         open={marketplaceDialogOpen}
         onOpenChange={setMarketplaceDialogOpen}
-        onInstallComplete={(extensionId) => {
+        onInstallComplete={(_extensionId) => {
           toast({
             title: t("extensions:extensionInstalled", { defaultValue: "Extension installed successfully" }),
           })

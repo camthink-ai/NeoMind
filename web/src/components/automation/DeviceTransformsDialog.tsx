@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useErrorHandler } from '@/hooks/useErrorHandler'
 import { Button } from '@/components/ui/button'
@@ -13,7 +13,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Switch } from '@/components/ui/switch'
-import { Database, Play, Edit, Trash2, Loader2, Sparkles } from 'lucide-react'
+import { Database, Play, Edit, Trash2, Sparkles } from 'lucide-react'
 import { api } from '@/lib/api'
 import { confirm } from '@/hooks/use-confirm'
 import { TransformBuilder as TransformBuilderSplit } from './TransformBuilderSplit'

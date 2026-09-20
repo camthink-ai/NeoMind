@@ -25,7 +25,7 @@ import { DataMapper, type CategoricalMappingConfig } from '@/lib/dataMapping'
 import { dashboardCardBase, dashboardComponentSize } from '@/design-system/tokens/size'
 import { indicatorFontWeight } from '@/design-system/tokens/indicator'
 import { chartColors as designChartColors, chartColorsHex } from '@/design-system/tokens/color'
-import type { DataSource, DataSourceOrList, TelemetryAggregate } from '@/types/dashboard'
+import type { DataSourceOrList, TelemetryAggregate } from '@/types/dashboard'
 import { getSourceId } from '@/types/dashboard'
 import { ChartContainer, ChartTooltip, EmptyState, useChartDimensions, useStaggeredData, createMemoRenderer, useChartPipeline } from '../shared'
 import { isNameValueData, isNumberArray, isMultiSourceData } from '../shared'
@@ -34,7 +34,7 @@ import {
 } from '@/lib/telemetryTransform'
 
 // Use design system chart colors
-const chartColors = designChartColors
+const _chartColors = designChartColors
 
 // Fallback colors as hex values for SVG
 const fallbackColors = chartColorsHex

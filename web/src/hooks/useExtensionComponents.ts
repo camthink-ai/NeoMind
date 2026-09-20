@@ -119,7 +119,7 @@ export function useExtensionComponents(options?: {
       const components: DashboardComponentDto[] = result.data || result || []
 
       // Use incremental sync - only update changes, preserve loaded modules
-      const changes = dynamicRegistry.syncComponents(components)
+      const _changes = dynamicRegistry.syncComponents(components)
 
       // Register components in dynamic registry
       const newComponents: Record<string, DashboardComponentDto> = {}

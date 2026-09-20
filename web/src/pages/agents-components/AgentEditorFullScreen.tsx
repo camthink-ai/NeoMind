@@ -37,7 +37,6 @@ import { Slider } from "@/components/ui/slider"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Switch } from "@/components/ui/switch"
 import {
   Select,
   SelectContent,
@@ -68,15 +67,15 @@ import {
   Wand2,
   ChevronRight,
   Bell,
-  Eye,
+
   Brain,
-  Wrench,
-  MessageSquare,
+
+
   Database,
-  Workflow,
+
   MousePointerClick,
   GitBranch,
-  Settings,
+
 } from "lucide-react"
 import type {
   AiAgentDetail,
@@ -86,7 +85,7 @@ import type {
   DeviceType,
   Extension,
   ExtensionDataSourceInfo,
-  ExtensionCommandDescriptor,
+
   LlmBackendInstance,
   ResourceRequest,
   UnifiedDataSourceInfo,
@@ -833,8 +832,8 @@ export function AgentEditorFullScreen({
       const tempKeywords = ['temperature', 'temp', '热', '温', 'climate', 'climate']
       const humidityKeywords = ['humidity', 'humid', '湿度', 'moisture']
       const lightKeywords = ['light', 'lamp', '灯', '亮度', 'brightness']
-      const motionKeywords = ['motion', 'move', 'movement', '移动', '人', 'person']
-      const alertKeywords = ['alert', 'notify', '告警', '通知', 'send', 'push']
+      const _motionKeywords = ['motion', 'move', 'movement', '移动', '人', 'person']
+      const _alertKeywords = ['alert', 'notify', '告警', '通知', 'send', 'push']
 
       devices.forEach(device => {
         const deviceType = deviceTypeMap.get(device.device_type)
@@ -1046,9 +1045,9 @@ export function AgentEditorFullScreen({
 
   // Validation - name and prompt are required
   // Metric selection is optional for event-triggered agents (device-level deduplication prevents loops)
-  const nameError = fieldErrors.name ??
+  const _nameError = fieldErrors.name ??
     (validateRequired(name, 'Name') || validateLength(name, 'Name', 1, 100))
-  const promptError = fieldErrors.prompt ??
+  const _promptError = fieldErrors.prompt ??
     (validateRequired(userPrompt, 'Prompt') || validateLength(userPrompt, 'Prompt', 1, 5000))
   const isValid: boolean = name.trim().length > 0 && userPrompt.trim().length > 0
 

@@ -10,7 +10,7 @@ import * as ReactDOM from 'react-dom'
 import * as jsxRuntime from 'react/jsx-runtime'
 import { dynamicIconMap } from '@/lib/dynamicIcons'
 import { ComponentMeta } from './types'
-import type { DashboardComponentDto, DashboardComponentsResponse } from '@/types'
+import type { DashboardComponentDto } from '@/types'
 import { isTauriEnv, getServerOrigin } from '@/lib/api'
 
 // Make React and ReactDOM available globally for extension components

@@ -757,7 +757,7 @@ export function UnifiedDataSourceConfig({
           </div>
           <div className="flex-1 overflow-y-auto p-2 space-y-1">
             {items.map(item => {
-              const [_source, deviceId, ...fieldParts] = item.key.split(':')
+              const [_source, _deviceId, ...fieldParts] = item.key.split(':')
               const field = fieldParts.join(':')
               return (
               <button
@@ -870,7 +870,7 @@ export function UnifiedDataSourceConfig({
                 key={item.key}
                 type="button"
                 onClick={() => {
-                  const [_src, devId, ...cmdParts] = item.key.split(':')
+                  const [_src, _devId, ...cmdParts] = item.key.split(':')
                   handleSelectItem(createCommandDS(selectedDevice.id, cmdParts.join(':')))
                 }}
                 className={cn(

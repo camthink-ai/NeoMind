@@ -11,7 +11,6 @@ import { LoadingState } from "@/components/shared/LoadingState"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Separator } from "@/components/ui/separator"
 import {
   Bot,
   Clock,
@@ -20,17 +19,17 @@ import {
   Eye,
   Zap,
   BarChart3,
-  Loader2,
+
   CheckCircle2,
   XCircle,
   Settings,
   FileText,
-  TrendingUp,
-  Database,
+
+
   MessageSquare,
   History,
-  Lightbulb,
-  BookOpen,
+
+
   ChevronDown,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -60,7 +59,7 @@ interface AgentDetailPanelProps {
 type DetailTab = 'overview' | 'history' | 'memory' | 'messages'
 
 // Role configuration - labels use i18n
-const ROLE_CONFIG: Record<string, { icon: typeof Activity; color: string }> = {
+const _ROLE_CONFIG: Record<string, { icon: typeof Activity; color: string }> = {
   Monitor: { icon: Activity, color: 'text-info' },
   Executor: { icon: Zap, color: 'text-accent-orange' },
   Analyst: { icon: BarChart3, color: 'text-accent-purple' },
@@ -82,7 +81,7 @@ export function AgentDetailPanel({
   const [executionsLoading, setExecutionsLoading] = useState(false)
   const [memory, setMemory] = useState<AgentMemory | null>(null)
   const [memoryLoading, setMemoryLoading] = useState(false)
-  const [availableResources, setAvailableResources] = useState<AgentAvailableResources | null>(null)
+  const [_availableResources, setAvailableResources] = useState<AgentAvailableResources | null>(null)
 
   // Real-time status from WebSocket events
   const [realtimeStatus, setRealtimeStatus] = useState<string | null>(null)

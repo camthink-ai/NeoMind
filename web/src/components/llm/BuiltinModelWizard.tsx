@@ -37,7 +37,7 @@ import {
   BrainCircuit,
   Info,
   CheckCircle2,
-  Cpu,
+  
   Download,
   HardDrive,
   Loader2,

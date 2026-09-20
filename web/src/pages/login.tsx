@@ -16,7 +16,7 @@ import { BrandLogoHorizontal } from "@/components/shared/BrandName"
 import { LoadingState } from "@/components/shared/LoadingState"
 import { forceViewportReset } from "@/hooks/useVisualViewport"
 import { textNano } from '@/design-system/tokens/typography'
-import { tokenManager, getApiBase, getApiKey, setApiBase, clearApiKey, setApiKey } from "@/lib/api"
+import { tokenManager, getApiBase, getApiKey, setApiBase, clearApiKey } from "@/lib/api"
 import { handleWindowDragMouseDown } from "@/lib/windowDrag"
 import { INSTANCE_CACHE_KEY, CURRENT_INSTANCE_KEY, PENDING_SWITCH_KEY } from "@/lib/instance-constants"
 import { getFullApiKey } from "@/store/slices/instanceSlice"
@@ -90,7 +90,7 @@ export function LoginPage() {
   const [rememberMe, setRememberMe] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState("")
-  const [isFirstSetup, setIsFirstSetup] = useState<boolean | null>(null)
+  const [_isFirstSetup, setIsFirstSetup] = useState<boolean | null>(null)
   const [checkingAuth, setCheckingAuth] = useState(true)
   const [hasLoadedCredentials, setHasLoadedCredentials] = useState(false)
   const [showInstancePicker, setShowInstancePicker] = useState(false)
@@ -115,7 +115,7 @@ export function LoginPage() {
     })
   }, [showInstancePicker])
   const apiBase = getApiBase()
-  const isRemote = !!(apiBase && apiBase !== '/api' && !apiBase.includes('localhost') && !apiBase.includes('127.0.0.1'))
+  const _isRemote = !!(apiBase && apiBase !== '/api' && !apiBase.includes('localhost') && !apiBase.includes('127.0.0.1'))
 
   // Handle instance switch — the full key comes from the per-browser key
   // store (saved when the user entered it); the backend never returns it.
@@ -156,7 +156,7 @@ export function LoginPage() {
     window.location.reload()
   }
 
-  const handleBackToLocal = () => {
+  const _handleBackToLocal = () => {
     localStorage.setItem(CURRENT_INSTANCE_KEY, 'local-default')
     setApiBase('')
     clearApiKey()

@@ -12,7 +12,6 @@ import { useTranslation } from 'react-i18next'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { cardPadded } from '@/design-system/tokens/size'
-import { textNano } from "@/design-system/tokens/typography"
 import { useIsMobile } from '@/hooks/useMobile'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -930,7 +929,7 @@ function TransformWorkspace({
   tBuilder,
   t,
 }: TransformWorkspaceProps) {
-  const isMobile = useIsMobile()
+  const _isMobile = useIsMobile()
 
   // Grouped selected extension sources for badge display
   const selectedSourceBadges = useMemo(() => {

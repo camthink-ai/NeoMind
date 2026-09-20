@@ -11,7 +11,7 @@ import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Brain, ChevronDown } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { textMini, textNano } from "@/design-system/tokens/typography"
+import { textMini } from "@/design-system/tokens/typography"
 
 interface ThinkingBlockProps {
   thinking?: string

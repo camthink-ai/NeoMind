@@ -64,7 +64,7 @@ export function GlobalChatFab() {
   const [panelState, setPanelState] = useState<PanelState>("closed")
   const [isStreaming, setIsStreaming] = useState(false)
   const location = useLocation()
-  const navigate = useNavigate()
+  const _navigate = useNavigate()
   const openSettings = useStore((s) => s.openSettings)
   const chatPanelRequest = useStore((s) => s.chatPanelRequest)
   const { t } = useTranslation("chat")

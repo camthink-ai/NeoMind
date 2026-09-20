@@ -115,7 +115,7 @@ export function AgentsPage() {
   // Data state
   const [agents, setAgents] = useState<AiAgent[]>([])
   const [loading, setLoading] = useState(false)
-  const [memoryRefreshKey, setMemoryRefreshKey] = useState(0)
+  const [memoryRefreshKey, _setMemoryRefreshKey] = useState(0)
   const memoryPanelRef = useRef<MemoryPanelRef>(null)
   const skillsPanelRef = useRef<SkillsPanelHandle>(null)
 
@@ -172,7 +172,7 @@ export function AgentsPage() {
   const [devices, setDevices] = useState<Device[]>([])
   const [deviceTypes, setDeviceTypes] = useState<DeviceType[]>([])
   const [extensions, setExtensions] = useState<Extension[]>([])
-  const [unifiedDataSources, setUnifiedDataSources] = useState<UnifiedDataSourceInfo[]>([])
+  const [unifiedDataSources, _setUnifiedDataSources] = useState<UnifiedDataSourceInfo[]>([])
 
   // Fetch agents list only (fast)
   const loadItems = useCallback(async () => {
@@ -247,7 +247,7 @@ export function AgentsPage() {
       }
     },
     onEvent: (event) => {
-      const eventData = event.data as { agent_id?: string }
+      const _eventData = event.data as { agent_id?: string }
 
       switch (event.type) {
         case 'AgentExecutionStarted': {

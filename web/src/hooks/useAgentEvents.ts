@@ -2,7 +2,7 @@
 //
 // Provides filtered event streaming for a specific agent.
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import type {
   NeoMindEvent,
   AgentThinkingEvent,
@@ -126,7 +126,7 @@ export interface UseAgentEventsResult {
   reconnect: () => void
 }
 
-const AGENT_EVENT_TYPES = [
+const _AGENT_EVENT_TYPES = [
   'AgentExecutionStarted',
   'AgentExecutionCompleted',
   'AgentThinking',

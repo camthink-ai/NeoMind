@@ -115,7 +115,7 @@ export const ProgressBar = memo(function ProgressBar({
   const state = getProgressState(percentage, effectiveWarningThreshold, effectiveDangerThreshold)
   const progressColor = getValueStateColor(value, max, effectiveWarningThreshold, effectiveDangerThreshold, color)
   const textColor = getValueTextColor(value, max, effectiveWarningThreshold, effectiveDangerThreshold)
-  const colorConfig = indicatorColors[state]
+  const _colorConfig = indicatorColors[state]
 
   // Get gradient for the progress fill
   const progressGradient = useMemo(() => getLinearGradient(state, 'to right', color), [state, color])

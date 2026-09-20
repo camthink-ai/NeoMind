@@ -37,7 +37,7 @@ import {
   X,
 } from 'lucide-react'
 import type { DataSource } from '@/types/dashboard'
-import { EmptyState, ErrorState } from '../shared'
+import { EmptyState } from '../shared'
 
 // ============================================================================
 // Types

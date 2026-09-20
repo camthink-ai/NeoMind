@@ -37,7 +37,7 @@ const ReleaseNotes = lazy(() =>
 )
 
 const releaseNotesComponents: Components = {
-  a: ({ node, className, children, href, ...props }) => (
+  a: ({ className, children, href, ...props }) => (
     <a
       className={cn('text-primary underline underline-offset-2 hover:opacity-80', className)}
       href={href as string}

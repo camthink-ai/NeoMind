@@ -140,7 +140,7 @@ export function AddDeviceDialog({
   }, [adding, onOpenChange])
 
   const selectedTemplate = deviceTypes.find(t => t.device_type === selectedDeviceType)
-  const hasCommands = (selectedTemplate?.commands?.length || 0) > 0
+  const _hasCommands = (selectedTemplate?.commands?.length || 0) > 0
 
   return (
     <UnifiedFormDialog

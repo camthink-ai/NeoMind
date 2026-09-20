@@ -42,7 +42,7 @@ export function useCommunityComponentLifecycle(
   const fetchingRef = useRef(false)
 
   const fetchInstalled = useStore(s => s.fetchInstalled)
-  const setInstalled = useStore(s => (components: FrontendComponentMeta[]) => {
+  const setInstalled = useStore(_s => (components: FrontendComponentMeta[]) => {
     // Direct state update to avoid full fetchInstalled call
     // This is a lightweight update for immediate UI feedback
     const currentState = useStore.getState()

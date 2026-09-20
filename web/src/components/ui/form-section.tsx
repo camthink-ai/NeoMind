@@ -147,7 +147,7 @@ export function FormSectionGroup({
   className,
   compact = false,
 }: FormSectionGroupProps) {
-  const isMobile = useIsMobile()
+  const _isMobile = useIsMobile()
 
   return (
     <div className={cn(

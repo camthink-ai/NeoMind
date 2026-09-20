@@ -7,7 +7,7 @@
 
 import { useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Search, X, Check } from 'lucide-react'
+import { Search, X } from 'lucide-react'
 import { dynamicIconMap } from '@/lib/dynamicIcons'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'

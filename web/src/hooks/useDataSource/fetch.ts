@@ -8,7 +8,7 @@ import { getUnifiedField } from '@/types/dashboard'
 import { useStore } from '@/store'
 import { logError, isNetworkError } from '@/lib/errors'
 import { getTimeRange } from '@/lib/telemetryTransform'
-import { insertAndMaintain, normalizeImageValue } from './helpers'
+import { normalizeImageValue } from './helpers'
 
 // ============================================================================
 // Cache (replaces TypedCache class instances)
@@ -263,7 +263,7 @@ export async function fetchHistoricalTelemetry(
           // raw — sort once then cap, instead of O(n²) per-point insertion.
           // Backend returns newest-first; sort ascending (oldest-first) for display.
           const displayLimit = limit || 50
-          const preserveAll = includeRawPoints
+          const _preserveAll = includeRawPoints
 
           // Sort indices by timestamp ascending to avoid creating wrapper objects
           const indices = metricData.map((_, i) => i)

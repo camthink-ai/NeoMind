@@ -1,7 +1,7 @@
 // Messages Page
 // Unified notification/message system for NeoMind
 
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { PageLayout } from '@/components/layout/PageLayout'
@@ -14,8 +14,7 @@ import { useToast } from '@/hooks/use-toast'
 import { confirm } from '@/hooks/use-confirm'
 import { useErrorHandler } from '@/hooks/useErrorHandler'
 import { useIsMobile } from '@/hooks/useMobile'
-import type { NotificationMessage, MessageSeverity, MessageStatus, MessageCategory, MessageChannel, ChannelFilter } from '@/types'
-import type { StandardError } from '@/lib/errors'
+import type { NotificationMessage, MessageSeverity, MessageStatus, MessageChannel, ChannelFilter } from '@/types'
 
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -29,12 +28,12 @@ import {
 } from '@/components/ui/select'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+
+
+
+
+
+
 } from '@/components/ui/table'
 import { UnifiedFormDialog } from '@/components/dialog/UnifiedFormDialog'
 import { Label } from '@/components/ui/label'
@@ -47,7 +46,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-  DropdownMenuCheckboxItem,
+
 } from '@/components/ui/dropdown-menu'
 import {
   Popover,
@@ -65,7 +64,7 @@ import {
   MoreVertical,
   Eye,
   RefreshCw,
-  Filter,
+
   X,
   CheckCircle2,
   TestTube,
@@ -155,7 +154,7 @@ export default function MessagesPage() {
   const [messagePage, setMessagePage] = useState(1)
   const messagesPerPage = 10
   // Mobile: track loaded page count for cumulative append
-  const [mobileLoadedPages, setMobileLoadedPages] = useState(1)
+  const [_mobileLoadedPages, setMobileLoadedPages] = useState(1)
 
   // Filters - support multiple selections
   const [selectedSeverities, setSelectedSeverities] = useState<Set<MessageSeverity>>(new Set())
@@ -565,7 +564,7 @@ export default function MessagesPage() {
     }
   }
 
-  const handleArchive = async (id: string) => {
+  const _handleArchive = async (id: string) => {
     try {
       await api.archiveMessage(id)
       setMessages(prev => prev.map(m =>

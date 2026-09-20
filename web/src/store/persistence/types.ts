@@ -5,7 +5,7 @@
  * Supports multiple storage backends (localStorage, API, hybrid).
  */
 
-import type { Dashboard, DashboardComponent, ComponentPosition, GenericComponent, BusinessComponent, DataSource, DataSourceOrList, ActionConfig, DisplayConfig } from '@/types/dashboard'
+import type { Dashboard, DashboardComponent, ComponentPosition, GenericComponent, BusinessComponent, DataSourceOrList, ActionConfig, DisplayConfig } from '@/types/dashboard'
 import { isGenericComponent, normalizeDataSource } from '@/types/dashboard'
 
 // ============================================================================

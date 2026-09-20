@@ -16,7 +16,7 @@ import { api, tokenManager } from '@/lib/api'
 import type { UpdateInfo, UpdateProgress } from '@/store/slices/updateSlice'
 
 /** Normalize version strings for reliable comparison */
-const normalizeVersion = (v: string) => v.trim().replace(/^v/, '')
+const _normalizeVersion = (v: string) => v.trim().replace(/^v/, '')
 
 const UPDATE_CHECK_INTERVAL = 24 * 60 * 60 * 1000 // 24 hours
 

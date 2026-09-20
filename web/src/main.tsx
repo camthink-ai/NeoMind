@@ -148,7 +148,7 @@ import { initVisualViewport } from "@/hooks/useVisualViewport"
    * List transform automations, optionally filtered.
    * GET /api/automations?type=transform
    */
-  listTransforms: async (filter?: { scope?: string; extension_id?: string }) => {
+  listTransforms: async (_filter?: { scope?: string; extension_id?: string }) => {
     const { api } = await import('@/lib/api')
     const result = await api.listAutomations({ type: 'transform' })
     return result.automations.map((a: any) => ({

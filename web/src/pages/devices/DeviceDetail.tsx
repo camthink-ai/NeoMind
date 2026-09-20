@@ -317,8 +317,8 @@ export function DeviceDetail({
   const pagination = telemetryData?.pagination
   const totalCount = pagination?.total ?? currentMetricData.length
   const totalPages = Math.ceil(totalCount / PAGE_SIZE)
-  const hasNextPage = currentPage < totalPages
-  const hasPrevPage = currentPage > 1
+  const _hasNextPage = currentPage < totalPages
+  const _hasPrevPage = currentPage > 1
   
   // Handle page change
   const handlePageChange = async (newPage: number) => {

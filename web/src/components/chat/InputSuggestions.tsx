@@ -9,7 +9,7 @@
  */
 
 import { useMemo, useEffect, useState, useCallback, useRef } from "react"
-import { useTranslation, Trans } from "react-i18next"
+import { useTranslation } from "react-i18next"
 import {
   Lightbulb,
   Cpu,
@@ -96,7 +96,7 @@ export function InputSuggestions({ input, onSelect, visible }: InputSuggestionsP
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [backendSuggestions, setBackendSuggestions] = useState<BackendSuggestion[]>([])
   const [isLoading, setIsLoading] = useState(false)
-  const [apiError, setApiError] = useState(false)
+  const [_apiError, setApiError] = useState(false)
   const [suggestionsContext, setSuggestionsContext] = useState<SuggestionsResponse["context"] | null>(null)
 
   // Debounce timer ref to prevent excessive API calls

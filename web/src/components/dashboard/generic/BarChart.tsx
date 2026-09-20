@@ -25,15 +25,14 @@ import {
   Cell,
 } from 'recharts'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import { DataMapper, type CategoricalMappingConfig } from '@/lib/dataMapping'
 import { dashboardCardBase, dashboardComponentSize } from '@/design-system/tokens/size'
 import { indicatorFontWeight } from '@/design-system/tokens/indicator'
 import { chartColors as designChartColors, chartColorsHex } from '@/design-system/tokens/color'
-import type { DataSource, DataSourceOrList, TelemetryAggregate } from '@/types/dashboard'
+import type { DataSourceOrList, TelemetryAggregate } from '@/types/dashboard'
 import { ChartContainer, ChartTooltip, EmptyState, useChartDimensions, useStaggeredData, createMemoRenderer, useChartPipeline } from '../shared'
-import { isNameValueData, isNumberArray, isMultiSourceData, extractNumericValue } from '../shared'
+import { isNameValueData, isNumberArray, isMultiSourceData } from '../shared'
 import {
   createChartTimeFormatter,
   aggregateData,
@@ -41,7 +40,7 @@ import {
 import type { TimePoint } from '@/lib/telemetryTransform'
 
 // Use design system chart colors
-const chartColors = designChartColors
+const _chartColors = designChartColors
 
 // Fallback colors as hex values for SVG
 const fallbackColors = chartColorsHex
@@ -229,7 +228,7 @@ export const BarChart = memo(function BarChart({
     if (!isMultiSourceData(data, sources.length)) return null
 
     const sourceArrays = data as unknown[][]
-    const chartColors = color ? [color] : fallbackColors
+    const _chartColors = color ? [color] : fallbackColors
 
     return sources.map((ds, i) => {
       const arr = sourceArrays[i]

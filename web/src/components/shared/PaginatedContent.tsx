@@ -120,7 +120,7 @@ export function PaginatedContent<T>({
   // Reset page when items change significantly
   const prevItemsLength = useMemo(() => items.length, [items.length])
   // biome-ignore lint: explicit reset is intentional
-  const itemsChanged = prevItemsLength !== items.length
+  const _itemsChanged = prevItemsLength !== items.length
 
   // Render items
   const renderItems = () => {

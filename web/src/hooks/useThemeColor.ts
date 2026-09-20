@@ -69,7 +69,7 @@ function parseColor(raw: string): { rgb: [number, number, number]; a: number } |
   return null
 }
 
-function toHex({ rgb, a }: { rgb: [number, number, number]; a: number }): string {
+function toHex({ rgb, a: _a }: { rgb: [number, number, number]; a: number }): string {
   return (
     "#" +
     rgb.map((v) => Math.round(Math.min(255, Math.max(0, v))).toString(16).padStart(2, "0")).join("")

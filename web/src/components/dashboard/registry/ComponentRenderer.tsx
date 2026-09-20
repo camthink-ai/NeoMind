@@ -15,10 +15,9 @@ import { cn } from '@/lib/utils'
 import { ErrorBoundary } from '@/components/shared/ErrorBoundary'
 import { findDevice } from '@/lib/deviceUtils'
 import type { DataSource } from '@/types/dashboard'
-import { normalizeDataSource } from '@/types/dashboard'
 import { resolveComponentData } from '@/lib/componentDataApi'
 import type { DashboardComponent, GenericComponentType } from '@/types/dashboard'
-import type { Device, DeviceType } from '@/types'
+import type { DeviceType } from '@/types'
 import { useStore } from '@/store'
 import { useEvents } from '@/hooks/useEvents'
 import { getComponentMeta } from './registry'
@@ -349,7 +348,7 @@ const ComponentRenderer = memo(function ComponentRenderer({
 
       // Auto-retry if we haven't exceeded max attempts
       if (attempt < MAX_LOAD_RETRIES) {
-        const retryType = componentType // capture current type
+        const _retryType = componentType // capture current type
         retryTimerRef.current = setTimeout(() => {
           // Only retry if the component type hasn't changed during the delay
           setAttemptCount(prev => prev === attempt ? attempt + 1 : prev)

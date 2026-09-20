@@ -6,7 +6,7 @@
  * It integrates with the existing error utilities in @/lib/errors.
  */
 
-import { getErrorMessage, isNetworkError, isAuthError, isNotFoundError } from '@/lib/errors'
+import { getErrorMessage, isNetworkError } from '@/lib/errors'
 
 interface ApiErrorLike {
   status?: number;

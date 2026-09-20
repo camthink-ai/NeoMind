@@ -9,9 +9,9 @@
 import { useMemo, memo } from 'react'
 import { ArrowUpRight, ArrowDownRight, Minus, Activity, TrendingUp, TrendingDown } from 'lucide-react'
 import { cn, getIconForEntity } from '@/lib/utils'
-import { chartColors, indicatorFontWeight, indicatorColors, dashboardCardBase, dashboardCardHorizontal } from '@/design-system'
+import { indicatorFontWeight, indicatorColors, dashboardCardBase, dashboardCardHorizontal } from '@/design-system'
 import { valueCardSize, type ValueCardSize } from '@/design-system/tokens/size'
-import type { DataSourceOrList, DataSource, TelemetryAggregate } from '@/types/dashboard'
+import type { DataSourceOrList, TelemetryAggregate } from '@/types/dashboard'
 import { normalizeDataSource } from '@/types/dashboard'
 import { useDataSource } from '@/hooks/useDataSource'
 import { aggregateData, getEffectiveAggregate } from '@/lib/telemetryTransform'
@@ -171,7 +171,7 @@ export const ValueCard = memo(function ValueCard({
   }, [dataSource])
 
   // Extract numeric value from data for calculations
-  const extractNumericValue = useMemo(() => {
+  const _extractNumericValue = useMemo(() => {
     if (data === null || data === undefined) return null
 
     // When data is an array of raw telemetry points with timestamps,

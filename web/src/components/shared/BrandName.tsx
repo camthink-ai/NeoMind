@@ -10,7 +10,7 @@
  * - Light theme logo: for light backgrounds (logo-light.png)
  */
 
-import { useBrand, useBrandMessages } from '@/hooks/useBrand'
+import { useBrand } from '@/hooks/useBrand'
 import { cn } from '@/lib/utils'
 
 /**

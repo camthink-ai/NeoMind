@@ -12,7 +12,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Field } from '@/components/ui/field'
 import { CompactColorPicker, COLOR_PRESETS } from '@/components/ui/color-picker'
 import { cn } from '@/lib/utils'
 
@@ -93,8 +92,8 @@ export function ValueMapEditor({ valueMap, onChange }: ValueMapEditorProps) {
             {t('valueMap.noRules')}
           </div>
         ) : (
-          valueMap.map((mapping, index) => {
-            const stateInfo = stateOptions.find(s => s.value === mapping.state)
+          valueMap.map((mapping, _index) => {
+            const _stateInfo = stateOptions.find(s => s.value === mapping.state)
             return (
               <div
                 key={mapping.id}

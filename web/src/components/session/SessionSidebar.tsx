@@ -61,11 +61,11 @@ export function SessionSidebar({
   const { sessionId: urlSessionId } = useParams<{ sessionId?: string }>()
 
   const sessions = useStore((s) => s.sessions)
-  const storeSessionId = useStore((s) => s.sessionId)
+  const _storeSessionId = useStore((s) => s.sessionId)
   const sessionsHasMore = useStore((s) => s.sessionsHasMore)
   const sessionsLoading = useStore((s) => s.sessionsLoading)
   const createSession = useStore((s) => s.createSession)
-  const switchSession = useStore((s) => s.switchSession)
+  const _switchSession = useStore((s) => s.switchSession)
   const deleteSession = useStore((s) => s.deleteSession)
   const updateSessionTitle = useStore((s) => s.updateSessionTitle)
   const loadMoreSessions = useStore((s) => s.loadMoreSessions)

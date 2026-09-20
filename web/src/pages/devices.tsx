@@ -14,16 +14,12 @@ import { PageTabsBar, PageTabsContent, PageTabsBottomNav, Pagination, type TabAc
 import { Upload, Download, Settings, Server, Layers, FileEdit, Cloud, ChevronLeft } from "lucide-react"
 import { LoadingState } from "@/components/shared/LoadingState"
 import { Button } from "@/components/ui/button"
-import { UnifiedFormDialog } from "@/components/dialog/UnifiedFormDialog"
-import { Switch } from "@/components/ui/switch"
-import { Label } from "@/components/ui/label"
-import { Input } from "@/components/ui/input"
 import { api } from "@/lib/api"
 import type { Device, DeviceType } from "@/types"
 import {
   DeviceList,
   DeviceDetail,
-  AddDeviceDialog,
+
   EditDeviceDialog,
   DeviceTypeList,
   AddDeviceTypeDialog,
@@ -64,7 +60,7 @@ export function DevicesPage() {
   }), shallow)
 
   // Group detail view data selectors (change together when viewing a device)
-  const { deviceTypeDetails, deviceDetails, telemetryData, telemetrySummary, deviceCurrentState, telemetryLoading } = useStore((s) => ({
+  const { deviceTypeDetails, deviceDetails, telemetryData, telemetrySummary: _telemetrySummary, deviceCurrentState, telemetryLoading } = useStore((s) => ({
     deviceTypeDetails: s.deviceTypeDetails,
     deviceDetails: s.deviceDetails,
     telemetryData: s.telemetryData,
@@ -86,7 +82,7 @@ export function DevicesPage() {
   const validateDeviceType = useStore((s) => s.validateDeviceType)
   const sendCommand = useStore((s) => s.sendCommand)
   const fetchTelemetryData = useStore((s) => s.fetchTelemetryData)
-  const fetchTelemetrySummary = useStore((s) => s.fetchTelemetrySummary)
+  const _fetchTelemetrySummary = useStore((s) => s.fetchTelemetrySummary)
   const fetchDeviceCurrentState = useStore((s) => s.fetchDeviceCurrentState)
   const clearDeviceDetails = useStore((s) => s.clearDeviceDetails)
   const updateDeviceStatus = useStore((s) => s.updateDeviceStatus)

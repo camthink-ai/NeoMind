@@ -7,16 +7,16 @@
 import type {
   DashboardStorage,
   StorageResult,
-  DashboardDTO,
-  CreateDashboardDTO,
-  UpdateDashboardDTO,
+  
+  
+  
 } from './types'
 import type { Dashboard } from '@/types/dashboard'
 import { generateId } from '@/lib/id'
 import i18n from '@/i18n/config'
 import { notifyError } from '@/lib/notify'
 import {
-  toDashboardDTO,
+  
   fromDashboardDTO,
   toCreateDashboardDTO,
   toUpdateDashboardDTO,
@@ -315,7 +315,7 @@ export class ApiDashboardStorage implements DashboardStorage {
       if (isLocalDashboard) {
         try {
           // Don't include the local ID - let server generate it
-          const { id, createdAt, updatedAt, ...dashboardForCreate } = dashboard
+          const { id, createdAt: _createdAt, updatedAt: _updatedAt, ...dashboardForCreate } = dashboard
           const createDto = toCreateDashboardDTO(dashboardForCreate as any)
           const result = await api.createDashboard(createDto)
           // Backend returns full Dashboard

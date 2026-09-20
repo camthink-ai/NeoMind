@@ -767,7 +767,7 @@ export const createDeviceSlice: StateCreator<
 
   // Apply current_values batch from fetchDeviceTelemetry directly via set(),
   // bypassing BatchUpdater RAF so store subscribers are notified immediately.
-  _applyCurrentValuesBatch: (results, deviceIds) => {
+  _applyCurrentValuesBatch: (results, _deviceIds) => {
     set((state) => {
       let changed = false
       const telemetryPatch: Record<string, Record<string, unknown>> = {}

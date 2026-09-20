@@ -4,7 +4,6 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 import type { NeoMindEvent, EventType, EventCategory } from '@/lib/events'
-import { fetchAPI } from '@/lib/api'
 
 export interface UseEventsOptions {
   /**

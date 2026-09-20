@@ -155,7 +155,7 @@ export function LayerEditorDialog({
   }, [open, initialBindings])
 
   // Convert bindings to layer items for preview
-  const convertToLayerItems = useCallback((): LayerItem[] => {
+  const _convertToLayerItems = useCallback((): LayerItem[] => {
     const getDeviceName = (deviceId: string) => {
       const device = findDevice(devices, deviceId)
       return device?.name || device?.device_id || deviceId

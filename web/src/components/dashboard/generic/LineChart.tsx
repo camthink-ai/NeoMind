@@ -30,7 +30,7 @@ import { DataMapper, type TimeSeriesMappingConfig } from '@/lib/dataMapping'
 import { dashboardCardBase, dashboardComponentSize } from '@/design-system/tokens/size'
 import { indicatorFontWeight } from '@/design-system/tokens/indicator'
 import { chartColors as designChartColors, chartColorsHex } from '@/design-system/tokens/color'
-import type { DataSource, DataSourceOrList, TelemetryAggregate } from '@/types/dashboard'
+import type { DataSourceOrList, TelemetryAggregate } from '@/types/dashboard'
 import { ChartContainer, ChartTooltip, EmptyState, ErrorState, useChartDimensions, useStaggeredData, createMemoRenderer, useChartPipeline } from '../shared'
 import { isSeriesDataArray, isNumberArray, isMultiSourceData, alignMultiSource, extractNumericValue, type SeriesData } from '../shared'
 import {
@@ -38,7 +38,7 @@ import {
 } from '@/lib/telemetryTransform'
 
 // Use design system chart colors
-const chartColors = designChartColors
+const _chartColors = designChartColors
 
 // Use design system hex colors for SVG rendering
 const fallbackColors = chartColorsHex
@@ -99,7 +99,7 @@ function transformTelemetryToChartData(
 /**
  * Format timestamp to readable time
  */
-function formatTimestamp(timestamp: string | number | undefined): string {
+function _formatTimestamp(timestamp: string | number | undefined): string {
   if (!timestamp) return ''
 
   const date = new Date(typeof timestamp === 'number' ? timestamp * 1000 : timestamp)

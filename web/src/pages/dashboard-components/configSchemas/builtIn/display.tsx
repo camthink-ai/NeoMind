@@ -1,10 +1,7 @@
 import React from 'react'
-import { cn } from '@/lib/utils'
-import { chartColorsHex } from '@/design-system/tokens/color'
 import { Field } from '@/components/ui/field'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
 import {
   Select,
   SelectContent,
@@ -13,13 +10,6 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Checkbox } from '@/components/ui/checkbox'
-import { ColorPicker } from '@/components/ui/color-picker'
-import { IconPicker } from '@/components/ui/icon-picker'
-import { EntityIconPicker } from '@/components/ui/entity-icon-picker'
-import { DataMappingConfig } from '@/components/dashboard/config/UIConfigSections'
-import { LEDStateRulesConfig } from '@/components/dashboard/config/LEDStateRulesConfig'
-import type { StateRule } from '@/components/dashboard/generic/LEDIndicator'
-import type { SingleValueMappingConfig, TimeSeriesMappingConfig, CategoricalMappingConfig } from '@/lib/dataMapping'
 import { DualModeSourceField } from '@/components/dashboard/config'
 import type { ComponentConfigSchema } from '@/components/dashboard/config/ComponentConfigBuilder'
 import { SelectField } from '../../ConfigFieldComponents'

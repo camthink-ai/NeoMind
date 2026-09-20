@@ -1,11 +1,9 @@
 import React from 'react'
-import { cn } from '@/lib/utils'
 import { compressImageFile } from '@/lib/imageUtils'
 import { chartColorsHex } from '@/design-system/tokens/color'
 import { Field } from '@/components/ui/field'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
 import {
   Select,
   SelectContent,
@@ -13,15 +11,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Checkbox } from '@/components/ui/checkbox'
-import { ColorPicker } from '@/components/ui/color-picker'
-import { IconPicker } from '@/components/ui/icon-picker'
-import { EntityIconPicker } from '@/components/ui/entity-icon-picker'
-import { DataMappingConfig } from '@/components/dashboard/config/UIConfigSections'
-import { LEDStateRulesConfig } from '@/components/dashboard/config/LEDStateRulesConfig'
-import type { StateRule } from '@/components/dashboard/generic/LEDIndicator'
-import type { SingleValueMappingConfig, TimeSeriesMappingConfig, CategoricalMappingConfig } from '@/lib/dataMapping'
-import { DualModeSourceField } from '@/components/dashboard/config'
 import type { ComponentConfigSchema } from '@/components/dashboard/config/ComponentConfigBuilder'
 import { SelectField } from '../../ConfigFieldComponents'
 import type { SchemaContext, Updaters } from '../types'
@@ -29,7 +18,6 @@ import { useStore } from '@/store'
 import { getSourceId } from '@/types/dashboard'
 import type { DataSource } from '@/types/dashboard'
 import { Button } from '@/components/ui/button'
-import { DeviceBindingConfig } from '@/components/dashboard/config/DeviceBindingConfig'
 import type { MapBinding, MapBindingType } from '@/components/dashboard/generic/MapEditorDialog'
 import type { LayerBinding, LayerBindingType } from '@/components/dashboard/generic/CustomLayer'
 import { BindingDataSourceSelector } from '../../BindingDataSourceSelector'
@@ -46,8 +34,8 @@ import {
 } from 'lucide-react'
 
 export function getMapDisplaySchema(config: any, ctx: SchemaContext, u: Updaters): ComponentConfigSchema {
-  const { t, setCenterPickerOpen, setMapEditorBindings, setMapEditorOpen, currentDashboard, selectedComponent } = ctx
-  const { updateConfig, updateDataSource, updateDataMapping, updateNestedConfig } = u
+  const { t, setCenterPickerOpen, setMapEditorBindings, setMapEditorOpen, currentDashboard: _currentDashboard, selectedComponent } = ctx
+  const { updateConfig, updateDataSource, updateDataMapping: _updateDataMapping, updateNestedConfig: _updateNestedConfig } = u
   return {
           dataSourceSections: [],
           styleSections: [
@@ -520,8 +508,8 @@ export function getMapDisplaySchema(config: any, ctx: SchemaContext, u: Updaters
 }
 
 export function getCustomLayerSchema(config: any, ctx: SchemaContext, u: Updaters): ComponentConfigSchema {
-  const { t, setLayerEditorBindings, setLayerEditorOpen, currentDashboard, selectedComponent } = ctx
-  const { updateConfig, updateDataSource, updateDataMapping, updateNestedConfig } = u
+  const { t, setLayerEditorBindings, setLayerEditorOpen, currentDashboard: _currentDashboard, selectedComponent } = ctx
+  const { updateConfig, updateDataSource: _updateDataSource, updateDataMapping: _updateDataMapping, updateNestedConfig: _updateNestedConfig } = u
   return {
           dataSourceSections: [],
           styleSections: [

@@ -32,7 +32,6 @@ import {
   Loader2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { cardPadded } from '@/design-system/tokens/size'
 import { textNano } from "@/design-system/tokens/typography"
 import { useIsMobile } from '@/hooks/useMobile'
 import type { Rule, RuleTrigger, RuleCondition, RuleAction, DeviceType, Extension, ExtensionDataSourceInfo, ExtensionCommandDescriptor, TransformDataSourceInfo } from '@/types'
@@ -89,7 +88,7 @@ function getCommandsForResource(
 }
 
 // Get metrics for a resource (device or extension)
-function getMetricsForResource(
+function _getMetricsForResource(
   id: string,
   devices: Array<{ id: string; name: string; device_type: string; metrics?: Array<{ name: string; data_type: string; unit?: string | null }> }>,
   deviceTypes?: DeviceType[],
@@ -373,7 +372,7 @@ function getDeviceMetrics(
   return deviceType?.metrics || [{ name: 'value', display_name: 'Value', data_type: 'float' }]
 }
 
-function getMetricDataType(
+function _getMetricDataType(
   metricName: string,
   deviceId: string,
   devices: Array<{ id: string; name: string; device_type?: string; metrics?: unknown }>,
@@ -384,7 +383,7 @@ function getMetricDataType(
   return metric?.data_type || 'float'
 }
 
-function getDeviceCommands(
+function _getDeviceCommands(
   deviceId: string,
   devices: Array<{ id: string; name: string; device_type?: string; commands?: unknown }>,
   deviceTypes?: DeviceType[]
@@ -442,7 +441,7 @@ function getExtensionMetrics(
   return metricsFromDataSources
 }
 
-function getExtensionDataType(
+function _getExtensionDataType(
   metricName: string,
   extensionId: string,
   extensions: Extension[],
@@ -468,7 +467,7 @@ function getTransformMetrics(
     }))
 }
 
-function getExtensionCommands(
+function _getExtensionCommands(
   extensionId: string,
   extensions: Extension[]
 ): ExtensionCommandDescriptor[] {
@@ -656,7 +655,7 @@ function ruleConditionToUiCondition(
 }
 
 // Helper to get device name from ID
-function getDeviceNameById(
+function _getDeviceNameById(
   deviceId: string,
   devices: Array<{ id: string; name: string; device_type?: string }>
 ): string {
@@ -679,7 +678,7 @@ function collectSourcesFromCondition(cond: RuleCondition): string[] {
 }
 
 // Helper to get extension name from ID
-function getExtensionNameById(
+function _getExtensionNameById(
   extensionId: string,
   extensions: Extension[]
 ): string {
@@ -690,7 +689,7 @@ function getExtensionNameById(
 // Helper to get the base metric name without duplicate prefix
 // Transform-generated metrics have format "prefix.name" (e.g., "ai_result.poses")
 // If the device type prefix matches the metric prefix, strip it to avoid duplication
-function getMetricPath(
+function _getMetricPath(
   metric: string,
   deviceId: string,
   devices: Array<{ id: string; name: string; device_type?: string }>
@@ -1161,8 +1160,8 @@ export function SimpleRuleBuilderSplit({
 }: RuleBuilderProps) {
   const { t } = useTranslation(['automation', 'common', 'dashboardComponents'])
   const tBuilder = (key: string) => t(`automation:ruleBuilder.${key}`)
-  const isEditMode = !!rule
-  const isMobile = useIsMobile()
+  const _isEditMode = !!rule
+  const _isMobile = useIsMobile()
 
   // Workspace state
   const [workspaceTab, setWorkspaceTab] = useState<'form' | 'dsl'>('form')
@@ -1826,7 +1825,7 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions
   })()
 
   // Get current source type (default to device if not set)
-  const currentSourceType = condition.source_type || 'device'
+  const _currentSourceType = condition.source_type || 'device'
 
   // Render simple condition
   const renderSimpleCondition = (cond: UICondition) => {
@@ -2332,7 +2331,7 @@ interface MetricValueInputProps {
   tBuilder: (key: string) => string
 }
 
-function MetricValueInput({ deviceId, propertyName, value, devices, extensions, onChange, tBuilder }: MetricValueInputProps) {
+function _MetricValueInput({ deviceId, propertyName, value, devices, extensions, onChange, tBuilder }: MetricValueInputProps) {
   const dataType = propertyName
     ? getMetricDataTypeForSet(deviceId, propertyName, devices, extensions)
     : 'string'
@@ -2403,7 +2402,7 @@ interface ActionEditorCompactProps {
   error?: string
 }
 
-function ActionEditorCompact({ action, devices, deviceTypes, extensions, messageChannels, agents, t, tBuilder, onUpdate, onRemove, error }: ActionEditorCompactProps) {
+function ActionEditorCompact({ action, devices, deviceTypes, extensions, messageChannels: _messageChannels, agents, t, tBuilder, onUpdate, onRemove, error }: ActionEditorCompactProps) {
   // Build device/extension options for Execute action
   const deviceOptions = [
     ...devices.map(d => ({ value: d.id, label: d.name, type: 'device' as const })),

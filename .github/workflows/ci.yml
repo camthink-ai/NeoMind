@@ -40,6 +40,20 @@ jobs:
       - name: Lint (error-level only)
         run: npm run lint:ci
 
+      # Warning ratchet: the legacy warning count is frozen in .eslint-baseline
+      # and may only go DOWN. New warnings fail CI immediately; cleanup lowers
+      # the baseline in the same PR that removes them.
+      - name: Lint warning ratchet (must not exceed baseline)
+        run: |
+          BASELINE=$(cat .eslint-baseline)
+          COUNT=$(npx eslint . --ext ts,tsx --report-unused-disable-directives --format json \
+            | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const r=JSON.parse(d);console.log(r.reduce((s,f)=>s+f.warningCount,0))})")
+          echo "ESLint warnings: $COUNT (baseline: $BASELINE)"
+          if [ "$COUNT" -gt "$BASELINE" ]; then
+            echo "::error::ESLint warnings grew past the frozen baseline ($COUNT > $BASELINE). Fix the new warnings; lower .eslint-baseline only as part of warning cleanup."
+            exit 1
+          fi
+
       - name: Typecheck
         run: npx tsc --noEmit
 

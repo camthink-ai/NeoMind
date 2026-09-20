@@ -6,10 +6,8 @@
 /// - Store persistence
 /// - Edge cases in state updates
 
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { create } from 'zustand'
-import { devtools, persist } from 'zustand/middleware'
-
 // Mock implementations for testing
 interface TestAuthState {
   isAuthenticated: boolean

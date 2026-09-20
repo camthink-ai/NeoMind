@@ -2,7 +2,6 @@
 import * as React from "react"
 import * as CollapsiblePrimitive from "@radix-ui/react-collapsible"
 import { cn } from "@/lib/utils"
-import { ChevronRight } from "lucide-react"
 import { forwardRef } from "react"
 
 import type { ElementRef } from "react"

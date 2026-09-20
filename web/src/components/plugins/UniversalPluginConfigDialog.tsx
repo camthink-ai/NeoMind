@@ -3,12 +3,11 @@ import { useTranslation } from "react-i18next"
 import { RefreshCw, Eye, Brain, Wrench, Loader2, Server, RotateCcw, Info, Text } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Switch } from "@/components/ui/switch"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { FormField } from "@/components/ui/field"
-import { FormSection, FormSectionGroup } from "@/components/ui/form-section"
+import { FormSectionGroup } from "@/components/ui/form-section"
 import { ConfigFormBuilder } from "@/components/plugins/ConfigFormBuilder"
 import { UnifiedFormDialog } from "@/components/dialog/UnifiedFormDialog"
 import { useToast } from "@/hooks/use-toast"
@@ -184,8 +183,8 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
     pending: false,
   })
 
-  const testResults = externalTestResults ?? internalTestResults
-  const setTestResults = setExternalTestResults ?? setInternalTestResults
+  const _testResults = externalTestResults ?? internalTestResults
+  const _setTestResults = setExternalTestResults ?? setInternalTestResults
   const isOllamaBackend = pluginType.type === "llm_backend" && pluginType.id === "ollama"
   const isLlamaCppBackend = pluginType.type === "llm_backend" && pluginType.id === "llamacpp"
 
@@ -473,7 +472,7 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
 
     // For Ollama backends, exclude endpoint and model fields since they're handled separately
     if (isOllamaBackend && schema.properties) {
-      const { model, endpoint, ...restProperties } = schema.properties
+      const { model, _endpoint, ...restProperties } = schema.properties
       schema.properties = restProperties
       if (schema.required) {
         schema.required = schema.required.filter((field: string) => field !== 'model' && field !== 'endpoint')
@@ -485,7 +484,7 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
 
     // For llama.cpp backends, exclude endpoint and model fields since they're handled by the server info UI
     if (isLlamaCppBackend && schema.properties) {
-      const { endpoint, model, ...restProperties } = schema.properties
+      const { endpoint, _model, ...restProperties } = schema.properties
       schema.properties = restProperties
       if (schema.required) {
         schema.required = schema.required.filter((field: string) => field !== 'endpoint' && field !== 'model')
@@ -768,7 +767,7 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
     )
   }
 
-  const getModelIcon = (model: OllamaModel) => {
+  const _getModelIcon = (model: OllamaModel) => {
     const icons = []
     if (model.supports_multimodal) icons.push(<Eye key="vision" className="h-4 w-4 text-info" />)
     if (model.supports_thinking) icons.push(<Brain key="thinking" className="h-4 w-4 text-accent-purple" />)

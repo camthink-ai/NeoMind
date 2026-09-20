@@ -5,7 +5,6 @@
  */
 import { ReactNode } from 'react'
 import { useIsMobile } from '@/hooks/useMobile'
-import { cn } from '@/lib/utils'
 import {
   FullScreenDialog,
   FullScreenDialogHeader,

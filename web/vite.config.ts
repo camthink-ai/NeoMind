@@ -99,7 +99,7 @@ export default defineConfig({
               // console.log('[Proxy]', req.method, req.url, '->', proxyReq.getHeader('host') + proxyReq.path)
             }
           })
-          proxy.on('proxyReqWs', (proxyReq, req, socket, options, head) => {
+          proxy.on('proxyReqWs', (proxyReq, req, socket, options, _head) => {
             // Log WebSocket connection attempts
             console.log('[Proxy WS]', req.url, '->', options.target + req.url)
 

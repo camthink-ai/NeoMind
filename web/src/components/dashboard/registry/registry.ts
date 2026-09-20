@@ -33,9 +33,9 @@ import {
   // Controls
   Send,
   Layers as LayersIcon,
-  Sliders as SliderIcon,
-  List,
-  Type,
+  Sliders as 
+  
+  
   // Display & Content
   Image,
   Play,
@@ -47,7 +47,7 @@ import {
   Webcam,
   Square as SquareIcon,
   // Business
-  Camera,
+  
   ScanEye,
   // Community
   Store,

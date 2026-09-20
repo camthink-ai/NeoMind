@@ -11,7 +11,7 @@ import { useStore } from '@/store'
 import { logError } from '@/lib/errors'
 import { fetchHistoricalTelemetry } from './fetch'
 import {
-  isImageDataSource, getDataSourceLimit,
+  isImageDataSource, 
 } from './helpers'
 import {
   getTs, getNewestTimestamp, extractPointsNewerThan, mergeLiveData,

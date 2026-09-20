@@ -15,7 +15,7 @@
 
 import { useState, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Link2, Unlink, Upload, Trash2, Database, Server, Zap, Activity, Puzzle, Workflow, Brain, MapPin } from 'lucide-react'
+import { Link2, Unlink, Upload, Trash2, Database, Server, Zap, Activity, Puzzle, Workflow, MapPin } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { normalizeImageUrl } from '@/lib/imageUtils'

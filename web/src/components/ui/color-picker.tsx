@@ -7,7 +7,7 @@
 
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, ChevronDown, Palette, Sun } from 'lucide-react'
+import { Check, Palette, Sun } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -21,7 +21,7 @@ import { cn } from '@/lib/utils'
 
 // Theme-aware special colors
 const THEME_FOREGROUND = 'hsl(var(--foreground))'
-const THEME_CARD_FOREGROUND = 'hsl(var(--card-foreground))'
+const _THEME_CARD_FOREGROUND = 'hsl(var(--card-foreground))'
 
 // Check if a color is theme-aware
 function isThemeColor(color: string): boolean {

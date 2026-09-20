@@ -33,7 +33,7 @@ export function FullScreenDialog({
   zIndex = 100,
 }: FullScreenDialogProps) {
   const isMobile = useIsMobile()
-  const insets = useSafeAreaInsets()
+  const _insets = useSafeAreaInsets()
 
   // Lock body scroll when dialog is open
   useBodyScrollLock(open, { mobileOnly: true })

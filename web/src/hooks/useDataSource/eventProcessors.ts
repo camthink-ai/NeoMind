@@ -8,7 +8,7 @@ import { getUnifiedId, getUnifiedField, getUnifiedMode, getUnifiedSource, getEve
 import { useStore } from '@/store'
 import {
   extractValueFromData, safeExtractValue, eventMetricMatches,
-  getPointValue, isImageDataSource, getDataSourceLimit,
+  isImageDataSource, getDataSourceLimit,
   isDuplicatePoint, sortAndDedup, normalizeImageValue,
   findDevice, resolveDeviceInfoValue, insertAndMaintain,
 } from './helpers'

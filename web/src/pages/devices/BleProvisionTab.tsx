@@ -176,7 +176,7 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
   const bleSupported = isTauriEnv() || (typeof navigator !== 'undefined' && !!navigator.bluetooth)
 
   const modelName = ble.deviceModel || parseBleDeviceName(ble.device?.name || '')?.model
-  const macSuffix = ble.deviceMac || parseBleDeviceName(ble.device?.name || '')?.macSuffix
+  const _macSuffix = ble.deviceMac || parseBleDeviceName(ble.device?.name || '')?.macSuffix
 
   // --- Scan phase ---
   if (phase === 'scan' && !ble.device) {

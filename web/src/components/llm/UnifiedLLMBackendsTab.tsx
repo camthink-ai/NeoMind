@@ -14,13 +14,13 @@ import {
   Wrench,
   Brain,
   Download,
-  Power,
+  
   RotateCcw,
   Zap,
   Cpu,
   BrainCircuit,
   Cloud,
-  ChevronRight,
+  
   Settings2,
   AlertTriangle,
 } from 'lucide-react'
@@ -152,7 +152,7 @@ const PROTOCOL_TYPE_IDS = ['ollama', 'llamacpp'] as const
 // Cloud AI is one card whose protocol paths (OpenAI-compatible / Anthropic)
 // are chosen inside it — other vendors ride the OpenAI path via their
 // compatible endpoint.
-const CLOUD_AI_PROTOCOLS = ['openai', 'anthropic'] as const
+const _CLOUD_AI_PROTOCOLS = ['openai', 'anthropic'] as const
 
 // Built-in bundled LLM (LFM2.5-2.6B) card actions.
 type BuiltinAction = 'download' | 'restart' | 'activate' | 'delete'
@@ -419,7 +419,7 @@ export function UnifiedLLMBackendsTab({
     }
   }
 
-  const openTypeDetail = (typeId: string) => {
+  const _openTypeDetail = (typeId: string) => {
     const type = backendTypes.find((b) => b.id === typeId)
     if (type) {
       setSelectedType(toUnifiedPluginType(type, t))

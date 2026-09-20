@@ -21,8 +21,7 @@ import { LoadingState } from '../shared'
 import {
   normalizeImageUrl,
   extractImageValue,
-  getFileExtension,
-  type ImageFormatType,
+  getFileExtension
 } from '@/lib/imageUtils'
 
 export interface ImageDisplayProps {

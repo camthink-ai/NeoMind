@@ -12,20 +12,19 @@ import { useTranslation } from "react-i18next"
 import { useNavigate, useLocation } from "react-router-dom"
 import { PageLayout } from "@/components/layout/PageLayout"
 import { PageTabsBar, PageTabsContent, PageTabsBottomNav, Pagination } from "@/components/shared"
-import { Sparkles, GitBranch, Download, Upload, MoreVertical } from "lucide-react"
+import { Sparkles, GitBranch, Download, Upload } from "lucide-react"
 import { api } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
 import { confirm } from "@/hooks/use-confirm"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { showErrorToast } from "@/lib/error-messages"
 import { useIsMobile } from "@/hooks/useMobile"
-import { Button } from "@/components/ui/button"
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-  DropdownMenuSeparator,
+
+
+
+
+
 } from "@/components/ui/dropdown-menu"
 import type { TransformAutomation, Rule, Extension, ExtensionDataSourceInfo, TransformDataSourceInfo } from "@/types"
 

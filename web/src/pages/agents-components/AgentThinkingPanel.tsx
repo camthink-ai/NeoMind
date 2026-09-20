@@ -11,7 +11,7 @@ import { Card } from "@/components/ui/card"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import {
   Brain,
-  ChevronRight,
+  
   ChevronDown,
   ChevronUp,
   Loader2,
@@ -42,7 +42,7 @@ export function AgentThinkingPanel({ agentId, isExecuting }: AgentThinkingPanelP
     eventTypes: ['AgentExecutionStarted', 'AgentThinking', 'AgentDecision', 'AgentExecutionCompleted'],
   })
 
-  const [autoScroll, setAutoScroll] = useState(true)
+  const [_autoScroll, _setAutoScroll] = useState(true)
 
   // Track when we should show the panel
   const [showPanel, setShowPanel] = useState(false)

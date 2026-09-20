@@ -20,7 +20,7 @@ import type {
   ExtensionExecuteResponse,
   ExtensionQueryParams,
   ExtensionQueryResult,
-  TransformDataSourceInfo,
+  
 } from '@/types'
 import { api } from '@/lib/api'
 import { logError } from '@/lib/errors'

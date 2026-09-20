@@ -126,7 +126,7 @@ export function VerticalStepper({
         </div>
 
         {/* Step items */}
-        {steps.map((step, index) => {
+        {steps.map((step, _index) => {
           const status = getStepStatus(step)
           const isClickable = onStepClick && (completedSteps.includes(step.id) || status === 'active')
 

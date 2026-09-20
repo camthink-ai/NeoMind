@@ -8,10 +8,9 @@
 import { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Card } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import { MoreVertical, Loader2, Inbox } from 'lucide-react'
+import { MoreVertical, Inbox } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyStateCompact } from '@/components/shared/EmptyState'
 import { cn } from '@/lib/utils'
@@ -104,7 +103,7 @@ export function ResponsiveTable<T extends object>({
 }: ResponsiveTableProps<T>) {
   const { t } = useTranslation('common')
   // Show empty state only on mobile when no data
-  const showEmptyState = data.length === 0 && !loading
+  const _showEmptyState = data.length === 0 && !loading
 
   // Default empty state — uses shared EmptyStateCompact for consistency
   const defaultEmpty = (

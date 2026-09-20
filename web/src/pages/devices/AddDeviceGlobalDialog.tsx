@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Bluetooth, Pencil, Search, RefreshCw, Cpu, Plus,
+  Bluetooth, Pencil, Search, RefreshCw, Cpu, 
   Wifi, Globe, Radio,
   CheckCircle2, XCircle, Loader2,
   Copy, LucideIcon, KeyRound, Download, Lock, ShieldCheck,

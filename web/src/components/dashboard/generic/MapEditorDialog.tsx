@@ -161,7 +161,7 @@ export function MapEditorDialog({
     }
 
     const markers = bindings.map((binding): MapMarker => {
-      const itemConfig = typeConfig[binding.icon || binding.type]
+      const _itemConfig = typeConfig[binding.icon || binding.type]
       const ds = binding.dataSource
       const sourceId = ds.sourceId || (ds as any).deviceId || (ds.metricId ? ds.metricId.split(':')[0] : undefined)
       const lat = binding.position === 'auto' || !binding.position

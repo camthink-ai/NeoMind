@@ -26,11 +26,11 @@ import {
   Unlock,
   Eye,
   EyeOff,
-  GripVertical,
+  
   Maximize2,
   Minimize2,
-  Image as ImageIcon,
-  Square,
+  Image as 
+  
   MapPin,
   Activity,
   Zap,
@@ -728,7 +728,7 @@ function getBackgroundStyle(
   return backgroundStyle
 }
 
-function LayerBackground({ type, color, image, gridSize = 20 }: LayerBackgroundProps) {
+function _LayerBackground({ type, color, image, gridSize = 20 }: LayerBackgroundProps) {
   const backgroundStyle = getBackgroundStyle(type, color, image, gridSize)
   return (
     <div

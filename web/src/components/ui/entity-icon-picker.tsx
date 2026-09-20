@@ -20,7 +20,6 @@ import {
 import { cn } from '@/lib/utils'
 import { entityIcons, getIconForEntity } from '@/design-system/icons'
 import { textNano } from "@/design-system/tokens/typography"
-import type { EntityIcon } from '@/design-system/icons'
 
 export interface EntityIconPickerProps {
   value?: string

@@ -29,9 +29,9 @@ import {
   LayoutDashboard,
   Plus,
   Minimize,
-  Hash,
+  
   Monitor,
-  Grid,
+  
   Settings2,
   Sparkles,
   ChevronRight,
@@ -93,7 +93,7 @@ function isTitleInDisplayComponent(_componentType?: string): boolean {
 const VisualDashboardMemo = memo(function VisualDashboard() {
   const { dashboardId } = useParams<{ dashboardId?: string }>()
   const navigate = useNavigate()
-  const { t, i18n } = useTranslation('dashboardComponents')
+  const { t, _i18n } = useTranslation('dashboardComponents')
   const { handleError } = useErrorHandler()
 
   // Dashboard state — split subscriptions to avoid cascade:
@@ -302,7 +302,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
   }, [setCurrentDashboard])
 
   // Dashboard interaction handlers
-  const handleDeviceClick = useCallback(async (deviceId: string) => {
+  const _handleDeviceClick = useCallback(async (deviceId: string) => {
     const device = devicesRef.current.find(d => d.id === deviceId || d.device_id === deviceId)
     if (device) {
       // Navigate to device detail page
@@ -316,7 +316,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
     }
   }, [navigate, t])
 
-  const handleMetricClick = useCallback(async (metricId: string, deviceId?: string) => {
+  const _handleMetricClick = useCallback(async (metricId: string, deviceId?: string) => {
     // Show metric info in toast
     toast({
       title: t('visualDashboard.metricInfo'),
@@ -324,7 +324,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
     })
   }, [t])
 
-  const handleCommandClick = useCallback(async (deviceId: string, command: string) => {
+  const _handleCommandClick = useCallback(async (deviceId: string, command: string) => {
     try {
       const success = await sendCommand(deviceId, command)
       if (success) {
@@ -836,7 +836,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
   const gridComponents = useMemo(() => {
     return (currentDashboard?.components ?? []).map((component) => {
       // Get dataSource from component (it should be a separate property, not in config)
-      const componentDataSource = (component as any).dataSource
+      const _componentDataSource = (component as any).dataSource
 
       // Create callbacks for this component to persist configuration changes
       const handleDataSourceChange = (newDataSource: any) => {

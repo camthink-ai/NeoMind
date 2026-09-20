@@ -54,7 +54,7 @@ export function StartupLoading({ onReady }: { onReady: () => void }) {
 
       // Listen for backend-ready event from Rust (for quick response)
       try {
-        const unlisten = await listen<BackendReadyEvent>("backend-ready", (event) => {
+        const unlisten = await listen<BackendReadyEvent>("backend-ready", (_event) => {
                     setStatus("ready")
           onReady()
         })

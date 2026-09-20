@@ -38,7 +38,6 @@ import { cn } from '@/lib/utils'
 import type { UnifiedDataSourceInfo } from '@/types'
 import { useIsMobile } from '@/hooks/useMobile'
 import { useEvents } from '@/hooks/useEvents'
-import { useAbortController } from '@/hooks/useAbortController'
 import { textNano, textMini } from "@/design-system/tokens/typography"
 import { ExportDataDialog } from '@/components/data/ExportDataDialog'
 import { formatTimestamp } from '@/lib/utils/format'
@@ -78,7 +77,7 @@ function formatTime(timestamp?: number): string {
   return `${d.getMonth() + 1}/${d.getDate()} ${time}`
 }
 
-function formatDateTime(timestamp: number): string {
+function _formatDateTime(timestamp: number): string {
   const ms = timestamp < 1e12 ? timestamp * 1000 : timestamp
   const d = new Date(ms)
   const pad = (n: number) => String(n).padStart(2, '0')
@@ -100,7 +99,7 @@ export function DataExplorerPage() {
   const [loading, setLoading] = useState(true)
 
   // Mobile: track loaded page count for cumulative append
-  const [mobileLoadedPages, setMobileLoadedPages] = useState(1)
+  const [_mobileLoadedPages, setMobileLoadedPages] = useState(1)
 
   // Filters
   const [search, setSearch] = useState('')
@@ -110,7 +109,7 @@ export function DataExplorerPage() {
 
   // Debounced search value
   const [debouncedSearch, setDebouncedSearch] = useState('')
-  const searchTimerRef = useRef<ReturnType<typeof setTimeout>>()
+  const _searchTimerRef = useRef<ReturnType<typeof setTimeout>>()
   const updateSearch = useMemo(() => debounce(setDebouncedSearch, 300), [])
 
   // Detail dialog

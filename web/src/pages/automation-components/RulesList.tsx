@@ -244,7 +244,7 @@ function parseForClause(rule: Rule): { duration: number; unit: string } | null {
 }
 
 // Check if rule has FOR clause
-function hasForClause(rule: Rule): boolean {
+function _hasForClause(rule: Rule): boolean {
   return rule.dsl_preview?.includes('\nFOR ') || false
 }
 
@@ -342,9 +342,9 @@ export function RulesList({
 
   // Use props if provided, otherwise use internal state (backward compatibility)
   const page = propsPage ?? internalPage
-  const setPage = onPageChange ?? setInternalPage
+  const _setPage = onPageChange ?? setInternalPage
 
-  const totalPages = Math.ceil(rules.length / ITEMS_PER_PAGE) || 1
+  const _totalPages = Math.ceil(rules.length / ITEMS_PER_PAGE) || 1
   const startIndex = (page - 1) * ITEMS_PER_PAGE
   const endIndex = startIndex + ITEMS_PER_PAGE
   const paginatedRules = propsPaginatedRules ?? rules.slice(startIndex, endIndex)

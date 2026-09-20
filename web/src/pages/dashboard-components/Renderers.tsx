@@ -6,7 +6,7 @@
  * Also used by SharedDashboard.tsx.
  */
 
-import { useState, useCallback, useMemo, memo } from 'react'
+import { useState, useCallback, memo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { createStableKey as createStableCacheKey } from '@/lib/stable-key'
@@ -169,7 +169,7 @@ export function scheduleDashboardIdleTask(task: () => void, timeout = 1500): () 
   return () => window.clearTimeout(timer)
 }
 
-function getTelemetryDataSource(dataSource: DataSourceOrList | undefined): DataSourceOrList | undefined {
+function _getTelemetryDataSource(dataSource: DataSourceOrList | undefined): DataSourceOrList | undefined {
   if (!dataSource) return undefined
   // Sort array data sources by a stable key to avoid cache misses from different orderings
   const sortedSource = Array.isArray(dataSource)
@@ -240,7 +240,7 @@ export function getCommonDisplayProps(component: DashboardComponent) {
   }
 }
 
-function getSpreadableProps(componentType: string, commonProps: Record<string, unknown>): Record<string, unknown> {
+function _getSpreadableProps(componentType: string, commonProps: Record<string, unknown>): Record<string, unknown> {
   const noStandardSize = ['led-indicator', 'toggle-switch', 'heading', 'tabs', 'agent-monitor-widget', 'ai-analyst']
   const noShowCard = ['value-card', 'led-indicator', 'sparkline', 'progress-bar', 'toggle-switch', 'heading', 'alert-banner', 'agent-monitor-widget', 'ai-analyst', 'tabs']
   const noTitle = ['sparkline', 'led-indicator', 'progress-bar', 'toggle-switch', 'heading', 'alert-banner', 'tabs', 'agent-monitor-widget']
@@ -344,8 +344,8 @@ const ComponentWrapper = memo(function ComponentWrapper({
   const { t } = useTranslation('dashboardComponents')
   const { isHovered: isTouchHovered, hoverProps } = useTouchHover({ enabled: editMode && !isMobile })
 
-  const handleMouseEnter = useCallback(() => setIsHovered(true), [])
-  const handleMouseLeave = useCallback(() => setIsHovered(false), [])
+  const _handleMouseEnter = useCallback(() => setIsHovered(true), [])
+  const _handleMouseLeave = useCallback(() => setIsHovered(false), [])
   const handleConfigClick = useCallback(() => onOpenConfig(component.id), [component.id, onOpenConfig])
   const handleDuplicateClick = useCallback(() => onDuplicate(component.id), [component.id, onDuplicate])
 

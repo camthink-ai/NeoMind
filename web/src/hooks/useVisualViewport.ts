@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 
 /**
  * Global VisualViewport tracking for mobile keyboard handling (2025)

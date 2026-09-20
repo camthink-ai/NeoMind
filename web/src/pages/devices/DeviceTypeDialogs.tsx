@@ -496,7 +496,7 @@ function DataDefinitionStep({
 }: DataDefinitionStepProps) {
   const { t } = useTranslation(['devices'])
   const { toast } = useToast()
-  const isMobile = useIsMobile()
+  const _isMobile = useIsMobile()
   const isRawMode = data.mode === 'simple'
   const [showImportDialog, setShowImportDialog] = useState(false)
   const [jsonInput, setJsonInput] = useState('')
