@@ -36,7 +36,10 @@ use clap::Parser;
 use serde_json::json;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, trace, warn};
-use wasmtime::{AsContext, AsContextMut, Config, Engine, Linker, Memory, Module, Store, Val};
+use wasmtime::{
+    AsContext, AsContextMut, Config, Engine, Linker, Memory, Module, Store, StoreLimits,
+    StoreLimitsBuilder, Val,
+};
 use wasmtime_wasi::preview1::{self, WasiP1Ctx};
 use wasmtime_wasi::WasiCtxBuilder;
 
@@ -958,12 +961,12 @@ impl WasmRuntime {
         config.consume_fuel(true);
         config.async_stack_size(8 * 1024 * 1024);
 
-        // `Config::static_memory_maximum_size` was removed in wasmtime 36+. It
-        // set the static-allocation *virtual* memory upper bound (a memory
-        // protection optimization), NOT a real cap on `memory.growth`. WASM is
-        // bounded here by fuel (above) + the module size check (below). To truly
-        // cap linear-memory growth, set a per-store ResourceLimiter — TODO
-        // (NEOMIND_WASM_MEMORY_MB env dropped; re-add via ResourceLimiter).
+        // WASM is bounded three ways: fuel (above), the module size check
+        // (below), and the per-store ResourceLimiter attached to every store
+        // (`HostState::limits`) — a TRUE cap on linear-memory growth, default
+        // 256 MB, override via NEOMIND_WASM_MEMORY_MB. The old
+        // `Config::static_memory_maximum_size` (removed in wasmtime 36+) only
+        // ever bounded the static-allocation *virtual* memory upper bound.
 
         let engine =
             Engine::new(&config).map_err(|e| format!("Failed to create WASM engine: {}", e))?;
@@ -1031,6 +1034,7 @@ impl WasmRuntime {
         let host_state = HostState::new(wasi);
 
         let mut store = Store::new(engine, host_state);
+        store.limiter(|s| &mut s.limits);
         store
             .set_fuel(
                 std::env::var("NEOMIND_WASM_FUEL")
@@ -1317,6 +1321,7 @@ impl WasmRuntime {
             let host_state = HostState::with_ipc(wasi, ipc_client);
 
             let mut store = Store::new(&engine, host_state);
+            store.limiter(|s| &mut s.limits);
             store
                 .set_fuel(
                     std::env::var("NEOMIND_WASM_FUEL")
@@ -1424,6 +1429,7 @@ impl WasmRuntime {
 
             // Create store with fuel
             let mut store = Store::new(&engine, host_state);
+            store.limiter(|s| &mut s.limits);
             store
                 .set_fuel(
                     std::env::var("NEOMIND_WASM_FUEL")
@@ -1586,150 +1592,8 @@ impl WasmRuntime {
     }
 }
 
-/// Host state for WASM execution
-struct HostState {
-    wasi: WasiP1Ctx,
-    memory: Option<Memory>,
-    /// IPC client for capability invocation (communicates with main process)
-    /// Uses sync channels for synchronous WASM host function calls
-    ipc_client: Option<Arc<SyncIpcClient>>,
-}
-
-/// Synchronous IPC client for capability invocation
-///
-/// This client sends CapabilityRequest messages via stdout and waits for
-/// CapabilityResult responses via the pending requests queue (routed by main loop).
-pub struct SyncIpcClient {}
-
-impl Default for SyncIpcClient {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl SyncIpcClient {
-    /// Create a new sync IPC client
-    pub fn new() -> Self {
-        Self {}
-    }
-
-    /// Invoke a capability synchronously
-    ///
-    /// Sends CapabilityRequest via stdout and waits for CapabilityResult
-    /// via the pending requests queue (routed by main loop).
-    pub fn invoke(&self, capability: &str, params: &serde_json::Value) -> serde_json::Value {
-        use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-
-        static REQUEST_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
-        let request_id = REQUEST_ID_COUNTER.fetch_add(1, AtomicOrdering::SeqCst);
-
-        debug!(capability, request_id, "SyncIpcClient invoke");
-
-        // Register pending request BEFORE sending
-        let response_rx = register_pending_request(request_id);
-
-        // Send CapabilityRequest via stdout
-        let request = IpcResponse::CapabilityRequest {
-            request_id,
-            capability: capability.to_string(),
-            params: params.clone(),
-        };
-
-        let payload = match request.to_bytes() {
-            Ok(p) => p,
-            Err(e) => {
-                error!("SyncIpcClient: failed to serialize request: {e}");
-                // Remove pending request on error
-                get_pending_requests().remove(&request_id);
-                return json!({"success": false, "error": format!("Failed to serialize request: {}", e)});
-            }
-        };
-
-        let frame = IpcFrame::new(payload);
-        let bytes = frame.encode();
-
-        // Write to stdout (protected by global mutex)
-        {
-            let _guard = STDOUT_WRITE_MUTEX.lock().unwrap_or_else(|e| {
-                error!("STDOUT_WRITE_MUTEX poisoned: {}", e);
-                e.into_inner()
-            });
-            let mut stdout = std::io::stdout();
-            if let Err(e) = stdout.write_all(&bytes) {
-                drop(_guard);
-                error!("SyncIpcClient: failed to write request: {e}");
-                get_pending_requests().remove(&request_id);
-                return json!({"success": false, "error": format!("Failed to write request: {}", e)});
-            }
-            if let Err(e) = stdout.flush() {
-                drop(_guard);
-                error!("SyncIpcClient: failed to flush request: {e}");
-                get_pending_requests().remove(&request_id);
-                return json!({"success": false, "error": format!("Failed to flush request: {}", e)});
-            }
-        }
-
-        debug!("SyncIpcClient: request sent, waiting for response");
-
-        // Wait for response from the pending requests queue (with timeout)
-        match response_rx.recv_timeout(std::time::Duration::from_secs(30)) {
-            Ok(response) => {
-                debug!("SyncIpcClient: received response");
-                match response {
-                    IpcResponse::CapabilityResult {
-                        request_id: resp_id,
-                        result,
-                        error,
-                    } => {
-                        if resp_id != request_id {
-                            warn!(expected = request_id, got = resp_id, "Request ID mismatch");
-                            return json!({"success": false, "error": "Request ID mismatch"});
-                        }
-                        if let Some(err) = error {
-                            json!({"success": false, "error": err})
-                        } else {
-                            result
-                        }
-                    }
-                    _ => {
-                        warn!("SyncIpcClient: unexpected response type");
-                        json!({"success": false, "error": "Unexpected response type".to_string()})
-                    }
-                }
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                error!("SyncIpcClient: timeout waiting for response");
-                get_pending_requests().remove(&request_id);
-                json!({"success": false, "error": "Timeout waiting for response"})
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                error!("SyncIpcClient: response channel disconnected");
-                get_pending_requests().remove(&request_id);
-                json!({"success": false, "error": "Response channel disconnected"})
-            }
-        }
-    }
-}
-
-impl HostState {
-    /// Create a new host state with WASI context
-    fn new(wasi: WasiP1Ctx) -> Self {
-        Self {
-            wasi,
-            memory: None,
-            ipc_client: None,
-        }
-    }
-
-    /// Create host state with IPC capability client
-    fn with_ipc(wasi: WasiP1Ctx, ipc_client: Option<Arc<SyncIpcClient>>) -> Self {
-        Self {
-            wasi,
-            memory: None,
-            ipc_client,
-        }
-    }
-}
+mod host;
+use host::{wasm_store_limits, HostState, SyncIpcClient};
 
 /// Add neomind host functions to the linker
 ///
@@ -3840,5 +3704,45 @@ mod tests {
         let ext_type = ExtensionType::Wasm;
         let copied = ext_type;
         assert_eq!(ext_type, copied);
+    }
+
+    // The per-store ResourceLimiter must actually stop linear-memory growth
+    // (regression for the TODO left by the wasmtime 26->36 bump: fuel caps CPU,
+    // the size check caps the module file, nothing capped memory.grow).
+    #[test]
+    fn wasm_memory_limiter_caps_linear_memory_growth() {
+        let mut config = Config::new();
+        config.async_support(false);
+        let engine = Engine::new(&config).unwrap();
+        let module = Module::new(
+            &engine,
+            r#"(module
+                (memory (export "memory") 1)
+                (func (export "grow") (param i32) (result i32)
+                    (local.get 0) (memory.grow)))"#,
+        )
+        .unwrap();
+
+        // Cap at exactly 2 pages; build the state directly so the test does
+        // not depend on the env-var default (256 MB would be allocated for real).
+        let host_state = HostState {
+            wasi: WasiCtxBuilder::new().build_p1(),
+            memory: None,
+            ipc_client: None,
+            limits: StoreLimitsBuilder::new().memory_size(2 * 64 * 1024).build(),
+        };
+        let mut store = Store::new(&engine, host_state);
+        store.limiter(|s| &mut s.limits);
+
+        let linker = Linker::new(&engine);
+        let instance = linker.instantiate(&mut store, &module).unwrap();
+        let grow = instance
+            .get_typed_func::<i32, i32>(&mut store, "grow")
+            .unwrap();
+
+        // Within the cap: 1 page -> 2 pages succeeds.
+        assert_eq!(grow.call(&mut store, 1).unwrap(), 1);
+        // Beyond the cap the limiter denies growth: memory.grow returns -1.
+        assert_eq!(grow.call(&mut store, 1).unwrap(), -1);
     }
 }
