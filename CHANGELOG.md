@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### chore(web): any-debt second batch — 43 more sites typed (ratchet 519 → 478)
+- automation.tsx (15): ResourceDevice view for the rule/transform-builder device shape (the resource APIs return a slimmer contract than canonical Device). VisualDashboard (14): dsKeyOf hasher, GenericComponent views, react-grid LayoutItem, ComponentSizeConstraints. DeviceTypeDialogs (14): JSON-import view types, ParameterDefinition updates, Select→ParameterDataType casts, transform outputs mapped to the state shape. any total 491 → ~395 across eight files; the seam-typing method holds at scale.
+
 ### refactor(agent): agent/mod.rs (3406 lines) — the seventh giant
 - The 2350-line `impl Agent` cut into per-domain impl blocks: construction/config/accessors (mod.rs), context-compaction free functions (context.rs — `pub use` keeps streaming's `super::super::` paths intact), the process/multimodal/stream entry points (process.rs), the LLM loop + tool batching (execution.rs), tool execution/sanitization (tools.rs). 728 agent tests green.
 
