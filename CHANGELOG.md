@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### refactor(web): AgentEditorFullScreen (3054 lines) split — editor subcomponents extracted
+- `AgentEditorFullScreen.tsx` 3054 → ~2190 lines; the resource-selection dialog, schedule/recommendation/list/selected-resource cards, shared types, and prompt-template constants moved to `agents-components/agent-editor/` (8 modules + barrel). Imports were re-derived per file from the symbols each body actually references, so the ESLint warning count is **exactly conserved** (714 → 714, no ratchet growth). The prompt-template icons became component references (`icon: Activity` rendered as `<template.icon/>`), which let the constants module drop its JSX and become plain `constants.ts`. Two icon-only buttons in SelectedResourceItem gained aria-labels (a11y, and the test hooks). 6 new component tests (cards, item interactions incl. metric toggle + remove, desktop dialog selection); suite 216 → 222.
+
 ### refactor: extensions.rs (5233 lines) split into 10 domain modules
 - `handlers/extensions.rs` → `handlers/extensions/{mod,lifecycle,commands,metrics,capabilities,config,logs,marketplace,components,packages}.rs`. Pure move: same items, same `handlers::extensions::*` paths (mod.rs re-exports submodules), router/openapi/re-export lists untouched. Largest module is marketplace.rs at 1655 lines (the install flow alone is ~700); every other is ≤ 715. Method: line-range splitter with a tiling assertion over the original file, then rustc/cargo-fix drove visibility (`pub(crate)` for cross-module helpers) and import pruning. All 369+ api tests green, workspace clippy `-D warnings` clean.
 

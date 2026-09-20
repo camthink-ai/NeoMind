@@ -15,50 +15,31 @@
  */
 
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible'
-import { getPortalRoot } from '@/lib/portal'
-import React, { useState, useEffect, useCallback, useMemo, useRef } from "react"
-import { useTranslation } from "react-i18next"
-import { createPortal } from "react-dom"
-import { api } from "@/lib/api"
-import { validateRequired, validateLength } from "@/lib/form-validation"
-import { useToast } from "@/hooks/use-toast"
-import { useErrorHandler } from "@/hooks/useErrorHandler"
-import { showErrorToast } from "@/lib/error-messages"
-import { useIsMobile, useSafeAreaInsets } from "@/hooks/useMobile"
-import { useBodyScrollLock } from "@/hooks/useBodyScrollLock"
-import { cn } from "@/lib/utils"
-import { textNano } from "@/design-system/tokens/typography"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-
-import { Checkbox } from "@/components/ui/checkbox"
-import { Slider } from "@/components/ui/slider"
-import { Textarea } from "@/components/ui/textarea"
-import { Badge } from "@/components/ui/badge"
-import { ScrollArea } from "@/components/ui/scroll-area"
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
+import { api } from '@/lib/api'
+import { validateRequired, validateLength } from '@/lib/form-validation'
+import { useToast } from '@/hooks/use-toast'
+import { useErrorHandler } from '@/hooks/useErrorHandler'
+import { showErrorToast } from '@/lib/error-messages'
+import { useIsMobile } from '@/hooks/useMobile'
+import { cn } from '@/lib/utils'
+import { textNano } from '@/design-system/tokens/typography'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Slider } from '@/components/ui/slider'
+import { Textarea } from '@/components/ui/textarea'
+import { Badge } from '@/components/ui/badge'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Dialog } from '@/components/ui/dialog'
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import {
-  Search,
   Loader2,
   Clock,
   Zap,
   Check,
   Target,
   Activity,
-  BarChart3,
   X,
   Sparkles,
   Puzzle,
@@ -66,17 +47,11 @@ import {
   Info,
   Wand2,
   ChevronRight,
-  Bell,
-
   Brain,
-
-
   Database,
-
   MousePointerClick,
   GitBranch,
-
-} from "lucide-react"
+} from 'lucide-react'
 import type {
   AiAgentDetail,
   AgentSchedule,
@@ -85,12 +60,10 @@ import type {
   DeviceType,
   Extension,
   ExtensionDataSourceInfo,
-
   LlmBackendInstance,
   ResourceRequest,
   UnifiedDataSourceInfo,
-} from "@/types"
-// Unified dialog components
+} from '@/types'
 import {
   FullScreenDialog,
   FullScreenDialogHeader,
@@ -98,10 +71,25 @@ import {
   FullScreenDialogFooter,
   FullScreenDialogMain,
 } from '@/components/automation/dialog'
+import {
+  ResourceSelectionDialog,
+  ScheduleCard,
+  SelectedResourceItem,
+  INTERVALS,
+  HOURS,
+  PROMPT_TEMPLATES,
+} from './agent-editor'
+import type {
+  MetricInfo,
+  CommandInfo,
+  DataCollectionConfig,
+  SelectedResource,
+  ResourceRecommendation,
+  ScheduleType,
+  TimerSubType,
+  AvailableResource,
+} from './agent-editor'
 
-// Shared className for inline link-styled buttons (not IconButton — these are
-// text links rendered as <button> for accessibility).
-const inlineLinkBtn = 'text-xs text-primary hover:underline'
 
 interface AgentEditorFullScreenProps {
   open: boolean
@@ -119,159 +107,6 @@ interface AgentEditorFullScreenProps {
 // Types
 // ============================================================================
 
-interface MetricInfo {
-  name: string
-  display_name: string
-  unit?: string
-  data_type?: string
-  source: 'device' | 'extension'
-  extensionId?: string
-}
-
-interface CommandInfo {
-  name: string
-  display_name: string
-  description?: string
-  source: 'device' | 'extension'
-  extensionId?: string
-  parameters?: Record<string, unknown>
-}
-
-interface DataCollectionConfig {
-  time_range_minutes: number
-  include_history: boolean
-  include_trend: boolean
-  include_baseline: boolean
-}
-
-interface SelectedResource {
-  id: string
-  name: string
-  type: 'device' | 'extension'
-  deviceType?: string
-  // All available metrics/commands
-  allMetrics: MetricInfo[]
-  allCommands: CommandInfo[]
-  // Selected metric/command names
-  selectedMetrics: Set<string>
-  selectedCommands: Set<string>
-  // Data collection config for Focused Mode
-  config?: {
-    data_collection?: DataCollectionConfig
-  }
-}
-
-interface ResourceRecommendation {
-  id: string
-  name: string
-  type: 'device' | 'extension'
-  reason: string
-  metrics?: MetricInfo[]
-  commands?: CommandInfo[]
-}
-
-type ScheduleType = 'timer' | 'reactive' | 'on-demand'
-type TimerSubType = 'interval' | 'daily' | 'weekly'
-
-// ============================================================================
-// Constants
-// ============================================================================
-
-const INTERVALS = [5, 10, 15, 30, 60]
-const HOURS = Array.from({ length: 24 }, (_, i) => i)
-
-const PROMPT_TEMPLATES = [
-  { id: 'empty', label: 'Custom', icon: null, description: 'Write your own prompt', template: '' },
-  {
-    id: 'monitor',
-    label: 'Monitor',
-    icon: <Activity className="h-4 w-4" />,
-    description: 'Monitor data and detect anomalies',
-    template: `Monitor the following metrics and alert when anomalies are detected:
-
-Monitoring Targets:
-- Data Range: Check if values exceed thresholds (e.g., temperature > 30°C)
-- Anomaly Detection: Look for sudden changes or abnormal patterns
-- Alert Method: Send notification when conditions are met
-
-Please analyze the current data and compare with historical baselines to identify:
-1. Values outside normal range
-2. Sudden spikes or drops
-3. Data gaps or missing readings
-
-When an anomaly is detected, send an alert with:
-- What metric is affected
-- Current value vs expected range
-- Severity level (info/warning/critical)`
-  },
-  {
-    id: 'control',
-    label: 'Control',
-    icon: <Zap className="h-4 w-4" />,
-    description: 'Automatically control devices',
-    template: `Automatically control devices based on the following conditions:
-
-Trigger Conditions:
-- Check current sensor readings
-- Compare against threshold values
-- Verify device states before taking action
-
-Control Actions:
-- Device ID: [target device]
-- Command: [turn_on / turn_off / adjust]
-- Parameters: [any required settings]
-
-Please:
-1. First verify the current condition by checking sensor data
-2. Only execute commands when the condition is clearly met
-3. Confirm the action was successful
-4. Avoid rapid repeated switching (add a cooldown between same actions)`
-  },
-  {
-    id: 'analysis',
-    label: 'Analysis',
-    icon: <BarChart3 className="h-4 w-4" />,
-    description: 'Analyze trends and generate reports',
-    template: `Analyze the following data and generate a comprehensive report:
-
-Analysis Scope:
-- Time Range: Use available historical data
-- Metrics: All selected metrics
-- Comparison: Compare with previous periods if available
-
-Report Contents:
-1. **Data Overview**: Summary of current values and status
-2. **Trend Analysis**: Increasing, decreasing, or stable patterns
-3. **Anomalies**: Any unusual readings or deviations
-4. **Correlations**: Relationships between different metrics
-5. **Recommendations**: Actionable insights based on the data
-
-Please provide specific numbers and percentages when describing trends and changes.`
-  },
-  {
-    id: 'alert',
-    label: 'Alert',
-    icon: <Bell className="h-4 w-4" />,
-    description: 'Send notifications based on conditions',
-    template: `Monitor the selected metrics and send alerts when specific conditions occur:
-
-Alert Conditions:
-- Threshold exceeded: When metric goes above/below a value
-- Rate of change: When value changes too quickly
-- Status change: When device state changes
-
-Alert Content:
-- Which metric/device triggered the alert
-- Current value and threshold
-- Time of occurrence
-- Suggested actions if applicable
-
-Please avoid duplicate alerts - only alert when:
-1. This is a new incident (not previously reported)
-2. The condition has significantly worsened
-3. A sufficient cooldown period has passed since the last alert`
-  },
-]
 
 // ============================================================================
 // Main Component
@@ -1430,7 +1265,7 @@ export function AgentEditorFullScreen({
                     onClick={() => setUserPrompt(template.template)}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border hover:bg-muted transition-colors"
                   >
-                    {template.icon}
+                    {template.icon ? <template.icon className="h-4 w-4" /> : null}
                     <span>{template.label}</span>
                   </button>
                 ))}
@@ -2351,704 +2186,4 @@ export function AgentEditorFullScreen({
 // Resource Selection Dialog
 // ============================================================================
 
-interface ResourceSelectionDialogProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  availableResources: AvailableResource[]
-  selectedResources: SelectedResource[]
-  setSelectedResources: React.Dispatch<React.SetStateAction<SelectedResource[]>>
-  recommendations: ResourceRecommendation[]
-  generatingRecommendations: boolean
-  searchQuery: string
-  setSearchQuery: (v: string) => void
-  toggleResource: (r: AvailableResource) => void
-  toggleRecommendation: (r: ResourceRecommendation) => void
-  scheduleType: ScheduleType
-}
-
-function ResourceSelectionDialog({
-  open,
-  onOpenChange,
-  availableResources,
-  selectedResources,
-  setSelectedResources,
-  recommendations,
-  generatingRecommendations,
-  searchQuery,
-  setSearchQuery,
-  toggleResource,
-  toggleRecommendation,
-  scheduleType,
-}: ResourceSelectionDialogProps) {
-  const { t: tAgent } = useTranslation('agents')
-  const isMobile = useIsMobile()
-  const insets = useSafeAreaInsets()
-
-  // Lock body scroll when dialog is open (mobile only)
-  useBodyScrollLock(open, { mobileOnly: true })
-
-  const isSelected = (id: string) => selectedResources.some(r => r.id === id)
-
-  // Mobile full-screen portal
-  if (isMobile) {
-    return createPortal(
-      <div
-        className={cn(
-          "fixed inset-0 z-[100] bg-background flex flex-col",
-          !open && "hidden"
-        )}
-        style={{
-          paddingTop: `${insets.top}px`,
-          paddingBottom: `${insets.bottom}px`,
-        }}
-      >
-        {/* Mobile Header */}
-        <div className="flex items-center justify-between px-4 py-4 border-b shrink-0">
-          <h2 className="text-base font-semibold">{tAgent('creator.resources.dialog.title')}</h2>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-10 w-10"
-            onClick={() => onOpenChange(false)}
-          >
-            <X className="h-5 w-5" />
-          </Button>
-        </div>
-
-        {/* Mobile Content */}
-        <div className="flex-1 overflow-y-auto">
-          {/* Recommendations */}
-          {recommendations.length > 0 && (
-            <div className="px-4 py-3 border-b shrink-0">
-              <div className="flex items-center gap-2 mb-2">
-                <Sparkles className="h-4 w-4 text-primary" />
-                <span className="text-sm font-medium">{tAgent('creator.resources.dialog.recommended')}</span>
-                {generatingRecommendations && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-              </div>
-              <div className="flex gap-2 overflow-x-auto pb-1">
-                {recommendations.map((rec) => (
-                  <RecommendationCard
-                    key={rec.id}
-                    recommendation={rec}
-                    selected={isSelected(rec.id)}
-                    onClick={() => toggleRecommendation(rec)}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Available Resources Section */}
-          <div className="px-4 py-3 border-b">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-sm font-medium">{tAgent('creator.resources.dialog.available')}</span>
-              <Badge variant="secondary">{availableResources.length}</Badge>
-            </div>
-            <div className="relative mb-3">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder={tAgent('creator.resources.dialog.searchPlaceholder')}
-                className="h-11 text-base pl-10"
-              />
-            </div>
-            <div className="space-y-2">
-              {availableResources.map((resource) => {
-                const selected = isSelected(resource.id)
-                return (
-                  <ResourceListItem
-                    key={resource.id}
-                    resource={resource}
-                    selected={selected}
-                    onClick={() => toggleResource(resource)}
-                    isMobile={true}
-                  />
-                )
-              })}
-              {availableResources.length === 0 && (
-                <div className="text-center py-8 text-muted-foreground text-sm">
-                  {tAgent('creator.resources.noResourcesFound')}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Selected Resources Section */}
-          <div className="px-4 py-3">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-sm font-medium">{tAgent('creator.resources.dialog.selected')}</span>
-              <Badge variant={selectedResources.length === 0 ? "secondary" : "default"}>
-                {selectedResources.length}
-              </Badge>
-            </div>
-            {selectedResources.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full text-center py-8">
-                <Target className="h-8 w-8 text-muted-foreground mb-2" />
-                <p className="text-sm text-muted-foreground">
-                  {tAgent('creator.resources.dialog.noResourcesHint')}
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {selectedResources.map((resource) => (
-                  <SelectedResourceItem
-                    key={resource.id}
-                    resource={resource}
-                    setSelectedResources={setSelectedResources}
-                    onRemove={() => {
-                      setSelectedResources(prev => prev.filter(r => r.id !== resource.id))
-                    }}
-                    onToggleMetric={(resourceId, metricName) => {
-                      setSelectedResources((prev) =>
-                        prev.map(r =>
-                          r.id === resourceId
-                            ? {
-                                ...r,
-                                selectedMetrics: new Set(
-                                  r.selectedMetrics.has(metricName)
-                                    ? Array.from(r.selectedMetrics).filter(n => n !== metricName)
-                                    : [...r.selectedMetrics, metricName]
-                                ),
-                              }
-                            : r
-                        )
-                      )
-                    }}
-                    onToggleCommand={(resourceId, commandName) => {
-                      setSelectedResources((prev) =>
-                        prev.map(r =>
-                          r.id === resourceId
-                            ? {
-                                ...r,
-                                selectedCommands: new Set(
-                                  r.selectedCommands.has(commandName)
-                                    ? Array.from(r.selectedCommands).filter(n => n !== commandName)
-                                    : [...r.selectedCommands, commandName]
-                                ),
-                              }
-                            : r
-                        )
-                      )
-                    }}
-                    isMobile={true}
-                                      />
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Mobile Footer */}
-        <div className="px-4 py-4 border-t flex justify-between items-center shrink-0">
-          <p className="text-sm text-muted-foreground">
-            {tAgent('creator.resources.dialog.selectedCount', { count: selectedResources.length })}
-          </p>
-          <Button className="min-w-[100px] h-12" onClick={() => onOpenChange(false)}>
-            {tAgent('creator.resources.dialog.done')}
-          </Button>
-        </div>
-      </div>, getPortalRoot()
-    )
-  }
-
-  // Desktop Dialog
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="z-[110] sm:max-w-3xl sm:max-h-[80vh] flex flex-col p-0 sm:p-0 gap-0 m-0">
-        <DialogHeader className="px-5 py-3 border-b">
-          <DialogTitle>{tAgent('creator.resources.dialog.title')}</DialogTitle>
-        </DialogHeader>
-
-        <div className="flex-1 overflow-hidden flex flex-col min-h-0">
-          {/* Recommendations */}
-          {recommendations.length > 0 && (
-            <div className="px-5 py-3 border-b shrink-0">
-              <div className="flex items-center gap-2 mb-2">
-                <Sparkles className="h-4 w-4 text-primary" />
-                <span className="text-sm font-medium">{tAgent('creator.resources.dialog.recommended')}</span>
-                {generatingRecommendations && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-              </div>
-              <div className="flex gap-2 overflow-x-auto pb-1">
-                {recommendations.map((rec) => (
-                  <RecommendationCard
-                    key={rec.id}
-                    recommendation={rec}
-                    selected={isSelected(rec.id)}
-                    onClick={() => toggleRecommendation(rec)}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Dual-pane layout */}
-          <div className="flex-1 flex gap-4 min-h-0 p-4 overflow-hidden">
-            {/* Available Resources */}
-            <div className="flex-1 flex flex-col rounded-lg overflow-hidden">
-              <div className="p-3 border-b bg-bg-50">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium">{tAgent('creator.resources.dialog.available')}</span>
-                  <Badge variant="secondary">{availableResources.length}</Badge>
-                </div>
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder={tAgent('creator.resources.dialog.searchPlaceholder')}
-                    className="h-8 text-sm pl-9"
-                  />
-                </div>
-              </div>
-              <ScrollArea className="flex-1">
-                <div className="p-2 space-y-1">
-                  {availableResources.map((resource) => {
-                    const selected = isSelected(resource.id)
-                    return (
-                      <ResourceListItem
-                        key={resource.id}
-                        resource={resource}
-                        selected={selected}
-                        onClick={() => toggleResource(resource)}
-                      />
-                    )
-                  })}
-                  {availableResources.length === 0 && (
-                    <div className="text-center py-8 text-muted-foreground text-sm">
-                      {tAgent('creator.resources.noResourcesFound')}
-                    </div>
-                  )}
-                </div>
-              </ScrollArea>
-            </div>
-
-            {/* Selected Resources */}
-            <div className="flex-1 flex flex-col rounded-lg overflow-hidden border">
-              <div className="p-3 border-b">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium">{tAgent('creator.resources.dialog.selected')}</span>
-                  <Badge variant={selectedResources.length === 0 ? "secondary" : "default"}>
-                    {selectedResources.length}
-                  </Badge>
-                </div>
-              </div>
-              <ScrollArea className="flex-1">
-                <div className="p-2 space-y-1">
-                  {selectedResources.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-full text-center py-8">
-                      <Target className="h-8 w-8 text-muted-foreground mb-2" />
-                      <p className="text-sm text-muted-foreground">
-                        {tAgent('creator.resources.dialog.noResourcesHint')}
-                      </p>
-                    </div>
-                  ) : (
-                    selectedResources.map((resource) => (
-                      <SelectedResourceItem
-                        key={resource.id}
-                        resource={resource}
-                        setSelectedResources={setSelectedResources}
-                        onRemove={() => {
-                          setSelectedResources(prev => prev.filter(r => r.id !== resource.id))
-                        }}
-                        onToggleMetric={(resourceId, metricName) => {
-                          setSelectedResources((prev) =>
-                            prev.map(r =>
-                              r.id === resourceId
-                                ? {
-                                    ...r,
-                                    selectedMetrics: new Set(
-                                      r.selectedMetrics.has(metricName)
-                                        ? Array.from(r.selectedMetrics).filter(n => n !== metricName)
-                                        : [...r.selectedMetrics, metricName]
-                                    ),
-                                  }
-                                : r
-                            )
-                          )
-                        }}
-                        onToggleCommand={(resourceId, commandName) => {
-                          setSelectedResources((prev) =>
-                            prev.map(r =>
-                              r.id === resourceId
-                                ? {
-                                    ...r,
-                                    selectedCommands: new Set(
-                                      r.selectedCommands.has(commandName)
-                                        ? Array.from(r.selectedCommands).filter(n => n !== commandName)
-                                        : [...r.selectedCommands, commandName]
-                                    ),
-                                  }
-                                : r
-                            )
-                          )
-                        }}
-                                              />
-                    ))
-                  )}
-                </div>
-              </ScrollArea>
-            </div>
-          </div>
-        </div>
-
-        <div className="px-5 py-3 border-t flex justify-between items-center shrink-0">
-          <p className="text-sm text-muted-foreground">
-            {tAgent('creator.resources.dialog.selectedCount', { count: selectedResources.length })}
-          </p>
-          <Button onClick={() => onOpenChange(false)}>
-            {tAgent('creator.resources.dialog.done')}
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-// ============================================================================
-// Sub-Components
-// ============================================================================
-
-interface ScheduleCardProps {
-  icon: React.ReactNode
-  label: string
-  description: string
-  active: boolean
-  onClick: () => void
-  isMobile?: boolean
-}
-
-function ScheduleCard({ icon, label, description, active, onClick, isMobile = false }: ScheduleCardProps) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "flex flex-col items-center rounded-lg border transition-colors",
-        isMobile ? "gap-3 p-4" : "gap-2 p-3",
-        active
-          ? "border-primary bg-muted"
-          : "border-transparent hover:border-border"
-      )}
-    >
-      <div className={cn("rounded-lg", active ? "bg-muted" : "", isMobile ? "p-2" : "p-1.5")}>
-        {icon}
-      </div>
-      <div className="text-center">
-        <div className={cn("font-medium", active ? "text-foreground" : "text-muted-foreground", isMobile ? "text-sm" : "text-xs")}>{label}</div>
-        <div className={cn("text-muted-foreground", isMobile ? "text-xs" : textNano)}>{description}</div>
-      </div>
-    </button>
-  )
-}
-
-interface RecommendationCardProps {
-  recommendation: ResourceRecommendation
-  selected: boolean
-  onClick: () => void
-}
-
-function RecommendationCard({ recommendation, selected, onClick }: RecommendationCardProps) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "flex items-center gap-2 px-3 py-2 rounded-lg border text-left whitespace-nowrap transition-colors min-w-0",
-        selected ? "border-primary bg-muted" : "border-border hover:bg-muted-30"
-      )}
-    >
-      <div className={cn(
-        "p-1 rounded",
-        selected ? "bg-primary text-primary-foreground" : "bg-muted"
-      )}>
-        {recommendation.type === 'extension' ? <Puzzle className="h-4 w-4" /> : <Target className="h-4 w-4" />}
-      </div>
-      <div className="min-w-0">
-        <div className="text-sm font-medium truncate">{recommendation.name}</div>
-        <div className="text-xs text-muted-foreground truncate">{recommendation.reason}</div>
-      </div>
-      {selected && <Check className="h-4 w-4 text-primary ml-1 shrink-0" />}
-    </button>
-  )
-}
-
-interface AvailableResource {
-  id: string
-  name: string
-  type: 'device' | 'extension'
-  deviceType?: string
-  metrics: MetricInfo[]
-  commands: CommandInfo[]
-}
-
-interface ResourceListItemProps {
-  resource: AvailableResource
-  selected: boolean
-  onClick: () => void
-  isMobile?: boolean
-}
-
-function ResourceListItem({ resource, selected, onClick, isMobile = false }: ResourceListItemProps) {
-  const metricCount = resource.metrics.length
-  const commandCount = resource.commands.length
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "w-full rounded-lg text-left transition-colors flex items-center justify-between group",
-        isMobile ? "px-4 py-3" : "px-3 py-2.5",
-        selected ? "bg-muted border border-border" : "hover:bg-muted border border-transparent"
-      )}
-    >
-      <div className="flex items-center gap-2 min-w-0">
-        <div className={cn(
-          "rounded",
-          isMobile ? "p-2" : "p-1.5",
-          selected ? "bg-primary text-primary-foreground" : "bg-muted"
-        )}>
-          {resource.type === 'extension' ? <Puzzle className={cn(isMobile ? "h-4 w-4" : "h-4 w-4")} /> : <Target className={cn(isMobile ? "h-4 w-4" : "h-4 w-4")} />}
-        </div>
-        <div className="min-w-0">
-          <div className={cn("font-medium truncate", isMobile ? "text-base" : "text-sm")}>{resource.name}</div>
-          <div className={cn("text-muted-foreground", isMobile ? "text-xs" : "text-xs")}>
-            {metricCount > 0 && `${metricCount} metric${metricCount > 1 ? 's' : ''}`}
-            {metricCount > 0 && commandCount > 0 && ' • '}
-            {commandCount > 0 && `${commandCount} command${commandCount > 1 ? 's' : ''}`}
-          </div>
-        </div>
-      </div>
-      {selected && <Check className={cn("text-primary shrink-0", isMobile ? "h-5 w-5" : "h-4 w-4")} />}
-    </button>
-  )
-}
-
-interface SelectedResourceItemProps {
-  resource: SelectedResource
-  setSelectedResources: React.Dispatch<React.SetStateAction<SelectedResource[]>>
-  onRemove: () => void
-  onToggleMetric: (resourceId: string, metricName: string) => void
-  onToggleCommand: (resourceId: string, commandName: string) => void
-  isMobile?: boolean
-}
-
-function SelectedResourceItem({ resource, setSelectedResources, onRemove, onToggleMetric, onToggleCommand, isMobile = false }: SelectedResourceItemProps) {
-  const [expanded, setExpanded] = useState(false)
-  const [showAllMetrics, setShowAllMetrics] = useState(false)
-  const [showAllCommands, setShowAllCommands] = useState(false)
-  const { t: tAgent } = useTranslation('agents')
-  const selectedMetricCount = resource.selectedMetrics.size
-  const selectedCommandCount = resource.selectedCommands.size
-  const allMetricCount = resource.allMetrics.length
-  const allCommandCount = resource.allCommands.length
-
-  const hasMetrics = resource.allMetrics.length > 0
-  const hasCommands = resource.allCommands.length > 0
-
-  return (
-    <div className={cn("rounded-lg border group", isMobile ? "px-4 py-3" : "px-3 py-2")}>
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <button
-          type="button"
-          onClick={() => setExpanded(!expanded)}
-          className="flex items-center gap-2 min-w-0 flex-1"
-        >
-          <ChevronRight
-            className={cn(
-              "text-muted-foreground transition-transform",
-              isMobile ? "h-5 w-5" : "h-4 w-4",
-              expanded && "rotate-90"
-            )}
-          />
-          <div className={cn(
-            "rounded",
-            isMobile ? "p-2" : "p-1",
-            resource.type === 'extension' ? "bg-accent-purple-light text-accent-purple" : "bg-info-light text-info"
-          )}>
-            {resource.type === 'extension' ? <Puzzle className={cn(isMobile ? "h-4 w-4" : "h-4 w-4")} /> : <Target className={cn(isMobile ? "h-4 w-4" : "h-4 w-4")} />}
-          </div>
-          <span className={cn("font-medium truncate", isMobile ? "text-base" : "text-sm")}>{resource.name}</span>
-          {(hasMetrics || hasCommands) && (
-            <Badge variant="secondary" className={cn(isMobile ? "text-xs" : "text-xs")}>
-              {selectedMetricCount}/{allMetricCount} • {selectedCommandCount}/{allCommandCount}
-            </Badge>
-          )}
-        </button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className={cn("transition-opacity", isMobile ? "h-9 w-9" : "h-6 w-6", isMobile ? "opacity-100" : "opacity-0 group-hover:opacity-100")}
-          onClick={onRemove}
-        >
-          <X className={cn(isMobile ? "h-4 w-4" : "h-4 w-4")} />
-        </Button>
-      </div>
-
-      {/* Collapsed state summary */}
-      {!expanded && (selectedMetricCount > 0 || selectedCommandCount > 0) && (
-        <div className={cn("mt-1", isMobile ? "pl-7" : "pl-6")}>
-          <p className="text-xs text-muted-foreground truncate">
-            {resource.allMetrics
-              .filter(m => resource.selectedMetrics.has(m.name))
-              .map(m => m.display_name)
-              .slice(0, 3)
-              .join(', ')}
-            {selectedMetricCount > 3 && ` +${selectedMetricCount - 3} more`}
-            {selectedMetricCount > 0 && selectedCommandCount > 0 && ' \u00B7 '}
-            {selectedCommandCount > 0 && `${selectedCommandCount} cmd${selectedCommandCount > 1 ? 's' : ''}`}
-          </p>
-        </div>
-      )}
-
-      {/* Expandable Metrics/Commands — partition folding: show only selected by default */}
-      {expanded && (hasMetrics || hasCommands) && (
-        <div className={cn("space-y-2", isMobile ? "mt-3 pl-7" : "mt-2 pl-6")}>
-          {/* Metrics */}
-          {hasMetrics && (
-            <div className="space-y-1">
-              <div className={cn("text-muted-foreground flex items-center justify-between", isMobile ? "text-sm" : "text-xs")}>
-                <span>Metrics ({selectedMetricCount}/{allMetricCount})</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const selectAll = selectedMetricCount < allMetricCount
-                    setSelectedResources((prev: SelectedResource[]) =>
-                      prev.map(r =>
-                        r.id === resource.id
-                          ? {
-                              ...r,
-                              selectedMetrics: selectAll
-                                ? new Set(resource.allMetrics.map(m => m.name))
-                                : new Set(),
-                            }
-                          : r
-                      )
-                    )
-                  }}
-                  className="text-primary hover:underline"
-                >
-                  {selectedMetricCount === allMetricCount ? 'Deselect All' : 'Select All'}
-                </button>
-              </div>
-              <div className={cn("gap-1", isMobile ? "grid grid-cols-1" : "grid grid-cols-2")}>
-                {(showAllMetrics || selectedMetricCount === 0 ? resource.allMetrics : resource.allMetrics.filter(m => resource.selectedMetrics.has(m.name)))
-                  .map((metric) => (
-                  <div key={metric.name} className="contents">
-                    <div
-                      className={cn(
-                        "flex items-center justify-between rounded transition-colors",
-                        isMobile
-                          ? "px-2 py-1 text-sm"
-                          : "px-1.5 py-0.5 text-xs",
-                        resource.selectedMetrics.has(metric.name)
-                          ? "bg-muted text-primary"
-                          : "hover:bg-muted-30"
-                      )}
-                    >
-                      <div
-                        className="flex items-center gap-2 cursor-pointer min-w-0"
-                        onClick={() => onToggleMetric(resource.id, metric.name)}
-                      >
-                        <Checkbox
-                          checked={resource.selectedMetrics.has(metric.name)}
-                          className={cn(isMobile ? "h-4 w-4" : "h-4 w-4")}
-                        />
-                        <span className="truncate">{metric.display_name}</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              {!showAllMetrics && selectedMetricCount < allMetricCount && (
-                <button type="button" onClick={() => setShowAllMetrics(true)} className={inlineLinkBtn}>
-                  Show All ({allMetricCount})
-                </button>
-              )}
-              {showAllMetrics && selectedMetricCount < allMetricCount && (
-                <button type="button" onClick={() => setShowAllMetrics(false)} className={inlineLinkBtn}>
-                  Show Selected Only
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Commands */}
-          {hasCommands && (
-            <div className="space-y-1">
-              <div className={cn("text-muted-foreground flex items-center justify-between", isMobile ? "text-sm" : "text-xs")}>
-                <span>Commands ({selectedCommandCount}/{allCommandCount})</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const selectAll = selectedCommandCount < allCommandCount
-                    setSelectedResources((prev: SelectedResource[]) =>
-                      prev.map(r =>
-                        r.id === resource.id
-                          ? {
-                              ...r,
-                              selectedCommands: selectAll
-                                ? new Set(resource.allCommands.map(c => c.name))
-                                : new Set(),
-                            }
-                          : r
-                      )
-                    )
-                  }}
-                  className="text-primary hover:underline"
-                >
-                  {selectedCommandCount === allCommandCount ? 'Deselect All' : 'Select All'}
-                </button>
-              </div>
-              <div className={cn("gap-1", isMobile ? "grid grid-cols-1" : "grid grid-cols-2")}>
-                {(showAllCommands || selectedCommandCount === 0 ? resource.allCommands : resource.allCommands.filter(c => resource.selectedCommands.has(c.name)))
-                  .map((command) => (
-                  <div
-                    key={command.name}
-                    className={cn(
-                      "flex items-center gap-2 rounded cursor-pointer transition-colors",
-                      isMobile
-                        ? "px-2 py-1 text-sm"
-                        : "px-1.5 py-0.5 text-xs",
-                      resource.selectedCommands.has(command.name)
-                        ? "bg-muted text-primary"
-                        : "hover:bg-muted-30"
-                    )}
-                    onClick={() => onToggleCommand(resource.id, command.name)}
-                  >
-                    <Checkbox
-                      checked={resource.selectedCommands.has(command.name)}
-                      className={cn(isMobile ? "h-4 w-4" : "h-4 w-4")}
-                    />
-                    <span className="truncate">{command.display_name}</span>
-                  </div>
-                ))}
-              </div>
-              {!showAllCommands && selectedCommandCount < allCommandCount && (
-                <button type="button" onClick={() => setShowAllCommands(true)} className={inlineLinkBtn}>
-                  Show All ({allCommandCount})
-                </button>
-              )}
-              {showAllCommands && selectedCommandCount < allCommandCount && (
-                <button type="button" onClick={() => setShowAllCommands(false)} className={inlineLinkBtn}>
-                  Show Selected Only
-                </button>
-              )}
-            </div>
-          )}
-
-          {!hasMetrics && !hasCommands && (
-            <p className={cn("text-muted-foreground italic", isMobile ? "text-xs" : "text-xs")}>No metrics or commands available</p>
-          )}
-
-        </div>
-      )}
-    </div>
-  )
-}
-
-// Export as default
 export default AgentEditorFullScreen
