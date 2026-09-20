@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### refactor: two more giants split — openai.rs and mqtt.rs
+- **llm_backends/backends/openai.rs (3162 → 6 files)**: provider/runtime/LlmRuntime-impl stay in mod.rs; the 1430-line `impl CloudRuntime` moved whole to runtime.rs; OpenAI + Anthropic wire types to protocol.rs (fields pub(crate)); config and vision-model detection get their own files. External paths stable.
+- **devices/adapters/mqtt.rs (3456 → 7 files)**: config; the ~1100-line connection lifecycle impl; the DeviceAdapter trait impl; the ~870-line message-handling impl; topic/device-id extraction helpers. Adapter/inner-client fields became pub(crate); config/topics are pub(crate) mods with explicit imports (glob re-export cycles were the failure mode of the first attempt). 32 mqtt tests green.
+- Remaining monolith candidates: agent/mod.rs (manager + conversation machinery), cli-ops/commands.rs (2720), server/types.rs (3673, low value).
+
 ### chore(web): lint batch — ratchet 626 → 614
 - 5× `catch (e: any)` narrowed to `unknown` with instanceof guards; 6 component files stopped exporting non-components (ChartContainer's chart hooks/factory → `shared/chartHooks.ts` via the barrel, DashboardGrid's mobile layout + its unit test, color-picker presets, ConfigFormBuilder's MQTT validators, icon-picker categories). Three further splits (SettingsNav sections, DataSourceIndicator summary, DefaultStates consts) were attempted and rolled back — anchor-based block extraction landed on the wrong spans; left as follow-ups rather than hand-patching mangled JSX. Remaining: any 486 (240 `as any` — needs per-site typing), exhaustive-deps 102 (behavior-risky), refresh 21 (hooks/context + shadcn boilerplate).
 
