@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### test(web): save-contract coverage for the three highest-regression paths
+- **Rule editor**: edit-mode save — prefill restores the manual trigger + notify action, and onSave carries the rule id (edit never degrades to create), the updated name, and the composed action payload.
+- **Device add**: the manual form's footer submit stays disabled until a device type is chosen, and the composed AddDeviceRequest carries typed id/name/type, adapter, and the auto-derived MQTT topics (`device/<type>/<id>/up|downlink`).
+- **Dashboard save**: ADR 0008's DTO seam — local (UUID) dashboards CREATE without their local id; server (`dashboard_*`) dashboards UPDATE in place by id; responses map back through fromDashboardDTO.
+- Two jsdom fight-scenes documented in the tests for the next person: the real Radix Select renders an empty panel under fireEvent (the device form swaps in a native `<select>` wired to the same props), and inline-arrow props on a test harness loop ManualAddForm's footer-publishing effect forever inside act() (callbacks must come from stable test-scope identities). Suite 222 → 227.
+
 ### refactor(web): AgentEditorFullScreen (3054 lines) split — editor subcomponents extracted
 - `AgentEditorFullScreen.tsx` 3054 → ~2190 lines; the resource-selection dialog, schedule/recommendation/list/selected-resource cards, shared types, and prompt-template constants moved to `agents-components/agent-editor/` (8 modules + barrel). Imports were re-derived per file from the symbols each body actually references, so the ESLint warning count is **exactly conserved** (714 → 714, no ratchet growth). The prompt-template icons became component references (`icon: Activity` rendered as `<template.icon/>`), which let the constants module drop its JSX and become plain `constants.ts`. Two icon-only buttons in SelectedResourceItem gained aria-labels (a11y, and the test hooks). 6 new component tests (cards, item interactions incl. metric toggle + remove, desktop dialog selection); suite 216 → 222.
 

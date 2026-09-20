@@ -2,8 +2,8 @@
 /// regression-cost forms in the app (user data entry). These assert the
 /// builders mount cleanly with minimal props and expose their primary
 /// affordances; deep field-level behavior stays with manual QA.
-import { describe, it, expect } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { SimpleRuleBuilderSplit } from '../SimpleRuleBuilderSplit'
 import { TransformBuilder as TransformBuilderSplit } from '../TransformBuilderSplit'
 
@@ -47,6 +47,51 @@ describe('SimpleRuleBuilderSplit', () => {
     const overlay = document.querySelector('.fixed.inset-0')
     expect(overlay).toBeTruthy() // portal exists
     expect(overlay!.classList.contains('hidden')).toBe(true) // but is hidden
+  })
+
+  it('edit mode: prefill restores state and save carries id + updated name', async () => {
+    // Prefill is the only Radix-free path to a fully-valid form (the create
+    // default's data_change trigger requires a condition built through
+    // Selects, which the FullScreenDialog focus trap keeps closed in jsdom).
+    // This pins the EDIT save contract: id preserved, trigger restored,
+    // name editable, actions composed.
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    render(
+      <SimpleRuleBuilderSplit
+        open
+        onOpenChange={noop}
+        onSave={onSave}
+        rule={{
+          id: 'r-1',
+          name: '旧名称',
+          enabled: true,
+          trigger: { trigger_type: 'manual' },
+          actions: [{ type: 'notify', message: 'Rule triggered', severity: 'info' }],
+        } as never}
+        resources={{
+          devices: [],
+          deviceTypes: [],
+          extensions: [],
+          extensionDataSources: [],
+          transformDataSources: [],
+          messageChannels: [],
+        }}
+      />,
+    )
+    const overlay = document.querySelector('.fixed.inset-0') as HTMLElement
+    const nameInput = overlay.querySelector('#rule-name') as HTMLInputElement
+    await waitFor(() => expect(nameInput.value).toBe('旧名称')) // restore ran
+    fireEvent.change(nameInput, { target: { value: '高温告警' } })
+
+    fireEvent.click(screen.getByRole('button', { name: /save/ }))
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+    const rule = onSave.mock.calls[0][0]
+    expect(rule.id).toBe('r-1') // edit, not accidental create
+    expect(rule.name).toBe('高温告警')
+    expect(rule.trigger).toEqual({ trigger_type: 'manual' })
+    expect(rule.actions).toEqual([
+      { type: 'notify', message: 'Rule triggered', severity: 'info' },
+    ])
   })
 })
 

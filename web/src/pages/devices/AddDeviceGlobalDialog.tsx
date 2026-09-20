@@ -648,7 +648,7 @@ const ADAPTER_TYPES = [
   { value: 'webhook' as const, icon: Wifi, color: 'text-accent-purple', bg: 'bg-accent-purple-light' },
 ]
 
-function ManualAddForm({
+export function ManualAddForm({
   deviceTypes,
   onAdd,
   adding,
