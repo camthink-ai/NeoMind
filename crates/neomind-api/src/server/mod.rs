@@ -114,6 +114,68 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
     state.init_data_push_targets().await;
     startup.service("Data push targets", ServiceStatus::Started);
 
+    // Bootstrap the agent's platform-command auth: provision an internal
+    // wildcard API key if none exists, so the chat agent's HTTP-path CLI
+    // commands work out of the box on fresh installs (see
+    // AuthState::ensure_internal_api_key).
+    state.auth.api_key_state.ensure_internal_api_key().await;
+
+    // Session retention: prune chat sessions older than the configured
+    // window (settings → retention → session_retention_hours; default OFF).
+    // Hourly cadence, config re-read each cycle so runtime changes apply.
+    {
+        let state_for_retention = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(3600));
+            loop {
+                interval.tick().await;
+                let hours = neomind_storage::SettingsStore::open_default()
+                    .ok()
+                    .and_then(|s| s.get_retention_config().session_retention_hours);
+                let Some(hours) = hours else { continue };
+                let session_store = state_for_retention
+                    .agents
+                    .session_manager
+                    .session_store();
+                match session_store.cleanup_old_sessions(hours as i64 * 3600) {
+                    Ok(n) if n > 0 => tracing::info!(
+                        category = "storage",
+                        n,
+                        hours,
+                        "Session retention pass complete"
+                    ),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(
+                        category = "storage",
+                        error = %e,
+                        "Session retention pass failed"
+                    ),
+                }
+            }
+        });
+    }
+
+    // Split-brain guard: with NEOMIND_DATA_DIR set, stores whose file only
+    // exists at the legacy cwd-relative data/ get silently redirected there
+    // (upgrade compat — see neomind_core::paths). Half-env/half-legacy is a
+    // data-loss illusion waiting to happen, so surface it as ONE prominent
+    // error-level banner instead of scattered per-file warns. Strict mode
+    // (NEOMIND_STRICT_DATA_DIR) never redirects at all.
+    // NOTE: placed after ALL init_* phases — stores resolve lazily through
+    // init (device/telemetry/llm/rules/automations/data-push among them), so
+    // checking earlier under-reports.
+    let redirected = neomind_core::paths::legacy_redirected_stores();
+    if !redirected.is_empty() {
+        tracing::error!(
+            files = ?redirected,
+            data_dir = %neomind_core::paths::data_dir().display(),
+            "DATA-DIR SPLIT: NEOMIND_DATA_DIR is set, but the stores above were \
+             found ONLY at the legacy cwd-relative ./data/ and are being used \
+             from there. Set NEOMIND_STRICT_DATA_DIR to disable the fallback, \
+             or move the files into the data dir to consolidate."
+        );
+    }
+
     // Configuration phase
     startup.phase_config();
 

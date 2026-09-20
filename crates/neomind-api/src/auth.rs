@@ -484,6 +484,35 @@ impl AuthState {
         (key, info)
     }
 
+    /// Boot-time bootstrap: ensure at least one ACTIVE wildcard API key
+    /// exists. The chat agent's HTTP-path CLI commands authenticate via the
+    /// default-key file (cli-ops `auto_auth`), which picks the first active
+    /// `*`-permission key — on a fresh install there are no keys at all, so
+    /// the agent's first "send a notification / list channels" turns hit
+    /// 401 until an operator manually creates one (observed live: the LLM
+    /// ended up explaining NEOMIND_API_KEY to the user). Provision an
+    /// internal key ONCE; the plaintext never appears in logs — it lands in
+    /// api_keys.redb, exactly where auto_auth reads it back.
+    pub async fn ensure_internal_api_key(&self) -> bool {
+        let has_wildcard = self
+            .list_keys()
+            .await
+            .iter()
+            .any(|(_, info)| info.active && info.permissions.iter().any(|p| p == "*"));
+        if has_wildcard {
+            return false;
+        }
+        let (_, info) = self
+            .create_key("internal-agent".to_string(), vec!["*".to_string()])
+            .await;
+        tracing::info!(
+            key_id = %info.id,
+            "Provisioned internal-agent API key (wildcard) — the chat agent's \
+             platform commands now authenticate out of the box"
+        );
+        true
+    }
+
     /// Delete an API key and persist to database.
     pub async fn delete_key(&self, key: &str) -> bool {
         let hash = self.crypto.hash_api_key(key);
@@ -818,11 +847,45 @@ mod tests {
         assert!(!auth.validate_key("invalid-key"));
     }
 
-    #[test]
-    fn test_api_key_validation() {
+    #[tokio::test]
+    async fn test_api_key_validation() {
         let auth = AuthState::new();
         // Invalid key should fail
         assert!(!auth.validate_key("invalid-key"));
+    }
+
+    #[tokio::test]
+    async fn test_internal_api_key_round_trips_through_auto_auth() {
+        // The REAL bootstrap guarantee: whatever key the server provisions,
+        // cli-ops auto_auth (the chat agent's HTTP-path auth) must be able
+        // to read it back from the same data dir.
+        let tmp = std::env::temp_dir().join(format!("nm-auth-bootstrap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let dir = tmp.to_str().unwrap();
+
+        let auth = AuthState::new_with_data_dir(dir);
+        let keys = auth.list_keys().await;
+        let wildcard: Vec<_> = keys
+            .iter()
+            .filter(|(_, i)| i.active && i.permissions.iter().any(|p| p == "*"))
+            .collect();
+        assert!(!wildcard.is_empty(), "fresh state must have a wildcard key");
+
+        // ensure_internal_api_key is a no-op when one already exists
+        assert!(!auth.ensure_internal_api_key().await);
+
+        // Round-trip: auto_auth reads the plaintext back
+        let recovered = neomind_cli_ops::auto_auth::read_default_api_key_from(dir);
+        assert!(
+            recovered.is_some(),
+            "auto_auth could not read back the server-provisioned key — \
+             this is exactly the fresh-install 401 the bootstrap exists to fix"
+        );
+        let recovered = recovered.unwrap();
+        assert!(auth.validate_key(&recovered), "recovered key must validate");
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[tokio::test]

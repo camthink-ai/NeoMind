@@ -148,6 +148,8 @@
   "defaultRetentionDesc": "数值指标（温度、湿度等）的保留时间",
   "imageRetention": "图片保留时间",
   "imageRetentionDesc": "摄像头图片和二进制数据的保留时间",
+  "sessionRetention": "会话保留时间",
+  "sessionRetentionDesc": "聊天会话的保留时间;超期的会话(含历史)将被定期清理,留空表示永久保留",
   "retentionNever": "永不清理",
   "retention12h": "12 小时",
   "retention1d": "1 天",

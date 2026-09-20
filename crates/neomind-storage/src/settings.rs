@@ -400,6 +400,13 @@ pub struct RetentionConfig {
     /// Retention period in hours for image/binary data (None = forever).
     #[serde(default = "default_retention_image")]
     pub image_retention: Option<u64>,
+
+    /// Retention period in hours for chat sessions (None = forever).
+    /// Prunes whole sessions (history + metadata) whose last update is older
+    /// than the window — sessions.redb otherwise grows without bound on
+    /// long-lived edge boxes. Default OFF: never surprise-delete history.
+    #[serde(default)]
+    pub session_retention_hours: Option<u64>,
 }
 
 /// Agent execution defaults (configurable via /api/settings/agent).
@@ -544,6 +551,7 @@ impl Default for RetentionConfig {
             interval_hours: default_retention_interval(),
             default_retention: default_retention_default(),
             image_retention: default_retention_image(),
+            session_retention_hours: None, // sessions keep forever unless opted in
         }
     }
 }

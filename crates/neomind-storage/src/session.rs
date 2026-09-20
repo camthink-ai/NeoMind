@@ -712,6 +712,42 @@ impl SessionStore {
         Ok(table.get(session_id)?.map(|v| v.value()))
     }
 
+    /// Delete sessions whose last-update timestamp is older than
+    /// `max_age_secs`. Returns the number of sessions removed.
+    ///
+    /// Chat sessions had no retention — sessions.redb grew forever on
+    /// long-lived edge boxes (telemetry already had retention). Sessions
+    /// without a timestamp are kept (never delete what we cannot date).
+    pub fn cleanup_old_sessions(&self, max_age_secs: i64) -> Result<usize, Error> {
+        let cutoff = chrono::Utc::now().timestamp() - max_age_secs;
+        let mut to_delete = Vec::new();
+        for session_id in self.list_sessions()? {
+            match self.get_session_timestamp(&session_id)? {
+                Some(ts) if ts < cutoff => to_delete.push(session_id),
+                _ => {}
+            }
+        }
+        let count = to_delete.len();
+        for session_id in &to_delete {
+            if let Err(e) = self.delete_session(session_id) {
+                tracing::warn!(
+                    category = "storage",
+                    session_id = %session_id,
+                    error = %e,
+                    "Session retention: failed to delete expired session"
+                );
+            }
+        }
+        if count > 0 {
+            tracing::info!(
+                category = "storage",
+                count,
+                "Session retention: removed expired chat sessions"
+            );
+        }
+        Ok(count)
+    }
+
     /// Save session metadata (title, etc.).
     pub fn save_session_metadata(
         &self,
@@ -1886,5 +1922,71 @@ mod tests {
         // Cleanup on empty database should return 0
         let cleaned = store.cleanup_stale_pending_streams().unwrap();
         assert_eq!(cleaned, 0);
+    }
+}
+
+#[cfg(test)]
+mod retention_tests {
+    use super::*;
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("nm-session-retention-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn seed(store: &SessionStore, id: &str, age_secs: i64) {
+        let old_ts = chrono::Utc::now().timestamp() - age_secs;
+        store.save_session_id(id).unwrap();
+        // overwrite the timestamp with an artificial age
+        let write_txn = store.db.begin_write().unwrap();
+        {
+            let mut table = write_txn.open_table(SESSIONS_TABLE).unwrap();
+            table.insert(id, old_ts).unwrap();
+        }
+        write_txn.commit().unwrap();
+        store
+            .save_history(id, &[SessionMessage::user("hello")])
+            .unwrap();
+    }
+
+    #[test]
+    fn cleanup_removes_only_expired_sessions() {
+        let dir = scratch("expired");
+        let store = SessionStore::open_isolated(dir.join("sessions.redb")).unwrap();
+
+        seed(&store, "ancient", 100 * 24 * 3600); // 100 days old
+        seed(&store, "fresh", 60); // one minute old
+
+        let removed = store.cleanup_old_sessions(30 * 24 * 3600).unwrap(); // 30-day window
+        assert_eq!(removed, 1);
+        assert!(!store.session_exists("ancient").unwrap());
+        assert!(store.session_exists("fresh").unwrap());
+        // history went with the session
+        assert!(store.load_history("ancient").unwrap().is_empty());
+        assert_eq!(store.load_history("fresh").unwrap().len(), 1);
+
+        // Idempotent second pass
+        assert_eq!(store.cleanup_old_sessions(30 * 24 * 3600).unwrap(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cleanup_keeps_sessions_without_timestamp() {
+        let dir = scratch("undated");
+        let store = SessionStore::open_isolated(dir.join("sessions.redb")).unwrap();
+        store.save_session_id("undated").unwrap();
+        // remove its timestamp entirely
+        let write_txn = store.db.begin_write().unwrap();
+        {
+            let mut table = write_txn.open_table(SESSIONS_TABLE).unwrap();
+            table.remove("undated").unwrap();
+        }
+        write_txn.commit().unwrap();
+        // list_sessions comes from the sessions table — undated is now
+        // invisible to listing, so cleanup cannot touch it (safe by design).
+        assert_eq!(store.cleanup_old_sessions(1).unwrap(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

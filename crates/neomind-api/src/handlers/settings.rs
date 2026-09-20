@@ -322,6 +322,7 @@ pub async fn get_retention_config(
         "interval_hours": config.interval_hours,
         "default_retention": config.default_retention,
         "image_retention": config.image_retention,
+        "session_retention_hours": config.session_retention_hours,
     }))
 }
 
@@ -356,6 +357,7 @@ pub async fn update_retention_config(
         interval_hours: req.interval_hours,
         default_retention: req.default_retention,
         image_retention: req.image_retention,
+        session_retention_hours: req.session_retention_hours,
     };
 
     settings_store
@@ -367,6 +369,7 @@ pub async fn update_retention_config(
         interval_h = config.interval_hours,
         default_h = ?config.default_retention,
         image_h = ?config.image_retention,
+        session_h = ?config.session_retention_hours,
         "Retention configuration updated"
     );
 
@@ -376,6 +379,7 @@ pub async fn update_retention_config(
         "interval_hours": config.interval_hours,
         "default_retention": config.default_retention,
         "image_retention": config.image_retention,
+        "session_retention_hours": config.session_retention_hours,
     }))
 }
 
@@ -631,6 +635,8 @@ pub struct RetentionConfigRequest {
     pub interval_hours: u64,
     pub default_retention: Option<u64>,
     pub image_retention: Option<u64>,
+    /// Chat-session retention in hours (None = keep forever).
+    pub session_retention_hours: Option<u64>,
 }
 
 /// Trigger an immediate data-directory backup (admin only).

@@ -148,6 +148,8 @@
   "defaultRetentionDesc": "Retention period for numeric metrics (temperature, humidity, etc.)",
   "imageRetention": "Image Retention",
   "imageRetentionDesc": "Retention period for image and binary data from camera devices",
+  "sessionRetention": "Session Retention",
+  "sessionRetentionDesc": "Retention period for chat sessions; expired sessions (with history) are pruned periodically — leave unset to keep forever",
   "retentionNever": "Never expire",
   "retention12h": "12 hours",
   "retention1d": "1 day",

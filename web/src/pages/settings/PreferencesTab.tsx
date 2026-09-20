@@ -21,6 +21,7 @@ import {
   Loader2,
   Database,
   SwitchCamera,
+  MessageSquare,
   Download,
 } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
@@ -545,6 +546,7 @@ function DataManagementSection() {
     interval_hours: number
     default_retention: number | null
     image_retention: number | null
+    session_retention_hours: number | null
   } | null>(null)
   const [loading, setLoading] = useState(true)
   const [cleaning, setCleaning] = useState(false)
@@ -637,6 +639,30 @@ function DataManagementSection() {
           <Select
             value={hoursToOption(config.image_retention)}
             onValueChange={(v) => saveConfig({ image_retention: optionToHours(v) })}
+            disabled={!config.enabled}
+          >
+            <SelectTrigger className="w-full sm:w-[180px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {retentionOptions.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {t(opt.labelKey)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </SettingsRow>
+
+        {/* Session Retention */}
+        <SettingsRow
+          label={t("settings:sessionRetention")}
+          description={t("settings:sessionRetentionDesc")}
+          leadingIcon={<MessageSquare className="h-4 w-4 text-muted-foreground" />}
+        >
+          <Select
+            value={hoursToOption(config.session_retention_hours)}
+            onValueChange={(v) => saveConfig({ session_retention_hours: optionToHours(v) })}
             disabled={!config.enabled}
           >
             <SelectTrigger className="w-full sm:w-[180px]">
