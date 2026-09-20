@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### test(data-push): scheduler-loop integration — interval cadence + bounded teardown
+- First end-to-end test of `PushScheduler`'s interval loop (the existing 26 tests were pure-function): a real TcpListener HTTP sink, a 1s-interval webhook target, and EventBus DeviceMetric publishes prove (a) buffered metrics flush on tick — not on event — with the batch payload carrying `device:<id>:<metric>` source ids, and (b) `stop()` delivers the still-buffered remainder instead of dropping it. Two harness gotchas documented inline: publish-before-subscribe silently drops on the broadcast bus (200ms warm-up), and stop()'s cancel arm can win the select race against a just-published event (300ms beat). A paused-clock variant was abandoned — real sockets and auto-advancing time don't mix under the current-thread test runtime.
+
 ### test(web): save-contract coverage for the three highest-regression paths
 - **Rule editor**: edit-mode save — prefill restores the manual trigger + notify action, and onSave carries the rule id (edit never degrades to create), the updated name, and the composed action payload.
 - **Device add**: the manual form's footer submit stays disabled until a device type is chosen, and the composed AddDeviceRequest carries typed id/name/type, adapter, and the auto-derived MQTT topics (`device/<type>/<id>/up|downlink`).

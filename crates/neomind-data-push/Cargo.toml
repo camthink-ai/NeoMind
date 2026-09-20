@@ -31,3 +31,5 @@ async-trait = { workspace = true }
 [dependencies.utoipa]
 version = "4"
 features = ["chrono", "uuid"]
+
+[dev-dependencies]

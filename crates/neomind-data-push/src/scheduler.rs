@@ -1178,4 +1178,190 @@ mod tests {
         // a dotted field that merely ends in _raw is not the raw dump
         assert!(!is_raw_metric("device:9999:values._raw"));
     }
+
+    // ======================= scheduler-loop integration =======================
+    //
+    // The pure-function tests above can't see the two timing behaviors that
+    // actually break in production: the interval cadence (buffer flushes on
+    // tick, not on event) and bounded teardown (stop() flushes the remainder
+    // instead of dropping it). Real time with a 1s interval — a paused clock
+    // proved incompatible with the real-socket HTTP delivery under the
+    // current-thread test runtime.
+
+    use std::sync::{Arc as StdArc, Mutex as StdMutex};
+
+    /// Minimal HTTP sink: accepts any number of POSTs, records bodies,
+    /// always answers 200. Real network — lets reqwest do real work under
+    /// the paused tokio clock.
+    async fn spawn_sink() -> (
+        std::net::SocketAddr,
+        StdArc<StdMutex<Vec<String>>>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let bodies: StdArc<StdMutex<Vec<String>>> = StdArc::new(StdMutex::new(Vec::new()));
+        let bodies_for_task = bodies.clone();
+        let handle = tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                let bodies = bodies_for_task.clone();
+                tokio::spawn(async move {
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    let mut buf = Vec::new();
+                    let mut chunk = [0u8; 4096];
+                    // read headers
+                    let header_end = loop {
+                        let n = sock.read(&mut chunk).await.ok()?;
+                        buf.extend_from_slice(&chunk[..n]);
+                        if let Some(pos) = find_header_end(&buf) {
+                            break pos;
+                        }
+                        chunk = [0u8; 4096];
+                    };
+                    let headers = String::from_utf8_lossy(&buf[..header_end]).to_string();
+                    let content_length: usize = headers
+                        .lines()
+                        .find_map(|l| {
+                            let (k, v) = l.split_once(':')?;
+                            k.eq_ignore_ascii_case("content-length")
+                                .then(|| v.trim().parse().ok())?
+                        })
+                        .unwrap_or(0);
+                    while buf.len() < header_end + content_length {
+                        let n = sock.read(&mut chunk).await.ok()?;
+                        if n == 0 {
+                            break;
+                        }
+                        buf.extend_from_slice(&chunk[..n]);
+                        chunk = [0u8; 4096];
+                    }
+                    let body = buf[header_end..].to_vec();
+                    bodies
+                        .lock()
+                        .unwrap()
+                        .push(String::from_utf8_lossy(&body).to_string());
+                    sock.write_all("HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok".as_bytes())
+                        .await
+                        .ok();
+                    Some(())
+                });
+            }
+        });
+        (addr, bodies, handle)
+    }
+
+    fn find_header_end(buf: &[u8]) -> Option<usize> {
+        buf.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4)
+    }
+
+    fn interval_target(addr: std::net::SocketAddr, interval_secs: u64) -> PushTarget {
+        PushTarget {
+            id: "t-1".to_string(),
+            name: "interval test".to_string(),
+            enabled: true,
+            target_type: PushTargetType::Webhook,
+            config: serde_json::json!({ "url": format!("http://{addr}/hook") }),
+            schedule: PushSchedule::Interval { interval_secs },
+            data_filter: DataSourceFilter {
+                source_patterns: vec![],
+                only_changes: false,
+            },
+            template: None,
+            retry_config: RetryConfig::default(),
+            batch_config: BatchConfig::default(),
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    /// Real-time-bounded wait for the sink.
+    async fn wait_for_sink(bodies: &StdArc<StdMutex<Vec<String>>>, min: usize) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if bodies.lock().unwrap().len() >= min {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "sink did not receive {min} bodies in 10s real time; got {:?}",
+                bodies.lock().unwrap()
+            );
+            tokio::task::yield_now().await;
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    #[tokio::test]
+    async fn interval_target_flushes_on_tick_and_stop_flushes_remainder() {
+        let (addr, bodies, _sink) = spawn_sink().await;
+        let store = Arc::new(crate::store::DataPushStore::memory().unwrap());
+        let bus = Arc::new(neomind_core::EventBus::new());
+        let scheduler = PushScheduler::new(
+            store,
+            Some(bus.clone()),
+            Arc::new(crate::template::TemplateRenderer::new()),
+        );
+
+        scheduler.start(interval_target(addr, 1)).await.unwrap();
+
+        // Warm-up: the spawned task must run its sync prefix through
+        // bus.subscribe() before the publish — a publish before subscribe
+        // is silently dropped (broadcast bus, no late delivery). A short
+        // real sleep is the deterministic way under the current-thread
+        // test runtime.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        bus.publish(neomind_core::NeoMindEvent::DeviceMetric {
+            device_id: "d1".to_string(),
+            metric: "temp".to_string(),
+            value: neomind_core::MetricValue::float(25.0),
+            timestamp: 1_000,
+            quality: None,
+            is_virtual: None,
+        })
+        .await;
+
+        // Real 1.5s > 1s interval: at least one tick must have flushed.
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        wait_for_sink(&bodies, 1).await;
+        {
+            let got = bodies.lock().unwrap();
+            assert!(
+                got.iter().any(|b| b.contains("device:d1:temp")),
+                "some flushed body carries the buffered metric: {:?}",
+                got
+            );
+        }
+
+        // Buffer a second metric but STOP before the next tick — the
+        // bounded-teardown path must deliver it instead of dropping it.
+        bus.publish(neomind_core::NeoMindEvent::DeviceMetric {
+            device_id: "d1".to_string(),
+            metric: "humidity".to_string(),
+            value: neomind_core::MetricValue::float(60.0),
+            timestamp: 2_000,
+            quality: None,
+            is_virtual: None,
+        })
+        .await;
+        // Give the scheduler task a beat to receive + buffer the event
+        // before stop()'s cancel arm can win the select race.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        scheduler.stop("t-1").await;
+        wait_for_sink(&bodies, 2).await;
+        {
+            let got = bodies.lock().unwrap();
+            assert!(
+                got.iter().any(|b| b.contains("device:d1:humidity")),
+                "stop() flushed the remainder: {:?}",
+                got
+            );
+        }
+
+        scheduler.stop_all().await;
+        _sink.abort();
+    }
 }
