@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### refactor: the monolith-splitting batch — timeseries, transform, runner (3 of the 4 remaining giants)
+- **storage/timeseries.rs (3652 → 8 files)**: the 1850-line single `impl TimeSeriesStore` cut into per-domain impls (write/query/aggregation/retention) across files; types + constructors in mod.rs; the 960-line test module became `tests.rs`. 167+21+18 storage tests green.
+- **api/automation/transform.rs (3584 → 8 files)**: both impl blocks (JsTransformExecutor ~740, TransformEngine ~1760) split into js_executor/pipeline/operations/aggregation; the free-function tail became image/value helpers. api tests 87+3+4 green. Encoded lessons: a `mod image` shadows the `image` crate inside the subtree (`::image::` disambiguation), cargo fix prunes use-names a test glob depended on, and the file-level inner `allow(too_many_arguments)` must move with the methods.
+- **extension-runner main.rs (3747 → ~400 + 5 modules)**: the changelog-reserved WasmRuntime/main-loop slice — capabilities/push/native/wasm/runner; all 121 runner tests green including the memory-limiter regression.
+- Deliberately not split: AgentEditorFullScreen's remaining 2190 lines (35+ useState continuous form — needs a product-regression session, not a mechanical cut) and server/types.rs (constructor+getter collection, low value).
+
+### ops: deferred-scheduler-test recon
+- The `#[ignore]`d `scheduler_stop_aborts_long_running_execution` TODO now carries the full harness recipe (constructor signatures verified: SchedulerConfig is pure config, AgentExecutorConfig requires only the store, MockLlmRuntime scripts in via llm_runtime) — implementation is a bounded next session, not exploration.
+
+### chore: disk headroom
+- The data volume hit 100% mid-batch (verify-all died on `No space left on device`); cleared regenerable caches (~2GB: updater bundles, pnpm store) and the batch then rebuilt from scratch cleanly.
+
 ### perf(web): eager bundle 3.6MB → 1.9MB — manualChunks was defeating route lazy()
 - **The mechanism, finally proven**: `manualChunks` groups for pages AND lazy-only vendors (codemirror/recharts/markdown/hls) turned each into a named chunk that Rollup added to the entry's STATIC import list — even with a provably clean source-level static graph (esbuild metafile, import-statement edges: zero `/pages/` modules, zero codemirror modules reachable). Result: `index.html` modulepreloaded ~3.6MB and route `lazy()` was decorative.
 - **Fix**: page-level and lazy-vendor groups are now opt-in (`VITE_PAGE_CHUNKS=1` restores them for comparison); the catch-all `vendor` rule passes heavy lazy-only libraries through to Rollup's natural splitting, so they land inside the lazy chunks that import them. Core eager set is now entry 703K + vendor 842K + react/radix/icons ≈ **1.94MB raw**, and a live `vite preview` check confirms the login page fetches **616KB over the wire** (previously ~1.2MB compressed) with zero page chunks and zero codemirror/markdown/recharts/hls in the boot set; the login page renders fully (browser-verified).
