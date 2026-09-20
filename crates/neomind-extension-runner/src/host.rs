@@ -3,13 +3,13 @@
 //! the per-store linear-memory cap. Split from main.rs 2026-09 — the runner
 //! binary was a 3900-line monolith.
 
-use std::io::Write;
-use std::sync::Arc;
-use wasmtime::{Memory, StoreLimits, StoreLimitsBuilder};
-use wasmtime_wasi::preview1::WasiP1Ctx;
 use neomind_extension_sdk::{IpcFrame, IpcResponse};
 use serde_json::json;
+use std::io::Write;
+use std::sync::Arc;
 use tracing::{debug, error, warn};
+use wasmtime::{Memory, StoreLimits, StoreLimitsBuilder};
+use wasmtime_wasi::preview1::WasiP1Ctx;
 
 use crate::ipc_routing::{get_pending_requests, register_pending_request};
 use crate::STDOUT_WRITE_MUTEX;

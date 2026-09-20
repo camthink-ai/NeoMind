@@ -36,11 +36,10 @@ use clap::Parser;
 use serde_json::json;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, trace, warn};
-use wasmtime::{
-    AsContext, AsContextMut, Config, Engine, Linker, Memory, Module, Store, StoreLimits,
-    StoreLimitsBuilder, Val,
-};
-use wasmtime_wasi::preview1::{self, WasiP1Ctx};
+#[cfg(test)]
+use wasmtime::StoreLimitsBuilder;
+use wasmtime::{AsContext, AsContextMut, Config, Engine, Linker, Module, Store, Val};
+use wasmtime_wasi::preview1;
 use wasmtime_wasi::WasiCtxBuilder;
 
 use neomind_extension_sdk::{
@@ -65,8 +64,8 @@ use event_handler::get_global_event_state;
 // IPC routing module
 mod ipc_routing;
 use ipc_routing::{
-    complete_pending_request, create_event_channel, get_pending_requests, register_pending_request,
-    safe_ffi_call, safe_ffi_call_with_timeout, start_stdin_reader, SendPtr, STDOUT_WRITE_MUTEX,
+    complete_pending_request, create_event_channel, safe_ffi_call, safe_ffi_call_with_timeout,
+    start_stdin_reader, SendPtr, STDOUT_WRITE_MUTEX,
 };
 
 // ============================================================================
@@ -1593,7 +1592,7 @@ impl WasmRuntime {
 }
 
 mod host;
-use host::{wasm_store_limits, HostState, SyncIpcClient};
+use host::{HostState, SyncIpcClient};
 
 /// Add neomind host functions to the linker
 ///
