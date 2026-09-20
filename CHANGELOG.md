@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### refactor(agent): agent/mod.rs (3406 lines) — the seventh giant
 - The 2350-line `impl Agent` cut into per-domain impl blocks: construction/config/accessors (mod.rs), context-compaction free functions (context.rs — `pub use` keeps streaming's `super::super::` paths intact), the process/multimodal/stream entry points (process.rs), the LLM loop + tool batching (execution.rs), tool execution/sanitization (tools.rs). 728 agent tests green.
 
-### chore(web): any-debt down payment — 45 sites typed at the seams (ratchet 614 → 573)
+### chore(web): any-debt — 100 sites typed at the seams across five files (ratchet 614 → 519)
+- `useComponentConfigDialog` (28) and `DynamicRegistry` (17): prior batch. `ComponentRenderer` (19): RuntimeComponent view + typed store selectors + NeoMindEvent onEvent. `spatial.tsx` (19): BindingDataSource view for the binding ladders (one documented disable stays — the schema config param is a genuine form-values bag). `CommunityRegistry` (17): RegistryWindow/MaybeComponent seams + indexed-access types for meta conversions. Method holds: type the seam once, not every expression. any total 491 → ~436; next files: automation.tsx (15), VisualDashboard (14), DeviceTypeDialogs (14).
 - `useComponentConfigDialog` (28 sites): the hook read/wrote DashboardComponent's persisted `config`/`dataSource` extras through `as any` everywhere; two local view types (ConfigurableComponent, ComponentUpdate) + three unknown→DataSourceOrList narrowings clear the file. `DynamicRegistry` (17 sites): RegistryWindow/MaybeComponent view types model the window-globals + React duck-typing seam. Method for the remaining ~440: type the seam once, not every expression — top files next: ComponentRenderer (19), spatial.tsx (19), CommunityRegistry (17), automation.tsx (15).
 
 ### refactor(agent): agent/mod.rs (3406 lines) — the seventh giant
