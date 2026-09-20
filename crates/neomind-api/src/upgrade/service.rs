@@ -115,22 +115,26 @@ impl UpgradeStatusShared {
     }
 
     fn set_phase(&self, p: &str) {
-        *self.phase.lock().unwrap() = p.to_string();
+        *self.phase.lock().unwrap_or_else(|e| e.into_inner()) = p.to_string();
     }
 
     fn set_error(&self, msg: String) {
         self.set_phase(phase::ERROR);
-        *self.error.lock().unwrap() = Some(msg);
+        *self.error.lock().unwrap_or_else(|e| e.into_inner()) = Some(msg);
     }
 
     fn snapshot(&self) -> UpgradeStatus {
         UpgradeStatus {
             running: self.running.load(Ordering::SeqCst),
-            phase: self.phase.lock().unwrap().clone(),
-            target_version: self.target_version.lock().unwrap().clone(),
+            phase: self.phase.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+            target_version: self
+                .target_version
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone(),
             downloaded: self.downloaded.load(Ordering::SeqCst),
             total: self.total.load(Ordering::SeqCst),
-            error: self.error.lock().unwrap().clone(),
+            error: self.error.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         }
     }
 }
@@ -248,7 +252,7 @@ impl UpgradeState {
 
         let shared = self.shared.clone();
         shared.running.store(true, Ordering::SeqCst);
-        *shared.error.lock().unwrap() = None;
+        *shared.error.lock().unwrap_or_else(|e| e.into_inner()) = None;
         shared.downloaded.store(0, Ordering::SeqCst);
         shared.total.store(0, Ordering::SeqCst);
         shared.set_phase(phase::CHECKING);
@@ -263,7 +267,11 @@ impl UpgradeState {
                 Err(e) => {
                     tracing::warn!(error = %e, "web-triggered upgrade failed");
                     shared.set_error(e.to_string());
-                    let target = shared.target_version.lock().unwrap().clone();
+                    let target = shared
+                        .target_version
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .clone();
                     publish_progress(
                         &bus_for_err,
                         phase::ERROR,
@@ -280,7 +288,13 @@ impl UpgradeState {
             // again with the new version. Only terminal non-restart outcomes
             // (done normally only reachable via apply verification, or error)
             // clear the flag — error already set its phase above.
-            if shared.phase.lock().unwrap().as_str() != phase::RESTARTING {
+            if shared
+                .phase
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_str()
+                != phase::RESTARTING
+            {
                 shared.running.store(false, Ordering::SeqCst);
             }
         });
@@ -309,7 +323,10 @@ async fn run_staged_upgrade(
         Some(v) => v.trim_start_matches('v').to_string(),
         None => common::github_latest_version(&client).await?,
     };
-    *shared.target_version.lock().unwrap() = Some(target.clone());
+    *shared
+        .target_version
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = Some(target.clone());
     publish_progress(
         &event_bus,
         phase::CHECKING,

@@ -307,7 +307,13 @@ impl ExtensionState {
             let record_config = record.config.clone();
 
             handles.push(tokio::spawn(async move {
-                let _permit = permit.acquire().await.unwrap();
+                let Ok(_permit) = permit.acquire().await else {
+                    tracing::warn!(
+                        extension_id = %record_id,
+                        "Extension load semaphore closed; skipping"
+                    );
+                    return Err(());
+                };
                 tracing::info!("Loading extension: {}", record_id);
 
                 let load_result = runtime.load(&file_path).await;

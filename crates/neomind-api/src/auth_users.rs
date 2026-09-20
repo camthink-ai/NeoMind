@@ -226,7 +226,7 @@ impl SlidingWindowCounter {
     /// Expired events are dropped, so the lockout ends exactly when the
     /// oldest counted event leaves the window.
     fn check(&self, key: &str) -> Result<(), u64> {
-        let mut map = self.events.lock().unwrap();
+        let mut map = self.events.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(times) = map.get_mut(key) {
             let now = std::time::Instant::now();
             times.retain(|t| now.duration_since(*t) < self.window);
@@ -240,7 +240,7 @@ impl SlidingWindowCounter {
 
     /// Count one event against `key`.
     fn record(&self, key: &str) {
-        let mut map = self.events.lock().unwrap();
+        let mut map = self.events.lock().unwrap_or_else(|e| e.into_inner());
         if map.len() > SWEEP_THRESHOLD {
             let now = std::time::Instant::now();
             map.retain(|_, times| {
@@ -256,7 +256,10 @@ impl SlidingWindowCounter {
     /// Drop all counted events for `key` (used when a login succeeds — an
     /// honest user who mistypes a few times then gets it right starts clean).
     fn clear(&self, key: &str) {
-        self.events.lock().unwrap().remove(key);
+        self.events
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(key);
     }
 }
 
@@ -710,7 +713,7 @@ impl AuthUserState {
     /// rows. Called on user deletion and password change.
     fn revoke_user_sessions(&self, username: &str) {
         let keys: Vec<String> = {
-            let sessions = self.sessions.read().unwrap();
+            let sessions = self.sessions.read().unwrap_or_else(|e| e.into_inner());
             sessions
                 .iter()
                 .filter(|(_, info)| info.username == username)
@@ -720,7 +723,7 @@ impl AuthUserState {
         if !keys.is_empty() {
             self.sessions
                 .write()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .retain(|_, info| info.username != username);
         }
         let persisted = Self::delete_user_sessions_from_db(self.db_path, username);
@@ -1011,7 +1014,7 @@ impl AuthUserState {
         if !self
             .sessions
             .read()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .contains_key(&token_key(token))
         {
             return Err(AuthError::SessionRevoked);
@@ -1095,7 +1098,10 @@ impl AuthUserState {
             };
             let key = token_key(&token);
             Self::save_session_to_db(self.db_path, &key, &session_info);
-            self.sessions.write().unwrap().insert(key, session_info);
+            self.sessions
+                .write()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(key, session_info);
         }
 
         info!(
@@ -1260,7 +1266,7 @@ impl AuthUserState {
             created_at: chrono::Utc::now().timestamp(),
             expires_at: chrono::Utc::now().timestamp() + self.session_duration,
         };
-        let mut sessions = self.sessions.write().unwrap();
+        let mut sessions = self.sessions.write().unwrap_or_else(|e| e.into_inner());
         let key = token_key(&token);
         Self::save_session_to_db(self.db_path, &key, &session_info);
         sessions.insert(key, session_info);
@@ -1291,7 +1297,10 @@ impl AuthUserState {
     pub async fn logout(&self, token: &str) -> Result<(), AuthError> {
         let key = token_key(token);
         Self::delete_session_from_db(self.db_path, &key);
-        self.sessions.write().unwrap().remove(&key);
+        self.sessions
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&key);
         Ok(())
     }
 

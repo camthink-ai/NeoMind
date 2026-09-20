@@ -802,7 +802,7 @@ pub async fn status_handler(
     if downloading {
         let downloaded = DL_DOWNLOADED.load(Ordering::SeqCst);
         let total = DL_TOTAL.load(Ordering::SeqCst);
-        let dl_id = dl_model().lock().unwrap().clone();
+        let dl_id = dl_model().lock().unwrap_or_else(|e| e.into_inner()).clone();
         return ok(json!({
             "installed": installed,
             "model_id": dl_id,
@@ -1061,7 +1061,7 @@ pub async fn download_handler(
     DL_ACTIVE.store(true, Ordering::SeqCst);
     DL_DOWNLOADED.store(0, Ordering::SeqCst);
     DL_TOTAL.store(0, Ordering::SeqCst);
-    *dl_model().lock().unwrap() = def.id.clone();
+    *dl_model().lock().unwrap_or_else(|e| e.into_inner()) = def.id.clone();
 
     let state_for_task = state.clone();
     let cfg_for_task = cfg.clone();

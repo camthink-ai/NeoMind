@@ -414,7 +414,10 @@ pub async fn add_credential_handler(
         if let Ok(store) = config::open_settings_store() {
             match crate::server::types::CredentialCache::load_from_store(&store) {
                 Ok(cache) => {
-                    *state.credential_cache.write().unwrap() = cache;
+                    *state
+                        .credential_cache
+                        .write()
+                        .unwrap_or_else(|e| e.into_inner()) = cache;
                 }
                 Err(e) => tracing::error!("Failed to refresh credential cache: {}", e),
             }
@@ -482,7 +485,10 @@ pub async fn delete_credential_handler(
         if let Ok(store) = config::open_settings_store() {
             match crate::server::types::CredentialCache::load_from_store(&store) {
                 Ok(cache) => {
-                    *state.credential_cache.write().unwrap() = cache;
+                    *state
+                        .credential_cache
+                        .write()
+                        .unwrap_or_else(|e| e.into_inner()) = cache;
                 }
                 Err(e) => tracing::error!("Failed to refresh credential cache: {}", e),
             }

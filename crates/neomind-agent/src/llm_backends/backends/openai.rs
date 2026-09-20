@@ -862,21 +862,26 @@ impl CloudRuntime {
     /// `<tool_call><function=name><parameter=k>v</parameter></function></tool_call>`.
     /// This recovers those calls so the agent can still act.
     fn parse_xml_tool_calls(content: &str) -> Vec<serde_json::Value> {
-        use regex::Regex;
-        let block_re = Regex::new(r"(?s)<tool_call>\s*(.*?)\s*</tool_call>").unwrap();
-        let func_re = Regex::new(r"(?s)<function=([\w-]+)>(.*?)</function>").unwrap();
-        let param_re = Regex::new(r"(?s)<parameter=([\w-]+)>(.*?)</parameter>").unwrap();
+        static BLOCK_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+            regex::Regex::new(r"(?s)<tool_call>\s*(.*?)\s*</tool_call>").unwrap()
+        });
+        static FUNC_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+            regex::Regex::new(r"(?s)<function=([\w-]+)>(.*?)</function>").unwrap()
+        });
+        static PARAM_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+            regex::Regex::new(r"(?s)<parameter=([\w-]+)>(.*?)</parameter>").unwrap()
+        });
         let mut out = Vec::new();
-        for b in block_re.captures_iter(content) {
+        for b in BLOCK_RE.captures_iter(content) {
             let inner = b.get(1).map(|m| m.as_str()).unwrap_or("");
-            if let Some(fc) = func_re.captures(inner) {
+            if let Some(fc) = FUNC_RE.captures(inner) {
                 let name = fc
                     .get(1)
                     .map(|m| m.as_str().to_string())
                     .unwrap_or_default();
                 let body = fc.get(2).map(|m| m.as_str()).unwrap_or("");
                 let mut args = serde_json::Map::new();
-                for pc in param_re.captures_iter(body) {
+                for pc in PARAM_RE.captures_iter(body) {
                     let k = pc
                         .get(1)
                         .map(|m| m.as_str().to_string())

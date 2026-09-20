@@ -315,7 +315,11 @@ impl ServerState {
     /// Get embedded broker.
     #[cfg(feature = "embedded-broker")]
     pub fn embedded_broker(&self) -> Option<Arc<EmbeddedBroker>> {
-        self.devices.embedded_broker.read().unwrap().clone()
+        self.devices
+            .embedded_broker
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Restart the embedded MQTT broker and internal adapter with updated config.
@@ -337,7 +341,12 @@ impl ServerState {
 
         // 1. Stop existing broker — rmqtt abort is instant, port released immediately
         let old_broker_config = {
-            let old_broker = self.devices.embedded_broker.read().unwrap().clone();
+            let old_broker = self
+                .devices
+                .embedded_broker
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
             if let Some(ref broker) = old_broker {
                 if broker.is_running() {
                     tracing::info!("Stopping embedded broker for config change...");
@@ -348,7 +357,11 @@ impl ServerState {
                 }
             }
             let config = old_broker.as_ref().map(|b| b.config());
-            *self.devices.embedded_broker.write().unwrap() = None;
+            *self
+                .devices
+                .embedded_broker
+                .write()
+                .unwrap_or_else(|e| e.into_inner()) = None;
             config
         };
 
@@ -368,7 +381,10 @@ impl ServerState {
         if let Ok(store) = crate::config::open_settings_store() {
             match CredentialCache::load_from_store(&store) {
                 Ok(cache) => {
-                    *self.credential_cache.write().unwrap() = cache;
+                    *self
+                        .credential_cache
+                        .write()
+                        .unwrap_or_else(|e| e.into_inner()) = cache;
                 }
                 Err(e) => {
                     tracing::error!("Failed to refresh credential cache during restart: {}", e)
@@ -379,7 +395,7 @@ impl ServerState {
         let cache = self.credential_cache.clone();
         let credential_validator: CredentialValidator =
             std::sync::Arc::new(move |username: &str, password: &str| {
-                let cache = cache.read().unwrap();
+                let cache = cache.read().unwrap_or_else(|e| e.into_inner());
 
                 if username == "__neomind_internal__" {
                     if let Some(ref system_pass) = cache.system_password {
@@ -418,7 +434,7 @@ impl ServerState {
                 let rollback_cache = self.credential_cache.clone();
                 let rollback_validator: CredentialValidator =
                     std::sync::Arc::new(move |username: &str, password: &str| {
-                        let cache = rollback_cache.read().unwrap();
+                        let cache = rollback_cache.read().unwrap_or_else(|e| e.into_inner());
                         if username == "__neomind_internal__" {
                             return cache.system_password.as_deref() == Some(password);
                         }
@@ -435,8 +451,11 @@ impl ServerState {
                     rollback_broker.set_event_bus(bus.clone());
                 }
                 if let Ok(()) = rollback_broker.start().await {
-                    *self.devices.embedded_broker.write().unwrap() =
-                        Some(Arc::new(rollback_broker));
+                    *self
+                        .devices
+                        .embedded_broker
+                        .write()
+                        .unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(rollback_broker));
                     tracing::info!("Rollback successful: broker restarted with previous config");
 
                     // Also rebuild the internal-mqtt adapter with old config
@@ -511,7 +530,11 @@ impl ServerState {
             broker_config.tls_enabled
         );
 
-        *self.devices.embedded_broker.write().unwrap() = Some(Arc::new(broker));
+        *self
+            .devices
+            .embedded_broker
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(broker));
 
         // 4. Create new internal-mqtt adapter with updated config
         let (adapter_username, adapter_password) = {
@@ -1702,7 +1725,10 @@ impl ServerState {
         if let Ok(store) = open_settings_store() {
             match CredentialCache::load_from_store(&store) {
                 Ok(cache) => {
-                    *self.credential_cache.write().unwrap() = cache;
+                    *self
+                        .credential_cache
+                        .write()
+                        .unwrap_or_else(|e| e.into_inner()) = cache;
                 }
                 Err(e) => tracing::error!("Failed to load credential cache: {}", e),
             }
@@ -1713,7 +1739,7 @@ impl ServerState {
         let cache = self.credential_cache.clone();
         let credential_validator: CredentialValidator =
             Arc::new(move |username: &str, password: &str| {
-                let cache = cache.read().unwrap();
+                let cache = cache.read().unwrap_or_else(|e| e.into_inner());
 
                 // System credential check (plaintext comparison)
                 if username == "__neomind_internal__" {
@@ -1762,7 +1788,11 @@ impl ServerState {
             }
         }
 
-        *self.devices.embedded_broker.write().unwrap() = Some(Arc::new(broker));
+        *self
+            .devices
+            .embedded_broker
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(broker));
     }
 
     /// Initialize MQTT adapter for device communication.
@@ -1787,7 +1817,10 @@ impl ServerState {
         let (adapter_username, adapter_password) = {
             #[cfg(feature = "embedded-broker")]
             {
-                let cache = self.credential_cache.read().unwrap();
+                let cache = self
+                    .credential_cache
+                    .read()
+                    .unwrap_or_else(|e| e.into_inner());
                 if let Some(ref pass) = cache.system_password {
                     tracing::debug!("Internal MQTT adapter: using system credential from cache");
                     (Some("__neomind_internal__".to_string()), Some(pass.clone()))

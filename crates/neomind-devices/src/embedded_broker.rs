@@ -492,7 +492,7 @@ impl EmbeddedBroker {
     /// Must be called before `start()`. Has no effect on an already-running
     /// broker — call `stop()` then `start()` again to pick up a new bus.
     pub fn set_event_bus(&self, bus: Arc<EventBus>) {
-        *self.event_bus.lock().unwrap() = Some(bus);
+        *self.event_bus.lock().unwrap_or_else(|e| e.into_inner()) = Some(bus);
     }
 
     /// Provide a topic-to-device-id resolver. Must be called before `start()`.
@@ -505,7 +505,10 @@ impl EmbeddedBroker {
     /// device_id (the raw client_id), and the frontend can't correlate them
     /// with registered devices.
     pub fn set_topic_resolver(&self, resolver: TopicResolverFn) {
-        *self.topic_resolver.lock().unwrap() = Some(resolver);
+        *self
+            .topic_resolver
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(resolver);
     }
 
     /// Check if the broker is running
@@ -515,7 +518,10 @@ impl EmbeddedBroker {
 
     /// Get the broker configuration
     pub fn config(&self) -> EmbeddedBrokerConfig {
-        self.config.lock().unwrap().clone()
+        self.config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Update the auth_enabled flag dynamically.
@@ -542,7 +548,12 @@ impl EmbeddedBroker {
 
         tracing::info!("Stopping embedded MQTT broker...");
 
-        if let Some(handle) = self.abort_handle.lock().unwrap().take() {
+        if let Some(handle) = self
+            .abort_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
             handle.abort();
         }
 
@@ -561,7 +572,11 @@ impl EmbeddedBroker {
             return Ok(());
         }
 
-        let config = self.config.lock().unwrap().clone();
+        let config = self
+            .config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
 
         // If port is in use, wait briefly for it to be released
         if check_port_sync(config.port) {
@@ -605,7 +620,11 @@ impl EmbeddedBroker {
         // EventBus was provided. This is what makes "device connected to MQTT
         // but hasn't published yet" show up correctly in the UI instead of
         // appearing as "Never Connected".
-        let presence_bus = self.event_bus.lock().unwrap().clone();
+        let presence_bus = self
+            .event_bus
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         if let Some(bus) = presence_bus {
             // Shared cache: MQTT client_id → NeoMind device_id, learned from
             // observed publishes. All three hook instances (connect/disconnect/
@@ -613,10 +632,17 @@ impl EmbeddedBroker {
             // the correct device_id for all future transport events.
             let client_id_cache: Arc<RwLock<HashMap<String, String>>> =
                 Arc::new(RwLock::new(HashMap::new()));
-            let topic_resolver = self.topic_resolver.lock().unwrap().clone();
+            let topic_resolver = self
+                .topic_resolver
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
 
-            let presence_handler =
-                DevicePresenceHook::new(bus, client_id_cache.clone(), topic_resolver.clone());
+            let presence_handler = DevicePresenceHook::new(
+                bus.clone(),
+                client_id_cache.clone(),
+                topic_resolver.clone(),
+            );
             reg.add(
                 rmqtt::hook::Type::ClientConnected,
                 Box::new(presence_handler),
@@ -627,11 +653,7 @@ impl EmbeddedBroker {
             // disconnect hook too. We need a second boxed instance because
             // `reg.add` takes ownership of the Box.
             let presence_handler_disc = DevicePresenceHook::new(
-                self.event_bus
-                    .lock()
-                    .unwrap()
-                    .clone()
-                    .expect("bus re-acquired"),
+                bus.clone(),
                 client_id_cache.clone(),
                 topic_resolver.clone(),
             );
@@ -646,11 +668,7 @@ impl EmbeddedBroker {
             // hook is a no-op (resolver is None).
             if topic_resolver.is_some() {
                 let presence_handler_pub = DevicePresenceHook::new(
-                    self.event_bus
-                        .lock()
-                        .unwrap()
-                        .clone()
-                        .expect("bus re-acquired"),
+                    bus.clone(),
                     client_id_cache.clone(),
                     topic_resolver.clone(),
                 );
@@ -739,7 +757,7 @@ impl EmbeddedBroker {
             }
         });
 
-        *self.abort_handle.lock().unwrap() = Some(handle.abort_handle());
+        *self.abort_handle.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle.abort_handle());
 
         // Wait for the broker to become ready
         let port = config.port;
