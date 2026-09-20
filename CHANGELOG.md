@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [1.0.0] - 2026-09-20 — the architecture release: seven monoliths split, first-load bundle halved, cancellation tested, 96 any-typed
+
+### Upgrade notes (0.9.24 → 1.0.0)
+- **WASM extension memory cap (the only behavior change)**: each extension instance gets a default 256 MB linear-memory hard cap (`NEOMIND_WASM_MEMORY_MB` to override). Existing extensions sit far below it; raise via the env var if ever needed.
+- **Session retention default unchanged**: `session_retention_hours` defaults to keep-forever and only takes effect once explicitly configured in Settings.
+- **Data-dir guard**: if startup detects stores split between `NEOMIND_DATA_DIR` and a legacy cwd `data/`, a DATA-DIR SPLIT error banner lists the affected stores; containers/tests should set `NEOMIND_STRICT_DATA_DIR` permanently.
+- **No API changes, no data migration**: route registration untouched, DTO contracts unchanged — upgrade is a binary swap.
 
 ### chore(web): any-debt second batch — 43 more sites typed (ratchet 519 → 478)
 - automation.tsx (15): ResourceDevice view for the rule/transform-builder device shape (the resource APIs return a slimmer contract than canonical Device). VisualDashboard (14): dsKeyOf hasher, GenericComponent views, react-grid LayoutItem, ComponentSizeConstraints. DeviceTypeDialogs (14): JSON-import view types, ParameterDefinition updates, Select→ParameterDataType casts, transform outputs mapped to the state shape. any total 491 → ~395 across eight files; the seam-typing method holds at scale.
