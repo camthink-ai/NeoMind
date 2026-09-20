@@ -1,3 +1,16 @@
+
+/** Devices as returned by the automation resource APIs — the slim rule/
+ *  transform-builder shape (id/name/type/metrics/commands), not the full
+ *  canonical Device record. */
+type ResourceDevice = {
+  id: string
+  name: string
+  device_type: string
+  metrics?: Array<{ name: string; data_type: string; unit?: string | null }>
+  commands?: Array<{ name: string; description: string }>
+  online?: boolean
+}
+
 /**
  * NeoMind Automation Page
  *
@@ -8,6 +21,7 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo } from "react"
 import { useDataVersion } from "@/hooks/useDataVersion"
+import type { AlertChannel, Device, DeviceType } from '@/types'
 import { useTranslation } from "react-i18next"
 import { useNavigate, useLocation } from "react-router-dom"
 import { PageLayout } from "@/components/layout/PageLayout"
@@ -101,9 +115,9 @@ export function AutomationPage() {
   const [transformsPage, setTransformsPage] = useState(1)
 
   // Resources for dialogs (lazy-loaded)
-  const [devices, setDevices] = useState<any[]>([])
-  const [deviceTypes, setDeviceTypes] = useState<any[]>([])
-  const [ruleDevices, setRuleDevices] = useState<any[]>([])  // Devices with metrics for rules
+  const [devices, setDevices] = useState<ResourceDevice[]>([])
+  const [deviceTypes, setDeviceTypes] = useState<DeviceType[]>([])
+  const [ruleDevices, setRuleDevices] = useState<ResourceDevice[]>([])  // Devices with metrics for rules
   const [extensions, setExtensions] = useState<Extension[]>([])
   const [extensionDataSources, setExtensionDataSources] = useState<ExtensionDataSourceInfo[]>([])
   const [transformDataSources, setTransformDataSources] = useState<TransformDataSourceInfo[]>([])
@@ -144,15 +158,15 @@ export function AutomationPage() {
     setResourcesLoading(true)
     try {
       const [devicesData, typesResult, resourcesResult, extResult, channelsResult, agentsResult] = await Promise.all([
-        api.getDevices().catch((): any => ({ devices: [] })),
-        api.getDeviceTypes().catch((): any => ({ device_types: [] })),
-        api.getRuleResources().catch((): any => ({ devices: [] })),
+        api.getDevices().catch(() => ({ devices: [] as ResourceDevice[] })),
+        api.getDeviceTypes().catch(() => ({ device_types: [] as DeviceType[] })),
+        api.getRuleResources().catch(() => ({ devices: [] as ResourceDevice[] })),
         Promise.all([
           api.listExtensions().catch((): Extension[] => []),
           api.listAllDataSources().catch((): (ExtensionDataSourceInfo | TransformDataSourceInfo)[] => []),
         ]),
-        api.listMessageChannels().catch((): any => ({ channels: [] })),
-        api.listAgentSummaries().catch((): any => ({ agents: [] })),
+        api.listMessageChannels().catch(() => ({ channels: [] as AlertChannel[] })),
+        api.listAgentSummaries().catch(() => ({ agents: [] as Array<{ id: string; name: string }> })),
       ])
 
       setDevices(devicesData.devices || [])
@@ -164,8 +178,8 @@ export function AutomationPage() {
       setExtensionDataSources(dsData.filter((source): source is ExtensionDataSourceInfo => 'extension_id' in source))
       setTransformDataSources(dsData.filter((source): source is TransformDataSourceInfo => 'transform_id' in source))
 
-      setAgents((agentsResult.agents || []).map((a: any) => ({ id: a.id, name: a.name })))
-      setMessageChannels((channelsResult.channels || []).map((ch: any) => ({
+      setAgents(((agentsResult.agents) || []).map((a) => ({ id: a.id, name: a.name })))
+      setMessageChannels(((channelsResult.channels) || []).map((ch) => ({
         name: ch.name,
         type: ch.channel_type,
         enabled: ch.enabled
@@ -294,11 +308,14 @@ export function AutomationPage() {
 
   const handleExecuteRule = async (rule: Rule) => {
     try {
-      const result = await api.testRule(rule.id, true) // execute=true to actually run actions
-      if ((result as any).executed) {
+      const result = await api.testRule(rule.id, true) as unknown as {
+        executed?: boolean
+        execution_result?: { actions_executed?: unknown[] }
+      }
+      if (result.executed) {
         toast({
           title: tCommon('success'),
-          description: tAuto('executeSuccess') + ' - ' + ((result as any).execution_result?.actions_executed?.length || 0) + ' actions executed',
+          description: tAuto('executeSuccess') + ' - ' + (result.execution_result?.actions_executed?.length || 0) + ' actions executed',
         })
       } else {
         toast({
@@ -391,12 +408,12 @@ export function AutomationPage() {
   }
 
   // Save handlers
-  const handleSaveRule = async (rule: any) => {
+  const handleSaveRule = async (rule: Partial<Rule>) => {
     try {
       if (rule.id) {
-        await api.updateRule(rule.id, rule)
+        await api.updateRule(rule.id, rule as Omit<Rule, 'id' | 'updated_at' | 'created_at'>)
       } else {
-        await api.createRule(rule)
+        await api.createRule(rule as Omit<Rule, 'id' | 'updated_at' | 'created_at'>)
       }
       setShowRuleDialog(false)
       setEditingRule(undefined)
@@ -482,11 +499,11 @@ export function AutomationPage() {
 
   const handleExportTransforms = async () => {
     try {
-      const data = await api.exportAutomations()
+      const data = await api.exportAutomations() as { automations?: Array<{ type?: string }>; exported_at?: string }
       // Filter only transform-type automations
       const transformData = {
-        automations: (data.automations || []).filter((a: any) => a.type === 'transform'),
-        count: ((data.automations || []).filter((a: any) => a.type === 'transform')).length,
+        automations: (data.automations || []).filter((a) => a.type === 'transform'),
+        count: ((data.automations || []).filter((a) => a.type === 'transform')).length,
         exported_at: data.exported_at,
       }
       const blob = new Blob([JSON.stringify(transformData, null, 2)], { type: 'application/json' })

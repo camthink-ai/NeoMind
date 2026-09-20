@@ -52,6 +52,7 @@ import {
 } from '@/components/dashboard/config'
 
 // Dashboard components
+import type { LayoutItem as Layout } from 'react-grid-layout'
 import { DashboardGrid } from '@/components/dashboard/DashboardGrid'
 import { LayerEditorDialog } from '@/components/dashboard/generic/LayerEditorDialog'
 import { MapEditorDialog, type MapBinding } from '@/components/dashboard/generic/MapEditorDialog'
@@ -60,7 +61,7 @@ import type { LayerBinding } from '@/components/dashboard/generic/CustomLayer'
 import { DashboardListSidebar } from '@/components/dashboard/DashboardListSidebar'
 import { ShareManagerDialog } from '@/components/dashboard/ShareManagerDialog'
 import { MobileEditBar } from '@/components/dashboard/MobileEditBar'
-import type { DashboardComponent, DataSource, GenericComponent } from '@/types/dashboard'
+import type { ComponentSizeConstraints, DashboardComponent, DataSource, DataSourceOrList, GenericComponent, GenericComponentType } from '@/types/dashboard'
 import type { Device } from '@/types'
 import { COMPONENT_SIZE_CONSTRAINTS } from '@/types/dashboard'
 import { dynamicRegistry } from '@/components/dashboard/registry/DynamicRegistry'
@@ -412,7 +413,11 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
       const gc = c as GenericComponent
       // Hash dataSource identity (use _saveTs stamp if present for forced refresh)
       const ds = gc.dataSource
-      const dsKey = ds ? (Array.isArray(ds) ? ds.map((d: any) => `${d.type}:${d.sourceId ?? d.extensionId ?? ''}:${d.metricId ?? ''}:${d._saveTs ?? ''}`).join(',') : `${(ds as any).type}:${(ds as any).sourceId ?? (ds as any).extensionId ?? ''}:${(ds as any).metricId ?? ''}:${(ds as any)._saveTs ?? ''}`) : ''
+      const dsKeyOf = (d: DataSource) =>
+        `${d.type}:${d.sourceId ?? d.extensionId ?? ''}:${d.metricId ?? ''}:${(d as unknown as Record<string, unknown>)._saveTs ?? ''}`
+      const dsKey = ds
+        ? (Array.isArray(ds) ? ds.map(dsKeyOf).join(',') : dsKeyOf(ds))
+        : ''
       // Hash config — use full JSON content to detect ALL value changes,
       // not just structural changes (length/keys).
       const configHash = gc.config ? JSON.stringify(gc.config) : ''
@@ -610,12 +615,12 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
     if (!constraints) {
       const extensionDto = dynamicRegistry.getMeta(componentType)
       if (extensionDto?.size_constraints) {
-        constraints = extensionDto.size_constraints as any
+        constraints = extensionDto.size_constraints as unknown as ComponentSizeConstraints
       }
     }
 
     // Build appropriate default config based on component type
-    let defaultConfig: any = {}
+    let defaultConfig: Record<string, unknown> = {}
 
     // For extension components, use their default config from DTO
     const extensionDto = dynamicRegistry.getMeta(componentType)
@@ -624,7 +629,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
     }
 
     // For extension components, set up dataSource with extensionId
-    let dataSource: any = undefined
+    let dataSource: DataSource | undefined = undefined
     if (extensionDto?.extension_id) {
       dataSource = {
         type: 'extension' as const,
@@ -779,7 +784,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
     }
 
     const newComponent: Omit<DashboardComponent, 'id'> = {
-      type: componentType as any,
+      type: componentType as GenericComponentType,
       position: {
         x: 0,
         y: maxY,
@@ -801,7 +806,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
 
   // Handle layout change - batch update all changed positions in a single store update
   // to prevent infinite re-render loops (store update → grid recalc → onLayoutChange → ...)
-  const handleLayoutChange = useCallback((layout: readonly any[]) => {
+  const handleLayoutChange = useCallback((layout: readonly Layout[]) => {
     const components = currentDashboard?.components ?? []
     const changed: Array<{ id: string; position: { x: number; y: number; w: number; h: number } }> = []
 
@@ -836,14 +841,14 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
   const gridComponents = useMemo(() => {
     return (currentDashboard?.components ?? []).map((component) => {
       // Get dataSource from component (it should be a separate property, not in config)
-      const _componentDataSource = (component as any).dataSource
+      const _componentDataSource = (component as GenericComponent).dataSource
 
       // Create callbacks for this component to persist configuration changes
-      const handleDataSourceChange = (newDataSource: any) => {
-        updateComponent(component.id, { dataSource: newDataSource as DataSource }, false)
+      const handleDataSourceChange = (newDataSource: Record<string, unknown>) => {
+        updateComponent(component.id, { dataSource: newDataSource as unknown as DataSource }, false)
       }
 
-      const handleConfigChange = (newConfig: Record<string, any>) => {
+      const handleConfigChange = (newConfig: Record<string, unknown>) => {
         updateComponent(component.id, { config: newConfig }, false)
       }
 

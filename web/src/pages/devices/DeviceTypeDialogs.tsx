@@ -50,7 +50,7 @@ import { textMini } from "@/design-system/tokens/typography"
 import { api, fetchAPI } from "@/lib/api"
 import { useIsMobile } from "@/hooks/useMobile"
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible"
-import type { DeviceType, MetricDefinition, CommandDefinition } from "@/types"
+import type { DeviceType, MetricDefinition, CommandDefinition, ParameterDefinition, TransformAutomation } from "@/types"
 import {
   FullScreenDialog,
   FullScreenDialogHeader,
@@ -636,7 +636,7 @@ function DataDefinitionStep({
       const samples = Array.isArray(parsed) ? parsed : [parsed]
 
       // Collect all unique keys and their values using flattenJson for nested support
-      const valueMap = new Map<string, Set<any>>()
+      const valueMap = new Map<string, Set<unknown>>()
       for (const sample of samples) {
         if (typeof sample === 'object' && sample !== null) {
           // Use flattenJson to get all nested paths
@@ -976,11 +976,11 @@ function CommandsStep({
       const commandsToAdd = Array.isArray(imported) ? imported : [imported]
 
       // Convert to CommandDefinition format
-      const newCommands = commandsToAdd.map((cmd: any) => ({
-        name: cmd.name || `cmd_${Date.now()}`,
-        display_name: cmd.display_name || cmd.name || t('devices:commandsStep.importedCommand', 'Imported Command'),
-        payload_template: cmd.payload_template || cmd.payload || JSON.stringify(cmd),
-        parameters: cmd.parameters || [],
+      const newCommands = (commandsToAdd as Array<Record<string, unknown>>).map((cmd) => ({
+        name: (cmd.name as string) || `cmd_${Date.now()}`,
+        display_name: (cmd.display_name as string) || (cmd.name as string) || t('devices:commandsStep.importedCommand', 'Imported Command'),
+        payload_template: (cmd.payload_template as string) || (cmd.payload as string) || JSON.stringify(cmd),
+        parameters: (cmd.parameters as ParameterDefinition[]) || [],
       }))
 
       onChange({
@@ -1014,11 +1014,11 @@ function CommandsStep({
         const imported = JSON.parse(event.target?.result as string)
         const commandsToAdd = Array.isArray(imported) ? imported : [imported]
 
-        const newCommands = commandsToAdd.map((cmd: any) => ({
-          name: cmd.name || `cmd_${Date.now()}`,
-          display_name: cmd.display_name || cmd.name || t('devices:commandsStep.importedCommand', 'Imported Command'),
-          payload_template: cmd.payload_template || cmd.payload || JSON.stringify(cmd),
-          parameters: cmd.parameters || [],
+        const newCommands = (commandsToAdd as Array<Record<string, unknown>>).map((cmd) => ({
+          name: (cmd.name as string) || `cmd_${Date.now()}`,
+          display_name: (cmd.display_name as string) || (cmd.name as string) || t('devices:commandsStep.importedCommand', 'Imported Command'),
+          payload_template: (cmd.payload_template as string) || (cmd.payload as string) || JSON.stringify(cmd),
+          parameters: (cmd.parameters as ParameterDefinition[]) || [],
         }))
 
         onChange({
@@ -1179,7 +1179,7 @@ function MetricEditorCompact({
               <Label className="text-xs text-muted-foreground">{t('devices:metricEditor.dataType')}</Label>
               <Select
                 value={metric.data_type}
-                onValueChange={(value) => onChange({ ...metric, data_type: value as any })}
+                onValueChange={(value) => onChange({ ...metric, data_type: value as MetricDefinition['data_type'] })}
               >
                 <SelectTrigger className="h-9 text-sm">
                   <SelectValue />
@@ -1305,7 +1305,7 @@ function CommandEditorCompact({
   }
 
   // Update a parameter
-  const updateParameter = (index: number, param: any) => {
+  const updateParameter = (index: number, param: Partial<ParameterDefinition>) => {
     const params = command.parameters || []
     const newParams = [...params]
     newParams[index] = { ...newParams[index], ...param }
@@ -1373,7 +1373,7 @@ function CommandEditorCompact({
   const formatDataType = (dt: string | Record<string, unknown>): string => {
     if (typeof dt === 'string') return dt
     if (typeof dt === 'object' && dt !== null) {
-      if ('enum' in dt) return `enum: ${JSON.stringify((dt as any).enum)}`
+      if ('enum' in dt) return `enum: ${JSON.stringify((dt as { enum: unknown }).enum)}`
       return JSON.stringify(dt)
     }
     return String(dt)
@@ -1523,8 +1523,8 @@ function CommandEditorCompact({
                       {idx < arr.length - 1 && <span className="text-muted-foreground">,</span>}
                       {item.type === 'param' && (
                         <div className="ml-4 text-xs text-muted-foreground">
-                          {(item as any).param?.display_name || (item as any).param?.name}
-                          {(item as any).param?.data_type !== 'string' && ` (${formatDataType((item as any).param?.data_type || 'string')})`}
+                          {(item as { param?: ParameterDefinition }).param?.display_name || (item as { param?: ParameterDefinition }).param?.name}
+                          {(item as { param?: ParameterDefinition }).param?.data_type !== 'string' && ` (${formatDataType((item as { param?: ParameterDefinition }).param?.data_type || 'string')})`}
                         </div>
                       )}
                     </div>
@@ -1612,7 +1612,7 @@ function CommandEditorCompact({
                         <td className="px-2 py-1">
                           <Select
                             value={typeof param.data_type === 'string' ? param.data_type : 'string'}
-                            onValueChange={(value) => updateParameter(pIdx, { data_type: value })}
+                            onValueChange={(value) => updateParameter(pIdx, { data_type: value as ParameterDefinition['data_type'] })}
                           >
                             <SelectTrigger className="h-7 text-xs px-2">
                               <SelectValue />
@@ -1790,11 +1790,11 @@ export function ViewDeviceTypeDialog({ open, onOpenChange, deviceType }: ViewDev
       setLoadingVirtual(true)
       api.listTransforms()
         .then(data => {
-          const transforms: any[] = data.transforms || []
+          const transforms: TransformAutomation[] = data.transforms || []
 
           // Filter transforms that apply to this device type
           const matching = transforms
-            .filter((t: any) => {
+            .filter((t) => {
               if (!t.enabled) return false
 
               // Handle scope - might be string or already parsed object
@@ -1813,12 +1813,14 @@ export function ViewDeviceTypeDialog({ open, onOpenChange, deviceType }: ViewDev
               }
               return false
             })
-            .map((t: any) => {
+            .map((t) => {
               // Parse js_code to extract output metrics
               const prefix = t.output_prefix || 'transform'
-              const outputs = parseTransformOutputs(t.js_code, prefix)
-              return outputs.map((out: any) => ({
-                ...out,
+              const outputs = parseTransformOutputs(t.js_code || '', prefix)
+              return outputs.map((out) => ({
+                name: out.name ?? '',
+                display_name: out.display_name ?? out.name ?? '',
+                data_type: 'string',
                 transform_id: t.id,
                 transform_name: t.name,
               }))
