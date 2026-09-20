@@ -168,38 +168,3 @@ async fn toolregistry_no_token_is_backward_compatible() {
 // =============================================================================
 // Ignored end-to-end test (requires real scheduler + LLM + storage setup)
 // =============================================================================
-
-/// Verifies that `scheduler.stop()` aborts a long-running agent execution.
-///
-/// Marked `#[ignore]` because it requires:
-///   - A running storage backend (redb files in data/)
-///   - A configured LLM backend
-///   - A test agent that uses ShellTool to run `sleep 60`
-///
-/// Run with: `cargo test -p neomind-agent --test cancellation_test -- --ignored`
-///
-/// Expected behavior:
-///   1. Spawn agent that calls `sleep 60`.
-///   2. After 1s, call `scheduler.stop()`.
-///   3. Assert `scheduler.stop()` returns within ~10s (not 60s).
-///   4. Assert no `sleep 60` processes remain (subprocess killed by PidKillGuard).
-#[tokio::test]
-#[ignore = "harness recon complete (see TODO); implement next — run with --ignored"]
-async fn scheduler_stop_aborts_long_running_execution() {
-    // TODO: implement — the harness is now fully reconnoitered (2026-09-20):
-    //   - AgentScheduler::new(SchedulerConfig) — pure in-memory, no store
-    //   - scheduler.start(Arc<AgentExecutor>) + scheduler.schedule_agent(AiAgent)
-    //   - AgentExecutor::new(AgentExecutorConfig { store, ..all-None }) — only
-    //     `store: Arc<AgentStore>` is required; llm_runtime takes the mock
-    //   - AgentStore::open(tempdir) -> Arc<AgentStore> (neomind-storage)
-    //   - MockLlmRuntime::new(Vec<MockResponse>) (testing_helpers, test-utils
-    //     feature) — script a tool-call response that invokes ShellTool with
-    //     `sleep 60`
-    //   - remaining unknown: AiAgent's required fields (defined around
-    //     ai_agent/mod.rs — the manager sits at the top, the struct further
-    //     down) and MockResponse's tool-call variant shape.
-    // The wiring under test is in place: scheduler.stop() drains
-    // running_task_handles and calls handle.abort() on each. The aborted
-    // future drops PidKillGuard which kills the subprocess via
-    // kill_process_by_pid (killpg on Unix).
-}

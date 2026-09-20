@@ -37,7 +37,7 @@ if [ "$SKIP_RUST" -eq 0 ]; then
 
   if [ "$FAST" -eq 0 ]; then
     GATE "rust: cargo test (workspace)"
-    cargo test --workspace --locked || FAIL "cargo test"
+    cargo test --workspace --locked --features neomind-agent/test-utils || FAIL "cargo test"
   else
     echo "(skipped by --fast)"
   fi

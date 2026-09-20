@@ -165,7 +165,7 @@ jobs:
         # The serve tests run the real binary with NEOMIND_EXIT_AFTER_READY_MS
         # (graceful exit after startup) + a per-test temp data dir, so they
         # need no special environment beyond free ports on a fresh runner.
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --locked --features neomind-agent/test-utils
 
   desktop-checks:
     name: Desktop (web/src-tauri) compile check

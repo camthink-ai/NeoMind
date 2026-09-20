@@ -15,8 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **extension-runner main.rs (3747 → ~400 + 5 modules)**: the changelog-reserved WasmRuntime/main-loop slice — capabilities/push/native/wasm/runner; all 121 runner tests green including the memory-limiter regression.
 - Deliberately not split: AgentEditorFullScreen's remaining 2190 lines (35+ useState continuous form — needs a product-regression session, not a mechanical cut) and server/types.rs (constructor+getter collection, low value).
 
-### ops: deferred-scheduler-test recon
-- The `#[ignore]`d `scheduler_stop_aborts_long_running_execution` TODO now carries the full harness recipe (constructor signatures verified: SchedulerConfig is pure config, AgentExecutorConfig requires only the store, MockLlmRuntime scripts in via llm_runtime) — implementation is a bounded next session, not exploration.
+### test(agent): the deferred scheduler-cancellation harness — implemented
+- `scheduler_stop_aborts_long_running_execution` is real and passing (1s): tempdir AgentStore → free-mode interval agent → AgentExecutor with `MockLlmRuntime::with_function_calling()` scripting a `shell {sleep 60}` tool call → scheduler tick spawns the execution → `scheduler.stop()` returns in well under 10s and `pgrep` confirms the subprocess (process group) is dead. The whole cooperative-cancellation chain — tick path → tool loop → PidKillGuard killpg — is now under regression coverage.
+- Enablers: `MockLlmRuntime` gained a `with_function_calling()` toggle (the default `capabilities().function_calling=false` kept routing executions to the legacy text-analysis path — invisible without logs); the test injects its own `ToolRegistry` carrying `ShellTool` (executor requires BOTH llm-support and a registry to activate tool mode); and one scripted warm-up response absorbs the analyzer's pre-loop call. The test lives in `scheduler_cancellation_test.rs` with `required-features = ["test-utils"]`, and CI/verify-all now run workspace tests with `--features neomind-agent/test-utils` so it executes in the default gate instead of being ignored.
 
 ### chore: disk headroom
 - The data volume hit 100% mid-batch (verify-all died on `No space left on device`); cleared regenerable caches (~2GB: updater bundles, pnpm store) and the batch then rebuilt from scratch cleanly.

@@ -118,7 +118,8 @@ pub mod mock_llm {
     use futures::Stream;
 
     use neomind_core::llm::backend::{
-        BackendId, FinishReason, LlmError, LlmInput, LlmOutput, LlmRuntime, StreamChunk, TokenUsage,
+        BackendCapabilities, BackendId, FinishReason, LlmError, LlmInput, LlmOutput, LlmRuntime,
+        StreamChunk, TokenUsage,
     };
 
     /// One scripted LLM response. Returned in order, one per `generate` /
@@ -201,6 +202,10 @@ pub mod mock_llm {
     #[derive(Clone)]
     pub struct MockLlmRuntime {
         state: Arc<Mutex<State>>,
+        /// Advertised via `capabilities()` — the default (false) keeps the
+        /// legacy text-only analysis paths under test; tool-loop tests turn
+        /// it on so the executor activates tool mode.
+        function_calling: bool,
     }
 
     struct State {
@@ -229,7 +234,15 @@ pub mod mock_llm {
                     msg_counts: Vec::new(),
                     max_context: 4096,
                 })),
+                function_calling: false,
             }
+        }
+
+        /// Advertise function-calling support so the executor takes the
+        /// tool-calling path (`capabilities().function_calling`).
+        pub fn with_function_calling(mut self) -> Self {
+            self.function_calling = true;
+            self
         }
 
         /// Number of times any generation method was invoked.
@@ -279,6 +292,20 @@ pub mod mock_llm {
 
         fn model_name(&self) -> &str {
             "mock-model"
+        }
+
+        fn capabilities(&self) -> BackendCapabilities {
+            BackendCapabilities {
+                streaming: true,
+                multimodal: false,
+                function_calling: self.function_calling,
+                multiple_models: false,
+                max_context: Some(4096),
+                modalities: vec!["text".to_string()],
+                reasoning: Default::default(),
+                supports_images: false,
+                thinking_display: false,
+            }
         }
 
         async fn generate(&self, input: LlmInput) -> Result<LlmOutput, LlmError> {
