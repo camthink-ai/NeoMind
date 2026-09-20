@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### robustness: lock-poison recovery on runtime paths — one panic can no longer cascade
+- Audited all 83 non-test `unwrap()` sites across the four core server crates. Most were provably safe (guarded Options, const-pattern regexes, cfg(test) constructors); the dangerous class was ~45 std-lock `.unwrap()`s on request/lifecycle paths — any panic while holding one poisons the lock and every later acquisition panics too, permanently taking down auth, the MQTT credential validator, or the upgrade flow on an unattended box. All converted to `unwrap_or_else(|e| e.into_inner())` (auth_users session/throttle maps, embedded-broker swap + credential cache incl. the validator closure, upgrade state, shutdown, broker lifecycle, builtin-llm download lock). Plus: extension-load semaphore acquire de-panicked (graceful skip), `DevicePresenceHook` registration no longer re-locks `event_bus` twice with `.expect`, and the OpenAI backend's per-call regex compilation became fn-local `LazyLock` statics.
+
+### fix(extension-runner): stale imports left by the host.rs split — CI clippy was red
+- The host-module extraction left `StoreLimits`/`StoreLimitsBuilder`/`WasiP1Ctx`/pending-request helpers imported but unused in main.rs; the batch's final clippy pass had run before the last edits, so this landed in history and would have failed CI on push. Fixed (StoreLimitsBuilder stays as a `cfg(test)` import for the memory-limiter test). Also landed the fmt drift four files had accumulated for the same reason. Lesson institutionalized as `scripts/verify-all.sh`.
+
+### ops: verify-all.sh — the CI gates as one local command
+- fmt --check + workspace clippy (-D warnings) + workspace cargo test + eslint errors + warning-ratchet + tsc + vitest, exact CI invocations, with --skip-rust/--skip-web/--fast for iteration. Born from the gap above: "final review passed" must mean every gate re-ran after the last edit.
+
+### docs: configuration reference (code-maintained) + wiki sync
+- `docs/configuration.md`: every `NEOMIND_*` deployment variable with defaults verified against source this pass — data dir + `NEOMIND_STRICT_DATA_DIR` split-brain semantics, network/TLS, the WASM sandbox trio (ADR 0018), telemetry cache, backup seeds, JWT secret, session retention, and the paginated session-history API contract. Mirrored into wiki.camthink.ai (repo `wiki-documents`, zh + en): install-setup env table rows, a DATA-DIR SPLIT troubleshooting entry, a Chat Session Retention settings section, the Sessions pagination contract in the REST API guide, and the paged-history note in AI Chat; both locales build green.
+
 ### ops: fresh-install agent auth bootstrap
 - Server startup now guarantees at least one ACTIVE wildcard API key exists (`AuthState::ensure_internal_api_key`, idempotent — no-op once any `*` key is present). The chat agent's HTTP-path CLI commands authenticate via the default-key file; fresh installs previously had a window where the agent's own platform commands 401'd. End-to-end guarantee test: the server-provisioned key round-trips through cli-ops `auto_auth` and validates. (Root-cause of any residual live 401s needs a focused repro — the dir-pairing fix in `AuthState::new()` predates this; the bootstrap + test close the remaining gap.)
 
