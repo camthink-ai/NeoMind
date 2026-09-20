@@ -48,7 +48,8 @@ pub fn store_path(file: &str) -> PathBuf {
         Some(v) if !v.is_empty() => {
             let canonical = data_dir().join(file);
             let legacy = Path::new("data").join(file);
-            resolve(&canonical, &legacy, file, strict_data_dir())        }
+            resolve(&canonical, &legacy, file, strict_data_dir())
+        }
         _ => Path::new("data").join(file),
     }
 }
@@ -57,10 +58,7 @@ pub fn store_path(file: &str) -> PathBuf {
 /// path. Server startup logs this list prominently: a split-brain data dir
 /// is invisible otherwise until data "goes missing".
 pub fn legacy_redirected_stores() -> Vec<String> {
-    WARNED
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
+    WARNED.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 /// Decision core, parameterized on strictness so tests cover both modes
@@ -153,7 +151,12 @@ mod tests {
         let tmp = scratch("s");
         std::fs::create_dir_all(tmp.join("legacy")).unwrap();
         std::fs::write(tmp.join("legacy/x.redb"), b"").unwrap();
-        let got = resolve(&tmp.join("custom/x.redb"), &tmp.join("legacy/x.redb"), "x.redb", true);
+        let got = resolve(
+            &tmp.join("custom/x.redb"),
+            &tmp.join("legacy/x.redb"),
+            "x.redb",
+            true,
+        );
         assert_eq!(got, tmp.join("custom/x.redb"));
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -163,7 +166,12 @@ mod tests {
         let tmp = scratch("ns");
         std::fs::create_dir_all(tmp.join("legacy")).unwrap();
         std::fs::write(tmp.join("legacy/x.redb"), b"").unwrap();
-        let got = resolve(&tmp.join("custom/x.redb"), &tmp.join("legacy/x.redb"), "x.redb", false);
+        let got = resolve(
+            &tmp.join("custom/x.redb"),
+            &tmp.join("legacy/x.redb"),
+            "x.redb",
+            false,
+        );
         assert_eq!(got, tmp.join("legacy/x.redb"));
         let _ = std::fs::remove_dir_all(&tmp);
     }

@@ -133,10 +133,7 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                     .ok()
                     .and_then(|s| s.get_retention_config().session_retention_hours);
                 let Some(hours) = hours else { continue };
-                let session_store = state_for_retention
-                    .agents
-                    .session_manager
-                    .session_store();
+                let session_store = state_for_retention.agents.session_manager.session_store();
                 match session_store.cleanup_old_sessions(hours as i64 * 3600) {
                     Ok(n) if n > 0 => tracing::info!(
                         category = "storage",

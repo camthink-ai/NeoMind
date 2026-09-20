@@ -600,7 +600,11 @@ pub struct HistoryQuery {
 /// a group would render a broken partial turn until the next full reload —
 /// the start walks back to the last user message (bounded so a pathological
 /// all-assistant history cannot degenerate into a full scan).
-fn slice_history(history: &[AgentMessage], limit: Option<u32>, before: Option<u32>) -> (Vec<AgentMessage>, bool) {
+fn slice_history(
+    history: &[AgentMessage],
+    limit: Option<u32>,
+    before: Option<u32>,
+) -> (Vec<AgentMessage>, bool) {
     let total = history.len();
     let Some(limit) = limit.filter(|l| *l > 0) else {
         return (history.to_vec(), false);
@@ -1876,7 +1880,7 @@ mod history_pagination_tests {
     #[test]
     fn before_pages_backwards_without_overlap() {
         let h = history(10); // 40 records
-        // Page 1: newest 8 (two whole turns)
+                             // Page 1: newest 8 (two whole turns)
         let (p1, more1) = slice_history(&h, Some(8), None);
         assert_eq!(p1.len(), 8);
         assert!(more1);
