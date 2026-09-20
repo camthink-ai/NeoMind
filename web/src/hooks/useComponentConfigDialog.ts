@@ -18,7 +18,7 @@ import { useTranslation } from 'react-i18next'
 import { useStore } from '@/store'
 import { clearTelemetryCache } from '@/hooks/useDataSource/fetch'
 import { getSourceId } from '@/types/dashboard'
-import type { Dashboard, DashboardComponent } from '@/types/dashboard'
+import type { Dashboard, DashboardComponent, DataSource, DataSourceOrList } from '@/types/dashboard'
 import type { ComponentConfigSchema } from '@/components/dashboard/config/ComponentConfigBuilder'
 import type { MapBinding } from '@/components/dashboard/generic/MapEditorDialog'
 import type { LayerBinding } from '@/components/dashboard/generic/CustomLayer'
@@ -45,10 +45,26 @@ export interface UseComponentConfigDialogParams {
   setLayerEditorOpen: (open: boolean) => void
 }
 
+
+/**
+ * A dashboard component as persisted: `config` / `dataSource` are the
+ * runtime-editable extras this hook reads and writes. The canonical
+ * DashboardComponent type doesn't model them, hence this local view.
+ */
+type ConfigurableComponent = DashboardComponent & {
+  config?: Record<string, unknown>
+  dataSource?: DataSourceOrList
+}
+
+/** Partial component update payload sent to the store on save. */
+type ComponentUpdate = Partial<DashboardComponent> & {
+  config?: Record<string, unknown>
+}
+
 export interface UseComponentConfigDialogReturn {
   configOpen: boolean
   selectedComponent: DashboardComponent | null
-  componentConfig: Record<string, any>
+  componentConfig: Record<string, unknown>
   configSchema: ComponentConfigSchema | null
   configTitle: string
   handleOpenConfig: (componentId: string) => void
@@ -82,20 +98,20 @@ export function useComponentConfigDialog(params: UseComponentConfigDialogParams)
   const [configOpen, setConfigOpen] = useState(false)
   const [selectedComponent, setSelectedComponent] = useState<DashboardComponent | null>(null)
   const [configTitle, setConfigTitle] = useState('')
-  const [componentConfig, setComponentConfig] = useState<Record<string, any>>({})
+  const [componentConfig, setComponentConfig] = useState<Record<string, unknown>>({})
   const [configSchema, setConfigSchema] = useState<ComponentConfigSchema | null>(null)
 
   // Store original config for revert on cancel
-  const [originalComponentConfig, setOriginalComponentConfig] = useState<Record<string, any>>({})
+  const [originalComponentConfig, setOriginalComponentConfig] = useState<Record<string, unknown>>({})
   const [originalTitle, setOriginalTitle] = useState('')
 
   // Track initial config load to avoid unnecessary updates
-  const initialConfigRef = useRef<any>(null)
+  const initialConfigRef = useRef<unknown>(null)
   const isInitialLoad = useRef(false)
   const lastSyncedConfigRef = useRef<string>('')
 
   // Generate config schema based on component type
-  const generateConfigSchema = (componentType: string, currentConfig: any): ComponentConfigSchema | null => {
+  const generateConfigSchema = (componentType: string, currentConfig: unknown): ComponentConfigSchema | null => {
     return _generateConfigSchema(componentType, currentConfig, {
       setConfigTitle,
       selectedComponent,
@@ -122,8 +138,8 @@ export function useComponentConfigDialog(params: UseComponentConfigDialogParams)
 
     setSelectedComponent(component)
     // Extract both config and dataSource (they are separate properties on GenericComponent)
-    const config = { ...((component as any).config || {}) }
-    const dataSource = (component as any).dataSource
+    const config = { ...((component as ConfigurableComponent).config || {}) }
+    const dataSource = (component as ConfigurableComponent).dataSource
     // Include title in config so style sections can access it
     const configWithTitle = { ...config, title: component.title }
     // Merge dataSource into config for unified state management
@@ -162,9 +178,10 @@ export function useComponentConfigDialog(params: UseComponentConfigDialogParams)
         lastSyncedConfigRef.current = currentJSON
 
         // Apply to store immediately for live preview in the grid
-        const { dataSource, ...configOnly } = componentConfig
-        const currentDS = (selectedComponent as any).dataSource
-        const updateData: any = { config: configOnly }
+        const { dataSource: rawDS, ...configOnly } = componentConfig
+        const dataSource = rawDS as DataSourceOrList | undefined
+        const currentDS = (selectedComponent as ConfigurableComponent).dataSource
+        const updateData: ComponentUpdate = { config: configOnly }
         if (dataSource !== undefined || currentDS !== undefined) {
           updateData.dataSource = dataSource
         }
@@ -198,11 +215,12 @@ export function useComponentConfigDialog(params: UseComponentConfigDialogParams)
       // slip through the check below and survive the cancel.
       const liveDashboard = useStore.getState().currentDashboard
       const liveComponent = liveDashboard?.components.find(c => c.id === selectedComponent.id)
-      const currentDS = (liveComponent as any)?.dataSource
+      const currentDS = (liveComponent as ConfigurableComponent)?.dataSource
 
       // Revert to original config (no need to persist - reverting to saved state)
-      const { dataSource, ...configOnly } = originalComponentConfig
-      const updateData: any = { config: configOnly }
+      const { dataSource: rawDS2, ...configOnly } = originalComponentConfig
+      const dataSource = rawDS2 as DataSourceOrList | undefined
+      const updateData: ComponentUpdate = { config: configOnly }
       // Include dataSource if:
       // 1. Original config had dataSource, OR
       // 2. The live component has one (added via live preview — must be cleared)
@@ -232,30 +250,30 @@ export function useComponentConfigDialog(params: UseComponentConfigDialogParams)
       // Do NOT read from nested config.dataSource — the migration moved it to top-level,
       // and reading the nested one can restore a dataSource the user intentionally cleared.
       const configDataSource = componentConfig.dataSource
-      const latestComponentDataSource = (latestComponent as any)?.dataSource
+      const latestComponentDataSource = (latestComponent as ConfigurableComponent)?.dataSource
 
       // Use explicit null check: if user cleared dataSource (set to null/undefined), respect that.
       // Only fall back to the latest component dataSource if config didn't touch it at all.
-      const finalDataSource = configDataSource !== undefined
-        ? configDataSource
+      const finalDataSource: DataSourceOrList | undefined = configDataSource !== undefined
+        ? (configDataSource as DataSourceOrList)
         : latestComponentDataSource
 
       // Merge local config changes with the latest component config
       const mergedConfig = {
-        ...(latestComponent as any)?.config || {},
+        ...(latestComponent as ConfigurableComponent)?.config || {},
         ...componentConfig,
       }
 
       // IMPORTANT: Remove dataSource from mergedConfig to avoid confusion
       // dataSource should be stored as a separate property, not inside config
-      delete (mergedConfig as any).dataSource
+      delete (mergedConfig as Record<string, unknown>).dataSource
 
       // Remove runtime-only fields that should never be persisted
-      delete (mergedConfig as any).editMode
+      delete (mergedConfig as Record<string, unknown>).editMode
 
       // Update the component in the store
       // CRITICAL: dataSource must be saved as a separate property, not inside config
-      const updateData: any = {
+      const updateData: ComponentUpdate = {
         config: mergedConfig,
         title: configTitle,
       }
@@ -278,8 +296,8 @@ export function useComponentConfigDialog(params: UseComponentConfigDialogParams)
       if (finalDataSource !== undefined) {
         const saveTs = Date.now()
         const stampedDataSource = Array.isArray(finalDataSource)
-          ? finalDataSource.map((ds: any) => ({ ...ds, _saveTs: saveTs }))
-          : { ...(finalDataSource as any), _saveTs: saveTs }
+          ? finalDataSource.map((ds) => ({ ...ds, _saveTs: saveTs }))
+          : { ...(finalDataSource as DataSourceOrList), _saveTs: saveTs }
         updateComponent(selectedComponent.id, { dataSource: stampedDataSource }, false)
       }
     }
@@ -291,7 +309,7 @@ export function useComponentConfigDialog(params: UseComponentConfigDialogParams)
     // Fix any duplicate IDs in bindings before saving
     const idCount = new Map<string, number>() as Map<string, number>
     const fixedBindings = bindings.map((binding, index) => {
-      const ds = binding.dataSource as any
+      const ds = binding.dataSource as DataSource
       const currentId = binding.id
       idCount.set(currentId, (idCount.get(currentId) || 0) + 1)
 
@@ -315,12 +333,12 @@ export function useComponentConfigDialog(params: UseComponentConfigDialogParams)
       const latestDashboard = useStore.getState().currentDashboard
       const latestComponent = latestDashboard?.components.find(c => c.id === selectedComponent.id)
 
-      const latestConfig = (latestComponent as any)?.config || {}
-      const latestDataSource = (latestComponent as any)?.dataSource
+      const latestConfig = (latestComponent as ConfigurableComponent)?.config || {}
+      const latestDataSource = (latestComponent as ConfigurableComponent)?.dataSource
 
       // Merge the latest config with the new bindings, preserving dataSource
       const newConfig = { ...latestConfig, bindings: fixedBindings }
-      const updateData: any = { config: newConfig }
+      const updateData: ComponentUpdate = { config: newConfig }
 
       // CRITICAL: Preserve dataSource when updating
       if (latestDataSource) {
@@ -346,12 +364,12 @@ export function useComponentConfigDialog(params: UseComponentConfigDialogParams)
       const latestDashboard = useStore.getState().currentDashboard
       const latestComponent = latestDashboard?.components.find(c => c.id === selectedComponent.id)
 
-      const latestConfig = (latestComponent as any)?.config || {}
-      const latestDataSource = (latestComponent as any)?.dataSource
+      const latestConfig = (latestComponent as ConfigurableComponent)?.config || {}
+      const latestDataSource = (latestComponent as ConfigurableComponent)?.dataSource
 
       // Merge the latest config with the new bindings, preserving dataSource
       const newConfig = { ...latestConfig, bindings }
-      const updateData: any = { config: newConfig }
+      const updateData: ComponentUpdate = { config: newConfig }
 
       // Preserve dataSource when updating
       if (latestDataSource) {
@@ -379,12 +397,12 @@ export function useComponentConfigDialog(params: UseComponentConfigDialogParams)
       const latestDashboard = useStore.getState().currentDashboard
       const latestComponent = latestDashboard?.components.find(c => c.id === selectedComponent.id)
 
-      const latestConfig = (latestComponent as any)?.config || {}
-      const latestDataSource = (latestComponent as any)?.dataSource
+      const latestConfig = (latestComponent as ConfigurableComponent)?.config || {}
+      const latestDataSource = (latestComponent as ConfigurableComponent)?.dataSource
 
       // Merge the latest config with the new center, preserving dataSource
       const newConfig = { ...latestConfig, center: newCenter }
-      const updateData: any = { config: newConfig }
+      const updateData: ComponentUpdate = { config: newConfig }
 
       // Preserve dataSource when updating
       if (latestDataSource) {
