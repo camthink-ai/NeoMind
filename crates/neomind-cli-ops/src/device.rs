@@ -1,4 +1,4 @@
-use crate::types::{BuildMeta, CliResponse};
+use crate::types::CliResponse;
 use crate::ApiClient;
 use anyhow::Result;
 use base64::Engine;
@@ -496,23 +496,8 @@ pub async fn create_device(
     }
 
     let data = client.post("/devices", &body).await?;
-    let device_id = data
-        .get("data")
-        .and_then(|d| d.get("device_id"))
-        .and_then(|v| v.as_str())
-        .or_else(|| data["id"].as_str())
-        .unwrap_or("unknown")
-        .to_string();
 
-    let meta = BuildMeta {
-        r#type: "device".to_string(),
-        action: "create".to_string(),
-        entity_id: device_id.clone(),
-        entity_name: Some(name.to_string()),
-        undo_command: format!("neomind device delete {}", device_id),
-    };
-
-    Ok(CliResponse::success_with_meta(data, "Device created", meta))
+    Ok(CliResponse::success(data, "Device created"))
 }
 
 /// Update device
@@ -844,19 +829,7 @@ pub async fn create_device_type(
     }
 
     let data = client.post("/device-types", &body).await?;
-    let meta = BuildMeta {
-        r#type: "device_type".to_string(),
-        action: "create".to_string(),
-        entity_id: device_type.clone(),
-        entity_name: Some(name.to_string()),
-        undo_command: format!("neomind device types delete {}", device_type),
-    };
-
-    Ok(CliResponse::success_with_meta(
-        data,
-        "Device type created",
-        meta,
-    ))
+    Ok(CliResponse::success(data, "Device type created"))
 }
 
 /// Delete device type

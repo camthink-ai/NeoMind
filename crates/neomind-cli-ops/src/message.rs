@@ -1,4 +1,4 @@
-use crate::types::{BuildMeta, CliResponse};
+use crate::types::CliResponse;
 use crate::ApiClient;
 use anyhow::Result;
 use serde_json::json;
@@ -74,17 +74,8 @@ pub async fn send_message(
 
     let data = client.post("/messages", &body).await?;
     let data = extract_inner_data(data);
-    let msg_id = data["id"].as_str().unwrap_or("unknown").to_string();
 
-    let meta = BuildMeta {
-        r#type: "message".to_string(),
-        action: "send".to_string(),
-        entity_id: msg_id.clone(),
-        entity_name: Some(title.to_string()),
-        undo_command: format!("neomind message delete {}", msg_id),
-    };
-
-    Ok(CliResponse::success_with_meta(data, "Message sent", meta))
+    Ok(CliResponse::success(data, "Message sent"))
 }
 
 /// Acknowledge/read a message
@@ -277,18 +268,7 @@ pub async fn create_channel(
         .insert("enabled".to_string(), json!(enabled));
     let data = client.post("/messages/channels", &body).await?;
     let data = extract_inner_data(data);
-    let meta = BuildMeta {
-        r#type: "channel".to_string(),
-        action: "create".to_string(),
-        entity_id: name.to_string(),
-        entity_name: Some(name.to_string()),
-        undo_command: format!("neomind message channel-delete {}", name),
-    };
-    Ok(CliResponse::success_with_meta(
-        data,
-        "Channel created",
-        meta,
-    ))
+    Ok(CliResponse::success(data, "Channel created"))
 }
 
 /// Update a channel's configuration

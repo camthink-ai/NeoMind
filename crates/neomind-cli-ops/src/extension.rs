@@ -1,4 +1,4 @@
-use crate::types::{BuildMeta, CliResponse};
+use crate::types::CliResponse;
 use crate::ApiClient;
 use anyhow::Result;
 use serde_json::json;
@@ -115,26 +115,8 @@ pub async fn install_extension_file(client: &ApiClient, file_path: &str) -> Resu
         "filename": filename,
     });
     let data = client.post("/extensions/upload/file", &body).await?;
-    let ext_id = data
-        .get("data")
-        .and_then(|d| d.get("id"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown")
-        .to_string();
 
-    let meta = BuildMeta {
-        r#type: "extension".to_string(),
-        action: "install".to_string(),
-        entity_id: ext_id.clone(),
-        entity_name: ext_id.clone().into(),
-        undo_command: format!("neomind extension uninstall {}", ext_id),
-    };
-
-    Ok(CliResponse::success_with_meta(
-        data,
-        "Extension installed",
-        meta,
-    ))
+    Ok(CliResponse::success(data, "Extension installed"))
 }
 
 /// Install extension from marketplace
@@ -151,25 +133,10 @@ pub async fn install_extension_market(
     }
 
     let data = client.post("/extensions/market/install", &body).await?;
-    let ext_id = data
-        .get("data")
-        .and_then(|d| d.get("id"))
-        .and_then(|v| v.as_str())
-        .unwrap_or(extension_id)
-        .to_string();
 
-    let meta = BuildMeta {
-        r#type: "extension".to_string(),
-        action: "install".to_string(),
-        entity_id: ext_id.clone(),
-        entity_name: ext_id.clone().into(),
-        undo_command: format!("neomind extension uninstall {}", ext_id),
-    };
-
-    Ok(CliResponse::success_with_meta(
+    Ok(CliResponse::success(
         data,
         "Extension installed from marketplace",
-        meta,
     ))
 }
 

@@ -4,7 +4,7 @@ use anyhow::Result;
 use serde_json::json;
 
 use crate::api_client::extract_inner_data;
-use crate::types::{BuildMeta, CliResponse};
+use crate::types::CliResponse;
 use crate::ApiClient;
 
 /// Parse comma-separated source patterns into a Vec<String>.
@@ -158,21 +158,8 @@ pub async fn create_target(
 
     let data = client.post("/data-push", &body).await?;
     let data = extract_inner_data(data);
-    let target_id = data["id"].as_str().unwrap_or("unknown").to_string();
 
-    let meta = BuildMeta {
-        r#type: "push".to_string(),
-        action: "create".to_string(),
-        entity_id: target_id.clone(),
-        entity_name: Some(name.to_string()),
-        undo_command: format!("neomind push delete {}", target_id),
-    };
-
-    Ok(CliResponse::success_with_meta(
-        data,
-        "Push target created",
-        meta,
-    ))
+    Ok(CliResponse::success(data, "Push target created"))
 }
 
 /// Update a push target.

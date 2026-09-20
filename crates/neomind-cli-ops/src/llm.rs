@@ -1,4 +1,4 @@
-use crate::types::{BuildMeta, CliResponse};
+use crate::types::CliResponse;
 use crate::ApiClient;
 use anyhow::Result;
 use serde_json::json;
@@ -132,26 +132,8 @@ pub async fn create_backend(
     }
 
     let data = client.post("/llm-backends", &body).await?;
-    let backend_id = data
-        .get("data")
-        .and_then(|d| d.get("id"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown")
-        .to_string();
 
-    let meta = BuildMeta {
-        r#type: "llm_backend".to_string(),
-        action: "create".to_string(),
-        entity_id: backend_id.clone(),
-        entity_name: Some(name.to_string()),
-        undo_command: format!("neomind llm delete {}", backend_id),
-    };
-
-    Ok(CliResponse::success_with_meta(
-        data,
-        "LLM backend created",
-        meta,
-    ))
+    Ok(CliResponse::success(data, "LLM backend created"))
 }
 
 /// Update an existing LLM backend

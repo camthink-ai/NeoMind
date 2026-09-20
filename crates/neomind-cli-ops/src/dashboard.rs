@@ -1,4 +1,4 @@
-use crate::types::{BuildMeta, CliResponse};
+use crate::types::CliResponse;
 use crate::ApiClient;
 use anyhow::Result;
 use serde_json::json;
@@ -181,26 +181,8 @@ pub async fn create_dashboard(
     }
 
     let data = client.post("/dashboards", &body).await?;
-    let dashboard_id = data
-        .get("data")
-        .and_then(|d| d.get("id"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown")
-        .to_string();
 
-    let meta = BuildMeta {
-        r#type: "dashboard".to_string(),
-        action: "create".to_string(),
-        entity_id: dashboard_id.clone(),
-        entity_name: Some(name.to_string()),
-        undo_command: format!("neomind dashboard delete {}", dashboard_id),
-    };
-
-    Ok(CliResponse::success_with_meta(
-        data,
-        "Dashboard created",
-        meta,
-    ))
+    Ok(CliResponse::success(data, "Dashboard created"))
 }
 
 /// Update dashboard

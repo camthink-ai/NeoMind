@@ -16,17 +16,6 @@ pub struct CliResponse {
     /// e.g. "Run 'neomind device list' to see available devices"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suggestion: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub build_meta: Option<BuildMeta>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct BuildMeta {
-    pub r#type: String, // "device" | "dashboard" | "rule" | ...
-    pub action: String, // "create" | "update" | "delete"
-    pub entity_id: String,
-    pub entity_name: Option<String>,
-    pub undo_command: String,
 }
 
 impl CliResponse {
@@ -38,23 +27,6 @@ impl CliResponse {
             error: None,
             code: None,
             suggestion: None,
-            build_meta: None,
-        }
-    }
-
-    pub fn success_with_meta(
-        data: serde_json::Value,
-        message: impl Into<String>,
-        meta: BuildMeta,
-    ) -> Self {
-        Self {
-            success: true,
-            data: Some(data),
-            message: Some(message.into()),
-            error: None,
-            code: None,
-            suggestion: None,
-            build_meta: Some(meta),
         }
     }
 
@@ -66,7 +38,6 @@ impl CliResponse {
             error: Some(error.into()),
             code: Some(code.into()),
             suggestion: None,
-            build_meta: None,
         }
     }
 
@@ -82,7 +53,6 @@ impl CliResponse {
             error: Some(error.into()),
             code: Some(code.into()),
             suggestion: Some(suggestion.into()),
-            build_meta: None,
         }
     }
 
@@ -116,7 +86,6 @@ mod tests {
         assert!(response.error.is_none());
         assert!(response.code.is_none());
         assert!(response.suggestion.is_none());
-        assert!(response.build_meta.is_none());
     }
 
     #[test]
@@ -144,47 +113,6 @@ mod tests {
             response.suggestion,
             Some("Run 'neomind device list' to see available devices".to_string())
         );
-    }
-
-    #[test]
-    fn test_cli_response_success_with_meta() {
-        let data = json!({"id": "456"});
-        let meta = BuildMeta {
-            r#type: "device".to_string(),
-            action: "create".to_string(),
-            entity_id: "456".to_string(),
-            entity_name: Some("Test Device".to_string()),
-            undo_command: "neomind device delete 456".to_string(),
-        };
-        let response = CliResponse::success_with_meta(data.clone(), "Created", meta.clone());
-
-        assert!(response.success);
-        assert_eq!(response.message, Some("Created".to_string()));
-        assert_eq!(response.data, Some(data));
-        assert!(response.error.is_none());
-        assert!(response.code.is_none());
-        assert!(response.suggestion.is_none());
-        assert_eq!(response.build_meta, Some(meta));
-    }
-
-    #[test]
-    fn test_build_meta_serialization() {
-        let meta = BuildMeta {
-            r#type: "dashboard".to_string(),
-            action: "update".to_string(),
-            entity_id: "789".to_string(),
-            entity_name: Some("My Dashboard".to_string()),
-            undo_command: "neomind dashboard update 789".to_string(),
-        };
-
-        let serialized = serde_json::to_string(&meta).unwrap();
-        let deserialized: BuildMeta = serde_json::from_str(&serialized).unwrap();
-
-        assert_eq!(deserialized.r#type, "dashboard");
-        assert_eq!(deserialized.action, "update");
-        assert_eq!(deserialized.entity_id, "789");
-        assert_eq!(deserialized.entity_name, Some("My Dashboard".to_string()));
-        assert_eq!(deserialized.undo_command, "neomind dashboard update 789");
     }
 
     #[test]

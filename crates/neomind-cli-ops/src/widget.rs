@@ -1,4 +1,4 @@
-use crate::types::{BuildMeta, CliResponse};
+use crate::types::CliResponse;
 use crate::ApiClient;
 use anyhow::Result;
 use serde_json::json;
@@ -111,15 +111,7 @@ pub fn create_widget(
     fs::write(&bundle_path, bundle_template)?;
 
     let dir_str = dir_path.display().to_string();
-    let meta = BuildMeta {
-        r#type: "widget".to_string(),
-        action: "create".to_string(),
-        entity_id: widget_id.clone(),
-        entity_name: Some(name.to_string()),
-        undo_command: format!("rm -rf {}", dir_str),
-    };
-
-    Ok(CliResponse::success_with_meta(
+    Ok(CliResponse::success(
         json!({
             "id": widget_id,
             "name": name,
@@ -131,7 +123,6 @@ pub fn create_widget(
             ]
         }),
         format!("Widget scaffold created in {}", dir_str),
-        meta,
     ))
 }
 
@@ -146,20 +137,97 @@ fn generate_bundle_template(widget_id: &str, global_name: &str, widget_type: &st
     // Different templates based on widget type
     let component_body = match widget_type {
         "chart" => format!(
-            r#"  // Chart widget — receives data via props.dataSource
+            r#"  // Chart widget — line chart over props.dataSource (array of {{value, timestamp}})
   const {{ useEffect, useRef }} = React;
-  const canvasRef = useRef(null);
+  const containerRef = useRef(null);
 
   useEffect(() => {{
-    // TODO: Implement chart rendering using props.dataSource
-    // props.dataSource contains the time-series data array
+    const container = containerRef.current;
+    if (!container) return;
+    const data = Array.isArray(props.dataSource) ? props.dataSource : [];
+
+    // Canvas can't use var(--*) directly — resolve design tokens per draw
+    const draw = () => {{
+      const canvas = container.querySelector('canvas');
+      if (!canvas || container.clientWidth === 0) return;
+      const css = getComputedStyle(container);
+      const lineColor = css.getPropertyValue('--color-primary').trim() || '#3b82f6';
+      const textColor = css.getPropertyValue('--color-text-muted').trim() || '#94a3b8';
+      const gridColor = css.getPropertyValue('--color-border').trim() || '#e2e8f0';
+
+      const dpr = window.devicePixelRatio || 1;
+      const w = container.clientWidth;
+      const h = container.clientHeight;
+      canvas.width = w * dpr;
+      canvas.height = h * dpr;
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      if (data.length === 0) return;
+
+      const pts = data.map(d => Number(d && d.value)).filter(v => Number.isFinite(v));
+      if (pts.length === 0) return;
+      const min = Math.min.apply(null, pts);
+      const max = Math.max.apply(null, pts);
+      const span = (max - min) || 1;
+
+      const pad = {{ top: 10, right: 12, bottom: 20, left: 40 }};
+      const iw = Math.max(w - pad.left - pad.right, 10);
+      const ih = Math.max(h - pad.top - pad.bottom, 10);
+      const xAt = i => pad.left + (pts.length === 1 ? iw / 2 : (i / (pts.length - 1)) * iw);
+      const yAt = v => pad.top + ih - ((v - min) / span) * ih;
+
+      // Gridlines + value labels
+      ctx.strokeStyle = gridColor;
+      ctx.fillStyle = textColor;
+      ctx.font = '10px sans-serif';
+      ctx.textAlign = 'right';
+      ctx.lineWidth = 1;
+      for (let g = 0; g <= 3; g++) {{
+        const gy = pad.top + (ih / 3) * g;
+        const val = max - (span / 3) * g;
+        ctx.beginPath();
+        ctx.moveTo(pad.left, gy);
+        ctx.lineTo(w - pad.right, gy);
+        ctx.stroke();
+        ctx.fillText(String(Math.round(val * 100) / 100), pad.left - 6, gy + 3);
+      }}
+
+      // Data line
+      ctx.strokeStyle = lineColor;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let i = 0; i < pts.length; i++) {{
+        if (i === 0) ctx.moveTo(xAt(i), yAt(pts[i]));
+        else ctx.lineTo(xAt(i), yAt(pts[i]));
+      }}
+      ctx.stroke();
+
+      // Latest value: dot on the line + label in the top-right corner
+      const lx = xAt(pts.length - 1);
+      const ly = yAt(pts[pts.length - 1]);
+      ctx.fillStyle = lineColor;
+      ctx.beginPath();
+      ctx.arc(lx, ly, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = textColor;
+      ctx.fillText(String(pts[pts.length - 1]), w - pad.right, pad.top + 8);
+    }};
+
+    draw();
+    // Redraw on container resize (dashboard grid drag/resize)
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(draw) : null;
+    if (ro) ro.observe(container);
+    return () => {{ if (ro) ro.disconnect(); }};
   }}, [props.dataSource]);
 
   return React.createElement('div', {{
-    style: {{ {card_style}, display: 'flex', alignItems: 'center', justifyContent: 'center' }},
-    ref: canvasRef,
+    style: {{ {card_style}, position: 'relative' }},
+    ref: containerRef,
   }},
-    React.createElement('span', {{ style: {{ color: 'var(--color-text-muted)' }} }}, '{component_name} Chart')
+    React.createElement('canvas', {{ style: {{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }} }}),
+    (!Array.isArray(props.dataSource) || props.dataSource.length === 0) &&
+      React.createElement('span', {{ style: {{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-muted)' }} }}, '{component_name} Chart')
   );"#
         ),
         "gauge" => format!(
@@ -464,27 +532,8 @@ pub async fn install_widget_file(client: &ApiClient, path: &str) -> Result<CliRe
 
     // API returns {"component": {...}} — extract from wrapper
     let component = data.get("component").cloned().unwrap_or(data.clone());
-    let widget_id = component["id"].as_str().unwrap_or("unknown").to_string();
 
-    let widget_name = component["name"]
-        .as_str()
-        .or_else(|| component["name"].get("en").and_then(|v| v.as_str()))
-        .unwrap_or("unknown")
-        .to_string();
-
-    let meta = BuildMeta {
-        r#type: "widget".to_string(),
-        action: "install".to_string(),
-        entity_id: widget_id.clone(),
-        entity_name: Some(widget_name),
-        undo_command: format!("neomind widget uninstall {}", widget_id),
-    };
-
-    Ok(CliResponse::success_with_meta(
-        component,
-        "Widget installed",
-        meta,
-    ))
+    Ok(CliResponse::success(component, "Widget installed"))
 }
 
 /// Uninstall widget
@@ -520,21 +569,9 @@ pub async fn install_widget_market(
     let data = client
         .post("/frontend-components/market/install", &body)
         .await?;
-    let installed_id = data["id"].as_str().unwrap_or(widget_id).to_string();
 
-    let widget_name = data["name"].as_str().unwrap_or("unknown").to_string();
-
-    let meta = BuildMeta {
-        r#type: "widget".to_string(),
-        action: "install".to_string(),
-        entity_id: installed_id.clone(),
-        entity_name: Some(widget_name),
-        undo_command: format!("neomind widget uninstall {}", installed_id),
-    };
-
-    Ok(CliResponse::success_with_meta(
+    Ok(CliResponse::success(
         data,
         "Widget installed from marketplace",
-        meta,
     ))
 }

@@ -1,4 +1,4 @@
-use crate::types::{BuildMeta, CliResponse};
+use crate::types::CliResponse;
 use crate::ApiClient;
 use anyhow::Result;
 use serde_json::json;
@@ -186,22 +186,8 @@ pub async fn create_rule(client: &ApiClient, json_body: &str) -> Result<CliRespo
     };
 
     let data = client.post("/rules", &body).await?;
-    let rule = data
-        .get("data")
-        .and_then(|d| d.get("rule"))
-        .unwrap_or(&data);
-    let rule_id = rule["id"].as_str().unwrap_or("unknown").to_string();
-    let rule_name = rule["name"].as_str().unwrap_or("(unnamed)").to_string();
 
-    let meta = BuildMeta {
-        r#type: "rule".to_string(),
-        action: "create".to_string(),
-        entity_id: rule_id.clone(),
-        entity_name: Some(rule_name),
-        undo_command: format!("neomind rule delete {}", rule_id),
-    };
-
-    Ok(CliResponse::success_with_meta(data, "Rule created", meta))
+    Ok(CliResponse::success(data, "Rule created"))
 }
 
 /// Update rule via JSON body.

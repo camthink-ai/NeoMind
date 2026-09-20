@@ -1,4 +1,4 @@
-use crate::types::{BuildMeta, CliResponse};
+use crate::types::CliResponse;
 use crate::ApiClient;
 use anyhow::Result;
 use serde_json::json;
@@ -123,14 +123,7 @@ pub async fn create_transform(
         .and_then(|v| v.as_str())
         .unwrap_or("unknown")
         .to_string();
-    let meta = BuildMeta {
-        r#type: "transform".to_string(),
-        action: "create".to_string(),
-        entity_id: transform_id.to_string(),
-        entity_name: Some(name.to_string()),
-        undo_command: format!("neomind transform delete {}", transform_id),
-    };
-    Ok(CliResponse::success_with_meta(
+    Ok(CliResponse::success(
         data,
         // Transforms only run when data flows — teach where to look instead
         // of leaving the workflow at "created, now what".
@@ -138,7 +131,6 @@ pub async fn create_transform(
             "Transform created. It runs on new data points; check results with: neomind transform executions {}",
             transform_id
         ),
-        meta,
     ))
 }
 

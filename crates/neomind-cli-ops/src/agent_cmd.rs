@@ -1,4 +1,4 @@
-use crate::types::{BuildMeta, CliResponse};
+use crate::types::CliResponse;
 use crate::ApiClient;
 use anyhow::Result;
 use serde_json::json;
@@ -257,15 +257,7 @@ pub async fn create_agent(
         .unwrap_or("unknown")
         .to_string();
 
-    let meta = BuildMeta {
-        r#type: "agent".to_string(),
-        action: "create".to_string(),
-        entity_id: agent_id.clone(),
-        entity_name: Some(name.to_string()),
-        undo_command: format!("neomind agent delete {}", agent_id),
-    };
-
-    Ok(CliResponse::success_with_meta(
+    Ok(CliResponse::success(
         data,
         // Agents are created Paused — they never run until activated. The
         // follow-up command is the difference between a finished workflow
@@ -276,7 +268,6 @@ pub async fn create_agent(
              Next: neomind agent control {} active",
             agent_id
         ),
-        meta,
     ))
 }
 
