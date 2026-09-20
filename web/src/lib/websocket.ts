@@ -2,7 +2,7 @@
 import type { ServerMessage, ClientChatMessage, ChatImage } from '@/types'
 import { tokenManager } from './auth'
 import { storage } from './utils/storage'
-import { isTauriEnv, getApiKey } from './api'
+import { getApiKey } from './api'
 import { buildWsUrl } from './urls'
 import { getServerOrigin } from './api'
 
@@ -160,8 +160,22 @@ export class ChatWebSocket {
       return
     }
 
-    // Close existing WebSocket if it's in a bad state
+    // A connect attempt to the same URL is already in flight — let it
+    // finish. Killing a CONNECTING socket here was the connect-livelock:
+    // double-mounted effects (React StrictMode in dev) call connect()
+    // twice; the second call closed the first socket mid-handshake, its
+    // onclose scheduled a reconnect, which closed the NEXT one… none ever
+    // reached OPEN, cycling ~1 reconnect interval forever.
+    if (this.ws && this.ws.readyState === WebSocket.CONNECTING && this.ws.url === wsUrl) {
+      return
+    }
+
+    // Close existing WebSocket if it's in a bad state. Handlers on the old
+    // socket are stale — the guards in onclose/onmessage ignore them.
     if (this.ws) {
+      this.ws.onclose = null
+      this.ws.onerror = null
+      this.ws.onmessage = null
       this.ws.close()
       this.ws = null
     }
@@ -189,6 +203,11 @@ export class ChatWebSocket {
     }
 
     this.ws.onclose = (event) => {
+      // Stale-socket guard: only the CURRENT socket's lifecycle drives state.
+      // (Pre-replacement sockets fire close asynchronously; reacting to them
+      // double-schedules reconnects and resurrects "disconnected" badges
+      // while the new connection is healthy.)
+      if (this.ws !== event.target) return
       this.notifyConnection(false)
       // Only stop reconnecting on auth rejection (4001)
       // Reconnect on everything else including normal close (server restart)
@@ -220,11 +239,13 @@ export class ChatWebSocket {
       }
     }
 
-    this.ws.onerror = () => {
+    this.ws.onerror = (event) => {
+      if (this.ws !== event.target) return
       this.setState({ status: 'error', errorMessage: 'Connection error' })
     }
 
     this.ws.onmessage = (event) => {
+      if (this.ws !== event.target) return
       try {
         const data = JSON.parse(event.data) as ServerMessage
 

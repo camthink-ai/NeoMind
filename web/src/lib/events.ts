@@ -389,6 +389,17 @@ export class EventsWebSocket {
       wsUrl += (wsUrl.includes('?') ? '&' : '?') + `api_key=${encodeURIComponent(apiKey)}`
     }
 
+    // Detach + close any previous socket: a stale one firing close late would
+    // otherwise schedule phantom reconnects while the new connection is fine
+    // (same race fixed in lib/websocket.ts).
+    if (this.ws) {
+      this.ws.onclose = null
+      this.ws.onerror = null
+      this.ws.onmessage = null
+      this.ws.close()
+      this.ws = null
+    }
+
     try {
       this.ws = new WebSocket(wsUrl)
     } catch (e) {
@@ -438,7 +449,8 @@ export class EventsWebSocket {
       }
     }
 
-    this.ws.onclose = () => {
+    this.ws.onclose = (event) => {
+      if (this.ws !== (event.target as WebSocket)) return // stale socket
       this.isConnecting = false
       this.authenticated = false
       this.notifyConnection(false)
@@ -448,12 +460,14 @@ export class EventsWebSocket {
       }
     }
 
-    this.ws.onerror = () => {
+    this.ws.onerror = (event) => {
+      if (this.ws !== (event.target as WebSocket)) return // stale socket
       this.isConnecting = false
       this.notifyError(new Error('WebSocket connection error'))
     }
 
     this.ws.onmessage = (event) => {
+      if (this.ws !== (event.target as WebSocket)) return // stale socket
       try {
         const data = JSON.parse(event.data)
         // Handle ping from server - respond with pong to keep connection alive
