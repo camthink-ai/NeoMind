@@ -9,13 +9,22 @@
  */
 
 import { dynamicIconMap } from '@/lib/dynamicIcons'
-import type { ComponentMeta } from './types'
+import type { ComponentCategory, ComponentMeta } from './types'
 import type { FrontendComponentMeta } from '@/types/frontend-component'
 import { isTauriEnv, getServerOrigin } from '@/lib/api'
 
 /**
  * Community component registry state
  */
+
+/** window + registry globals + locale (same seam as DynamicRegistry). */
+type RegistryWindow = Window & typeof globalThis & Record<string, unknown>
+
+/** React component-ish structural check. */
+type MaybeComponent = { $$typeof?: unknown; render?: unknown; propTypes?: unknown }
+
+const registryWindow = () => window as RegistryWindow
+
 interface CommunityRegistryState {
   // All registered community components by type
   components: Record<string, FrontendComponentMeta>
@@ -100,7 +109,7 @@ export class CommunityComponentRegistry {
         if (changed) {
           if (oldMeta?.global_name) {
             try {
-              delete (window as any)[oldMeta.global_name]
+              delete registryWindow()[oldMeta.global_name]
             } catch (e) {
               console.warn(`[CommunityRegistry] Failed to clear global ${oldMeta.global_name}:`, e)
             }
@@ -205,7 +214,7 @@ export class CommunityComponentRegistry {
         // Check if Component is a valid React component type
         const isValidComponent = typeof Component === 'function' ||
           (typeof Component === 'object' && Component !== null &&
-           ((Component as any).$$typeof || typeof (Component as any).render === 'function'))
+           (((Component as MaybeComponent).$$typeof) || typeof (Component as MaybeComponent).render === 'function'))
 
         if (isValidComponent) {
           return Component
@@ -217,7 +226,7 @@ export class CommunityComponentRegistry {
             const prop = (Component as Record<string, unknown>)[key]
             if (typeof prop === 'function' ||
                 (typeof prop === 'object' && prop !== null &&
-                 ((prop as any).$$typeof || typeof (prop as any).render === 'function'))) {
+                 (((prop as MaybeComponent | null)?.$$typeof) || typeof (prop as MaybeComponent | null)?.render === 'function'))) {
               return prop
             }
           }
@@ -251,17 +260,20 @@ export class CommunityComponentRegistry {
   private async loadViaScriptTag(bundleUrl: string, globalName: string, exportName?: string, componentId?: string): Promise<unknown> {
     return new Promise((resolve, reject) => {
       // Check if the global variable already exists (bundle already loaded)
-      const existingGlobal = (window as any)[globalName]
+      const existingGlobal = registryWindow()[globalName] as
+        | (Record<string, unknown> & { default?: unknown })
+        | ((...args: unknown[]) => unknown)
+        | undefined
       if (existingGlobal) {
         // Get the export from the global
         const exportKey = exportName || 'default'
-        let Component = existingGlobal[exportKey]
+        let Component = typeof existingGlobal === 'function' ? undefined : existingGlobal[exportKey]
 
         // If exportName is specified, look for it as a named export
         if (!Component && exportName) {
           if (typeof existingGlobal === 'function') {
             Component = existingGlobal
-          } else if (existingGlobal.default && typeof existingGlobal.default === 'function') {
+          } else if (typeof existingGlobal.default === 'function') {
             Component = existingGlobal.default
           }
         }
@@ -283,7 +295,10 @@ export class CommunityComponentRegistry {
       // Set up load handler
       script.onload = () => {
         // Access the global variable
-        const global = (window as any)[globalName]
+        const global = registryWindow()[globalName] as
+          | (Record<string, unknown> & { default?: unknown })
+          | ((...args: unknown[]) => unknown)
+          | undefined
 
         // Clean up
         document.head.removeChild(script)
@@ -291,25 +306,26 @@ export class CommunityComponentRegistry {
         // Get the component from the global
         let Component: unknown = null
 
+        const globalRecord = typeof global === 'function' ? undefined : global
         if (global) {
           // First try: named export
-          if (exportName && global[exportName]) {
-            Component = global[exportName]
+          if (exportName && globalRecord?.[exportName]) {
+            Component = globalRecord[exportName]
           }
           // Second try: default export
-          else if (global.default && typeof global.default === 'function') {
-            Component = global.default
+          else if (typeof globalRecord?.default === 'function') {
+            Component = globalRecord.default
           }
           // Third try: global itself is the component
           else if (typeof global === 'function') {
             Component = global
           }
           // Fourth try: find any function or React component export
-          else {
-            for (const key of Object.keys(global)) {
-              const val = global[key]
+          else if (globalRecord) {
+            for (const key of Object.keys(globalRecord)) {
+              const val = globalRecord[key]
               if (typeof val === 'function' ||
-                  (typeof val === 'object' && val !== null && val.$$typeof)) {
+                  (typeof val === 'object' && val !== null && Boolean((val as MaybeComponent)?.$$typeof))) {
                 Component = val
                 break
               }
@@ -320,8 +336,8 @@ export class CommunityComponentRegistry {
         if (Component) {
           // Check if it's a valid React component
           const typeofComponent = typeof Component
-          const hasTypeof = (Component as any)?.$$typeof
-          const hasRender = typeof (Component as any)?.render === 'function'
+          const hasTypeof = (Component as MaybeComponent | null)?.$$typeof
+          const hasRender = typeof (Component as MaybeComponent | null)?.render === 'function'
           const isValidComponent = typeofComponent === 'function' ||
             (typeofComponent === 'object' && Component !== null &&
              (hasTypeof || hasRender))
@@ -376,7 +392,7 @@ export class CommunityComponentRegistry {
     // Clear global variable
     if (meta?.global_name) {
       try {
-        delete (window as any)[meta.global_name]
+        delete registryWindow()[meta.global_name]
       } catch (e) {
         console.warn(`[CommunityRegistry] Failed to clear global ${meta.global_name}:`, e)
       }
@@ -402,7 +418,7 @@ export class CommunityComponentRegistry {
     // Clear global variable
     if (meta.global_name) {
       try {
-        delete (window as any)[meta.global_name]
+        delete registryWindow()[meta.global_name]
       } catch (e) {
         console.warn(`[CommunityRegistry] Failed to clear global ${meta.global_name}:`, e)
       }
@@ -426,7 +442,7 @@ export class CommunityComponentRegistry {
         return meta.name
       }
       // Try to get locale from i18n, fallback to 'en', then first available
-      const locale = (window as any).__locale__ || 'en'
+      const locale = ((registryWindow().__locale__ as string | undefined) || 'en')
       return meta.name[locale] || meta.name.en || Object.values(meta.name)[0] || meta.id
     }
 
@@ -435,7 +451,7 @@ export class CommunityComponentRegistry {
       if (typeof meta.description === 'string') {
         return meta.description
       }
-      const locale = (window as any).__locale__ || 'en'
+      const locale = ((registryWindow().__locale__ as string | undefined) || 'en')
       return meta.description[locale] || meta.description.en || Object.values(meta.description)[0] || ''
     }
 
@@ -459,12 +475,12 @@ export class CommunityComponentRegistry {
     }
 
     return {
-      type: meta.id as any, // Community component types are dynamic
+      type: meta.id as ComponentMeta['type'], // community ids are dynamic component types
       name: getName(),
       description: getDescription(),
-      category: (meta.source === 'marketplace' ? 'marketplace' : 'local') as any,
+      category: (meta.source === 'marketplace' ? 'marketplace' : 'local') as ComponentCategory,
       icon: IconComponent,
-      sizeConstraints: sizeConstraints as any,
+      sizeConstraints,
       hasDataSource: meta.has_data_source,
       maxDataSources: meta.max_data_sources,
       hasDisplayConfig: meta.has_display_config,
@@ -484,7 +500,7 @@ export class CommunityComponentRegistry {
     for (const meta of Object.values(this.state.components)) {
       if (meta.global_name) {
         try {
-          delete (window as any)[meta.global_name]
+          delete registryWindow()[meta.global_name]
         } catch (e) {
           console.warn(`[CommunityRegistry] Failed to clear global ${meta.global_name}:`, e)
         }

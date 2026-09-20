@@ -19,6 +19,8 @@ import { resolveComponentData } from '@/lib/componentDataApi'
 import type { DashboardComponent, GenericComponentType } from '@/types/dashboard'
 import type { DeviceType } from '@/types'
 import { useStore } from '@/store'
+import type { NeoMindStore } from '@/store'
+import type { NeoMindEvent } from '@/lib/events'
 import { useEvents } from '@/hooks/useEvents'
 import { getComponentMeta } from './registry'
 import { dynamicRegistry, dtoToComponentMeta } from './DynamicRegistry'
@@ -54,11 +56,19 @@ import { MapDisplay } from '../generic/MapDisplay'
 import { VideoDisplay } from '../generic/VideoDisplay'
 import { CustomLayer } from '../generic/CustomLayer'
 
+/** A dashboard component as persisted — the config/dataSource/display
+ *  extras the renderer reads (not modeled on the canonical type). */
+type RuntimeComponent = DashboardComponent & {
+  config?: Record<string, unknown>
+  dataSource?: unknown
+  display?: Record<string, unknown>
+}
+
 // ============================================================================
 // Component Map
 // ============================================================================
 
-const componentMap: Record<GenericComponentType, React.ComponentType<any>> = {
+const componentMap: Record<GenericComponentType, React.ComponentType<Record<string, unknown>>> = {
   // Indicators
   'value-card': ValueCard,
   'led-indicator': LEDIndicator,
@@ -93,7 +103,7 @@ const componentMap: Record<GenericComponentType, React.ComponentType<any>> = {
 const AgentMonitorWidget = lazy(() => import('../generic/AgentMonitorWidget').then(m => ({ default: m.AgentMonitorWidget })))
 const AiAnalyst = lazy(() => import('../generic/AiAnalyst').then(m => ({ default: m.AiAnalyst })))
 
-const businessComponentMap: Record<string, React.ComponentType<any>> = {
+const businessComponentMap: Record<string, React.ComponentType<Record<string, unknown>>> = {
   'agent-monitor-widget': AgentMonitorWidget,
   'ai-analyst': AiAnalyst,
 } as const
@@ -275,7 +285,7 @@ const ComponentRenderer = memo(function ComponentRenderer({
   const isCommunity = !isBuiltIn && communityRegistry.isCommunity(componentType)
 
   // State for dynamic component loading
-  const [DynamicComponent, setDynamicComponent] = useState<React.ComponentType<any> | null>(null)
+  const [DynamicComponent, setDynamicComponent] = useState<React.ComponentType<Record<string, unknown>> | null>(null)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState<Error | null>(null)
   const [attemptCount, setAttemptCount] = useState(0)
@@ -315,19 +325,19 @@ const ComponentRenderer = memo(function ComponentRenderer({
         : await dynamicRegistry.loadComponent(componentType)
 
       if (module) {
-        let Component: React.ComponentType<any> | null = null
+        let Component: React.ComponentType<Record<string, unknown>> | null = null
 
         if (typeof module === 'function') {
           Component = module as React.ComponentType
         } else if (typeof module === 'object' && module !== null) {
-          if ((module as any).$$typeof || typeof (module as any).render === 'function') {
+          if ((module as { $$typeof?: unknown; render?: unknown }).$$typeof || typeof (module as { render?: unknown }).render === 'function') {
             Component = module as React.ComponentType
           } else if ('default' in module) {
             const defaultExport = (module as { default: unknown }).default
             if (typeof defaultExport === 'function') {
               Component = defaultExport as React.ComponentType
             } else if (typeof defaultExport === 'object' && defaultExport !== null) {
-              if ((defaultExport as any).$$typeof || typeof (defaultExport as any).render === 'function') {
+              if ((defaultExport as { $$typeof?: unknown; render?: unknown }).$$typeof || typeof (defaultExport as { render?: unknown }).render === 'function') {
                 Component = defaultExport as React.ComponentType
               }
             }
@@ -402,7 +412,7 @@ const ComponentRenderer = memo(function ComponentRenderer({
   // Subscribe to installed community component count to detect when
   // communityRegistry gets populated after async fetchInstalled().
   // This breaks through the memo boundary so isCommunity is re-evaluated.
-  const communityRevision = useStore(useCallback((s: any) =>
+  const communityRevision = useStore(useCallback((s: NeoMindStore) =>
     (s.installed?.length ?? 0) + (s.loading ? 0.5 : 0)
   , []))
 
@@ -447,12 +457,12 @@ const ComponentRenderer = memo(function ComponentRenderer({
   // Use individual properties instead of entire component object to prevent unnecessary re-creates
   const componentId = component.id
   const componentTitle = component.title
-  const componentConfig = (component as any).config || {}
-  const componentDataSource = (component as any).dataSource
-  const componentDisplay = (component as any).display
+  const componentConfig = ((component as RuntimeComponent).config) || {}
+  const componentDataSource = (component as RuntimeComponent).dataSource
+  const componentDisplay = (component as RuntimeComponent).display
 
   // Device binding: check if component has device binding config
-  const boundDeviceId = componentConfig.deviceBinding?.deviceId as string | undefined
+  const boundDeviceId = (componentConfig.deviceBinding as { deviceId?: string } | undefined)?.deviceId as string | undefined
   const communityMetaForDevice = isCommunity ? communityRegistry.getMeta(componentType) : null
   const dynamicMetaForDevice = isDynamic ? dynamicRegistry.getMeta(componentType) : null
   const hasDeviceBinding = !!(
@@ -460,16 +470,16 @@ const ComponentRenderer = memo(function ComponentRenderer({
   )
 
   // Subscribe to bound device from store (static config only — does NOT change on telemetry updates)
-  const boundDevice = useStore(useCallback((s: any) =>
+  const boundDevice = useStore(useCallback((s: NeoMindStore) =>
     hasDeviceBinding ? findDevice(s.devices, boundDeviceId) : null
   , [hasDeviceBinding, boundDeviceId]))
 
   // Subscribe to bound device's telemetry independently (high-frequency updates)
-  const boundDeviceTelemetry = useStore(useCallback((s: any) =>
+  const boundDeviceTelemetry = useStore(useCallback((s: NeoMindStore) =>
     hasDeviceBinding && boundDeviceId ? s.deviceTelemetry[boundDeviceId] : undefined
   , [hasDeviceBinding, boundDeviceId]))
 
-  const boundDeviceType = useStore(useCallback((s: any) =>
+  const boundDeviceType = useStore(useCallback((s: NeoMindStore) =>
     hasDeviceBinding && boundDevice
       ? s.deviceTypes.find((dt: DeviceType) => dt.device_type === boundDevice.device_type)
       : null
@@ -520,9 +530,11 @@ const ComponentRenderer = memo(function ComponentRenderer({
   useEvents({
     enabled: hasDeviceBinding && !!boundDeviceId,
     category: 'device',
-    onEvent: useCallback((event: any) => {
+    onEvent: useCallback((event: NeoMindEvent) => {
       if (!hasDeviceBinding || !boundDeviceId) return
-      const eventData = event.data || event
+      const eventData = (event.data ?? event) as {
+        type?: string; device_id?: string; id?: string; timestamp?: number | string
+      }
       const eventType = event.type || eventData.type || ''
       const deviceId = eventData.device_id
 
@@ -530,7 +542,7 @@ const ComponentRenderer = memo(function ComponentRenderer({
       if (deviceId !== boundDeviceId) return
 
       // Deduplicate
-      const eventId = eventData.id || `${eventType}-${eventData.timestamp}-${deviceId}`
+      const eventId = eventData.id || `${eventType}-${eventData.timestamp ?? ''}-${deviceId}`
       if (processedEventsRef.current.has(eventId)) return
       processedEventsRef.current.add(eventId)
       if (processedEventsRef.current.size > 100) {
@@ -579,7 +591,7 @@ const ComponentRenderer = memo(function ComponentRenderer({
     const { editMode, key: _key, ref: _ref, children: _children, ...restConfig } = componentConfig
 
     // Build props for the component (NOT including key - key must be passed directly)
-    const builtProps: Record<string, any> = {
+    const builtProps: Record<string, unknown> = {
       dataSource: componentDataSource,
       editMode, // Pass editMode as a separate prop for components that need it
       config: componentConfig, // Pass full config object for community/extension components that read props.config
@@ -600,8 +612,9 @@ const ComponentRenderer = memo(function ComponentRenderer({
     }
 
     // Special handling for agent-monitor-widget: extract agentId from dataSource
-    if (componentType === 'agent-monitor-widget' && componentDataSource?.agentId) {
-      builtProps.agentId = componentDataSource.agentId
+    const dsAgentId = (componentDataSource as { agentId?: string } | undefined)?.agentId
+    if (componentType === 'agent-monitor-widget' && dsAgentId) {
+      builtProps.agentId = dsAgentId
     }
 
     // ai-analyst: agentId comes from config (restConfig), no special handling needed
@@ -672,7 +685,7 @@ const ComponentRenderer = memo(function ComponentRenderer({
 
   // ErrorBoundary resetKey: when config (e.g., deviceBinding) or component identity changes,
   // reset the error state so the component gets a fresh retry.
-  const errorResetKey = component.id + ':' + component.type + ':' + (componentConfig.deviceBinding?.deviceId || '')
+  const errorResetKey = component.id + ':' + component.type + ':' + ((componentConfig.deviceBinding as { deviceId?: string } | undefined)?.deviceId || '')
 
   // Built-in components: render directly without Suspense (they're statically imported)
   if (isBuiltIn) {
@@ -692,8 +705,8 @@ const ComponentRenderer = memo(function ComponentRenderer({
   )
 }, (prevProps, nextProps) => {
   // Custom comparison for more precise re-render control
-  const prevComp = prevProps.component as any
-  const nextComp = nextProps.component as any
+  const prevComp = prevProps.component as RuntimeComponent
+  const nextComp = nextProps.component as RuntimeComponent
 
   // Quick primitive checks
   if (prevProps.component.id !== nextProps.component.id) return false
