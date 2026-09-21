@@ -792,7 +792,7 @@ impl ExtensionPackage {
                                 name
                             )));
                         }
-                        if file.size() > Self::MAX_EXTRACT_FILE_SIZE {
+                        if file.size() > Self::effective_max_file_size() {
                             return Err(PackageError::Zip(format!(
                                 "Bundled library '{}' is {} bytes (exceeds limit)",
                                 name,
@@ -989,12 +989,12 @@ impl ExtensionPackage {
             )));
         }
         // Zip-bomb defense: reject oversized entries.
-        if file.size() > Self::MAX_EXTRACT_FILE_SIZE {
+        if file.size() > Self::effective_max_file_size() {
             return Err(PackageError::Zip(format!(
                 "File '{}' is {} bytes (exceeds {} byte limit)",
                 src_path,
                 file.size(),
-                Self::MAX_EXTRACT_FILE_SIZE
+                Self::effective_max_file_size()
             )));
         }
         budget.charge(file.size())?;
@@ -1021,9 +1021,41 @@ impl ExtensionPackage {
     /// Zip-bomb defense caps — shared by BOTH extraction paths. The async
     /// path (`extract_file`/`extract_directory`, used by `install()`) had NO
     /// caps while the sync path did; one definition so they can't drift again.
+    ///
+    /// These are DEFAULTS, not hardwired limits: GPU deployments install
+    /// extension bundles whose CUDA Execution Provider library alone is
+    /// 330–390 MB (onnxruntime_providers_cuda.so statically links its CUDA
+    /// kernels), which no vendor ships under the 200 MiB default. Set
+    /// NEOMIND_EXTENSION_MAX_FILE_SIZE / NEOMIND_EXTENSION_MAX_TOTAL_SIZE
+    /// (bytes) in the service environment to raise them; unset keeps the
+    /// zip-bomb-safe defaults below.
     pub(crate) const MAX_EXTRACT_FILE_SIZE: u64 = 200 * 1024 * 1024;
     pub(crate) const MAX_EXTRACT_TOTAL_SIZE: u64 = 500 * 1024 * 1024;
     pub(crate) const MAX_EXTRACT_FILE_COUNT: usize = 10_000;
+
+    /// Effective per-file extraction cap in bytes.
+    pub(crate) fn effective_max_file_size() -> u64 {
+        static CACHE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+        *CACHE.get_or_init(|| {
+            std::env::var("NEOMIND_EXTENSION_MAX_FILE_SIZE")
+                .ok()
+                .and_then(|v| v.trim().parse::<u64>().ok())
+                .filter(|v| *v > 0)
+                .unwrap_or(Self::MAX_EXTRACT_FILE_SIZE)
+        })
+    }
+
+    /// Effective total-extraction cap in bytes.
+    pub(crate) fn effective_max_total_size() -> u64 {
+        static CACHE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+        *CACHE.get_or_init(|| {
+            std::env::var("NEOMIND_EXTENSION_MAX_TOTAL_SIZE")
+                .ok()
+                .and_then(|v| v.trim().parse::<u64>().ok())
+                .filter(|v| *v > 0)
+                .unwrap_or(Self::MAX_EXTRACT_TOTAL_SIZE)
+        })
+    }
 
     /// Resolve `rel_path` against `dst_dir`, rejecting any entry that would
     /// escape `dst_dir` via `..` traversal or absolute paths.
@@ -1090,12 +1122,12 @@ impl ExtensionPackage {
                         name
                     )));
                 }
-                if entry_size > Self::MAX_EXTRACT_FILE_SIZE {
+                if entry_size > Self::effective_max_file_size() {
                     return Err(PackageError::Zip(format!(
                         "File '{}' is {} bytes (exceeds {} byte limit)",
                         name,
                         entry_size,
-                        Self::MAX_EXTRACT_FILE_SIZE
+                        Self::effective_max_file_size()
                     )));
                 }
                 budget.charge(entry_size)?;
@@ -1225,12 +1257,12 @@ impl ExtensionPackage {
                 src_path
             )));
         }
-        if file.size() > Self::MAX_EXTRACT_FILE_SIZE {
+        if file.size() > Self::effective_max_file_size() {
             return Err(PackageError::Zip(format!(
                 "File '{}' is {} bytes (exceeds {} byte limit)",
                 src_path,
                 file.size(),
-                Self::MAX_EXTRACT_FILE_SIZE
+                Self::effective_max_file_size()
             )));
         }
 
@@ -1298,19 +1330,19 @@ impl ExtensionPackage {
                     )));
                 }
                 let entry_size = file.size();
-                if entry_size > Self::MAX_EXTRACT_FILE_SIZE {
+                if entry_size > Self::effective_max_file_size() {
                     return Err(PackageError::Zip(format!(
                         "File '{}' is {} bytes (exceeds {} byte limit)",
                         name,
                         entry_size,
-                        Self::MAX_EXTRACT_FILE_SIZE
+                        Self::effective_max_file_size()
                     )));
                 }
                 total_bytes += entry_size;
-                if total_bytes > Self::MAX_EXTRACT_TOTAL_SIZE {
+                if total_bytes > Self::effective_max_total_size() {
                     return Err(PackageError::Zip(format!(
                         "Total extracted size exceeds {} bytes (zip-bomb suspected)",
-                        Self::MAX_EXTRACT_TOTAL_SIZE
+                        Self::effective_max_total_size()
                     )));
                 }
 
@@ -1567,10 +1599,10 @@ impl InstallBudget {
     pub(crate) fn charge(&mut self, bytes: u64) -> Result<(), PackageError> {
         self.total_bytes = self.total_bytes.saturating_add(bytes);
         self.file_count += 1;
-        if self.total_bytes > ExtensionPackage::MAX_EXTRACT_TOTAL_SIZE {
+        if self.total_bytes > ExtensionPackage::effective_max_total_size() {
             return Err(PackageError::Zip(format!(
                 "Total extracted size exceeds {} bytes across the whole install (zip-bomb suspected)",
-                ExtensionPackage::MAX_EXTRACT_TOTAL_SIZE
+                ExtensionPackage::effective_max_total_size()
             )));
         }
         if self.file_count > ExtensionPackage::MAX_EXTRACT_FILE_COUNT {
