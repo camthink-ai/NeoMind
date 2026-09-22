@@ -94,16 +94,18 @@ export function AgentUserMessages({ agentId, onMessageAdded }: AgentUserMessages
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    // Enter sends; Shift+Enter inserts a newline. (Notes are one-liners far
+    // more often than not — requiring ⌘ was friction.)
+    if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSendMessage()
     }
   }
 
   return (
-    <div className="space-y-3">
-      {/* Messages List */}
-      <div>
+    <div className="flex min-h-[300px] flex-col gap-3">
+      {/* Messages List — occupies the section body */}
+      <div className="flex-1">
         <div>
           <div className="space-y-3">
             {loading ? (
@@ -133,30 +135,27 @@ export function AgentUserMessages({ agentId, onMessageAdded }: AgentUserMessages
         </div>
       </div>
 
-      {/* Input Area */}
-      <div className="rounded-lg border border-border bg-card p-2.5">
+      {/* Input — one quiet bar: type, press Enter (⇧Enter for a newline) */}
+      <div className="flex items-center gap-1.5 rounded-lg border border-input bg-card py-1 pl-3 pr-1">
         <Textarea
           ref={textareaRef}
           value={newMessage}
           onChange={(e) => setNewMessage(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={t('agents:userMessages.placeholder')}
-          className="resize-none min-h-[52px] max-h-[140px] border-0 bg-transparent p-1 shadow-none focus-visible:ring-0"
+          rows={1}
+          className="min-h-0 max-h-[120px] flex-1 resize-none border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0"
           disabled={sending}
         />
-        <div className="flex items-center justify-between gap-2">
-          <span className="pl-1 text-[11px] text-muted-foreground">
-            {t('agents:userMessages.hint')} ⌘⏎
-          </span>
-          <Button
-            size="sm"
-            onClick={handleSendMessage}
-            disabled={!newMessage.trim() || sending}
-            className="h-7 shrink-0 px-2.5"
-          >
-            {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-          </Button>
-        </div>
+        <Button
+          size="icon"
+          onClick={handleSendMessage}
+          disabled={!newMessage.trim() || sending}
+          className="h-7 w-7 shrink-0 rounded-md"
+          aria-label={t('common:send')}
+        >
+          {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+        </Button>
       </div>
     </div>
   )

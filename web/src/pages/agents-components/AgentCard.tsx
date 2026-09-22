@@ -103,14 +103,14 @@ export function AgentCard({
       {/* ── Header: identity + health ─────────────────────────────── */}
       <div className="flex items-start gap-3">
         <div className={cn(
-          "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg transition-colors",
+          "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors",
           agent.status === 'Active' && "bg-success-light",
           isExecuting && "bg-info-light",
           isError && "bg-error-light",
           (agent.status === 'Paused' || agent.status === 'Completed') && "bg-muted-50"
         )}>
           <Bot className={cn(
-            "h-5 w-5",
+            "h-[18px] w-[18px]",
             agent.status === 'Active' && "text-success",
             isExecuting && "text-info",
             isError && "text-error",
@@ -119,10 +119,10 @@ export function AgentCard({
         </div>
 
         <div className="min-w-0 flex-1">
-          <h3 className="truncate text-base font-semibold leading-tight" title={agent.name}>
+          <h3 className="truncate text-[15px] font-semibold leading-snug" title={agent.name}>
             {agent.name}
           </h3>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+          <p className="mt-1 truncate text-[11px] text-muted-foreground">
             {t(`agents:card.role.${roleKey}`)}
             <span className="mx-1.5 text-border">·</span>
             {t(`agents:card.memory.${isToolMemory ? 'tool' : 'assistant'}`)}
@@ -168,7 +168,7 @@ export function AgentCard({
       </div>
 
       {/* ── Hero: what it produced / what's happening ─────────────── */}
-      <div className="mt-3 flex-1">
+      <div className="mt-3.5 flex-1">
         {isExecuting ? (
           <div className="flex items-center gap-2 rounded-lg bg-info-light px-2.5 py-2">
             <Loader2 className="h-4 w-4 shrink-0 animate-spin text-info" />
@@ -188,9 +188,9 @@ export function AgentCard({
       </div>
 
       {/* ── Footer: freshness + collapsed stats + toggle ──────────── */}
-      <div className="mt-3 flex items-center justify-between gap-2 border-t border-border pt-2.5">
-        <div className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
-          <Clock className="h-3.5 w-3.5 shrink-0" />
+      <div className="mt-3 flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground">
+          <Clock className="h-3 w-3 shrink-0" />
           <span className="truncate">
             {agent.last_execution_at
               ? formatTimestamp(agent.last_execution_at, false)
