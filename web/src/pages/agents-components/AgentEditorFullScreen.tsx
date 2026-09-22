@@ -71,20 +71,13 @@ import type {
   ResourceRequest,
   UnifiedDataSourceInfo,
 } from '@/types'
-import {
-  FullScreenDialog,
-  FullScreenDialogHeader,
-  FullScreenDialogContent,
-  FullScreenDialogMain,
-  FullScreenDialogFooter,
-} from '@/components/automation/dialog'
+import { BuilderShell } from '@/components/automation/dialog/BuilderShell'
 import {
   ResourceSelectionDialog,
   ScheduleCard,
   SelectedResourceItem,
   INTERVALS,
   HOURS,
-  PROMPT_TEMPLATES,
 } from './agent-editor'
 import type {
   MetricInfo,
@@ -1214,7 +1207,7 @@ export function AgentEditorFullScreen({
             {/* Task-first entry: 客户语言四选一，技术模式隐入幕后 */}
             <div className="space-y-2 min-w-0">
               <Label className="text-sm font-medium">{tAgent('creator.task.question')}</Label>
-              <div className={cn("gap-3", isMobile ? "grid grid-cols-1" : "grid grid-cols-2 xl:grid-cols-4")}>
+              <div className={cn("gap-2 grid grid-cols-1")}>
                 {([
                   {
                     kind: 'watch', icon: Eye,
@@ -1275,7 +1268,7 @@ export function AgentEditorFullScreen({
   rail['namedesc'] = (
     <>
             {/* Name + Description — one row */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-4">
             {/* Name */}
             <div className="space-y-2 min-w-0">
               <Label className={cn("font-medium", isMobile ? "text-base" : "text-sm")}>
@@ -1490,21 +1483,6 @@ export function AgentEditorFullScreen({
               <Label className="text-sm font-medium">
                 {tAgent('creator.basicInfo.requirement')} <span className="text-error">*</span>
               </Label>
-
-              {/* Quick templates */}
-              <div className="flex gap-2 flex-wrap">
-                {PROMPT_TEMPLATES.filter(t => t.id !== 'empty').map((template) => (
-                  <button
-                    key={template.id}
-                    type="button"
-                    onClick={() => setUserPrompt(template.template)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border hover:bg-muted transition-colors"
-                  >
-                    {template.icon ? <template.icon className="h-4 w-4" /> : null}
-                    <span>{template.label}</span>
-                  </button>
-                ))}
-              </div>
 
               <Textarea
                 value={userPrompt}
@@ -2467,35 +2445,17 @@ export function AgentEditorFullScreen({
 
   return (
     <>
-    <FullScreenDialog open={open} onOpenChange={onOpenChange}>
-      <FullScreenDialogHeader
-        icon={<Sparkles className="h-5 w-5" />}
-        iconBg="bg-accent-purple-light"
-        iconColor="text-accent-purple"
-        title={agent ? tAgent('editAgent') : tAgent('createAgent')}
-        onClose={() => onOpenChange(false)}
-      />
-      <FullScreenDialogContent>
-        <FullScreenDialogMain className="overflow-hidden">
-          <div className="h-full overflow-y-auto">
-            <div className={cn(
-              "space-y-5",
-              isMobile ? "px-4 py-6" : "px-6 py-6 max-w-6xl mx-auto"
-            )}>
-              {rail.task}
-              {rail.namedesc}
-              {rail.model}
-              {canvas.prompt}
-              {canvas.structured}
-              {canvas.schedule}
-              {canvas.resources}
-              {rail.advanced}
-            </div>
-          </div>
-        </FullScreenDialogMain>
-      </FullScreenDialogContent>
-      <FullScreenDialogFooter className="justify-between">{footerNode}</FullScreenDialogFooter>
-    </FullScreenDialog>
+    <BuilderShell
+      open={open}
+      onOpenChange={onOpenChange}
+      accent="indigo"
+      title={agent ? tAgent('editAgent') : tAgent('createAgent')}
+      icon={<Sparkles className="h-5 w-5" />}
+      config={<div className="space-y-5">{rail.task}{rail.namedesc}{rail.model}{rail.advanced}</div>}
+      workspace={<div className="space-y-5">{canvas.prompt}{canvas.structured}{canvas.schedule}{canvas.resources}</div>}
+      footer={footerNode}
+      mobileConfigLabel={tAgent('creator.task.question')}
+    />
 
 
 
