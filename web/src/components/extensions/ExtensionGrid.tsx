@@ -2,7 +2,6 @@ import { useState, useMemo } from "react"
 import { useTranslation } from "react-i18next"
 import { ExtensionCard } from "./ExtensionCard"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { EmptyState } from "@/components/shared/EmptyState"
 import {
@@ -54,6 +53,9 @@ interface ExtensionGridProps {
   onDetails?: (id: string) => void
   onUninstall?: (id: string) => void
   onReload?: (id: string) => Promise<boolean>
+  /** Controlled search text — lifted to the page's toolbar row. */
+  searchQuery: string
+  onSearchChange: (value: string) => void
 }
 
 // Status filter options with counts
@@ -70,16 +72,19 @@ export function ExtensionGrid({
   onDetails,
   onUninstall,
   onReload,
+  searchQuery,
+  onSearchChange,
 }: ExtensionGridProps) {
   const { t } = useTranslation(["extensions", "common"])
 
-  // Filter states
-  const [searchQuery, setSearchQuery] = useState("")
+  // Search is owned by the page (lifted into the toolbar row, per the
+  // no-tab standard: content controls left, actions right). Only the
+  // status filter stays local.
   const [statusFilter, setStatusFilter] = useState<string>("all")
 
   // Clear filters
   const clearFilters = () => {
-    setSearchQuery("")
+    onSearchChange("")
     setStatusFilter("all")
   }
 
@@ -207,7 +212,7 @@ export function ExtensionGrid({
             {marqueeItems.map((ext, i) => (
               <div
                 key={`${ext.name}-${i}`}
-                className="flex-shrink-0 w-56 mx-2 rounded-xl border bg-card backdrop-blur-sm p-3.5 hover:border-foreground/30 hover:bg-background transition-colors"
+                className="flex-shrink-0 w-64 mx-2 rounded-xl border bg-card backdrop-blur-sm p-3.5 hover:border-foreground/30 hover:bg-background transition-colors"
               >
                 <div className="flex items-start gap-3">
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground">
@@ -265,44 +270,16 @@ export function ExtensionGrid({
 
   return (
     <div className="space-y-4">
-      {/* Search Bar */}
-      <div className="relative">
-        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input
-          placeholder={t("searchPlaceholder", { defaultValue: "Search extensions by name, ID, or description..." })}
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="pl-10 h-10 bg-card"
-        />
-        {searchQuery && (
-          <button
-            onClick={() => setSearchQuery("")}
-            aria-label={t('common:clear')}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        )}
-      </div>
-
-      {/* Results summary + Status filters on one row */}
+      {/* Status filter row — pills left (content controls), filtered count
+          right only while filters are active (unfiltered counts duplicate
+          the pill counts). Search lives in the page toolbar row.
+          Hidden entirely when every extension shares one state ("all" +
+          one category): status filtering means nothing there, and the
+          pills just echo the total twice. Appears once a second category
+          (error/stopped) exists. */}
+      {statusOptions.length >= 3 && (
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        {/* Left: results count */}
-        <div className="flex items-center gap-3 text-sm min-w-0">
-          <span className="text-muted-foreground whitespace-nowrap">
-            {hasActiveFilters
-              ? t("filteredResults", { count: filteredExtensions.length, total: stats.total }).replace("{{count}}", String(filteredExtensions.length)).replace("{{total}}", String(stats.total))
-              : t("showingResults", { count: filteredExtensions.length, defaultValue: "Showing {{count}} extensions" }).replace("{{count}}", String(filteredExtensions.length))}
-          </span>
-          {!hasActiveFilters && stats.active > 0 && (
-            <span className="flex items-center gap-1 text-success whitespace-nowrap">
-              <div className="w-2 h-2 rounded-full bg-success" />
-              {stats.active} {t("active", { defaultValue: "active" })}
-            </span>
-          )}
-        </div>
-
-        {/* Right: status filter pills */}
+        {/* Left: status filter pills */}
         <div className="flex items-center gap-1.5 flex-wrap">
           {statusOptions.map((option) => {
             const isSelected = statusFilter === option.value
@@ -341,7 +318,16 @@ export function ExtensionGrid({
             </Button>
           )}
         </div>
+
+        {/* Right: filtered count — only while filters are active.
+            Language-neutral "x / y" beats the old label-only string. */}
+        {hasActiveFilters && (
+          <span className="text-sm text-muted-foreground tabular-nums whitespace-nowrap">
+            {filteredExtensions.length} / {stats.total}
+          </span>
+        )}
       </div>
+      )}
 
       {/* Extension Cards Grid */}
       <div className="grid grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,280px),1fr))] gap-5">

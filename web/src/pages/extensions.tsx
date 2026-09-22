@@ -5,8 +5,9 @@ import { PageLayout } from "@/components/layout/PageLayout"
 import { ExtensionGrid, ExtensionDetailsDialog, MarketplaceDialog } from "@/components/extensions"
 import { ExtensionUploadDialog } from "@/components/extensions"
 import { useToast } from "@/hooks/use-toast"
-import { RefreshCw, Upload, Globe } from "lucide-react"
+import { RefreshCw, Upload, Globe, Search, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -41,6 +42,9 @@ export function ExtensionsPage() {
   const [detailsDialogOpen, setDetailsDialogOpen] = useState(false)
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false)
   const [marketplaceDialogOpen, setMarketplaceDialogOpen] = useState(false)
+  // Search lives in the page toolbar row (no-tab standard: content
+  // controls left, actions right); the grid receives it controlled.
+  const [searchQuery, setSearchQuery] = useState("")
 
   // Confirmation dialogs state
   const [reloadConfirmOpen, setReloadConfirmOpen] = useState(false)
@@ -132,12 +136,14 @@ export function ExtensionsPage() {
     <>
       <PageLayout
         title={t("extensions:title", { defaultValue: "Extensions" })}
-        subtitle={t("extensions:description", { defaultValue: "Manage dynamic extensions and plugins" })}
         borderedHeader={false}
         headerContent={
-          // Same toolbar-row shape as every other page (PageTabsBar row)
-          <div className="flex shrink-0 items-center bg-background px-4 py-2 sm:px-6 md:px-8">
-            <div className="flex shrink-0 flex-wrap items-center gap-1.5 sm:gap-2">
+          // No-tab page standard (actions-left variant): page actions sit
+          // in the tab slot, search anchors the right edge (aligned with
+          // the content below) — the mirrored layout to tabbed pages'
+          // "tabs left, actions right".
+          <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-end bg-background px-4 pt-2 sm:px-6 md:px-8">
+            <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
               <Button
                 variant="default"
                 size="sm"
@@ -156,17 +162,42 @@ export function ExtensionsPage() {
                 {t("extensions:uploadExtension", { defaultValue: "Upload" })}
               </Button>
             </div>
+            {/* Anchored right: ml-auto + capped width keeps the input's
+                right edge flush with the content card edge below. */}
+            <div className="relative w-full sm:ml-auto sm:w-full sm:max-w-md">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder={t("searchPlaceholder", { defaultValue: "Search extensions and commands..." })}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9 h-9 bg-card"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery("")}
+                  aria-label={t("common:clear")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
           </div>
         }
       >
-        {/* Extensions Grid */}
-        <ExtensionGrid
-          extensions={extensions}
-          loading={extensionsLoading}
-          onUninstall={handleUninstall}
-          onDetails={handleConfigure}
-          onReload={handleReload}
-        />
+        {/* Extensions Grid — mt-4 mirrors PageTabsContent's tabs→content
+            gap (16px) so the no-tab toolbar doesn't touch the cards. */}
+        <div className="mt-4">
+          <ExtensionGrid
+            extensions={extensions}
+            loading={extensionsLoading}
+            onUninstall={handleUninstall}
+            onDetails={handleConfigure}
+            onReload={handleReload}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+          />
+        </div>
       </PageLayout>
 
       {/* Extension Details Dialog */}

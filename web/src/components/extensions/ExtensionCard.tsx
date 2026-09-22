@@ -156,7 +156,7 @@ export function ExtensionCard({
                 </span>
               </div>
               <div className="flex items-center gap-2 mt-0.5">
-                <span className={cn(textMini, "text-muted-foreground font-mono truncate max-w-[100px]")} title={extension.id}>{extension.id}</span>
+                <span className={cn(textMini, "text-muted-foreground font-mono truncate max-w-[160px]")} title={extension.id}>{extension.id}</span>
                 {extension.version && (
                   <span className={cn(textNano, "text-muted-foreground shrink-0")}>v{extension.version}</span>
                 )}
