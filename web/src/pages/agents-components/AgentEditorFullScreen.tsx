@@ -71,13 +71,7 @@ import type {
   ResourceRequest,
   UnifiedDataSourceInfo,
 } from '@/types'
-import {
-  FullScreenDialog,
-  FullScreenDialogHeader,
-  FullScreenDialogContent,
-  FullScreenDialogFooter,
-  FullScreenDialogMain,
-} from '@/components/automation/dialog'
+import { BuilderShell } from '@/components/automation/dialog/BuilderShell'
 import {
   ResourceSelectionDialog,
   ScheduleCard,
@@ -1206,32 +1200,74 @@ export function AgentEditorFullScreen({
   // Render
   // ========================================================================
 
-  return (
+  const rail: Record<string, React.ReactNode> = {}
+  const canvas: Record<string, React.ReactNode> = {}
+
+  rail['task'] = (
     <>
-    <FullScreenDialog
-      open={open}
-      onOpenChange={onOpenChange}
-    >
-      {/* Header */}
-      <FullScreenDialogHeader
-        icon={<Sparkles className="h-5 w-5" />}
-        iconBg="bg-accent-purple-light"
-        iconColor="text-accent-purple"
-        title={agent ? tAgent('editAgent') : tAgent('createAgent')}
-        onClose={() => onOpenChange(false)}
-      />
+            {/* Task-first entry: 客户语言四选一，技术模式隐入幕后 */}
+            <div className="space-y-2 min-w-0">
+              <Label className="text-sm font-medium">{tAgent('creator.task.question')}</Label>
+              <div className={cn("gap-2", isMobile ? "grid grid-cols-1" : "grid grid-cols-2")}>
+                {([
+                  {
+                    kind: 'watch', icon: Eye,
+                    title: tAgent('creator.task.watch.title'),
+                    desc: tAgent('creator.task.watch.desc'),
+                    example: tAgent('creator.task.watch.example'),
+                    apply: () => { setExecutionMode('structured'); setScheduleType('timer'); setTimerSubType('interval') },
+                  },
+                  {
+                    kind: 'guard', icon: BellRing,
+                    title: tAgent('creator.task.guard.title'),
+                    desc: tAgent('creator.task.guard.desc'),
+                    example: tAgent('creator.task.guard.example'),
+                    apply: () => { setExecutionMode('structured'); setScheduleType('reactive') },
+                  },
+                  {
+                    kind: 'investigate', icon: SearchCheck,
+                    title: tAgent('creator.task.investigate.title'),
+                    desc: tAgent('creator.task.investigate.desc'),
+                    example: tAgent('creator.task.investigate.example'),
+                    apply: () => { setExecutionMode('free'); setScheduleType('on-demand') },
+                  },
+                  {
+                    kind: 'report', icon: FileText,
+                    title: tAgent('creator.task.report.title'),
+                    desc: tAgent('creator.task.report.desc'),
+                    example: tAgent('creator.task.report.example'),
+                    apply: () => { setExecutionMode('focused'); setScheduleType('timer'); setTimerSubType('daily') },
+                  },
+                ] as const).map((card) => {
+                  const on = taskKind === card.kind
+                  return (
+                    <button
+                      key={card.kind}
+                      type="button"
+                      onClick={() => { setTaskKind(card.kind); card.apply() }}
+                      className={cn(
+                        "flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors",
+                        on ? "border-primary bg-muted" : "border-muted hover:border-border"
+                      )}
+                    >
+                      <div className="flex items-center gap-2">
+                        <card.icon className={cn("h-4 w-4", on ? "text-foreground" : "text-muted-foreground")} />
+                        <span className="text-sm font-medium">{card.title}</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground">{card.desc}</p>
+                      <p className="w-full border-t border-dashed border-border pt-1 text-[11px] text-muted-foreground">
+                        {tAgent('creator.task.examplePrefix')}{card.example}
+                      </p>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+    </>
+  )
 
-      <FullScreenDialogContent>
-        <FullScreenDialogMain className="overflow-hidden">
-          <div className="h-full overflow-y-auto">
-              <div className={cn(
-                "space-y-6",
-                isMobile ? "px-4 py-6" : "px-4 py-6"
-              )}>
-
-            {/* Two-column body: left = config track, right = inputs & dry-run */}
-            <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] items-start">
-              <div className="min-w-0 space-y-6">
+  rail['namedesc'] = (
+    <>
             {/* Name + Description — one row */}
             <div className="grid grid-cols-2 gap-3">
             {/* Name */}
@@ -1270,6 +1306,12 @@ export function AgentEditorFullScreen({
               />
             </div>
 
+            </div>{/* end Name + Description row */}
+    </>
+  )
+
+  rail['model'] = (
+    <>
             {/* Model Selection */}
             <div className="space-y-2 min-w-0">
               <div className="flex items-center justify-between">
@@ -1358,67 +1400,85 @@ export function AgentEditorFullScreen({
 
             {/* Advanced knobs — rarely changed; collapsed so the required
                 fields (mode / name / requirements) keep the visual focus. */}
-            {/* Task-first entry: 客户语言四选一，技术模式隐入幕后 */}
-            <div className="space-y-2 min-w-0">
-              <Label className="text-sm font-medium">{tAgent('creator.task.question')}</Label>
-              <div className={cn("gap-2", isMobile ? "grid grid-cols-1" : "grid grid-cols-2")}>
-                {([
-                  {
-                    kind: 'watch', icon: Eye,
-                    title: tAgent('creator.task.watch.title'),
-                    desc: tAgent('creator.task.watch.desc'),
-                    example: tAgent('creator.task.watch.example'),
-                    apply: () => { setExecutionMode('structured'); setScheduleType('timer'); setTimerSubType('interval') },
-                  },
-                  {
-                    kind: 'guard', icon: BellRing,
-                    title: tAgent('creator.task.guard.title'),
-                    desc: tAgent('creator.task.guard.desc'),
-                    example: tAgent('creator.task.guard.example'),
-                    apply: () => { setExecutionMode('structured'); setScheduleType('reactive') },
-                  },
-                  {
-                    kind: 'investigate', icon: SearchCheck,
-                    title: tAgent('creator.task.investigate.title'),
-                    desc: tAgent('creator.task.investigate.desc'),
-                    example: tAgent('creator.task.investigate.example'),
-                    apply: () => { setExecutionMode('free'); setScheduleType('on-demand') },
-                  },
-                  {
-                    kind: 'report', icon: FileText,
-                    title: tAgent('creator.task.report.title'),
-                    desc: tAgent('creator.task.report.desc'),
-                    example: tAgent('creator.task.report.example'),
-                    apply: () => { setExecutionMode('focused'); setScheduleType('timer'); setTimerSubType('daily') },
-                  },
-                ] as const).map((card) => {
-                  const on = taskKind === card.kind
-                  return (
-                    <button
-                      key={card.kind}
-                      type="button"
-                      onClick={() => { setTaskKind(card.kind); card.apply() }}
-                      className={cn(
-                        "flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors",
-                        on ? "border-primary bg-muted" : "border-muted hover:border-border"
-                      )}
-                    >
-                      <div className="flex items-center gap-2">
-                        <card.icon className={cn("h-4 w-4", on ? "text-foreground" : "text-muted-foreground")} />
-                        <span className="text-sm font-medium">{card.title}</span>
-                      </div>
-                      <p className="text-xs text-muted-foreground">{card.desc}</p>
-                      <p className="w-full border-t border-dashed border-border pt-1 text-[11px] text-muted-foreground">
-                        {tAgent('creator.task.examplePrefix')}{card.example}
-                      </p>
-                    </button>
-                  )
-                })}
+    </>
+  )
+
+  rail['advanced'] = (
+    <>
+            <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+              <CollapsibleTrigger className="w-full flex items-center justify-between py-1 text-left">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                  {tAgent('creator.advanced.title', 'Advanced Configuration')}
+                </span>
+                <ChevronRight className={cn(
+                  "h-4 w-4 text-muted-foreground transition-transform",
+                  advancedOpen && "rotate-90"
+                )} />
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <div className="pt-3 space-y-6">
+            {/* Agent Priority */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm font-medium">{tAgent('creator.advanced.agentPriority', 'Agent Priority')}</Label>
+                <span className="text-sm font-medium tabular-nums">{priority}</span>
               </div>
+              <Slider
+                min={1}
+                max={10}
+                step={1}
+                value={[priority]}
+                onValueChange={([v]) => setPriority(v)}
+              />
+              <p className="text-xs text-muted-foreground">
+                {tAgent('creator.advanced.priorityHint', 'Execution priority (1=lowest, 10=highest)')}
+              </p>
             </div>
 
+{!isStructuredMode && (<>
+            {/* Max Chain Depth */}
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">{tAgent('creator.advanced.chainDepth', 'Max Chain Depth')}</Label>
+              <Slider
+                min={1}
+                max={20}
+                step={1}
+                value={[maxChainDepth]}
+                onValueChange={([v]) => setMaxChainDepth(v)}
+              />
+              <p className="text-xs text-muted-foreground">
+                {tAgent('creator.advanced.chainDepthHint', 'Maximum tool-calling rounds per execution (1=single-pass, higher=more capable)')}
+              </p>
             </div>
 
+            {/* Conversation History Depth */}
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">{tAgent('creator.advanced.historyDepth', 'Conversation History Depth')}</Label>
+              <Select value={contextWindowSize.toString()} onValueChange={(v) => setContextWindowSize(parseInt(v))}>
+                <SelectTrigger className="h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="5">5</SelectItem>
+                  <SelectItem value="10">10</SelectItem>
+                  <SelectItem value="20">20</SelectItem>
+                  <SelectItem value="30">30</SelectItem>
+                  <SelectItem value="50">50</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {tAgent('creator.advanced.contextHint', 'Number of recent conversation turns to include as context')}
+              </p>
+            </div>
+</>)}
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+    </>
+  )
+
+  canvas['prompt'] = (
+    <>
             {/* Prompt */}
             <div className="space-y-3">
               <Label className="text-sm font-medium">
@@ -1465,7 +1525,11 @@ export function AgentEditorFullScreen({
                 </p>
               </div>
             </div>
+    </>
+  )
 
+  canvas['structured'] = (
+    <>
             {/* Structured (L0) output contract — only for structured mode */}
             {isStructuredMode && (
               <div className="space-y-2">
@@ -1666,78 +1730,11 @@ export function AgentEditorFullScreen({
                 {dryRunError}
               </div>
             )}
+    </>
+  )
 
-
-            <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
-              <CollapsibleTrigger className="w-full flex items-center justify-between py-1 text-left">
-                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                  {tAgent('creator.advanced.title', 'Advanced Configuration')}
-                </span>
-                <ChevronRight className={cn(
-                  "h-4 w-4 text-muted-foreground transition-transform",
-                  advancedOpen && "rotate-90"
-                )} />
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                <div className="pt-3 space-y-6">
-            {/* Agent Priority */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label className="text-sm font-medium">{tAgent('creator.advanced.agentPriority', 'Agent Priority')}</Label>
-                <span className="text-sm font-medium tabular-nums">{priority}</span>
-              </div>
-              <Slider
-                min={1}
-                max={10}
-                step={1}
-                value={[priority]}
-                onValueChange={([v]) => setPriority(v)}
-              />
-              <p className="text-xs text-muted-foreground">
-                {tAgent('creator.advanced.priorityHint', 'Execution priority (1=lowest, 10=highest)')}
-              </p>
-            </div>
-
-{!isStructuredMode && (<>
-            {/* Max Chain Depth */}
-            <div className="space-y-2">
-              <Label className="text-sm font-medium">{tAgent('creator.advanced.chainDepth', 'Max Chain Depth')}</Label>
-              <Slider
-                min={1}
-                max={20}
-                step={1}
-                value={[maxChainDepth]}
-                onValueChange={([v]) => setMaxChainDepth(v)}
-              />
-              <p className="text-xs text-muted-foreground">
-                {tAgent('creator.advanced.chainDepthHint', 'Maximum tool-calling rounds per execution (1=single-pass, higher=more capable)')}
-              </p>
-            </div>
-
-            {/* Conversation History Depth */}
-            <div className="space-y-2">
-              <Label className="text-sm font-medium">{tAgent('creator.advanced.historyDepth', 'Conversation History Depth')}</Label>
-              <Select value={contextWindowSize.toString()} onValueChange={(v) => setContextWindowSize(parseInt(v))}>
-                <SelectTrigger className="h-9">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="5">5</SelectItem>
-                  <SelectItem value="10">10</SelectItem>
-                  <SelectItem value="20">20</SelectItem>
-                  <SelectItem value="30">30</SelectItem>
-                  <SelectItem value="50">50</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                {tAgent('creator.advanced.contextHint', 'Number of recent conversation turns to include as context')}
-              </p>
-            </div>
-</>)}
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
-
+  canvas['schedule'] = (
+    <>
             {/* Execution Schedule */}
             <div className="space-y-3">
               <Label className={cn("font-medium", isMobile ? "text-base" : "text-sm")}>{tAgent('creator.basicInfo.scheduleLabel')}</Label>
@@ -2268,10 +2265,11 @@ export function AgentEditorFullScreen({
                 )}
               </div>
             </div>
+    </>
+  )
 
-              </div>{/* end left column */}
-
-              <div className="min-w-0 space-y-4">
+  canvas['resources'] = (
+    <>
             {/* Resources Section */}
             {(() => {
               // Determine Resources section style based on schedule type + execution mode
@@ -2408,16 +2406,21 @@ export function AgentEditorFullScreen({
                 </div>
               )
             })()}
-              </div>{/* end right column */}
-            </div>{/* end two-column grid */}
-          </div>
-        </div>
-        </FullScreenDialogMain>
-      </FullScreenDialogContent>
+    </>
+  )
 
-      {/* Footer with action buttons and summary */}
-      <FullScreenDialogFooter className="flex-col items-stretch">
-        <div className={cn(
+  const footerNode = (
+    <div className="flex w-full flex-col gap-2">
+      {agentSummary && (
+          <div className={cn(
+            "flex items-center gap-2 text-muted-foreground",
+            isMobile ? "text-xs" : "text-xs"
+          )}>
+            <Info className={cn(isMobile ? "h-4 w-4" : "h-4 w-4", "shrink-0")} />
+            <span className="line-clamp-1">{agentSummary}</span>
+          </div>
+        )}
+      <div className={cn(
           "flex gap-2",
           isMobile ? "justify-end" : "justify-end"
         )}>
@@ -2452,18 +2455,24 @@ export function AgentEditorFullScreen({
             {saving ? 'Saving...' : agent ? tCommon('save') : tCommon('create')}
           </Button>
         </div>
-        {agentSummary && (
-          <div className={cn(
-            "flex items-center gap-2 text-muted-foreground border-t pt-2",
-            isMobile ? "text-xs" : "text-xs"
-          )}>
-            <Info className={cn(isMobile ? "h-4 w-4" : "h-4 w-4", "shrink-0")} />
-            <span className="line-clamp-1">{agentSummary}</span>
-          </div>
-        )}
-      </FullScreenDialogFooter>
+    </div>
+  )
 
-    </FullScreenDialog>
+
+  return (
+    <>
+    <BuilderShell
+      open={open}
+      onOpenChange={onOpenChange}
+      accent="indigo"
+      title={agent ? tAgent('editAgent') : tAgent('createAgent')}
+      icon={<Sparkles className="h-5 w-5" />}
+      config={<div className="space-y-5">{rail.task}{rail.namedesc}{rail.model}{rail.advanced}</div>}
+      workspace={<div className="space-y-5">{canvas.prompt}{canvas.structured}{canvas.schedule}{canvas.resources}</div>}
+      footer={footerNode}
+      mobileConfigLabel={tAgent('creator.task.question')}
+    />
+
 
       {/* Resource Selection Dialog — sibling of FullScreenDialog to avoid Radix focus conflict (double-click issue) */}
       <ResourceSelectionDialog
