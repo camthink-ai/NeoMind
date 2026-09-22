@@ -279,7 +279,7 @@ pub enum ExecutionMode {
 }
 
 /// One output field of a Structured-mode agent's schema.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OperatorField {
     /// Field name (becomes the metric name in `ai:{agent_id}:{name}`)
     pub name: String,
@@ -294,7 +294,7 @@ pub struct OperatorField {
 }
 
 /// Allowed value types for [`OperatorField`].
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase", tag = "type", content = "values")]
 pub enum OperatorFieldType {
     Number,
@@ -305,7 +305,7 @@ pub enum OperatorFieldType {
 
 /// Output smoothing for state-like fields: a single inference can flicker
 /// (clean → messy → clean); smoothing decides when a change is real.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum SmoothingPolicy {
     /// Change is published only after `n` consecutive identical judgments
@@ -317,7 +317,7 @@ pub enum SmoothingPolicy {
 /// Runtime tuning for a Structured-mode agent (L0). All costs are bounded:
 /// debounce caps frequency, budget caps daily volume, the failure threshold
 /// trips the circuit breaker (agent degrades: keeps last values, marked stale).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OperatorConfig {
     /// Inputs are merged: at most one inference per `debounce_secs` (default 30)
     #[serde(default = "default_operator_debounce")]

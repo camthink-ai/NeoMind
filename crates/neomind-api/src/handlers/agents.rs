@@ -214,6 +214,12 @@ struct AgentDetailDto {
     /// Tool scoping (None = all tools; allowed_tools empty = all tools)
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_config: Option<neomind_storage::AgentToolConfig>,
+    /// Structured (L0) output contract — present only for structured agents
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_schema: Option<Vec<neomind_storage::OperatorField>>,
+    /// Structured (L0) runtime tuning — present only for structured agents
+    #[serde(skip_serializing_if = "Option::is_none")]
+    operator_config: Option<neomind_storage::OperatorConfig>,
 }
 
 /// Agent resource for API responses.
@@ -427,12 +433,18 @@ pub struct CreateAgentRequest {
     /// Context window size (default: 10)
     #[serde(default)]
     pub context_window_size: Option<usize>,
-    /// Execution mode: "focused" for single-pass with bound resources, "free" for multi-round tool calling
+    /// Execution mode: "focused", "free", or "structured" (L0 operator)
     #[serde(default)]
     pub execution_mode: Option<String>,
     /// Custom system prompt override (replaces default IoT role prompt)
     #[serde(default)]
     pub system_prompt: Option<String>,
+    /// Structured (L0) output contract: fields published as ai:{id}:{field}
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Vec<neomind_storage::OperatorField>>,
+    /// Structured (L0) runtime tuning (debounce/smoothing/budget/breaker)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator_config: Option<neomind_storage::OperatorConfig>,
     /// Tool scoping: restrict which tools this agent may call. Omit (or set
     /// `allowed_tools: []`) for all tools — the default. Scoping the tool set
     /// per task is the highest-leverage fix for small-model tool selection.
@@ -524,6 +536,12 @@ pub struct UpdateAgentRequest {
     /// Custom system prompt override (replaces default IoT role prompt)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
+    /// Structured (L0) output contract: fields published as ai:{id}:{field}
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Vec<neomind_storage::OperatorField>>,
+    /// Structured (L0) runtime tuning (debounce/smoothing/budget/breaker)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator_config: Option<neomind_storage::OperatorConfig>,
     /// Tool scoping override. Send an object to set/replace it; omit to leave
     /// unchanged. Set `allowed_tools: []` to mean "all tools".
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -662,6 +680,8 @@ impl From<&AiAgent> for AgentDetailDto {
             execution_mode: execution_mode_to_string(&agent.execution_mode).to_string(),
             system_prompt: agent.system_prompt.clone(),
             tool_config: agent.tool_config.clone(),
+            output_schema: agent.output_schema.clone(),
+            operator_config: agent.operator_config.clone(),
         }
     }
 }
@@ -1129,8 +1149,8 @@ pub async fn create_agent(
         system_prompt: request.system_prompt,
         max_retries: 0,
         consecutive_failures: 0,
-        output_schema: None,
-        operator_config: None,
+        output_schema: request.output_schema,
+        operator_config: request.operator_config,
         conversation_history: Default::default(),
         user_messages: Default::default(),
         conversation_summary: Default::default(),
@@ -1389,6 +1409,13 @@ pub async fn update_agent(
     // `{allowed_tools: []}` to clear scoping (meaning "all tools").
     if let Some(tool_config) = request.tool_config {
         agent.tool_config = Some(tool_config);
+    }
+    // Structured (L0) contract: Some replaces; omit leaves unchanged.
+    if let Some(output_schema) = request.output_schema {
+        agent.output_schema = Some(output_schema);
+    }
+    if let Some(operator_config) = request.operator_config {
+        agent.operator_config = Some(operator_config);
     }
     if let Some(status_str) = request.status {
         agent.status = match status_str.as_str() {
