@@ -271,3 +271,66 @@ async fn max_rounds_graceful_exit_runs_phase2() {
     assert_eq!(out.final_text, "synthesized conclusion");
     assert_eq!(out.stop_reason, StopReason::MaxRounds);
 }
+
+#[tokio::test]
+async fn structured_mode_publishes_schema_fields_on_first_pass() {
+    let (mut executor, mut agent, _registry) = build_harness().await;
+    agent.execution_mode = neomind_storage::agents::ExecutionMode::Structured;
+    agent.output_schema = Some(vec![
+        neomind_storage::OperatorField {
+            name: "missing_count".into(),
+            field_type: neomind_storage::OperatorFieldType::Number,
+            unit: Some("件".into()),
+            description: Some("漏装数量".into()),
+        },
+        neomind_storage::OperatorField {
+            name: "batch_status".into(),
+            field_type: neomind_storage::OperatorFieldType::Enum(vec![
+                "正常".into(),
+                "待检".into(),
+            ]),
+            unit: None,
+            description: None,
+        },
+    ]);
+    // Route resolution through the executor default runtime (harness has no
+    // instance manager) — the mock scripts the one inference call.
+    let rt: Arc<dyn LlmRuntime> = Arc::new(MockLlmRuntime::new(vec![MockResponse::text(
+        r#"{"missing_count": 1, "batch_status": "待检"}"#,
+    )]));
+    executor.set_llm_runtime(rt).await;
+
+    let (dp, er) = executor
+        .execute_structured(
+            "exec-structured-1",
+            &agent,
+            vec![neomind_storage::DataCollected {
+                source: "cam-01".into(),
+                data_type: "image".into(),
+                values: serde_json::json!({"描述": "conveyor 有 1 件空位"}),
+                timestamp: 0,
+            }],
+        )
+        .await
+        .expect("structured execution succeeds");
+
+    assert_eq!(er.success_rate, 1.0);
+    assert!(er.summary.contains("2 field(s)"), "summary: {}", er.summary);
+    assert!(dp.conclusion.contains("待检"));
+    assert_eq!(dp.stop_reason, "structured");
+    assert_eq!(dp.decisions.len(), 1);
+    assert!(dp.decisions[0].action.contains("ai:test-agent"));
+}
+
+#[tokio::test]
+async fn structured_mode_without_schema_is_rejected() {
+    let (executor, mut agent, _registry) = build_harness().await;
+    agent.execution_mode = neomind_storage::agents::ExecutionMode::Structured;
+    agent.output_schema = None;
+
+    let err = executor
+        .execute_structured("exec-structured-2", &agent, vec![])
+        .await
+        .expect_err("missing schema must fail");
+    assert!(err.to_string().contains("output_schema"), "err: {}", err);
+}

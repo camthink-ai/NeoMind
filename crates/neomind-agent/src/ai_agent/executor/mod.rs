@@ -160,6 +160,7 @@ mod data_collector;
 mod event_trigger;
 mod intent;
 mod llm_runtime;
+mod structured;
 mod memory;
 mod response_parser;
 mod tool_loop;
@@ -1297,6 +1298,17 @@ impl AgentExecutor {
             step_num += 1;
             // Small delay for visual effect
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+
+        // Structured (L0) branch: one constrained inference, schema-validated
+        // fields out — no intent parse, no situation analysis, no tool loop.
+        if matches!(
+            agent.execution_mode,
+            neomind_storage::agents::ExecutionMode::Structured
+        ) {
+            return self
+                .execute_structured(&execution_id, &agent, data_collected)
+                .await;
         }
 
         // Progress: Analyzing
