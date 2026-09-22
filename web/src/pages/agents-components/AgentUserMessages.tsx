@@ -10,9 +10,7 @@ import { useState, useEffect, useRef } from "react"
 import { useTranslation } from "react-i18next"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
 import { Textarea } from "@/components/ui/textarea"
-import { Badge } from "@/components/ui/badge"
 import {
   Loader2,
   MessageSquare,
@@ -137,30 +135,28 @@ export function AgentUserMessages({ agentId, onMessageAdded }: AgentUserMessages
 
       {/* Input Area */}
       <div className="rounded-lg border border-border bg-card p-3">
-        <div className="flex gap-2">
-          <Textarea
-            ref={textareaRef}
-            value={newMessage}
-            onChange={(e) => setNewMessage(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={t('agents:userMessages.placeholder')}
-            className="resize-none min-h-[60px] max-h-[120px]"
-            disabled={sending}
-          />
-          <div className="flex flex-col gap-2">
-            <Button
-              size="icon"
-              onClick={handleSendMessage}
-              disabled={!newMessage.trim() || sending}
-              className="h-full shrink-0"
-            >
-              <Send className="h-4 w-4" />
-            </Button>
-          </div>
+        <Textarea
+          ref={textareaRef}
+          value={newMessage}
+          onChange={(e) => setNewMessage(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder={t('agents:userMessages.placeholder')}
+          className="resize-none min-h-[64px] max-h-[140px] border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
+          disabled={sending}
+        />
+        <div className="mt-2 flex items-center justify-between gap-2 border-t border-border pt-2">
+          <span className="text-xs text-muted-foreground">
+            {t('agents:userMessages.hint')} ⌘⏎ / Ctrl+Enter
+          </span>
+          <Button
+            size="sm"
+            onClick={handleSendMessage}
+            disabled={!newMessage.trim() || sending}
+            className="shrink-0"
+          >
+            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+          </Button>
         </div>
-        <p className="text-xs text-muted-foreground mt-2">
-          {t('agents:userMessages.hint')} ⌘⏎ / Ctrl+Enter
-        </p>
       </div>
     </div>
   )
@@ -179,7 +175,7 @@ function MessageBubble({ message, onDelete }: MessageBubbleProps) {
   const { t } = useTranslation(['common', 'agents'])
 
   return (
-    <Card className="p-3 relative group">
+    <div className="group relative rounded-lg border border-border bg-card p-3 transition-colors hover:border-foreground/20">
       <button
         onClick={onDelete}
         aria-label={t('common:delete')}
@@ -193,23 +189,19 @@ function MessageBubble({ message, onDelete }: MessageBubbleProps) {
         <Trash2 className="h-4 w-4" />
       </button>
 
-      <div className="pr-6">
-        <div className="flex items-center gap-2 mb-1.5">
-          <MessageSquare className="h-4 w-4 text-muted-foreground" />
-          <span className="text-xs text-muted-foreground flex items-center gap-1">
-            <Clock className="h-4 w-4" />
-            {formatTimestamp(message.timestamp, false)}
+      <div className="flex items-center gap-2 pr-6">
+        <span className="text-xs tabular-nums text-muted-foreground">
+          {formatTimestamp(message.timestamp, false)}
+        </span>
+        {message.message_type && (
+          <span className="rounded border border-border px-1.5 text-xs text-muted-foreground">
+            {message.message_type}
           </span>
-          {message.message_type && (
-            <Badge variant="secondary" className="text-xs h-5">
-              {message.message_type}
-            </Badge>
-          )}
-        </div>
-        <p className="text-sm whitespace-pre-wrap break-words">
-          {message.content}
-        </p>
+        )}
       </div>
-    </Card>
+      <p className="mt-1 pr-6 text-sm whitespace-pre-wrap break-words">
+        {message.content}
+      </p>
+    </div>
   )
 }

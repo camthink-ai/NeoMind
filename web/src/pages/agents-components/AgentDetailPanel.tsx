@@ -381,29 +381,25 @@ export function AgentDetailPanel({
                                 </DetailSection>
                               )}
 
-                              <div className={cn("grid gap-4", isMobile ? "grid grid-cols-1" : "grid grid-cols-2")}>
-                                <div className="rounded-lg bg-card border border-border p-4">
-                                <DetailSection title={t('agents:detail.schedule')} icon={Clock}>
-                                  <div className="space-y-1">
-                                    <InfoRow label={t('agents:detail.type')} value={agent.schedule.schedule_type} />
-                                    {agent.schedule.interval_seconds && (
-                                      <InfoRow label={t('agents:detail.interval')} value={`${agent.schedule.interval_seconds}s`} />
-                                    )}
-                                    {agent.schedule.cron_expression && (
-                                      <InfoRow label={t('agents:detail.cron')} value={agent.schedule.cron_expression} mono />
-                                    )}
-                                    {agent.schedule.event_filter && (
-                                      <InfoRow label={t('agents:creator.schedule.event.triggerEvent')} value={agent.schedule.event_filter} mono />
-                                    )}
-                                  </div>
-                                </DetailSection>
+                              <div className="rounded-lg bg-card border border-border p-4">
+                                <div className="space-y-1.5">
+                                  <h4 className="text-sm font-medium">{t('agents:detail.schedule')}</h4>
+                                  <InfoRow label={t('agents:detail.type')} value={agent.schedule.schedule_type} />
+                                  {agent.schedule.interval_seconds && (
+                                    <InfoRow label={t('agents:detail.interval')} value={`${agent.schedule.interval_seconds}s`} />
+                                  )}
+                                  {agent.schedule.cron_expression && (
+                                    <InfoRow label={t('agents:detail.cron')} value={agent.schedule.cron_expression} mono />
+                                  )}
+                                  {agent.schedule.event_filter && (
+                                    <InfoRow label={t('agents:creator.schedule.event.triggerEvent')} value={agent.schedule.event_filter} mono />
+                                  )}
+                                </div>
 
-                                <DetailSection title={t('agents:creator.basicInfo.llmBackend')} icon={Brain}>
-                                  <div className="space-y-1">
-                                    <InfoRow label={t('agents:detail.model')} value={agent.llm_backend_id || t('agents:creator.basicInfo.useActiveBackend')} mono={!!agent.llm_backend_id} />
-                                    <InfoRow label={t('common:priority')} value={agent.priority ?? '-'} />
-                                  </div>
-                                </DetailSection>
+                                <div className="mt-4 space-y-1.5 border-t border-border pt-4">
+                                  <h4 className="text-sm font-medium">{t('agents:creator.basicInfo.llmBackend')}</h4>
+                                  <InfoRow label={t('agents:detail.model')} value={agent.llm_backend_id || t('agents:creator.basicInfo.useActiveBackend')} mono={!!agent.llm_backend_id} />
+                                  <InfoRow label={t('common:priority')} value={agent.priority ?? '-'} />
                                 </div>
                               </div>
 
