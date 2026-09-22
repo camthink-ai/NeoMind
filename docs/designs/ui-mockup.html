@@ -142,6 +142,14 @@ section>.desc{color:var(--muted-foreground);font-size:13px;margin-bottom:14px}
 .zone .zt{font-size:12px;font-weight:600;color:var(--muted-foreground);letter-spacing:.04em}
 .zone .zl{flex:1;height:1px;background:var(--border)}
 
+.taskgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;margin-bottom:10px}
+.taskcard{border:1px solid var(--border);border-radius:var(--radius-lg);padding:10px;display:flex;flex-direction:column;gap:4px;cursor:pointer;background:var(--card)}
+.taskcard.on{border-color:var(--primary);background:var(--primary-bg)}
+.taskcard .tt{font-weight:600;font-size:13px}
+.taskcard .td{font-size:11.5px;color:var(--muted-foreground)}
+.taskcard .te{font-size:11px;color:var(--muted-foreground);border-top:1px dashed var(--border);padding-top:4px;margin-top:2px}
+.taskq{font-size:13px;font-weight:600;margin:2px 0 6px}
+
 /* ===== Screen 2 向导 ===== */
 .s2{display:flex;flex-direction:column;min-height:580px}
 .s2-head{display:flex;align-items:center;gap:18px;padding:14px 22px;border-bottom:1px solid var(--border)}
@@ -355,8 +363,8 @@ footer{max-width:1200px;margin:40px auto 60px;padding:0 24px;color:var(--muted-f
 
 <!-- ============ Screen 2 创建向导 ============ -->
 <section id="s2">
-  <h2>② 新增 / 编辑智能体 —— 连续表单流（顺序 = 身份 → 能力 → 运行策略）</h2>
-  <p class="desc">无向导的单页连续表单（遵循 DESIGN_SPEC：无满宽分隔线、无装饰性分区头），仅以<b>顺序</b>表达分组：身份（名称/描述/模型）→ 能力（类型卡 + 指令 + 输出字段 + 护栏折叠行）→ 运行策略（节奏/通知 + 高级折叠，按类型过滤）。配置面与确定性成正比：自由模式只剩一句话+节奏，确定性模式的旋钮全部折叠在默认值后。解决四个混乱来源：输出区插在模式卡与基本信息之间、调度区离模式区太远、高级项不随模式变化、试跑按钮埋在表单中部（改为吸底 CTA）。<span class="dg d-keep">保留</span> · <span class="dg d-new">新增</span> · <span class="dg d-mod">调整</span>（含位置重排）。</p>
+  <h2>② 新增 / 编辑智能体 —— 任务优先入口</h2>
+  <p class="desc">入口只剩一个问题：<b>"它替你做什么？"</b>四张任务卡（替我看/盯/查/报，客户语言），技术模式（Focused/Free/Structured）全部隐入幕后——选卡即设定执行模式与节奏默认值，仍可在下方覆盖。无满宽分隔线、无装饰性分区头（DESIGN_SPEC），分组仅由顺序表达。</p>
   <div class="frame"><div class="frame-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="url">neomind.local/agents?editor=new</span></div>
   <div class="screen"><div class="s2">
     <div class="s2-head">
@@ -365,65 +373,59 @@ footer{max-width:1200px;margin:40px auto 60px;padding:0 24px;color:var(--muted-f
     </div>
     <div class="s2-body">
       <div class="s2-left" style="width:390px">
-        <div>
-          <div class="rythm" style="margin-bottom:6px"><span>包装台视觉质检</span><small style="color:var(--muted-foreground)">名称</small></div>
-          <div class="rythm" style="margin-bottom:6px"><span style="color:var(--muted-foreground)">每 15 分钟质检一次包装台…</span><small style="color:var(--muted-foreground)">描述</small></div>
-          <div class="rythm"><span>本地 VLM（MiniCPM-V）</span><a href="#">更换模型</a></div>
+        <div class="taskq">它替你做什么？</div>
+        <div class="taskgrid">
+          <div class="taskcard on"><span class="tt">👁 替我看</span><span class="td">定时看数据/画面，把结果记成数据</span><span class="te">例：每小时读一次仪表，记入系统</span></div>
+          <div class="taskcard"><span class="tt">🔔 替我盯</span><span class="td">盯住异常，一触发就通知你</span><span class="te">例：温度超标 10 分钟就叫我</span></div>
+          <div class="taskcard"><span class="tt">🔍 替我查</span><span class="td">出问题时自己排查，给你结论</span><span class="te">例：产量掉了，查是哪台设备</span></div>
+          <div class="taskcard"><span class="tt">📄 替我报</span><span class="td">定期汇总成报告发给你</span><span class="te">例：每天早 8 点夜间摘要</span></div>
         </div>
 
-        <div class="f-label" style="margin-bottom:6px">类型<span class="dg d-mod">位置提前为主分区开关</span></div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
-          <span class="chip" style="background:var(--primary);color:var(--primary-foreground);border-color:transparent">替我看</span>
-          <span class="chip">替我盯</span><span class="chip">替我查</span><span class="chip">替我报</span>
-        </div>
-        <div class="promptbox">指令：看看包装台画面有没有<b>错装、漏装</b>，统计数量并标记批次状态。参照我已纠正的样本判断。</div>
+        <div class="rythm" style="margin-bottom:6px"><span>包装台质检</span><small style="color:var(--muted-foreground)">名称</small></div>
+        <div class="rythm" style="margin-bottom:6px"><span>本地 VLM（MiniCPM-V）</span><a href="#">更换模型</a></div>
+
+        <div class="promptbox">指令：看看包装台画面有没有<b>错装、漏装</b>，统计数量并标记批次状态。</div>
         <div style="height:8px"></div>
-        <div class="f-label" style="margin-bottom:6px">输出字段<span class="dg d-new">模式专属：仅替我看显示</span></div>
+        <div class="f-label" style="margin-bottom:6px">记什么（输出字段）<span class="dg d-new">看/盯专属</span></div>
         <div class="fieldrow" style="margin-bottom:8px">
           <span class="fieldchip">漏装数 <small>数值</small></span><span class="fieldchip">错装数 <small>数值</small></span>
           <span class="fieldchip">批次状态 <small>枚举</small></span>
           <button class="btn btn-sm">＋ 字段</button>
         </div>
-        <div class="f-label" style="margin-bottom:6px">护栏<span class="dg d-mod">调度/预算合并为模式专属的"护栏"</span></div>
-        <div class="rythm" style="margin-bottom:6px"><span>触发：画面变化时 · 防抖 30 秒 · 平滑 连续 2 次</span><a href="#">调整</a></div>
-        <div class="rythm"><span>每日上限 200 次 · 熔断 3 · 超时 60s</span><a href="#">调整</a></div>
-
-        <div>
-          <div class="rythm" style="margin-bottom:6px"><span>节奏：变化触发（继承护栏中的防抖）</span><a href="#">调整</a></div>
-          <div class="rythm" style="margin-bottom:6px"><span>通知：漏装 → 张经理</span><a href="#">调整</a></div>
-          <div class="rythm"><span>▸ 高级设置（优先级 / 上下文深度 / 工具范围——按类型只显示相关项）</span></div>
-        </div>
+        <div class="rythm"><span>护栏：防抖 30s · 超时 60s · 熔断 3 · 日上限 ∞</span><a href="#">调整</a></div>
+        <div style="height:8px"></div>
+        <div class="rythm"><span>节奏：每 15 分钟（按所选任务预填，可改）</span><a href="#">调整</a></div>
+        <div class="rythm"><span>▸ 高级（按任务过滤显示相关项）</span></div>
       </div>
       <div class="s2-right">
-        <div class="f-label">输入资源<span class="dg d-keep">右栏保留</span></div>
+        <div class="f-label">输入资源</div>
         <div class="srcbox"><div class="thumb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></div>
           <div class="meta">cam-01 · 包装台摄像头<small>画面 · 1080p / 2fps</small></div>
           <button class="btn btn-sm" style="margin-left:auto">＋</button></div>
         <div class="rythm" style="margin-top:6px"><span style="font-size:12px">✦ AI 推荐：包装台产量计数器（extension:counter）</span><a href="#">采纳</a></div>
         <div class="tryrun" style="margin-top:12px">
-          <div class="f-label" style="margin:10px 14px 0">试跑结果<span class="dg d-new">结果区（按钮在吸底栏）</span></div>
+          <div class="f-label" style="margin:10px 14px 0">试跑结果</div>
           <div class="bd" style="padding:10px 14px 12px">
             <div class="res-row"><span class="v" style="color:var(--color-error)">漏装 1 件</span><span class="conf">置信度 0.91 · 刚刚</span>
               <div class="evi"><div class="thumb"><div class="bx"></div></div></div>
-              <a href="#" style="font-size:12px;color:var(--color-info);text-decoration:none">查看依据：原图 + 框选</a></div>
-            <div class="res-row"><span>批次状态</span><b>待检</b><span class="conf">字段就绪 · 3/3</span></div>
-            <div class="runin"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>前 10 次为磨合期——判断不对可当场纠正，它会越用越准。</div>
+              <a href="#" style="font-size:12px;color:var(--color-info);text-decoration:none">查看依据</a></div>
+            <div class="runin">前 10 次为磨合期——判断不对可当场纠正。</div>
           </div>
         </div>
       </div>
     </div>
     <div class="s2-foot">
       <button class="btn">取消</button>
-      <button class="btn">试跑一次<span class="dg d-new">吸底 CTA（仅替我看/盯）</span></button>
+      <button class="btn">试跑一次</button>
       <button class="btn btn-primary">保存并开始</button>
-      <span class="cost">预计成本：约 96 次/天 · 本地推理 ≈ 0 元 · 输出 → ai:packing_qc:*</span>
+      <span class="cost">预计 96 次/天 · 本地 ≈ 0 元 · 输出 → ai:packing_qc:*</span>
     </div>
   </div></div></div>
   <div class="notes">
-    <div class="note"><span class="n">1</span><span>三段式 = 身份 / 能力 / 运行策略：名称、描述、模型不再被模式专属区推下去；"类型"成为能力段的总开关，选什么类型、能力段就长什么样子（替我看=指令+输出字段+护栏；替我盯=指令+判定阈值+通知；替我查=提示词+工具范围；替我报=模板+渠道）。</span></div>
-    <div class="note"><span class="n">2</span><span>防抖/平滑/预算/超时合并为"护栏"组，与触发方式一起放在能力段（模式强相关）；原"调度"区只剩节奏确认+通知路由——避免同一概念分散两处。</span></div>
-    <div class="note"><span class="n">3</span><span>高级设置按类型过滤：替我看不显示链深/工具范围，替我查不显示输出字段——一股脑折叠是旧混乱来源之一。</span></div>
-    <div class="note"><span class="n">4</span><span>试跑从表单中部移到吸底 CTA（次级按钮，仅看/盯类型显示），结果卡仍在右栏——创建的核心承诺（先看结果再保存）获得固定入口。</span></div>
+    <div class="note"><span class="n">1</span><span>客户语言四选一替换 Focused/Free/Structured 三张技术模式卡——技术词汇从表单消失，只在高级里可覆盖。</span></div>
+    <div class="note"><span class="n">2</span><span>选卡即编译默认值：看=结构化+定时、盯=结构化+事件触发、查=自由+按需、报=单遍+每日 08:00——节奏区显示"按所选任务预填，可改"。</span></div>
+    <div class="note"><span class="n">3</span><span>任务决定可见配置：看/盯 显示输出字段+护栏；查 只剩指令；报 显示模板与渠道——配置面与确定性成正比。</span></div>
+    <div class="note"><span class="n">4</span><span>每张卡带一个具体例子（小字虚线下）——"例：每小时读一次仪表"比任何模式名都好懂。</span></div>
   </div>
 </section>
 

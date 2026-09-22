@@ -51,6 +51,10 @@ import {
   Database,
   MousePointerClick,
   GitBranch,
+  Eye,
+  BellRing,
+  SearchCheck,
+  FileText,
 } from 'lucide-react'
 import type {
   AiAgentDetail,
@@ -175,6 +179,8 @@ export function AgentEditorFullScreen({
 
   // Advanced configuration state
   const [executionMode, setExecutionMode] = useState<'focused' | 'free' | 'structured'>('focused')
+  // 客户语言的任务类型（技术 executionMode/schedule 默认值由选卡编译而来）
+  const [taskKind, setTaskKind] = useState<'watch' | 'guard' | 'investigate' | 'report'>('watch')
   const [outputSchema, setOutputSchema] = useState<OperatorField[]>([])
   const [operatorConfig, setOperatorConfig] = useState<OperatorConfig>({
     debounce_secs: 30,
@@ -327,6 +333,13 @@ export function AgentEditorFullScreen({
           agent.execution_mode === 'free' ? 'free'
           : agent.execution_mode === 'structured' ? 'structured'
           : 'focused'
+        )
+        setTaskKind(
+          agent.execution_mode === 'structured'
+            ? (agent.schedule?.schedule_type === 'event' ? 'guard' : 'watch')
+            : agent.execution_mode === 'free'
+              ? 'investigate'
+              : 'report'
         )
         setOutputSchema(agent.output_schema ?? [])
         setOperatorConfig(agent.operator_config ?? {
@@ -1338,137 +1351,62 @@ export function AgentEditorFullScreen({
 
             {/* Advanced knobs — rarely changed; collapsed so the required
                 fields (mode / name / requirements) keep the visual focus. */}
-            {/* Execution Mode */}
+            {/* Task-first entry: 客户语言四选一，技术模式隐入幕后 */}
             <div className="space-y-2">
-              <Label className="text-sm font-medium flex items-center gap-2">
-                <Brain className="h-4 w-4 text-muted-foreground" />
-                {tAgent('creator.advanced.executionMode')}
-              </Label>
-              <div className={cn("gap-3", isMobile ? "grid grid-cols-1" : "grid grid-cols-3")}>
-                <button
-                  type="button"
-                  onClick={() => setExecutionMode('focused')}
-                  className={cn(
-                    "relative flex flex-col items-start gap-1.5 rounded-lg border p-3 text-left transition-colors",
-                    isFocusedMode
-                      ? "border-primary bg-muted"
-                      : "border-muted hover:border-border"
-                  )}
-                >
-                  <div className="flex items-center gap-2 w-full">
-                    <div className={cn(
-                      "h-8 w-8 rounded-lg flex items-center justify-center shrink-0",
-                      isFocusedMode ? "bg-primary text-primary-foreground" : "bg-muted"
-                    )}>
-                      <Target className="h-4 w-4" />
-                    </div>
-                    <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                      <span className="text-sm font-medium">{tAgent('creator.advanced.focusedMode')}</span>
-                    </div>
-                  </div>
-                  <p className="text-xs text-muted-foreground pl-10">
-                    {tAgent('creator.advanced.focusedModeDescription')}
-                  </p>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => { setExecutionMode('free'); setSelectedResources([]) }}
-                  className={cn(
-                    "relative flex flex-col items-start gap-1.5 rounded-lg border p-3 text-left transition-colors",
-                    isFreeMode
-                      ? "border-primary bg-muted"
-                      : "border-muted hover:border-border"
-                  )}
-                >
-                  <div className="flex items-center gap-2 w-full">
-                    <div className={cn(
-                      "h-8 w-8 rounded-lg flex items-center justify-center shrink-0",
-                      isFreeMode ? "bg-primary text-primary-foreground" : "bg-muted"
-                    )}>
-                      <Zap className="h-4 w-4" />
-                    </div>
-                    <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                      <span className="text-sm font-medium">{tAgent('creator.advanced.freeMode')}</span>
-                    </div>
-                  </div>
-                  <p className="text-xs text-muted-foreground pl-10">
-                    {tAgent('creator.advanced.freeModeDescription')}
-                  </p>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setExecutionMode('structured')}
-                  className={cn(
-                    "relative flex flex-col items-start gap-1.5 rounded-lg border p-3 text-left transition-colors",
-                    isStructuredMode
-                      ? "border-primary bg-muted"
-                      : "border-muted hover:border-border"
-                  )}
-                >
-                  <div className="flex items-center gap-2 w-full">
-                    <div className={cn(
-                      "h-8 w-8 rounded-lg flex items-center justify-center shrink-0",
-                      isStructuredMode ? "bg-primary text-primary-foreground" : "bg-muted"
-                    )}>
-                      <Database className="h-4 w-4" />
-                    </div>
-                    <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                      <span className="text-sm font-medium">{tAgent('creator.advanced.structuredMode')}</span>
-                    </div>
-                  </div>
-                  <p className="text-xs text-muted-foreground pl-10">
-                    {tAgent('creator.advanced.structuredModeDescription')}
-                  </p>
-                </button>
-              </div>
-            </div>
-
-            {/* Prompt */}
-            <div className="space-y-3">
-              <Label className="text-sm font-medium">
-                {tAgent('creator.basicInfo.requirement')} <span className="text-error">*</span>
-              </Label>
-
-              {/* Quick templates */}
-              <div className="flex gap-2 flex-wrap">
-                {PROMPT_TEMPLATES.filter(t => t.id !== 'empty').map((template) => (
-                  <button
-                    key={template.id}
-                    type="button"
-                    onClick={() => setUserPrompt(template.template)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border hover:bg-muted transition-colors"
-                  >
-                    {template.icon ? <template.icon className="h-4 w-4" /> : null}
-                    <span>{template.label}</span>
-                  </button>
-                ))}
-              </div>
-
-              <Textarea
-                value={userPrompt}
-                onChange={(e) => {
-                  setUserPrompt(e.target.value)
-                  if (fieldErrors.prompt) setFieldErrors(prev => { const next = { ...prev }; delete next.prompt; return next })
-                }}
-                onBlur={() => {
-                  const err = validateRequired(userPrompt, 'Prompt') || validateLength(userPrompt, 'Prompt', 1, 5000)
-                  if (err) setFieldErrors(prev => ({ ...prev, prompt: err }))
-                }}
-                placeholder={tAgent('creator.basicInfo.promptPlaceholder')}
-                className={cn("min-h-[140px] resize-y text-sm leading-relaxed", fieldErrors.prompt && "border-error")}
-              />
-              {fieldErrors.prompt && (
-                <p className="text-sm text-error mt-1">{fieldErrors.prompt}</p>
-              )}
-
-              {/* AI Helper Tip */}
-              <div className="flex items-start gap-2 p-3 rounded-lg border border-border">
-                <Wand2 className="h-4 w-4 text-primary shrink-0 mt-0.5" />
-                <p className="text-xs text-muted-foreground">
-                  <span className="font-medium text-primary">Tip:</span> {tAgent('creator.basicInfo.promptTip')}
-                </p>
+              <Label className="text-sm font-medium">{tAgent('creator.task.question')}</Label>
+              <div className={cn("gap-2", isMobile ? "grid grid-cols-1" : "grid grid-cols-2")}>
+                {([
+                  {
+                    kind: 'watch', icon: Eye,
+                    title: tAgent('creator.task.watch.title'),
+                    desc: tAgent('creator.task.watch.desc'),
+                    example: tAgent('creator.task.watch.example'),
+                    apply: () => { setExecutionMode('structured'); setScheduleType('timer'); setTimerSubType('interval') },
+                  },
+                  {
+                    kind: 'guard', icon: BellRing,
+                    title: tAgent('creator.task.guard.title'),
+                    desc: tAgent('creator.task.guard.desc'),
+                    example: tAgent('creator.task.guard.example'),
+                    apply: () => { setExecutionMode('structured'); setScheduleType('reactive') },
+                  },
+                  {
+                    kind: 'investigate', icon: SearchCheck,
+                    title: tAgent('creator.task.investigate.title'),
+                    desc: tAgent('creator.task.investigate.desc'),
+                    example: tAgent('creator.task.investigate.example'),
+                    apply: () => { setExecutionMode('free'); setScheduleType('on-demand') },
+                  },
+                  {
+                    kind: 'report', icon: FileText,
+                    title: tAgent('creator.task.report.title'),
+                    desc: tAgent('creator.task.report.desc'),
+                    example: tAgent('creator.task.report.example'),
+                    apply: () => { setExecutionMode('focused'); setScheduleType('timer'); setTimerSubType('daily') },
+                  },
+                ] as const).map((card) => {
+                  const on = taskKind === card.kind
+                  return (
+                    <button
+                      key={card.kind}
+                      type="button"
+                      onClick={() => { setTaskKind(card.kind); card.apply() }}
+                      className={cn(
+                        "flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors",
+                        on ? "border-primary bg-muted" : "border-muted hover:border-border"
+                      )}
+                    >
+                      <div className="flex items-center gap-2">
+                        <card.icon className={cn("h-4 w-4", on ? "text-foreground" : "text-muted-foreground")} />
+                        <span className="text-sm font-medium">{card.title}</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground">{card.desc}</p>
+                      <p className="w-full border-t border-dashed border-border pt-1 text-[11px] text-muted-foreground">
+                        {tAgent('creator.task.examplePrefix')}{card.example}
+                      </p>
+                    </button>
+                  )
+                })}
               </div>
             </div>
 

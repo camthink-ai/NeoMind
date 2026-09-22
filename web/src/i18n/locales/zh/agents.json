@@ -608,6 +608,30 @@
       "America/New_York": "纽约 (UTC-5/-4)",
       "America/Los_Angeles": "洛杉矶 (UTC-8/-7)",
       "UTC": "UTC (UTC+0)"
+    },
+    "task": {
+      "question": "它替你做什么？",
+      "examplePrefix": "例：",
+      "watch": {
+        "title": "替我看",
+        "desc": "定时查看数据或画面，把结果记录成数据",
+        "example": "每小时读一次仪表，记入系统"
+      },
+      "guard": {
+        "title": "替我盯",
+        "desc": "盯住异常，一触发就通知你",
+        "example": "温度超标 10 分钟就叫我"
+      },
+      "investigate": {
+        "title": "替我查",
+        "desc": "出问题时自己排查，给你结论",
+        "example": "产量掉了，查是哪台设备"
+      },
+      "report": {
+        "title": "替我报",
+        "desc": "定期汇总成报告发给你",
+        "example": "每天早 8 点夜间摘要"
+      }
     }
   },
   "skills": {
