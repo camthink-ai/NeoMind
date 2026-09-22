@@ -23,10 +23,6 @@ import {
   Eye,
   Zap,
   BarChart3,
-
-  CheckCircle2,
-  XCircle,
-  Settings,
   FileText,
 
 
@@ -247,53 +243,32 @@ export function AgentDetailPanel({
           <TabsList className={cn(
             isMobile
               ? "grid grid-cols-4 gap-1 h-auto w-full p-0.5 rounded-lg border border-border bg-card"
-              : "h-9 p-0.5 rounded-lg border border-border bg-card"
+              : "flex h-9 w-full items-end p-0 bg-transparent"
           )}>
-            <TabsTrigger
-              value="overview"
-              className={cn(
-                isMobile
-                  ? "flex flex-col items-center justify-center gap-1 py-1.5 px-1 min-w-0 rounded-md text-mini leading-none data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-none"
-                  : "h-7 px-3 rounded-md text-sm data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-none data-[state=active]:hover:bg-foreground hover:bg-muted"
-              )}
-            >
-              <Eye className={cn(isMobile ? "h-4 w-4" : "h-4 w-4 mr-1")} />
-              <span className={cn(isMobile && "truncate w-full text-center")}>{t('agents:detail.overview')}</span>
-            </TabsTrigger>
-            <TabsTrigger
-              value="history"
-              className={cn(
-                isMobile
-                  ? "flex flex-col items-center justify-center gap-1 py-1.5 px-1 min-w-0 rounded-md text-mini leading-none data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-none"
-                  : "h-7 px-3 rounded-md text-sm data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-none data-[state=active]:hover:bg-foreground hover:bg-muted"
-              )}
-            >
-              <Clock className={cn(isMobile ? "h-4 w-4" : "h-4 w-4 mr-1")} />
-              <span className={cn(isMobile && "truncate w-full text-center")}>{t('agents:detail.history')}</span>
-            </TabsTrigger>
-            <TabsTrigger
-              value="memory"
-              className={cn(
-                isMobile
-                  ? "flex flex-col items-center justify-center gap-1 py-1.5 px-1 min-w-0 rounded-md text-mini leading-none data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-none"
-                  : "h-7 px-3 rounded-md text-sm data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-none data-[state=active]:hover:bg-foreground hover:bg-muted"
-              )}
-            >
-              <Brain className={cn(isMobile ? "h-4 w-4" : "h-4 w-4 mr-1")} />
-              <span className={cn(isMobile && "truncate w-full text-center")}>{t('agents:detail.memory')}</span>
-            </TabsTrigger>
-            <TabsTrigger
-              value="messages"
-              className={cn(
-                isMobile
-                  ? "flex flex-col items-center justify-center gap-1 py-1.5 px-1 min-w-0 rounded-md text-mini leading-none data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-none"
-                  : "h-7 px-3 rounded-md text-sm data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-none data-[state=active]:hover:bg-foreground hover:bg-muted"
-              )}
-            >
-              <MessageSquare className={cn(isMobile ? "h-4 w-4" : "h-4 w-4 mr-1")} />
-              <span className={cn(isMobile && "truncate w-full text-center")}>{t('agents:detail.messages')}</span>
-            </TabsTrigger>
-          </TabsList>
+            {([
+              { value: 'overview', Icon: Eye, label: t('agents:detail.overview') },
+              { value: 'history', Icon: Clock, label: t('agents:detail.history') },
+              { value: 'memory', Icon: Brain, label: t('agents:detail.memory') },
+              { value: 'messages', Icon: MessageSquare, label: t('agents:detail.messages') },
+            ] as const).map(({ value, Icon, label }) => (
+              <TabsTrigger
+                key={value}
+                value={value}
+                className={cn(
+                  isMobile
+                    ? "flex flex-col items-center justify-center gap-1 py-1.5 px-1 min-w-0 rounded-md text-mini leading-none data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-none"
+                    : "h-full rounded-none border-b-2 border-transparent px-3 text-sm text-muted-foreground transition-colors hover:text-foreground data-[state=active]:border-foreground data-[state=active]:text-foreground data-[state=active]:shadow-none focus-visible:outline-none focus-visible:ring-0"
+                )}
+              >
+                {isMobile ? (
+                  <>
+                    <Icon className="h-4 w-4" />
+                    <span className="w-full truncate text-center">{label}</span>
+                  </>
+                ) : label}
+              </TabsTrigger>
+            ))}
+        </TabsList>
         </div>
 
         {/* Tab Contents */}
@@ -325,81 +300,64 @@ export function AgentDetailPanel({
                   })()}
                 </div>
 
-                {/* Stats Grid - Top section */}
-                <DetailSection title="" icon={null}>
-                  <div className={cn("gap-2", isMobile ? "grid grid-cols-1" : "grid grid-cols-4")}>
-                    <StatItem
-                      icon={<Activity className="h-4 w-4" />}
-                      label={t('agents:detail.executions')}
-                      value={formatCount(agent.stats?.total_executions ?? agent.execution_count)}
-                      color="text-info"
-                    />
-                    <StatItem
-                      icon={<CheckCircle2 className="h-4 w-4" />}
-                      label={t('agents:detail.success')}
-                      value={formatCount(agent.stats?.successful_executions ?? agent.success_count)}
-                      color="text-success"
-                    />
-                    <StatItem
-                      icon={<XCircle className="h-4 w-4" />}
-                      label={t('agents:detail.failed')}
-                      value={formatCount(agent.stats?.failed_executions ?? agent.error_count)}
-                      color="text-error"
-                    />
-                    <StatItem
-                      icon={<Clock className="h-4 w-4" />}
-                      label={t('agents:detail.avgDuration')}
-                      value={formatDuration(agent.stats?.avg_duration_ms ?? agent.avg_duration_ms)}
-                      color="text-accent-orange"
-                    />
+                {/* Stats — one quiet row, no tiles */}
+                <div className="grid grid-cols-4 gap-3">
+                  <div>
+                    <div className="text-base font-semibold tabular-nums leading-tight">{formatCount(agent.stats?.total_executions ?? agent.execution_count)}</div>
+                    <div className="text-xs text-muted-foreground">{t('agents:detail.executions')}</div>
                   </div>
-                </DetailSection>
+                  <div>
+                    <div className="text-base font-semibold tabular-nums leading-tight text-success">{formatCount(agent.stats?.successful_executions ?? agent.success_count)}</div>
+                    <div className="text-xs text-muted-foreground">{t('agents:detail.success')}</div>
+                  </div>
+                  <div>
+                    <div className={cn(
+                      "text-base font-semibold tabular-nums leading-tight",
+                      (agent.stats?.failed_executions ?? agent.error_count) > 0 ? "text-error" : ""
+                    )}>{formatCount(agent.stats?.failed_executions ?? agent.error_count)}</div>
+                    <div className="text-xs text-muted-foreground">{t('agents:detail.failed')}</div>
+                  </div>
+                  <div>
+                    <div className="text-base font-semibold tabular-nums leading-tight">{formatDuration(agent.stats?.avg_duration_ms ?? agent.avg_duration_ms)}</div>
+                    <div className="text-xs text-muted-foreground">{t('agents:detail.avgDuration')}</div>
+                  </div>
+                </div>
 
-                {/* User Intent */}
+                {/* Instruction */}
                 <DetailSection title={t('agents:userPrompt')} icon={FileText}>
                   <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground">
                     {agent.user_prompt || t('agents:card.noDescription')}
                   </div>
-                  {agent.parsed_intent && (
-                    <div className="mt-3 pt-3 border-t border-border">
-                      <div className="text-xs text-muted-foreground mb-1.5">{t('agents:creator.basicInfo.requirement')}</div>
-                      <div className="text-sm">
-                        <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-info-light text-info">
-                          {agent.parsed_intent.intent_type || '-'}
-                        </span>
-                      </div>
-                    </div>
-                  )}
                 </DetailSection>
 
-                {/* Schedule & Config - Two columns */}
-                <div className={cn("gap-4", isMobile ? "grid grid-cols-1" : "grid grid-cols-2")}>
-                  {/* Schedule */}
-                  {(agent.output_schema?.length ?? 0) > 0 && (
+                {/* Output contract — full width */}
+                {(agent.output_schema?.length ?? 0) > 0 && (
                   <DetailSection title={t('agents:detail.outputFields')} icon={Database}>
-                    <div className="space-y-1.5">
+                    <div className="space-y-1">
                       {agent.output_schema!.map((f) => {
                         const latest = (agent as { latest_output?: Record<string, unknown> }).latest_output?.[f.name]
                         return (
-                          <div key={f.name} className="flex items-center gap-2 rounded-md bg-muted-30 px-2 py-1.5">
+                          <div key={f.name} className="flex items-baseline gap-2 border-b border-border py-1.5 last:border-0">
                             <span className="font-mono text-xs">{f.name}</span>
-                            <span className="text-xs text-muted-foreground">
+                            <span className="text-xs text-muted-foreground truncate">
                               {f.field_type.type === 'enum' ? `enum(${f.field_type.values.join('/')})` : t(`agents:detail.fieldType.${f.field_type.type}`)}
+                              {f.unit ? ` · ${f.unit}` : ''}
                             </span>
-                            {f.unit && <span className="text-xs text-muted-foreground">{f.unit}</span>}
-                            <span className="ml-auto text-xs font-medium truncate">
+                            <span className="ml-auto shrink-0 text-sm font-medium tabular-nums">
                               {latest !== undefined ? String(latest) : '—'}
                             </span>
                           </div>
                         )
                       })}
-                      <p className="text-xs text-muted-foreground">{t('agents:detail.outputFieldsHint')}</p>
+                      <p className="pt-1 text-xs text-muted-foreground">{t('agents:detail.outputFieldsHint')}</p>
                     </div>
                   </DetailSection>
                 )}
 
-                <DetailSection title={t('agents:detail.schedule')} icon={Clock}>
-                    <div className="space-y-1.5">
+                {/* Schedule & model — two quiet columns */}
+                <div className={cn("gap-6", isMobile ? "grid grid-cols-1" : "grid grid-cols-2")}>
+                  <DetailSection title={t('agents:detail.schedule')} icon={Clock}>
+                    <div className="space-y-1">
                       <InfoRow label={t('agents:detail.type')} value={agent.schedule.schedule_type} />
                       {agent.schedule.interval_seconds && (
                         <InfoRow label={t('agents:detail.interval')} value={`${agent.schedule.interval_seconds}s`} />
@@ -413,75 +371,55 @@ export function AgentDetailPanel({
                     </div>
                   </DetailSection>
 
-                  {/* LLM Config */}
-                  {agent.llm_backend_id ? (
-                    <DetailSection title={t('agents:creator.basicInfo.llmBackend')} icon={Brain}>
-                      <InfoRow label={t('agents:creator.basicInfo.llmBackend')} value={agent.llm_backend_id} mono />
-                    </DetailSection>
-                  ) : (
-                    <DetailSection title={t('common:info')} icon={Settings}>
-                      <div className="space-y-1.5">
-                        <InfoRow label={t('common:createdAt')} value={new Date(agent.created_at).toLocaleString()} />
-                        <InfoRow label={t('common:updatedAt')} value={new Date(agent.updated_at).toLocaleString()} />
-                        {agent.last_execution_at && (
-                          <InfoRow label={t('agents:lastExecution')} value={new Date(agent.last_execution_at).toLocaleString()} />
-                        )}
-                      </div>
-                    </DetailSection>
-                  )}
+                  <DetailSection title={t('agents:creator.basicInfo.llmBackend')} icon={Brain}>
+                    <div className="space-y-1">
+                      <InfoRow label={t('agents:detail.model')} value={agent.llm_backend_id || t('agents:creator.basicInfo.useActiveBackend')} mono={!!agent.llm_backend_id} />
+                      <InfoRow label={t('common:priority')} value={agent.priority ?? '-'} />
+                    </div>
+                  </DetailSection>
                 </div>
 
-                {/* Resources - Full width */}
+                {/* Resources */}
                 <DetailSection title={`${t('agents:detail.resources')} (${(agent.resources || []).length})`} icon={Zap}>
-                  <div className="space-y-3">
-                    {/* Resource summary counts - group by actual types */}
-                    <div className="flex flex-wrap gap-3">
-                      {Object.entries(
-                        (agent.resources || []).reduce((acc, r) => {
-                          const type = r.resource_type.toLowerCase()
-                          acc[type] = (acc[type] || 0) + 1
-                          return acc
-                        }, {} as Record<string, number>)
-                      ).map(([type, count]) => (
-                        <div key={type} className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-muted text-foreground text-sm">
-                          <span className="capitalize text-muted-foreground">{type}:</span>
-                          <span className="font-semibold">{count}</span>
-                        </div>
-                      ))}
-                    </div>
-                    {/* Resource list */}
-                    <div className={cn("gap-2", isMobile ? "grid grid-cols-1" : "grid grid-cols-2")}>
+                  <div className="space-y-2">
+                    {(agent.resources || []).length > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        {Object.entries(
+                          (agent.resources || []).reduce((acc, r) => {
+                            const type = r.resource_type.toLowerCase()
+                            acc[type] = (acc[type] || 0) + 1
+                            return acc
+                          }, {} as Record<string, number>)
+                        ).map(([type, count]) => `${count} × ${type}`).join(' · ')}
+                      </p>
+                    )}
+                    <div className={cn("gap-x-4 gap-y-1", isMobile ? "grid grid-cols-1" : "grid grid-cols-2")}>
                       {(agent.resources || []).slice(0, 8).map((resource, idx) => (
-                        <div key={idx} className="flex items-center justify-between px-2.5 py-1.5 rounded-md bg-muted">
-                          <span className="text-sm truncate flex-1 mr-2" title={resource.resource_id}>
+                        <div key={idx} className="flex items-baseline gap-2 border-b border-border py-1 last:border-0">
+                          <span className="min-w-0 flex-1 truncate text-sm" title={resource.resource_id}>
                             {resource.name || resource.resource_id}
                           </span>
-                          <Badge variant="secondary" className="text-xs shrink-0">
-                            {resource.resource_type}
-                          </Badge>
+                          <span className="shrink-0 text-xs text-muted-foreground">{resource.resource_type}</span>
                         </div>
                       ))}
                     </div>
                     {(agent.resources || []).length > 8 && (
-                      <div className="text-xs text-muted-foreground text-center pt-1">
+                      <div className="text-xs text-muted-foreground pt-0.5">
                         {t('agents:detail.moreResources', { count: (agent.resources || []).length - 8 })}
                       </div>
                     )}
                   </div>
                 </DetailSection>
 
-                {/* Timestamps - if LLM backend was shown above */}
-                {agent.llm_backend_id && (
-                  <DetailSection title={t('common:info')} icon={Settings}>
-                    <div className={cn("gap-2", isMobile ? "grid grid-cols-1" : "grid grid-cols-3")}>
-                      <InfoRow label={t('common:createdAt')} value={new Date(agent.created_at).toLocaleString()} />
-                      <InfoRow label={t('common:updatedAt')} value={new Date(agent.updated_at).toLocaleString()} />
-                      {agent.last_execution_at && (
-                        <InfoRow label={t('agents:lastExecution')} value={new Date(agent.last_execution_at).toLocaleString()} />
-                      )}
-                    </div>
-                  </DetailSection>
-                )}
+                {/* Timestamps — quiet footer line */}
+                <p className="border-t border-border pt-3 text-xs text-muted-foreground">
+                  {t('common:createdAt')} {new Date(agent.created_at).toLocaleString()}
+                  {' · '}
+                  {t('common:updatedAt')} {new Date(agent.updated_at).toLocaleString()}
+                  {agent.last_execution_at && (
+                    <>{' · '}{t('agents:lastExecution')} {new Date(agent.last_execution_at).toLocaleString()}</>
+                  )}
+                </p>
               </div>
             </ScrollArea>
           </TabsContent>
@@ -554,27 +492,8 @@ function DetailSection({ title, icon: Icon, children }: DetailSectionProps) {
   )
 }
 
-// Compact Stat Item for stats grid
-interface StatItemProps {
-  icon: React.ReactNode
-  label: string
-  value: string | number
-  color: string
-}
 
-function StatItem({ icon, label, value, color }: StatItemProps) {
-  return (
-    <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-card shadow-sm">
-      <div className={cn("shrink-0", color)}>{icon}</div>
-      <div className="flex-1 min-w-0">
-        <div className="text-xs text-muted-foreground truncate">{label}</div>
-        <div className="text-sm font-semibold truncate">{value}</div>
-      </div>
-    </div>
-  )
-}
-
-// Info Row Component
+// Info Row Component — definition-list row: muted label left, value right
 interface InfoRowProps {
   label: string
   value: string | number
@@ -583,9 +502,9 @@ interface InfoRowProps {
 
 function InfoRow({ label, value, mono }: InfoRowProps) {
   return (
-    <div className="flex items-baseline gap-2 py-1 text-sm">
-      <span className="text-muted-foreground text-xs shrink-0">{label}</span>
-      <span className={cn("font-medium text-xs truncate", mono && "font-mono")}>{value}</span>
+    <div className="flex items-baseline justify-between gap-3 py-1">
+      <span className="shrink-0 text-xs text-muted-foreground">{label}</span>
+      <span className={cn("truncate text-sm font-medium", mono && "font-mono")}>{value}</span>
     </div>
   )
 }
