@@ -1228,8 +1228,14 @@ export function AgentEditorFullScreen({
                 "space-y-6",
                 isMobile ? "px-4 py-6" : "px-4 py-6"
               )}>
+
+            {/* Two-column body: left = config track, right = inputs & dry-run */}
+            <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] items-start">
+              <div className="min-w-0 space-y-6">
+            {/* Name + Description — one row */}
+            <div className="grid grid-cols-2 gap-3">
             {/* Name */}
-            <div className="space-y-2">
+            <div className="space-y-2 min-w-0">
               <Label className={cn("font-medium", isMobile ? "text-base" : "text-sm")}>
                 {tAgent('creator.basicInfo.name')} <span className="text-error">*</span>
               </Label>
@@ -1252,8 +1258,9 @@ export function AgentEditorFullScreen({
               )}
             </div>
 
+
             {/* Description (Optional) */}
-            <div className="space-y-2">
+            <div className="space-y-2 min-w-0">
               <Label className={cn("font-medium", isMobile ? "text-base" : "text-sm")}>{tAgent('creator.basicInfo.description')}</Label>
               <Input
                 value={description}
@@ -1264,7 +1271,7 @@ export function AgentEditorFullScreen({
             </div>
 
             {/* Model Selection */}
-            <div className="space-y-2">
+            <div className="space-y-2 min-w-0">
               <div className="flex items-center justify-between">
                 <Label className="text-sm font-medium">{tAgent('creator.basicInfo.llmBackend')}</Label>
                 <Button
@@ -1352,7 +1359,7 @@ export function AgentEditorFullScreen({
             {/* Advanced knobs — rarely changed; collapsed so the required
                 fields (mode / name / requirements) keep the visual focus. */}
             {/* Task-first entry: 客户语言四选一，技术模式隐入幕后 */}
-            <div className="space-y-2">
+            <div className="space-y-2 min-w-0">
               <Label className="text-sm font-medium">{tAgent('creator.task.question')}</Label>
               <div className={cn("gap-2", isMobile ? "grid grid-cols-1" : "grid grid-cols-2")}>
                 {([
@@ -1407,6 +1414,55 @@ export function AgentEditorFullScreen({
                     </button>
                   )
                 })}
+              </div>
+            </div>
+
+            </div>
+
+            {/* Prompt */}
+            <div className="space-y-3">
+              <Label className="text-sm font-medium">
+                {tAgent('creator.basicInfo.requirement')} <span className="text-error">*</span>
+              </Label>
+
+              {/* Quick templates */}
+              <div className="flex gap-2 flex-wrap">
+                {PROMPT_TEMPLATES.filter(t => t.id !== 'empty').map((template) => (
+                  <button
+                    key={template.id}
+                    type="button"
+                    onClick={() => setUserPrompt(template.template)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border hover:bg-muted transition-colors"
+                  >
+                    {template.icon ? <template.icon className="h-4 w-4" /> : null}
+                    <span>{template.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              <Textarea
+                value={userPrompt}
+                onChange={(e) => {
+                  setUserPrompt(e.target.value)
+                  if (fieldErrors.prompt) setFieldErrors(prev => { const next = { ...prev }; delete next.prompt; return next })
+                }}
+                onBlur={() => {
+                  const err = validateRequired(userPrompt, 'Prompt') || validateLength(userPrompt, 'Prompt', 1, 5000)
+                  if (err) setFieldErrors(prev => ({ ...prev, prompt: err }))
+                }}
+                placeholder={tAgent('creator.basicInfo.promptPlaceholder')}
+                className={cn("min-h-[140px] resize-y text-sm leading-relaxed", fieldErrors.prompt && "border-error")}
+              />
+              {fieldErrors.prompt && (
+                <p className="text-sm text-error mt-1">{fieldErrors.prompt}</p>
+              )}
+
+              {/* AI Helper Tip */}
+              <div className="flex items-start gap-2 p-3 rounded-lg border border-border">
+                <Wand2 className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+                <p className="text-xs text-muted-foreground">
+                  <span className="font-medium text-primary">Tip:</span> {tAgent('creator.basicInfo.promptTip')}
+                </p>
               </div>
             </div>
 
@@ -2213,6 +2269,9 @@ export function AgentEditorFullScreen({
               </div>
             </div>
 
+              </div>{/* end left column */}
+
+              <div className="min-w-0 space-y-4">
             {/* Resources Section */}
             {(() => {
               // Determine Resources section style based on schedule type + execution mode
@@ -2349,6 +2408,8 @@ export function AgentEditorFullScreen({
                 </div>
               )
             })()}
+              </div>{/* end right column */}
+            </div>{/* end two-column grid */}
           </div>
         </div>
         </FullScreenDialogMain>
