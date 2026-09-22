@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased] — the agent kernel batch (M0): one runtime factory, one publish path, dead links gone
+
+No API, storage or DTO changes — a binary swap. The design context lives in `docs/designs/` (001 tech design, 002 product & interaction design, 003 implementation plan + UI mockup); this batch is its first milestone.
+
+### refactor(agent): runtime construction unified in the instance manager — the dual stack closes
+- The agent executor's 165-line hand-rolled per-backend match and its second per-(type|endpoint|model) runtime cache are gone: `get_llm_runtime_for_agent` resolves the backend id and delegates construction/caching/capability-refresh to `get_instance_manager()`. The executor's DEFAULT runtime in `server/types.rs` — a fourth construction site with its own match and an `unreachable!()` — now resolves via `get_active_runtime()`. One factory, one cache, one capability path for chat AND agents.
+- Behavior riding the unification: agent-path Ollama/llama.cpp runtimes gain live `/api/show` / `/props` capability detection (previously trusted stored values verbatim); cloud backends honor `multimodal_user_override` on the agent path (the gotcha #3 class drift — user choice being ignored, not text models); cloud default timeout unified at 300s (chat's implicit 60s serde default was too tight for agent multi-step calls; per-provider env overrides preserved, parsed in the one new `env_timeout_secs`); the old cache key ignored api-key changes — the manager's per-id cache invalidates with the instance.
+- Trait-object types normalized to `Arc<dyn LlmRuntime>` (the trait already requires Send + Sync; explicit bounds were redundant).
+
+### refactor(agent): execution memory finalization deduped — Focused branch lacked the FIFO cap
+- The Free and Focused branches of `execute_internal` carried a verbatim-duplicated finalize sequence (journal → knowledge-handle sync → auto-init → FIFO cap → persist) that had drifted: the Focused copy had NO knowledge-file cap, so a long-running Focused agent could accumulate unbounded knowledge files (each injected into every subsequent prompt). Both now call `finalize_execution_memory()` in `executor/memory.rs`.
+
+### refactor(api): single metric publish path + cross-world value converters
+- New `automation/metric_publish.rs`: `core_to_devices` / `devices_to_core` / `core_to_rule_value` — the single crossing point between the bus (`core::MetricValue`), telemetry storage (`devices::MetricValue`) and rule engine (`RuleValue`) enums — plus `VirtualMetricPublisher::publish_virtual_metric`: dual-namespace `is_virtual` event + dual telemetry write + rule-value refresh, generalized from the transform pipeline's inline skeleton.
+- The three inline copies (transform pipeline, REST ingestion, extension metrics collector) had drifted on conversion degradations; all three now use the shared converters. New derived-metric producers (AI operators, agent output contracts — M1/M2) must go through this path.
+
+### refactor(agent): dead streaming entry points removed
+- `SessionManager::process_message_stream` (zero callers repo-wide), `Agent::process_stream`, and `events_to_string_stream` (reachable only through that chain, plus two re-exports). The REST/WS paths stream via `process_message_events_with_backend_and_skills`; CLI uses `process()`.
+
+### chore(web) / docs
+- Deleted the unreferenced `components/alerts/UnifiedAlertChannelsTab` (819 lines; superseded by `MessageChannelsTab`).
+- `docs/designs/` added: the AI capability redesign set — product & interaction design (four hiring modes 看/盯/查/报, care-item concept, decision chains, correction samples, value recap; operators are a type of agent, no new menu/tab; disposal workflow scoped out), technical design, M0–M4 implementation plan with full frontend+backend impact map, and a six-screen UI mockup on the real design tokens with keep/new/modified delta badges.
+- Gates: workspace `check --tests` and clippy (0.1.92) clean, agent 715 + api 471 tests green, web `tsc` clean.
+
 ## [1.0.0] - 2026-09-20 — the architecture release: seven monoliths split, first-load bundle halved, cancellation tested, 96 any-typed
 
 ### Upgrade notes (0.9.24 → 1.0.0)
