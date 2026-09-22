@@ -355,8 +355,8 @@ footer{max-width:1200px;margin:40px auto 60px;padding:0 24px;color:var(--muted-f
 
 <!-- ============ Screen 2 创建向导 ============ -->
 <section id="s2">
-  <h2>② 新增 / 编辑智能体 —— 三段式信息架构重构</h2>
-  <p class="desc">仍是无向导的单页表单（现有哲学不变），但重排为三个带标号的分区：<b>① 身份（名称/描述/模型）→ ② 能力（类型四选一 + 模式专属区）→ ③ 运行策略（调度 + 折叠的高级项）</b>。解决四个混乱来源：输出区插在模式卡与基本信息之间、调度区离模式区太远、高级项不随模式变化、试跑按钮埋在表单中部（改为吸底 CTA）。<span class="dg d-keep">保留</span> · <span class="dg d-new">新增</span> · <span class="dg d-mod">调整</span>（含位置重排）。</p>
+  <h2>② 新增 / 编辑智能体 —— 连续表单流（顺序 = 身份 → 能力 → 运行策略）</h2>
+  <p class="desc">无向导的单页连续表单（遵循 DESIGN_SPEC：无满宽分隔线、无装饰性分区头），仅以<b>顺序</b>表达分组：身份（名称/描述/模型）→ 能力（类型卡 + 指令 + 输出字段 + 护栏折叠行）→ 运行策略（节奏/通知 + 高级折叠，按类型过滤）。配置面与确定性成正比：自由模式只剩一句话+节奏，确定性模式的旋钮全部折叠在默认值后。解决四个混乱来源：输出区插在模式卡与基本信息之间、调度区离模式区太远、高级项不随模式变化、试跑按钮埋在表单中部（改为吸底 CTA）。<span class="dg d-keep">保留</span> · <span class="dg d-new">新增</span> · <span class="dg d-mod">调整</span>（含位置重排）。</p>
   <div class="frame"><div class="frame-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="url">neomind.local/agents?editor=new</span></div>
   <div class="screen"><div class="s2">
     <div class="s2-head">
@@ -365,14 +365,12 @@ footer{max-width:1200px;margin:40px auto 60px;padding:0 24px;color:var(--muted-f
     </div>
     <div class="s2-body">
       <div class="s2-left" style="width:390px">
-        <div class="zone"><span class="zn">1</span><span class="zt">身份</span><span class="zl"></span></div>
         <div>
           <div class="rythm" style="margin-bottom:6px"><span>包装台视觉质检</span><small style="color:var(--muted-foreground)">名称</small></div>
           <div class="rythm" style="margin-bottom:6px"><span style="color:var(--muted-foreground)">每 15 分钟质检一次包装台…</span><small style="color:var(--muted-foreground)">描述</small></div>
           <div class="rythm"><span>本地 VLM（MiniCPM-V）</span><a href="#">更换模型</a></div>
         </div>
 
-        <div class="zone"><span class="zn">2</span><span class="zt">能力 —— 它替我做什么</span><span class="zl"></span></div>
         <div class="f-label" style="margin-bottom:6px">类型<span class="dg d-mod">位置提前为主分区开关</span></div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
           <span class="chip" style="background:var(--primary);color:var(--primary-foreground);border-color:transparent">替我看</span>
@@ -390,7 +388,6 @@ footer{max-width:1200px;margin:40px auto 60px;padding:0 24px;color:var(--muted-f
         <div class="rythm" style="margin-bottom:6px"><span>触发：画面变化时 · 防抖 30 秒 · 平滑 连续 2 次</span><a href="#">调整</a></div>
         <div class="rythm"><span>每日上限 200 次 · 熔断 3 · 超时 60s</span><a href="#">调整</a></div>
 
-        <div class="zone"><span class="zn">3</span><span class="zt">运行策略</span><span class="zl"></span></div>
         <div>
           <div class="rythm" style="margin-bottom:6px"><span>节奏：变化触发（继承护栏中的防抖）</span><a href="#">调整</a></div>
           <div class="rythm" style="margin-bottom:6px"><span>通知：漏装 → 张经理</span><a href="#">调整</a></div>

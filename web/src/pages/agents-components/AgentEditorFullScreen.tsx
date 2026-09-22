@@ -115,20 +115,6 @@ interface AgentEditorFullScreenProps {
 // Main Component
 // ============================================================================
 
-/** Numbered section header for the editor's three-zone IA
- * (identity / capability / run policy — docs/designs/002 §4.4). */
-function ZoneHeader({ n, label }: { n: string; label: string }) {
-  return (
-    <div className="flex items-center gap-2 pt-2" aria-label={label}>
-      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border bg-muted text-[11px] font-semibold text-muted-foreground">
-        {n}
-      </span>
-      <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
-      <div className="h-px flex-1 bg-border" />
-    </div>
-  )
-}
-
 export function AgentEditorFullScreen({
   open,
   onOpenChange,
@@ -1229,8 +1215,6 @@ export function AgentEditorFullScreen({
                 "space-y-6",
                 isMobile ? "px-4 py-6" : "px-4 py-6"
               )}>
-            {/* Zone 1: identity */}
-            <ZoneHeader n="1" label={tAgent('creator.zones.identity')} />
             {/* Name */}
             <div className="space-y-2">
               <Label className={cn("font-medium", isMobile ? "text-base" : "text-sm")}>
@@ -1354,8 +1338,6 @@ export function AgentEditorFullScreen({
 
             {/* Advanced knobs — rarely changed; collapsed so the required
                 fields (mode / name / requirements) keep the visual focus. */}
-            {/* Zone 2: capability */}
-            <ZoneHeader n="2" label={tAgent('creator.zones.capability')} />
             {/* Execution Mode */}
             <div className="space-y-2">
               <Label className="text-sm font-medium flex items-center gap-2">
@@ -1492,7 +1474,7 @@ export function AgentEditorFullScreen({
 
             {/* Structured (L0) output contract — only for structured mode */}
             {isStructuredMode && (
-              <div className="space-y-3 rounded-lg border border-border p-3">
+              <div className="space-y-2">
                 <Label className="text-sm font-medium flex items-center gap-2">
                   <Database className="h-4 w-4 text-muted-foreground" />
                   {tAgent('creator.structured.sectionTitle')}
@@ -1692,8 +1674,6 @@ export function AgentEditorFullScreen({
             )}
 
 
-            {/* Zone 3: run policy */}
-            <ZoneHeader n="3" label={tAgent('creator.zones.runPolicy')} />
             <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
               <CollapsibleTrigger className="w-full flex items-center justify-between py-1 text-left">
                 <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">

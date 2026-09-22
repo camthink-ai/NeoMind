@@ -531,11 +531,6 @@
       "guardrailSummary": "Guardrails: debounce {{debounce}}s · timeout {{timeout}}s · breaker {{threshold}} · daily cap {{cap}}",
       "guardrailToggle": "Adjust"
     },
-    "zones": {
-      "identity": "Identity",
-      "capability": "Capability — what it does for me",
-      "runPolicy": "Run policy"
-    },
     "advanced": {
       "title": "Advanced Configuration",
       "dataCollection": "Data Collection",
