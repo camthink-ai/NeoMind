@@ -43,7 +43,10 @@ pub struct InferenceRequest {
     pub backend_id: Option<String>,
     /// Per-call wall-clock timeout in seconds (default via [`InferenceRequest::default`]).
     pub timeout_secs: u32,
-    /// Output token cap — schema output never needs more than a few hundred.
+    /// Output token cap. Numbers and enums fit in a few hundred tokens, but a
+    /// text field (an image description) does not: capped at 512 the JSON
+    /// never closes and every run fails validation. 2048 leaves room for a
+    /// verbose description per field without inviting essays.
     pub max_output_tokens: usize,
     /// Images the model must actually SEE (S1: camera → fields). Rendered as
     /// multimodal parts, never as text — base64 in the prompt is truncated
@@ -59,7 +62,7 @@ impl Default for InferenceRequest {
             schema: Vec::new(),
             backend_id: None,
             timeout_secs: 60,
-            max_output_tokens: 512,
+            max_output_tokens: 2048,
             images: Vec::new(),
         }
     }
