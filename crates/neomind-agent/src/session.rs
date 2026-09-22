@@ -1554,16 +1554,6 @@ Assistant: {ar}\n"
         Ok(response)
     }
 
-    /// Process a message in a session with streaming response.
-    pub async fn process_message_stream(
-        &self,
-        session_id: &str,
-        message: &str,
-    ) -> Result<Pin<Box<dyn Stream<Item = String> + Send>>> {
-        let agent = self.get_session(session_id).await?;
-        agent.process_stream(message).await
-    }
-
     /// Process a message in a session with optional LLM backend override.
     pub async fn process_message_with_backend(
         &self,

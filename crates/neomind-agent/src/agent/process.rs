@@ -602,13 +602,3 @@ impl Agent {
         }
     }
 }
-impl Agent {
-    /// Process a user message with streaming response (returns String stream).
-    pub async fn process_stream(
-        &self,
-        user_message: &str,
-    ) -> Result<Pin<Box<dyn Stream<Item = String> + Send>>> {
-        let event_stream = self.process_stream_events(user_message, None, None).await?;
-        Ok(events_to_string_stream(event_stream))
-    }
-}

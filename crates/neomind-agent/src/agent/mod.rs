@@ -59,8 +59,8 @@ pub use conversation_context::ConversationContext;
 pub use fallback::{default_fallback_rules, process_fallback, FallbackRule};
 pub use smart_followup::SmartFollowUpManager;
 pub use streaming::{
-    events_to_string_stream, process_multimodal_stream_events_with_safeguards,
-    process_stream_events_with_safeguards, StreamSafeguards,
+    process_multimodal_stream_events_with_safeguards, process_stream_events_with_safeguards,
+    StreamSafeguards,
 };
 pub use types::{
     AgentConfig, AgentEvent, AgentInternalState, AgentMessage, AgentMessageImage, AgentResponse,

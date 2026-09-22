@@ -34,9 +34,7 @@ pub use neomind_core::llm::compaction::{CompactionConfig, MessagePriority};
 // Public API re-exports (preserving all original import paths)
 pub use cache::ToolResultCache;
 pub use result_format::format_tool_results;
-pub use stream_core::{
-    events_to_string_stream, process_stream_events_with_safeguards, StreamSafeguards,
-};
+pub use stream_core::{process_stream_events_with_safeguards, StreamSafeguards};
 pub use stream_multimodal::process_multimodal_stream_events_with_safeguards;
 pub use thinking::cleanup_thinking_content;
 

@@ -1606,29 +1606,6 @@ pub async fn process_stream_events_with_safeguards(
     }))
 }
 
-/// Convert AgentEvent stream to String stream for backward compatibility.
-pub fn events_to_string_stream(
-    event_stream: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>,
-) -> Pin<Box<dyn Stream<Item = String> + Send>> {
-    Box::pin(async_stream::stream! {
-        let mut stream = event_stream;
-        while let Some(event) = StreamExt::next(&mut stream).await {
-            match event {
-                AgentEvent::Content { content } => {
-                    yield content;
-                }
-                AgentEvent::Error { message } => {
-                    yield format!("[Error: {}]", message);
-                }
-                AgentEvent::End { .. } => break,
-                _ => {
-                    // Ignore other events for backward compatibility
-                }
-            }
-        }
-    })
-}
-
 /// Reserve tokens for model response generation (minimum 1024).
 const RESERVE_FOR_RESPONSE: usize = 1024;
 
