@@ -849,6 +849,7 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         .route("/api/agents/:id", delete(agents::delete_agent))
         .route("/api/agents/:id/execute", post(agents::execute_agent))
         .route("/api/agents/:id/invoke", post(agents::invoke_agent))
+        .route("/api/agents/:id/test", post(agents::test_agent))
         .route("/api/agents/:id/status", post(agents::set_agent_status))
         .route(
             "/api/agents/:id/executions",

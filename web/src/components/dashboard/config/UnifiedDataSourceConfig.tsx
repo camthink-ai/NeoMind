@@ -32,7 +32,7 @@ import { ItemBadge, DataIndicator } from './shared'
 export interface UnifiedDataSourceConfigProps {
   value?: DataSourceOrList
   onChange: (dataSource: DataSourceOrList | undefined) => void
-  allowedTypes?: Array<'device-metric' | 'device-command' | 'device-info' | 'device' | 'metric' | 'command' | 'system' | 'extension' | 'extension-command' | 'transform'>
+  allowedTypes?: Array<'device-metric' | 'device-command' | 'device-info' | 'device' | 'metric' | 'command' | 'system' | 'extension' | 'extension-command' | 'transform' | 'ai'>
   multiple?: boolean
   maxSources?: number
   className?: string
@@ -99,6 +99,17 @@ function createTransformDS(transformId: string, field: string): DataSource {
     timeRange: DEFAULT_TIME_RANGE, limit: DEFAULT_LIMIT, aggregate: DEFAULT_AGGREGATE,
     params: { includeRawPoints: true }, transform: 'raw',
     source: 'transform', id: transformId, field, mode: 'timeseries',
+  }
+}
+
+function createAiDS(agentId: string, field: string): DataSource {
+  // Structured (L0) agent field, published under the `ai:{agentId}` telemetry
+  // namespace — same fetch shape as a transform output (timeseries read).
+  return {
+    type: 'transform', sourceId: `ai:${agentId}`, metricId: field,
+    timeRange: DEFAULT_TIME_RANGE, limit: DEFAULT_LIMIT, aggregate: DEFAULT_AGGREGATE,
+    params: { includeRawPoints: true }, transform: 'raw',
+    source: 'ai', id: agentId, field, mode: 'timeseries',
   }
 }
 
@@ -347,9 +358,13 @@ export function UnifiedDataSourceConfig({
     return () => { cancelled = true }
   }, [availableCategories])
 
-  // Computed lists for transform sources
-  const transformSources = useMemo(() =>
-    unifiedDataSources.filter(s => s.source_type === 'transform'),
+  // Computed lists for transform / structured-agent (ai) sources
+  const transformSources = useMemo(
+    () => unifiedDataSources.filter(s => s.source_type === 'transform'),
+    [unifiedDataSources]
+  )
+  const aiSources = useMemo(
+    () => unifiedDataSources.filter(s => s.source_type === 'ai'),
     [unifiedDataSources]
   )
 
@@ -1287,6 +1302,77 @@ export function UnifiedDataSourceConfig({
                     </div>
                     <span className={cn("shrink-0", textNano, "px-1.5 py-0.5 rounded bg-accent-indigo-light text-accent-indigo border border-accent-indigo-light")}>
                       {t('dataSource.transform')}
+                    </span>
+                  </button>
+                )
+              })
+            )}
+          </div>
+        )
+      case 'ai':
+        // Transform data sources - flat list layout
+        return (
+          <div className="space-y-1">
+            {unifiedSourcesLoading ? (
+              <div className="p-4 text-center text-muted-foreground text-sm flex items-center justify-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading...
+              </div>
+            ) : aiSources.length === 0 ? (
+              <div className="p-4 text-center text-muted-foreground text-sm">{t('dataSource.noAiAgents')}</div>
+            ) : (
+              aiSources.map(source => {
+                const tfIsSelected = isSelected('ai', source.source_name, source.field)
+                return (
+                  <button
+                    key={source.id}
+                    type="button"
+                    onClick={() => handleSelectItem(createAiDS(source.source_name, source.field))}
+                    className={cn(
+                      'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-all duration-fast',
+                      tfIsSelected
+                        ? 'bg-muted border-border'
+                        : 'bg-card border-border hover:bg-accent hover:border-border'
+                    )}
+                  >
+                    <div className={cn(
+                      'shrink-0 w-5 h-5 rounded-md flex items-center justify-center transition-colors',
+                      tfIsSelected
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-muted text-muted-foreground'
+                    )}>
+                      <Check className={cn(
+                        'h-4 w-4',
+                        tfIsSelected ? 'opacity-100' : 'opacity-0'
+                      )} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className={cn(
+                        'text-sm truncate',
+                        tfIsSelected ? 'font-medium text-foreground' : 'font-normal text-foreground'
+                      )}>
+                        {source.source_display_name} · {source.field_display_name}
+                      </div>
+                      <div className={cn(textNano, "text-muted-foreground truncate flex items-center gap-1.5")}>
+                        <code className={cn("px-1 py-0.5 bg-muted rounded", textMicro, "font-mono")}>
+                          {source.source_name}:{source.field}
+                        </code>
+                        {source.unit && source.unit !== '-' && (
+                          <>
+                            <span className="text-muted-foreground">·</span>
+                            <span className="text-muted-foreground">{source.unit}</span>
+                          </>
+                        )}
+                        {source.current_value !== undefined && source.current_value !== null && (
+                          <>
+                            <span className="text-muted-foreground">·</span>
+                            <span className="text-foreground">{String(source.current_value)}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <span className={cn("shrink-0", textNano, "px-1.5 py-0.5 rounded bg-accent-indigo-light text-accent-indigo border border-accent-indigo-light")}>
+                      {t('dataSource.aiAgent')}
                     </span>
                   </button>
                 )

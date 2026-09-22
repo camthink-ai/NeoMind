@@ -1822,6 +1822,56 @@ pub async fn execute_agent(
     }))
 }
 
+/// Dry-run a structured (L0) agent: collect + one inference, publish nothing
+/// (no telemetry, no events, no journal, no budget count). Editor 试跑 preview.
+#[utoipa::path(
+    post,
+    path = "/api/agents/{id}/test",
+    tag = "agents",
+    params(
+        ("id" = String, Path, description = "Agent id"),
+    ),
+    responses(
+        (status = 200, description = "Dry-run result: rendered context, schema-validated fields, raw model text, attempt count"),
+        (status = 400, description = "Agent is not structured, or has no output schema"),
+        (status = 404, description = "Agent not found"),
+    )
+)]
+pub async fn test_agent(
+    State(state): State<ServerState>,
+    Path(id): Path<String>,
+) -> HandlerResult<serde_json::Value> {
+    let agent_manager = state
+        .get_or_init_agent_manager()
+        .await
+        .map_err(|e| ErrorResponse::internal(format!("Failed to get agent manager: {}", e)))?;
+
+    let agent = agent_manager
+        .executor()
+        .store()
+        .get_agent(&id)
+        .await
+        .map_err(|e| ErrorResponse::internal(format!("Failed to get agent: {}", e)))?
+        .ok_or_else(|| ErrorResponse::not_found(format!("Agent not found: {}", id)))?;
+
+    if !matches!(
+        agent.execution_mode,
+        neomind_storage::agents::ExecutionMode::Structured
+    ) {
+        return Err(ErrorResponse::bad_request(
+            "Dry-run is only available for structured (L0) agents",
+        ));
+    }
+
+    let result = agent_manager
+        .executor()
+        .dry_run_structured(&agent)
+        .await
+        .map_err(|e| ErrorResponse::internal(format!("Dry-run failed: {}", e)))?;
+
+    ok(result)
+}
+
 /// Invoke an AI Agent synchronously — waits for execution to complete and returns results.
 #[utoipa::path(
     post,

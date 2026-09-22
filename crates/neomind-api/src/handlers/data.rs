@@ -107,9 +107,10 @@ pub async fn list_all_data_sources_handler(
     let need_device = filter_type.is_none() || filter_type == Some("device");
     let need_extension = filter_type.is_none() || filter_type == Some("extension");
     let need_transform = filter_type.is_none() || filter_type == Some("transform");
+    let need_ai = filter_type.is_none() || filter_type == Some("ai");
 
     // Collect sources from all needed types in parallel
-    let (mut device_sources, mut extension_sources, mut transform_sources) = tokio::join!(
+    let (mut device_sources, mut extension_sources, mut transform_sources, mut ai_sources) = tokio::join!(
         async {
             if need_device {
                 collect_device_sources_parallel(&state).await
@@ -131,10 +132,18 @@ pub async fn list_all_data_sources_handler(
                 vec![]
             }
         },
+        async {
+            if need_ai {
+                collect_ai_sources_parallel(&state).await
+            } else {
+                vec![]
+            }
+        },
     );
     sources.append(&mut device_sources);
     sources.append(&mut extension_sources);
     sources.append(&mut transform_sources);
+    sources.append(&mut ai_sources);
 
     // Sort by id for consistent ordering
     sources.sort_by(|a, b| a.id.cmp(&b.id));
@@ -283,6 +292,54 @@ async fn collect_extension_sources_parallel(state: &ServerState) -> Vec<UnifiedD
 }
 
 /// Collect data sources from all registered transforms (returns new Vec for parallel use).
+/// Collect data sources from structured (L0) agents: one entry per output
+/// schema field, id `ai:{agent_id}:{field}` — exactly how the executor
+/// publishes them, so the dashboard picker binds to the live namespace.
+async fn collect_ai_sources(state: &ServerState, sources: &mut Vec<UnifiedDataSourceInfo>) {
+    let agents = state
+        .agents
+        .agent_store
+        .query_agents(neomind_storage::AgentFilter::default())
+        .await
+        .unwrap_or_default();
+
+    for agent in agents {
+        if !matches!(
+            agent.execution_mode,
+            neomind_storage::agents::ExecutionMode::Structured
+        ) {
+            continue;
+        }
+        let Some(schema) = agent.output_schema else { continue };
+        for field in schema {
+            sources.push(UnifiedDataSourceInfo {
+                id: format!("ai:{}:{}", agent.id, field.name),
+                source_type: "ai".to_string(),
+                source_name: agent.id.clone(),
+                source_display_name: agent.name.clone(),
+                field: field.name.clone(),
+                field_display_name: field.description.clone().unwrap_or_else(|| field.name.clone()),
+                data_type: match field.field_type {
+                    neomind_storage::OperatorFieldType::Number => "number".to_string(),
+                    neomind_storage::OperatorFieldType::Boolean => "boolean".to_string(),
+                    _ => "string".to_string(),
+                },
+                unit: field.unit.clone(),
+                description: field.description.clone(),
+                current_value: None,
+                last_update: None,
+                quality: None,
+            });
+        }
+    }
+}
+
+async fn collect_ai_sources_parallel(state: &ServerState) -> Vec<UnifiedDataSourceInfo> {
+    let mut sources = Vec::new();
+    collect_ai_sources(state, &mut sources).await;
+    sources
+}
+
 async fn collect_transform_sources_parallel(state: &ServerState) -> Vec<UnifiedDataSourceInfo> {
     let mut sources = Vec::new();
     collect_transform_sources(state, &mut sources).await;

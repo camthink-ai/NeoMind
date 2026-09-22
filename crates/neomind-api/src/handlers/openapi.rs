@@ -171,6 +171,7 @@ route index (including not-yet-schematized endpoints): /api/docs/routes.json."
         crate::handlers::agents::delete_agent,
         crate::handlers::agents::execute_agent,
         crate::handlers::agents::invoke_agent,
+        crate::handlers::agents::test_agent,
         crate::handlers::agents::set_agent_status,
         crate::handlers::agents::get_agent_executions,
         crate::handlers::agents::get_execution,
