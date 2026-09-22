@@ -15,11 +15,13 @@
  * report, lives in the hover title.
  */
 
+import { useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Unplug } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { EmptyState } from './DefaultStates'
+import { dashboardCardBase } from '@/design-system/tokens/size'
 import type { StaleDeviceRef } from './useDeviceBindingStatus'
 
 export interface DanglingBindingStateProps {
@@ -27,15 +29,53 @@ export interface DanglingBindingStateProps {
   className?: string
 }
 
+/** Below this height the full icon+two-line state can't breathe. */
+const COMPACT_THRESHOLD_PX = 132
+
 export function DanglingBindingState({ deviceIds: _deviceIds, className }: DanglingBindingStateProps) {
   const { t } = useTranslation('dashboardComponents')
+  const hostRef = useRef<HTMLDivElement>(null)
+  const [compact, setCompact] = useState(false)
+
+  // Widgets are grid-sized — the same dangling state must collapse to a
+  // single-line strip on short cards instead of cramming icon + two lines.
+  useLayoutEffect(() => {
+    const el = hostRef.current
+    if (!el) return
+    const ro = new ResizeObserver(([entry]) => {
+      setCompact(entry.contentRect.height < COMPACT_THRESHOLD_PX)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  const message = t('bindingDeviceRemoved', 'Bound device was removed')
+  const hint = t('bindingDeviceRemovedHint', 'Rebind this component to an existing device')
+
   return (
-    <EmptyState
-      className={cn('border-warning-light', className)}
-      icon={<Unplug className="h-8 w-8 text-warning" />}
-      message={t('bindingDeviceRemoved', 'Bound device was removed')}
-      subMessage={t('bindingDeviceRemovedHint', 'Rebind this component to an existing device')}
-    />
+    <div ref={hostRef} className={cn('min-h-full w-full', className)}>
+      {compact ? (
+        // Short card: one quiet strip — small icon + message; the rebind
+        // hint survives as the hover title so no information is lost.
+        <div
+          title={hint}
+          className={cn(
+            dashboardCardBase,
+            'flex-row items-center justify-center gap-2 border-warning-light px-3'
+          )}
+        >
+          <Unplug className="h-4 w-4 shrink-0 text-warning" />
+          <p className="truncate text-xs font-medium text-muted-foreground">{message}</p>
+        </div>
+      ) : (
+        <EmptyState
+          className={cn('border-warning-light')}
+          icon={<Unplug className="h-8 w-8 text-warning" />}
+          message={message}
+          subMessage={hint}
+        />
+      )}
+    </div>
   )
 }
 
