@@ -633,30 +633,23 @@ function MemoryContent({ memory, loading }: MemoryContentProps) {
     <ScrollArea className="h-full">
       <div className="space-y-4 pr-2">
         {/* Stats */}
-        <div className={cn("gap-2", isMobile ? "grid grid-cols-1" : "grid grid-cols-3")}>
-          {journalRecords.length > 0 && (
-            <div className="flex flex-col items-center p-3 rounded-lg bg-card shadow-sm">
-              <History className="h-4 w-4 text-muted-foreground mb-1" />
-              <span className="text-lg font-semibold text-foreground">{journalRecords.length}</span>
-              <span className={cn(textNano, "text-muted-foreground uppercase tracking-wide")}>{t('agents:memory.executions')}</span>
+        <div className="rounded-lg bg-card border border-border p-4">
+          <div className={cn("grid gap-4", isMobile ? "grid-cols-2" : "grid-cols-3")}>
+            <div>
+              <div className="text-base font-semibold tabular-nums leading-tight">{journalRecords.length}</div>
+              <div className="text-xs text-muted-foreground">{t('agents:memory.executions')}</div>
             </div>
-          )}
-          {knowledgeFiles.length > 0 && (
-            <div className="flex flex-col items-center p-3 rounded-lg bg-card shadow-sm">
-              <FileText className="h-4 w-4 text-muted-foreground mb-1" />
-              <span className="text-lg font-semibold text-foreground">{knowledgeFiles.length}</span>
-              <span className={cn(textNano, "text-muted-foreground uppercase tracking-wide")}>{t('agents:memory.knowledgeFiles')}</span>
+            <div>
+              <div className="text-base font-semibold tabular-nums leading-tight">{knowledgeFiles.length}</div>
+              <div className="text-xs text-muted-foreground">{t('agents:memory.knowledgeFiles')}</div>
             </div>
-          )}
-          {memory.updated_at && (
-            <div className="flex flex-col items-center p-3 rounded-lg bg-card shadow-sm">
-              <Clock className="h-4 w-4 text-muted-foreground mb-1" />
-              <span className="text-sm font-medium text-foreground">
-                {formatTime(memory.updated_at)}
-              </span>
-              <span className={cn(textNano, "text-muted-foreground uppercase tracking-wide")}>{t('agents:memory.lastUpdate')}</span>
-            </div>
-          )}
+            {memory.updated_at && (
+              <div>
+                <div className="text-base font-semibold leading-tight">{formatTime(memory.updated_at)}</div>
+                <div className="text-xs text-muted-foreground">{t('agents:memory.lastUpdate')}</div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Knowledge Files */}
@@ -681,7 +674,7 @@ function MemoryContent({ memory, loading }: MemoryContentProps) {
           >
             <div className="space-y-2">
               {journalRecords.map((record: JournalExecutionRecord, idx: number) => (
-                <div key={idx} className="group rounded-lg border border-border hover:border-foreground/25 transition-colors">
+                <div key={idx} className="group rounded-lg border border-border bg-card hover:border-foreground/25 transition-colors">
                   <div className="pl-4 pr-3 py-3">
                     <div className="flex items-center justify-between mb-1">
                       <div className="flex items-center gap-2">

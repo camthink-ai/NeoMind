@@ -266,9 +266,11 @@ export function AgentExecutionTimeline({
                       {/* Timeline Card */}
                       <div
                         className={cn(
-                          "border rounded-lg overflow-hidden transition-all",
-                          isExpanded && statusConfig.bg,
-                          !isExpanded && "hover:bg-muted-30"
+                          "rounded-lg border bg-card overflow-hidden transition-colors",
+                          // Status color stays on the dot/badge; the card body
+                          // is a neutral surface (large success-green fills read
+                          // as "everything is fine" noise).
+                          isExpanded ? "border-foreground/20" : "border-border hover:bg-muted-30"
                         )}
                       >
                         {/* Header - Always Visible */}
@@ -283,7 +285,7 @@ export function AgentExecutionTimeline({
                               <Badge variant="outline" className="text-xs">
                                 #{executions.length - index}
                               </Badge>
-                              <Badge className={cn("text-xs", statusConfig.bg, statusConfig.color)}>
+                              <Badge variant="outline" className={cn("text-xs border-0", statusConfig.color)}>
                                 {statusConfig.label}
                               </Badge>
                             </div>
