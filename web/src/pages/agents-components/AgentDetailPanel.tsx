@@ -44,7 +44,6 @@ import { useEvents } from "@/hooks/useEvents"
 
 // Import sub-components
 import { AgentExecutionTimeline } from "./AgentExecutionTimeline"
-import { AgentThinkingPanel } from "./AgentThinkingPanel"
 import { AgentUserMessages, AgentUserMessagesComposer } from "./AgentUserMessages"
 
 interface AgentDetailPanelProps {
@@ -238,14 +237,6 @@ export function AgentDetailPanel({
 
   return (
     <div className="flex flex-col gap-3 h-full">
-      {/* Real-time Thinking Panel - shows during execution */}
-      {agent.id && (
-        <AgentThinkingPanel
-          agentId={agent.id}
-          isExecuting={currentStatus === 'Executing'}
-        />
-      )}
-
       {/* Left-rail section nav + content — matches the app's quiet list language */}
       <div className="flex min-h-0 flex-1">
         <FullScreenDialogSidebar>
