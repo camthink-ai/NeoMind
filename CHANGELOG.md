@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased.1] — M1: the structured agent (L0 operator) — S1 end to end
+
+The first business-layer milestone on the M0 kernel (design: docs/designs/001 §5.1, revised to live in the ai_agent domain — operators are a TYPE of agent, one list, one API). Create a "structured" agent in the editor, bind resources, define output fields, 试跑, schedule — the fields flow into dashboards/rules/data-push as live data sources.
+
+### feat(agent): Structured execution mode — single constrained inference, schema-validated fields out
+- `ExecutionMode` gains `structured` (appended LAST — bincode variant indices of existing rows unchanged); `AiAgent` tail-appends `output_schema` (field name / number-text-boolean-enum type / unit / description; enum restricts the model to listed values) and `operator_config` (debounce / smoothing / max-calls-per-day / per-call timeout / circuit-breaker threshold). All serde-defaulted; existing agents serialize identically.
+- New `src/inference.rs` — the L0 kernel entry: system contract built from the schema, JSON extraction tolerant of fences/prose, per-field validation (lenient number coercion, strict enum membership), exactly ONE repair retry that feeds the errors back, thinking forced off (gotcha #7), temperature 0.1, bounded output tokens. Runtime comes from the unified instance-manager factory.
+- The execution branch routes BEFORE intent parsing / situation analysis / the tool loop: collect (shared collector) → one inference → every validated field published as `ai:{agent_id}:{field}` (telemetry write + `DeviceMetric { is_virtual }` event — dashboards/rules/data-push see it like any source) → journal entry on the shared finalize path. Structured agents with no schema are rejected with a clear editor-facing message.
+- Self-healing + budget: while a structured agent sits in Error the scheduler holds off 300s (since the last attempt) then admits exactly one probe — success resets on the normal path, so L0 agents never stay dead the way legacy Error agents do. Daily cap counted at inference time; the scheduler pre-skips ticks over cap, manual invoke soft-fails with a clear message.
+- Tests: 7 inference-client cases (coercion, enum repair, persistent validation failure, transport error, JSON extraction) + 3 behavior tests (publish chain, schema-less rejection, daily budget cap).
+
+### feat(api/web): editor support, dry-run, and ai:* data sources end to end
+- Create/update/detail pass `output_schema` / `operator_config` through (skip-when-none); the four storage types derive ToSchema and register in the OpenAPI component list — drift guard green.
+- `POST /api/agents/:id/test` — dry-run a structured agent: collect + one inference, publish NOTHING (no telemetry, no events, no journal, no budget count); returns rendered context, validated fields, raw text, attempt count. The editor's 试跑 preview.
+- `GET /api/data/sources` lists `ai:{agent_id}:{field}` per schema field (`?source_type=ai`); the dashboard picker gains the "structured agents" category — items bind as timeseries sources under `ai:{agentId}`. `useDataSource` already dispatched `source === 'ai'` and `getEventDeviceId` already mapped `ai:{id}` WS prefixes, so live updates and history reads ride the existing plumbing.
+- Editor (web): third mode card 替我看/Structured beside Focused/Free; selecting it reveals the output-contract section — field rows (name / type / unit / description, enum allowed-values input) and operator tuning (debounce / inference timeout / breaker threshold / optional daily cap); payloads carry the new fields, edit mode loads them back. i18n en+zh.
+- Gates: workspace check + clippy clean (test-utils), agent 738 + api 371 tests green, web tsc + production build clean.
+
 ## [Unreleased] — the agent kernel batch (M0): one runtime factory, one publish path, dead links gone
 
 No API, storage or DTO changes — a binary swap. The design context lives in `docs/designs/` (001 tech design, 002 product & interaction design, 003 implementation plan + UI mockup); this batch is its first milestone.
