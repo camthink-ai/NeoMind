@@ -165,8 +165,19 @@ struct AgentDto {
     priority: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     context_window_size: Option<usize>,
-    /// Execution mode: "focused" or "free"
+    /// Execution mode: "focused" | "free" | "structured"
     execution_mode: String,
+    /// Output contract field names (structured/contracted agents) — the card
+    /// role badge + latest-output row key off these.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_fields: Option<Vec<String>>,
+    /// Memory axis (None = mode-derived default: structured→tool, else→assistant)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    memory_mode: Option<neomind_storage::MemoryMode>,
+    /// Latest published field values (ai:{agent_id}:{field}), if any — read
+    /// best-effort from telemetry for the card's 最新产出 row.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    latest_output: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 /// Lightweight agent summary for dropdowns/selectors.
@@ -605,6 +616,14 @@ impl From<AiAgent> for AgentDto {
             priority: Some(agent.priority),
             context_window_size: Some(agent.context_window_size),
             execution_mode: execution_mode_to_string(&agent.execution_mode).to_string(),
+            output_fields: agent
+                .output_schema
+                .as_ref()
+                .map(|schema| schema.iter().map(|f| f.name.clone()).collect()),
+            memory_mode: agent.memory_mode.or_else(|| {
+                Some(neomind_storage::MemoryMode::derived_for(agent.execution_mode))
+            }),
+            latest_output: None,
         }
     }
 }
@@ -855,7 +874,25 @@ pub async fn list_agents(
             "count": summaries.len(),
         }))
     } else {
-        let dtos: Vec<AgentDto> = agents.into_iter().map(AgentDto::from).collect();
+        let mut dtos: Vec<AgentDto> = agents.into_iter().map(AgentDto::from).collect();
+        // Latest published output per agent (ai:{id}:{field}) — best-effort,
+        // batched per agent; contract-less agents just omit the row.
+        for dto in &mut dtos {
+            let Some(fields) = &dto.output_fields else { continue };
+            let ns = format!("ai:{}", dto.id);
+            let field_refs: Vec<&str> = fields.iter().map(String::as_str).collect();
+            if let Ok(points) = state.devices.telemetry.latest_batch(&ns, &field_refs).await {
+                let values: serde_json::Map<String, serde_json::Value> = points
+                    .into_iter()
+                    .filter_map(|(metric, point)| {
+                        serde_json::to_value(point.value).ok().map(|v| (metric, v))
+                    })
+                    .collect();
+                if !values.is_empty() {
+                    dto.latest_output = Some(values);
+                }
+            }
+        }
 
         ok(json!({
             "agents": dtos,
