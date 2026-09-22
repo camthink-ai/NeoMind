@@ -322,6 +322,12 @@ export function AgentDetailPanel({
                                     </>
                                   )
                                 })()}
+                                <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+                                  {t('common:updatedAt')} {new Date(agent.updated_at).toLocaleDateString()}
+                                  {agent.last_execution_at && (
+                                    <> · {t('agents:lastExecution')} {new Date(agent.last_execution_at).toLocaleString()}</>
+                                  )}
+                                </span>
                               </div>
 
                               <div className="grid grid-cols-4 gap-3 rounded-lg bg-card p-3 border border-border">
@@ -434,14 +440,6 @@ export function AgentDetailPanel({
                               </DetailSection>
                 </div>
 
-                              <p className="border-t border-border pt-3 text-xs text-muted-foreground">
-                                {t('common:createdAt')} {new Date(agent.created_at).toLocaleString()}
-                                {' · '}
-                                {t('common:updatedAt')} {new Date(agent.updated_at).toLocaleString()}
-                                {agent.last_execution_at && (
-                                  <>{' · '}{t('agents:lastExecution')} {new Date(agent.last_execution_at).toLocaleString()}</>
-                                )}
-                              </p>
               </>
             )}
             {section === 'history' && (
@@ -587,15 +585,15 @@ function MemoryContent({ memory, loading }: MemoryContentProps) {
 
   if (loading) {
     return (
-      <LoadingState size="md" className="h-full" />
+      <LoadingState size="md" className="py-12" />
     )
   }
 
   if (!memory) {
     return (
-      <div className="h-full flex flex-col items-center justify-center text-muted-foreground">
-        <Brain className="h-12 w-12 mb-3 opacity-20" />
-        <p className="text-sm">{t('agents:detail.noMemory')}</p>
+      <div className="flex flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-border py-12 text-center">
+        <Brain className="h-8 w-8 text-muted-foreground/40" />
+        <p className="text-sm text-muted-foreground">{t('agents:detail.noMemory')}</p>
       </div>
     )
   }
@@ -606,10 +604,10 @@ function MemoryContent({ memory, loading }: MemoryContentProps) {
 
   if (isEmptyMemory) {
     return (
-      <div className="h-full flex flex-col items-center justify-center text-muted-foreground">
-        <Brain className="h-12 w-12 mb-3 opacity-20" />
-        <p className="text-sm">{t('agents:detail.noMemory')}</p>
-        <p className="text-xs mt-1 opacity-60">{t('agents:memory.emptyHint')}</p>
+      <div className="flex flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-border py-12 text-center">
+        <Brain className="h-8 w-8 text-muted-foreground/40" />
+        <p className="text-sm text-muted-foreground">{t('agents:detail.noMemory')}</p>
+        <p className="text-xs text-muted-foreground/70">{t('agents:memory.emptyHint')}</p>
       </div>
     )
   }
@@ -630,8 +628,7 @@ function MemoryContent({ memory, loading }: MemoryContentProps) {
   }
 
   return (
-    <ScrollArea className="h-full">
-      <div className="space-y-4 pr-2">
+      <div className="space-y-4">
         {/* Stats */}
         <div className="rounded-lg bg-card border border-border p-4">
           <div className={cn("grid gap-4", isMobile ? "grid-cols-2" : "grid-cols-3")}>
@@ -699,20 +696,8 @@ function MemoryContent({ memory, loading }: MemoryContentProps) {
               ))}
             </div>
 
-        {/* Updated At footer */}
-        {memory.updated_at && (
-          <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground py-3 border-t border-border">
-            <Clock className="h-4 w-4" />
-            <span>{t('agents:memory.updatedAt')}: {
-              typeof memory.updated_at === 'number'
-                ? new Date(memory.updated_at * 1000).toLocaleString()
-                : new Date(memory.updated_at).toLocaleString()
-            }</span>
-          </div>
-        )}
           </DetailSection>
         )}
       </div>
-    </ScrollArea>
   )
 }

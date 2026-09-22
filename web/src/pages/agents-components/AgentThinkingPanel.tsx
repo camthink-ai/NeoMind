@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils"
 import { useAgentEvents, type AgentThinkingStep } from "@/hooks/useAgentEvents"
 import { formatTimestamp } from "@/lib/utils/format"
 import { api } from "@/lib/api"
+import { ConclusionContent } from "./ConclusionContent"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import type { AgentExecutionDetail } from "@/types"
 
@@ -223,34 +224,11 @@ export function AgentThinkingPanel({ agentId, isExecuting }: AgentThinkingPanelP
                         {t('agents:memory.conclusion')}
                       </h4>
                       <div className="space-y-2">
-                        {conclusion && (() => {
-                          // Structured agents conclude with a JSON object — render
-                          // its fields as chips, not as a raw JSON wall.
-                          let fields: Array<[string, unknown]> | null = null
-                          try {
-                            const parsed = JSON.parse(conclusion)
-                            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-                              fields = Object.entries(parsed)
-                            }
-                          } catch { /* free-form conclusion — plain text */ }
-                          if (fields) {
-                            return (
-                              <div className="flex flex-wrap gap-1.5">
-                                {fields.map(([k, v]) => (
-                                  <span key={k} className="inline-flex items-baseline gap-1 rounded-md bg-muted px-1.5 py-1 text-sm">
-                                    <span className="text-xs text-muted-foreground">{k}</span>
-                                    <span className="font-medium">{String(v)}</span>
-                                  </span>
-                                ))}
-                              </div>
-                            )
-                          }
-                          return (
-                            <Card className="p-2.5 bg-muted">
-                            <p className="text-sm">{conclusion}</p>
-                          </Card>
-                          )
-                        })()}
+                        {conclusion && (
+                          <div className="rounded-lg border border-border bg-card p-3">
+                            <ConclusionContent content={conclusion} />
+                          </div>
+                        )}
                         {confidence !== undefined && (
                           <div className="flex items-center justify-between text-sm p-2 bg-muted rounded-lg">
                             <span className="text-xs text-muted-foreground">{t('agents:memory.confidence')}</span>

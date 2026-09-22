@@ -2,7 +2,6 @@ import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { LoadingState } from "@/components/shared/LoadingState"
 import { Badge } from "@/components/ui/badge"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Card } from "@/components/ui/card"
 import {
   Clock,
@@ -28,7 +27,7 @@ import { cn } from "@/lib/utils"
 import { textNano, textMini } from "@/design-system/tokens/typography"
 import { formatTimestamp } from "@/lib/utils/format"
 import { api } from "@/lib/api"
-import { MarkdownMessage } from "@/components/chat/MarkdownMessage"
+import { ConclusionContent } from "./ConclusionContent"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import type { AgentExecution, AgentExecutionDetail, DataCollected, ReasoningStep, Decision } from "@/types"
 
@@ -225,9 +224,8 @@ export function AgentExecutionTimeline({
   }
 
   return (
-    <div className="h-full flex flex-col">
-      <ScrollArea className="flex-1">
-        <div className="p-4">
+    <div>
+        <div>
           {loading ? (
             <LoadingState size="md" className="py-12" />
           ) : executions.length === 0 ? (
@@ -428,9 +426,9 @@ export function AgentExecutionTimeline({
                                     >
                                       <div className="space-y-2">
                                         {hasConclusion && (
-                                          <Card className="p-4 bg-muted border-border shadow-sm">
-                                            <MarkdownMessage content={dp!.conclusion} />
-                                          </Card>
+                                          <div className="rounded-lg border border-border bg-card p-3">
+                                            <ConclusionContent content={dp!.conclusion} />
+                                          </div>
                                         )}
                                         {hasConfidence && (
                                           <div className="flex items-center justify-between text-sm p-2 bg-muted rounded-lg">
@@ -572,7 +570,6 @@ export function AgentExecutionTimeline({
             </div>
           )}
         </div>
-      </ScrollArea>
     </div>
   )
 }

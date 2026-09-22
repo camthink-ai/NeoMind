@@ -11,10 +11,10 @@ import { useTranslation } from "react-i18next"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import {
+  Loader2,
   MessageSquare,
   Send,
   Trash2,
@@ -39,7 +39,7 @@ export function AgentUserMessages({ agentId, onMessageAdded }: AgentUserMessages
   const [sending, setSending] = useState(false)
   const [newMessage, setNewMessage] = useState("")
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const scrollAreaRef = useRef<HTMLDivElement>(null)
+  const bottomRef = useRef<HTMLDivElement>(null)
 
   // Load messages
   const loadMessages = async () => {
@@ -60,11 +60,8 @@ export function AgentUserMessages({ agentId, onMessageAdded }: AgentUserMessages
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
-    if (scrollAreaRef.current && messages.length > 0) {
-      const scrollContainer = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]')
-      if (scrollContainer) {
-        scrollContainer.scrollTop = scrollContainer.scrollHeight
-      }
+    if (messages.length > 0) {
+      bottomRef.current?.scrollIntoView({ block: 'nearest' })
     }
   }, [messages])
 
@@ -106,36 +103,40 @@ export function AgentUserMessages({ agentId, onMessageAdded }: AgentUserMessages
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="space-y-3">
       {/* Messages List */}
-      <div className="flex-1 min-h-0">
-        <ScrollArea className="h-full" ref={scrollAreaRef}>
-          <div className="p-4 space-y-3">
+      <div>
+        <div>
+          <div className="space-y-3">
             {loading ? (
-              <div className="text-center py-8 text-muted-foreground text-sm">
-                {t('common:loading')}...
+              <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                {t('common:loading')}
               </div>
             ) : messages.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                <MessageSquare className="h-10 w-10 mx-auto mb-2 opacity-20" />
-                <p className="text-sm">{t('agents:userMessages.empty')}</p>
-                <p className="text-xs mt-1">{t('agents:userMessages.emptyHint')}</p>
+              <div className="flex flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-border py-10 text-center">
+                <MessageSquare className="h-8 w-8 text-muted-foreground/40" />
+                <p className="text-sm text-muted-foreground">{t('agents:userMessages.empty')}</p>
+                <p className="text-xs text-muted-foreground/70">{t('agents:userMessages.emptyHint')}</p>
               </div>
             ) : (
-              messages.map((message) => (
-                <MessageBubble
-                  key={message.id}
-                  message={message}
-                  onDelete={() => handleDeleteMessage(message.id)}
-                />
-              ))
+              <>
+                {messages.map((message) => (
+                  <MessageBubble
+                    key={message.id}
+                    message={message}
+                    onDelete={() => handleDeleteMessage(message.id)}
+                  />
+                ))}
+                <div ref={bottomRef} />
+              </>
             )}
           </div>
-        </ScrollArea>
+        </div>
       </div>
 
       {/* Input Area */}
-      <div className="border-t p-3 bg-muted-20">
+      <div className="rounded-lg border border-border bg-card p-3">
         <div className="flex gap-2">
           <Textarea
             ref={textareaRef}
