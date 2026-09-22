@@ -63,6 +63,9 @@ export function normalizeAllowedTypes(
   if (allowedTypes.includes('extension')) result.push('extension')
   if (allowedTypes.includes('extension-command')) result.push('extension-command')
   if (allowedTypes.includes('transform')) result.push('transform')
+  // ai was silently dropped here: every widget passes an explicit list, so
+  // schemas could allow 'ai' forever and the category would never appear.
+  if (allowedTypes.includes('ai')) result.push('ai')
 
   // Old format types - map to new format (but not 'device' since it's distinct now)
   if (allowedTypes.includes('metric')) {
@@ -74,5 +77,5 @@ export function normalizeAllowedTypes(
     if (!result.includes('extension-command')) result.push('extension-command')
   }
 
-  return result.length > 0 ? result : ['device', 'device-metric', 'device-command', 'system', 'extension', 'extension-command', 'transform']
+  return result.length > 0 ? result : ['device', 'device-metric', 'device-command', 'system', 'extension', 'extension-command', 'transform', 'ai']
 }
