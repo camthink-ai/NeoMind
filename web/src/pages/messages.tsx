@@ -774,7 +774,6 @@ export default function MessagesPage() {
     <>
       <PageLayout
         title={t('messages.title')}
-        subtitle={t('messages.description')}
         hideFooterOnMobile
         hasBottomNav
         headerContent={
@@ -981,24 +980,8 @@ export default function MessagesPage() {
           <ResponsiveTable
             columns={[
                 {
-                  key: 'messageType',
-                  label: t('messages.type.label'),
-                  width: 'w-[72px]',
-                  align: 'center',
-                },
-                {
-                  key: 'severity',
-                  label: '',
-                  width: 'w-[50px]',
-                  className: 'text-center',
-                },
-                {
                   key: 'title',
                   label: t('messages.formTitle.label'),
-                },
-                {
-                  key: 'message',
-                  label: t('messages.content.label'),
                 },
                 {
                   key: 'severityBadge',
@@ -1020,7 +1003,7 @@ export default function MessagesPage() {
                 {
                   key: 'timestamp',
                   label: t('common:createdAt'),
-                  width: 'w-[130px]',
+                  width: 'w-[150px]',
                 },
               ]}
               data={messages}
@@ -1034,20 +1017,17 @@ export default function MessagesPage() {
                 const CategoryIcon = categoryConfig.icon
 
                 switch (columnKey) {
-                  case 'severity':
-                    return <SeverityIcon className={cn("h-4 w-4", severityConfig.color)} />
                   case 'title':
+                    // Title + message preview + tags in one cell — the two
+                    // columns were a truncated echo of each other.
                     return (
-                      <div className="font-medium text-sm truncate" title={message.title}>
-                        {message.title}
-                      </div>
-                    )
-                  case 'message':
-                    return (
-                      <div className="text-sm">
-                        <div className="text-muted-foreground line-clamp-2">{message.message}</div>
+                      <div className="text-sm min-w-0">
+                        <div className="font-medium truncate" title={message.title}>
+                          {message.title}
+                        </div>
+                        <div className="text-muted-foreground line-clamp-1 text-xs mt-0.5">{message.message}</div>
                         {(message.tags || []).length > 0 && (
-                          <div className="flex items-center gap-1 mt-1.5 flex-wrap">
+                          <div className="flex items-center gap-1 mt-1 flex-wrap">
                             {(message.tags || []).slice(0, 4).map((tag, i) => (
                               <Badge key={i} variant="secondary" className="text-xs h-5 px-1.5">
                                 {tag}
@@ -1072,19 +1052,6 @@ export default function MessagesPage() {
                         <CategoryIcon className="h-4 w-4 text-muted-foreground" />
                         <span className="text-xs">{t(categoryConfig.label)}</span>
                       </div>
-                    )
-                  case 'messageType':
-                    return (
-                      <Badge
-                        variant="outline"
-                        className={cn(
-                          "text-xs",
-                          "bg-info-light text-info border-info"
-                        )}
-                      >
-                        <Bell className="h-4 w-4 mr-1" />
-                        {t('messages.type.notification')}
-                      </Badge>
                     )
                   case 'status':
                     return (
