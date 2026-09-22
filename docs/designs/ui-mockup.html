@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NeoMind 智能能力 · UI 呈现稿（002 设计）</title>
+<style>
+/* ===== NeoMind 设计令牌（提取自 web/src/index.css，light + dark）===== */
+:root{
+  --background:oklch(1 0 0); --chrome:oklch(1 0 0); --sidebar-bg:oklch(0.97 0 0);
+  --foreground:oklch(0.21 0.01 264); --card:oklch(1 0 0); --card-foreground:oklch(0.21 0.01 264);
+  --popover:oklch(1 0 0);
+  --primary:oklch(0.22 0.03 265); --primary-foreground:oklch(1 0 0);
+  --secondary:oklch(0.962 0 0); --secondary-foreground:oklch(0.21 0.01 264);
+  --muted:oklch(0.962 0 0); --muted-foreground:oklch(0.48 0.012 264);
+  --accent:oklch(0.962 0 0); --accent-foreground:oklch(0.21 0.01 264);
+  --destructive:oklch(0.577 0.245 27); --border:oklch(0.21 0.01 264 / 9%);
+  --input:oklch(0.21 0.01 264 / 10%);
+  --color-success:oklch(0.55 0.17 155); --color-success-bg:oklch(0.55 0.17 155 / 8%);
+  --color-warning:oklch(0.68 0.17 65); --color-warning-bg:oklch(0.68 0.17 65 / 8%);
+  --color-error:oklch(0.55 0.22 25); --color-error-bg:oklch(0.55 0.22 25 / 8%);
+  --color-info:oklch(0.52 0.15 250); --color-info-bg:oklch(0.52 0.15 250 / 8%);
+  --primary-bg:oklch(0.18 0.02 270 / 8%); --destructive-bg:oklch(0.577 0.245 27 / 8%);
+  --accent-purple:oklch(0.52 0.18 300); --accent-purple-bg:oklch(0.52 0.18 300 / 8%);
+  --accent-orange:oklch(0.68 0.15 60); --accent-orange-bg:oklch(0.68 0.15 60 / 8%);
+  --accent-cyan:oklch(0.62 0.12 200); --accent-cyan-bg:oklch(0.62 0.12 200 / 8%);
+  --accent-emerald:oklch(0.58 0.15 160); --accent-emerald-bg:oklch(0.58 0.15 160 / 8%);
+  --tool-bg:oklch(0.96 0 0); --thinking-bg:oklch(0.962 0 0);
+  --radius:0.5rem; --radius-lg:0.5rem; --radius-xl:0.75rem;
+}
+.dark{
+  --background:oklch(0.135 0.01 270 / 97%); --chrome:oklch(0.20 0.008 270); --sidebar-bg:oklch(0.10 0.01 270);
+  --foreground:oklch(0.95 0.006 270); --card:oklch(0.175 0.01 270 / 85%); --card-foreground:oklch(0.95 0.006 270);
+  --popover:oklch(0.19 0.01 270);
+  --primary:oklch(0.95 0.006 270); --primary-foreground:oklch(0.135 0.01 270);
+  --secondary:oklch(0.205 0.01 270); --secondary-foreground:oklch(0.95 0.006 270);
+  --muted:oklch(0.205 0.01 270); --muted-foreground:oklch(0.64 0.014 270);
+  --accent:oklch(0.205 0.01 270); --accent-foreground:oklch(0.95 0.006 270);
+  --border:oklch(1 0 0 / 10%); --input:oklch(1 0 0 / 12%);
+  --color-success:oklch(0.72 0.19 155); --color-success-bg:oklch(0.72 0.19 155 / 10%);
+  --color-warning:oklch(0.72 0.16 85); --color-warning-bg:oklch(0.72 0.16 85 / 10%);
+  --color-error:oklch(0.577 0.245 27); --color-error-bg:oklch(0.577 0.245 27 / 10%);
+  --color-info:oklch(0.65 0.15 250); --color-info-bg:oklch(0.65 0.15 250 / 10%);
+  --primary-bg:oklch(0.96 0.003 270 / 12%);
+  --accent-purple:oklch(0.72 0.16 300); --accent-purple-bg:oklch(0.72 0.16 300 / 12%);
+  --accent-orange:oklch(0.75 0.15 80); --accent-orange-bg:oklch(0.75 0.15 80 / 12%);
+  --accent-cyan:oklch(0.70 0.12 200); --accent-cyan-bg:oklch(0.70 0.12 200 / 12%);
+  --accent-emerald:oklch(0.72 0.16 160); --accent-emerald-bg:oklch(0.72 0.16 160 / 12%);
+  --tool-bg:oklch(0.22 0.008 270); --thinking-bg:oklch(0.205 0.01 270);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI","Microsoft YaHei",sans-serif;
+  background:var(--background);color:var(--foreground);font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased}
+svg{flex:none}
+/* ===== 页面骨架（评审容器）===== */
+.topbar{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:16px;padding:10px 24px;
+  background:var(--chrome);border-bottom:1px solid var(--border);flex-wrap:wrap}
+.topbar .logo{font-weight:700;letter-spacing:.02em}
+.topbar .sub{color:var(--muted-foreground);font-size:12px}
+.topbar nav{display:flex;gap:4px;margin-left:auto;flex-wrap:wrap}
+.topbar nav a{padding:5px 10px;border-radius:var(--radius);color:var(--muted-foreground);text-decoration:none;font-size:12.5px}
+.topbar nav a:hover{background:var(--muted);color:var(--foreground)}
+.theme-toggle{border:1px solid var(--border);background:var(--secondary);color:var(--foreground);
+  padding:5px 12px;border-radius:var(--radius);cursor:pointer;font-size:12.5px}
+.intro{max-width:1200px;margin:24px auto 0;padding:0 24px;color:var(--muted-foreground);font-size:13px}
+.intro b{color:var(--foreground)}
+section{max-width:1200px;margin:36px auto 0;padding:0 24px}
+section>h2{font-size:17px;margin-bottom:4px}
+section>.desc{color:var(--muted-foreground);font-size:13px;margin-bottom:14px}
+/* 浏览器框 */
+.frame{border:1px solid var(--border);border-radius:var(--radius-xl);overflow:hidden;background:var(--card);
+  box-shadow:0 1px 2px oklch(0 0 0/4%),0 8px 28px oklch(0 0 0/6%)}
+.frame-bar{display:flex;align-items:center;gap:8px;padding:8px 14px;background:var(--muted);border-bottom:1px solid var(--border)}
+.frame-bar .dot{width:10px;height:10px;border-radius:50%;background:var(--border)}
+.frame-bar .url{font-size:11.5px;color:var(--muted-foreground);background:var(--card);border:1px solid var(--border);
+  border-radius:6px;padding:2px 10px;margin-left:8px}
+.screen{padding:0}
+/* 标注 */
+.notes{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;margin-top:12px}
+.note{display:flex;gap:8px;font-size:12.5px;color:var(--muted-foreground);align-items:flex-start}
+.note .n{flex:none;width:18px;height:18px;border-radius:50%;background:var(--primary);color:var(--primary-foreground);
+  font-size:11px;display:flex;align-items:center;justify-content:center;font-weight:600;margin-top:1px}
+/* ===== 通用组件 ===== */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:var(--radius);font-size:13px;
+  border:1px solid var(--border);background:var(--card);color:var(--foreground);cursor:pointer;white-space:nowrap}
+.btn-primary{background:var(--primary);color:var(--primary-foreground);border-color:transparent}
+.btn-sm{padding:4px 10px;font-size:12px}
+.btn-ghost{border-color:transparent;background:transparent;color:var(--muted-foreground)}
+.btn-ghost:hover{background:var(--muted)}
+.chip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:9999px;font-size:11.5px;
+  border:1px solid var(--border);color:var(--muted-foreground);white-space:nowrap}
+.chip svg{width:12px;height:12px}
+.dot-status{width:8px;height:8px;border-radius:50%;flex:none}
+.st-ok{background:var(--color-success)}.st-deg{background:var(--color-warning)}.st-paused{background:var(--muted-foreground)}
+.badge-mode{font-size:11px;padding:2px 8px;border-radius:9999px;font-weight:500}
+.m-watch{background:var(--accent-cyan-bg);color:var(--accent-cyan)}
+.m-guard{background:var(--accent-orange-bg);color:var(--accent-orange)}
+.m-report{background:var(--accent-purple-bg);color:var(--accent-purple)}
+.m-invest{background:var(--accent-emerald-bg);color:var(--accent-emerald)}
+/* ===== Screen 1 智能体·值守总览 ===== */
+.ptabs{display:flex;gap:2px;align-items:flex-end}
+.ptabs span{padding:7px 14px;font-size:13px;color:var(--muted-foreground);border-bottom:2px solid transparent;cursor:pointer}
+.ptabs span.on{color:var(--foreground);font-weight:600;border-bottom-color:var(--primary)}
+.s1{display:flex;min-height:560px}
+.s1-side{width:196px;flex:none;background:var(--sidebar-bg);border-right:1px solid var(--border);padding:14px 10px;display:flex;flex-direction:column;gap:2px}
+.s1-side .t{font-size:11px;color:var(--muted-foreground);padding:0 10px 8px;letter-spacing:.06em}
+.s1-side a{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:var(--radius);color:var(--muted-foreground);text-decoration:none;font-size:13px}
+.s1-side a svg{width:15px;height:15px}
+.s1-side a.on{background:var(--primary-bg);color:var(--foreground);font-weight:600}
+.s1-side .new{margin-left:auto;font-size:10px;background:var(--color-success);color:var(--primary-foreground);padding:1px 6px;border-radius:9999px}
+.s1-main{flex:1;padding:20px 24px;display:flex;flex-direction:column;gap:16px}
+.s1-head{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap}
+.s1-head h3{font-size:18px}
+.s1-head .sub{color:var(--muted-foreground);font-size:12.5px}
+.s1-head .acts{margin-left:auto;display:flex;gap:8px}
+.glabel{font-size:12px;color:var(--muted-foreground);display:flex;gap:8px;align-items:center;grid-column:1/-1;margin-top:2px}
+.glabel a{color:var(--color-info);text-decoration:none}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.ccard{border:1px solid var(--border);border-radius:var(--radius-xl);padding:14px 16px;background:var(--card);display:flex;flex-direction:column;gap:8px}
+.ccard.degraded{border-color:var(--color-warning);background:linear-gradient(var(--card),var(--card)) padding-box, var(--color-warning-bg)}
+.ccard-top{display:flex;align-items:center;gap:8px}
+.ccard-top .name{font-weight:600;font-size:13.5px}
+.ccard-top .st{margin-left:auto;display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--muted-foreground)}
+.ccard .line{display:flex;gap:6px;font-size:12.5px;color:var(--muted-foreground);align-items:center}
+.ccard .line b{color:var(--foreground);font-weight:600}
+.ccard .line svg{width:13px;height:13px;opacity:.7}
+.ccard .foot{display:flex;align-items:center;gap:8px;margin-top:2px}
+.ccard .learn{font-size:11px;color:var(--color-success);background:var(--color-success-bg);border-radius:9999px;padding:2px 8px}
+.valuebar{margin-top:auto;display:flex;align-items:center;gap:14px;border:1px solid var(--border);border-radius:var(--radius-xl);
+  padding:10px 16px;background:var(--primary-bg);font-size:12.5px;flex-wrap:wrap}
+.valuebar b{font-weight:700}
+.valuebar .more{margin-left:auto}
+/* ===== 增量标记（基于现有 UI 的设计）===== */
+.dg{display:inline-flex;align-items:center;font-size:10px;line-height:1;padding:3px 8px;border-radius:9999px;margin-left:8px;font-weight:500;vertical-align:middle}
+.d-keep{background:var(--muted);color:var(--muted-foreground)}
+.d-new{background:var(--color-success-bg);color:var(--color-success)}
+.d-mod{background:var(--color-warning-bg);color:var(--color-warning)}
+
+/* ===== Screen 2 向导 ===== */
+.s2{display:flex;flex-direction:column;min-height:580px}
+.s2-head{display:flex;align-items:center;gap:18px;padding:14px 22px;border-bottom:1px solid var(--border)}
+.s2-head .t{font-weight:600;font-size:15px}
+.steps{display:flex;gap:6px;align-items:center;margin-left:12px}
+.step{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--muted-foreground)}
+.step .num{width:20px;height:20px;border-radius:50%;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:11px}
+.step.done .num{background:var(--primary);color:var(--primary-foreground);border-color:transparent}
+.step.on{color:var(--foreground);font-weight:600}
+.step.on .num{border-color:var(--primary);border-width:2px}
+.step-arrow{color:var(--border);font-size:12px;margin:0 4px}
+.s2-head .x{margin-left:auto;color:var(--muted-foreground);font-size:16px}
+.s2-body{display:flex;flex:1;min-height:0}
+.s2-left{width:300px;flex:none;border-right:1px solid var(--border);padding:16px;display:flex;flex-direction:column;gap:14px;overflow:hidden}
+.f-label{font-size:12px;color:var(--muted-foreground);margin-bottom:5px;display:flex;align-items:center;gap:6px}
+.f-label svg{width:13px;height:13px}
+.srcbox{border:1px solid var(--input);border-radius:var(--radius-lg);padding:10px;display:flex;gap:10px;align-items:center;background:var(--card)}
+.thumb{width:74px;height:52px;border-radius:6px;background:linear-gradient(135deg,var(--accent-cyan-bg),var(--accent-purple-bg));
+  display:flex;align-items:center;justify-content:center;color:var(--muted-foreground);flex:none;position:relative;overflow:hidden}
+.thumb svg{width:18px;height:18px}
+.srcbox .meta{font-size:12.5px}
+.srcbox .meta small{color:var(--muted-foreground);font-size:11px;display:block}
+.rythm{border:1px solid var(--input);border-radius:var(--radius-lg);padding:9px 12px;font-size:12.5px;display:flex;justify-content:space-between;align-items:center}
+.rythm a{color:var(--color-info);text-decoration:none;font-size:12px}
+.s2-right{flex:1;padding:16px 20px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.promptbox{border:1px solid var(--input);border-radius:var(--radius-lg);padding:12px;font-size:13.5px;line-height:1.7;background:var(--card)}
+.tryrun{border:1px solid var(--color-success);border-radius:var(--radius-xl);overflow:hidden}
+.tryrun .hd{display:flex;align-items:center;gap:8px;padding:9px 14px;background:var(--color-success-bg);font-size:12.5px;color:var(--color-success);font-weight:600}
+.tryrun .hd .btn{margin-left:auto}
+.tryrun .bd{padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+.res-row{display:flex;align-items:center;gap:10px;font-size:13px;flex-wrap:wrap}
+.res-row .v{font-size:17px;font-weight:700}
+.conf{font-size:11px;color:var(--muted-foreground)}
+.evi{display:flex;gap:6px}
+.evi .thumb{width:64px;height:44px}
+.evi .thumb .bx{position:absolute;border:1.5px solid var(--color-error);border-radius:2px;width:26px;height:18px;left:26px;top:20px}
+.fieldrow{display:flex;gap:6px;flex-wrap:wrap}
+.fieldchip{font-size:12px;border:1px dashed var(--border);border-radius:6px;padding:3px 9px;color:var(--foreground);background:var(--card)}
+.fieldchip small{color:var(--muted-foreground)}
+.runin{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--color-info);background:var(--color-info-bg);
+  border-radius:var(--radius-lg);padding:7px 12px}
+.s2-foot{display:flex;align-items:center;gap:8px;padding:12px 22px;border-top:1px solid var(--border)}
+.s2-foot .cost{font-size:12px;color:var(--muted-foreground);margin-left:auto}
+/* ===== Screen 3 判定链 ===== */
+.s3{padding:20px 24px;max-width:820px}
+.s3-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.sev{font-size:11.5px;background:var(--color-warning-bg);color:var(--color-warning);padding:3px 10px;border-radius:9999px;font-weight:600}
+.s3-head h3{font-size:16px}
+.s3-head .time{color:var(--muted-foreground);font-size:12px}
+.claim{margin-left:auto;font-size:12px;color:var(--destructive);border:1px solid var(--destructive);padding:3px 10px;border-radius:9999px}
+.chain{margin-top:16px;display:flex;flex-direction:column}
+.cnode{display:flex;gap:12px}
+.cnode .rail{display:flex;flex-direction:column;align-items:center}
+.cnode .ic{width:26px;height:26px;border-radius:50%;border:1px solid var(--border);background:var(--card);
+  display:flex;align-items:center;justify-content:center;color:var(--muted-foreground);z-index:1}
+.cnode .ic svg{width:13px;height:13px}
+.cnode .cord{width:2px;flex:1;background:var(--border);min-height:14px}
+.cnode:last-child .cord{display:none}
+.cnode .body{padding-bottom:16px;flex:1;min-width:0}
+.cnode .t{font-size:13.5px;font-weight:600;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.cnode .d{font-size:12.5px;color:var(--muted-foreground);margin-top:2px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.cnode .d a{color:var(--color-info);text-decoration:none;font-size:12px}
+.cnode.final .ic{background:var(--primary);color:var(--primary-foreground);border-color:transparent}
+.cnode.final .t .confv{color:var(--muted-foreground);font-weight:400;font-size:12px}
+.outrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+.outcome{font-size:12px;border-radius:6px;padding:4px 10px;background:var(--muted)}
+.outcome.ok{background:var(--color-success-bg);color:var(--color-success)}
+.outcome.warn{background:var(--color-warning-bg);color:var(--color-warning)}
+.disposal{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px;padding-top:16px;border-top:1px dashed var(--border);align-items:center}
+.disposal .hint{font-size:11.5px;color:var(--muted-foreground);margin-left:auto}
+/* ===== Screen 4 chat ===== */
+.s4{display:flex;flex-direction:column;max-width:760px;margin:0 auto;padding:18px 20px;gap:14px;background:var(--background)}
+.msg{display:flex;gap:10px;max-width:92%}
+.msg .av{width:28px;height:28px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600}
+.msg.user{align-self:flex-end;flex-direction:row-reverse}
+.msg.user .av{background:var(--primary);color:var(--primary-foreground)}
+.msg.ai .av{background:var(--accent-purple-bg);color:var(--accent-purple)}
+.bubble{border-radius:var(--radius-xl);padding:10px 14px;font-size:13.5px;line-height:1.65}
+.msg.user .bubble{background:var(--primary);color:var(--primary-foreground);border-bottom-right-radius:4px}
+.msg.ai .bubble{background:var(--card);border:1px solid var(--border);border-bottom-left-radius:4px}
+.draft{border:1px solid var(--border);border-radius:var(--radius-xl);overflow:hidden;margin-top:8px;min-width:min(440px,100%)}
+.draft .dh{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--primary-bg);font-size:12px;font-weight:600}
+.draft .dh svg{width:13px;height:13px}
+.draft .db{padding:10px 12px;display:flex;flex-direction:column;gap:6px}
+.drow{display:flex;gap:8px;font-size:12.5px}
+.drow .k{width:44px;flex:none;color:var(--muted-foreground)}
+.drow .v{flex:1}
+.drow .edit{color:var(--color-info);font-size:11.5px;cursor:pointer;margin-left:6px}
+.draft .assume{font-size:11.5px;color:var(--color-warning);background:var(--color-warning-bg);border-radius:6px;padding:4px 10px}
+.draft .df{display:flex;gap:8px;padding:8px 12px;border-top:1px solid var(--border)}
+.srcnote{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted-foreground);
+  border:1px solid var(--border);border-radius:9999px;padding:3px 10px;margin-top:8px}
+.srcnote b{color:var(--foreground);font-weight:600}
+.srcnote a{color:var(--color-info);text-decoration:none}
+.sysline{align-self:center;font-size:11.5px;color:var(--muted-foreground);background:var(--muted);
+  border-radius:9999px;padding:3px 12px;display:flex;gap:6px;align-items:center}
+.composer{display:flex;gap:8px;align-items:center;border:1px solid var(--input);border-radius:var(--radius-xl);padding:8px 12px}
+.composer .ph{color:var(--muted-foreground);font-size:13px;flex:1}
+.composer svg{width:16px;height:16px;color:var(--muted-foreground)}
+/* ===== Screen 5 模板库 ===== */
+.s5{padding:20px 24px}
+.s5-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.s5-head h3{font-size:16px}
+.s5-tabs{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap}
+.s5-tabs .chip.on{background:var(--primary);color:var(--primary-foreground);border-color:transparent}
+.tgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;margin-top:14px}
+.tcard{border:1px solid var(--border);border-radius:var(--radius-xl);padding:14px;display:flex;flex-direction:column;gap:7px;background:var(--card)}
+.tcard .ic{width:34px;height:34px;border-radius:var(--radius-lg);display:flex;align-items:center;justify-content:center}
+.tcard .ic svg{width:17px;height:17px}
+.tcard .nm{font-weight:600;font-size:13.5px}
+.tcard .ds{font-size:12px;color:var(--muted-foreground)}
+.tcard .rt{font-size:11.5px;color:var(--muted-foreground);display:flex;gap:5px;align-items:center}
+.s5-hint{margin-top:14px;font-size:12.5px;color:var(--color-info);background:var(--color-info-bg);
+  border-radius:var(--radius-lg);padding:8px 14px;display:flex;gap:8px;align-items:center}
+footer{max-width:1200px;margin:40px auto 60px;padding:0 24px;color:var(--muted-foreground);font-size:12px}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <span class="logo">NeoMind</span>
+  <span class="sub">智能能力 UI 呈现稿 · 依据 docs/designs/002 产品与交互设计 · 静态示意（2026-09-22）</span>
+  <nav>
+    <a href="#s1">① 智能体页升级</a>
+    <a href="#s2">② 新建向导·试跑</a>
+    <a href="#s2b">②·B 智能体详情</a>
+    <a href="#s3">③ 判定链·处置台</a>
+    <a href="#s4">④ 对话即创建</a>
+    <a href="#s5">⑤ 模板库</a>
+  </nav>
+  <button class="theme-toggle" onclick="document.documentElement.classList.toggle('dark')">明 / 暗</button>
+</div>
+
+<p class="intro">本页是 002 设计的界面呈现稿：五个关键界面 × 真实设计令牌（取自 <b>web/src/index.css</b>，支持右上角明暗切换）。每屏下方附编号标注，对应 002 的设计决策。静态示意，非可交互原型；文案与机制以 002 §3/§4 为准。</p>
+
+<!-- ============ Screen 1 智能体页升级 ============ -->
+<section id="s1">
+  <h2>① 智能体页升级 —— 管理与运行状态合一（不新增 tab）</h2>
+  <p class="desc">菜单与 tab 结构保持现状（智能体/记忆/技能/工具），「智能体」tab 原地升级：卡片带运行态（在岗/降级/新鲜度/今日动作），算子以分组展示且管理入口指向自动化页，底部价值回顾常驻（002 §4.4）。曾设想的独立"值守总览" tab 因与智能体列表重复而否决。</p>
+  <div class="frame"><div class="frame-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="url">neomind.local/agents</span></div>
+  <div class="screen"><div class="s1">
+    <aside class="s1-side">
+      <div class="t">NEOMIND</div>
+      <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>仪表盘</a>
+      <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>智能对话</a>
+      <a class="on" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>智能体</a>
+      <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>设备</a>
+      <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 15l4-6 4 3 5-8"/></svg>可视化</a>
+      <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 6v6l4 2"/></svg>自动化</a>
+      <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"/></svg>数据</a>
+      <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>消息</a>
+      <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z"/></svg>扩展</a>
+    </aside>
+    <main class="s1-main">
+      <div class="s1-head">
+        <div><h3>智能体</h3><div class="sub">5 个智能体 · 4 在岗 · 1 降级自愈中</div></div>
+        <div class="acts"><button class="btn">模板库</button><button class="btn btn-primary">＋ 新建智能体</button></div>
+      </div>
+      <div class="ptabs"><span class="on">智能体</span><span>记忆</span><span>技能</span><span>工具</span></div>
+      <div class="cards">
+        <div class="ccard">
+          <div class="ccard-top"><span class="badge-mode m-guard">替我盯</span><span class="name">冷库温度盯守</span>
+            <span class="st"><span class="dot-status st-ok"></span>在岗</span></div>
+          <div class="line"><b style="color:var(--color-success);font-size:15px">-18.2℃</b> 正常 · 近 24h 超标 0 次</div>
+          <div class="line"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>上次成功 <b>28 秒前</b> · 门状态已联动核对</div>
+          <div class="foot"><span class="chip">本地模型</span><span class="chip">本月 12 次判定</span><button class="btn btn-ghost btn-sm" style="margin-left:auto">详情</button></div>
+        </div>
+        <div class="ccard">
+          <div class="ccard-top"><span class="badge-mode m-guard">替我盯</span><span class="name">车间能耗盯守</span>
+            <span class="st"><span class="dot-status st-ok"></span>在岗</span></div>
+          <div class="line">本周 <b>+3%</b> · 仍在月度预算内</div>
+          <div class="line"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 2 5-6"/></svg>3 条产线分项跟踪 · 昨日无异常</div>
+          <div class="foot"><span class="chip">规则+算子</span><button class="btn btn-ghost btn-sm" style="margin-left:auto">详情</button></div>
+        </div>
+        <div class="ccard">
+          <div class="ccard-top"><span class="badge-mode m-report">替我报</span><span class="name">每日运营摘要</span>
+            <span class="st"><span class="dot-status st-ok"></span>在岗</span></div>
+          <div class="line">今晨摘要已发送 · <b>0</b> 起待处置事项</div>
+          <div class="line"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>下一期 <b>明早 08:00</b> · 含历史对比</div>
+          <div class="foot"><button class="btn btn-ghost btn-sm" style="margin-left:auto">详情</button></div>
+        </div>
+        <div class="ccard degraded">
+          <div class="ccard-top"><span class="badge-mode m-watch">替我看</span><span class="name">包装台视觉质检</span>
+            <span class="st"><span class="dot-status st-deg"></span>降级</span></div>
+          <div class="line">连续 3 次失败已<b>熔断</b> · 输出保持旧值并标注过期</div>
+          <div class="line"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>上次成功 <b>40 分钟前</b> · 预计 5 分钟后自愈探针</div>
+          <div class="foot"><span class="chip">旧值已标 stale</span><button class="btn btn-ghost btn-sm" style="margin-left:auto">详情</button></div>
+        </div>
+        <div class="ccard">
+          <div class="ccard-top"><span class="badge-mode m-watch">替我看</span><span class="name">仪表自动抄表</span>
+            <span class="st"><span class="dot-status st-ok"></span>在岗</span></div>
+          <div class="line">今日 <b>96 次</b> · 成功率 100%</div>
+          <div class="line"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>每 15 分钟 · 摄像头读数直入时序库</div>
+          <div class="foot"><span class="chip">本地模型</span><span class="learn">已按你的 3 次纠正优化</span><button class="btn btn-ghost btn-sm" style="margin-left:auto">详情</button></div>
+        </div>
+      </div>
+      <div class="valuebar">
+        <b>本月价值回顾</b><span>值守 720 小时 · 作业 2,880 次 · 异常 12 起 · 误报标记 2 起 · 平均响应 40 秒</span>
+        <span class="more"><b style="color:var(--color-success)">≈ 替代人工 36 工时</b></span>
+        <button class="btn btn-sm">查看报告</button>
+      </div>
+    </main>
+  </div></div></div>
+  <div class="notes">
+    <div class="note"><span class="n">1</span><span>在岗/降级/暂停 是数据质量语义（降级=熔断自愈），不是 agent 的 Error/退避——002 §3.1/001 §5.1.4 的概念边界在 UI 上的直接体现。</span></div>
+    <div class="note"><span class="n">2</span><span>降级卡明示"保旧值+标过期"，抄表卡显示"已按你的 3 次纠正优化"——失败透明与越用越准（002 §4.2/§3.3）。</span></div>
+    <div class="note"><span class="n">3</span><span>底部价值回顾常驻：技术运行翻译成经营语言（002 §2.2），月度推送同源。</span></div>
+    <div class="note"><span class="n">4</span><span>雇佣模式徽章（替我看/盯/报）是唯一暴露的"技术分类"，用户可懂；执行拓扑（算子/规则/agent）完全不可见。</span></div>
+  </div>
+</section>
+
+<!-- ============ Screen 2 创建向导 ============ -->
+<section id="s2">
+  <h2>② 新增 / 编辑智能体 —— 在现有单页编辑器上增量</h2>
+  <p class="desc">基于现有 AgentEditorFullScreen（FullScreenDialog 单页表单，无分步向导：基本信息 / 模型 / 提示词 / 调度 / 资源 + AI 推荐）做增量（002 §4.1 入口二）：<span class="dg d-keep">保留</span>现有不动 · <span class="dg d-new">新增</span>本次新增 · <span class="dg d-mod">调整</span>现有基础上扩展。</p>
+  <div class="frame"><div class="frame-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="url">neomind.local/agents?editor=new</span></div>
+  <div class="screen"><div class="s2">
+    <div class="s2-head">
+      <span class="t">新建智能体</span>
+      <span class="x">✕</span>
+    </div>
+    <div class="s2-body">
+      <div class="s2-left" style="width:340px">
+        <div>
+          <div class="f-label">基本信息<span class="dg d-keep">保留</span></div>
+          <div class="rythm" style="margin-bottom:6px"><span>包装台视觉质检</span><small style="color:var(--muted-foreground)">名称</small></div>
+          <div class="rythm"><span style="color:var(--muted-foreground)">每 15 分钟质检一次包装台…</span><small style="color:var(--muted-foreground)">描述</small></div>
+          <div style="height:8px"></div>
+          <div class="f-label" style="margin-bottom:6px">类型<span class="dg d-new">新增</span></div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <span class="chip" style="background:var(--primary);color:var(--primary-foreground);border-color:transparent">替我看</span>
+            <span class="chip">替我盯</span><span class="chip">替我查</span><span class="chip">替我报</span>
+          </div>
+        </div>
+        <div>
+          <div class="f-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>模型<span class="dg d-keep">保留</span></div>
+          <div class="rythm"><span>本地 VLM（MiniCPM-V）</span><a href="#">更换</a></div>
+        </div>
+        <div>
+          <div class="f-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>调度<span class="dg d-mod">调整</span></div>
+          <div class="rythm" style="margin-bottom:6px"><span>触发：画面变化时</span><a href="#">调整</a></div>
+          <div class="rythm" style="margin-bottom:6px"><span>防抖 30 秒<span class="dg d-new">新增</span></span></div>
+          <div class="rythm"><span>输出平滑：连续 2 次一致<span class="dg d-new">新增</span></span></div>
+        </div>
+        <div>
+          <div class="f-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>预算护栏<span class="dg d-new">新增</span></div>
+          <div class="rythm"><span>每日上限 200 次 · 熔断阈值 3</span><a href="#">调整</a></div>
+        </div>
+      </div>
+      <div class="s2-right">
+        <div class="f-label">指令（提示词）<span class="dg d-keep">保留</span><span class="dg d-mod">文案：提示词→指令</span></div>
+        <div class="promptbox">看看包装台画面有没有<b>错装、漏装</b>，统计数量并标记批次状态。参照我已纠正的样本判断。</div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:2px">
+          <div class="f-label" style="margin:0;flex:1">资源<span class="dg d-keep">保留</span></div>
+          <button class="btn btn-sm">＋ 添加资源</button>
+        </div>
+        <div class="srcbox"><div class="thumb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></div>
+          <div class="meta">cam-01 · 包装台摄像头<small>画面 · 1080p / 2fps</small></div></div>
+        <div class="rythm" style="margin-top:6px"><span style="font-size:12px">✦ AI 推荐：包装台产量计数器（extension:counter）</span><a href="#">采纳</a></div>
+        <div class="tryrun" style="margin-top:12px">
+          <div class="f-label" style="margin:10px 14px 0">输出与试跑<span class="dg d-new">新增</span></div>
+          <div class="bd" style="padding:10px 14px 12px">
+            <div class="fieldrow"><span class="fieldchip">漏装数 <small>数值</small></span><span class="fieldchip">错装数 <small>数值</small></span><span class="fieldchip">批次状态 <small>枚举</small></span><button class="btn btn-sm" style="margin-left:auto">试跑一次</button></div>
+            <div class="res-row"><span class="v" style="color:var(--color-error)">漏装 1 件</span><span class="conf">置信度 0.91 · 刚刚</span>
+              <div class="evi"><div class="thumb"><div class="bx"></div></div></div>
+              <a href="#" style="font-size:12px;color:var(--color-info);text-decoration:none">查看依据：原图 + 框选</a></div>
+            <div class="runin"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>前 10 次为磨合期——判断不对可当场纠正，它会越用越准。</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="s2-foot">
+      <button class="btn">取消</button><button class="btn btn-primary">保存并开始</button>
+      <span class="cost"><span class="dg d-new">新增</span>预计成本：约 96 次/天 · 本地推理 ≈ 0 元 · 输出发布为 ai:packing_qc:* 数据源</span>
+    </div>
+  </div></div></div>
+  <div class="notes">
+    <div class="note"><span class="n">1</span><span>结构完全沿用现有单页编辑器（无分步向导）：基本信息/模型/指令/调度/资源五个区块位置不变；类型是基本信息下的一个新字段（四选一），不是独立步骤。</span></div>
+    <div class="note"><span class="n">2</span><span>调度区块在现有调度卡上扩两行（防抖/平滑），预算护栏为新增字段——对应 001 §5.1.3/5.1.5 的产品形态。</span></div>
+    <div class="note"><span class="n">3</span><span>右侧沿用"资源 + AI 推荐"（现有 parse-intent 推荐），新增"输出与试跑"区块：字段由指令预生成（F2），试跑结果带原图框选证据（002 §4.2）。</span></div>
+    <div class="note"><span class="n">4</span><span>磨合期提示衔接纠错样本机制（002 §3.3）；底部明示成本与产出物（002 §2.3）。</span></div>
+  </div>
+</section>
+
+<!-- ============ Screen 2B 智能体详情 ============ -->
+<section id="s2b">
+  <h2>②·B 智能体详情 —— 在现有四 tab 面板上增量</h2>
+  <p class="desc">基于现有 AgentDetailPanel 的四个 tab（总览 / 执行历史 / 记忆 / 留言）增量（002 §4.4）：<span class="dg d-new">新增</span>总览顶部插入"运行状态 / 输出字段"两个 section；<span class="dg d-mod">调整</span>执行历史沿用现有执行时间线、每条增加判定链入口；记忆 tab 在知识文件 / journal 之外增加纠正样本。其余 <span class="dg d-keep">保留</span>。</p>
+  <div class="frame"><div class="frame-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="url">neomind.local/agents/packing-qc</span></div>
+  <div class="screen"><div class="s3" style="max-width:960px">
+    <div class="s3-head">
+      <h3>包装台视觉质检</h3>
+      <span class="badge-mode m-watch">替我看<span class="dg d-new" style="margin-left:4px">类型徽章</span></span>
+      <span class="st" style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--muted-foreground)"><span class="dot-status st-ok"></span>在岗<span class="dg d-new" style="margin-left:2px">运行态</span></span>
+      <span style="margin-left:auto;display:flex;gap:8px">
+        <button class="btn">编辑</button><button class="btn">暂停</button><button class="btn btn-primary">立即运行</button></span>
+    </div>
+    <div class="ptabs"><span class="on">总览</span><span>执行历史</span><span>记忆</span><span>留言</span><span class="dg d-keep" style="margin-left:auto">现有四 tab，结构不动</span></div>
+    <div style="display:flex;flex-direction:column;gap:12px;margin-top:14px">
+      <div class="ccard" style="gap:5px">
+        <div class="f-label" style="margin:0">运行状态<span class="dg d-new">新增 section</span></div>
+        <div class="line" style="gap:18px;flex-wrap:wrap"><span><b style="color:var(--color-success)">在岗</b> · 上次成功 28 秒前</span><span>今日 <b>96 次</b> · 成功率 99%</span><span>连续异常 <b>0</b></span><span>成本 <b>≈0</b>（本地模型）</span><span style="margin-left:auto">最新输出：<b>漏装数 0 · 批次状态 正常</b></span></div>
+      </div>
+      <div class="ccard" style="gap:6px">
+        <div class="f-label" style="margin:0">输出字段（数据源）<span class="dg d-new">新增 section</span><a href="#" style="margin-left:8px;color:var(--color-info);text-decoration:none;font-size:12px">在仪表盘中使用 →</a></div>
+        <div class="fieldrow"><span class="fieldchip">ai:packing_qc:漏装数 <small>数值</small></span><span class="fieldchip">错装数 <small>数值</small></span><span class="fieldchip">批次状态 <small>枚举</small></span></div>
+      </div>
+      <div class="ccard" style="gap:5px">
+        <div class="f-label" style="margin:0">提示词<span class="dg d-keep">保留</span></div>
+        <div class="line" style="color:var(--foreground)">看看包装台画面有没有错装、漏装，统计数量并标记批次状态。参照我已纠正的样本判断。</div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="ccard" style="gap:5px">
+          <div class="f-label" style="margin:0">调度<span class="dg d-mod">调整：现有卡扩防抖/平滑两行</span></div>
+          <div class="line">画面变化时 · 防抖 30 秒 · 平滑 连续 2 次 · 预算 ≤200 次/天</div>
+        </div>
+        <div class="ccard" style="gap:5px">
+          <div class="f-label" style="margin:0">模型<span class="dg d-keep">保留</span> · 资源 (1)<span class="dg d-keep">保留</span></div>
+          <div class="line">本地 VLM（MiniCPM-V） · cam-01 包装台摄像头</div>
+        </div>
+      </div>
+      <div class="runin"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg><b>执行历史</b> tab：沿用现有执行时间线，每条增加"判定链 / 依据"入口（也是就地纠错入口）｜<b>记忆</b> tab：知识文件 / journal 保留，新增"纠正样本（3 条）"区块。</div>
+    </div>
+  </div></div></div>
+  <div class="notes">
+    <div class="note"><span class="n">1</span><span>信息架构完全沿用现有 AgentDetailPanel 四 tab——总览内按现有 DetailSection 模式只在顶部插两个新 section（运行状态/输出字段），提示词/调度/模型/资源原位保留。</span></div>
+    <div class="note"><span class="n">2</span><span>执行历史 = 现有 AgentExecutionTimeline 的增强（每条加判定链/依据入口，F3），不重造时间线。</span></div>
+    <div class="note"><span class="n">3</span><span>输出字段让数据面交付可见：字段即 ai:* 数据源，最新值直读、一键去仪表盘绑定（001 §5.1）。</span></div>
+    <div class="note"><span class="n">4</span><span>纠正样本并入现有"记忆"tab（与知识文件/journal 同域），不新造概念入口（002 §3.3，F5）。</span></div>
+  </div>
+</section>
+
+<!-- ============ Screen 3 判定链 ============ -->
+<section id="s3">
+  <h2>③ 判定链详情 —— "为什么行动，一眼可查"</h2>
+  <p class="desc">通知点开后的详情页（002 §3.2/§4.5）。多源判定链展示"它看到了什么、为什么行动"，已执行联动如实回显；人工动作只有反馈（标记误报/确认有效）——不设认领、派单等业务流程（"处置台"已移出设计：现有系统无此逻辑，平台不做业务流转）。</p>
+  <div class="frame"><div class="frame-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="url">neomind.local/messages/alerts/af-2081</span></div>
+  <div class="screen"><div class="s3">
+    <div class="s3-head">
+      <span class="sev">预警</span><h3>冷库温度异常</h3><span class="time">今天 23:41 · 来自「冷库温度盯守」</span>
+    </div>
+    <div class="chain">
+      <div class="cnode"><div class="rail"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0z"/></svg></div><div class="cord"></div></div>
+        <div class="body"><div class="t">温度传感器 temp-01 · 9.4℃</div>
+          <div class="d">连续第 3 次超过 8℃ 阈值 <a href="#">查看曲线</a></div></div></div>
+      <div class="cnode"><div class="rail"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div><div class="cord"></div></div>
+        <div class="body"><div class="t">门磁 door-01 · 已关闭</div>
+          <div class="d">自动排除"冷库门未关"这一最常见原因 <a href="#">查看记录</a></div></div></div>
+      <div class="cnode"><div class="rail"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.2 4.2l2.8 2.8M17 17l2.8 2.8M1 12h4M19 12h4M4.2 19.8L7 17M17 7l2.8-2.8"/></svg></div><div class="cord"></div></div>
+        <div class="body"><div class="t">压缩机 power-03（Modbus）· 运行电流偏低</div>
+          <div class="d"><a href="#">查看原始值</a></div></div></div>
+      <div class="cnode final"><div class="rail"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><div class="cord"></div></div>
+        <div class="body"><div class="t">综合判定：疑似制冷故障 <span class="confv">置信度 0.87</span></div>
+          <div class="outrow"><span class="outcome warn">已通知 张经理（App 推送）</span><span class="outcome ok">已下发启动备用制冷</span><span class="outcome">留证：近 1 小时曲线快照</span></div></div></div>
+    </div>
+    <div class="disposal">
+      <button class="btn">标记误报</button>
+      <button class="btn btn-primary">确认有效</button>
+      <span class="hint">标记误报自动记入纠正样本，累计 5 次会建议调整判定阈值；联动动作已由系统执行（见判定链末行），无需人工操作。</span>
+    </div>
+  </div></div></div>
+  <div class="notes">
+    <div class="note"><span class="n">1</span><span>判定链 = 证据 + 每步判定 + 动作，多源融合（传感器+门磁+Modbus）对用户可读可点——trust 的载体（002 §3.2，F3）。</span></div>
+    <div class="note"><span class="n">2</span><span>"自动排除门未关"展示系统的推理过程而非只给结论——把 S2 场景的"先核查再通知"设计（用户原声）可视化。</span></div>
+    <div class="note"><span class="n">3</span><span>人工动作只有"标记误报 / 确认有效"——误报进纠正样本形成学习闭环；认领/派单/升级链属上层业务系统，平台不业务化（002 §3.4）。</span></div>
+  </div>
+</section>
+
+<!-- ============ Screen 4 对话即创建 ============ -->
+<section id="s4">
+  <h2>④ 对话即创建 & 问询 —— chat 是调度台</h2>
+  <p class="desc">同一段对话内完成"想→建→用"（002 §4.1 入口四 + §4.6 问询金字塔）：草稿确认卡创建，之后 chat 直接调度它要结论。</p>
+  <div class="frame"><div class="frame-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="url">neomind.local/chat/s-1024</span></div>
+  <div class="screen"><div class="s4">
+    <div class="msg user"><div class="av">我</div><div class="bubble">帮我盯着冷库，超过 8℃ 持续十分钟就叫张经理，最好先看看是不是门没关</div></div>
+    <div class="msg ai"><div class="av">AI</div><div>
+      <div class="bubble">好的，我按"替你盯"来安排，先给你一份草稿确认：</div>
+      <div class="draft">
+        <div class="dh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 15l6-6M9 9l6 6"/></svg>智能体草稿 · 冷库温度盯守</div>
+        <div class="db">
+          <div class="drow"><span class="k">目标</span><span class="v">冷库·温度(temp-01) + 门磁(door-01)<span class="edit">改</span></span></div>
+          <div class="drow"><span class="k">模式</span><span class="v">替我盯<span class="edit">改</span></span></div>
+          <div class="drow"><span class="k">节奏</span><span class="v">超标持续 10 分钟触发<span class="edit">改</span></span></div>
+          <div class="drow"><span class="k">通知</span><span class="v">张经理（App）<span class="edit">改</span></span></div>
+          <div class="drow"><span class="k">处置</span><span class="v">先核对门状态，排除后再通知<span class="edit">改</span></span></div>
+          <div class="assume">缺省假设：按"持续 10 分钟"理解——不对就直接告诉我。</div>
+        </div>
+        <div class="df"><button class="btn btn-sm">试跑一次</button><button class="btn btn-sm btn-primary">确认创建</button></div>
+      </div>
+    </div></div>
+    <div class="msg user"><div class="av">我</div><div class="bubble">改成李经理，其余确认</div></div>
+    <div class="sysline"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.1V12a10 10 0 1 1-5.9-9.1"/><path d="M22 4L12 14l-3-3"/></svg>已创建「冷库温度盯守」· 首跑进行中，30 秒后回你结果</div>
+    <div style="height:4px"></div>
+    <div class="msg user"><div class="av">我</div><div class="bubble">冷库现在怎么样？</div></div>
+    <div class="msg ai"><div class="av">AI</div><div><div class="bubble">冷库当前 -18.2℃，一切正常；门已关闭，近 24 小时没有超标时段。</div>
+      <span class="srcnote">来自 <b>冷库温度盯守</b> · 截至 3 分钟前 · <a href="#">查看判定链</a>｜<a href="#">让它现场查一次</a></span></div></div>
+    <div class="composer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.4 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 1 1 5.66 5.66l-9.2 9.19a2 2 0 1 1-2.83-2.83l8.49-8.48"/></svg>
+      <span class="ph">问问看，或描述一件要我长期盯的事…</span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg></div>
+  </div></div></div>
+  <div class="notes">
+    <div class="note"><span class="n">1</span><span>草稿卡：五槽结构 + 每槽可改 + 缺省假设明示——槽位化创建协议（002 §3.1，F14）；对话永不直接落库，确认才创建。</span></div>
+    <div class="note"><span class="n">2</span><span>创建后系统行提示首跑回传——创建与首跑无缝衔接。</span></div>
+    <div class="note"><span class="n">3</span><span>问询答案带来源链（哪个智能体+新鲜度+判定链+现场查一次入口）——信息金字塔第①层默认、第②层一键可达（002 §4.6，F13）。</span></div>
+    <div class="note"><span class="n">4</span><span>输入框文案暗示两条路径：问一句（调度）或描述长期任务（创建）——chat 双身份合一。</span></div>
+  </div>
+</section>
+
+<!-- ============ Screen 5 模板库 ============ -->
+<section id="s5">
+  <h2>⑤ 模板库 —— 30 秒完成第一次雇佣</h2>
+  <p class="desc">经营者的默认创建路径（002 §4.1 入口一）。按行业/场景分类，安防只是其一；选中后只问两件事：用哪个设备、通知谁。</p>
+  <div class="frame"><div class="frame-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="url">neomind.local/agents/templates</span></div>
+  <div class="screen"><div class="s5">
+    <div class="s5-head"><h3>智能体模板</h3>
+      <div class="s5-tabs"><span class="chip on">全部</span><span class="chip">环境</span><span class="chip">能耗</span><span class="chip">生产</span><span class="chip">视觉质检</span><span class="chip">报表</span><span class="chip">安防</span></div></div>
+    <div class="tgrid">
+      <div class="tcard"><div class="ic" style="background:var(--accent-cyan-bg);color:var(--accent-cyan)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0z"/></svg></div>
+        <div class="nm">温度异常盯守</div><div class="ds">超阈值持续 N 分钟通知，先自动排查常见原因</div>
+        <div class="rt">替我盯 · 温度类传感器 · 免配置模型</div></div>
+      <div class="tcard"><div class="ic" style="background:var(--accent-orange-bg);color:var(--accent-orange)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></div>
+        <div class="nm">能耗超标预警</div><div class="ds">周环比超预算提醒，分线路定位涨幅来源</div>
+        <div class="rt">替我盯 · 电表/能耗数据 · 规则+算子</div></div>
+      <div class="tcard"><div class="ic" style="background:var(--accent-emerald-bg);color:var(--accent-emerald)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 9h10M7 13h6"/></svg></div>
+        <div class="nm">仪表自动抄表</div><div class="ds">摄像头定时读数或 Modbus 直读，直入时序库</div>
+        <div class="rt">替我看 · 摄像头/网关 · 本地模型</div></div>
+      <div class="tcard"><div class="ic" style="background:var(--accent-purple-bg);color:var(--accent-purple)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 2 5-6"/></svg></div>
+        <div class="nm">产量日统计</div><div class="ds">每日各线良品数汇总，异常批次自动标出</div>
+        <div class="rt">替我看 · 生产数据源</div></div>
+      <div class="tcard"><div class="ic" style="background:var(--accent-cyan-bg);color:var(--accent-cyan)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></div>
+        <div class="nm">视觉质检巡检</div><div class="ds">错装/漏装/堆放检测，开放词汇改一句话就换</div>
+        <div class="rt">替我看 · 摄像头 · VLM</div></div>
+      <div class="tcard"><div class="ic" style="background:var(--accent-purple-bg);color:var(--accent-purple)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div>
+        <div class="nm">每日运营摘要</div><div class="ds">夜间摘要+异常清单+历史对比，早 8 点推送</div>
+        <div class="rt">替我报 · 汇总全部智能体与算子</div></div>
+    </div>
+    <div class="s5-hint"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>选中模板后只需回答两件事：用哪个设备 / 数据源，通知谁——其余已预置，创建后立即试跑一次给你看。</div>
+  </div></div></div>
+  <div class="notes">
+    <div class="note"><span class="n">1</span><span>每个模板标注雇佣模式与所需数据源类型——用户在安装前就知道"它替我干什么、要喂它什么"。</span></div>
+    <div class="note"><span class="n">2</span><span>分类里"安防"与"环境/能耗/生产"平级——场景中立原则（002 §1.3）在信息架构上的体现。</span></div>
+    <div class="note"><span class="n">3</span><span>模板含预置 prompt/输出 schema/判定规则/样本库，集成商可"调教好再交付"（002 §3.3，F6）。</span></div>
+  </div>
+</section>
+
+<footer>NeoMind 智能能力 UI 呈现稿 · 配套文档：001 技术设计 / 002 产品与交互设计 / 003 实施计划 · 令牌与组件规范遵循 web/DESIGN_SPEC.md（本页为静态示意，实施时使用真实组件 PageLayout / UnifiedFormDialog / BuilderShell 等）</footer>
+
+</body>
+</html>
