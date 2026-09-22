@@ -1872,6 +1872,116 @@ pub async fn test_agent(
     ok(result)
 }
 
+/// Dry-run WITHOUT an agent: builds a transient structured agent from the
+/// request and runs one inference. Nothing is persisted — the editor's
+/// 保存前试跑. New-format resources only (preview is a new API).
+#[derive(utoipa::ToSchema, Debug, serde::Deserialize)]
+pub struct TestPreviewRequest {
+    /// The instruction (what to extract / judge)
+    pub user_prompt: String,
+    #[serde(default)]
+    pub resources: Vec<AgentResourceRequest>,
+    #[serde(default)]
+    pub output_schema: Option<Vec<neomind_storage::OperatorField>>,
+    #[serde(default)]
+    pub operator_config: Option<neomind_storage::OperatorConfig>,
+    #[serde(default)]
+    pub llm_backend_id: Option<String>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/agents/test-preview",
+    tag = "agents",
+    request_body = TestPreviewRequest,
+    responses(
+        (status = 200, description = "Dry-run result for the transient agent"),
+        (status = 400, description = "No output schema given"),
+    )
+)]
+pub async fn test_agent_preview(
+    State(state): State<ServerState>,
+    Json(request): Json<TestPreviewRequest>,
+) -> HandlerResult<serde_json::Value> {
+    use neomind_storage::{
+        AgentMemory, AgentResource, AgentSchedule, AgentStats, AgentStatus, ScheduleType,
+    };
+
+    let resources = request
+        .resources
+        .iter()
+        .map(|r| {
+            let resource_type = match r.resource_type.as_str() {
+                "device" | "Device" => ResourceType::Device,
+                "metric" | "Metric" => ResourceType::Metric,
+                "command" | "Command" => ResourceType::Command,
+                "extension_metric" | "ExtensionMetric" => ResourceType::ExtensionMetric,
+                "extension_tool" | "ExtensionTool" => ResourceType::ExtensionTool,
+                "data_stream" | "DataStream" => ResourceType::DataStream,
+                _ => infer_resource_type_from_id(&r.resource_id),
+            };
+            AgentResource {
+                resource_type,
+                resource_id: r.resource_id.clone(),
+                name: r.name.clone(),
+                config: r.config.clone().unwrap_or_default(),
+            }
+        })
+        .collect();
+
+    let now = chrono::Utc::now().timestamp();
+    let transient = AiAgent {
+        id: "preview".to_string(),
+        name: "Preview".to_string(),
+        description: None,
+        user_prompt: request.user_prompt,
+        llm_backend_id: request.llm_backend_id,
+        parsed_intent: None,
+        resources,
+        schedule: AgentSchedule {
+            schedule_type: ScheduleType::Manual,
+            cron_expression: None,
+            interval_seconds: None,
+            event_filter: None,
+            timezone: None,
+        },
+        status: AgentStatus::Active,
+        priority: 128,
+        created_at: now,
+        updated_at: now,
+        last_execution_at: None,
+        stats: AgentStats::default(),
+        memory: AgentMemory::default(),
+        conversation_history: Default::default(),
+        user_messages: Default::default(),
+        conversation_summary: None,
+        context_window_size: 10,
+        enable_tool_chaining: false,
+        max_chain_depth: 5,
+        tool_config: None,
+        system_prompt: None,
+        max_retries: 0,
+        consecutive_failures: 0,
+        output_schema: request.output_schema,
+        operator_config: request.operator_config,
+        execution_mode: neomind_storage::agents::ExecutionMode::Structured,
+        error_message: None,
+    };
+
+    let agent_manager = state
+        .get_or_init_agent_manager()
+        .await
+        .map_err(|e| ErrorResponse::internal(format!("Failed to get agent manager: {}", e)))?;
+
+    let result = agent_manager
+        .executor()
+        .dry_run_structured(&transient)
+        .await
+        .map_err(|e| ErrorResponse::internal(format!("Dry-run failed: {}", e)))?;
+
+    ok(result)
+}
+
 /// Invoke an AI Agent synchronously — waits for execution to complete and returns results.
 #[utoipa::path(
     post,

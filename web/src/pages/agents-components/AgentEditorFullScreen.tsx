@@ -58,6 +58,7 @@ import type {
   CreateAgentRequest,
   OperatorField,
   OperatorConfig,
+  DryRunResult,
   Device,
   DeviceType,
   Extension,
@@ -113,6 +114,20 @@ interface AgentEditorFullScreenProps {
 // ============================================================================
 // Main Component
 // ============================================================================
+
+/** Numbered section header for the editor's three-zone IA
+ * (identity / capability / run policy — docs/designs/002 §4.4). */
+function ZoneHeader({ n, label }: { n: string; label: string }) {
+  return (
+    <div className="flex items-center gap-2 pt-2" aria-label={label}>
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border bg-muted text-[11px] font-semibold text-muted-foreground">
+        {n}
+      </span>
+      <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
+      <div className="h-px flex-1 bg-border" />
+    </div>
+  )
+}
 
 export function AgentEditorFullScreen({
   open,
@@ -940,6 +955,107 @@ export function AgentEditorFullScreen({
     }
   }
 
+  /** Resource requests in the new unified format — shared by save and dry-run. */
+  const buildResourceRequests = useCallback((): ResourceRequest[] => {
+    const resources = selectedResources.flatMap(r => {
+      const result: ResourceRequest[] = []
+
+      // Add metrics
+      Array.from(r.selectedMetrics).forEach(metricName => {
+        const metric = r.allMetrics.find(m => m.name === metricName)
+        if (r.type === 'extension') {
+          // Extension metric format: extension:extension_id:metric_name
+          // Note: r.id already contains "extension:" prefix, so we use it directly
+          result.push({
+            resource_id: `${r.id}:${metricName}`,
+            resource_type: 'extension_metric',
+            name: metric?.display_name || metricName,
+            config: {
+              extension_id: r.id.replace('extension:', ''),
+              metric_name: metricName,
+              // Include data collection config for Focused Mode
+              ...(r.config?.data_collection && { data_collection: r.config.data_collection }),
+            },
+          })
+        } else {
+          // Device metric format: device_id:metric_name
+          result.push({
+            resource_id: `${r.id}:${metricName}`,
+            resource_type: 'metric',
+            name: metric?.display_name || metricName,
+            config: {
+              device_id: r.id,
+              metric_name: metricName,
+              // Include data collection config for Focused Mode
+              ...(r.config?.data_collection && { data_collection: r.config.data_collection }),
+            },
+          })
+        }
+      })
+
+      // Add commands/tools
+      Array.from(r.selectedCommands).forEach(commandName => {
+        const command = r.allCommands.find(c => c.name === commandName)
+        if (r.type === 'extension') {
+          // Extension tool format: extension:extension_id:command_name
+          // Note: r.id already contains "extension:" prefix, so we use it directly
+          result.push({
+            resource_id: `${r.id}:${commandName}`,
+            resource_type: 'extension_tool',
+            name: command?.display_name || commandName,
+            config: {
+              extension_id: r.id.replace('extension:', ''),
+              command_name: commandName,
+              parameters: command?.parameters || {},
+            },
+          })
+        } else {
+          // Device command format: device_id:command_name
+          result.push({
+            resource_id: `${r.id}:${commandName}`,
+            resource_type: 'command',
+            name: command?.display_name || commandName,
+            config: {
+              device_id: r.id,
+              command_name: commandName,
+              parameters: command?.parameters || {},
+            },
+          })
+        }
+      })
+
+      return result
+    })
+    return resources
+  }, [selectedResources])
+
+  const [dryRunResult, setDryRunResult] = useState<DryRunResult | null>(null)
+  const [dryRunError, setDryRunError] = useState<string | null>(null)
+  const [dryRunning, setDryRunning] = useState(false)
+
+  /** 保存前试跑：transient dry-run via /api/agents/test-preview — nothing persisted. */
+  const handleDryRun = async () => {
+    if (!userPrompt.trim() || dryRunning) return
+    setDryRunning(true)
+    setDryRunError(null)
+    setDryRunResult(null)
+    try {
+      const result = await api.testAgentPreview({
+        user_prompt: userPrompt,
+        resources: buildResourceRequests(),
+        output_schema: outputSchema.filter((f) => f.name.trim() !== ''),
+        operator_config: operatorConfig,
+        llm_backend_id: llmBackendId ?? undefined,
+      })
+      setDryRunResult(result)
+    } catch (error) {
+      handleError(error, { operation: 'Dry-run structured agent', showToast: false })
+      setDryRunError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setDryRunning(false)
+    }
+  }
+
   const handleSave = async () => {
     if (!isValid) return
 
@@ -977,75 +1093,7 @@ export function AgentEditorFullScreen({
       }
 
       // Build resources array in the new format that supports both devices and extensions
-      const resources = selectedResources.flatMap(r => {
-        const result: ResourceRequest[] = []
-
-        // Add metrics
-        Array.from(r.selectedMetrics).forEach(metricName => {
-          const metric = r.allMetrics.find(m => m.name === metricName)
-          if (r.type === 'extension') {
-            // Extension metric format: extension:extension_id:metric_name
-            // Note: r.id already contains "extension:" prefix, so we use it directly
-            result.push({
-              resource_id: `${r.id}:${metricName}`,
-              resource_type: 'extension_metric',
-              name: metric?.display_name || metricName,
-              config: {
-                extension_id: r.id.replace('extension:', ''),
-                metric_name: metricName,
-                // Include data collection config for Focused Mode
-                ...(r.config?.data_collection && { data_collection: r.config.data_collection }),
-              },
-            })
-          } else {
-            // Device metric format: device_id:metric_name
-            result.push({
-              resource_id: `${r.id}:${metricName}`,
-              resource_type: 'metric',
-              name: metric?.display_name || metricName,
-              config: {
-                device_id: r.id,
-                metric_name: metricName,
-                // Include data collection config for Focused Mode
-                ...(r.config?.data_collection && { data_collection: r.config.data_collection }),
-              },
-            })
-          }
-        })
-
-        // Add commands/tools
-        Array.from(r.selectedCommands).forEach(commandName => {
-          const command = r.allCommands.find(c => c.name === commandName)
-          if (r.type === 'extension') {
-            // Extension tool format: extension:extension_id:command_name
-            // Note: r.id already contains "extension:" prefix, so we use it directly
-            result.push({
-              resource_id: `${r.id}:${commandName}`,
-              resource_type: 'extension_tool',
-              name: command?.display_name || commandName,
-              config: {
-                extension_id: r.id.replace('extension:', ''),
-                command_name: commandName,
-                parameters: command?.parameters || {},
-              },
-            })
-          } else {
-            // Device command format: device_id:command_name
-            result.push({
-              resource_id: `${r.id}:${commandName}`,
-              resource_type: 'command',
-              name: command?.display_name || commandName,
-              config: {
-                device_id: r.id,
-                command_name: commandName,
-                parameters: command?.parameters || {},
-              },
-            })
-          }
-        })
-
-        return result
-      })
+      const resources = buildResourceRequests()
 
       // Also provide legacy format for backward compatibility
       const deviceIds = selectedResources
@@ -1181,6 +1229,133 @@ export function AgentEditorFullScreen({
                 "space-y-6",
                 isMobile ? "px-4 py-6" : "px-4 py-6"
               )}>
+            {/* Zone 1: identity */}
+            <ZoneHeader n="1" label={tAgent('creator.zones.identity')} />
+            {/* Name */}
+            <div className="space-y-2">
+              <Label className={cn("font-medium", isMobile ? "text-base" : "text-sm")}>
+                {tAgent('creator.basicInfo.name')} <span className="text-error">*</span>
+              </Label>
+              <Input
+                ref={nameInputRef}
+                value={name}
+                onChange={(e) => {
+                  setName(e.target.value)
+                  if (fieldErrors.name) setFieldErrors(prev => { const next = { ...prev }; delete next.name; return next })
+                }}
+                onBlur={() => {
+                  const err = validateRequired(name, 'Name') || validateLength(name, 'Name', 1, 100)
+                  if (err) setFieldErrors(prev => ({ ...prev, name: err }))
+                }}
+                placeholder={tAgent('creator.basicInfo.namePlaceholder')}
+                className={cn(isMobile ? "h-12 text-base" : "h-10", fieldErrors.name && "border-error")}
+              />
+              {fieldErrors.name && (
+                <p className="text-sm text-error mt-1">{fieldErrors.name}</p>
+              )}
+            </div>
+
+            {/* Description (Optional) */}
+            <div className="space-y-2">
+              <Label className={cn("font-medium", isMobile ? "text-base" : "text-sm")}>{tAgent('creator.basicInfo.description')}</Label>
+              <Input
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder={tAgent('creator.basicInfo.descriptionPlaceholder')}
+                className={cn(isMobile ? "h-12 text-base" : "h-10")}
+              />
+            </div>
+
+            {/* Model Selection */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm font-medium">{tAgent('creator.basicInfo.llmBackend')}</Label>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={handleValidateLlm}
+                  disabled={llmValidating}
+                >
+                  {llmValidating ? (
+                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                  ) : llmValid === true ? (
+                    <Check className="h-4 w-4 mr-1 text-success" />
+                  ) : llmValid === false ? (
+                    <span className="text-error">!</span>
+                  ) : null}
+                  {llmValidating ? 'Checking...' : llmValid === true ? 'OK' : llmValid === false ? 'Failed' : 'Test'}
+                </Button>
+              </div>
+              <Select value={llmBackendId ?? activeBackendId ?? ''} onValueChange={setLlmBackendId}>
+                <SelectTrigger className="h-10">
+                  {(() => {
+                    const selectedId = llmBackendId ?? activeBackendId ?? '';
+                    if (!selectedId || selectedId === 'default') {
+                      const activeName = llmBackends.find((b) => b.id === activeBackendId)?.name;
+                      return (
+                        <span className="flex items-center gap-2 min-w-0 truncate">
+                          <span className="truncate">{tAgent('creator.basicInfo.useActiveBackend')}</span>
+                          {activeName && (
+                            <span className="text-xs text-muted-foreground shrink-0 truncate">({activeName})</span>
+                          )}
+                        </span>
+                      );
+                    }
+                    const backend = llmBackends.find((b) => b.id === selectedId);
+                    if (!backend) {
+                      return <span className="text-muted-foreground truncate">{tAgent('creator.basicInfo.useActiveBackend')}</span>;
+                    }
+                    return (
+                      <span className="flex items-center gap-2 min-w-0">
+                        <span className="truncate min-w-0">{backend.name}</span>
+                        <span className="text-muted-foreground shrink-0 truncate">{backend.model}</span>
+                      </span>
+                    );
+                  })()}
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="default" textValue={tAgent('creator.basicInfo.useActiveBackend')}>
+                    <span className="flex items-center gap-2">
+                      <span>{tAgent('creator.basicInfo.useActiveBackend')}</span>
+                      {activeBackendId && (
+                        <span className="text-xs text-muted-foreground">
+                          ({tAgent('creator.basicInfo.active')})
+                        </span>
+                      )}
+                    </span>
+                  </SelectItem>
+                  {llmBackends.map((backend) => (
+                    <SelectItem key={backend.id} value={backend.id} textValue={backend.name}>
+                      <span className="flex flex-1 min-w-0 items-center gap-2">
+                        <span className="truncate min-w-0">{backend.name}</span>
+                        <span className="text-muted-foreground shrink-0 truncate">{backend.model}</span>
+                        <span className="ml-auto flex items-center gap-1 shrink-0">
+                          {backend.capabilities?.supports_multimodal && (
+                            <span title={tAgent('creator.basicInfo.supportsVision')} className="inline-flex items-center px-1.5 h-5 rounded font-medium bg-muted-30 text-muted-foreground">{tAgent('creator.capability.vision', { defaultValue: 'Vision' })}</span>
+                          )}
+                          {backend.capabilities?.supports_tools && (
+                            <span title={tAgent('creator.basicInfo.supportsTools')} className="inline-flex items-center px-1.5 h-5 rounded font-medium bg-muted-30 text-muted-foreground">{tAgent('creator.capability.tools', { defaultValue: 'Tools' })}</span>
+                          )}
+                          {backend.capabilities?.supports_thinking && (
+                            <span title={tAgent('creator.basicInfo.supportsThinking')} className="inline-flex items-center px-1.5 h-5 rounded font-medium bg-muted-30 text-muted-foreground">{tAgent('creator.capability.thinking', { defaultValue: 'Thinking' })}</span>
+                          )}
+                        </span>
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {llmValidationError && (
+                <p className="text-xs text-error">{llmValidationError}</p>
+              )}
+            </div>
+
+            {/* Advanced knobs — rarely changed; collapsed so the required
+                fields (mode / name / requirements) keep the visual focus. */}
+            {/* Zone 2: capability */}
+            <ZoneHeader n="2" label={tAgent('creator.zones.capability')} />
             {/* Execution Mode */}
             <div className="space-y-2">
               <Label className="text-sm font-medium flex items-center gap-2">
@@ -1265,6 +1440,53 @@ export function AgentEditorFullScreen({
                     {tAgent('creator.advanced.structuredModeDescription')}
                   </p>
                 </button>
+              </div>
+            </div>
+
+            {/* Prompt */}
+            <div className="space-y-3">
+              <Label className="text-sm font-medium">
+                {tAgent('creator.basicInfo.requirement')} <span className="text-error">*</span>
+              </Label>
+
+              {/* Quick templates */}
+              <div className="flex gap-2 flex-wrap">
+                {PROMPT_TEMPLATES.filter(t => t.id !== 'empty').map((template) => (
+                  <button
+                    key={template.id}
+                    type="button"
+                    onClick={() => setUserPrompt(template.template)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border hover:bg-muted transition-colors"
+                  >
+                    {template.icon ? <template.icon className="h-4 w-4" /> : null}
+                    <span>{template.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              <Textarea
+                value={userPrompt}
+                onChange={(e) => {
+                  setUserPrompt(e.target.value)
+                  if (fieldErrors.prompt) setFieldErrors(prev => { const next = { ...prev }; delete next.prompt; return next })
+                }}
+                onBlur={() => {
+                  const err = validateRequired(userPrompt, 'Prompt') || validateLength(userPrompt, 'Prompt', 1, 5000)
+                  if (err) setFieldErrors(prev => ({ ...prev, prompt: err }))
+                }}
+                placeholder={tAgent('creator.basicInfo.promptPlaceholder')}
+                className={cn("min-h-[140px] resize-y text-sm leading-relaxed", fieldErrors.prompt && "border-error")}
+              />
+              {fieldErrors.prompt && (
+                <p className="text-sm text-error mt-1">{fieldErrors.prompt}</p>
+              )}
+
+              {/* AI Helper Tip */}
+              <div className="flex items-start gap-2 p-3 rounded-lg border border-border">
+                <Wand2 className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+                <p className="text-xs text-muted-foreground">
+                  <span className="font-medium text-primary">Tip:</span> {tAgent('creator.basicInfo.promptTip')}
+                </p>
               </div>
             </div>
 
@@ -1372,6 +1594,19 @@ export function AgentEditorFullScreen({
                   {tAgent('creator.structured.addField')}
                 </Button>
 
+                <Collapsible>
+                  <CollapsibleTrigger className="flex w-full items-center justify-between py-1 text-left text-xs text-muted-foreground">
+                    <span>
+                      {tAgent('creator.structured.guardrailSummary', {
+                        debounce: operatorConfig.debounce_secs ?? 30,
+                        timeout: operatorConfig.timeout_secs ?? 60,
+                        threshold: operatorConfig.consecutive_failure_threshold ?? 3,
+                        cap: operatorConfig.max_calls_per_day ?? '∞',
+                      })}
+                    </span>
+                    <span className="text-primary">{tAgent('creator.structured.guardrailToggle')}</span>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-2 pt-1">
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">{tAgent('creator.structured.debounce')}</Label>
@@ -1421,179 +1656,44 @@ export function AgentEditorFullScreen({
                     />
                   </div>
                 </div>
+                  </CollapsibleContent>
+                </Collapsible>
+              </div>
+            )}
+            {/* Dry-run (试跑) result — capability zone feedback */}
+            {dryRunResult && (
+              <div className="space-y-2 rounded-lg border border-success bg-card p-3">
+                <div className="flex items-center gap-2 text-sm font-medium text-success">
+                  <Check className="h-4 w-4" />
+                  {tAgent('creator.structured.dryRunResultTitle')}
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.entries(dryRunResult.fields).map(([k, v]) => (
+                    <span key={k} className="rounded border border-border px-1.5 py-0.5 font-mono text-xs">
+                      {k} = {String(v)}
+                    </span>
+                  ))}
+                </div>
+                <p className="line-clamp-3 rounded bg-muted p-2 font-mono text-xs text-muted-foreground">
+                  {dryRunResult.raw_text}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {tAgent('creator.structured.dryRunMeta', {
+                    sources: dryRunResult.data_sources,
+                    attempts: dryRunResult.attempts,
+                  })}
+                </p>
+              </div>
+            )}
+            {dryRunError && (
+              <div className="rounded-lg border border-error bg-error-light p-3 text-sm text-error">
+                {dryRunError}
               </div>
             )}
 
-            {/* Name */}
-            <div className="space-y-2">
-              <Label className={cn("font-medium", isMobile ? "text-base" : "text-sm")}>
-                {tAgent('creator.basicInfo.name')} <span className="text-error">*</span>
-              </Label>
-              <Input
-                ref={nameInputRef}
-                value={name}
-                onChange={(e) => {
-                  setName(e.target.value)
-                  if (fieldErrors.name) setFieldErrors(prev => { const next = { ...prev }; delete next.name; return next })
-                }}
-                onBlur={() => {
-                  const err = validateRequired(name, 'Name') || validateLength(name, 'Name', 1, 100)
-                  if (err) setFieldErrors(prev => ({ ...prev, name: err }))
-                }}
-                placeholder={tAgent('creator.basicInfo.namePlaceholder')}
-                className={cn(isMobile ? "h-12 text-base" : "h-10", fieldErrors.name && "border-error")}
-              />
-              {fieldErrors.name && (
-                <p className="text-sm text-error mt-1">{fieldErrors.name}</p>
-              )}
-            </div>
 
-            {/* Description (Optional) */}
-            <div className="space-y-2">
-              <Label className={cn("font-medium", isMobile ? "text-base" : "text-sm")}>{tAgent('creator.basicInfo.description')}</Label>
-              <Input
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder={tAgent('creator.basicInfo.descriptionPlaceholder')}
-                className={cn(isMobile ? "h-12 text-base" : "h-10")}
-              />
-            </div>
-
-            {/* Prompt */}
-            <div className="space-y-3">
-              <Label className="text-sm font-medium">
-                {tAgent('creator.basicInfo.requirement')} <span className="text-error">*</span>
-              </Label>
-
-              {/* Quick templates */}
-              <div className="flex gap-2 flex-wrap">
-                {PROMPT_TEMPLATES.filter(t => t.id !== 'empty').map((template) => (
-                  <button
-                    key={template.id}
-                    type="button"
-                    onClick={() => setUserPrompt(template.template)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border hover:bg-muted transition-colors"
-                  >
-                    {template.icon ? <template.icon className="h-4 w-4" /> : null}
-                    <span>{template.label}</span>
-                  </button>
-                ))}
-              </div>
-
-              <Textarea
-                value={userPrompt}
-                onChange={(e) => {
-                  setUserPrompt(e.target.value)
-                  if (fieldErrors.prompt) setFieldErrors(prev => { const next = { ...prev }; delete next.prompt; return next })
-                }}
-                onBlur={() => {
-                  const err = validateRequired(userPrompt, 'Prompt') || validateLength(userPrompt, 'Prompt', 1, 5000)
-                  if (err) setFieldErrors(prev => ({ ...prev, prompt: err }))
-                }}
-                placeholder={tAgent('creator.basicInfo.promptPlaceholder')}
-                className={cn("min-h-[140px] resize-y text-sm leading-relaxed", fieldErrors.prompt && "border-error")}
-              />
-              {fieldErrors.prompt && (
-                <p className="text-sm text-error mt-1">{fieldErrors.prompt}</p>
-              )}
-
-              {/* AI Helper Tip */}
-              <div className="flex items-start gap-2 p-3 rounded-lg border border-border">
-                <Wand2 className="h-4 w-4 text-primary shrink-0 mt-0.5" />
-                <p className="text-xs text-muted-foreground">
-                  <span className="font-medium text-primary">Tip:</span> {tAgent('creator.basicInfo.promptTip')}
-                </p>
-              </div>
-            </div>
-
-            {/* Model Selection */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label className="text-sm font-medium">{tAgent('creator.basicInfo.llmBackend')}</Label>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs"
-                  onClick={handleValidateLlm}
-                  disabled={llmValidating}
-                >
-                  {llmValidating ? (
-                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                  ) : llmValid === true ? (
-                    <Check className="h-4 w-4 mr-1 text-success" />
-                  ) : llmValid === false ? (
-                    <span className="text-error">!</span>
-                  ) : null}
-                  {llmValidating ? 'Checking...' : llmValid === true ? 'OK' : llmValid === false ? 'Failed' : 'Test'}
-                </Button>
-              </div>
-              <Select value={llmBackendId ?? activeBackendId ?? ''} onValueChange={setLlmBackendId}>
-                <SelectTrigger className="h-10">
-                  {(() => {
-                    const selectedId = llmBackendId ?? activeBackendId ?? '';
-                    if (!selectedId || selectedId === 'default') {
-                      const activeName = llmBackends.find((b) => b.id === activeBackendId)?.name;
-                      return (
-                        <span className="flex items-center gap-2 min-w-0 truncate">
-                          <span className="truncate">{tAgent('creator.basicInfo.useActiveBackend')}</span>
-                          {activeName && (
-                            <span className="text-xs text-muted-foreground shrink-0 truncate">({activeName})</span>
-                          )}
-                        </span>
-                      );
-                    }
-                    const backend = llmBackends.find((b) => b.id === selectedId);
-                    if (!backend) {
-                      return <span className="text-muted-foreground truncate">{tAgent('creator.basicInfo.useActiveBackend')}</span>;
-                    }
-                    return (
-                      <span className="flex items-center gap-2 min-w-0">
-                        <span className="truncate min-w-0">{backend.name}</span>
-                        <span className="text-muted-foreground shrink-0 truncate">{backend.model}</span>
-                      </span>
-                    );
-                  })()}
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="default" textValue={tAgent('creator.basicInfo.useActiveBackend')}>
-                    <span className="flex items-center gap-2">
-                      <span>{tAgent('creator.basicInfo.useActiveBackend')}</span>
-                      {activeBackendId && (
-                        <span className="text-xs text-muted-foreground">
-                          ({tAgent('creator.basicInfo.active')})
-                        </span>
-                      )}
-                    </span>
-                  </SelectItem>
-                  {llmBackends.map((backend) => (
-                    <SelectItem key={backend.id} value={backend.id} textValue={backend.name}>
-                      <span className="flex flex-1 min-w-0 items-center gap-2">
-                        <span className="truncate min-w-0">{backend.name}</span>
-                        <span className="text-muted-foreground shrink-0 truncate">{backend.model}</span>
-                        <span className="ml-auto flex items-center gap-1 shrink-0">
-                          {backend.capabilities?.supports_multimodal && (
-                            <span title={tAgent('creator.basicInfo.supportsVision')} className="inline-flex items-center px-1.5 h-5 rounded font-medium bg-muted-30 text-muted-foreground">{tAgent('creator.capability.vision', { defaultValue: 'Vision' })}</span>
-                          )}
-                          {backend.capabilities?.supports_tools && (
-                            <span title={tAgent('creator.basicInfo.supportsTools')} className="inline-flex items-center px-1.5 h-5 rounded font-medium bg-muted-30 text-muted-foreground">{tAgent('creator.capability.tools', { defaultValue: 'Tools' })}</span>
-                          )}
-                          {backend.capabilities?.supports_thinking && (
-                            <span title={tAgent('creator.basicInfo.supportsThinking')} className="inline-flex items-center px-1.5 h-5 rounded font-medium bg-muted-30 text-muted-foreground">{tAgent('creator.capability.thinking', { defaultValue: 'Thinking' })}</span>
-                          )}
-                        </span>
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {llmValidationError && (
-                <p className="text-xs text-error">{llmValidationError}</p>
-              )}
-            </div>
-
-            {/* Advanced knobs — rarely changed; collapsed so the required
-                fields (mode / name / requirements) keep the visual focus. */}
+            {/* Zone 3: run policy */}
+            <ZoneHeader n="3" label={tAgent('creator.zones.runPolicy')} />
             <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
               <CollapsibleTrigger className="w-full flex items-center justify-between py-1 text-left">
                 <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
@@ -1624,6 +1724,7 @@ export function AgentEditorFullScreen({
               </p>
             </div>
 
+{!isStructuredMode && (<>
             {/* Max Chain Depth */}
             <div className="space-y-2">
               <Label className="text-sm font-medium">{tAgent('creator.advanced.chainDepth', 'Max Chain Depth')}</Label>
@@ -1658,6 +1759,7 @@ export function AgentEditorFullScreen({
                 {tAgent('creator.advanced.contextHint', 'Number of recent conversation turns to include as context')}
               </p>
             </div>
+</>)}
                 </div>
               </CollapsibleContent>
             </Collapsible>
@@ -2349,6 +2451,18 @@ export function AgentEditorFullScreen({
           >
             {tCommon('cancel')}
           </Button>
+          {isStructuredMode && (
+            <Button
+              variant="outline"
+              size={isMobile ? "default" : "sm"}
+              onClick={handleDryRun}
+              disabled={!userPrompt.trim() || dryRunning || saving}
+              className={isMobile ? "min-w-[100px] h-12" : ""}
+            >
+              {dryRunning ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+              {dryRunning ? tAgent('creator.structured.dryRunRunning') : tAgent('creator.structured.dryRun')}
+            </Button>
+          )}
           <Button
             size={isMobile ? "default" : "sm"}
             onClick={handleSave}

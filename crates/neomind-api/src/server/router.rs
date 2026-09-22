@@ -844,6 +844,7 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         // or Axum's router will route `GET /api/agents/tools` to `get_agent` with
         // id="tools". Read-only catalog of the server's ToolRegistry.
         .route("/api/agents/tools", get(agents::list_agent_tools))
+        .route("/api/agents/test-preview", post(agents::test_agent_preview))
         .route("/api/agents/:id", get(agents::get_agent))
         .route("/api/agents/:id", put(agents::update_agent))
         .route("/api/agents/:id", delete(agents::delete_agent))

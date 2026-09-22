@@ -55,6 +55,16 @@ export const agentsApi = {
     }),
 
   /**
+   * Save-before dry run for a structured agent (transient, nothing persisted)
+   * POST /api/agents/test-preview
+   */
+  testAgentPreview: (req: import('@/types').TestPreviewRequest) =>
+    fetchAPI<import('@/types').DryRunResult>('/agents/test-preview', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    }),
+
+  /**
    * Delete an AI Agent
    * DELETE /api/agents/:id
    */

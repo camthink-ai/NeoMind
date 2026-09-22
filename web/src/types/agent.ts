@@ -266,6 +266,25 @@ export interface OperatorConfig {
 
 export type AgentExecutionMode = 'focused' | 'free' | 'structured'
 
+/** Dry-run (试跑) result — one inference, nothing published */
+export interface DryRunResult {
+  agent_id: string
+  context: string
+  data_sources: number
+  fields: Record<string, unknown>
+  raw_text: string
+  attempts: number
+}
+
+/** Save-before dry-run request — transient agent, nothing persisted */
+export interface TestPreviewRequest {
+  user_prompt: string
+  resources?: ResourceRequest[]
+  output_schema?: OperatorField[]
+  operator_config?: OperatorConfig
+  llm_backend_id?: string
+}
+
 export interface CreateAgentRequest {
   name: string
   description?: string
