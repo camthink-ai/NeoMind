@@ -253,16 +253,20 @@ impl InferenceClient {
 }
 
 /// Human words for a field type, used in the contract message.
-fn type_words(t: &OperatorFieldType) -> &'static str {
+fn type_words(t: &OperatorFieldType) -> String {
     match t {
-        OperatorFieldType::Number => "number",
-        OperatorFieldType::Text => "string",
-        OperatorFieldType::Boolean => "boolean (true/false)",
+        OperatorFieldType::Number => "number".to_string(),
+        OperatorFieldType::Text => "string".to_string(),
+        OperatorFieldType::Boolean => "boolean (true/false)".to_string(),
+        // The allowed strings must be IN the contract. Pointing at "the
+        // description" made the model guess — a Chinese-enum field with no
+        // description got answered "red" in English, failing validation.
         OperatorFieldType::Enum(values) => {
             if values.is_empty() {
-                "string"
+                "string".to_string()
             } else {
-                "one of the exact strings listed in the description"
+                let quoted: Vec<String> = values.iter().map(|v| format!("\"{}\"", v)).collect();
+                format!("one of exactly {}", quoted.join(", "))
             }
         }
     }
@@ -335,7 +339,16 @@ fn json_kind(v: &serde_json::Value) -> &'static str {
 /// markdown fences and leading prose ("Here is the JSON: {...}").
 fn extract_json_object(raw: &str) -> Option<serde_json::Value> {
     let bytes = raw.as_bytes();
-    let start = bytes.iter().position(|&b| b == b'{')?;
+    let Some(start) = bytes.iter().position(|&b| b == b'{') else {
+        // Models sometimes emit the object WITHOUT its braces — a bare
+        // `"key": value` pair (observed live: `"dominant_color": "red"`).
+        // If it parses once wrapped, that is what was meant.
+        let trimmed = raw.trim();
+        if trimmed.contains("\":") {
+            return serde_json::from_str(&format!("{{ {} }}", trimmed)).ok();
+        }
+        return None;
+    };
     let mut depth = 0usize;
     let mut in_string = false;
     let mut escaped = false;

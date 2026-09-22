@@ -277,6 +277,42 @@ impl ValueProvider for UnifiedValueProvider {
 mod tests {
     use super::*;
 
+
+    /// An agent's published field is a rule-bindable source like any other
+    /// (M1/M2-2): parse `ai:{agent}:{field}`, feed it a value the way the
+    /// event bus would, and a rule reading the same DataSourceId sees it.
+    /// Guards the `ai` arms added to update/get — before them, parse failed
+    /// and rules could never bind AI output at all.
+    #[test]
+    fn test_unified_value_provider_ai_source() {
+        let provider = UnifiedValueProvider::new();
+
+        // The round trip through the typed DataSourceId — this is what a
+        // rule condition's source parses into.
+        let ds = DataSourceId::parse("ai:agent-1:anomaly_count")
+            .expect("ai:{agent}:{field} must parse");
+        assert_eq!(ds.source_part(), "ai:agent-1");
+
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            provider.update_from_data_source_id(&ds, 3.0).await;
+        });
+
+        assert_eq!(
+            provider.get_by_source(&DataSourceId::ai("agent-1", "anomaly_count")),
+            Some(RuleValue::Number(3.0))
+        );
+
+        // String fields (enum verdicts) ride the string update path too.
+        let verdict = DataSourceId::ai("agent-1", "status");
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            provider.update_string_from_data_source_id(&verdict, "异常").await;
+        });
+        assert_eq!(
+            provider.get_by_source(&verdict),
+            Some(RuleValue::Text("异常".to_string()))
+        );
+    }
+
     #[test]
     fn test_cache_entry_expiration() {
         let entry = CacheEntry::new(RuleValue::Number(42.0), 100);
