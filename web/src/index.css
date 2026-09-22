@@ -302,6 +302,9 @@ html {
     /* Sidebar rail — the one gray chrome layer (~#F8F9FA), separating from
        the white canvas by color contrast; no border (reference palette). */
     --sidebar-bg: oklch(0.97 0 0);
+    /* Active nav chip on the rail — half-white over the rail gray ≈ L0.985:
+       a soft highlight, between the rail (0.97) and a full white chip. */
+    --sidebar-active: oklch(1 0 0 / 50%);
     --foreground: oklch(0.21 0.01 264);
     --card: oklch(1 0 0);
     --card-foreground: oklch(0.21 0.01 264);
@@ -374,15 +377,18 @@ html {
     --ease-spring-snappy: cubic-bezier(0.5, 1.5, 0.5, 1); /* light overshoot: micro-interactions, toggles, small elements */
     --ease-spring-soft: cubic-bezier(0.34, 1.4, 0.64, 1); /* soft overshoot: large elements, dialog/sheet entrance */
 
-    /* Semantic colors */
-    --color-success: oklch(0.55 0.17 155);
-    --color-success-bg: oklch(0.55 0.17 155 / 8%);
-    --color-warning: oklch(0.68 0.17 65);
-    --color-warning-bg: oklch(0.68 0.17 65 / 8%);
-    --color-error: oklch(0.55 0.22 25);
-    --color-error-bg: oklch(0.55 0.22 25 / 8%);
-    --color-info: oklch(0.52 0.15 250);
-    --color-info-bg: oklch(0.52 0.15 250 / 8%);
+    /* Semantic colors (light). Chroma matches the dark theme's vibrancy
+       while L stays put — white-background contrast is governed by L, so
+       this reads livelier at identical WCAG ratios. Warning hue 78 kills
+       the muddy 65 brown-yellow; washes at 10% mirror dark. */
+    --color-success: oklch(0.55 0.19 155);
+    --color-success-bg: oklch(0.55 0.19 155 / 10%);
+    --color-warning: oklch(0.68 0.19 78);
+    --color-warning-bg: oklch(0.68 0.19 78 / 10%);
+    --color-error: oklch(0.55 0.24 25);
+    --color-error-bg: oklch(0.55 0.24 25 / 10%);
+    --color-info: oklch(0.52 0.17 250);
+    --color-info-bg: oklch(0.52 0.17 250 / 10%);
 
     /* Tint backgrounds for primary & destructive (mirror semantic *-bg pattern) */
     --primary-bg: oklch(0.18 0.02 270 / 8%);
@@ -394,17 +400,18 @@ html {
     --overlay-medium: oklch(0 0 0 / 50%);
     --overlay-heavy: oklch(0 0 0 / 80%);
 
-    /* Accent category colors (light) - harmonious OKLCH palette */
-    --accent-purple: oklch(0.52 0.18 300);
-    --accent-purple-bg: oklch(0.52 0.18 300 / 8%);
-    --accent-orange: oklch(0.55 0.22 37);
-    --accent-orange-bg: oklch(0.55 0.22 37 / 8%);
-    --accent-cyan: oklch(0.58 0.12 200);
-    --accent-cyan-bg: oklch(0.58 0.12 200 / 8%);
-    --accent-emerald: oklch(0.55 0.14 165);
-    --accent-emerald-bg: oklch(0.55 0.14 165 / 8%);
-    --accent-indigo: oklch(0.48 0.18 280);
-    --accent-indigo-bg: oklch(0.48 0.18 280 / 8%);
+    /* Accent category colors (light) - chroma-boosted to match the dark
+       theme's vibrancy (L/hue unchanged); washes at 10% like dark. */
+    --accent-purple: oklch(0.52 0.20 300);
+    --accent-purple-bg: oklch(0.52 0.20 300 / 10%);
+    --accent-orange: oklch(0.55 0.24 37);
+    --accent-orange-bg: oklch(0.55 0.24 37 / 10%);
+    --accent-cyan: oklch(0.58 0.14 200);
+    --accent-cyan-bg: oklch(0.58 0.14 200 / 10%);
+    --accent-emerald: oklch(0.55 0.16 165);
+    --accent-emerald-bg: oklch(0.55 0.16 165 / 10%);
+    --accent-indigo: oklch(0.48 0.20 280);
+    --accent-indigo-bg: oklch(0.48 0.20 280 / 10%);
 
     /* Shadow system — layered (contact + ambient) for soft, realistic
        elevation. Each step up adds a wider, fainter ambient layer rather than
@@ -528,6 +535,9 @@ html {
        the rail vs content step reads in dark mode just like light mode
        (#F8F9FA rail vs white content). */
     --sidebar-bg: oklch(0.10 0.01 270);
+    /* Active nav chip on the rail — same gray the expanded list uses; a
+       clear lightness step above the very dark rail. */
+    --sidebar-active: oklch(0.205 0.01 270);
     --card-foreground: oklch(0.95 0.006 270);
     /* Popovers/menus float above cards — one step up, just under chrome. */
     --popover: oklch(0.19 0.01 270);
