@@ -56,6 +56,7 @@ fn execution_mode_to_string(mode: &ExecutionMode) -> &'static str {
     match mode {
         ExecutionMode::Focused => "focused",
         ExecutionMode::Free => "free",
+        ExecutionMode::Structured => "structured",
     }
 }
 
@@ -1128,6 +1129,8 @@ pub async fn create_agent(
         system_prompt: request.system_prompt,
         max_retries: 0,
         consecutive_failures: 0,
+        output_schema: None,
+        operator_config: None,
         conversation_history: Default::default(),
         user_messages: Default::default(),
         conversation_summary: Default::default(),

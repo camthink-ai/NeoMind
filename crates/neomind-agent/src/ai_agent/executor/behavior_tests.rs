@@ -120,6 +120,8 @@ async fn build_harness() -> (AgentExecutor, AiAgent, Arc<ToolRegistry>) {
         system_prompt: None,
         max_retries: 0,
         consecutive_failures: 0,
+        output_schema: None,
+        operator_config: None,
         enable_tool_chaining: false,
         max_chain_depth: 3,
     };

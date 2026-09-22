@@ -80,11 +80,11 @@
 
 | # | 工作项 | 文件 | 规模 |
 |---|--------|------|------|
-| M1-1 | `OperatorAutomation` 模型+存储（automations 域，含 evidence/smoothing/budget 字段） | automation/types.rs + SharedAutomationStore | M |
+| M1-1 | 算子落 ai_agent 域：`ExecutionMode` 尾加 `Structured` + `AiAgent` 尾部追加字段（输出 schema/防抖/平滑/预算，bincode 兼容）；存储 agents.redb（2026-09-22 评审修订，见 001） | neomind-storage/agents.rs | M |
 | M1-2 | `InferenceClient` 薄接口（单次受约束调用 + schema 解析，thinking 强制关闭 gotcha #7） | neomind-agent（基于 M0-2 工厂） | M |
 | M1-3 | `OperatorEngine`：触发（OnInputChange/Interval/Manual + 摄像头三档采样）→ 采集（M0-5）→ prompt 组装（含纠正样本注入钩子）→ 推理 → schema 校验（重试一次）→ `publish_virtual_metric`（M0-4） | automation/transform/operator/（新目录） | L |
 | M1-4 | 状态机 + 熔断 + 预算（Healthy/Degraded/Paused，保旧值+stale TTL） | 同上 | M |
-| M1-5 | `OperatorEventService`（照抄 TransformEventService 模式：订阅→触发→执行→发布）+ 启动接线 | event_services.rs + server/mod.rs | M |
+| M1-5 | 触发复用现有 AgentScheduler（interval/cron/manual；OnInputChange 防抖映射为 interval+事件冷却）——无需新事件服务 | — | S |
 | M1-6 | handlers：CRUD + `/run`（手动同步）+ `/test`（dry-run 不入库）+ `/executions`（滚动 100 条）+ 数据源列表纳入 `ai:*` | handlers/automations.rs + router.rs + **OpenAPI schema 注册** | M |
 | M1-7 | 证据存储：执行记录携带输入引用（图片路径/来源值），evidence 可回查 | operator 执行记录 | S |
 

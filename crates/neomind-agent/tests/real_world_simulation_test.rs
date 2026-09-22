@@ -198,6 +198,8 @@ impl SimulationContext {
             system_prompt: None,
             max_retries: 0,
             consecutive_failures: 0,
+            output_schema: None,
+            operator_config: None,
             priority: 128,
             conversation_history: vec![],
             user_messages: vec![],

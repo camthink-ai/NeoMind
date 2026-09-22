@@ -39,6 +39,7 @@ pub mod ai_agent;
 pub mod context;
 pub mod error;
 pub mod image_utils;
+pub mod inference;
 pub mod llm;
 pub mod llm_backends; // Merged from neomind-llm crate
 pub mod memory;

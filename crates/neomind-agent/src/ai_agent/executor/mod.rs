@@ -510,6 +510,10 @@ impl AgentExecutor {
         let tool_config = match agent.execution_mode {
             neomind_storage::agents::ExecutionMode::Free => ToolLoopConfig::free(),
             neomind_storage::agents::ExecutionMode::Focused => ToolLoopConfig::focused_plus(agent),
+            // Structured (L0) never reaches the tool loop — execute_internal
+            // routes it to the single-shot path before this. Defense-in-depth:
+            // treat it as the tightest possible loop config.
+            neomind_storage::agents::ExecutionMode::Structured => ToolLoopConfig::focused_plus(agent),
         };
 
         let (mut filtered_tools, mut tool_name_map) =

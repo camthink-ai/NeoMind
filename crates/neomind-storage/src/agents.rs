@@ -105,6 +105,16 @@ pub struct AiAgent {
     /// Current consecutive failure count (reset to 0 on success)
     #[serde(default)]
     pub consecutive_failures: u32,
+    /// Structured-mode (L0) output contract: fields published as
+    /// `ai:{agent_id}:{field}`. None for Focused/Free agents.
+    /// Tail-appended with serde defaults — existing bincode rows decode
+    /// unchanged (same pattern as `enable_tool_chaining`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Vec<OperatorField>>,
+    /// Structured-mode (L0) runtime tuning (debounce / smoothing / budget /
+    /// circuit breaker). None for Focused/Free agents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator_config: Option<OperatorConfig>,
 }
 
 /// Tool configuration for AI Agent function calling mode.
@@ -259,6 +269,81 @@ pub enum ExecutionMode {
     /// Free mode — LLM freely explores with full tool access, multi-round reasoning
     #[serde(rename = "free", alias = "react")]
     Free,
+    /// Structured mode (L0 operator, 2026-09) — single constrained inference:
+    /// no intent/situation preamble, no tool loop; input data sources in,
+    /// schema-validated fields out, published as `ai:{agent_id}:{field}`.
+    /// Appended LAST: bincode encodes variants by index, so Focused=0 / Free=1
+    /// rows in agents.redb keep decoding unchanged.
+    #[serde(rename = "structured")]
+    Structured,
+}
+
+/// One output field of a Structured-mode agent's schema.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OperatorField {
+    /// Field name (becomes the metric name in `ai:{agent_id}:{name}`)
+    pub name: String,
+    /// Value type; `Enum` restricts the model to the listed values
+    pub field_type: OperatorFieldType,
+    /// Unit shown by dashboards (e.g. "℃", "件")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    /// Field semantics, injected into the prompt so the model knows what to emit
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// Allowed value types for [`OperatorField`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase", tag = "type", content = "values")]
+pub enum OperatorFieldType {
+    Number,
+    Text,
+    Boolean,
+    Enum(Vec<String>),
+}
+
+/// Output smoothing for state-like fields: a single inference can flicker
+/// (clean → messy → clean); smoothing decides when a change is real.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum SmoothingPolicy {
+    /// Change is published only after `n` consecutive identical judgments
+    ConsecutiveConfirmations { n: u8 },
+    /// Majority vote inside the window
+    WindowMajority { window_secs: u32 },
+}
+
+/// Runtime tuning for a Structured-mode agent (L0). All costs are bounded:
+/// debounce caps frequency, budget caps daily volume, the failure threshold
+/// trips the circuit breaker (agent degrades: keeps last values, marked stale).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OperatorConfig {
+    /// Inputs are merged: at most one inference per `debounce_secs` (default 30)
+    #[serde(default = "default_operator_debounce")]
+    pub debounce_secs: u32,
+    pub smoothing: Option<SmoothingPolicy>,
+    /// Daily inference cap; None = uncapped (local models) — exceeded pauses
+    /// the agent until the next day
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_calls_per_day: Option<u32>,
+    /// Per-inference timeout (default 60s — L0 is a single call, not the
+    /// 300s agent loop)
+    #[serde(default = "default_operator_timeout")]
+    pub timeout_secs: u32,
+    /// Consecutive failures before the circuit breaker opens (default 3)
+    #[serde(default = "default_operator_failure_threshold")]
+    pub consecutive_failure_threshold: u8,
+}
+
+fn default_operator_debounce() -> u32 {
+    30
+}
+fn default_operator_timeout() -> u32 {
+    60
+}
+fn default_operator_failure_threshold() -> u8 {
+    3
 }
 
 /// Agent execution statistics.
@@ -1372,6 +1457,8 @@ mod tests {
             system_prompt: None,
             max_retries: 0,
             consecutive_failures: 0,
+            output_schema: None,
+            operator_config: None,
         };
 
         store.save_agent(&agent).await.unwrap();
@@ -1418,6 +1505,8 @@ mod tests {
             system_prompt: None,
             max_retries: 0,
             consecutive_failures: 0,
+            output_schema: None,
+            operator_config: None,
         };
 
         store.save_agent(&agent).await.unwrap();
@@ -1498,6 +1587,8 @@ mod tests {
             system_prompt: None,
             max_retries: 0,
             consecutive_failures: 0,
+            output_schema: None,
+            operator_config: None,
         };
 
         // Save initial agent
@@ -1565,6 +1656,8 @@ mod tests {
             system_prompt: None,
             max_retries: 0,
             consecutive_failures: 0,
+            output_schema: None,
+            operator_config: None,
         };
 
         store.save_agent(&agent).await.unwrap();

@@ -98,6 +98,7 @@ pub use agents::{
     Decision, DecisionProcess, ExecutionJournal, ExecutionMode, ExecutionRecord, ExecutionResult,
     ExecutionStatus, GeneratedReport, IntentType, KnowledgeFileRef, NotificationSent, ParsedIntent,
     ReasoningStep, ResourceType, ScheduleType, UserMessage,
+    OperatorConfig, OperatorField, OperatorFieldType, SmoothingPolicy,
 };
 
 pub use device_registry::DeviceRegistryStore;

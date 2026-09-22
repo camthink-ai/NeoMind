@@ -160,6 +160,8 @@ NeoMind 是**边缘部署**的 AIoT 平台（ADR-0003 单机假设）。三条�
 
 ### 推荐：**A 为主体，B 为桥梁，分两步走**
 
+> **2026-09-22 评审修订：算子改落 ai_agent 域（思路 B 的家 + 思路 A 的语义）。** 产品层已决定"算子是智能体的一种类型、一个列表"（002），独立 automation 实体与该决定矛盾；M0-2 的 kernel 统一也消解了当年否决 B 的双栈理由。保留 A 的核心设计：L0 轻通路（无 intent/analyze 前置）、schema 校验+单次重试、预算/熔断字段、`ai:{agent_id}:{field}` 发布（executor 直写 telemetry + DeviceMetric 事件）、dry-run。存储为 `ExecutionMode` 尾加 `Structured` 变体 + `AiAgent` 尾部追加字段（bincode 兼容）；CRUD/编辑器/详情/调度全部复用 `/api/agents` 与现有 scheduler。
+
 1. 算子落数据面（思路 A）——概念放对地方，边缘成本模型成立，且与 transform 的 AI 原生化方向连续（`intent` 字段已经存在，算子是它的自然延伸）；
 2. 现有 agent 不改名不改存储，产品话术重组为"任务/智能体"（吸收思路 B 的上市速度，但不加新执行模式——Focused 的归宿是引导迁移到算子，见 §6.2）；
 3. 思路 C 的"独立 crate"保留为演进选项：若 M1 后发现 automation 模块装不下（多模型并发、队列、优先级），再把算子引擎抽成 crate，接口按本设计的 `InferenceClient` 边界切，届时迁移成本可控。

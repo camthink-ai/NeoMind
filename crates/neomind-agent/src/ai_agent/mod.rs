@@ -175,6 +175,8 @@ impl AiAgentManager {
             system_prompt: None,
             max_retries: 0,
             consecutive_failures: 0,
+            output_schema: None,
+            operator_config: None,
             conversation_history: Default::default(),
             user_messages: Default::default(),
             conversation_summary: Default::default(),
