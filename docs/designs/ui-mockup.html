@@ -137,6 +137,11 @@ section>.desc{color:var(--muted-foreground);font-size:13px;margin-bottom:14px}
 .d-new{background:var(--color-success-bg);color:var(--color-success)}
 .d-mod{background:var(--color-warning-bg);color:var(--color-warning)}
 
+.zone{display:flex;align-items:center;gap:8px;margin:2px 0 -2px}
+.zone .zn{flex:none;width:20px;height:20px;border-radius:50%;background:var(--primary-bg);color:var(--primary);font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;border:1px solid var(--border)}
+.zone .zt{font-size:12px;font-weight:600;color:var(--muted-foreground);letter-spacing:.04em}
+.zone .zl{flex:1;height:1px;background:var(--border)}
+
 /* ===== Screen 2 向导 ===== */
 .s2{display:flex;flex-direction:column;min-height:580px}
 .s2-head{display:flex;align-items:center;gap:18px;padding:14px 22px;border-bottom:1px solid var(--border)}
@@ -350,8 +355,8 @@ footer{max-width:1200px;margin:40px auto 60px;padding:0 24px;color:var(--muted-f
 
 <!-- ============ Screen 2 创建向导 ============ -->
 <section id="s2">
-  <h2>② 新增 / 编辑智能体 —— 在现有单页编辑器上增量</h2>
-  <p class="desc">基于现有 AgentEditorFullScreen（FullScreenDialog 单页表单，无分步向导：基本信息 / 模型 / 提示词 / 调度 / 资源 + AI 推荐）做增量（002 §4.1 入口二）：<span class="dg d-keep">保留</span>现有不动 · <span class="dg d-new">新增</span>本次新增 · <span class="dg d-mod">调整</span>现有基础上扩展。</p>
+  <h2>② 新增 / 编辑智能体 —— 三段式信息架构重构</h2>
+  <p class="desc">仍是无向导的单页表单（现有哲学不变），但重排为三个带标号的分区：<b>① 身份（名称/描述/模型）→ ② 能力（类型四选一 + 模式专属区）→ ③ 运行策略（调度 + 折叠的高级项）</b>。解决四个混乱来源：输出区插在模式卡与基本信息之间、调度区离模式区太远、高级项不随模式变化、试跑按钮埋在表单中部（改为吸底 CTA）。<span class="dg d-keep">保留</span> · <span class="dg d-new">新增</span> · <span class="dg d-mod">调整</span>（含位置重排）。</p>
   <div class="frame"><div class="frame-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="url">neomind.local/agents?editor=new</span></div>
   <div class="screen"><div class="s2">
     <div class="s2-head">
@@ -359,65 +364,69 @@ footer{max-width:1200px;margin:40px auto 60px;padding:0 24px;color:var(--muted-f
       <span class="x">✕</span>
     </div>
     <div class="s2-body">
-      <div class="s2-left" style="width:340px">
+      <div class="s2-left" style="width:390px">
+        <div class="zone"><span class="zn">1</span><span class="zt">身份</span><span class="zl"></span></div>
         <div>
-          <div class="f-label">基本信息<span class="dg d-keep">保留</span></div>
           <div class="rythm" style="margin-bottom:6px"><span>包装台视觉质检</span><small style="color:var(--muted-foreground)">名称</small></div>
-          <div class="rythm"><span style="color:var(--muted-foreground)">每 15 分钟质检一次包装台…</span><small style="color:var(--muted-foreground)">描述</small></div>
-          <div style="height:8px"></div>
-          <div class="f-label" style="margin-bottom:6px">类型<span class="dg d-new">新增</span></div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap">
-            <span class="chip" style="background:var(--primary);color:var(--primary-foreground);border-color:transparent">替我看</span>
-            <span class="chip">替我盯</span><span class="chip">替我查</span><span class="chip">替我报</span>
-          </div>
+          <div class="rythm" style="margin-bottom:6px"><span style="color:var(--muted-foreground)">每 15 分钟质检一次包装台…</span><small style="color:var(--muted-foreground)">描述</small></div>
+          <div class="rythm"><span>本地 VLM（MiniCPM-V）</span><a href="#">更换模型</a></div>
         </div>
-        <div>
-          <div class="f-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>模型<span class="dg d-keep">保留</span></div>
-          <div class="rythm"><span>本地 VLM（MiniCPM-V）</span><a href="#">更换</a></div>
+
+        <div class="zone"><span class="zn">2</span><span class="zt">能力 —— 它替我做什么</span><span class="zl"></span></div>
+        <div class="f-label" style="margin-bottom:6px">类型<span class="dg d-mod">位置提前为主分区开关</span></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+          <span class="chip" style="background:var(--primary);color:var(--primary-foreground);border-color:transparent">替我看</span>
+          <span class="chip">替我盯</span><span class="chip">替我查</span><span class="chip">替我报</span>
         </div>
-        <div>
-          <div class="f-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>调度<span class="dg d-mod">调整</span></div>
-          <div class="rythm" style="margin-bottom:6px"><span>触发：画面变化时</span><a href="#">调整</a></div>
-          <div class="rythm" style="margin-bottom:6px"><span>防抖 30 秒<span class="dg d-new">新增</span></span></div>
-          <div class="rythm"><span>输出平滑：连续 2 次一致<span class="dg d-new">新增</span></span></div>
+        <div class="promptbox">指令：看看包装台画面有没有<b>错装、漏装</b>，统计数量并标记批次状态。参照我已纠正的样本判断。</div>
+        <div style="height:8px"></div>
+        <div class="f-label" style="margin-bottom:6px">输出字段<span class="dg d-new">模式专属：仅替我看显示</span></div>
+        <div class="fieldrow" style="margin-bottom:8px">
+          <span class="fieldchip">漏装数 <small>数值</small></span><span class="fieldchip">错装数 <small>数值</small></span>
+          <span class="fieldchip">批次状态 <small>枚举</small></span>
+          <button class="btn btn-sm">＋ 字段</button>
         </div>
+        <div class="f-label" style="margin-bottom:6px">护栏<span class="dg d-mod">调度/预算合并为模式专属的"护栏"</span></div>
+        <div class="rythm" style="margin-bottom:6px"><span>触发：画面变化时 · 防抖 30 秒 · 平滑 连续 2 次</span><a href="#">调整</a></div>
+        <div class="rythm"><span>每日上限 200 次 · 熔断 3 · 超时 60s</span><a href="#">调整</a></div>
+
+        <div class="zone"><span class="zn">3</span><span class="zt">运行策略</span><span class="zl"></span></div>
         <div>
-          <div class="f-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>预算护栏<span class="dg d-new">新增</span></div>
-          <div class="rythm"><span>每日上限 200 次 · 熔断阈值 3</span><a href="#">调整</a></div>
+          <div class="rythm" style="margin-bottom:6px"><span>节奏：变化触发（继承护栏中的防抖）</span><a href="#">调整</a></div>
+          <div class="rythm" style="margin-bottom:6px"><span>通知：漏装 → 张经理</span><a href="#">调整</a></div>
+          <div class="rythm"><span>▸ 高级设置（优先级 / 上下文深度 / 工具范围——按类型只显示相关项）</span></div>
         </div>
       </div>
       <div class="s2-right">
-        <div class="f-label">指令（提示词）<span class="dg d-keep">保留</span><span class="dg d-mod">文案：提示词→指令</span></div>
-        <div class="promptbox">看看包装台画面有没有<b>错装、漏装</b>，统计数量并标记批次状态。参照我已纠正的样本判断。</div>
-        <div style="display:flex;align-items:center;gap:10px;margin-top:2px">
-          <div class="f-label" style="margin:0;flex:1">资源<span class="dg d-keep">保留</span></div>
-          <button class="btn btn-sm">＋ 添加资源</button>
-        </div>
+        <div class="f-label">输入资源<span class="dg d-keep">右栏保留</span></div>
         <div class="srcbox"><div class="thumb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></div>
-          <div class="meta">cam-01 · 包装台摄像头<small>画面 · 1080p / 2fps</small></div></div>
+          <div class="meta">cam-01 · 包装台摄像头<small>画面 · 1080p / 2fps</small></div>
+          <button class="btn btn-sm" style="margin-left:auto">＋</button></div>
         <div class="rythm" style="margin-top:6px"><span style="font-size:12px">✦ AI 推荐：包装台产量计数器（extension:counter）</span><a href="#">采纳</a></div>
         <div class="tryrun" style="margin-top:12px">
-          <div class="f-label" style="margin:10px 14px 0">输出与试跑<span class="dg d-new">新增</span></div>
+          <div class="f-label" style="margin:10px 14px 0">试跑结果<span class="dg d-new">结果区（按钮在吸底栏）</span></div>
           <div class="bd" style="padding:10px 14px 12px">
-            <div class="fieldrow"><span class="fieldchip">漏装数 <small>数值</small></span><span class="fieldchip">错装数 <small>数值</small></span><span class="fieldchip">批次状态 <small>枚举</small></span><button class="btn btn-sm" style="margin-left:auto">试跑一次</button></div>
             <div class="res-row"><span class="v" style="color:var(--color-error)">漏装 1 件</span><span class="conf">置信度 0.91 · 刚刚</span>
               <div class="evi"><div class="thumb"><div class="bx"></div></div></div>
               <a href="#" style="font-size:12px;color:var(--color-info);text-decoration:none">查看依据：原图 + 框选</a></div>
+            <div class="res-row"><span>批次状态</span><b>待检</b><span class="conf">字段就绪 · 3/3</span></div>
             <div class="runin"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>前 10 次为磨合期——判断不对可当场纠正，它会越用越准。</div>
           </div>
         </div>
       </div>
     </div>
     <div class="s2-foot">
-      <button class="btn">取消</button><button class="btn btn-primary">保存并开始</button>
-      <span class="cost"><span class="dg d-new">新增</span>预计成本：约 96 次/天 · 本地推理 ≈ 0 元 · 输出发布为 ai:packing_qc:* 数据源</span>
+      <button class="btn">取消</button>
+      <button class="btn">试跑一次<span class="dg d-new">吸底 CTA（仅替我看/盯）</span></button>
+      <button class="btn btn-primary">保存并开始</button>
+      <span class="cost">预计成本：约 96 次/天 · 本地推理 ≈ 0 元 · 输出 → ai:packing_qc:*</span>
     </div>
   </div></div></div>
   <div class="notes">
-    <div class="note"><span class="n">1</span><span>结构完全沿用现有单页编辑器（无分步向导）：基本信息/模型/指令/调度/资源五个区块位置不变；类型是基本信息下的一个新字段（四选一），不是独立步骤。</span></div>
-    <div class="note"><span class="n">2</span><span>调度区块在现有调度卡上扩两行（防抖/平滑），预算护栏为新增字段——对应 001 §5.1.3/5.1.5 的产品形态。</span></div>
-    <div class="note"><span class="n">3</span><span>右侧沿用"资源 + AI 推荐"（现有 parse-intent 推荐），新增"输出与试跑"区块：字段由指令预生成（F2），试跑结果带原图框选证据（002 §4.2）。</span></div>
-    <div class="note"><span class="n">4</span><span>磨合期提示衔接纠错样本机制（002 §3.3）；底部明示成本与产出物（002 §2.3）。</span></div>
+    <div class="note"><span class="n">1</span><span>三段式 = 身份 / 能力 / 运行策略：名称、描述、模型不再被模式专属区推下去；"类型"成为能力段的总开关，选什么类型、能力段就长什么样子（替我看=指令+输出字段+护栏；替我盯=指令+判定阈值+通知；替我查=提示词+工具范围；替我报=模板+渠道）。</span></div>
+    <div class="note"><span class="n">2</span><span>防抖/平滑/预算/超时合并为"护栏"组，与触发方式一起放在能力段（模式强相关）；原"调度"区只剩节奏确认+通知路由——避免同一概念分散两处。</span></div>
+    <div class="note"><span class="n">3</span><span>高级设置按类型过滤：替我看不显示链深/工具范围，替我查不显示输出字段——一股脑折叠是旧混乱来源之一。</span></div>
+    <div class="note"><span class="n">4</span><span>试跑从表单中部移到吸底 CTA（次级按钮，仅看/盯类型显示），结果卡仍在右栏——创建的核心承诺（先看结果再保存）获得固定入口。</span></div>
   </div>
 </section>
 
