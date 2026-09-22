@@ -5,6 +5,7 @@
  * These states replace the entire card container.
  */
 
+import { useLayoutEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -21,6 +22,28 @@ const ICON_SIZE: Record<DashboardComponentSize, string> = {
   sm: 'h-8 w-8',
   md: 'h-12 w-12',
   lg: 'h-16 w-16',
+}
+
+/** Below this card height the stacked icon + two-line states cram. */
+const COMPACT_THRESHOLD_PX = 132
+
+/**
+ * Dashboard grid cells vary per widget — the same state must collapse to a
+ * single quiet line on short cards instead of cramming icon + two lines.
+ */
+function useCompactCard<T extends HTMLElement>() {
+  const ref = useRef<T>(null)
+  const [compact, setCompact] = useState(false)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const ro = new ResizeObserver(([entry]) => {
+      setCompact(entry.contentRect.height < COMPACT_THRESHOLD_PX)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  return { ref, compact }
 }
 
 /**
@@ -43,9 +66,34 @@ export function EmptyState({
   action,
 }: EmptyStateProps) {
   const sizeConfig = dashboardComponentSize[size]
+  const { ref, compact } = useCompactCard<HTMLDivElement>()
+
+  if (compact) {
+    // Short card: one quiet line — forced-small icon + message; the
+    // subMessage survives as the hover title, the action stays inline.
+    return (
+      <div
+        ref={ref}
+        title={subMessage}
+        className={cn(
+          dashboardCardBase,
+          'flex-row items-center justify-center gap-2 px-3 min-h-full w-full',
+          className
+        )}
+      >
+        {icon && (
+          <span className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground [&>svg]:h-4 [&>svg]:w-4">
+            {icon}
+          </span>
+        )}
+        <p className="truncate text-xs font-medium text-muted-foreground">{message}</p>
+        {action}
+      </div>
+    )
+  }
 
   return (
-    <div className={cn(
+    <div ref={ref} className={cn(
       dashboardCardBase,
       'flex flex-col items-center justify-center gap-3 min-h-full w-full',
       sizeConfig.padding,
@@ -87,9 +135,39 @@ export function ErrorState({
   retryLabel = 'Retry',
 }: ErrorStateProps) {
   const sizeConfig = dashboardComponentSize[size]
+  const { ref, compact } = useCompactCard<HTMLDivElement>()
+
+  if (compact) {
+    // Short card: error line + inline retry icon-button; the subMessage
+    // survives as the hover title.
+    return (
+      <div
+        ref={ref}
+        title={subMessage}
+        className={cn(
+          dashboardCardBase,
+          'flex-row items-center justify-center gap-2 px-3 min-h-full w-full',
+          className
+        )}
+      >
+        <p className="truncate text-xs font-medium text-error">{message}</p>
+        {onRetry && (
+          <Button
+            variant="outline"
+            size="icon-sm"
+            className="h-7 w-7 shrink-0"
+            onClick={onRetry}
+            aria-label={retryLabel}
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+          </Button>
+        )}
+      </div>
+    )
+  }
 
   return (
-    <div className={cn(
+    <div ref={ref} className={cn(
       dashboardCardBase,
       'flex flex-col items-center justify-center gap-2 min-h-full w-full',
       sizeConfig.padding,
