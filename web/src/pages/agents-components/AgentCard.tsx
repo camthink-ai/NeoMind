@@ -1,5 +1,10 @@
 /**
  * Agent Card - Grid item for displaying an AI Agent
+ *
+ * The card answers the operator's three questions in order: what role this
+ * agent plays (badges), whether it's healthy right now (status + freshness),
+ * and what it last produced (latest output row). Stats collapsed to a single
+ * meta line — they're operator telemetry, not the card's job.
  */
 
 import { useTranslation } from "react-i18next"
@@ -14,6 +19,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
+  BarChart3,
   Bot,
   Edit,
   Play,
@@ -25,6 +31,10 @@ import {
   Loader2,
   Clock,
   CheckCircle2,
+  Wrench,
+  BrainCircuit,
+  MessageSquareText,
+  Workflow,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { formatTimestamp } from "@/lib/utils/format"
@@ -49,6 +59,15 @@ const STATUS_CONFIG: Record<string, { icon: typeof Activity; color: string; bg: 
   // One-shot task finished — check icon, quiet green; falls back to Paused
   // styling via the `|| STATUS_CONFIG.Paused` default in the component.
   Completed: { icon: CheckCircle2, color: 'text-success', bg: 'bg-muted-50' },
+}
+
+/** Role badge derived from the compiled axes — customer language, never the
+ *  execution-mode jargon. */
+function roleOf(agent: AiAgent): { icon: typeof BarChart3; key: string } {
+  const hasContract = (agent.output_fields?.length ?? 0) > 0
+  if (agent.execution_mode === 'structured' && hasContract) return { icon: BarChart3, key: 'recordData' }
+  if (agent.execution_mode === 'free') return { icon: Workflow, key: 'actOrInvestigate' }
+  return { icon: MessageSquareText, key: 'answer' }
 }
 
 export function AgentCard({
@@ -85,13 +104,13 @@ export function AgentCard({
 
   const successRate = agent.execution_count > 0
     ? Math.round((agent.success_count / agent.execution_count) * 100)
-    : 0
+    : null
 
-  // Get status label from i18n
-  const _getStatusLabel = (status: string) => {
-    const key = status.toLowerCase() as 'active' | 'paused' | 'error' | 'executing'
-    return t(`agents:status.${key}`)
-  }
+  const role = roleOf(agent)
+  const RoleIcon = role.icon
+  const isToolMemory = (agent.memory_mode ?? (agent.execution_mode === 'structured' ? 'tool' : 'assistant')) === 'tool'
+  const MemoryIcon = isToolMemory ? Wrench : BrainCircuit
+  const latestEntries = Object.entries(agent.latest_output ?? {})
 
   return (
     <div
@@ -101,41 +120,18 @@ export function AgentCard({
       )}
       onClick={onClick}
     >
-      {/* Header: Icon + Name + Status */}
-      <div className="flex items-start gap-3 mb-4">
-        {/* Icon with status glow */}
-        <div className={cn(
-          "w-12 h-12 rounded-xl flex items-center justify-center shrink-0 transition-colors",
-          agent.status === 'Active' && "bg-success-light",
-          agent.status === 'Executing' && "bg-info-light",
-          agent.status === 'Error' && "bg-error-light",
-          agent.status === 'Paused' && "bg-muted-50"
-        )}>
-          <Bot className={cn(
-            "h-6 w-6",
-            agent.status === 'Active' && "text-success",
-            agent.status === 'Executing' && "text-info",
-            agent.status === 'Error' && "text-error",
-            agent.status === 'Paused' && "text-muted-foreground"
-          )} />
-        </div>
-
-        {/* Name and Status */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <h3 className="text-base font-semibold truncate" title={agent.name}>{agent.name}</h3>
-            <StatusIcon className={cn(
-              "h-4 w-4 shrink-0",
-              statusConfig.color,
-              agent.status === 'Executing' && "animate-spin"
-            )} />
-          </div>
-          <p className="text-sm text-muted-foreground mt-0.5 line-clamp-1">
-            {agent.user_prompt || agent.description || t('agents:card.noDescription')}
-          </p>
-        </div>
-
-        {/* More menu */}
+      {/* Role badges + status + menu */}
+      <div className="flex items-center gap-1.5 mb-2">
+        <RoleIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+        <span className="text-xs text-muted-foreground truncate">{t(`agents:card.role.${role.key}`)}</span>
+        <span className={cn("h-1 w-1 rounded-full bg-border shrink-0")} />
+        <MemoryIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+        <span className="text-xs text-muted-foreground truncate">{t(`agents:card.memory.${isToolMemory ? 'tool' : 'assistant'}`)}</span>
+        <StatusIcon className={cn(
+          "h-4 w-4 shrink-0 ml-auto",
+          statusConfig.color,
+          agent.status === 'Executing' && "animate-spin"
+        )} />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <IconButton
@@ -169,59 +165,90 @@ export function AgentCard({
         </DropdownMenu>
       </div>
 
-      {/* Stats Grid - simplified without borders */}
-      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2 mb-3">
-        {/* Execution Count */}
-        <div className="text-center p-2 rounded-lg bg-muted-30">
-          <div className="text-lg font-semibold tabular-nums">{agent.execution_count}</div>
-          <div className="text-xs text-muted-foreground">{t('agents:card.executions')}</div>
+      {/* Name + prompt line */}
+      <div className="flex items-start gap-2.5 mb-2">
+        <div className={cn(
+          "w-9 h-9 rounded-lg flex items-center justify-center shrink-0 transition-colors",
+          agent.status === 'Active' && "bg-success-light",
+          agent.status === 'Executing' && "bg-info-light",
+          agent.status === 'Error' && "bg-error-light",
+          agent.status === 'Paused' && "bg-muted-50"
+        )}>
+          <Bot className={cn(
+            "h-5 w-5",
+            agent.status === 'Active' && "text-success",
+            agent.status === 'Executing' && "text-info",
+            agent.status === 'Error' && "text-error",
+            agent.status === 'Paused' && "text-muted-foreground"
+          )} />
         </div>
-
-        {/* Success Rate */}
-        <div className="text-center p-2 rounded-lg bg-muted-30">
-          <div className={cn(
-            "text-lg font-semibold tabular-nums",
-            successRate >= 80 ? "text-success" : successRate >= 50 ? "text-warning" : "text-error"
-          )}>
-            {successRate}%
-          </div>
-          <div className="text-xs text-muted-foreground">{t('agents:card.successRate')}</div>
-        </div>
-
-        {/* Avg Duration */}
-        <div className="text-center p-2 rounded-lg bg-muted-30">
-          <div className="text-lg font-semibold tabular-nums">
-            {agent.avg_duration_ms > 0 ? `${(agent.avg_duration_ms / 1000).toFixed(1)}s` : '-'}
-          </div>
-          <div className="text-xs text-muted-foreground">{t('agents:card.avgDuration')}</div>
+        <div className="min-w-0 flex-1">
+          <h3 className="text-sm font-semibold truncate" title={agent.name}>{agent.name}</h3>
+          <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">
+            {agent.user_prompt || agent.description || t('agents:card.noDescription')}
+          </p>
         </div>
       </div>
 
-      {/* Footer: Executing status or Last Execution + Toggle */}
-      {agent.status === 'Executing' ? (
-        <div className="flex items-center gap-2 pt-1.5 border-t border-info bg-info-light -mx-1 px-1">
-          <Loader2 className="h-4 w-4 text-info animate-spin shrink-0" />
+      {/* Latest output — the "it's alive and producing" row */}
+      {latestEntries.length > 0 ? (
+        <div className="flex flex-wrap gap-1 mb-2.5">
+          {latestEntries.slice(0, 3).map(([field, value]) => (
+            <span
+              key={field}
+              className="inline-flex max-w-full items-baseline gap-1 rounded-md bg-muted-30 px-1.5 py-0.5 text-xs"
+              title={`${field} = ${String(value)}`}
+            >
+              <span className="text-muted-foreground shrink-0">{field}</span>
+              <span className="font-medium truncate">{String(value)}</span>
+            </span>
+          ))}
+          {latestEntries.length > 3 && (
+            <span className="text-xs text-muted-foreground self-center">+{latestEntries.length - 3}</span>
+          )}
+        </div>
+      ) : null}
+
+      {/* Error line replaces stats when broken */}
+      {agent.status === 'Error' && (
+        <p className="mb-2 line-clamp-1 rounded-md bg-error-light px-2 py-1 text-xs text-error">
+          {agent.error || t('agents:card.errorUnknown')}
+        </p>
+      )}
+
+      {/* Executing banner */}
+      {agent.status === 'Executing' && (
+        <div className="flex items-center gap-2 mb-2 rounded-md bg-info-light px-2 py-1">
+          <Loader2 className="h-3.5 w-3.5 text-info animate-spin shrink-0" />
           <span className="text-xs text-info truncate flex-1">
             {agent.currentThinking || t('agents:thinking.executing')}
           </span>
         </div>
-      ) : (
-        <div className="flex items-center justify-between pt-1.5 border-t border-border">
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Clock className="h-4 w-4" />
-            <span className="truncate max-w-[120px]">
-              {agent.last_execution_at ? formatTimestamp(agent.last_execution_at, false) : t('agents:card.neverExecuted')}
-            </span>
-          </div>
-
-          <Switch
-            checked={agent.status === 'Active'}
-            onCheckedChange={handleToggleStatus}
-            onClick={(e) => e.stopPropagation()}
-            aria-label={t('agents:card.toggleStatus', { name: agent.name })}
-          />
-        </div>
       )}
+
+      {/* Footer: freshness + collapsed stats + toggle */}
+      <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-border">
+        <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+          <Clock className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">
+            {agent.last_execution_at
+              ? formatTimestamp(agent.last_execution_at, false)
+              : t('agents:card.neverExecuted')}
+          </span>
+          {successRate !== null && agent.execution_count > 0 && (
+            <span className="shrink-0 text-muted-foreground/70">
+              · {agent.execution_count}次 {successRate}%
+            </span>
+          )}
+        </div>
+
+        <Switch
+          checked={agent.status === 'Active'}
+          onCheckedChange={handleToggleStatus}
+          onClick={(e) => e.stopPropagation()}
+          aria-label={t('agents:card.toggleStatus', { name: agent.name })}
+        />
+      </div>
     </div>
   )
 }

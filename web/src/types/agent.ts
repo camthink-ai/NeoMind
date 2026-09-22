@@ -36,7 +36,15 @@ export interface AiAgent {
   max_chain_depth?: number
   priority?: number
   context_window_size?: number
+  /** Contract field names — card role badge + latest-output keys */
+  output_fields?: string[]
+  /** Latest published ai:{id}:{field} values (list endpoint, best-effort) */
+  latest_output?: Record<string, unknown>
+  /** Last error message (Error status) */
+  error?: string
   execution_mode?: AgentExecutionMode
+  /** Memory axis — absent means the mode-derived default */
+  memory_mode?: AgentMemoryMode
 }
 
 /**

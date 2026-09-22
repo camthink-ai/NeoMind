@@ -61,7 +61,17 @@
     "avgDuration": "Avg Duration",
     "neverExecuted": "Never executed",
     "toggleStatus": "Toggle {{name}} status",
-    "moreOptions": "More options"
+    "moreOptions": "More options",
+    "role": {
+      "recordData": "Records data",
+      "actOrInvestigate": "Acts & investigates",
+      "answer": "Answers"
+    },
+    "memory": {
+      "tool": "Stateless tool",
+      "assistant": "Has memory"
+    },
+    "errorUnknown": "Execution failed — open details for the log"
   },
   "confirm": {
     "pauseTitle": "Confirm pause agent?",
@@ -459,11 +469,11 @@
       }
     },
     "resources": {
-      "title": "What it watches",
+      "title": "Data & commands",
       "optional": "Optional",
-      "hintFocused": "This is its entire input — collected automatically at run time, and the only thing it judges from.",
-      "hintFree": "Configure preloaded data sources. If omitted, the Agent will query data via tools as needed.",
-      "hintReactive": "Trigger source data is collected automatically. Add additional sources here for cross-device correlation analysis.",
+      "hintFocused": "Data is the AI’s entire input, collected at run time; binding commands lets the AI act on its own.",
+      "hintFree": "Optional data to preload instead of fetching each run. Without it the AI finds what it needs with tools.",
+      "hintReactive": "The trigger source’s data is collected automatically; add other devices or commands to consult alongside.",
       "searchPlaceholder": "Search resource name or type...",
       "selectedCount": "{{count}} selected",
       "noResourcesFound": "No resources found",
@@ -500,6 +510,7 @@
         "searchPlaceholder": "Search resources...",
         "noResourcesHint": "Click \"Add Resources\" to select devices and extensions",
         "done": "Done",
+        "doneWithCount": "Done ({{count}})",
         "selectedCount": "{{count}} resource{{s}} selected"
       }
     },
@@ -613,13 +624,53 @@
       "UTC": "UTC (UTC+0)"
     },
     "section": {
-      "what": "What it should do",
+      "what": "What should the AI do",
       "record": "What it records",
       "when": "When it runs"
     },
-    "autonomy": {
-      "label": "It can work things out itself",
-      "hint": "Calls tools and retries — for open-ended tasks like working out what went wrong. Off means it looks once and answers."
+    "preset": {
+      "title": "Start from a template",
+      "appliedFrom": "Started from ‘{{name}}’",
+      "repick": "Pick another",
+      "image": {
+        "fDescDesc": "What the frame shows",
+        "fStatusValues": "normal, abnormal",
+        "fStatusDesc": "Frame status verdict",
+        "name": "Image understanding",
+        "desc": "Look at a camera frame, give a verdict",
+        "prompt": "You are the on-site attendant. Look at the bound camera's latest frame:\n1. Describe the key points (equipment, materials, people);\n2. Judge whether anything is wrong (equipment state, stacking, safety);\n3. If something is, say where, the likely cause, and a suggested response; otherwise state clearly that all is normal."
+      },
+      "monitor": {
+        "fStatusDesc": "Overall status verdict",
+        "fStatusValues": "normal, abnormal, review",
+        "fCountDesc": "Number of anomalous items",
+        "fCountUnit": "items",
+        "name": "Data monitoring",
+        "desc": "Multi-source readings, recorded as data",
+        "prompt": "You are the equipment inspector. Read the bound metrics' current values on schedule:\n1. Compare each against its normal range;\n2. Give an overall verdict (normal / abnormal / review);\n3. Count and list the anomalies.\nValues near but not past a threshold are review, not abnormal."
+      },
+      "smart": {
+        "name": "Smart task",
+        "desc": "Analysis linked to action",
+        "prompt": "You are the duty engineer. Watch the bound data sources; when something looks wrong:\n1. Investigate the cause yourself (query other data, use tools);\n2. Operate the bound devices directly when needed (start a fan, lower power, stop a line);\n3. After every action, say what you did and why.\nEscalate gently: prefer adjusting parameters over stopping equipment."
+      },
+      "scheduled": {
+        "name": "Scheduled report",
+        "desc": "Periodic summary",
+        "prompt": "You are the operations analyst. Summarise the bound sources over the last 24 hours:\n1. Overall status and key metric changes;\n2. Events and actions during the period;\n3. Comparison with the previous day (better / worse / flat);\n4. The 1–3 things most worth attention next."
+      },
+      "advanced": {
+        "name": "Advanced",
+        "desc": "High freedom, your words",
+        "prompt": "Describe your task — four things make a good brief:\n1. Goal — what to achieve;\n2. Input — which data or cameras to look at;\n3. Judgement — what counts as normal, what as trouble;\n4. Action — what to do and who to notify when trouble shows."
+      }
+    },
+    "workstyle": {
+      "title": "How it works",
+      "bound": "Bound data only",
+      "boundDesc": "Each run collects the bound data and commands and answers in one pass. Fast, cheap, stable.",
+      "auto": "Explore and act",
+      "autoDesc": "The AI queries, calls tools and executes commands over multiple rounds until done. For open-ended tasks; slower."
     },
     "memory": {
       "title": "What it remembers",
