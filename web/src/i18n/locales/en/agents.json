@@ -507,6 +507,24 @@
         "selectedCount": "{{count}} resource{{s}} selected"
       }
     },
+    "structured": {
+      "sectionTitle": "Output Fields (ai:{id}:* data sources)",
+      "hint": "Each field is published as a platform data source usable by dashboards, rules and data-push. Define what to extract, then bind it to inputs via resources.",
+      "fieldName": "Field name (e.g. missing_count)",
+      "fieldUnit": "Unit (optional, e.g. ℃ / 件)",
+      "fieldDescription": "What this field means (injected into the prompt)",
+      "enumValues": "Allowed values, comma-separated (e.g. 正常, 待检, 停线)",
+      "typeNumber": "Number",
+      "typeText": "Text",
+      "typeBoolean": "Boolean",
+      "typeEnum": "Enum (fixed values)",
+      "addField": "Add field",
+      "removeField": "Remove",
+      "debounce": "Debounce (seconds)",
+      "timeout": "Inference timeout (seconds)",
+      "threshold": "Circuit-breaker threshold",
+      "dailyCap": "Daily call cap (optional)"
+    },
     "advanced": {
       "title": "Advanced Configuration",
       "dataCollection": "Data Collection",
@@ -516,6 +534,8 @@
       "focusedModeDescription": "Bind specific resources and actions for fast, precise analysis. Best for monitoring, alerts, data analysis.",
       "freeMode": "Free Mode",
       "freeModeDescription": "LLM freely explores and decides with multi-round tool calling. Best for complex automation and device control.",
+      "structuredMode": "Structured (Watch)",
+      "structuredModeDescription": "Single constrained inference: inputs in, schema-validated fields out as ai:{id}:{field}. Best for meter reading, QC checks, periodic inspection.",
       "focusedModeRequiresResources": "Focused Mode requires at least one resource binding",
       "saveToken": "Save Tokens",
       "timeRange": "Time Range",

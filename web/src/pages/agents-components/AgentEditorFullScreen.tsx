@@ -56,6 +56,8 @@ import type {
   AiAgentDetail,
   AgentSchedule,
   CreateAgentRequest,
+  OperatorField,
+  OperatorConfig,
   Device,
   DeviceType,
   Extension,
@@ -171,7 +173,13 @@ export function AgentEditorFullScreen({
   const [activeBackendId, setActiveBackendId] = useState<string | null>(null)
 
   // Advanced configuration state
-  const [executionMode, setExecutionMode] = useState<'focused' | 'free'>('focused')
+  const [executionMode, setExecutionMode] = useState<'focused' | 'free' | 'structured'>('focused')
+  const [outputSchema, setOutputSchema] = useState<OperatorField[]>([])
+  const [operatorConfig, setOperatorConfig] = useState<OperatorConfig>({
+    debounce_secs: 30,
+    timeout_secs: 60,
+    consecutive_failure_threshold: 3,
+  })
   const [priority, setPriority] = useState(5)
   const [contextWindowSize, setContextWindowSize] = useState(10)
   const [maxChainDepth, setMaxChainDepth] = useState(5)
@@ -192,6 +200,7 @@ export function AgentEditorFullScreen({
 
   const isFocusedMode = executionMode === 'focused'
   const isFreeMode = executionMode === 'free'
+  const isStructuredMode = executionMode === 'structured'
 
   // Helper: get metrics for a device (from deviceTypes)
   const getDeviceMetrics = useCallback((deviceId: string): Array<{ name: string; display_name: string }> => {
@@ -313,7 +322,17 @@ export function AgentEditorFullScreen({
         setUserPrompt(agent.user_prompt || '')
         setLlmBackendId(agent.llm_backend_id || null)
         // Load advanced config from agent
-        setExecutionMode(agent.execution_mode === 'free' ? 'free' : 'focused')
+        setExecutionMode(
+          agent.execution_mode === 'free' ? 'free'
+          : agent.execution_mode === 'structured' ? 'structured'
+          : 'focused'
+        )
+        setOutputSchema(agent.output_schema ?? [])
+        setOperatorConfig(agent.operator_config ?? {
+          debounce_secs: 30,
+          timeout_secs: 60,
+          consecutive_failure_threshold: 3,
+        })
         setPriority(agent.priority ?? 5)
         setContextWindowSize(agent.context_window_size ?? 10)
         setMaxChainDepth(agent.max_chain_depth ?? 5)
@@ -327,6 +346,8 @@ export function AgentEditorFullScreen({
         setLlmBackendId(null)
         // Reset to defaults
         setExecutionMode('focused')
+        setOutputSchema([])
+        setOperatorConfig({ debounce_secs: 30, timeout_secs: 60, consecutive_failure_threshold: 3 })
         setPriority(5)
         setContextWindowSize(10)
         setMaxChainDepth(5)
@@ -1075,7 +1096,13 @@ export function AgentEditorFullScreen({
         priority: priority !== 5 ? priority : undefined,
         context_window_size: contextWindowSize !== 10 ? contextWindowSize : undefined,
         max_chain_depth: maxChainDepth !== 5 ? maxChainDepth : undefined,
-        execution_mode: isFocusedMode ? 'focused' : 'free',
+        execution_mode: executionMode,
+        ...(isStructuredMode
+          ? {
+              output_schema: outputSchema.filter((f) => f.name.trim() !== ''),
+              operator_config: operatorConfig,
+            }
+          : {}),
       }
 
       await onSave(data)
@@ -1160,7 +1187,7 @@ export function AgentEditorFullScreen({
                 <Brain className="h-4 w-4 text-muted-foreground" />
                 {tAgent('creator.advanced.executionMode')}
               </Label>
-              <div className={cn("gap-3", isMobile ? "grid grid-cols-1" : "grid grid-cols-2")}>
+              <div className={cn("gap-3", isMobile ? "grid grid-cols-1" : "grid grid-cols-3")}>
                 <button
                   type="button"
                   onClick={() => setExecutionMode('focused')}
@@ -1212,8 +1239,190 @@ export function AgentEditorFullScreen({
                     {tAgent('creator.advanced.freeModeDescription')}
                   </p>
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => setExecutionMode('structured')}
+                  className={cn(
+                    "relative flex flex-col items-start gap-1.5 rounded-lg border p-3 text-left transition-colors",
+                    isStructuredMode
+                      ? "border-primary bg-muted"
+                      : "border-muted hover:border-border"
+                  )}
+                >
+                  <div className="flex items-center gap-2 w-full">
+                    <div className={cn(
+                      "h-8 w-8 rounded-lg flex items-center justify-center shrink-0",
+                      isStructuredMode ? "bg-primary text-primary-foreground" : "bg-muted"
+                    )}>
+                      <Database className="h-4 w-4" />
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                      <span className="text-sm font-medium">{tAgent('creator.advanced.structuredMode')}</span>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground pl-10">
+                    {tAgent('creator.advanced.structuredModeDescription')}
+                  </p>
+                </button>
               </div>
             </div>
+
+            {/* Structured (L0) output contract — only for structured mode */}
+            {isStructuredMode && (
+              <div className="space-y-3 rounded-lg border border-border p-3">
+                <Label className="text-sm font-medium flex items-center gap-2">
+                  <Database className="h-4 w-4 text-muted-foreground" />
+                  {tAgent('creator.structured.sectionTitle')}
+                </Label>
+                <p className="text-xs text-muted-foreground">{tAgent('creator.structured.hint')}</p>
+
+                {outputSchema.map((field, idx) => (
+                  <div key={idx} className="space-y-2 rounded-md border border-border p-2">
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                      <Input
+                        placeholder={tAgent('creator.structured.fieldName')}
+                        value={field.name}
+                        onChange={(e) => {
+                          const next = [...outputSchema]
+                          next[idx] = { ...field, name: e.target.value }
+                          setOutputSchema(next)
+                        }}
+                      />
+                      <Select
+                        value={field.field_type.type}
+                        onValueChange={(v) => {
+                          const next = [...outputSchema]
+                          next[idx] = {
+                            ...field,
+                            field_type:
+                              v === 'enum'
+                                ? { type: 'enum', values: [] }
+                                : ({ type: v } as OperatorField['field_type']),
+                          }
+                          setOutputSchema(next)
+                        }}
+                      >
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="number">{tAgent('creator.structured.typeNumber')}</SelectItem>
+                          <SelectItem value="text">{tAgent('creator.structured.typeText')}</SelectItem>
+                          <SelectItem value="boolean">{tAgent('creator.structured.typeBoolean')}</SelectItem>
+                          <SelectItem value="enum">{tAgent('creator.structured.typeEnum')}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        placeholder={tAgent('creator.structured.fieldUnit')}
+                        value={field.unit ?? ''}
+                        onChange={(e) => {
+                          const next = [...outputSchema]
+                          next[idx] = { ...field, unit: e.target.value || undefined }
+                          setOutputSchema(next)
+                        }}
+                      />
+                      <Input
+                        placeholder={tAgent('creator.structured.fieldDescription')}
+                        value={field.description ?? ''}
+                        onChange={(e) => {
+                          const next = [...outputSchema]
+                          next[idx] = { ...field, description: e.target.value || undefined }
+                          setOutputSchema(next)
+                        }}
+                      />
+                    </div>
+                    {field.field_type.type === 'enum' && (
+                      <Input
+                        placeholder={tAgent('creator.structured.enumValues')}
+                        value={field.field_type.type === 'enum' ? field.field_type.values.join(', ') : ''}
+                        onChange={(e) => {
+                          const next = [...outputSchema]
+                          next[idx] = {
+                            ...field,
+                            field_type: {
+                              type: 'enum',
+                              values: e.target.value.split(',').map((v) => v.trim()).filter(Boolean),
+                            },
+                          }
+                          setOutputSchema(next)
+                        }}
+                      />
+                    )}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="text-muted-foreground"
+                      onClick={() => setOutputSchema(outputSchema.filter((_, i) => i !== idx))}
+                    >
+                      <X className="h-3 w-3 mr-1" />
+                      {tAgent('creator.structured.removeField')}
+                    </Button>
+                  </div>
+                ))}
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    setOutputSchema([...outputSchema, { name: '', field_type: { type: 'number' } }])
+                  }
+                >
+                  <Plus className="h-3 w-3 mr-1" />
+                  {tAgent('creator.structured.addField')}
+                </Button>
+
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-2 pt-1">
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">{tAgent('creator.structured.debounce')}</Label>
+                    <Input
+                      type="number"
+                      value={operatorConfig.debounce_secs ?? 30}
+                      onChange={(e) =>
+                        setOperatorConfig({ ...operatorConfig, debounce_secs: Number(e.target.value) || 30 })
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">{tAgent('creator.structured.timeout')}</Label>
+                    <Input
+                      type="number"
+                      value={operatorConfig.timeout_secs ?? 60}
+                      onChange={(e) =>
+                        setOperatorConfig({ ...operatorConfig, timeout_secs: Number(e.target.value) || 60 })
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">{tAgent('creator.structured.threshold')}</Label>
+                    <Input
+                      type="number"
+                      value={operatorConfig.consecutive_failure_threshold ?? 3}
+                      onChange={(e) =>
+                        setOperatorConfig({
+                          ...operatorConfig,
+                          consecutive_failure_threshold: Number(e.target.value) || 3,
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">{tAgent('creator.structured.dailyCap')}</Label>
+                    <Input
+                      type="number"
+                      placeholder="—"
+                      value={operatorConfig.max_calls_per_day ?? ''}
+                      onChange={(e) =>
+                        setOperatorConfig({
+                          ...operatorConfig,
+                          max_calls_per_day: e.target.value ? Number(e.target.value) : undefined,
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Name */}
             <div className="space-y-2">

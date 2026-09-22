@@ -508,6 +508,24 @@
         "selectedCount": "已选 {{count}} 个资源"
       }
     },
+    "structured": {
+      "sectionTitle": "输出字段（ai:{id}:* 数据源）",
+      "hint": "每个字段都会发布为平台数据源，仪表盘、规则、数据推送可直接使用。定义要提取什么，再用资源绑定输入。",
+      "fieldName": "字段名（如 missing_count）",
+      "fieldUnit": "单位（可选，如 ℃ / 件）",
+      "fieldDescription": "字段含义（会注入提示词）",
+      "enumValues": "允许的取值，逗号分隔（如 正常, 待检, 停线）",
+      "typeNumber": "数值",
+      "typeText": "文本",
+      "typeBoolean": "布尔",
+      "typeEnum": "枚举（固定取值）",
+      "addField": "添加字段",
+      "removeField": "移除",
+      "debounce": "防抖（秒）",
+      "timeout": "推理超时（秒）",
+      "threshold": "熔断阈值（连续失败）",
+      "dailyCap": "每日调用上限（可选）"
+    },
     "advanced": {
       "title": "高级配置",
       "dataCollection": "数据采集",
@@ -517,6 +535,8 @@
       "focusedModeDescription": "绑定特定资源和操作，快速精准分析。适合监控、告警、数据分析。",
       "freeMode": "自由模式",
       "freeModeDescription": "LLM 自主探索和决策，支持多轮工具调用。适合复杂自动化和设备控制。",
+      "structuredMode": "替我看（结构化抽取）",
+      "structuredModeDescription": "单次受约束推理：输入数据进，结构化字段出（发布为 ai:{id}:{field}）。适合抄表读数、质检判定、周期巡检。",
       "focusedModeRequiresResources": "精准模式需要至少绑定一个资源",
       "saveToken": "省 Token",
       "timeRange": "时间范围",

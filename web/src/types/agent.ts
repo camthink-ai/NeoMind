@@ -36,7 +36,7 @@ export interface AiAgent {
   max_chain_depth?: number
   priority?: number
   context_window_size?: number
-  execution_mode?: 'focused' | 'free'
+  execution_mode?: AgentExecutionMode
 }
 
 /**
@@ -56,10 +56,14 @@ export interface AiAgentDetail extends AiAgent {
   // Tool chaining configuration
   max_chain_depth?: number
   priority?: number
-  /** Execution mode: "focused" for bound-resource agents, "free" for unrestricted tool-calling */
-  execution_mode?: 'focused' | 'free'
+  /** Execution mode: "focused" for bound-resource agents, "free" for unrestricted tool-calling, "structured" for L0 extraction */
+  execution_mode?: AgentExecutionMode
   /** Custom system prompt override */
   system_prompt?: string
+  /** Structured (L0) output contract */
+  output_schema?: OperatorField[]
+  /** Structured (L0) runtime tuning */
+  operator_config?: OperatorConfig
 }
 
 /**
@@ -231,6 +235,37 @@ export interface AgentResource {
 /**
  * Request to create a new AI Agent - matches backend CreateAgentRequest
  */
+/** Structured (L0) field type: number | text | boolean | enum(values) */
+export type OperatorFieldType =
+  | { type: 'number' }
+  | { type: 'text' }
+  | { type: 'boolean' }
+  | { type: 'enum'; values: string[] }
+
+/** One output field of a structured agent — published as ai:{agentId}:{name} */
+export interface OperatorField {
+  name: string
+  field_type: OperatorFieldType
+  unit?: string
+  description?: string
+}
+
+/** Output smoothing policy for state-like fields */
+export type SmoothingPolicy =
+  | { kind: 'consecutive_confirmations'; n: number }
+  | { kind: 'window_majority'; window_secs: number }
+
+/** Structured (L0) runtime tuning */
+export interface OperatorConfig {
+  debounce_secs?: number
+  smoothing?: SmoothingPolicy
+  max_calls_per_day?: number
+  timeout_secs?: number
+  consecutive_failure_threshold?: number
+}
+
+export type AgentExecutionMode = 'focused' | 'free' | 'structured'
+
 export interface CreateAgentRequest {
   name: string
   description?: string
@@ -248,10 +283,14 @@ export interface CreateAgentRequest {
   priority?: number
   /** Context window size (default: 10) */
   context_window_size?: number
-  /** Execution mode: "focused" for bound-resource agents, "free" for unrestricted tool-calling */
-  execution_mode?: 'focused' | 'free'
+  /** Execution mode: "focused" for bound-resource agents, "free" for unrestricted tool-calling, "structured" for L0 extraction */
+  execution_mode?: AgentExecutionMode
   /** Custom system prompt override */
   system_prompt?: string
+  /** Structured (L0) output contract */
+  output_schema?: OperatorField[]
+  /** Structured (L0) runtime tuning */
+  operator_config?: OperatorConfig
 }
 
 /**
@@ -330,10 +369,14 @@ export interface UpdateAgentRequest {
   priority?: number
   /** Context window size in tokens (default: 8192) */
   context_window_size?: number
-  /** Execution mode: "focused" for bound-resource agents, "free" for unrestricted tool-calling */
-  execution_mode?: 'focused' | 'free'
+  /** Execution mode: "focused" for bound-resource agents, "free" for unrestricted tool-calling, "structured" for L0 extraction */
+  execution_mode?: AgentExecutionMode
   /** Custom system prompt override */
   system_prompt?: string
+  /** Structured (L0) output contract */
+  output_schema?: OperatorField[]
+  /** Structured (L0) runtime tuning */
+  operator_config?: OperatorConfig
 }
 
 /**
