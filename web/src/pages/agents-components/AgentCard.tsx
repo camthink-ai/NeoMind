@@ -49,15 +49,6 @@ interface AgentCardProps {
   onClick: () => void
 }
 
-/** Health dot — quieter than an icon; the tinted icon block already carries status color. */
-const STATUS_DOT: Record<string, string> = {
-  Active: "bg-success",
-  Executing: "bg-info animate-pulse",
-  Error: "bg-error",
-  Paused: "bg-muted-foreground",
-  Completed: "bg-success",
-}
-
 export function AgentCard({
   agent,
   onToggleStatus,
@@ -143,7 +134,6 @@ export function AgentCard({
           {isError && (
             <AlertTriangle className="h-4 w-4 text-error" aria-label={t('agents:status.error')} />
           )}
-          <span className={cn("h-2 w-2 rounded-full", STATUS_DOT[agent.status] ?? STATUS_DOT.Paused)} />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <IconButton

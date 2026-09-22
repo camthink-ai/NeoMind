@@ -119,6 +119,8 @@ fn infer_resource_type_from_id(resource_id: &str) -> ResourceType {
                 ResourceType::ExtensionMetric
             }
             neomind_core::datasource::DataSourceType::Transform => ResourceType::DataStream,
+            // An agent's published field, bound as an input to another agent.
+            neomind_core::datasource::DataSourceType::Ai => ResourceType::Metric,
         }
     } else if let Some(_ds_id) = DataSourceId::parse_extension_command(resource_id) {
         // Four-part format: extension:id:command:field
@@ -151,6 +153,8 @@ struct AgentDto {
     name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<String>,
+    /// The agent's instruction — the card's hero fallback before first run
+    user_prompt: String,
     status: String,
     created_at: String,
     last_execution_at: Option<String>,
@@ -604,6 +608,7 @@ impl From<AiAgent> for AgentDto {
             id: agent.id,
             name: agent.name,
             description: agent.description,
+            user_prompt: agent.user_prompt,
             status: status_to_string(&agent.status).to_string(),
             created_at: format_datetime(agent.created_at),
             last_execution_at: agent.last_execution_at.map(format_datetime),
