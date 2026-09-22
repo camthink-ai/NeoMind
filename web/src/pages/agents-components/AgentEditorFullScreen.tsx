@@ -1570,17 +1570,27 @@ export function AgentEditorFullScreen({
                 <Collapsible>
                   <CollapsibleTrigger className="flex w-full items-center justify-between py-1 text-left text-xs text-muted-foreground">
                     <span>
-                      {tAgent('creator.structured.guardrailSummary', {
-                        debounce: operatorConfig.debounce_secs ?? 30,
-                        timeout: operatorConfig.timeout_secs ?? 60,
-                        threshold: operatorConfig.consecutive_failure_threshold ?? 3,
-                        cap: operatorConfig.max_calls_per_day ?? '∞',
-                      })}
+                      {isStructuredMode
+                        ? tAgent('creator.structured.guardrailSummary', {
+                            debounce: operatorConfig.debounce_secs ?? 30,
+                            timeout: operatorConfig.timeout_secs ?? 60,
+                            threshold: operatorConfig.consecutive_failure_threshold ?? 3,
+                            cap: operatorConfig.max_calls_per_day ?? '∞',
+                          })
+                        : tAgent('creator.structured.guardrailSummaryEveryRun', {
+                            timeout: operatorConfig.timeout_secs ?? 60,
+                            cap: operatorConfig.max_calls_per_day ?? '∞',
+                          })}
                     </span>
                     <span className="text-primary">{tAgent('creator.structured.guardrailToggle')}</span>
                   </CollapsibleTrigger>
                   <CollapsibleContent>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-2 pt-1">
+                <div className={cn("grid grid-cols-1 gap-2 pt-1", isStructuredMode ? "md:grid-cols-4" : "md:grid-cols-2")}>
+                  {/* Debounce and the breaker are L0 semantics — merging input
+                      bursts into one inference, and tripping on repeated
+                      inference failures. A reasoning agent has neither, so it
+                      gets the two that apply to every run: timeout and cap. */}
+                  {isStructuredMode && (
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">{tAgent('creator.structured.debounce')}</Label>
                     <Input
@@ -1591,6 +1601,7 @@ export function AgentEditorFullScreen({
                       }
                     />
                   </div>
+                  )}
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">{tAgent('creator.structured.timeout')}</Label>
                     <Input
@@ -1601,6 +1612,7 @@ export function AgentEditorFullScreen({
                       }
                     />
                   </div>
+                  {isStructuredMode && (
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">{tAgent('creator.structured.threshold')}</Label>
                     <Input
@@ -1614,6 +1626,7 @@ export function AgentEditorFullScreen({
                       }
                     />
                   </div>
+                  )}
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">{tAgent('creator.structured.dailyCap')}</Label>
                     <Input

@@ -409,6 +409,38 @@ impl AgentExecutor {
         self.llm_runtime = Some(llm);
     }
 
+    /// Reserve one of today's runs for this agent.
+    ///
+    /// `max_calls_per_day` caps **runs**, not L0 inferences: a reasoning agent
+    /// costs more per run, not less, so the guardrail has to apply to every
+    /// mode. Counted at the point of execution rather than the scheduler, so
+    /// manual invokes and event triggers count too.
+    fn reserve_daily_call(&self, agent: &AiAgent) -> AgentResult<()> {
+        let Some(cap) = agent
+            .operator_config
+            .as_ref()
+            .and_then(|c| c.max_calls_per_day)
+        else {
+            return Ok(());
+        };
+        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let mut counts = self.daily_call_counts.write();
+        let entry = counts
+            .entry(agent.id.clone())
+            .or_insert_with(|| (today.clone(), 0));
+        if entry.0 != today {
+            *entry = (today.clone(), 0);
+        }
+        if entry.1 >= cap {
+            return Err(crate::error::NeoMindError::Config(format!(
+                "daily run cap reached ({}/{}), agent paused until tomorrow",
+                entry.1, cap
+            )));
+        }
+        entry.1 += 1;
+        Ok(())
+    }
+
     /// Check whether tool mode should be used for this agent execution.
     ///
     /// All agents use tool-calling when the LLM and tool registry support it.
@@ -1218,6 +1250,12 @@ impl AgentExecutor {
         let agent_id = agent.id.clone();
         let execution_id = context.execution_id.clone();
         let mut step_num = 1u32;
+
+        // Before any work: every mode costs a run, and the cap is about how
+        // often this agent may run — not about which branch it takes. Placed
+        // here rather than in the scheduler so manual invokes and event
+        // triggers count too.
+        self.reserve_daily_call(&agent)?;
 
         // Progress: Collecting data
         self.send_progress(

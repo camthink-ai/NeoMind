@@ -292,9 +292,9 @@ async fn collect_extension_sources_parallel(state: &ServerState) -> Vec<UnifiedD
 }
 
 /// Collect data sources from all registered transforms (returns new Vec for parallel use).
-/// Collect data sources from structured (L0) agents: one entry per output
-/// schema field, id `ai:{agent_id}:{field}` — exactly how the executor
-/// publishes them, so the dashboard picker binds to the live namespace.
+/// Collect data sources from agents that declare an output contract: one entry
+/// per field, id `ai:{agent_id}:{field}` — exactly how the executor publishes
+/// them, so the dashboard picker binds to the live namespace.
 async fn collect_ai_sources(state: &ServerState, sources: &mut Vec<UnifiedDataSourceInfo>) {
     let agents = state
         .agents
@@ -304,12 +304,9 @@ async fn collect_ai_sources(state: &ServerState, sources: &mut Vec<UnifiedDataSo
         .unwrap_or_default();
 
     for agent in agents {
-        if !matches!(
-            agent.execution_mode,
-            neomind_storage::agents::ExecutionMode::Structured
-        ) {
-            continue;
-        }
+        // Any agent with an output contract, not just the L0 ones: since M2-2 a
+        // reasoning agent publishes its fields too, and a field the picker
+        // refuses to list is a field nothing can bind to.
         let Some(schema) = agent.output_schema else { continue };
         for field in schema {
             sources.push(UnifiedDataSourceInfo {

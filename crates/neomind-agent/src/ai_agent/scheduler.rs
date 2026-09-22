@@ -550,50 +550,53 @@ impl AgentScheduler {
                                     "Acquired backend permit"
                                 );
 
-                                // Structured (L0) self-healing + daily budget gate.
+                                // Structured (L0) self-healing gate.
                                 if matches!(
                                     agent.execution_mode,
                                     neomind_storage::agents::ExecutionMode::Structured
-                                ) {
-                                    if agent.status == neomind_storage::AgentStatus::Error {
-                                        let last = agent.last_execution_at.unwrap_or_default();
-                                        let elapsed =
-                                            chrono::Utc::now().timestamp().saturating_sub(last);
-                                        if elapsed < STRUCTURED_CIRCUIT_COOLDOWN_SECS {
-                                            tracing::trace!(
-                                                agent_id = %agent_id,
-                                                elapsed_secs = elapsed,
-                                                "Structured agent in Error — circuit cooldown, skipping tick"
-                                            );
-                                            return;
-                                        }
-                                        tracing::info!(
+                                ) && agent.status == neomind_storage::AgentStatus::Error
+                                {
+                                    let last = agent.last_execution_at.unwrap_or_default();
+                                    let elapsed =
+                                        chrono::Utc::now().timestamp().saturating_sub(last);
+                                    if elapsed < STRUCTURED_CIRCUIT_COOLDOWN_SECS {
+                                        tracing::trace!(
                                             agent_id = %agent_id,
                                             elapsed_secs = elapsed,
-                                            "Structured agent cooldown elapsed — probing once"
+                                            "Structured agent in Error — circuit cooldown, skipping tick"
                                         );
+                                        return;
                                     }
-                                    if let Some(cap) = agent
-                                        .operator_config
-                                        .as_ref()
-                                        .and_then(|c| c.max_calls_per_day)
-                                    {
-                                        let today =
-                                            chrono::Utc::now().format("%Y-%m-%d").to_string();
-                                        let over = executor
-                                            .daily_call_counts
-                                            .read()
-                                            .get(&agent_id)
-                                            .map(|(d, n)| *d == today && *n >= cap)
-                                            .unwrap_or(false);
-                                        if over {
-                                            tracing::debug!(
-                                                agent_id = %agent_id,
-                                                cap,
-                                                "Structured agent daily cap reached — skipping tick"
-                                            );
-                                            return;
-                                        }
+                                    tracing::info!(
+                                        agent_id = %agent_id,
+                                        elapsed_secs = elapsed,
+                                        "Structured agent cooldown elapsed — probing once"
+                                    );
+                                }
+
+                                // The daily cap applies to every mode: it is about
+                                // how often the agent may run, and a reasoning run
+                                // costs more per run, not less.
+                                if let Some(cap) = agent
+                                    .operator_config
+                                    .as_ref()
+                                    .and_then(|c| c.max_calls_per_day)
+                                {
+                                    let today =
+                                        chrono::Utc::now().format("%Y-%m-%d").to_string();
+                                    let over = executor
+                                        .daily_call_counts
+                                        .read()
+                                        .get(&agent_id)
+                                        .map(|(d, n)| *d == today && *n >= cap)
+                                        .unwrap_or(false);
+                                    if over {
+                                        tracing::debug!(
+                                            agent_id = %agent_id,
+                                            cap,
+                                            "Daily run cap reached — skipping tick"
+                                        );
+                                        return;
                                     }
                                 }
 

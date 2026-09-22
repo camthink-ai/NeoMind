@@ -3,8 +3,9 @@
 //! Regression guards for two hand-rolled string→enum mappings that had drifted
 //! from the storage enums the rest of the system agrees on.
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::Json;
+use neomind_api::handlers::data::{list_all_data_sources_handler, ListDataSourcesQuery};
 use neomind_api::handlers::agents::{
     create_agent, get_agent, update_agent, CreateAgentRequest, UpdateAgentRequest,
 };
@@ -116,4 +117,56 @@ async fn test_create_agent_accepts_manual_schedule() {
         "manual",
         "create must accept the on-demand schedule the editor sends"
     );
+}
+
+/// An output contract is no longer structured-only (M2-2), so every agent that
+/// declares one has to appear in the dashboard's data-source picker — not just
+/// the L0 ones. Publishing a field the picker refuses to list is a dead end:
+/// the data lands in telemetry and nothing can bind to it.
+#[tokio::test]
+async fn test_reasoning_agent_output_fields_are_listed_as_data_sources() {
+    let state = create_test_server_state().await;
+    // `free`, not `structured`: the case that used to be filtered out.
+    let id = create_agent_with(&state, json!({ "execution_mode": "free" })).await;
+
+    let listed = list_all_data_sources_handler(
+        State(state.clone()),
+        Query(ListDataSourcesQuery {
+            source_type: Some("ai".to_string()),
+            source: None,
+            search: None,
+            offset: None,
+            limit: None,
+            skip_telemetry: Some(true),
+        }),
+    )
+    .await
+    .expect("data sources must be listable");
+
+    let payload = listed.0.data.expect("handler returns a payload");
+    let ids: Vec<&str> = payload.data.iter().map(|s| s.id.as_str()).collect();
+    assert!(
+        ids.contains(&format!("ai:{id}:missing_count").as_str()),
+        "a reasoning agent's field must be bindable; got {ids:?}"
+    );
+}
+
+/// The most basic agent there is: a prompt and nothing else. The derivation
+/// calls it `focused`, and "focused" means "no commands, no output contract" —
+/// so requiring a resource binding here rejects the form's plainest path.
+#[tokio::test]
+async fn test_create_agent_without_resources_is_allowed() {
+    let state = create_test_server_state().await;
+
+    let request: CreateAgentRequest = serde_json::from_value(json!({
+        "name": "只看一眼",
+        "user_prompt": "看看车间现在有没有异常",
+        "schedule": { "schedule_type": "interval", "interval_seconds": 3600 },
+        "execution_mode": "focused",
+    }))
+    .expect("valid create fixture");
+
+    let _created = create_agent(State(state.clone()), Json(request))
+        .await
+        .expect("a prompt-only agent must be creatable");
 }

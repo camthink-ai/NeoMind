@@ -524,12 +524,13 @@
       "debounce": "Debounce (seconds)",
       "timeout": "Inference timeout (seconds)",
       "threshold": "Circuit-breaker threshold",
-      "dailyCap": "Daily call cap (optional)",
+      "dailyCap": "Daily run cap (optional)",
       "dryRun": "Dry run",
       "dryRunRunning": "Running…",
       "dryRunResultTitle": "Dry-run result",
       "dryRunMeta": "{{sources}} input source(s) · attempt {{attempts}} · nothing saved",
       "guardrailSummary": "Guardrails: debounce {{debounce}}s · timeout {{timeout}}s · breaker {{threshold}} · daily cap {{cap}}",
+      "guardrailSummaryEveryRun": "Guardrails: timeout {{timeout}}s · daily cap {{cap}}",
       "guardrailToggle": "Adjust"
     },
     "advanced": {

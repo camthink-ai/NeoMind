@@ -1005,19 +1005,6 @@ pub async fn create_agent(
         }
     }
 
-    // Validate execution_mode and check Focused mode requires resources
-    let has_resources = request.resources.as_ref().is_some_and(|r| !r.is_empty())
-        || !request.device_ids.is_empty()
-        || !request.metrics.is_empty()
-        || !request.commands.is_empty();
-
-    let execution_mode = request.execution_mode.as_deref();
-    if execution_mode == Some("focused") && !has_resources {
-        return Err(ErrorResponse::validation(
-            "Focused mode requires at least one resource binding",
-        ));
-    }
-
     // Convert request to storage types
     let schedule_type = match request.schedule.schedule_type.as_str() {
         "interval" => ScheduleType::Interval,
@@ -1115,17 +1102,15 @@ pub async fn create_agent(
         }
     }
 
-    // Validate execution_mode and check Focused mode requires resources
+    // Map the editor's mode string. A `focused` agent may bind no resources:
+    // "focused" now means "no commands and no output contract" — the plainest
+    // agent there is — so requiring a binding here rejected the form's most
+    // basic path.
     let execution_mode = match request.execution_mode.as_deref() {
         Some("free") | Some("react") => neomind_storage::agents::ExecutionMode::Free,
         Some("structured") => neomind_storage::agents::ExecutionMode::Structured,
         _ => neomind_storage::agents::ExecutionMode::Focused,
     };
-    if execution_mode == neomind_storage::agents::ExecutionMode::Focused && resources.is_empty() {
-        return Err(ErrorResponse::bad_request(
-            "Focused mode requires at least one resource binding".to_string(),
-        ));
-    }
 
     // Create the agent
     let agent = AiAgent {
@@ -1625,16 +1610,6 @@ pub async fn update_agent(
             "structured" => neomind_storage::agents::ExecutionMode::Structured,
             _ => neomind_storage::agents::ExecutionMode::Focused,
         };
-    }
-
-    // Validate: Focused mode requires resources
-    // Check both the (possibly updated) execution_mode and resources
-    if agent.execution_mode == neomind_storage::agents::ExecutionMode::Focused
-        && agent.resources.is_empty()
-    {
-        return Err(ErrorResponse::bad_request(
-            "Focused mode requires at least one resource binding".to_string(),
-        ));
     }
 
     agent.updated_at = chrono::Utc::now().timestamp();

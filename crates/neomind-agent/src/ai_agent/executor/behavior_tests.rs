@@ -590,38 +590,51 @@ async fn structured_mode_without_schema_is_rejected() {
     assert!(err.to_string().contains("output_schema"), "err: {}", err);
 }
 
+/// The cap limits how often the agent may RUN, so it has to bite in every mode.
+/// This drives the run entry point for a *focused* agent — the branch that used
+/// to be uncapped — and expects the second run of the day to be refused.
 #[tokio::test]
-async fn structured_mode_daily_budget_caps_inferences() {
-    let (mut executor, mut agent, _registry) = build_harness().await;
-    agent.execution_mode = neomind_storage::agents::ExecutionMode::Structured;
-    agent.output_schema = Some(vec![neomind_storage::OperatorField {
-        name: "count".into(),
-        field_type: neomind_storage::OperatorFieldType::Number,
-        unit: None,
-        description: None,
-    }]);
+async fn daily_run_cap_applies_to_every_mode() {
+    let (mut executor, mut agent, registry) = build_harness().await;
+    executor.set_tool_registry(registry);
+    agent.execution_mode = ExecutionMode::Focused;
+    agent.parsed_intent = Some(neomind_storage::ParsedIntent {
+        intent_type: neomind_storage::IntentType::Monitoring,
+        target_metrics: vec![],
+        conditions: vec![],
+        actions: vec![],
+        confidence: 0.9,
+    });
     agent.operator_config = Some(neomind_storage::OperatorConfig {
         debounce_secs: 30,
         max_calls_per_day: Some(1),
         timeout_secs: 60,
         consecutive_failure_threshold: 3,
     });
-    let rt: Arc<dyn LlmRuntime> = Arc::new(MockLlmRuntime::new(vec![
-        MockResponse::text(r#"{"count": 1}"#),
-        MockResponse::text(r#"{"count": 2}"#),
-    ]));
+    let rt: Arc<dyn LlmRuntime> = Arc::new(
+        MockLlmRuntime::new(vec![
+            MockResponse::text("nothing unusual"),
+            MockResponse::text("nothing unusual"),
+        ])
+        .with_function_calling(),
+    );
     executor.set_llm_runtime(rt).await;
+    executor.store().save_agent(&agent).await.expect("seed store");
 
-    // First call of the day: allowed.
-    let first = executor
-        .execute_structured("exec-budget-1", &agent, vec![])
-        .await;
-    assert!(first.is_ok(), "first inference within cap: {:?}", first.err());
+    // First run of the day: allowed.
+    let first = executor.execute_agent(agent.clone(), None, None).await;
+    assert!(first.is_ok(), "first run within cap: {:?}", first.err());
 
-    // Second call the same day: soft-fails with the cap message.
+    // Second run the same day: refused at the run entry point. The executor
+    // reports failures as a failed RECORD rather than an Err, so assert there.
     let second = executor
-        .execute_structured("exec-budget-2", &agent, vec![])
-        .await;
-    let err = second.expect_err("cap must block the second inference");
-    assert!(err.to_string().contains("daily inference cap"), "err: {}", err);
+        .execute_agent(agent, None, None)
+        .await
+        .expect("returns a record");
+    assert_eq!(second.status, neomind_storage::ExecutionStatus::Failed);
+    assert!(
+        second.error.as_deref().unwrap_or_default().contains("daily run cap"),
+        "second run must be refused with the cap message; got {:?}",
+        second.error
+    );
 }

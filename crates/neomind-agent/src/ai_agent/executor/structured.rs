@@ -39,26 +39,6 @@ impl AgentExecutor {
         )
         .await;
 
-        // Daily budget: counted at the moment of inference (manual invoke
-        // counts too — the scheduler gate only pre-skips its own ticks).
-        if let Some(cap) = op.max_calls_per_day {
-            let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-            let mut counts = self.daily_call_counts.write();
-            let entry = counts
-                .entry(agent.id.clone())
-                .or_insert_with(|| (today.clone(), 0));
-            if entry.0 != today {
-                *entry = (today.clone(), 0);
-            }
-            if entry.1 >= cap {
-                return Err(NeoMindError::Config(format!(
-                    "daily inference cap reached ({}/{}), agent paused until tomorrow",
-                    entry.1, cap
-                )));
-            }
-            entry.1 += 1;
-        }
-
         let context = render_context(&data_collected);
         let outcome = self.infer_structured(agent, &schema, op.timeout_secs, &context).await?;
 

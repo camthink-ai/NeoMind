@@ -524,12 +524,13 @@
       "debounce": "防抖（秒）",
       "timeout": "推理超时（秒）",
       "threshold": "熔断阈值（连续失败）",
-      "dailyCap": "每日调用上限（可选）",
+      "dailyCap": "每日运行上限（可选）",
       "dryRun": "试跑一次",
       "dryRunRunning": "试跑中…",
       "dryRunResultTitle": "试跑结果",
       "dryRunMeta": "{{sources}} 个输入源 · 第 {{attempts}} 次尝试 · 未保存任何内容",
       "guardrailSummary": "护栏：防抖 {{debounce}}s · 超时 {{timeout}}s · 熔断 {{threshold}} · 日上限 {{cap}}",
+      "guardrailSummaryEveryRun": "护栏：超时 {{timeout}}s · 日上限 {{cap}}",
       "guardrailToggle": "调整"
     },
     "advanced": {
