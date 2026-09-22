@@ -8,7 +8,6 @@ import { useState, useEffect, useRef } from "react"
 import { useTranslation } from "react-i18next"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { LoadingState } from "@/components/shared/LoadingState"
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import {
@@ -20,7 +19,6 @@ import {
   Clock,
   Activity,
   Brain,
-  Eye,
   Zap,
   BarChart3,
   FileText,
@@ -56,8 +54,6 @@ interface AgentDetailPanelProps {
   inlineMode?: boolean  // When true, used inside dialog (no empty state)
 }
 
-type DetailTab = 'overview' | 'history' | 'memory' | 'messages'
-
 // Role configuration - labels use i18n
 const _ROLE_CONFIG: Record<string, { icon: typeof Activity; color: string }> = {
   Monitor: { icon: Activity, color: 'text-info' },
@@ -76,7 +72,6 @@ export function AgentDetailPanel({
   const { t } = useTranslation(['common', 'agents'])
   const { handleError } = useErrorHandler()
   const isMobile = useIsMobile()
-  const [activeTab, setActiveTab] = useState<DetailTab>('overview')
   const [executions, setExecutions] = useState<AgentExecution[]>([])
   const [executionsLoading, setExecutionsLoading] = useState(false)
   const [memory, setMemory] = useState<AgentMemory | null>(null)
@@ -94,12 +89,12 @@ export function AgentDetailPanel({
     }
   }, [agent?.id])
 
-  // Load memory when memory tab is active
+  // Memory loads with the agent — the panel is a single page now
   useEffect(() => {
-    if (agent && activeTab === 'memory') {
+    if (agent?.id) {
       loadMemory()
     }
-  }, [agent, activeTab])
+  }, [agent?.id])
 
   // Load available resources
   useEffect(() => {
@@ -141,9 +136,7 @@ export function AgentDetailPanel({
             // Clear realtime status - agent's original status will be used
             setRealtimeStatus(null)
             // Reload executions silently to include the just-completed one
-            if (activeTab === 'history') {
-              loadExecutions()
-            }
+            loadExecutions()
             // Reload agent data to get updated stats
             api.getAgent(currentAgentId).then(() => {
               // Notify parent to refresh if needed
@@ -237,46 +230,10 @@ export function AgentDetailPanel({
         />
       )}
 
-      {/* Tabs */}
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as DetailTab)} className="flex flex-col flex-1 min-h-0">
-        <div className={cn("pt-3", isMobile ? "px-2" : "px-4")}>
-          <TabsList className={cn(
-            isMobile
-              ? "grid grid-cols-4 gap-1 h-auto w-full p-0.5 rounded-lg border border-border bg-card"
-              : "flex h-9 w-full items-end p-0 bg-transparent"
-          )}>
-            {([
-              { value: 'overview', Icon: Eye, label: t('agents:detail.overview') },
-              { value: 'history', Icon: Clock, label: t('agents:detail.history') },
-              { value: 'memory', Icon: Brain, label: t('agents:detail.memory') },
-              { value: 'messages', Icon: MessageSquare, label: t('agents:detail.messages') },
-            ] as const).map(({ value, Icon, label }) => (
-              <TabsTrigger
-                key={value}
-                value={value}
-                className={cn(
-                  isMobile
-                    ? "flex flex-col items-center justify-center gap-1 py-1.5 px-1 min-w-0 rounded-md text-mini leading-none data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-none"
-                    : "h-full rounded-none border-b-2 border-transparent px-3 text-sm text-muted-foreground transition-colors hover:text-foreground data-[state=active]:border-foreground data-[state=active]:text-foreground data-[state=active]:shadow-none focus-visible:outline-none focus-visible:ring-0"
-                )}
-              >
-                {isMobile ? (
-                  <>
-                    <Icon className="h-4 w-4" />
-                    <span className="w-full truncate text-center">{label}</span>
-                  </>
-                ) : label}
-              </TabsTrigger>
-            ))}
-        </TabsList>
-        </div>
+      {/* Single content page — no tabs; sections separated by headers */}
+      <ScrollArea className="flex-1 min-h-0">
+        <div className={cn("space-y-5", isMobile ? "px-2 py-3" : "px-4 py-3")}>
 
-        {/* Tab Contents */}
-        <div className="flex-1 min-h-0">
-          {/* Overview Tab */}
-          <TabsContent value="overview" className={cn("h-full m-0 pt-2", isMobile ? "p-2" : "p-4")}>
-            <ScrollArea className="h-full">
-              <div className="space-y-4 pr-2">
                 {/* Profile row — the compiled axes in customer language */}
                 <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                   {(() => {
@@ -420,23 +377,20 @@ export function AgentDetailPanel({
                     <>{' · '}{t('agents:lastExecution')} {new Date(agent.last_execution_at).toLocaleString()}</>
                   )}
                 </p>
-              </div>
-            </ScrollArea>
-          </TabsContent>
 
-          {/* History Tab */}
-          <TabsContent value="history" className="h-full m-0">
-            <AgentExecutionTimeline
+          {/* ── Execution history ── */}
+          <DetailSection title={t('agents:detail.history')} icon={History}>
+<AgentExecutionTimeline
               executions={executions}
               loading={executionsLoading}
               agentId={agent.id}
               onViewExecutionDetail={onViewExecutionDetail}
             />
-          </TabsContent>
+          </DetailSection>
 
-          {/* Memory Tab */}
-          <TabsContent value="memory" className={cn("h-full m-0 pt-2", isMobile ? "p-2" : "p-4")}>
-            <div className="mb-3 flex items-center gap-1.5 rounded-md bg-muted-30 px-2 py-1.5 text-xs text-muted-foreground">
+          {/* ── Memory ── */}
+          <DetailSection title={t('agents:detail.memory')} icon={Brain}>
+<div className="mb-3 flex items-center gap-1.5 rounded-md bg-muted-30 px-2 py-1.5 text-xs text-muted-foreground">
               {(() => {
                 const isTool = (agent.memory_mode ?? (agent.execution_mode === 'structured' ? 'tool' : 'assistant')) === 'tool'
                 const MemIcon = isTool ? Wrench : BrainCircuit
@@ -449,20 +403,20 @@ export function AgentDetailPanel({
               })()}
             </div>
             <MemoryContent memory={memory} loading={memoryLoading} />
-          </TabsContent>
+          </DetailSection>
 
-          {/* Messages Tab */}
-          <TabsContent value="messages" className="h-full m-0">
-            <AgentUserMessages
+          {/* ── Messages ── */}
+          <DetailSection title={t('agents:detail.messages')} icon={MessageSquare}>
+<AgentUserMessages
               agentId={agent.id}
               onMessageAdded={() => {
                 // Refresh agent data to show updated message count
                 onRefresh()
               }}
             />
-          </TabsContent>
+          </DetailSection>
         </div>
-      </Tabs>
+      </ScrollArea>
     </div>
   )
 }
