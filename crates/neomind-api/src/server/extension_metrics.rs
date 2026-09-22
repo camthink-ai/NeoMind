@@ -18,6 +18,7 @@ use tracing::{debug, info, warn};
 
 use neomind_core::datasource::DataSourceId;
 
+use crate::automation::metric_publish;
 // Use ExtensionMetricsStorage from extension_state instead of device TimeSeriesStorage
 use crate::server::state::ExtensionMetricsStorage;
 
@@ -441,21 +442,11 @@ impl ExtensionMetricsCollector {
 
                         // Publish ExtensionOutput event to trigger event-driven agents
                         if let Some(ref bus) = self.event_bus {
-                            let core_value = match &value_for_event {
-                                neomind_devices::mdl::MetricValue::Integer(n) => {
-                                    neomind_core::MetricValue::Integer(*n)
-                                }
-                                neomind_devices::mdl::MetricValue::Float(f) => {
-                                    neomind_core::MetricValue::Float(*f)
-                                }
-                                neomind_devices::mdl::MetricValue::String(s) => {
-                                    neomind_core::MetricValue::String(s.clone())
-                                }
-                                neomind_devices::mdl::MetricValue::Boolean(b) => {
-                                    neomind_core::MetricValue::Boolean(*b)
-                                }
-                                other => neomind_core::MetricValue::String(format!("{:?}", other)),
-                            };
+                            // Unified conversion: the producer above only emits
+                            // Float/String/Boolean device values, so the shared
+                            // converter's Array/Binary/Null arms are unreachable here.
+                            let core_value =
+                                metric_publish::devices_to_core(&value_for_event);
                             bus.publish_sync(neomind_core::NeoMindEvent::ExtensionOutput {
                                 extension_id: extension_id.clone(),
                                 output_name: metric_value.name.clone(),

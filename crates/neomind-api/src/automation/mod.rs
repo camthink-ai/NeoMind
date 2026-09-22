@@ -11,6 +11,7 @@
 pub mod device_type_generator;
 pub mod discovery;
 pub mod error;
+pub mod metric_publish;
 pub mod output_registry;
 pub mod store;
 pub mod transform;

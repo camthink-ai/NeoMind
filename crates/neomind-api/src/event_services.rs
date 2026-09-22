@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::automation::metric_publish::VirtualMetricPublisher;
 use crate::automation::{store::SharedAutomationStore, TransformEngine};
 use neomind_core::eventbus::EventBus;
 use neomind_core::{MetricValue, NeoMindEvent};
@@ -323,160 +324,36 @@ impl TransformEventService {
                                         }
 
                                         // Publish transformed metrics back to event bus AND store to telemetry
+                                        let publisher = VirtualMetricPublisher {
+                                            event_bus: event_bus_clone.clone(),
+                                            time_series: time_series_storage_inner.clone(),
+                                            value_provider: value_provider_clone.clone(),
+                                            rule_engine: rule_engine_clone.clone(),
+                                        };
                                         for transformed_metric in result.metrics {
-                                            // Use storage_device_id() ("transform:{transform_id}") as device_id
-                                            // so the event is consistent with time-series storage namespace,
-                                            // frontend fetch path, and rule engine data source filters.
-                                            // The transform trigger handler (above) skips is_virtual metrics,
-                                            // so this won't cause feedback loops.
-                                            let storage_device_id =
-                                                transformed_metric.storage_device_id();
-                                            let _ = event_bus_clone
-                                                .publish(NeoMindEvent::DeviceMetric {
-                                                    device_id: storage_device_id.clone(),
-                                                    metric: transformed_metric.metric.clone(),
-                                                    value: transformed_metric.value.clone(),
-                                                    timestamp: transformed_metric.timestamp,
-                                                    quality: transformed_metric.quality,
-                                                    is_virtual: Some(true),
-                                                })
-                                                .await;
-
-                                            // Also publish in the original device namespace
-                                            // (device:{device_id}:{metric}) so event-driven consumers that
-                                            // select the device's virtual metrics — e.g. data-push targets
-                                            // filtering on `device:9999:virtual.*` — actually receive them.
-                                            // The dual-write below stores these under device:{id} for REST
-                                            // discovery, but the event above was only published under
-                                            // transform:{id}, so device-namespace filters never matched and
-                                            // the virtual metrics were never pushed. is_virtual keeps this
-                                            // feedback-safe (transform trigger + frontend WS both skip
-                                            // is_virtual events).
-                                            let _ = event_bus_clone
-                                                .publish(NeoMindEvent::DeviceMetric {
-                                                    device_id: device_id_clone.clone(),
-                                                    metric: transformed_metric.metric.clone(),
-                                                    value: transformed_metric.value.clone(),
-                                                    timestamp: transformed_metric.timestamp,
-                                                    quality: transformed_metric.quality,
-                                                    is_virtual: Some(true),
-                                                })
-                                                .await;
-
-                                            // Store to time series storage.
-                                            // Dual-write: transform namespace (for Data Explorer, rules, useDataSource)
-                                            // AND original device namespace (so GET /api/devices/:id/current and
-                                            // community components using fetchDeviceValues can discover virtual metrics).
-                                            // The frontend Redux store skips is_virtual events, so this does NOT
-                                            // pollute deviceTelemetry — it only makes metrics queryable via REST.
-                                            let storage_value = match &transformed_metric.value {
-                                                MetricValue::Float(f) => {
-                                                    neomind_devices::MetricValue::Float(*f)
-                                                }
-                                                MetricValue::Integer(i) => {
-                                                    neomind_devices::MetricValue::Integer(*i)
-                                                }
-                                                MetricValue::Boolean(b) => {
-                                                    neomind_devices::MetricValue::Boolean(*b)
-                                                }
-                                                MetricValue::String(s) => {
-                                                    neomind_devices::MetricValue::String(s.clone())
-                                                }
-                                                MetricValue::Json(v) => {
-                                                    neomind_devices::MetricValue::String(
-                                                        v.to_string(),
-                                                    )
-                                                }
-                                            };
-                                            let data_point = neomind_devices::DataPoint {
-                                                timestamp: transformed_metric.timestamp,
-                                                value: storage_value,
-                                                quality: transformed_metric.quality,
-                                            };
-                                            // Primary: transform namespace
-                                            if let Err(e) = time_series_storage_inner
-                                                .write(
-                                                    &storage_device_id,
+                                            // Primary namespace "transform:{transform_id}" is
+                                            // consistent with storage, frontend fetch path, and rule
+                                            // data-source filters; the alias "device:{id}" namespace
+                                            // feeds REST discovery and device-namespace consumers
+                                            // (e.g. data-push `device:…:virtual.*` filters).
+                                            // publish_virtual_metric marks the events is_virtual,
+                                            // which keeps this feedback-safe (the transform trigger
+                                            // above and the frontend WS both skip is_virtual).
+                                            let rule_source = transformed_metric
+                                                .transform_id
+                                                .as_deref()
+                                                .map(|tid| ("transform", tid));
+                                            publisher
+                                                .publish_virtual_metric(
+                                                    &transformed_metric.storage_device_id(),
+                                                    Some(&format!("device:{}", device_id_clone)),
                                                     &transformed_metric.metric,
-                                                    data_point.clone(),
+                                                    &transformed_metric.value,
+                                                    transformed_metric.timestamp,
+                                                    transformed_metric.quality,
+                                                    rule_source,
                                                 )
-                                                .await
-                                            {
-                                                tracing::warn!(
-                                                    device_id = %storage_device_id,
-                                                    metric = %transformed_metric.metric,
-                                                    error = %e,
-                                                    "Failed to store transformed metric to time series storage"
-                                                );
-                                            }
-
-                                            // Secondary: original device namespace (for REST API discovery)
-                                            let device_source_id =
-                                                format!("device:{}", device_id_clone);
-                                            if let Err(e) = time_series_storage_inner
-                                                .write(
-                                                    &device_source_id,
-                                                    &transformed_metric.metric,
-                                                    data_point,
-                                                )
-                                                .await
-                                            {
-                                                tracing::debug!(
-                                                    device_id = %device_source_id,
-                                                    metric = %transformed_metric.metric,
-                                                    error = %e,
-                                                    "Failed to store transformed metric to device namespace (non-critical)"
-                                                );
-                                            }
-
-                                            tracing::trace!(
-                                                device_id = %storage_device_id,
-                                                metric = %transformed_metric.metric,
-                                                value = ?transformed_metric.value,
-                                                "Published and stored transformed metric"
-                                            );
-
-                                            // Update rule engine value provider + notify engine
-                                            // so that rules referencing `transform:{transform_id}:{metric}` fire.
-                                            // Both the DeviceMetric event and the time-series storage now use
-                                            // the "transform:{id}" namespace, consistent with rule data source filters.
-                                            if let Some(ref transform_id) =
-                                                transformed_metric.transform_id
-                                            {
-                                                let rv = match &transformed_metric.value {
-                                                    MetricValue::Float(v) => {
-                                                        neomind_rules::RuleValue::Number(*v)
-                                                    }
-                                                    MetricValue::Integer(v) => {
-                                                        neomind_rules::RuleValue::Number(*v as f64)
-                                                    }
-                                                    MetricValue::Boolean(v) => {
-                                                        neomind_rules::RuleValue::Number(if *v {
-                                                            1.0
-                                                        } else {
-                                                            0.0
-                                                        })
-                                                    }
-                                                    MetricValue::String(s) => {
-                                                        neomind_rules::RuleValue::Text(s.clone())
-                                                    }
-                                                    MetricValue::Json(v) => {
-                                                        neomind_rules::RuleValue::Text(
-                                                            v.to_string(),
-                                                        )
-                                                    }
-                                                };
-                                                value_provider_clone
-                                                    .update_rule_value(
-                                                        "transform",
-                                                        transform_id,
-                                                        &transformed_metric.metric,
-                                                        rv.clone(),
-                                                    )
-                                                    .await;
-                                                let ds = neomind_core::datasource::DataSourceId::transform(transform_id, &transformed_metric.metric);
-                                                rule_engine_clone.on_data_update(&ds, rv).await;
-                                            }
+                                                .await;
                                         }
                                     }
 

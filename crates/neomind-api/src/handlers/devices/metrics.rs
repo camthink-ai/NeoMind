@@ -11,6 +11,7 @@ use serde_json::json;
 use neomind_devices::{DataPoint, MetricValue};
 
 use super::models::SendCommandRequest;
+use crate::automation::metric_publish;
 use crate::handlers::{
     common::{ok, HandlerResult},
     ServerState,
@@ -141,21 +142,7 @@ pub async fn write_metric_handler(
     // device's last_seen never advanced (a REST-fed device showed offline
     // despite fresh data).
     if let Some(bus) = &state.core.event_bus {
-        let core_value = match &metric_value {
-            MetricValue::Float(f) => neomind_core::MetricValue::Float(*f),
-            MetricValue::Integer(i) => neomind_core::MetricValue::Integer(*i),
-            MetricValue::Boolean(b) => neomind_core::MetricValue::Boolean(*b),
-            MetricValue::String(s) => neomind_core::MetricValue::String(s.clone()),
-            // devices-side has no Json variant; Binary/Null degrade to a JSON
-            // null payload (same degradation the webhook adapter applies);
-            // Array serializes into the JSON variant.
-            MetricValue::Array(items) => neomind_core::MetricValue::Json(
-                serde_json::to_value(items).unwrap_or(serde_json::json!(null)),
-            ),
-            MetricValue::Binary(_) | MetricValue::Null => {
-                neomind_core::MetricValue::Json(serde_json::json!(null))
-            }
-        };
+        let core_value = metric_publish::devices_to_core(&metric_value);
         let event_device_id = device_id.clone();
         let event_metric = req.metric.clone();
         let event_ts = timestamp_secs;
