@@ -29,7 +29,7 @@ export function getImageDisplaySchema(config: any, ctx: SchemaContext, u: Update
                   onValueChange={updateConfig('src')}
                   dataSource={config.dataSource}
                   onDataSourceChange={updateDataSource}
-                  allowedTypes={['device-metric', 'system', 'extension', 'transform']}
+                  allowedTypes={['device-metric', 'system', 'extension', 'transform', 'ai']}
                   label={t('visualDashboard.imageSource')}
                   placeholder={t('visualDashboard.urlPlaceholder')}
                 />
@@ -144,7 +144,7 @@ export function getImageHistorySchema(config: any, ctx: SchemaContext, u: Update
               props: {
                 dataSource: config.dataSource,
                 onChange: updateDataSource,
-                allowedTypes: ['device-metric', 'system', 'extension', 'transform'],
+                allowedTypes: ['device-metric', 'system', 'extension', 'transform', 'ai'],
               },
             },
           ],
@@ -306,7 +306,7 @@ export function getWebDisplaySchema(config: any, ctx: SchemaContext, u: Updaters
                   onValueChange={updateConfig('src')}
                   dataSource={config.dataSource}
                   onDataSourceChange={updateDataSource}
-                  allowedTypes={['device-metric', 'system', 'extension', 'transform']}
+                  allowedTypes={['device-metric', 'system', 'extension', 'transform', 'ai']}
                   label={t('webDisplay.websiteUrl', 'Website URL')}
                   placeholder={t('placeholders.urlExample')}
                 />
@@ -408,7 +408,7 @@ export function getMarkdownDisplaySchema(config: any, ctx: SchemaContext, u: Upd
                   onValueChange={updateConfig('content')}
                   dataSource={config.dataSource}
                   onDataSourceChange={updateDataSource}
-                  allowedTypes={['device-metric', 'system', 'extension', 'transform']}
+                  allowedTypes={['device-metric', 'system', 'extension', 'transform', 'ai']}
                   label={t('visualDashboard.markdownContent')}
                   placeholder={t('visualDashboard.markdownPlaceholder')}
                   rows={6}

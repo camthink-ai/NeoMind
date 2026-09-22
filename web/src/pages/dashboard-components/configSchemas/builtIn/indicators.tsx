@@ -143,7 +143,7 @@ export function getValueCardSchema(config: any, ctx: SchemaContext, u: Updaters)
               props: {
                 dataSource: config.dataSource,
                 onChange: updateDataSource,
-                allowedTypes: ['device-metric', 'system', 'extension', 'transform'],
+                allowedTypes: ['device-metric', 'system', 'extension', 'transform', 'ai'],
               },
             },
           ],
@@ -273,7 +273,7 @@ export function getSparklineSchema(config: any, ctx: SchemaContext, u: Updaters)
               props: {
                 dataSource: config.dataSource,
                 onChange: updateDataSource,
-                allowedTypes: ['device-metric', 'system', 'extension', 'transform'],
+                allowedTypes: ['device-metric', 'system', 'extension', 'transform', 'ai'],
               },
             },
           ],
@@ -424,7 +424,7 @@ export function getProgressBarSchema(config: any, ctx: SchemaContext, u: Updater
               props: {
                 dataSource: config.dataSource,
                 onChange: updateDataSource,
-                allowedTypes: ['device-metric', 'system', 'extension', 'transform'],
+                allowedTypes: ['device-metric', 'system', 'extension', 'transform', 'ai'],
               },
             },
           ],
@@ -535,7 +535,7 @@ export function getLEDIndicatorSchema(config: any, ctx: SchemaContext, u: Update
               props: {
                 dataSource: config.dataSource,
                 onChange: updateDataSource,
-                allowedTypes: ['device-metric', 'system', 'extension', 'transform'],
+                allowedTypes: ['device-metric', 'system', 'extension', 'transform', 'ai'],
               },
             },
           ],
