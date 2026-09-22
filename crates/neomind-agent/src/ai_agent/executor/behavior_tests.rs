@@ -334,3 +334,40 @@ async fn structured_mode_without_schema_is_rejected() {
         .expect_err("missing schema must fail");
     assert!(err.to_string().contains("output_schema"), "err: {}", err);
 }
+
+#[tokio::test]
+async fn structured_mode_daily_budget_caps_inferences() {
+    let (mut executor, mut agent, _registry) = build_harness().await;
+    agent.execution_mode = neomind_storage::agents::ExecutionMode::Structured;
+    agent.output_schema = Some(vec![neomind_storage::OperatorField {
+        name: "count".into(),
+        field_type: neomind_storage::OperatorFieldType::Number,
+        unit: None,
+        description: None,
+    }]);
+    agent.operator_config = Some(neomind_storage::OperatorConfig {
+        debounce_secs: 30,
+        smoothing: None,
+        max_calls_per_day: Some(1),
+        timeout_secs: 60,
+        consecutive_failure_threshold: 3,
+    });
+    let rt: Arc<dyn LlmRuntime> = Arc::new(MockLlmRuntime::new(vec![
+        MockResponse::text(r#"{"count": 1}"#),
+        MockResponse::text(r#"{"count": 2}"#),
+    ]));
+    executor.set_llm_runtime(rt).await;
+
+    // First call of the day: allowed.
+    let first = executor
+        .execute_structured("exec-budget-1", &agent, vec![])
+        .await;
+    assert!(first.is_ok(), "first inference within cap: {:?}", first.err());
+
+    // Second call the same day: soft-fails with the cap message.
+    let second = executor
+        .execute_structured("exec-budget-2", &agent, vec![])
+        .await;
+    let err = second.expect_err("cap must block the second inference");
+    assert!(err.to_string().contains("daily inference cap"), "err: {}", err);
+}

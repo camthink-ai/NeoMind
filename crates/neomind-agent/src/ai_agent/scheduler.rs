@@ -246,6 +246,11 @@ pub struct ScheduledTask {
 }
 
 /// Agent scheduler for executing agents on schedule.
+/// Structured (L0) circuit-breaker cooldown: seconds in Error before the
+/// scheduler lets a probe execution through. Self-healing — structured
+/// agents never stay dead the way legacy Error agents do.
+const STRUCTURED_CIRCUIT_COOLDOWN_SECS: i64 = 300;
+
 pub struct AgentScheduler {
     /// Scheduled tasks
     tasks: Arc<RwLock<HashMap<String, ScheduledTask>>>,
@@ -544,6 +549,53 @@ impl AgentScheduler {
                                     backend_id = %backend_id,
                                     "Acquired backend permit"
                                 );
+
+                                // Structured (L0) self-healing + daily budget gate.
+                                if matches!(
+                                    agent.execution_mode,
+                                    neomind_storage::agents::ExecutionMode::Structured
+                                ) {
+                                    if agent.status == neomind_storage::AgentStatus::Error {
+                                        let last = agent.last_execution_at.unwrap_or_default();
+                                        let elapsed =
+                                            chrono::Utc::now().timestamp().saturating_sub(last);
+                                        if elapsed < STRUCTURED_CIRCUIT_COOLDOWN_SECS {
+                                            tracing::trace!(
+                                                agent_id = %agent_id,
+                                                elapsed_secs = elapsed,
+                                                "Structured agent in Error — circuit cooldown, skipping tick"
+                                            );
+                                            return;
+                                        }
+                                        tracing::info!(
+                                            agent_id = %agent_id,
+                                            elapsed_secs = elapsed,
+                                            "Structured agent cooldown elapsed — probing once"
+                                        );
+                                    }
+                                    if let Some(cap) = agent
+                                        .operator_config
+                                        .as_ref()
+                                        .and_then(|c| c.max_calls_per_day)
+                                    {
+                                        let today =
+                                            chrono::Utc::now().format("%Y-%m-%d").to_string();
+                                        let over = executor
+                                            .daily_call_counts
+                                            .read()
+                                            .get(&agent_id)
+                                            .map(|(d, n)| *d == today && *n >= cap)
+                                            .unwrap_or(false);
+                                        if over {
+                                            tracing::debug!(
+                                                agent_id = %agent_id,
+                                                cap,
+                                                "Structured agent daily cap reached — skipping tick"
+                                            );
+                                            return;
+                                        }
+                                    }
+                                }
 
                                 let max_retries = agent.max_retries;
                                 let consecutive = agent.consecutive_failures;

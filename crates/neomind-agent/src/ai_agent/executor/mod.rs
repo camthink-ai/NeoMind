@@ -320,6 +320,10 @@ pub struct AgentExecutor {
     /// Track recent executions to prevent duplicates (agent_id, device_id -> timestamp)
     /// Deduplicates by device only, not by individual metrics
     pub(crate) recent_executions: Arc<RwLock<HashMap<String, i64>>>,
+    /// Structured (L0) daily inference budget: agent_id -> (YYYY-MM-DD, calls).
+    /// In-memory v1 — resets on restart, which only ever grants extra calls
+    /// for one day; the scheduler gate reads it, execute_structured increments.
+    pub(crate) daily_call_counts: parking_lot::RwLock<HashMap<String, (String, u32)>>,
     /// Phase 3.3: Extension registry for dynamic tool loading
     pub(crate) extension_registry:
         Option<Arc<neomind_core::extension::registry::ExtensionRegistry>>,
@@ -368,6 +372,7 @@ impl AgentExecutor {
             llm_backend_store,
             event_agents: Arc::new(RwLock::new(HashMap::new())),
             recent_executions: Arc::new(RwLock::new(HashMap::new())),
+            daily_call_counts: parking_lot::RwLock::new(HashMap::new()),
             extension_registry,
             tool_registry: parking_lot::RwLock::new(config.tool_registry.clone()),
             memory_store: config.memory_store.clone(),
