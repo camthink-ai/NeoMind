@@ -71,7 +71,13 @@ import type {
   ResourceRequest,
   UnifiedDataSourceInfo,
 } from '@/types'
-import { BuilderShell } from '@/components/automation/dialog/BuilderShell'
+import {
+  FullScreenDialog,
+  FullScreenDialogHeader,
+  FullScreenDialogContent,
+  FullScreenDialogMain,
+  FullScreenDialogFooter,
+} from '@/components/automation/dialog'
 import {
   ResourceSelectionDialog,
   ScheduleCard,
@@ -1208,7 +1214,7 @@ export function AgentEditorFullScreen({
             {/* Task-first entry: 客户语言四选一，技术模式隐入幕后 */}
             <div className="space-y-2 min-w-0">
               <Label className="text-sm font-medium">{tAgent('creator.task.question')}</Label>
-              <div className={cn("gap-2", isMobile ? "grid grid-cols-1" : "grid grid-cols-2")}>
+              <div className={cn("gap-3", isMobile ? "grid grid-cols-1" : "grid grid-cols-2 xl:grid-cols-4")}>
                 {([
                   {
                     kind: 'watch', icon: Eye,
@@ -2461,17 +2467,36 @@ export function AgentEditorFullScreen({
 
   return (
     <>
-    <BuilderShell
-      open={open}
-      onOpenChange={onOpenChange}
-      accent="indigo"
-      title={agent ? tAgent('editAgent') : tAgent('createAgent')}
-      icon={<Sparkles className="h-5 w-5" />}
-      config={<div className="space-y-5">{rail.task}{rail.namedesc}{rail.model}{rail.advanced}</div>}
-      workspace={<div className="space-y-5">{canvas.prompt}{canvas.structured}{canvas.schedule}{canvas.resources}</div>}
-      footer={footerNode}
-      mobileConfigLabel={tAgent('creator.task.question')}
-    />
+    <FullScreenDialog open={open} onOpenChange={onOpenChange}>
+      <FullScreenDialogHeader
+        icon={<Sparkles className="h-5 w-5" />}
+        iconBg="bg-accent-purple-light"
+        iconColor="text-accent-purple"
+        title={agent ? tAgent('editAgent') : tAgent('createAgent')}
+        onClose={() => onOpenChange(false)}
+      />
+      <FullScreenDialogContent>
+        <FullScreenDialogMain className="overflow-hidden">
+          <div className="h-full overflow-y-auto">
+            <div className={cn(
+              "space-y-5",
+              isMobile ? "px-4 py-6" : "px-6 py-6 max-w-6xl mx-auto"
+            )}>
+              {rail.task}
+              {rail.namedesc}
+              {rail.model}
+              {canvas.prompt}
+              {canvas.structured}
+              {canvas.schedule}
+              {canvas.resources}
+              {rail.advanced}
+            </div>
+          </div>
+        </FullScreenDialogMain>
+      </FullScreenDialogContent>
+      <FullScreenDialogFooter className="justify-between">{footerNode}</FullScreenDialogFooter>
+    </FullScreenDialog>
+
 
 
       {/* Resource Selection Dialog — sibling of FullScreenDialog to avoid Radix focus conflict (double-click issue) */}
