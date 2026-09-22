@@ -89,7 +89,7 @@ export function AgentUserMessages({ agentId, onMessageAdded, refreshToken = 0 }:
                 {t('common:loading')}
               </div>
             ) : messages.length === 0 ? (
-              <div className="flex flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-border py-10 text-center">
+              <div className="flex min-h-[280px] flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-border text-center">
                 <MessageSquare className="h-8 w-8 text-muted-foreground/40" />
                 <p className="text-sm text-muted-foreground">{t('agents:userMessages.empty')}</p>
                 <p className="text-xs text-muted-foreground/70">{t('agents:userMessages.emptyHint')}</p>
