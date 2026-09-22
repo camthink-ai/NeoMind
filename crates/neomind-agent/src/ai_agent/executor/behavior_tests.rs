@@ -598,6 +598,121 @@ async fn metric_collection_reads_the_key_telemetry_is_written_under() {
     );
 }
 
+
+/// Two fields, one inference, one publish — both must land in telemetry.
+/// (A live instance showed the string field stored and the NUMBER field
+/// missing from the listing; this test decides which side drops it.)
+#[tokio::test]
+async fn two_field_contract_publishes_both_metrics() {
+    let ts = neomind_storage::TimeSeriesStore::memory().expect("memory timeseries");
+    let agent_store = AgentStore::memory().expect("memory agent store");
+    let config = AgentExecutorConfig {
+        store: agent_store,
+        time_series_storage: Some(ts.clone()),
+        device_service: None,
+        event_bus: None,
+        message_manager: None,
+        llm_runtime: None,
+        llm_backend_store: None,
+        extension_registry: None,
+        tool_registry: None,
+        memory_store: None,
+        backend_semaphores: None,
+        skill_registry: None,
+        execution_semaphore: None,
+    };
+    let mut executor = AgentExecutor::new(config).await.expect("executor");
+    let mut agent = AiAgent {
+        id: "two-field-agent".into(),
+        name: "two".into(),
+        description: None,
+        user_prompt: "巡检".into(),
+        llm_backend_id: None,
+        parsed_intent: None,
+        resources: vec![],
+        schedule: AgentSchedule {
+            schedule_type: ScheduleType::Manual,
+            interval_seconds: None,
+            cron_expression: None,
+            timezone: None,
+            event_filter: None,
+        },
+        status: AgentStatus::Active,
+        priority: 128,
+        created_at: 0,
+        updated_at: 0,
+        last_execution_at: None,
+        stats: AgentStats {
+            total_executions: 0,
+            successful_executions: 0,
+            failed_executions: 0,
+            avg_duration_ms: 0,
+            last_duration_ms: Some(0),
+        },
+        memory: AgentMemory {
+            journal: ExecutionJournal::default(),
+            knowledge_files: vec![],
+            updated_at: 0,
+        },
+        conversation_history: vec![],
+        user_messages: vec![],
+        conversation_summary: None,
+        context_window_size: 5,
+        tool_config: None,
+        execution_mode: ExecutionMode::Structured,
+        error_message: None,
+        system_prompt: None,
+        max_retries: 0,
+        consecutive_failures: 0,
+        output_schema: Some(vec![
+            neomind_storage::OperatorField {
+                name: "anomaly_count".into(),
+                field_type: neomind_storage::OperatorFieldType::Number,
+                unit: None,
+                description: None,
+            },
+            neomind_storage::OperatorField {
+                name: "status".into(),
+                field_type: neomind_storage::OperatorFieldType::Enum(vec![
+                    "正常".into(),
+                    "待检".into(),
+                ]),
+                unit: None,
+                description: None,
+            },
+        ]),
+        operator_config: None,
+        memory_mode: None,
+        enable_tool_chaining: false,
+        max_chain_depth: 3,
+    };
+    executor.store().save_agent(&agent).await.expect("seed");
+
+    let rt: Arc<dyn LlmRuntime> = Arc::new(MockLlmRuntime::new(vec![MockResponse::text(
+        r#"{"anomaly_count": 0, "status": "待检"}"#,
+    )]));
+    executor.set_llm_runtime(rt).await;
+
+    let (_dp, record) = executor
+        .execute_structured("exec-two-field", &agent, vec![])
+        .await
+        .expect("run");
+    assert!(record.success_rate >= 1.0);
+
+    ts.flush().expect("flush buffer");
+
+    let ns = "ai:two-field-agent";
+    let num = ts.query_latest(ns, "anomaly_count").await.expect("num");
+    let txt = ts.query_latest(ns, "status").await.expect("txt");
+    assert!(
+        num.is_some(),
+        "the NUMBER field must be stored — live instance showed it missing"
+    );
+    assert_eq!(num.unwrap().value, serde_json::json!(0));
+    assert!(txt.is_some());
+    assert_eq!(txt.unwrap().value, serde_json::json!("待检"));
+}
+
 /// S1 closed: a structured agent with an image input attaches the pixels as a
 /// multimodal part — the base64 never enters the prompt text (where the char
 /// cap truncated it into garbage the model rightly refused to read).
