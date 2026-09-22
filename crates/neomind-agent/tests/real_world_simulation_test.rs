@@ -36,6 +36,16 @@ use neomind_storage::{
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+/// The model the real-backend tests drive. These tests are `#[ignore]`d because
+/// they need a live server; hard-coding the model made them unrunnable the
+/// moment that tag moved. Override with `NEOMIND_TEST_MODEL`.
+fn test_model() -> String {
+    std::env::var("NEOMIND_TEST_MODEL")
+        .or_else(|_| std::env::var("MODEL"))
+        .unwrap_or_else(|_| "qwen3.5:4b".to_string())
+}
+
+
 // ============================================================================
 // Test Context
 // ============================================================================
@@ -56,7 +66,7 @@ impl SimulationContext {
 
         let ollama_config = OllamaConfig {
             endpoint: "http://localhost:11434".to_string(),
-            model: "qwen3.5:2b".to_string(),
+            model: test_model(),
             timeout_secs: 120,
         };
         let llm_runtime = Arc::new(OllamaRuntime::new(ollama_config)?);

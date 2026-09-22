@@ -159,6 +159,7 @@ fn condition_to_json(cond: &RuleCondition) -> Value {
                     neomind_core::datasource::DataSourceType::Device => "device",
                     neomind_core::datasource::DataSourceType::Extension => "extension",
                     neomind_core::datasource::DataSourceType::Transform => "transform",
+                    neomind_core::datasource::DataSourceType::Ai => "ai",
                 },
                 "source_id": source.source_id,
                 "metric": source.field_path,
@@ -178,6 +179,7 @@ fn condition_to_json(cond: &RuleCondition) -> Value {
                     neomind_core::datasource::DataSourceType::Device => "device",
                     neomind_core::datasource::DataSourceType::Extension => "extension",
                     neomind_core::datasource::DataSourceType::Transform => "transform",
+                    neomind_core::datasource::DataSourceType::Ai => "ai",
                 },
                 "source_id": source.source_id,
                 "metric": source.field_path,
@@ -902,6 +904,9 @@ pub async fn test_rule_handler(
         }
         neomind_core::datasource::DataSourceType::Transform => {
             format!("transform:{}", query_source.source_id)
+        }
+        neomind_core::datasource::DataSourceType::Ai => {
+            format!("ai:{}", query_source.source_id)
         }
     };
     let metric_variants = vec![

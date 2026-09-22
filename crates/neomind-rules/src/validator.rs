@@ -209,6 +209,19 @@ impl RuleValidator {
                             });
                         }
                     }
+                    neomind_core::datasource::DataSourceType::Ai => {
+                        // AI output fields are queryable like any source; the
+                        // agent may not exist (yet) at rule-authoring time, so
+                        // only structural checks — same treatment as transform.
+                        if source.source_id.is_empty() {
+                            issues.push(ValidationIssue {
+                                code: "EMPTY_SOURCE_ID".to_string(),
+                                message: "Source ID cannot be empty".to_string(),
+                                field: Some("condition.comparison.source".to_string()),
+                                severity: ValidationSeverity::Error,
+                            });
+                        }
+                    }
                 }
             }
             RuleCondition::Range { source, min, max } => {

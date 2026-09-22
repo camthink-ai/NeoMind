@@ -39,6 +39,11 @@ pub enum DataSourceType {
     Extension,
     #[serde(rename = "transform")]
     Transform,
+    /// An AI agent's published output field. First-class like the rest
+    /// (M1/M2-2): dashboards, rules and data-push bind to it exactly as they
+    /// do to a device metric. Namespace `ai:{agent_id}`, field = metric.
+    #[serde(rename = "ai")]
+    Ai,
 }
 
 impl DataSourceId {
@@ -77,6 +82,15 @@ impl DataSourceId {
         }
     }
 
+    /// Create an AI-output data source ID (`ai:{agent_id}:{field}`).
+    pub fn ai(agent_id: &str, field: &str) -> Self {
+        Self {
+            source_type: DataSourceType::Ai,
+            source_id: agent_id.to_string(),
+            field_path: field.to_string(),
+        }
+    }
+
     /// Parse from string representation
     ///
     /// Expected format: "type:id:field" (3 parts, unified)
@@ -90,6 +104,7 @@ impl DataSourceId {
             "device" => DataSourceType::Device,
             "extension" => DataSourceType::Extension,
             "transform" => DataSourceType::Transform,
+            "ai" => DataSourceType::Ai,
             _ => return None,
         };
 
@@ -112,6 +127,7 @@ impl DataSourceId {
             DataSourceType::Transform => {
                 format!("transform:{}:{}", self.source_id, self.field_path)
             }
+            DataSourceType::Ai => format!("ai:{}:{}", self.source_id, self.field_path),
         }
     }
 
@@ -125,6 +141,7 @@ impl DataSourceId {
             DataSourceType::Transform => {
                 format!("Transform {} / {}", self.source_id, self.field_path)
             }
+            DataSourceType::Ai => format!("AI {} / {}", self.source_id, self.field_path),
         }
     }
 
@@ -139,6 +156,7 @@ impl DataSourceId {
             DataSourceType::Device => format!("device:{}", self.source_id),
             DataSourceType::Extension => format!("extension:{}", self.source_id),
             DataSourceType::Transform => format!("transform:{}", self.source_id),
+            DataSourceType::Ai => format!("ai:{}", self.source_id),
         }
     }
 

@@ -157,10 +157,11 @@ export function ResourceSelectionDialog({
                 </p>
               </div>
             ) : (
-              <div className="space-y-2">
+              <div className="divide-y divide-border">
                 {selectedResources.map((resource) => (
                   <SelectedResourceItem
                     key={resource.id}
+                    embedded
                     resource={resource}
                     setSelectedResources={setSelectedResources}
                     onRemove={() => {
@@ -252,8 +253,8 @@ export function ResourceSelectionDialog({
           {/* Dual-pane layout */}
           <div className="flex-1 flex gap-4 min-h-0 p-4 overflow-hidden">
             {/* Available Resources */}
-            <div className="flex-1 flex flex-col rounded-lg overflow-hidden">
-              <div className="p-3 border-b bg-bg-50">
+            <div className="flex-1 flex flex-col overflow-hidden rounded-lg border">
+              <div className="border-b bg-muted-30 p-3">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm font-medium">{tAgent('creator.resources.dialog.available')}</span>
                   <Badge variant="secondary">{availableResources.length}</Badge>
@@ -291,8 +292,8 @@ export function ResourceSelectionDialog({
             </div>
 
             {/* Selected Resources */}
-            <div className="flex-1 flex flex-col rounded-lg overflow-hidden border">
-              <div className="p-3 border-b">
+            <div className="flex-1 flex flex-col overflow-hidden rounded-lg border">
+              <div className="border-b bg-muted-30 p-3">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium">{tAgent('creator.resources.dialog.selected')}</span>
                   <Badge variant={selectedResources.length === 0 ? "secondary" : "default"}>
@@ -301,7 +302,7 @@ export function ResourceSelectionDialog({
                 </div>
               </div>
               <ScrollArea className="flex-1">
-                <div className="p-2 space-y-1">
+                <div className="px-3 py-1">
                   {selectedResources.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-full text-center py-8">
                       <Target className="h-8 w-8 text-muted-foreground mb-2" />
@@ -310,9 +311,11 @@ export function ResourceSelectionDialog({
                       </p>
                     </div>
                   ) : (
-                    selectedResources.map((resource) => (
+                    <div className="divide-y divide-border">
+                    {selectedResources.map((resource) => (
                       <SelectedResourceItem
                         key={resource.id}
+                        embedded
                         resource={resource}
                         setSelectedResources={setSelectedResources}
                         onRemove={() => {
@@ -351,7 +354,8 @@ export function ResourceSelectionDialog({
                           )
                         }}
                                               />
-                    ))
+                    ))}
+                    </div>
                   )}
                 </div>
               </ScrollArea>
@@ -359,12 +363,14 @@ export function ResourceSelectionDialog({
           </div>
         </div>
 
-        <div className="px-5 py-3 border-t flex justify-between items-center shrink-0">
+        <div className="flex shrink-0 items-center justify-between border-t px-5 py-3">
           <p className="text-sm text-muted-foreground">
             {tAgent('creator.resources.dialog.selectedCount', { count: selectedResources.length })}
           </p>
           <Button onClick={() => onOpenChange(false)}>
-            {tAgent('creator.resources.dialog.done')}
+            {selectedResources.length > 0
+              ? tAgent('creator.resources.dialog.doneWithCount', { count: selectedResources.length })
+              : tAgent('creator.resources.dialog.done')}
           </Button>
         </div>
       </DialogContent>

@@ -39,8 +39,19 @@ impl AgentExecutor {
         )
         .await;
 
+        let images = extract_images(&data_collected);
+        if !images.is_empty() {
+            tracing::info!(
+                agent_id = %agent.id,
+                image_count = images.len(),
+                "Structured inference attaching {} image(s) as multimodal parts",
+                images.len()
+            );
+        }
         let context = render_context(&data_collected);
-        let outcome = self.infer_structured(agent, &schema, op.timeout_secs, &context).await?;
+        let outcome = self
+            .infer_structured_with_images(agent, &schema, op.timeout_secs, &context, images)
+            .await?;
 
         // Publish every validated field as `ai:{agent_id}:{field}`.
         self.publish_output_fields(&agent.id, &outcome.fields).await;
@@ -224,6 +235,38 @@ pub async fn dry_run_structured(
     }
 
 /// Shared inference step (runtime resolution + one constrained call).
+pub(super) async fn infer_structured_with_images(
+    &self,
+    agent: &AiAgent,
+    schema: &[neomind_storage::OperatorField],
+    timeout_secs: u32,
+    context: &str,
+    images: Vec<(String, String)>,
+) -> AgentResult<crate::inference::InferenceOutcome> {
+    let request = crate::inference::InferenceRequest {
+        instruction: agent.user_prompt.clone(),
+        context: context.to_string(),
+        schema: schema.to_vec(),
+        backend_id: agent.llm_backend_id.clone(),
+        timeout_secs,
+        images,
+        ..Default::default()
+    };
+    // Unified resolution (M0-2): per-agent backend id → instance manager,
+    // falling back to the executor default runtime. The seam also lets
+    // tests inject a mock runtime.
+    let runtime = self
+        .get_llm_runtime_for_agent(agent)
+        .await?
+        .ok_or_else(|| {
+            NeoMindError::Llm("no LLM backend available for structured agent".to_string())
+        })?;
+    crate::inference::InferenceClient::new()
+        .run_with_runtime(&runtime, &request)
+        .await
+        .map_err(|e| NeoMindError::Llm(e.to_string()))
+}
+
 pub(super) async fn infer_structured(
     &self,
     agent: &AiAgent,
@@ -271,14 +314,46 @@ pub(super) fn default_operator_config() -> neomind_storage::OperatorConfig {
 
 /// Render collected data as the inference payload block. Bounded: an
 /// operator prompt never needs the full history, just current values.
+/// Pull `(mime, base64)` from every collected image, so the inference can
+/// attach them as parts instead of letting the base64 reach the prompt text.
+fn extract_images(data: &[DataCollected]) -> Vec<(String, String)> {
+    data.iter()
+        .filter(|d| {
+            d.values.get("_is_image").and_then(|v| v.as_bool()).unwrap_or(false)
+        })
+        .filter_map(|d| {
+            let b64 = d.values.get("image_base64")?.as_str()?.to_string();
+            let mime = d
+                .values
+                .get("image_mime_type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("image/jpeg")
+                .to_string();
+            Some((mime, b64))
+        })
+        .collect()
+}
+
 fn render_context(data: &[DataCollected]) -> String {
     let mut out = String::new();
     for d in data {
-        let compact = match &d.values {
+        // Base64 never belongs in the text: a single frame blows the char cap
+        // and what survives is truncated garbage. The image rides as a part
+        // (see extract_images); the text just says it is there.
+        let values = match &d.values {
+            serde_json::Value::Object(map) if map.contains_key("image_base64") => {
+                let mut stripped = map.clone();
+                stripped.remove("image_base64");
+                stripped.insert(
+                    "_image".to_string(),
+                    serde_json::Value::String("attached as image part".to_string()),
+                );
+                serde_json::to_string(&serde_json::Value::Object(stripped)).unwrap_or_default()
+            }
             serde_json::Value::String(s) => s.clone(),
             v => serde_json::to_string(v).unwrap_or_default(),
         };
-        out.push_str(&format!("[{} / {}]\n{}\n\n", d.source, d.data_type, compact));
+        out.push_str(&format!("[{} / {}]\n{}\n\n", d.source, d.data_type, values));
     }
     // Hard cap the payload (chars ≈ generous token proxy for CJK text).
     const MAX_CONTEXT_CHARS: usize = 8_000;

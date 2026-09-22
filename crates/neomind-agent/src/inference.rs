@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use neomind_core::llm::backend::{GenerationParams, LlmError, LlmInput, LlmRuntime};
-use neomind_core::message::Message;
+use neomind_core::message::{Content, ContentPart, Message, MessageRole};
 use neomind_storage::{OperatorField, OperatorFieldType};
 
 /// What the inference produced.
@@ -45,6 +45,10 @@ pub struct InferenceRequest {
     pub timeout_secs: u32,
     /// Output token cap — schema output never needs more than a few hundred.
     pub max_output_tokens: usize,
+    /// Images the model must actually SEE (S1: camera → fields). Rendered as
+    /// multimodal parts, never as text — base64 in the prompt is truncated
+    /// garbage the model rightly refuses to interpret. `(mime, base64)`.
+    pub images: Vec<(String, String)>,
 }
 
 impl Default for InferenceRequest {
@@ -56,6 +60,7 @@ impl Default for InferenceRequest {
             backend_id: None,
             timeout_secs: 60,
             max_output_tokens: 512,
+            images: Vec::new(),
         }
     }
 }
@@ -116,10 +121,20 @@ impl InferenceClient {
             return Err(InferenceError::NoSchema);
         }
 
-        let mut messages = vec![
-            Message::system(Self::contract_message(&req.schema)),
-            Message::user(Self::payload_message(req, None)),
-        ];
+        // With images the user message is multimodal: the text payload plus
+        // one image part each. The payload text references them ("[image
+        // attached]"); the pixels ride in the parts, where backends that
+        // support vision will actually decode them.
+        let user_message = if req.images.is_empty() {
+            Message::user(Self::payload_message(req, None))
+        } else {
+            let mut parts = vec![ContentPart::text(Self::payload_message(req, None))];
+            for (mime, data) in &req.images {
+                parts.push(ContentPart::image_base64(data.clone(), mime.clone()));
+            }
+            Message::new(MessageRole::User, Content::Parts(parts))
+        };
+        let mut messages = vec![Message::system(Self::contract_message(&req.schema)), user_message];
 
         for attempt in 1u8..=2 {
             let input = LlmInput {

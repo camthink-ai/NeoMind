@@ -170,3 +170,28 @@ async fn test_create_agent_without_resources_is_allowed() {
         .await
         .expect("a prompt-only agent must be creatable");
 }
+
+/// Data Explorer's detail view queries `?source=ai:{agent_id}&metric={field}` —
+/// the fallback source parser only knew device/extension/transform, so
+/// clicking into an AI-published series was a 400.
+#[tokio::test]
+async fn test_ai_series_detail_endpoint_accepts_ai_source() {
+    let state = create_test_server_state().await;
+    let id = create_agent_with(&state, json!({ "execution_mode": "structured" })).await;
+
+    let _resp = neomind_api::handlers::data::query_telemetry_handler(
+        State(state),
+        Query(neomind_api::handlers::data::TelemetryQueryParams {
+            source: Some(format!("ai:{id}")),
+            metric: Some("missing_count".to_string()),
+            start: None,
+            end: None,
+            limit: None,
+            offset: None,
+            aggregate: None,
+            bucketed: None,
+        }),
+    )
+    .await
+    .expect("ai:{agent} must parse as a source, not 400");
+}

@@ -15,6 +15,16 @@ use neomind_agent::session::SessionManager;
 use std::sync::Arc;
 use std::time::Instant;
 
+/// The model the real-backend tests drive. These tests are `#[ignore]`d because
+/// they need a live server; hard-coding the model made them unrunnable the
+/// moment that tag moved. Override with `NEOMIND_TEST_MODEL`.
+fn test_model() -> String {
+    std::env::var("NEOMIND_TEST_MODEL")
+        .or_else(|_| std::env::var("MODEL"))
+        .unwrap_or_else(|_| "qwen3.5:4b".to_string())
+}
+
+
 /// Check if Ollama is available
 fn ollama_available() -> bool {
     use std::net::TcpStream;
@@ -33,7 +43,7 @@ struct TestContext {
 
 impl TestContext {
     async fn new() -> Result<Self> {
-        let model = std::env::var("MODEL").unwrap_or_else(|_| "qwen3.5:2b".to_string());
+        let model = std::env::var("MODEL").unwrap_or_else(|_| test_model());
 
         let endpoint = std::env::var("OLLAMA_ENDPOINT")
             .unwrap_or_else(|_| "http://localhost:11434".to_string());

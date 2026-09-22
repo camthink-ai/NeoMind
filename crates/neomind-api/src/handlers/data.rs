@@ -644,6 +644,7 @@ pub async fn query_telemetry_handler(
                 "device" => Some(DataSourceId::device(parts[1], metric)),
                 "extension" => Some(DataSourceId::extension(parts[1], metric)),
                 "transform" => Some(DataSourceId::transform(parts[1], metric)),
+                "ai" => Some(DataSourceId::ai(parts[1], metric)),
                 _ => None,
             }
         } else {

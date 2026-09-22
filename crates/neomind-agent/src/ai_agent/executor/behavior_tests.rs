@@ -497,6 +497,121 @@ async fn execute_agent_applies_the_output_contract_for_a_reasoning_agent() {
     );
 }
 
+
+
+/// Telemetry is written under `device:{id}` (device service, capability
+/// providers — every write path). Metric collection queried the bare id, so
+/// every bound-metric agent collected nothing: 31 resources → 0 data points,
+/// and a 1-second "successful" run.
+#[tokio::test]
+async fn metric_collection_reads_the_key_telemetry_is_written_under() {
+    use neomind_storage::timeseries::DataPoint as TsPoint;
+    use neomind_storage::TimeSeriesStore;
+
+    let store = TimeSeriesStore::memory().expect("memory timeseries");
+    // The write path: source key `device:{id}` — see DeviceService and the
+    // capability provider.
+    store
+        .write(
+            "device:dev-1",
+            "temperature",
+            TsPoint {
+                timestamp: chrono::Utc::now().timestamp(),
+                value: serde_json::json!(23.5),
+                quality: None,
+                metadata: None,
+            },
+        )
+        .await
+        .expect("seed telemetry");
+    // Writes are buffered; query_range reads redb, not the cache.
+    store.flush().expect("flush to storage");
+
+    let collected = AgentExecutor::collect_single_metric(
+        store,
+        "dev-1",
+        "temperature",
+        "dev-1:temperature".to_string(),
+        60,
+        false,
+        1000,
+        false,
+        false,
+        chrono::Utc::now().timestamp(),
+    )
+    .await
+    .expect("collection must not error");
+
+    let item = collected.expect("the bound metric MUST be found");
+    assert_eq!(
+        item.values.get("value"),
+        Some(&serde_json::json!(23.5)),
+        "the value read back must be the one written"
+    );
+}
+
+/// S1 closed: a structured agent with an image input attaches the pixels as a
+/// multimodal part — the base64 never enters the prompt text (where the char
+/// cap truncated it into garbage the model rightly refused to read).
+#[tokio::test]
+async fn structured_inference_sees_the_image_as_a_part() {
+    let (mut executor, mut agent, _registry) = build_harness().await;
+    agent.execution_mode = neomind_storage::agents::ExecutionMode::Structured;
+    agent.output_schema = Some(vec![neomind_storage::OperatorField {
+        name: "clutter_level".into(),
+        field_type: neomind_storage::OperatorFieldType::Enum(vec![
+            "整洁".into(),
+            "一般".into(),
+            "混乱".into(),
+        ]),
+        unit: None,
+        description: None,
+    }]);
+    let rt = MockLlmRuntime::new(vec![MockResponse::text(
+        r#"{"clutter_level": "一般"}"#,
+    )]);
+    let rt_handle = rt.clone();
+    executor.set_llm_runtime(Arc::new(rt)).await;
+
+    let image_item = neomind_storage::DataCollected {
+        source: "cam-01:values.image".into(),
+        data_type: "values.image".into(),
+        values: serde_json::json!({
+            "_is_image": true,
+            "_is_event_data": true,
+            "image_base64": "aGVsbG8gd29ybGQgaW1hZ2UgYnl0ZXM=",
+            "image_mime_type": "image/jpeg",
+        }),
+        timestamp: 0,
+    };
+    let (decision, record) = executor
+        .execute_structured("exec-s1-image", &agent, vec![image_item])
+        .await
+        .expect("structured run with an image succeeds");
+
+    assert!(record.success_rate >= 1.0, "record: {:?}", record.summary);
+    assert!(decision.conclusion.contains("一般"));
+
+    // The part, not the text: the message the model received must carry the
+    // image, and the text payload must NOT contain the base64.
+    let captured = rt_handle.captured_messages();
+    assert_eq!(captured.len(), 1, "one inference call");
+    let dump = captured[0].to_string();
+    assert!(
+        dump.contains("image_base64"),
+        "the model must receive the image as a part: {dump}"
+    );
+    assert!(
+        !dump.contains("aGVsbG8gd29ybGQgaW1hZ2UgYnl0ZXM=")
+            || dump.matches("aGVsbG8gd29ybGQgaW1hZ2UgYnl0ZXM=").count() == 1,
+        "base64 must appear exactly once (the part), never also as prompt text"
+    );
+    assert!(
+        dump.contains("attached as image part"),
+        "the text says where the image went instead of dumping bytes"
+    );
+}
+
 /// M2-2: a *reasoning* agent (not structured) that declares an output contract
 /// gets its conclusion rendered as schema fields, published as ai:* sources.
 #[tokio::test]

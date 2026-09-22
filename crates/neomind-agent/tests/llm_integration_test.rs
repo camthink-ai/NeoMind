@@ -15,6 +15,16 @@ use neomind_storage::{
 };
 use std::sync::Arc;
 
+/// The model the real-backend tests drive. These tests are `#[ignore]`d because
+/// they need a live server; hard-coding the model made them unrunnable the
+/// moment that tag moved. Override with `NEOMIND_TEST_MODEL`.
+fn test_model() -> String {
+    std::env::var("NEOMIND_TEST_MODEL")
+        .or_else(|_| std::env::var("MODEL"))
+        .unwrap_or_else(|_| "qwen3.5:4b".to_string())
+}
+
+
 /// Test context with real LLM backend
 struct LlmTestContext {
     pub store: Arc<AgentStore>,
@@ -32,7 +42,7 @@ impl LlmTestContext {
         // Create real LLM backend
         let ollama_config = OllamaConfig {
             endpoint: "http://localhost:11434".to_string(),
-            model: "qwen3.5:2b".to_string(),
+            model: test_model(),
             timeout_secs: 120,
         };
 
@@ -358,7 +368,7 @@ async fn test_llm_direct_api() -> anyhow::Result<()> {
 
     let ollama_config = OllamaConfig {
         endpoint: "http://localhost:11434".to_string(),
-        model: "qwen3.5:2b".to_string(),
+        model: test_model(),
         timeout_secs: 60,
     };
 
@@ -379,7 +389,7 @@ async fn test_llm_direct_api() -> anyhow::Result<()> {
             max_tokens: Some(200),
             ..Default::default()
         },
-        model: Some("qwen3.5:2b".to_string()),
+        model: Some(test_model()),
         stream: false,
         tools: None,
     };

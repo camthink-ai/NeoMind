@@ -16,9 +16,12 @@ export interface SelectedResourceItemProps {
   onToggleMetric: (resourceId: string, metricName: string) => void
   onToggleCommand: (resourceId: string, commandName: string) => void
   isMobile?: boolean
+  /** Inside the selection dialog: the pane already provides the chrome, so the
+   *  item drops its own border instead of card-in-card-in-pane. */
+  embedded?: boolean
 }
 
-export function SelectedResourceItem({ resource, setSelectedResources, onRemove, onToggleMetric, onToggleCommand, isMobile = false }: SelectedResourceItemProps) {
+export function SelectedResourceItem({ resource, setSelectedResources, onRemove, onToggleMetric, onToggleCommand, isMobile = false, embedded = false }: SelectedResourceItemProps) {
   const { t: tAgent } = useTranslation('agents')
   const [expanded, setExpanded] = useState(false)
   const selectedMetricCount = resource.selectedMetrics.size
@@ -30,7 +33,14 @@ export function SelectedResourceItem({ resource, setSelectedResources, onRemove,
   const hasCommands = resource.allCommands.length > 0
 
   return (
-    <div className={cn("rounded-lg border group", isMobile ? "px-4 py-3" : "px-3 py-2")}>
+    <div
+      className={cn(
+        "group",
+        embedded
+          ? isMobile ? "py-2.5" : "py-2"
+          : cn("rounded-lg border", isMobile ? "px-4 py-3" : "px-3 py-2"),
+      )}
+    >
       {/* Header */}
       <div className="flex items-center justify-between">
         <button

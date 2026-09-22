@@ -214,6 +214,7 @@ pub mod mock_llm {
         call_count: usize,
         msg_counts: Vec<usize>,
         max_context: usize,
+        captured_messages: Vec<serde_json::Value>,
     }
 
     impl MockLlmRuntime {
@@ -232,6 +233,7 @@ pub mod mock_llm {
                     default,
                     call_count: 0,
                     msg_counts: Vec::new(),
+                    captured_messages: Vec::new(),
                     max_context: 4096,
                 })),
                 function_calling: false,
@@ -254,6 +256,12 @@ pub mod mock_llm {
         /// assert that context grew / was compacted across rounds.
         pub fn message_counts(&self) -> Vec<usize> {
             self.state.lock().unwrap().msg_counts.clone()
+        }
+
+        /// The messages of every call, serialized — lets a test assert on
+        /// multimodal parts (e.g. that an image actually reached the model).
+        pub fn captured_messages(&self) -> Vec<serde_json::Value> {
+            self.state.lock().unwrap().captured_messages.clone()
         }
 
         /// Pop the next scripted response (or the default), recording the call.
@@ -310,6 +318,11 @@ pub mod mock_llm {
 
         async fn generate(&self, input: LlmInput) -> Result<LlmOutput, LlmError> {
             let msg_count = input.messages.len();
+            {
+                let mut st = self.state.lock().unwrap();
+                st.captured_messages
+                    .push(serde_json::to_value(&input.messages).unwrap_or_default());
+            }
             let resp = self.next_response(msg_count);
             if let Some(msg) = resp.error_msg {
                 return Err(LlmError::Network(msg));

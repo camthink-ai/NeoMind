@@ -31,6 +31,16 @@ use neomind_core::llm::backend::LlmRuntime;
 #[cfg(feature = "llamacpp")]
 use neomind_agent::llm_backends::backends::llamacpp::{LlamaCppConfig, LlamaCppRuntime};
 
+/// The model the real-backend tests drive. These tests are `#[ignore]`d because
+/// they need a live server; hard-coding the model made them unrunnable the
+/// moment that tag moved. Override with `NEOMIND_TEST_MODEL`.
+fn test_model() -> String {
+    std::env::var("NEOMIND_TEST_MODEL")
+        .or_else(|_| std::env::var("MODEL"))
+        .unwrap_or_else(|_| "qwen3.5:4b".to_string())
+}
+
+
 // ── sandbox platform ─────────────────────────────────────────────────
 
 /// Self-hosted sandbox: `neomind serve` subprocess on a private port with a
@@ -368,7 +378,7 @@ async fn new_session() -> (SessionManager, String) {
         Arc::new(CloudRuntime::new(cfg).unwrap())
     } else {
         // Local Ollama mode
-        let model = std::env::var("MODEL").unwrap_or("qwen3.5:2b".into());
+        let model = test_model();
         let endpoint = std::env::var("OLLAMA_ENDPOINT").unwrap_or("http://localhost:11434".into());
         Arc::new(
             OllamaRuntime::new(OllamaConfig {
@@ -2236,7 +2246,7 @@ async fn comprehensive_20round_evaluation() -> anyhow::Result<()> {
     // 401s against whatever server happens to run on :9375.
     sandbox::start().await;
 
-    let model = std::env::var("MODEL").unwrap_or("qwen3.5:2b".into());
+    let model = test_model();
     println!("\n{}", "═".repeat(70));
     println!("COMPREHENSIVE AGENT EVALUATION — 20 Rounds x 15+ Turns");
     println!("Model: {}", model);

@@ -362,8 +362,12 @@ impl AgentExecutor {
             "[COLLECT] Querying metric"
         );
 
+        // Telemetry is written under `device:{id}` (DeviceService and the
+        // capability provider — every write path). Querying the bare id read
+        // a key that never exists, so bound-metric agents collected nothing.
+        let storage_key = format!("device:{}", device_id);
         let result = storage
-            .query_range(device_id, metric_name, start_time, end_time, None)
+            .query_range(&storage_key, metric_name, start_time, end_time, None)
             .await
             .map_err(|e| NeoMindError::Storage(format!("Query failed: {}", e)))?;
 
@@ -610,7 +614,7 @@ impl AgentExecutor {
                 };
 
                 if let Ok(result) = storage
-                    .query_range(device_id, &metric_name, time_range.0, time_range.1, None)
+                    .query_range(&format!("device:{}", device_id), &metric_name, time_range.0, time_range.1, None)
                     .await
                 {
                     if !result.points.is_empty() {

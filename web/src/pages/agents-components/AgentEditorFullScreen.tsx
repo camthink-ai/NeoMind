@@ -28,17 +28,14 @@ import { textNano } from '@/design-system/tokens/typography'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Slider } from '@/components/ui/slider'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { } from '@/components/ui/dialog'
 import {
   Loader2,
   Clock,
   Check,
-  Target,
   Activity,
   X,
   Sparkles,
@@ -46,7 +43,6 @@ import {
   Plus,
   Info,
   Database,
-  ChevronRight,
   Brain,
   MousePointerClick,
   GitBranch,
@@ -73,11 +69,12 @@ import { BuilderShell } from '@/components/automation/dialog/BuilderShell'
 import {
   ResourceSelectionDialog,
   ScheduleCard,
-  SelectedResourceItem,
   INTERVALS,
   HOURS,
   deriveExecutionMode,
   hasOutputContract,
+  AGENT_PRESETS,
+  type AgentPreset,
 } from './agent-editor'
 import type {
   MetricInfo,
@@ -140,47 +137,19 @@ function InfoHint({ text }: { text: string }) {
 function EditorSection({
   title,
   hint,
-  accessory,
-  collapsible = false,
-  defaultExpanded = true,
   children,
 }: {
   title: React.ReactNode
   hint?: string
-  accessory?: React.ReactNode
-  /** Some sections are optional by nature and start folded. */
-  collapsible?: boolean
-  defaultExpanded?: boolean
   children: React.ReactNode
 }) {
-  const [expanded, setExpanded] = useState(defaultExpanded)
-  const open = !collapsible || expanded
   return (
     <section className="overflow-hidden rounded-lg border border-border">
-      <header
-        className={cn(
-          "flex items-center gap-2 border-border px-4 py-3",
-          open && "border-b",
-          collapsible && "cursor-pointer select-none",
-        )}
-        onClick={collapsible ? () => setExpanded((v) => !v) : undefined}
-        role={collapsible ? 'button' : undefined}
-        tabIndex={collapsible ? 0 : undefined}
-        aria-expanded={collapsible ? open : undefined}
-      >
-        {collapsible ? (
-          <ChevronRight
-            className={cn(
-              "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
-              open && "rotate-90",
-            )}
-          />
-        ) : null}
+      <header className="flex items-center gap-2 border-b border-border px-4 py-3">
         <Label className="text-sm font-medium">{title}</Label>
         {hint ? <InfoHint text={hint} /> : null}
-        {accessory ? <div className="ml-auto flex items-center gap-2">{accessory}</div> : null}
       </header>
-      {open ? <div className="space-y-3 p-4">{children}</div> : null}
+      <div className="space-y-3 p-4">{children}</div>
     </section>
   )
 }
@@ -244,6 +213,9 @@ export function AgentEditorFullScreen({
   // How much latitude the agent gets. It is the input the derivation needs to
   // tell "investigate" from "summarise" — no resource or field can.
   const [canActAutonomously, setCanActAutonomously] = useState(false)
+  // The chosen starting point, or null while the picker is showing. Create-only:
+  // an existing agent already has its content.
+  const [appliedPreset, setAppliedPreset] = useState<AgentPreset['key'] | null>(null)
   const [memoryMode, setMemoryMode] = useState<AgentMemoryMode | null>(null)
   const [outputSchema, setOutputSchema] = useState<OperatorField[]>([])
   const [operatorConfig, setOperatorConfig] = useState<OperatorConfig>({
@@ -289,13 +261,11 @@ export function AgentEditorFullScreen({
   // Resources say different things depending on the run: the only input for a
   // single-pass agent, a supplement when an event triggers it, an optional
   // preload when the agent fetches its own data.
-  const isResourcesProminent = scheduleType !== 'reactive' && isFocusedMode
-  // One question for this section in every mode; what changes per mode is the
-  // role, and that is the hint's job.
-  const resourcesTitle = tAgent('creator.resources.title')
+  // What the binding strip means depends on the run; the title is fixed, the
+  // role is the hint's job.
   const resourcesHint = scheduleType === 'reactive'
     ? tAgent('creator.resources.hintReactive')
-    : isResourcesProminent
+    : isFocusedMode
       ? tAgent('creator.resources.hintFocused')
       : tAgent('creator.resources.hintFree')
 
@@ -440,6 +410,7 @@ export function AgentEditorFullScreen({
         // Reset to defaults
         setCanActAutonomously(false)
         setMemoryMode(null)
+        setAppliedPreset(null)
         setOutputSchema([])
         setOperatorConfig({ debounce_secs: 30, timeout_secs: 60, consecutive_failure_threshold: 3 })
         setPriority(5)
@@ -1255,8 +1226,89 @@ export function AgentEditorFullScreen({
   // One header treatment for every workspace section, numbered to match the
   // four questions the form asks — so the dialog reads as a flow rather than a
   // stack of unrelated blocks.
+  const applyPreset = (preset: AgentPreset) => {
+    // A matching name to go with the template — only when the field is still
+    // empty, so a name the user typed is never clobbered.
+    if (!name.trim()) setName(tAgent(`creator.preset.${preset.key}.name`))
+    setUserPrompt(tAgent(`creator.preset.${preset.key}.prompt`))
+    // Clicking the preset blurs the focused field BEFORE the fill lands, so
+    // onBlur validation can fire on the still-empty value — and the error
+    // only self-clears through onChange, which a programmatic fill never
+    // triggers. Clear both here or "Name is required" sticks beside a
+    // name the template just wrote.
+    setFieldErrors((prev) => {
+      const next = { ...prev }
+      delete next.name
+      delete next.prompt
+      return next
+    })
+    setCanActAutonomously(preset.fill.autonomy)
+    setOutputSchema(preset.fill.outputSchema ? preset.fill.outputSchema(tAgent).map((f) => ({ ...f })) : [])
+    setMemoryMode(preset.fill.memoryMode)
+    const sched = preset.fill.schedule
+    setScheduleType(sched.type)
+    if (sched.type === 'timer') {
+      setTimerSubType(sched.subType ?? 'interval')
+      if (sched.intervalMinutes) setIntervalValue(sched.intervalMinutes)
+      if (sched.hour !== undefined) {
+        setScheduleHour(sched.hour)
+        setScheduleMinute(0)
+      }
+    }
+    setAppliedPreset(preset.key)
+  }
+
   const rail: Record<string, React.ReactNode> = {}
   const canvas: Record<string, React.ReactNode> = {}
+
+  rail['preset'] = (
+    <>
+            {/* Create-only: a starting point for the blank prompt. It fills the
+                form and nothing gets hidden; picking another overwrites the
+                same fields. Resources are never touched — cameras and devices
+                are bound by the user in ②. */}
+            {!agent && (
+              appliedPreset ? (
+                <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted-30 px-3 py-2">
+                  <span className="min-w-0 truncate text-xs text-muted-foreground">
+                    {tAgent('creator.preset.appliedFrom', {
+                      name: tAgent(`creator.preset.${appliedPreset}.name`),
+                    })}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    onClick={() => setAppliedPreset(null)}
+                  >
+                    {tAgent('creator.preset.repick')}
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">{tAgent('creator.preset.title')}</Label>
+                  <div className="grid grid-cols-1 gap-1.5">
+                    {AGENT_PRESETS.map((preset) => (
+                      <button
+                        key={preset.key}
+                        type="button"
+                        onClick={() => applyPreset(preset)}
+                        className="flex flex-col items-start rounded-lg border border-border px-3 py-2 text-left transition-colors hover:border-muted-foreground hover:bg-muted"
+                      >
+                        <span className="text-sm font-medium">
+                          {tAgent(`creator.preset.${preset.key}.name`)}
+                        </span>
+                        <span className="truncate text-xs text-muted-foreground">
+                          {tAgent(`creator.preset.${preset.key}.desc`)}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )
+            )}
+    </>
+  )
 
   rail['name'] = (
     <>
@@ -1384,6 +1436,11 @@ export function AgentEditorFullScreen({
             {/* Prompt */}
             <div className="space-y-3">
 
+              <div className="flex items-center gap-2">
+                <Label className="text-sm font-medium">
+                  {tAgent('creator.basicInfo.requirement')} <span className="text-error">*</span>
+                </Label>
+              </div>
               <Textarea
                 value={userPrompt}
                 onChange={(e) => {
@@ -1401,36 +1458,147 @@ export function AgentEditorFullScreen({
                 <p className="text-sm text-error mt-1">{fieldErrors.prompt}</p>
               )}
 
-              {/* The one input no resource or field can express: whether this
-                  task is open-ended enough that the agent must try things. It
-                  is what separates "investigate" from "summarise". */}
-              <div className="flex items-center gap-2 pt-1">
-                <Checkbox
-                  id="agent-autonomy"
-                  checked={canActAutonomously}
-                  onCheckedChange={(v) => setCanActAutonomously(v === true)}
-                />
-                <Label htmlFor="agent-autonomy" className="text-sm font-medium">
-                  {tAgent('creator.autonomy.label')}
-                </Label>
-                <InfoHint text={tAgent('creator.autonomy.hint')} />
+              {/* 数据与指令 — the things the words above refer to, right under
+                  the words. Deep selection (which metric of which device) stays
+                  in the dialog; this strip is summary, add and remove. */}
+              <div className="space-y-2 pt-1">
+                <div className="flex items-center gap-2">
+                  <Label className="text-sm font-medium">
+                    {tAgent('creator.resources.title')}
+                  </Label>
+                  <InfoHint text={resourcesHint} />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="xs"
+                    className="ml-auto"
+                    onClick={() => setResourceDialogOpen(true)}
+                  >
+                    <Plus className="mr-1 h-3.5 w-3.5" />
+                    {tAgent('creator.resources.addResources')}
+                  </Button>
+                </div>
+                {/* A zone with its own default height: the layout never jumps
+                    between "empty hint" and "first chip", and the area reads as
+                    a place you put things — dashed until it has some. */}
+                <div
+                  className={cn(
+                    'flex min-h-[3rem] flex-wrap gap-1.5 rounded-md border bg-muted-30 p-2',
+                    selectedResources.length === 0
+                      ? 'items-center justify-center border-dashed border-border'
+                      : 'content-start border-border',
+                  )}
+                >
+                {selectedResources.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    {tAgent('creator.resources.dialog.noResourcesHint')}
+                  </p>
+                ) : (
+                  selectedResources.map((r) => (
+                      <span
+                        key={r.id}
+                        className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border bg-background px-2 text-xs"
+                      >
+                        {getSourceIcon(r.type, 'h-3.5 w-3.5 shrink-0 text-muted-foreground')}
+                        <span className="max-w-[12rem] truncate font-medium">{r.name}</span>
+                        {(r.selectedMetrics.size > 0 || r.selectedCommands.size > 0) && (
+                          <span className="whitespace-nowrap text-muted-foreground">
+                            {r.selectedMetrics.size > 0 &&
+                              tAgent('creator.resources.metricCount', { count: r.selectedMetrics.size })}
+                            {r.selectedMetrics.size > 0 && r.selectedCommands.size > 0 && ' · '}
+                            {r.selectedCommands.size > 0 &&
+                              tAgent('creator.resources.commandCount', { count: r.selectedCommands.size })}
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          aria-label={tAgent('creator.resources.removeOne', { name: r.name })}
+                          onClick={() =>
+                            setSelectedResources((prev) => prev.filter((x) => x.id !== r.id))
+                          }
+                          className="ml-0.5 flex h-4 w-4 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:text-foreground"
+                        >
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      </span>
+                    ))
+                )}
+                </div>
               </div>
 
-              {/* Rounds only mean anything once the agent may take them. */}
+              {/* The one input nothing else can express: whether the AI may
+                  take multiple rounds. It separates "investigate" from
+                  "summarise" — each option says what happens, not what is
+                  permitted. */}
+              <div className="space-y-1.5 pt-1">
+                <Label className="text-sm font-medium">
+                  {tAgent('creator.workstyle.title')}
+                </Label>
+                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                  {([
+                    {
+                      key: 'bound' as const,
+                      active: !canActAutonomously,
+                      apply: () => setCanActAutonomously(false),
+                    },
+                    {
+                      key: 'auto' as const,
+                      active: canActAutonomously,
+                      apply: () => setCanActAutonomously(true),
+                    },
+                  ]).map(({ key, active, apply }) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={apply}
+                      className={cn(
+                        'flex flex-col items-start rounded-md border p-2.5 text-left transition-colors',
+                        active
+                          ? 'border-primary bg-muted'
+                          : 'border-border hover:border-muted-foreground',
+                      )}
+                    >
+                      <span className="text-sm font-medium">
+                        {tAgent(`creator.workstyle.${key}`)}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {tAgent(`creator.workstyle.${key}Desc`)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Rounds only mean anything once the AI may take them. Same
+                  row shape as priority: label + hint left, exact number right —
+                  a slider over 20 steps cannot express "exactly 3". */}
               {canActAutonomously && (
-                <div className="space-y-2 pt-1">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-sm font-medium">
-                      {tAgent('creator.advanced.chainDepth', 'Max Chain Depth')}
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="agent-chain-depth" className="text-sm font-medium">
+                      {tAgent('creator.advanced.chainDepth', 'Rounds per run')}
                     </Label>
-                    <span className="text-sm font-medium tabular-nums">{maxChainDepth}</span>
+                    <InfoHint
+                      text={tAgent(
+                        'creator.advanced.chainDepthHint',
+                        'How many rounds the AI may act for on its own. More rounds, more capable — and slower.',
+                      )}
+                    />
                   </div>
-                  <Slider
+                  <Input
+                    id="agent-chain-depth"
+                    type="number"
                     min={1}
                     max={20}
                     step={1}
-                    value={[maxChainDepth]}
-                    onValueChange={([v]) => setMaxChainDepth(v)}
+                    value={maxChainDepth}
+                    onChange={(e) => {
+                      const v = Number(e.target.value)
+                      if (e.target.value !== '' && Number.isFinite(v)) {
+                        setMaxChainDepth(Math.max(1, Math.min(20, Math.round(v))))
+                      }
+                    }}
+                    className="h-9 w-24 text-right tabular-nums"
                   />
                 </div>
               )}
@@ -1555,17 +1723,16 @@ export function AgentEditorFullScreen({
                   </div>
                 ))}
 
-                <Button
+                <button
                   type="button"
-                  variant="outline"
-                  size="sm"
                   onClick={() =>
                     setOutputSchema([...outputSchema, { name: '', field_type: { type: 'number' } }])
                   }
+                  className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border py-1.5 text-xs text-muted-foreground transition-colors hover:border-muted-foreground hover:text-foreground"
                 >
-                  <Plus className="h-3 w-3 mr-1" />
+                  <Plus className="h-3.5 w-3.5" />
                   {tAgent('creator.structured.addField')}
-                </Button>
+                </button>
 
                 <Collapsible>
                   <CollapsibleTrigger className="flex w-full items-center justify-between py-1 text-left text-xs text-muted-foreground">
@@ -2317,37 +2484,6 @@ export function AgentEditorFullScreen({
     </>
   )
 
-  canvas['resources'] = (
-    <>
-            {selectedResources.length === 0 ? (
-              <div className="flex flex-col items-center justify-center rounded-lg border py-6">
-                <Target className="h-6 w-6 text-muted-foreground mb-2" />
-                <p className="text-xs text-muted-foreground">
-                  {tAgent('creator.resources.dialog.noResourcesHint')}
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {selectedResources.map((resource) => (
-                  <SelectedResourceItem
-                    key={resource.id}
-                    resource={resource}
-                    setSelectedResources={setSelectedResources}
-                    onRemove={() => setSelectedResources(prev => prev.filter(r => r.id !== resource.id))}
-                    onToggleMetric={(resourceId, metricName) => {
-                      setSelectedResources((prev) => prev.map(r => r.id === resourceId ? { ...r, selectedMetrics: new Set(r.selectedMetrics.has(metricName) ? Array.from(r.selectedMetrics).filter(n => n !== metricName) : [...r.selectedMetrics, metricName]) } : r))
-                    }}
-                    onToggleCommand={(resourceId, commandName) => {
-                      setSelectedResources((prev) => prev.map(r => r.id === resourceId ? { ...r, selectedCommands: new Set(r.selectedCommands.has(commandName) ? Array.from(r.selectedCommands).filter(n => n !== commandName) : [...r.selectedCommands, commandName]) } : r))
-                    }}
-                    isMobile={isMobile}
-                  />
-                ))}
-              </div>
-            )}
-    </>
-  )
-
   const footerNode = (
     <div className="flex w-full flex-col gap-2">
       <div className={cn(
@@ -2397,7 +2533,7 @@ export function AgentEditorFullScreen({
       accent="indigo"
       title={agent ? tAgent('editAgent') : tAgent('createAgent')}
       icon={<Sparkles className="h-5 w-5" />}
-      config={<div className="space-y-5">{rail.name}{rail.model}</div>}
+      config={<div className="space-y-5">{rail.preset}{rail.name}{rail.model}</div>}
       workspace={
         <div className="space-y-4">
           <EditorSection
@@ -2409,40 +2545,6 @@ export function AgentEditorFullScreen({
             hint={tAgent('creator.basicInfo.promptTip')}
           >
             {canvas.prompt}
-          </EditorSection>
-          <EditorSection
-            title={resourcesTitle}
-            hint={resourcesHint}
-            collapsible={!isResourcesProminent}
-            defaultExpanded={isResourcesProminent}
-            accessory={
-              <>
-                {selectedResources.length > 0 && (
-                  <Badge variant="secondary" className="h-5 text-xs">
-                    {selectedResources.length}
-                  </Badge>
-                )}
-                {!isResourcesProminent && (
-                  <Badge variant="outline" className="h-5 text-xs">
-                    {tAgent('creator.resources.optional')}
-                  </Badge>
-                )}
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setResourceDialogOpen(true)
-                  }}
-                >
-                  <Plus className="mr-1 h-4 w-4" />
-                  {tAgent('creator.resources.addResources')}
-                </Button>
-              </>
-            }
-          >
-            {canvas.resources}
           </EditorSection>
           <EditorSection
             title={tAgent('creator.section.record')}

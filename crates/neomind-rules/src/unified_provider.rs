@@ -157,6 +157,7 @@ impl UnifiedValueProvider {
             DataSourceType::Device => "device",
             DataSourceType::Extension => "extension",
             DataSourceType::Transform => "transform",
+            DataSourceType::Ai => "ai",
         };
         self.update_value(
             source_type,
@@ -177,6 +178,7 @@ impl UnifiedValueProvider {
             DataSourceType::Device => "device",
             DataSourceType::Extension => "extension",
             DataSourceType::Transform => "transform",
+            DataSourceType::Ai => "ai",
         };
         self.update_string_value(
             source_type,
@@ -243,6 +245,7 @@ impl ValueProvider for UnifiedValueProvider {
             DataSourceType::Device => "device",
             DataSourceType::Extension => "extension",
             DataSourceType::Transform => "transform",
+            DataSourceType::Ai => "ai",
         };
         // [contention-safe] parking_lot read — the old tokio try_read treated
         // lock contention as "no value", so rule conditions evaluated as
