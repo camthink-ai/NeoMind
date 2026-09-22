@@ -138,8 +138,11 @@ export function AppSidebar() {
             aria-current={isActive ? "page" : undefined}
             className={cn(
               "w-full h-10 px-3 justify-start font-normal no-press-scale",
+              // Active = elevated card chip: bg-card is white on the gray
+              // rail (light) and a clear step above it (dark) — bg-muted
+              // was invisible in light (0.962 vs rail 0.97).
               isActive
-                ? "bg-muted text-foreground hover:bg-muted"
+                ? "bg-[var(--sidebar-active)] text-foreground hover:bg-[var(--sidebar-active)]"
                 : "text-muted-foreground hover:text-foreground hover:bg-muted-50"
             )}
             onClick={() => handleNavigate(item.path)}
@@ -160,8 +163,10 @@ export function AppSidebar() {
             aria-current={isActive ? "page" : undefined}
             className={cn(
               "h-10 w-10 px-0 justify-center font-normal no-press-scale",
+              // Same elevated-card active chip as the expanded row —
+              // bg-muted vanished against the light rail gray.
               isActive
-                ? "bg-muted text-foreground hover:bg-muted"
+                ? "bg-[var(--sidebar-active)] text-foreground hover:bg-[var(--sidebar-active)]"
                 : "text-muted-foreground hover:text-foreground hover:bg-muted-50"
             )}
             onClick={() => handleNavigate(item.path)}
@@ -228,7 +233,7 @@ export function AppSidebar() {
             expanded ? "w-full px-3 justify-start gap-3" : "w-10 px-0 justify-center"
           )}
         >
-          <Avatar className="h-7 w-7 shrink-0 cursor-pointer rounded-full ring-2 ring-background">
+          <Avatar className="h-8 w-8 shrink-0 cursor-pointer rounded-full">
             <AvatarFallback className="bg-primary text-primary-foreground text-xs font-semibold">
               {getUserInitials(user.username)}
             </AvatarFallback>

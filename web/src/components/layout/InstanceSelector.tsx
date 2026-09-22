@@ -47,9 +47,8 @@ export function InstanceSelector({ onManageInstances, compact = false }: Instanc
           // (w-full h-10 px-3 text-sm) so the rail doesn't reflow per
           // instance-name length; name truncates, status shows as a dot.
           : "w-full flex items-center px-3 h-10",
-        isOnline
-          ? cn("bg-success-light text-success", !compact && "border border-success-light")
-          : cn("bg-error-light text-error", !compact && "border border-error-light")
+        // Neutral surface — status lives on the dot alone. A tinted block
+        // here out-shouted the active-page indicator (inverted hierarchy).
       )}
     >
       <div className="relative shrink-0">
@@ -58,7 +57,7 @@ export function InstanceSelector({ onManageInstances, compact = false }: Instanc
             Setup Guide badge, so both markers align across rows. */}
         <span
           className={cn(
-            'absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-background',
+            'absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full',
             isOnline ? 'bg-success' : 'bg-error'
           )}
           aria-label={isOnline ? t('status.online') : t('status.offline')}
