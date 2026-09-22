@@ -153,21 +153,23 @@ export function GlobalChatFab() {
 
   return (
     <>
-      {/* Floating action button — ink circle */}
+      {/* Floating action button — quiet utility chip. A 56px ink circle
+          out-shouted the page's primary actions; the card-styled 48px chip
+          reads as an auxiliary tool (card surface + border, muted icon)
+          that only gains presence on hover. */}
       <button
         ref={fabRef}
         onClick={isOpen ? handleClose : handleOpen}
         aria-label={isOpen ? t("closePanel") : t("openPanel")}
         className={cn(
           "fixed bottom-[calc(5rem+var(--keyboard-offset,0px))] right-6 z-50",
-          "w-14 h-14 rounded-full",
+          "w-12 h-12 rounded-full",
           "flex items-center justify-center",
           "transition-all duration-slow ease-out",
           "safe-bottom",
-          "bg-primary text-primary-foreground",
-          "border border-transparent",
-          "shadow-lg",
-          "hover:shadow-xl hover:bg-primary-hover",
+          "bg-card text-muted-foreground border border-border",
+          "shadow-sm",
+          "hover:text-foreground hover:shadow-md",
           isOpen
             ? "scale-0 opacity-0 pointer-events-none"
             : "scale-100 opacity-100 hover:scale-105"
