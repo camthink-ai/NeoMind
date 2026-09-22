@@ -27,16 +27,23 @@ import type { UserMessage } from "@/types"
 interface AgentUserMessagesProps {
   agentId: string
   onMessageAdded?: () => void
+  /** Bump to refetch (the sibling composer increments it after sending). */
+  refreshToken?: number
 }
 
-export function AgentUserMessages({ agentId, onMessageAdded }: AgentUserMessagesProps) {
+interface AgentUserMessagesComposerProps {
+  agentId: string
+  /** Fired after a successful send so the list can refetch/scroll. */
+  onSent?: (message: UserMessage) => void
+}
+
+/** The message list. The composer that belongs to it renders separately
+ *  (pinned to the detail page's bottom bar) — the list here only reads. */
+export function AgentUserMessages({ agentId, onMessageAdded, refreshToken = 0 }: AgentUserMessagesProps) {
   const { t } = useTranslation(['common', 'agents'])
   const { handleError } = useErrorHandler()
   const [messages, setMessages] = useState<UserMessage[]>([])
   const [loading, setLoading] = useState(false)
-  const [sending, setSending] = useState(false)
-  const [newMessage, setNewMessage] = useState("")
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   // Load messages
@@ -54,7 +61,9 @@ export function AgentUserMessages({ agentId, onMessageAdded }: AgentUserMessages
 
   useEffect(() => {
     loadMessages()
-  }, [agentId])
+    // refreshToken: the composer lives outside this component; a send bumps
+    // the token so the list picks the new note up.
+  }, [agentId, refreshToken])
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -62,27 +71,6 @@ export function AgentUserMessages({ agentId, onMessageAdded }: AgentUserMessages
       bottomRef.current?.scrollIntoView({ block: 'nearest' })
     }
   }, [messages])
-
-  const handleSendMessage = async () => {
-    if (!newMessage.trim() || sending) return
-
-    const content = newMessage.trim()
-    setNewMessage("")
-    setSending(true)
-
-    try {
-      const message = await api.addAgentUserMessage(agentId, content)
-      setMessages(prev => [...prev, message])
-      onMessageAdded?.()
-    } catch (error) {
-      handleError(error, { operation: 'Send message to agent', showToast: false })
-      // Restore message on error
-      setNewMessage(content)
-    } finally {
-      setSending(false)
-      textareaRef.current?.focus()
-    }
-  }
 
   const handleDeleteMessage = async (messageId: string) => {
     try {
@@ -93,21 +81,8 @@ export function AgentUserMessages({ agentId, onMessageAdded }: AgentUserMessages
     }
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    // Enter sends; Shift+Enter inserts a newline. (Notes are one-liners far
-    // more often than not — requiring ⌘ was friction.)
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSendMessage()
-    }
-  }
-
   return (
-    <div className="flex min-h-[300px] flex-col gap-3">
-      {/* Messages List — occupies the section body */}
-      <div className="flex-1">
-        <div>
-          <div className="space-y-3">
+    <div className="space-y-3">
             {loading ? (
               <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -131,32 +106,70 @@ export function AgentUserMessages({ agentId, onMessageAdded }: AgentUserMessages
                 <div ref={bottomRef} />
               </>
             )}
-          </div>
-        </div>
-      </div>
+    </div>
+  )
+}
 
-      {/* Input — one quiet bar: type, press Enter (⇧Enter for a newline) */}
-      <div className="flex items-center gap-1.5 rounded-lg border border-input bg-card py-1 pl-3 pr-1">
-        <Textarea
-          ref={textareaRef}
-          value={newMessage}
-          onChange={(e) => setNewMessage(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder={t('agents:userMessages.placeholder')}
-          rows={1}
-          className="min-h-0 max-h-[120px] flex-1 resize-none border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0"
-          disabled={sending}
-        />
-        <Button
-          size="icon"
-          onClick={handleSendMessage}
-          disabled={!newMessage.trim() || sending}
-          className="h-7 w-7 shrink-0 rounded-md"
-          aria-label={t('common:send')}
-        >
-          {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-        </Button>
-      </div>
+/**
+ * The composer for agent notes. Rendered by the detail page's bottom bar
+ * (pinned, chat-style) rather than inside the list, so it stays put while
+ * the section scrolls.
+ */
+export function AgentUserMessagesComposer({ agentId, onSent }: AgentUserMessagesComposerProps) {
+  const { t } = useTranslation(['common', 'agents'])
+  const { handleError } = useErrorHandler()
+  const [newMessage, setNewMessage] = useState("")
+  const [sending, setSending] = useState(false)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  const handleSend = async () => {
+    if (!newMessage.trim() || sending) return
+
+    const content = newMessage.trim()
+    setNewMessage("")
+    setSending(true)
+
+    try {
+      const message = await api.addAgentUserMessage(agentId, content)
+      onSent?.(message)
+    } catch (error) {
+      handleError(error, { operation: 'Send message to agent', showToast: false })
+      setNewMessage(content) // restore on error
+    } finally {
+      setSending(false)
+      textareaRef.current?.focus()
+    }
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Enter sends; Shift+Enter inserts a newline.
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      void handleSend()
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-1.5 rounded-lg border border-input bg-card py-1 pl-3 pr-1">
+      <Textarea
+        ref={textareaRef}
+        value={newMessage}
+        onChange={(e) => setNewMessage(e.target.value)}
+        onKeyDown={handleKeyDown}
+        placeholder={t('agents:userMessages.placeholder')}
+        rows={1}
+        className="min-h-0 max-h-[120px] flex-1 resize-none border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0"
+        disabled={sending}
+      />
+      <Button
+        size="icon"
+        onClick={() => void handleSend()}
+        disabled={!newMessage.trim() || sending}
+        className="h-7 w-7 shrink-0 rounded-md"
+        aria-label={t('common:send')}
+      >
+        {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+      </Button>
     </div>
   )
 }

@@ -45,7 +45,7 @@ import { useEvents } from "@/hooks/useEvents"
 // Import sub-components
 import { AgentExecutionTimeline } from "./AgentExecutionTimeline"
 import { AgentThinkingPanel } from "./AgentThinkingPanel"
-import { AgentUserMessages } from "./AgentUserMessages"
+import { AgentUserMessages, AgentUserMessagesComposer } from "./AgentUserMessages"
 
 interface AgentDetailPanelProps {
   agent: AiAgentDetail | null
@@ -85,6 +85,8 @@ export function AgentDetailPanel({
   // Backend id → human-readable name/model (the raw id means nothing to users)
   const [llmBackends, setLlmBackends] = useState<LlmBackendInstance[]>([])
   const [section, setSection] = useState<'overview' | 'history' | 'memory' | 'messages'>('overview')
+  // Bumped by the pinned composer so the message list refetches after a send
+  const [messagesVersion, setMessagesVersion] = useState(0)
 
   // Load executions immediately when agent is selected (preload)
   // and when switching back to history tab with stale data
@@ -309,7 +311,8 @@ export function AgentDetailPanel({
           </div>
         )}
 
-        <ScrollArea className="min-w-0 flex-1 bg-muted-20">
+        <div className="flex min-w-0 flex-1 flex-col">
+        <ScrollArea className="min-h-0 flex-1 bg-muted-20">
           <div className={cn("space-y-5", isMobile ? "px-3 py-3" : "px-5 py-4")}>
             {section === 'overview' && (
               <>
@@ -497,15 +500,27 @@ export function AgentDetailPanel({
             )}
             {section === 'messages' && (
               <AgentUserMessages
-                            agentId={agent.id}
-                            onMessageAdded={() => {
-                              // Refresh agent data to show updated message count
-                              onRefresh()
-                            }}
-                          />
+                agentId={agent.id}
+                refreshToken={messagesVersion}
+                onMessageAdded={onRefresh}
+              />
             )}
           </div>
         </ScrollArea>
+
+        {/* Pinned composer — chat-style bottom bar, Messages section only */}
+        {section === 'messages' && (
+          <div className={cn(
+            "shrink-0 border-t border-border bg-muted-20",
+            isMobile ? "px-3 py-2.5" : "px-5 py-3"
+          )}>
+            <AgentUserMessagesComposer
+              agentId={agent.id}
+              onSent={() => setMessagesVersion(v => v + 1)}
+            />
+          </div>
+        )}
+        </div>
       </div>
     </div>
   )
