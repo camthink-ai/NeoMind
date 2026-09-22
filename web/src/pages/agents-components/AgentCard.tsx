@@ -92,7 +92,6 @@ export function AgentCard({
       : 'answer'
   const isToolMemory = (agent.memory_mode ?? (agent.execution_mode === 'structured' ? 'tool' : 'assistant')) === 'tool'
 
-  const latestEntries = Object.entries(agent.latest_output ?? {})
   const isExecuting = agent.status === 'Executing'
   const isError = agent.status === 'Error'
 
@@ -181,19 +180,6 @@ export function AgentCard({
           <p className="line-clamp-2 rounded-lg bg-error-light px-2.5 py-2 text-xs text-error" title={agent.error}>
             {agent.error || t('agents:card.errorUnknown')}
           </p>
-        ) : latestEntries.length > 0 ? (
-          // Latest published fields, read like the metric cards they are:
-          // muted label above a tabular value. Up to 4 shown, 2 per row.
-          <div className="grid grid-cols-2 gap-x-3 gap-y-2">
-            {latestEntries.slice(0, 4).map(([field, value]) => (
-              <div key={field} className="min-w-0">
-                <p className="truncate text-xs text-muted-foreground" title={field}>{field}</p>
-                <p className="truncate text-lg font-semibold tabular-nums leading-tight" title={String(value)}>
-                  {String(value)}
-                </p>
-              </div>
-            ))}
-          </div>
         ) : (
           <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">
             {agent.user_prompt || agent.description || t('agents:card.noDescription')}

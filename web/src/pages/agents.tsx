@@ -293,6 +293,11 @@ export function AgentsPage() {
               ? { ...agent, status: newStatus }
               : agent
           ))
+          // Silent refresh — stats/freshness catch up without a full reload
+          api.getAgent(completedData.agent_id).then((fresh) => {
+            setAgents(prev => prev.map(a => a.id === fresh.id ? { ...a, ...fresh } : a))
+            setSelectedAgent(prev => prev?.id === fresh.id ? { ...prev, ...fresh } : prev)
+          }).catch(() => {})
 
           // Update selected agent if it's the same one
           if (selectedAgent?.id === completedData.agent_id) {

@@ -139,7 +139,8 @@
     "memoryModeNote": {
       "tool": "Stateless tool — every run sees only the current input (your corrected standards still apply).",
       "assistant": "Has memory — each run carries the narrative of recent executions; it can say “worse than last time”."
-    }
+    },
+    "sections": "Sections"
   },
   "tabs": {
     "agents": "Agents",

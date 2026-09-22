@@ -79,7 +79,7 @@ export function AgentThinkingPanel({ agentId, isExecuting }: AgentThinkingPanelP
     if (!isExecuting && currentExecution?.completed_at) {
       const timer = setTimeout(() => {
         setShowPanel(false)
-      }, 15000)
+      }, 4000)
       return () => clearTimeout(timer)
     }
   }, [isExecuting, currentExecution, dismissed])
@@ -223,11 +223,34 @@ export function AgentThinkingPanel({ agentId, isExecuting }: AgentThinkingPanelP
                         {t('agents:memory.conclusion')}
                       </h4>
                       <div className="space-y-2">
-                        {conclusion && (
-                          <Card className="p-2.5 bg-muted">
+                        {conclusion && (() => {
+                          // Structured agents conclude with a JSON object — render
+                          // its fields as chips, not as a raw JSON wall.
+                          let fields: Array<[string, unknown]> | null = null
+                          try {
+                            const parsed = JSON.parse(conclusion)
+                            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                              fields = Object.entries(parsed)
+                            }
+                          } catch { /* free-form conclusion — plain text */ }
+                          if (fields) {
+                            return (
+                              <div className="flex flex-wrap gap-1.5">
+                                {fields.map(([k, v]) => (
+                                  <span key={k} className="inline-flex items-baseline gap-1 rounded-md bg-muted px-1.5 py-1 text-sm">
+                                    <span className="text-xs text-muted-foreground">{k}</span>
+                                    <span className="font-medium">{String(v)}</span>
+                                  </span>
+                                ))}
+                              </div>
+                            )
+                          }
+                          return (
+                            <Card className="p-2.5 bg-muted">
                             <p className="text-sm">{conclusion}</p>
                           </Card>
-                        )}
+                          )
+                        })()}
                         {confidence !== undefined && (
                           <div className="flex items-center justify-between text-sm p-2 bg-muted rounded-lg">
                             <span className="text-xs text-muted-foreground">{t('agents:memory.confidence')}</span>
