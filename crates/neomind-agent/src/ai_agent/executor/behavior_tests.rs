@@ -499,6 +499,54 @@ async fn execute_agent_applies_the_output_contract_for_a_reasoning_agent() {
 
 
 
+
+/// Telemetry writes are buffered; `query_range` reads only redb. A device
+/// report triggers execution within milliseconds, so collection ran before
+/// the flush and saw none of the just-written values — 12 bound metrics,
+/// 0 collected, every time the freshest report is the interesting one.
+/// The latest-value cache IS updated synchronously on write, so a
+/// no-history collection must read through it.
+#[tokio::test]
+async fn metric_collection_sees_just_written_values_before_flush() {
+    use neomind_storage::timeseries::DataPoint as TsPoint;
+    use neomind_storage::TimeSeriesStore;
+
+    let store = TimeSeriesStore::memory().expect("memory timeseries");
+    store
+        .write(
+            "device:dev-2",
+            "battery",
+            TsPoint {
+                timestamp: chrono::Utc::now().timestamp(),
+                value: serde_json::json!(84),
+                quality: None,
+                metadata: None,
+            },
+        )
+        .await
+        .expect("seed telemetry");
+    // Deliberately NO flush: the point sits in the write buffer + latest
+    // cache, exactly like a report that triggered this very execution.
+
+    let collected = AgentExecutor::collect_single_metric(
+        store,
+        "dev-2",
+        "battery",
+        "dev-2:battery".to_string(),
+        60,
+        false, // include_history = false — only the latest value matters
+        1000,
+        false,
+        false,
+        chrono::Utc::now().timestamp(),
+    )
+    .await
+    .expect("collection must not error");
+
+    let item = collected.expect("a value written milliseconds ago MUST be visible");
+    assert_eq!(item.values.get("value"), Some(&serde_json::json!(84)));
+}
+
 /// Telemetry is written under `device:{id}` (device service, capability
 /// providers — every write path). Metric collection queried the bare id, so
 /// every bound-metric agent collected nothing: 31 resources → 0 data points,

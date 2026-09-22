@@ -366,28 +366,42 @@ impl AgentExecutor {
         // capability provider — every write path). Querying the bare id read
         // a key that never exists, so bound-metric agents collected nothing.
         let storage_key = format!("device:{}", device_id);
-        let result = storage
-            .query_range(&storage_key, metric_name, start_time, end_time, None)
-            .await
-            .map_err(|e| NeoMindError::Storage(format!("Query failed: {}", e)))?;
-
-        if result.points.is_empty() {
-            tracing::debug!(
-                device_id = %device_id,
-                metric_name = %metric_name,
-                "[COLLECT] No data points found"
-            );
-            return Ok(None);
-        }
-
-        tracing::debug!(
-            device_id = %device_id,
-            metric_name = %metric_name,
-            points_count = result.points.len(),
-            "[COLLECT] Data points found"
-        );
-
-        let latest = &result.points[result.points.len() - 1];
+        // A no-history collection only needs the newest value — and the
+        // newest value may still be in the write buffer: a device report
+        // triggers execution within milliseconds, while `query_range` reads
+        // only flushed redb. `query_latest` goes through the latest-value
+        // cache, which is updated synchronously on write.
+        let mut range_points: Option<neomind_storage::timeseries::TimeSeriesResult> = None;
+        let (latest, points_count) = if include_history {
+            let result = storage
+                .query_range(&storage_key, metric_name, start_time, end_time, None)
+                .await
+                .map_err(|e| NeoMindError::Storage(format!("Query failed: {}", e)))?;
+            if result.points.is_empty() {
+                tracing::debug!(
+                    device_id = %device_id,
+                    metric_name = %metric_name,
+                    "[COLLECT] No data points found"
+                );
+                return Ok(None);
+            }
+            let n = result.points.len();
+            let latest = result.points[n - 1].clone();
+            range_points = Some(result);
+            (latest, n)
+        } else {
+            match storage.query_latest(&storage_key, metric_name).await {
+                Ok(Some(point)) => (point, 1),
+                Ok(None) | Err(_) => {
+                    tracing::debug!(
+                        device_id = %device_id,
+                        metric_name = %metric_name,
+                        "[COLLECT] No data points found"
+                    );
+                    return Ok(None);
+                }
+            }
+        };
 
         // Check if this is an image metric
         let is_image = is_image_metric(metric_name, &latest.value);
@@ -401,7 +415,7 @@ impl AgentExecutor {
         let mut values_json = serde_json::json!({
             "value": latest.value,
             "timestamp": latest.timestamp,
-            "points_count": result.points.len(),
+            "points_count": points_count,
             "time_range_minutes": time_range_minutes,
             "_is_image": is_image,
         });
@@ -418,13 +432,10 @@ impl AgentExecutor {
         }
 
         // Include history if configured and not an image
-        if include_history && !is_image && result.points.len() > 1 {
-            let history_limit = max_points.min(result.points.len());
-            let start_idx = if result.points.len() > history_limit {
-                result.points.len() - history_limit
-            } else {
-                0
-            };
+        if include_history && !is_image && points_count > 1 {
+            let result = range_points.as_ref().expect("history requested");
+            let history_limit = max_points.min(points_count);
+            let start_idx = points_count.saturating_sub(history_limit);
 
             let history_points = &result.points[start_idx..];
 
