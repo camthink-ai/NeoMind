@@ -76,184 +76,6 @@ impl AgentExecutor {
         );
     }
 
-    /// Check if an event should trigger any agent and execute it (legacy device-only entry point).
-    pub async fn check_and_trigger_event(
-        &self,
-        device_id: String,
-        metric: &str,
-        value: &MetricValue,
-    ) -> AgentResult<()> {
-        // Refresh event-triggered agents cache
-        self.refresh_event_agents().await;
-
-        let event_agents = self.event_agents.read().await;
-
-        tracing::debug!(
-            device_id = %device_id,
-            metric = %metric,
-            event_agent_count = event_agents.len(),
-            "[EVENT] Checking device event against {} event-triggered agents",
-            event_agents.len()
-        );
-
-        // Clone device_id for use in spawned tasks
-        let device_id_for_spawn = device_id.clone();
-
-        // Clean up old entries from recent_executions (older than cooldown window)
-        self.cleanup_stale_dedup_entries().await;
-        let now = chrono::Utc::now().timestamp();
-
-        for agent in event_agents.values() {
-            // Check if this agent has event-based schedule
-            if matches!(
-                agent.schedule.schedule_type,
-                neomind_storage::ScheduleType::Event
-            ) {
-                // Check if agent's event filter matches this event
-                if self
-                    .matches_data_source_filter(agent, "device", &device_id, metric)
-                    .await
-                {
-                    // Cooldown: one execution per (agent, source) per 60s window
-                    const COOLDOWN_SECS: i64 = 60;
-                    let dedup_key = format!("{}:device:{}", agent.id, device_id);
-                    let recent = self.recent_executions.read().await;
-                    let is_duplicate = recent
-                        .get(&dedup_key)
-                        .map(|&timestamp| now - timestamp < COOLDOWN_SECS)
-                        .unwrap_or(false);
-                    drop(recent);
-
-                    if is_duplicate {
-                        tracing::info!(
-                            agent_name = %agent.name,
-                            device_id = %device_id,
-                            metric = %metric,
-                            "Skipping event-triggered execution (cooldown: {}s)",
-                            COOLDOWN_SECS
-                        );
-                        continue;
-                    }
-
-                    // Clone dedup_key before it's moved into the recent_executions map;
-                    // the spawned task needs a copy to clear the cooldown on failure.
-                    let dedup_key_clone = dedup_key.clone();
-
-                    // Mark this execution as recent
-                    {
-                        let mut recent = self.recent_executions.write().await;
-                        recent.insert(dedup_key, now);
-                    }
-
-                    tracing::debug!(
-                        agent_name = %agent.name,
-                        device_id = %device_id,
-                        metric = %metric,
-                        "Event-triggered agent execution"
-                    );
-
-                    // Clone the agent and event data for execution
-                    let agent_clone = agent.clone();
-                    let metric_clone = metric.to_string();
-                    let value_clone = value.clone();
-                    let device_id_for_task = device_id_for_spawn.clone();
-                    let timestamp = chrono::Utc::now().timestamp();
-
-                    // Build executor config for spawned task
-                    let executor_config = self.build_spawn_config(agent);
-                    let agent_id_for_log = agent.id.clone();
-                    let recent_executions_clone = self.recent_executions.clone();
-
-                    let handle = tokio::spawn(async move {
-                        // Acquire the GLOBAL execution semaphore first (WAIT):
-                        // scheduled executions hold this same permit, and event
-                        // bursts used to stack past the global bound because
-                        // only the per-backend permit was held. Held for the
-                        // whole run (dropped when this task ends).
-                        let _global_permit = match executor_config.execution_semaphore.clone() {
-                            Some(sem) => sem.acquire_owned().await.ok(),
-                            None => None,
-                        };
-                        // Acquire per-backend semaphore (WAIT, not fail)
-                        Self::acquire_backend_permit(
-                            &executor_config.backend_semaphores,
-                            &agent_id_for_log,
-                            &agent_clone
-                                .llm_backend_id
-                                .clone()
-                                .unwrap_or_else(|| "default".to_string()),
-                        )
-                        .await;
-
-                        // Create event trigger data
-                        let event_trigger_data = EventTriggerData {
-                            source: DataSourceRef {
-                                source_type: "device".to_string(),
-                                source_id: device_id_for_task,
-                                field: metric_clone,
-                            },
-                            value: value_clone,
-                            timestamp,
-                        };
-
-                        match AgentExecutor::new(executor_config).await {
-                            Ok(executor) => {
-                                tracing::debug!(
-                                    agent_id = %agent_id_for_log,
-                                    trigger_device = %event_trigger_data.source.source_id,
-                                    trigger_metric = %event_trigger_data.source.field,
-                                    "Executing event-triggered agent with event data"
-                                );
-
-                                // Execute the agent with event data (includes the triggering metric value directly).
-                                // On failure, perform one inline retry with a short backoff; if the retry
-                                // also fails, clear the cooldown marker so transient errors (API hiccups,
-                                // network blips) don't lock out subsequent events for 60 seconds.
-                                let result = Self::execute_with_retry(
-                                    &executor,
-                                    agent_clone,
-                                    event_trigger_data,
-                                    1,
-                                    &agent_id_for_log,
-                                )
-                                .await;
-
-                                if result.is_err() {
-                                    let mut recent = recent_executions_clone.write().await;
-                                    recent.remove(&dedup_key_clone);
-                                    tracing::info!(
-                                        agent_id = %agent_id_for_log,
-                                        dedup_key = %dedup_key_clone,
-                                        "Cleared event cooldown after failed execution"
-                                    );
-                                }
-                            }
-                            Err(e) => {
-                                tracing::error!(
-                                    agent_id = %agent_id_for_log,
-                                    error = %e,
-                                    "Failed to create executor for event-triggered agent"
-                                );
-                                // Executor creation failed — clear cooldown so the next event can retry.
-                                let mut recent = recent_executions_clone.write().await;
-                                recent.remove(&dedup_key_clone);
-                            }
-                        }
-                    });
-                    // [cancellation] register the handle so shutdown can abort it;
-                    // prune finished entries to keep the registry bounded.
-                    {
-                        let mut handles = self.event_task_handles.lock();
-                        handles.retain(|h| !h.is_finished());
-                        handles.push(handle);
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-
     /// Unified entry point for triggering agents on any data source update.
     /// Called from the EventBus listener when any data source produces new values.
     pub async fn check_and_trigger_data_event(
@@ -300,6 +122,39 @@ impl AgentExecutor {
                 continue;
             }
 
+            // L0 guardrail: merge input bursts. One physical event can match
+            // several of this agent's sources, and the per-source cooldown
+            // below would happily run once per match. The debounce window is
+            // per AGENT, so the agent pays for one inference per window no
+            // matter how many sources fired. Structured-only: its guardrails
+            // are all-or-nothing, defaulting to 30s (see OperatorConfig).
+            let debounce_secs = match agent.execution_mode {
+                neomind_storage::agents::ExecutionMode::Structured => agent
+                    .operator_config
+                    .clone()
+                    .unwrap_or_else(super::structured::default_operator_config)
+                    .debounce_secs as i64,
+                _ => 0,
+            };
+            if debounce_secs > 0 {
+                let last = self
+                    .last_event_inference
+                    .read()
+                    .get(&agent.id)
+                    .copied()
+                    .unwrap_or(0);
+                if now - last < debounce_secs {
+                    tracing::info!(
+                        agent_name = %agent.name,
+                        source_id = %source_id,
+                        field = %field,
+                        debounce_secs,
+                        "Merged into the debounce window — skipping data event execution"
+                    );
+                    continue;
+                }
+            }
+
             // Cooldown: one execution per (agent, source) per 60s window
             const COOLDOWN_SECS: i64 = 60;
             let dedup_key = format!("{}:{}:{}", agent.id, source_type, source_id);
@@ -330,6 +185,11 @@ impl AgentExecutor {
             {
                 let mut recent = self.recent_executions.write().await;
                 recent.insert(dedup_key, now);
+            }
+            if debounce_secs > 0 {
+                self.last_event_inference
+                    .write()
+                    .insert(agent.id.clone(), now);
             }
 
             tracing::debug!(

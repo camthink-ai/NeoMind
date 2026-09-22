@@ -1,5 +1,6 @@
 //! Handler tests module.
 
+pub mod agents;
 pub mod auth_users;
 pub mod basic;
 // llm_backends.rs deprecated - API changed significantly

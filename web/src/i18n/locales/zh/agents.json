@@ -510,9 +510,13 @@
     "structured": {
       "sectionTitle": "输出字段（ai:{id}:* 数据源）",
       "hint": "每个字段都会发布为平台数据源，仪表盘、规则、数据推送可直接使用。定义要提取什么，再用资源绑定输入。",
-      "fieldName": "字段名（如 missing_count）",
-      "fieldUnit": "单位（可选，如 ℃ / 件）",
-      "fieldDescription": "字段含义（会注入提示词）",
+      "colName": "字段名",
+      "colType": "类型",
+      "colUnit": "单位",
+      "colDesc": "含义",
+      "fieldName": "如 missing_count",
+      "fieldUnit": "如 ℃ / 件",
+      "fieldDescription": "会注入提示词",
       "enumValues": "允许的取值，逗号分隔（如 正常, 待检, 停线）",
       "typeNumber": "数值",
       "typeText": "文本",
@@ -573,7 +577,8 @@
       "nameRequired": "请输入智能体名称",
       "requirementRequired": "请描述你的需求",
       "resourceRequired": "请至少选择一个设备资源",
-      "eventTypeRequired": "请选择触发事件类型"
+      "eventTypeRequired": "请选择触发事件类型",
+      "outputFieldRequired": "请至少定义一个输出字段"
     },
     "actions": {
       "cancel": "取消",

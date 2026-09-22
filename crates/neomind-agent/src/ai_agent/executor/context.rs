@@ -115,8 +115,12 @@ pub(crate) fn build_history_context(
         );
     }
 
-    // 3. Execution Journal
-    if !agent.memory.journal.records.is_empty() {
+    // 3. Execution Journal — omitted for stateless agents (MemoryMode::Tool):
+    // what happened last time is cost, not context, for a scanner. The user's
+    // instructions and knowledge files above are standards, and still apply.
+    if agent.effective_memory_mode() == neomind_storage::MemoryMode::Assistant
+        && !agent.memory.journal.records.is_empty()
+    {
         // The full `action_taken` (up to 5×150 chars) is the key learning
         // signal for FAILED runs; for successes a short preview keeps the
         // journal from dominating a small model's window (5 entries × ~1100
@@ -206,6 +210,82 @@ pub(crate) fn truncate_to(text: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An agent whose prompt would carry every context section: a past run, a
+    /// user correction, and a knowledge file.
+    fn agent_with_history(memory_mode: Option<neomind_storage::MemoryMode>) -> AiAgent {
+        serde_json::from_value(serde_json::json!({
+            "id": "a1",
+            "name": "n",
+            "user_prompt": "p",
+            "parsed_intent": null,
+            "status": "active",
+            "created_at": 0,
+            "updated_at": 0,
+            "last_execution_at": null,
+            "stats": {
+                "total_executions": 0, "successful_executions": 0,
+                "failed_executions": 0, "avg_duration_ms": 0, "last_duration_ms": 0
+            },
+            "error_message": null,
+            "resources": [],
+            "schedule": { "schedule_type": "interval", "interval_seconds": 60 },
+            "execution_mode": "focused",
+            "memory_mode": memory_mode.map(|m| serde_json::to_value(m).unwrap()),
+            "user_messages": [
+                { "id": "m1", "timestamp": 0, "content": "STANDARD_错装记成待检" }
+            ],
+            "memory": {
+                "journal": { "records": [ {
+                    "timestamp": 0,
+                    "execution_id": "e1",
+                    "outcome": "HISTORY_上次读数28度",
+                    "action_taken": "alert",
+                    "success": true
+                } ] },
+                "knowledge_files": [],
+                "updated_at": 0
+            }
+        }))
+        .expect("fixture deserialises")
+    }
+
+    /// A scanner is judged on this run's input alone. Past runs are cost, not
+    /// context — while the user's own rules still apply.
+    #[test]
+    fn tool_mode_drops_past_runs_but_keeps_the_users_rules() {
+        let agent = agent_with_history(Some(neomind_storage::MemoryMode::Tool));
+        let ctx = build_history_context(&agent, &HistoryConfig::focused(10), None);
+
+        assert!(
+            !ctx.contains("HISTORY_"),
+            "a stateless agent must not carry past runs into its prompt: {ctx}"
+        );
+        assert!(
+            ctx.contains("STANDARD_"),
+            "the user's corrections are standards, not history: {ctx}"
+        );
+    }
+
+    /// Regression guard: an agent that never chose a memory mode must keep
+    /// exactly today's prompt. The derivation decides the default — it must
+    /// not silently strip history from every agent that predates the field.
+    #[test]
+    fn unset_memory_mode_keeps_todays_behaviour() {
+        let agent = agent_with_history(None);
+        let ctx = build_history_context(&agent, &HistoryConfig::focused(10), None);
+
+        assert!(ctx.contains("HISTORY_"), "expected the journal in: {ctx}");
+        assert!(ctx.contains("STANDARD_"), "expected the rules in: {ctx}");
+    }
+
+    #[test]
+    fn assistant_mode_keeps_past_runs() {
+        let agent = agent_with_history(Some(neomind_storage::MemoryMode::Assistant));
+        let ctx = build_history_context(&agent, &HistoryConfig::focused(10), None);
+
+        assert!(ctx.contains("HISTORY_"), "expected the journal in: {ctx}");
+    }
 
     #[test]
     fn test_truncate_to_short_text() {

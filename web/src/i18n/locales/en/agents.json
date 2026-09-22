@@ -510,9 +510,13 @@
     "structured": {
       "sectionTitle": "Output Fields (ai:{id}:* data sources)",
       "hint": "Each field is published as a platform data source usable by dashboards, rules and data-push. Define what to extract, then bind it to inputs via resources.",
-      "fieldName": "Field name (e.g. missing_count)",
-      "fieldUnit": "Unit (optional, e.g. ℃ / 件)",
-      "fieldDescription": "What this field means (injected into the prompt)",
+      "colName": "Name",
+      "colType": "Type",
+      "colUnit": "Unit",
+      "colDesc": "Meaning",
+      "fieldName": "e.g. missing_count",
+      "fieldUnit": "e.g. ℃ / pcs",
+      "fieldDescription": "Injected into prompt",
       "enumValues": "Allowed values, comma-separated (e.g. 正常, 待检, 停线)",
       "typeNumber": "Number",
       "typeText": "Text",
@@ -573,7 +577,8 @@
       "nameRequired": "Please enter agent name",
       "requirementRequired": "Please describe your requirements",
       "resourceRequired": "Please select at least one device resource",
-      "eventTypeRequired": "Please select trigger event type"
+      "eventTypeRequired": "Please select trigger event type",
+      "outputFieldRequired": "Please define at least one output field"
     },
     "actions": {
       "cancel": "Cancel",

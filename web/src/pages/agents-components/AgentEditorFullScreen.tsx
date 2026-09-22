@@ -36,7 +36,6 @@ import { } from '@/components/ui/dialog'
 import {
   Loader2,
   Clock,
-  Zap,
   Check,
   Target,
   Activity,
@@ -45,7 +44,6 @@ import {
   Puzzle,
   Plus,
   Info,
-  Wand2,
   ChevronRight,
   Brain,
   Database,
@@ -56,6 +54,7 @@ import {
   SearchCheck,
   FileText,
 } from 'lucide-react'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type {
   AiAgentDetail,
   AgentSchedule,
@@ -78,6 +77,7 @@ import {
   SelectedResourceItem,
   INTERVALS,
   HOURS,
+  hasOutputContract,
 } from './agent-editor'
 import type {
   MetricInfo,
@@ -199,7 +199,6 @@ export function AgentEditorFullScreen({
   // ========================================================================
 
   const isFocusedMode = executionMode === 'focused'
-  const isFreeMode = executionMode === 'free'
   const isStructuredMode = executionMode === 'structured'
 
   // Helper: get metrics for a device (from deviceTypes)
@@ -912,7 +911,12 @@ export function AgentEditorFullScreen({
     (validateRequired(name, 'Name') || validateLength(name, 'Name', 1, 100))
   const _promptError = fieldErrors.prompt ??
     (validateRequired(userPrompt, 'Prompt') || validateLength(userPrompt, 'Prompt', 1, 5000))
-  const isValid: boolean = name.trim().length > 0 && userPrompt.trim().length > 0
+  // A structured (L0) agent publishes one data source per output field; with
+  // no named field there is nothing to publish and the executor rejects every
+  // run. Block the save here rather than failing after the user has left.
+  const outputContractOk = !isStructuredMode || hasOutputContract(outputSchema)
+  const isValid: boolean =
+    name.trim().length > 0 && userPrompt.trim().length > 0 && outputContractOk
 
   // ========================================================================
   // Handlers
@@ -1207,7 +1211,7 @@ export function AgentEditorFullScreen({
             {/* Task-first entry: 客户语言四选一，技术模式隐入幕后 */}
             <div className="space-y-2 min-w-0">
               <Label className="text-sm font-medium">{tAgent('creator.task.question')}</Label>
-              <div className={cn("gap-2 grid grid-cols-1")}>
+              <div className={cn("gap-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4")}>
                 {([
                   {
                     kind: 'watch', icon: Eye,
@@ -1244,19 +1248,20 @@ export function AgentEditorFullScreen({
                       key={card.kind}
                       type="button"
                       onClick={() => { setTaskKind(card.kind); card.apply() }}
+                      // The example rides on hover — it is the part users can
+                      // do without once they have read the card twice, and
+                      // showing it cost a third line of height.
+                      title={`${tAgent('creator.task.examplePrefix')}${card.example}`}
                       className={cn(
-                        "flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors",
-                        on ? "border-primary bg-muted" : "border-muted hover:border-border"
+                        "flex min-w-0 items-center gap-2 rounded-lg border px-3 py-2.5 text-left transition-colors",
+                        on ? "border-primary bg-muted" : "border-border hover:border-muted-foreground"
                       )}
                     >
-                      <div className="flex items-center gap-2">
-                        <card.icon className={cn("h-4 w-4", on ? "text-foreground" : "text-muted-foreground")} />
-                        <span className="text-sm font-medium">{card.title}</span>
+                      <card.icon className={cn("h-4 w-4 shrink-0", on ? "text-foreground" : "text-muted-foreground")} />
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium">{card.title}</div>
+                        <div className="truncate text-xs text-muted-foreground">{card.desc}</div>
                       </div>
-                      <p className="text-xs text-muted-foreground">{card.desc}</p>
-                      <p className="w-full border-t border-dashed border-border pt-1 text-[11px] text-muted-foreground">
-                        {tAgent('creator.task.examplePrefix')}{card.example}
-                      </p>
                     </button>
                   )
                 })}
@@ -1480,9 +1485,22 @@ export function AgentEditorFullScreen({
     <>
             {/* Prompt */}
             <div className="space-y-3">
-              <Label className="text-sm font-medium">
-                {tAgent('creator.basicInfo.requirement')} <span className="text-error">*</span>
-              </Label>
+              <div className="flex items-center gap-1.5">
+                <Label className="text-sm font-medium">
+                  {tAgent('creator.basicInfo.requirement')} <span className="text-error">*</span>
+                </Label>
+                {/* Same affordance `Field` renders for its `tooltip` prop. */}
+                <TooltipProvider delayDuration={300}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Info className="h-3.5 w-3.5 cursor-help text-muted-foreground" />
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-xs">
+                      <p>{tAgent('creator.basicInfo.promptTip')}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
 
               <Textarea
                 value={userPrompt}
@@ -1501,13 +1519,6 @@ export function AgentEditorFullScreen({
                 <p className="text-sm text-error mt-1">{fieldErrors.prompt}</p>
               )}
 
-              {/* AI Helper Tip */}
-              <div className="flex items-start gap-2 p-3 rounded-lg border border-border">
-                <Wand2 className="h-4 w-4 text-primary shrink-0 mt-0.5" />
-                <p className="text-xs text-muted-foreground">
-                  <span className="font-medium text-primary">Tip:</span> {tAgent('creator.basicInfo.promptTip')}
-                </p>
-              </div>
             </div>
     </>
   )
@@ -1522,11 +1533,29 @@ export function AgentEditorFullScreen({
                   {tAgent('creator.structured.sectionTitle')}
                 </Label>
                 <p className="text-xs text-muted-foreground">{tAgent('creator.structured.hint')}</p>
+                {!outputContractOk && (
+                  <p className="text-sm text-error">{tAgent('creator.validation.outputFieldRequired')}</p>
+                )}
+
+                {outputSchema.length > 0 && (
+                  // Column identity lives in this header, not in the input
+                  // placeholders — a placeholder disappears as soon as the
+                  // field has a value, which is exactly when you need it.
+                  <div className="hidden gap-2 px-2 md:grid md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,0.7fr)_minmax(0,1.4fr)_1.75rem]">
+                    {['colName', 'colType', 'colUnit', 'colDesc'].map((k) => (
+                      <span key={k} className="text-xs text-muted-foreground">
+                        {tAgent(`creator.structured.${k}`)}
+                      </span>
+                    ))}
+                    <span />
+                  </div>
+                )}
 
                 {outputSchema.map((field, idx) => (
                   <div key={idx} className="space-y-2 rounded-md border border-border p-2">
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                    <div className="grid grid-cols-1 items-center gap-2 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,0.7fr)_minmax(0,1.4fr)_1.75rem]">
                       <Input
+                        className="font-mono"
                         placeholder={tAgent('creator.structured.fieldName')}
                         value={field.name}
                         onChange={(e) => {
@@ -1575,6 +1604,17 @@ export function AgentEditorFullScreen({
                           setOutputSchema(next)
                         }}
                       />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        className="text-muted-foreground hover:text-error"
+                        aria-label={tAgent('creator.structured.removeField')}
+                        title={tAgent('creator.structured.removeField')}
+                        onClick={() => setOutputSchema(outputSchema.filter((_, i) => i !== idx))}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
                     </div>
                     {field.field_type.type === 'enum' && (
                       <Input
@@ -1593,16 +1633,6 @@ export function AgentEditorFullScreen({
                         }}
                       />
                     )}
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="text-muted-foreground"
-                      onClick={() => setOutputSchema(outputSchema.filter((_, i) => i !== idx))}
-                    >
-                      <X className="h-3 w-3 mr-1" />
-                      {tAgent('creator.structured.removeField')}
-                    </Button>
                   </div>
                 ))}
 
@@ -1768,9 +1798,9 @@ export function AgentEditorFullScreen({
               </div>
 
               {/* Schedule Configuration */}
-              <div className={cn("border rounded-lg p-4")}>
+              <div className={cn("border rounded-lg p-3")}>
                 {scheduleType === 'timer' && (
-                  <div className="space-y-3">
+                  <div className="space-y-2">
                     {/* Timer sub-type tabs */}
                     <div className={cn(
                       "flex gap-1",
@@ -1786,13 +1816,13 @@ export function AgentEditorFullScreen({
                           type="button"
                           onClick={() => setTimerSubType(key)}
                           className={cn(
-                            "rounded-lg font-medium transition-colors",
+                            "rounded-lg border font-medium transition-colors",
                             isMobile
                               ? "px-4 py-2.5 text-sm flex-1"
                               : "px-3 py-1.5 text-sm",
                             timerSubType === key
-                              ? "bg-primary text-primary-foreground"
-                              : "bg-background hover:bg-muted"
+                              ? "border-primary bg-primary text-primary-foreground"
+                              : "border-border bg-background hover:bg-muted"
                           )}
                         >
                           {label}
@@ -1817,13 +1847,13 @@ export function AgentEditorFullScreen({
                               type="button"
                               onClick={() => setIntervalValue(mins)}
                               className={cn(
-                                "rounded-lg font-medium transition-colors",
+                                "rounded-lg border font-medium transition-colors",
                                 isMobile
                                   ? "px-4 py-3 text-base min-w-[60px]"
                                   : "px-3 py-1.5 text-sm",
                                 intervalValue === mins
-                                  ? "bg-primary text-primary-foreground"
-                                  : "bg-background hover:bg-muted"
+                                  ? "border-primary bg-primary text-primary-foreground"
+                                  : "border-border bg-background hover:bg-muted"
                               )}
                             >
                               {mins}m
@@ -1840,18 +1870,16 @@ export function AgentEditorFullScreen({
                         isMobile ? "flex-col items-start gap-4" : ""
                       )}>
                         <span className={cn("text-muted-foreground", isMobile ? "text-sm" : "text-sm")}>{tAgent('creator.schedule.daily.everyDay')}</span>
-                        <div className="flex items-center gap-1 bg-background rounded-lg p-1">
-                          <Select value={scheduleHour.toString()} onValueChange={(v) => setScheduleHour(parseInt(v))}>
-                            <SelectTrigger className={cn("border-0 bg-transparent", isMobile ? "w-24 h-11 text-base" : "w-20 h-9")}>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {HOURS.map((h) => (
-                                <SelectItem key={h} value={h.toString()}>{h.toString().padStart(2, '0')}:00</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
+                        <Select value={scheduleHour.toString()} onValueChange={(v) => setScheduleHour(parseInt(v))}>
+                          <SelectTrigger className={cn(isMobile ? "w-28 h-11 text-base" : "w-24 h-9")}>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {HOURS.map((h) => (
+                              <SelectItem key={h} value={h.toString()}>{h.toString().padStart(2, '0')}:00</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </div>
                     )}
 
@@ -1876,13 +1904,13 @@ export function AgentEditorFullScreen({
                                 setSelectedWeekdays(newWeekdays)
                               }}
                               className={cn(
-                                "rounded-lg font-medium transition-colors",
+                                "rounded-lg border font-medium transition-colors",
                                 isMobile
                                   ? "w-12 h-12 text-base"
                                   : "w-10 h-10 text-sm",
                                 selectedWeekdays.includes(d)
-                                  ? "bg-primary text-primary-foreground"
-                                  : "bg-background hover:bg-muted"
+                                  ? "border-primary bg-primary text-primary-foreground"
+                                  : "border-border bg-background hover:bg-muted"
                               )}
                             >
                               {tAgent(`creator.weekdays.${d}`)}
@@ -1895,7 +1923,7 @@ export function AgentEditorFullScreen({
                         )}>
                           <span className={cn("text-muted-foreground", isMobile ? "text-sm" : "text-sm")}>{tAgent('creator.schedule.daily.at')}</span>
                           <Select value={scheduleHour.toString()} onValueChange={(v) => setScheduleHour(parseInt(v))}>
-                            <SelectTrigger className={cn(isMobile ? "w-24 h-11 text-base" : "w-20 h-9")}>
+                            <SelectTrigger className={cn(isMobile ? "w-28 h-11 text-base" : "w-24 h-9")}>
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -2142,7 +2170,7 @@ export function AgentEditorFullScreen({
                                 isMobile ? "px-3 py-1.5 text-sm" : "px-2.5 py-1 text-xs",
                                 activeAllSelected
                                   ? "bg-primary text-primary-foreground"
-                                  : "bg-muted hover:bg-muted text-muted-foreground"
+                                  : "bg-muted text-muted-foreground hover:text-foreground"
                               )}
                             >
                               {tAgent('creator.schedule.reactive.allMetrics')}
@@ -2160,7 +2188,7 @@ export function AgentEditorFullScreen({
                                     isMobile ? "px-3 py-1.5 text-sm" : "px-2.5 py-1 text-xs",
                                     isSelected
                                       ? "bg-muted text-primary font-medium ring-1 ring-primary"
-                                      : "bg-muted hover:bg-muted text-muted-foreground"
+                                      : "bg-muted text-muted-foreground hover:text-foreground"
                                   )}
                                 >
                                   {m.display_name}
@@ -2276,7 +2304,7 @@ export function AgentEditorFullScreen({
 
               if (isProminent) {
                 return (
-                  <div className="space-y-3 rounded-lg p-3 -mx-3 border border-border">
+                  <div className="space-y-3 rounded-lg border border-border p-3">
                     <div className={cn(
                       "flex items-center justify-between",
                       isMobile ? "flex-col items-start gap-3" : ""
@@ -2333,7 +2361,7 @@ export function AgentEditorFullScreen({
 
               // Collapsed style (Reactive / Free / On-demand)
               return (
-                <div className="rounded-lg -mx-3 border overflow-hidden">
+                <div className="overflow-hidden rounded-lg border">
                   <button
                     type="button"
                     onClick={() => setFreeModeResourcesExpanded(!freeModeResourcesExpanded)}
@@ -2422,7 +2450,7 @@ export function AgentEditorFullScreen({
               variant="outline"
               size={isMobile ? "default" : "sm"}
               onClick={handleDryRun}
-              disabled={!userPrompt.trim() || dryRunning || saving}
+              disabled={!userPrompt.trim() || !outputContractOk || dryRunning || saving}
               className={isMobile ? "min-w-[100px] h-12" : ""}
             >
               {dryRunning ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
@@ -2451,10 +2479,11 @@ export function AgentEditorFullScreen({
       accent="indigo"
       title={agent ? tAgent('editAgent') : tAgent('createAgent')}
       icon={<Sparkles className="h-5 w-5" />}
-      config={<div className="space-y-5">{rail.task}{rail.namedesc}{rail.model}{rail.advanced}</div>}
+      top={rail.task}
+      config={<div className="space-y-5">{rail.namedesc}{rail.model}{rail.advanced}</div>}
       workspace={<div className="space-y-5">{canvas.prompt}{canvas.structured}{canvas.schedule}{canvas.resources}</div>}
       footer={footerNode}
-      mobileConfigLabel={tAgent('creator.task.question')}
+      mobileConfigLabel={tAgent('creator.steps.basic')}
     />
 
 

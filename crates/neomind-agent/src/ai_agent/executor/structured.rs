@@ -226,11 +226,11 @@ async fn infer_structured(
 
 
 /// Defaults for [`neomind_storage::OperatorConfig`] when an agent omits it —
-/// mirrors the serde defaults on the struct.
-fn default_operator_config() -> neomind_storage::OperatorConfig {
+/// mirrors the serde defaults on the struct. `pub(super)` so the event-trigger
+/// path resolves the same defaults the inference path does.
+pub(super) fn default_operator_config() -> neomind_storage::OperatorConfig {
     neomind_storage::OperatorConfig {
         debounce_secs: 30,
-        smoothing: None,
         max_calls_per_day: None,
         timeout_secs: 60,
         consecutive_failure_threshold: 3,

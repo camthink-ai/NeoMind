@@ -1175,6 +1175,11 @@ pub static ROUTES: &[RouteDoc] = &[
         auth: "jwt-or-api-key",
     },
     RouteDoc {
+        method: "POST",
+        path: "/api/agents/test-preview",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
         method: "GET",
         path: "/api/agents/:id",
         auth: "jwt-or-api-key",
@@ -1197,6 +1202,11 @@ pub static ROUTES: &[RouteDoc] = &[
     RouteDoc {
         method: "POST",
         path: "/api/agents/:id/invoke",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
+        method: "POST",
+        path: "/api/agents/:id/test",
         auth: "jwt-or-api-key",
     },
     RouteDoc {

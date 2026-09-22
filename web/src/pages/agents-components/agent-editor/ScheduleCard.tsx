@@ -15,24 +15,25 @@ export interface ScheduleCardProps {
 
 export function ScheduleCard({ icon, label, description, active, onClick, isMobile = false }: ScheduleCardProps) {
   return (
+    // Icon beside stacked text, not above it: the old column centred an icon
+    // in its own padded box and let the description wrap under it, which cost
+    // roughly twice the height for the same information.
     <button
       type="button"
       onClick={onClick}
       className={cn(
-        "flex flex-col items-center rounded-lg border transition-colors",
-        isMobile ? "gap-3 p-4" : "gap-2 p-3",
+        "flex min-w-0 items-center rounded-lg border text-left transition-colors",
+        isMobile ? "gap-2.5 p-3" : "gap-2 px-3 py-2.5",
         active
           ? "border-primary bg-muted"
-          : "border-transparent hover:border-border"
+          : "border-border hover:border-muted-foreground"
       )}
     >
-      <div className={cn("rounded-lg", active ? "bg-muted" : "", isMobile ? "p-2" : "p-1.5")}>
-        {icon}
-      </div>
-      <div className="text-center">
-        <div className={cn("font-medium", active ? "text-foreground" : "text-muted-foreground", isMobile ? "text-sm" : "text-xs")}>{label}</div>
-        <div className={cn("text-muted-foreground", isMobile ? "text-xs" : textNano)}>{description}</div>
-      </div>
+      <span className="shrink-0">{icon}</span>
+      <span className="min-w-0">
+        <span className={cn("block truncate font-medium", active ? "text-foreground" : "text-muted-foreground", isMobile ? "text-sm" : "text-xs")}>{label}</span>
+        <span className={cn("block truncate text-muted-foreground", isMobile ? "text-xs" : textNano)}>{description}</span>
+      </span>
     </button>
   )
 }

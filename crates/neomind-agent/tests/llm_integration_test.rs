@@ -111,6 +111,7 @@ impl LlmTestContext {
             consecutive_failures: 0,
             output_schema: None,
             operator_config: None,
+            memory_mode: None,
             enable_tool_chaining: false,
             max_chain_depth: 3,
         };

@@ -320,6 +320,11 @@ pub struct AgentExecutor {
     /// Track recent executions to prevent duplicates (agent_id, device_id -> timestamp)
     /// Deduplicates by device only, not by individual metrics
     pub(crate) recent_executions: Arc<RwLock<HashMap<String, i64>>>,
+    /// Structured (L0) event debounce: agent_id -> timestamp of that agent's last
+    /// event-driven run. Unlike `recent_executions` (keyed per agent+source),
+    /// this is per AGENT: one physical event can match several of its sources,
+    /// and the guardrail merges them into a single inference.
+    pub(crate) last_event_inference: parking_lot::RwLock<HashMap<String, i64>>,
     /// Structured (L0) daily inference budget: agent_id -> (YYYY-MM-DD, calls).
     /// In-memory v1 — resets on restart, which only ever grants extra calls
     /// for one day; the scheduler gate reads it, execute_structured increments.
@@ -372,6 +377,7 @@ impl AgentExecutor {
             llm_backend_store,
             event_agents: Arc::new(RwLock::new(HashMap::new())),
             recent_executions: Arc::new(RwLock::new(HashMap::new())),
+            last_event_inference: parking_lot::RwLock::new(HashMap::new()),
             daily_call_counts: parking_lot::RwLock::new(HashMap::new()),
             extension_registry,
             tool_registry: parking_lot::RwLock::new(config.tool_registry.clone()),

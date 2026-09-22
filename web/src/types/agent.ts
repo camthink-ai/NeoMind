@@ -250,15 +250,9 @@ export interface OperatorField {
   description?: string
 }
 
-/** Output smoothing policy for state-like fields */
-export type SmoothingPolicy =
-  | { kind: 'consecutive_confirmations'; n: number }
-  | { kind: 'window_majority'; window_secs: number }
-
 /** Structured (L0) runtime tuning */
 export interface OperatorConfig {
   debounce_secs?: number
-  smoothing?: SmoothingPolicy
   max_calls_per_day?: number
   timeout_secs?: number
   consecutive_failure_threshold?: number

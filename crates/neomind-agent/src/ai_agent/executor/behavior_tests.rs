@@ -122,6 +122,7 @@ async fn build_harness() -> (AgentExecutor, AiAgent, Arc<ToolRegistry>) {
         consecutive_failures: 0,
         output_schema: None,
         operator_config: None,
+        memory_mode: None,
         enable_tool_chaining: false,
         max_chain_depth: 3,
     };
@@ -322,6 +323,130 @@ async fn structured_mode_publishes_schema_fields_on_first_pass() {
     assert!(dp.decisions[0].action.contains("ai:test-agent"));
 }
 
+/// The dispatch in `execute_internal` must route a structured agent to the L0
+/// branch. Its sibling above calls `execute_structured` directly, so it cannot
+/// catch a dispatch that routes elsewhere — this one enters through the same
+/// production entry point the scheduler uses.
+#[tokio::test]
+async fn structured_mode_is_dispatched_from_the_production_entry_point() {
+    let (mut executor, mut agent, _registry) = build_harness().await;
+    agent.execution_mode = neomind_storage::agents::ExecutionMode::Structured;
+    agent.output_schema = Some(vec![neomind_storage::OperatorField {
+        name: "missing_count".into(),
+        field_type: neomind_storage::OperatorFieldType::Number,
+        unit: None,
+        description: None,
+    }]);
+    let rt: Arc<dyn LlmRuntime> = Arc::new(MockLlmRuntime::new(vec![MockResponse::text(
+        r#"{"missing_count": 1}"#,
+    )]));
+    executor.set_llm_runtime(rt).await;
+    // `execute_agent` persists an execution record, so the agent must exist.
+    executor.store().save_agent(&agent).await.expect("seed store");
+
+    let record = executor
+        .execute_agent(agent, None, None)
+        .await
+        .expect("structured execution through the production entry point");
+
+    assert_eq!(
+        record.decision_process.stop_reason, "structured",
+        "a structured agent must reach the L0 branch, not the tool loop"
+    );
+}
+
+/// Build an event-triggered agent whose filter matches every device source,
+/// seed it, and hand back the executor. `debounce_secs` of `None` omits the
+/// operator config entirely (no L0 guardrails).
+async fn build_event_agent(
+    mode: ExecutionMode,
+    debounce_secs: Option<u32>,
+) -> (AgentExecutor, AiAgent) {
+    let (mut executor, mut agent, _registry) = build_harness().await;
+    agent.schedule = AgentSchedule {
+        schedule_type: ScheduleType::Event,
+        interval_seconds: None,
+        cron_expression: None,
+        timezone: None,
+        event_filter: Some(r#"{"sources":[{"type":"device","id":"all"}]}"#.to_string()),
+    };
+    agent.execution_mode = mode;
+    agent.output_schema = Some(vec![neomind_storage::OperatorField {
+        name: "missing_count".into(),
+        field_type: neomind_storage::OperatorFieldType::Number,
+        unit: None,
+        description: None,
+    }]);
+    agent.operator_config = debounce_secs.map(|debounce_secs| neomind_storage::OperatorConfig {
+        debounce_secs,
+        max_calls_per_day: None,
+        timeout_secs: 60,
+        consecutive_failure_threshold: 3,
+    });
+    executor.store().save_agent(&agent).await.expect("seed store");
+    let rt: Arc<dyn LlmRuntime> = Arc::new(MockLlmRuntime::new(vec![MockResponse::text(
+        r#"{"missing_count": 1}"#,
+    )]));
+    executor.set_llm_runtime(rt).await;
+    (executor, agent)
+}
+
+/// One physical event can match several of a structured agent's sources. The
+/// debounce window must merge them so the agent pays for one inference, not
+/// one per match — that is what the editor's "防抖" field promises.
+#[tokio::test]
+async fn structured_event_agent_debounces_across_sources() {
+    let (executor, _agent) = build_event_agent(ExecutionMode::Structured, Some(300)).await;
+
+    for source in ["dev-a", "dev-b"] {
+        executor
+            .check_and_trigger_data_event(
+                "device",
+                source.to_string(),
+                "temp".to_string(),
+                &neomind_core::event::MetricValue::Float(1.0),
+            )
+            .await
+            .expect("trigger must not error");
+    }
+
+    let recent = executor.recent_executions.read().await;
+    assert!(
+        recent.contains_key("test-agent:device:dev-a"),
+        "the first source must run"
+    );
+    assert!(
+        !recent.contains_key("test-agent:device:dev-b"),
+        "a second source inside the debounce window must be merged away, \
+         not run as its own inference"
+    );
+}
+
+/// The guardrail is L0-only: an agent with no operator config keeps today's
+/// per-source cooldown and nothing else.
+#[tokio::test]
+async fn event_agent_without_operator_config_keeps_per_source_cooldown_only() {
+    let (executor, _agent) = build_event_agent(ExecutionMode::Free, None).await;
+
+    for source in ["dev-a", "dev-b"] {
+        executor
+            .check_and_trigger_data_event(
+                "device",
+                source.to_string(),
+                "temp".to_string(),
+                &neomind_core::event::MetricValue::Float(1.0),
+            )
+            .await
+            .expect("trigger must not error");
+    }
+
+    let recent = executor.recent_executions.read().await;
+    assert!(
+        recent.contains_key("test-agent:device:dev-b"),
+        "without L0 guardrails each source keeps its own cooldown window"
+    );
+}
+
 #[tokio::test]
 async fn structured_mode_without_schema_is_rejected() {
     let (executor, mut agent, _registry) = build_harness().await;
@@ -347,7 +472,6 @@ async fn structured_mode_daily_budget_caps_inferences() {
     }]);
     agent.operator_config = Some(neomind_storage::OperatorConfig {
         debounce_secs: 30,
-        smoothing: None,
         max_calls_per_day: Some(1),
         timeout_secs: 60,
         consecutive_failure_threshold: 3,

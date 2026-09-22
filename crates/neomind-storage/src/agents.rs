@@ -111,10 +111,16 @@ pub struct AiAgent {
     /// unchanged (same pattern as `enable_tool_chaining`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_schema: Option<Vec<OperatorField>>,
-    /// Structured-mode (L0) runtime tuning (debounce / smoothing / budget /
-    /// circuit breaker). None for Focused/Free agents.
+    /// Structured-mode (L0) runtime tuning (debounce / budget / circuit
+    /// breaker). None for Focused/Free agents.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operator_config: Option<OperatorConfig>,
+    /// Memory axis (2026-09-22): Tool = stateless per run, Assistant =
+    /// carry the recent-execution narrative. None = mode-derived default
+    /// (Structured→Tool, Free/Focused→Assistant). Tail-appended, serde
+    /// defaulted — existing rows decode unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_mode: Option<MemoryMode>,
 }
 
 /// Tool configuration for AI Agent function calling mode.
@@ -303,17 +309,6 @@ pub enum OperatorFieldType {
     Enum(Vec<String>),
 }
 
-/// Output smoothing for state-like fields: a single inference can flicker
-/// (clean → messy → clean); smoothing decides when a change is real.
-#[derive(utoipa::ToSchema, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "kind")]
-pub enum SmoothingPolicy {
-    /// Change is published only after `n` consecutive identical judgments
-    ConsecutiveConfirmations { n: u8 },
-    /// Majority vote inside the window
-    WindowMajority { window_secs: u32 },
-}
-
 /// Runtime tuning for a Structured-mode agent (L0). All costs are bounded:
 /// debounce caps frequency, budget caps daily volume, the failure threshold
 /// trips the circuit breaker (agent degrades: keeps last values, marked stale).
@@ -322,7 +317,6 @@ pub struct OperatorConfig {
     /// Inputs are merged: at most one inference per `debounce_secs` (default 30)
     #[serde(default = "default_operator_debounce")]
     pub debounce_secs: u32,
-    pub smoothing: Option<SmoothingPolicy>,
     /// Daily inference cap; None = uncapped (local models) — exceeded pauses
     /// the agent until the next day
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -334,6 +328,44 @@ pub struct OperatorConfig {
     /// Consecutive failures before the circuit breaker opens (default 3)
     #[serde(default = "default_operator_failure_threshold")]
     pub consecutive_failure_threshold: u8,
+}
+
+/// How much history an agent carries into each run (2026-09-22 review —
+/// the memory axis made explicit, docs/designs/002 §3.5).
+#[derive(utoipa::ToSchema, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryMode {
+    /// Stateless tool:每次只看当前输入 + instructed standard. No journal
+    /// narrative, no knowledge-file preload into the *prompt* — the agent
+    /// behaves like a scanner. Journal still RECORDS (for humans + the
+    /// detail page); corrections still apply (they encode the user's
+    /// standards, not past events). Cheapest, most predictable.
+    #[default]
+    Tool,
+    /// Assistant with history: 每次运行带上最近执行的结果叙事（journal
+    /// timeline），能说"比上次更差"这类判断。排查/汇总/自由发挥必须有它。
+    Assistant,
+}
+
+impl MemoryMode {
+    /// What an agent runs in when it carries no explicit override: a scanner
+    /// (structured) has nothing to learn from past runs, so carrying their
+    /// narrative is pure cost; everything that reasons across turns does.
+    pub fn derived_for(execution_mode: ExecutionMode) -> Self {
+        match execution_mode {
+            ExecutionMode::Structured => MemoryMode::Tool,
+            ExecutionMode::Focused | ExecutionMode::Free => MemoryMode::Assistant,
+        }
+    }
+}
+
+impl AiAgent {
+    /// Resolve the memory axis for this agent — an explicit choice wins,
+    /// otherwise it follows the execution mode.
+    pub fn effective_memory_mode(&self) -> MemoryMode {
+        self.memory_mode
+            .unwrap_or_else(|| MemoryMode::derived_for(self.execution_mode))
+    }
 }
 
 fn default_operator_debounce() -> u32 {
@@ -1419,6 +1451,85 @@ mod tests {
         AgentStore::memory().unwrap()
     }
 
+    /// Minimal agent for the memory-mode derivation tests.
+    fn memory_mode_fixture(
+        execution_mode: ExecutionMode,
+        memory_mode: Option<MemoryMode>,
+    ) -> AiAgent {
+        AiAgent {
+            id: "agent-m".to_string(),
+            name: "fixture".to_string(),
+            description: None,
+            user_prompt: "p".to_string(),
+            llm_backend_id: None,
+            parsed_intent: None,
+            resources: vec![],
+            schedule: AgentSchedule {
+                schedule_type: ScheduleType::Interval,
+                cron_expression: None,
+                interval_seconds: Some(300),
+                event_filter: None,
+                timezone: None,
+            },
+            status: AgentStatus::Active,
+            priority: 128,
+            created_at: 0,
+            updated_at: 0,
+            last_execution_at: None,
+            stats: AgentStats::default(),
+            memory: AgentMemory::default(),
+            conversation_history: vec![],
+            user_messages: vec![],
+            conversation_summary: None,
+            context_window_size: 10,
+            enable_tool_chaining: false,
+            max_chain_depth: 3,
+            tool_config: None,
+            execution_mode,
+            error_message: None,
+            system_prompt: None,
+            max_retries: 0,
+            consecutive_failures: 0,
+            output_schema: None,
+            operator_config: None,
+            memory_mode,
+        }
+    }
+
+    /// A scanner (structured) has nothing to learn from past runs, so it must
+    /// not pay to carry their narrative into the prompt.
+    #[test]
+    fn effective_memory_mode_derives_tool_for_structured_agents() {
+        let agent = memory_mode_fixture(ExecutionMode::Structured, None);
+        assert_eq!(agent.effective_memory_mode(), MemoryMode::Tool);
+    }
+
+    /// Everything that reasons across turns defaults to carrying history.
+    #[test]
+    fn effective_memory_mode_derives_assistant_for_the_rest() {
+        for mode in [ExecutionMode::Focused, ExecutionMode::Free] {
+            let agent = memory_mode_fixture(mode, None);
+            assert_eq!(
+                agent.effective_memory_mode(),
+                MemoryMode::Assistant,
+                "mode {mode:?} should carry history by default"
+            );
+        }
+    }
+
+    /// The derived default is only a default — an explicit choice wins, in
+    /// both directions.
+    #[test]
+    fn effective_memory_mode_honours_an_explicit_override() {
+        let pinned_stateless =
+            memory_mode_fixture(ExecutionMode::Free, Some(MemoryMode::Tool));
+        assert_eq!(pinned_stateless.effective_memory_mode(), MemoryMode::Tool);
+
+        let pinned_history =
+            memory_mode_fixture(ExecutionMode::Structured, Some(MemoryMode::Assistant));
+        assert_eq!(pinned_history.effective_memory_mode(), MemoryMode::Assistant);
+    }
+
     #[tokio::test]
     async fn test_save_and_get_agent() {
         let store = test_store();
@@ -1459,6 +1570,7 @@ mod tests {
             consecutive_failures: 0,
             output_schema: None,
             operator_config: None,
+            memory_mode: None,
         };
 
         store.save_agent(&agent).await.unwrap();
@@ -1507,6 +1619,7 @@ mod tests {
             consecutive_failures: 0,
             output_schema: None,
             operator_config: None,
+            memory_mode: None,
         };
 
         store.save_agent(&agent).await.unwrap();
@@ -1589,6 +1702,7 @@ mod tests {
             consecutive_failures: 0,
             output_schema: None,
             operator_config: None,
+            memory_mode: None,
         };
 
         // Save initial agent
@@ -1658,6 +1772,7 @@ mod tests {
             consecutive_failures: 0,
             output_schema: None,
             operator_config: None,
+            memory_mode: None,
         };
 
         store.save_agent(&agent).await.unwrap();

@@ -220,6 +220,9 @@ struct AgentDetailDto {
     /// Structured (L0) runtime tuning — present only for structured agents
     #[serde(skip_serializing_if = "Option::is_none")]
     operator_config: Option<neomind_storage::OperatorConfig>,
+    /// Memory axis (None = mode-derived default)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    memory_mode: Option<neomind_storage::MemoryMode>,
 }
 
 /// Agent resource for API responses.
@@ -442,9 +445,12 @@ pub struct CreateAgentRequest {
     /// Structured (L0) output contract: fields published as ai:{id}:{field}
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_schema: Option<Vec<neomind_storage::OperatorField>>,
-    /// Structured (L0) runtime tuning (debounce/smoothing/budget/breaker)
+    /// Structured (L0) runtime tuning (debounce/budget/breaker)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operator_config: Option<neomind_storage::OperatorConfig>,
+    /// Memory axis: "tool" (stateless) | "assistant" (carries history narrative)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_mode: Option<neomind_storage::MemoryMode>,
     /// Tool scoping: restrict which tools this agent may call. Omit (or set
     /// `allowed_tools: []`) for all tools — the default. Scoping the tool set
     /// per task is the highest-leverage fix for small-model tool selection.
@@ -539,9 +545,12 @@ pub struct UpdateAgentRequest {
     /// Structured (L0) output contract: fields published as ai:{id}:{field}
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_schema: Option<Vec<neomind_storage::OperatorField>>,
-    /// Structured (L0) runtime tuning (debounce/smoothing/budget/breaker)
+    /// Structured (L0) runtime tuning (debounce/budget/breaker)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operator_config: Option<neomind_storage::OperatorConfig>,
+    /// Memory axis override
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_mode: Option<neomind_storage::MemoryMode>,
     /// Tool scoping override. Send an object to set/replace it; omit to leave
     /// unchanged. Set `allowed_tools: []` to mean "all tools".
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -682,6 +691,7 @@ impl From<&AiAgent> for AgentDetailDto {
             tool_config: agent.tool_config.clone(),
             output_schema: agent.output_schema.clone(),
             operator_config: agent.operator_config.clone(),
+            memory_mode: agent.memory_mode,
         }
     }
 }
@@ -929,10 +939,11 @@ pub async fn create_agent(
         validate_usize_range(cw, "context_window_size", 1, 100)?;
     }
 
-    // Validate schedule type
-    if !["interval", "cron", "event"].contains(&request.schedule.schedule_type.as_str()) {
+    // Validate schedule type. "manual" is first-class (manual-only, never
+    // auto-scheduled) — the editor's on-demand strategy compiles to it.
+    if !["interval", "cron", "event", "manual"].contains(&request.schedule.schedule_type.as_str()) {
         return Err(ErrorResponse::bad_request(format!(
-            "Invalid schedule type: {} (must be 'interval', 'cron', or 'event')",
+            "Invalid schedule type: {} (must be 'interval', 'cron', 'event', or 'manual')",
             request.schedule.schedule_type
         )));
     }
@@ -1107,6 +1118,7 @@ pub async fn create_agent(
     // Validate execution_mode and check Focused mode requires resources
     let execution_mode = match request.execution_mode.as_deref() {
         Some("free") | Some("react") => neomind_storage::agents::ExecutionMode::Free,
+        Some("structured") => neomind_storage::agents::ExecutionMode::Structured,
         _ => neomind_storage::agents::ExecutionMode::Focused,
     };
     if execution_mode == neomind_storage::agents::ExecutionMode::Focused && resources.is_empty() {
@@ -1151,6 +1163,7 @@ pub async fn create_agent(
         consecutive_failures: 0,
         output_schema: request.output_schema,
         operator_config: request.operator_config,
+        memory_mode: request.memory_mode,
         conversation_history: Default::default(),
         user_messages: Default::default(),
         conversation_summary: Default::default(),
@@ -1417,6 +1430,9 @@ pub async fn update_agent(
     if let Some(operator_config) = request.operator_config {
         agent.operator_config = Some(operator_config);
     }
+    if let Some(memory_mode) = request.memory_mode {
+        agent.memory_mode = Some(memory_mode);
+    }
     if let Some(status_str) = request.status {
         agent.status = match status_str.as_str() {
             "active" => AgentStatus::Active,
@@ -1606,6 +1622,7 @@ pub async fn update_agent(
     if let Some(mode) = request.execution_mode {
         agent.execution_mode = match mode.as_str() {
             "free" | "react" => neomind_storage::agents::ExecutionMode::Free,
+            "structured" => neomind_storage::agents::ExecutionMode::Structured,
             _ => neomind_storage::agents::ExecutionMode::Focused,
         };
     }
@@ -1964,6 +1981,7 @@ pub async fn test_agent_preview(
         consecutive_failures: 0,
         output_schema: request.output_schema,
         operator_config: request.operator_config,
+        memory_mode: None,
         execution_mode: neomind_storage::agents::ExecutionMode::Structured,
         error_message: None,
     };
