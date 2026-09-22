@@ -234,7 +234,7 @@ impl LlmBackendInstanceManager {
 
             let config = OllamaConfig::new(&instance.model)
                 .with_endpoint(endpoint)
-                .with_timeout_secs(180);
+                .with_timeout_secs(env_timeout_secs("OLLAMA_TIMEOUT_SECS", 180));
 
             let ollama_runtime = OllamaRuntime::new(config)
                 .map_err(|e| LlmError::BackendUnavailable(e.to_string()))?;
@@ -349,7 +349,7 @@ impl LlmBackendInstanceManager {
                             .as_deref()
                             .unwrap_or("http://127.0.0.1:8080"),
                     )
-                    .with_timeout_secs(600);
+                    .with_timeout_secs(env_timeout_secs("LLAMACPP_TIMEOUT_SECS", 600));
 
                 if let Some(ref key) = instance.api_key {
                     config = config.with_api_key(key);
@@ -474,6 +474,26 @@ impl LlmBackendInstanceManager {
                         }))
                         .map_err(|e| LlmError::BackendUnavailable(e.to_string()))?;
                         cfg.provider = provider;
+                        // Per-provider timeout override, unified default 300s:
+                        // agent executions issue long multi-step calls, and the
+                        // implicit serde default (60s) was too tight once this
+                        // became the single factory for chat AND agents (M0-2).
+                        // A longer timeout only waits longer on hung backends.
+                        let timeout_env = match instance.backend_type {
+                            LlmBackendType::OpenAi => "OPENAI_TIMEOUT_SECS",
+                            LlmBackendType::Anthropic => "ANTHROPIC_TIMEOUT_SECS",
+                            LlmBackendType::Google => "GOOGLE_TIMEOUT_SECS",
+                            LlmBackendType::XAi => "XAI_TIMEOUT_SECS",
+                            LlmBackendType::Qwen => "QWEN_TIMEOUT_SECS",
+                            LlmBackendType::DeepSeek => "DEEPSEEK_TIMEOUT_SECS",
+                            LlmBackendType::GLM => "GLM_TIMEOUT_SECS",
+                            LlmBackendType::MiniMax => "MINIMAX_TIMEOUT_SECS",
+                            _ => "",
+                        };
+                        if !timeout_env.is_empty() {
+                            cfg.timeout_secs =
+                                env_timeout_secs(timeout_env, 300);
+                        }
 
                         let runtime = CloudRuntime::new(cfg)
                             .map_err(|e| LlmError::BackendUnavailable(e.to_string()))?;
@@ -1358,6 +1378,19 @@ impl LlmBackendInstanceManager {
 
 /// Global singleton for the instance manager
 static INSTANCE_MANAGER: OnceLock<RwLock<Option<Arc<LlmBackendInstanceManager>>>> = OnceLock::new();
+
+/// Read a per-backend timeout (seconds) from an environment variable.
+///
+/// Single source for runtime construction timeouts. The agent-side copy of
+/// this logic lived in `ai_agent/executor/llm_runtime.rs` and was removed
+/// when the factories unified (M0-2) — new producers must not reintroduce
+/// per-site timeout parsing.
+fn env_timeout_secs(env_var: &str, default: u64) -> u64 {
+    std::env::var(env_var)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
+}
 
 /// Get or create the global instance manager
 pub fn get_instance_manager() -> Result<Arc<LlmBackendInstanceManager>, LlmError> {

@@ -2,7 +2,6 @@
 
 #![allow(clippy::too_many_arguments)]
 
-use crate::llm_backends::{OllamaConfig, OllamaRuntime};
 use futures::future::join_all;
 use futures::FutureExt;
 use neomind_core::llm::backend::LlmRuntime;
@@ -12,8 +11,6 @@ use neomind_core::{
 };
 use neomind_devices::DeviceService;
 
-#[cfg(feature = "cloud")]
-use crate::llm_backends::{CloudConfig, CloudRuntime};
 use neomind_messages::MessageManager;
 use neomind_storage::{
     AgentExecutionRecord, AgentResource, AgentStore, AgentToolConfig, AiAgent, DataCollected,
@@ -252,7 +249,7 @@ pub struct AgentExecutorConfig {
     /// Message manager for sending notifications (replaces AlertManager)
     pub message_manager: Option<Arc<MessageManager>>,
     /// LLM runtime for intent analysis (default)
-    pub llm_runtime: Option<Arc<dyn neomind_core::llm::backend::LlmRuntime + Send + Sync>>,
+    pub llm_runtime: Option<Arc<dyn neomind_core::llm::backend::LlmRuntime>>,
     /// LLM backend store for per-agent backend lookup
     pub llm_backend_store: Option<Arc<LlmBackendStore>>,
     /// Phase 3.3: Extension registry for dynamic tool loading
@@ -314,7 +311,7 @@ pub struct AgentExecutor {
     /// Configuration
     pub(crate) _config: AgentExecutorConfig,
     /// LLM runtime (default)
-    pub(crate) llm_runtime: Option<Arc<dyn neomind_core::llm::backend::LlmRuntime + Send + Sync>>,
+    pub(crate) llm_runtime: Option<Arc<dyn neomind_core::llm::backend::LlmRuntime>>,
     /// LLM backend store for per-agent backend lookup
     pub(crate) llm_backend_store: Option<Arc<LlmBackendStore>>,
     /// Event-triggered agents cache
@@ -322,10 +319,6 @@ pub struct AgentExecutor {
     /// Track recent executions to prevent duplicates (agent_id, device_id -> timestamp)
     /// Deduplicates by device only, not by individual metrics
     pub(crate) recent_executions: Arc<RwLock<HashMap<String, i64>>>,
-    /// LLM runtime cache: backend_id -> runtime
-    /// Key format: "{backend_type}:{endpoint}:{model}" for cache invalidation
-    pub(crate) llm_runtime_cache:
-        Arc<RwLock<HashMap<String, Arc<dyn neomind_core::llm::backend::LlmRuntime + Send + Sync>>>>,
     /// Phase 3.3: Extension registry for dynamic tool loading
     pub(crate) extension_registry:
         Option<Arc<neomind_core::extension::registry::ExtensionRegistry>>,
@@ -374,7 +367,6 @@ impl AgentExecutor {
             llm_backend_store,
             event_agents: Arc::new(RwLock::new(HashMap::new())),
             recent_executions: Arc::new(RwLock::new(HashMap::new())),
-            llm_runtime_cache: Arc::new(RwLock::new(HashMap::new())),
             extension_registry,
             tool_registry: parking_lot::RwLock::new(config.tool_registry.clone()),
             memory_store: config.memory_store.clone(),
@@ -401,10 +393,7 @@ impl AgentExecutor {
     }
 
     /// Set the LLM runtime for intent parsing.
-    pub async fn set_llm_runtime(
-        &mut self,
-        llm: Arc<dyn neomind_core::llm::backend::LlmRuntime + Send + Sync>,
-    ) {
+    pub async fn set_llm_runtime(&mut self, llm: Arc<dyn LlmRuntime>) {
         self.llm_runtime = Some(llm);
     }
 
@@ -412,11 +401,7 @@ impl AgentExecutor {
     ///
     /// All agents use tool-calling when the LLM and tool registry support it.
     /// Falls back to structured JSON analysis only when tool-calling is unavailable.
-    fn should_use_tools(
-        &self,
-        agent: &AiAgent,
-        llm_runtime: &Arc<dyn LlmRuntime + Send + Sync>,
-    ) -> bool {
+    fn should_use_tools(&self, agent: &AiAgent, llm_runtime: &Arc<dyn LlmRuntime>) -> bool {
         let llm_supports_tools = llm_runtime.capabilities().function_calling;
         let registry_available = self.tool_registry.read().is_some();
 
@@ -506,7 +491,7 @@ impl AgentExecutor {
         &self,
         agent: &AiAgent,
         data_collected: &[DataCollected],
-        llm_runtime: Arc<dyn LlmRuntime + Send + Sync>,
+        llm_runtime: Arc<dyn LlmRuntime>,
         execution_id: &str,
         invocation_input: Option<&super::AgentInput>,
     ) -> AgentResult<(DecisionProcess, neomind_storage::ExecutionResult)> {
@@ -1386,61 +1371,16 @@ impl AgentExecutor {
                 // Update memory with Free mode results
                 // Reflect partial failures: mark as failed when success_rate < 1.0
                 let overall_success = execution_result.success_rate >= 1.0;
-                let mut updated_memory = self
-                    .update_memory(
-                        &agent,
-                        &decision_process.decisions,
-                        &decision_process.conclusion,
-                        &execution_id,
-                        overall_success,
-                        &decision_process.stop_reason,
-                    )
-                    .await?;
-
-                // Sync knowledge_files from per-execution MemoryTool handle
-                if let Some(ref handle) = per_exec_knowledge_files {
-                    updated_memory.knowledge_files = handle.read().await.clone();
-                }
-
-                // Auto-init knowledge file on first SUCCESSFUL execution
-                self.auto_init_knowledge_file(
+                self.finalize_execution_memory(
                     &agent,
-                    &mut updated_memory,
+                    &decision_process.decisions,
                     &decision_process.conclusion,
+                    &execution_id,
                     overall_success,
-                );
-
-                // Cap knowledge_files FIFO. The MemoryTool can append
-                // arbitrary new files; without a cap a runaway agent
-                // (or a long-lived one accumulating one file per execution)
-                // bloats both storage and the system prompt —
-                // `prefetch_knowledge_files` injects ALL file contents
-                // into context. Same trim pattern as `journal.records`
-                // (memory.rs:49-51) and `user_messages` (storage
-                // MAX_USER_MESSAGES=50).
-                while updated_memory.knowledge_files.len() > memory::MAX_KNOWLEDGE_FILES {
-                    let dropped = updated_memory.knowledge_files.remove(0);
-                    tracing::info!(
-                        agent_id = %agent.id,
-                        dropped_file = %dropped.name,
-                        remaining = updated_memory.knowledge_files.len(),
-                        "Trimmed knowledge file exceeding MAX_KNOWLEDGE_FILES (FIFO)"
-                    );
-                }
-
-                self.store
-                    .update_agent_memory(&agent.id, updated_memory.clone())
-                    .await
-                    .map_err(|e| {
-                        NeoMindError::Storage(format!("Failed to update memory: {}", e))
-                    })?;
-
-                // Extract learned patterns into system memory
-                // DISABLED: per-execution memory extraction was turned off (token
-                // cost, wrong model). The memory scheduler (memory/scheduler.rs)
-                // does NOT compensate — it only does temp-file cleanup. So agents
-                // currently learn only via explicit memory-tool calls. Proper
-                // extraction is tracked as follow-up work (Mem0 single-pass).
+                    &decision_process.stop_reason,
+                    &per_exec_knowledge_files,
+                )
+                .await?;
 
                 tracing::debug!(
                     agent_id = %agent_id,
@@ -1557,44 +1497,16 @@ impl AgentExecutor {
                 // Reflect partial failures in action execution
                 let focused_success =
                     actions_executed.is_empty() || actions_executed.iter().all(|a| a.success);
-                let mut updated_memory = self
-                    .update_memory(
-                        &agent,
-                        &decisions,
-                        &conclusion,
-                        &execution_id,
-                        focused_success,
-                        "",
-                    )
-                    .await?;
-
-                // Sync knowledge_files from per-execution MemoryTool handle
-                if let Some(ref handle) = per_exec_knowledge_files {
-                    updated_memory.knowledge_files = handle.read().await.clone();
-                }
-
-                // Auto-init knowledge file on first SUCCESSFUL execution
-                self.auto_init_knowledge_file(
+                self.finalize_execution_memory(
                     &agent,
-                    &mut updated_memory,
+                    &decisions,
                     &conclusion,
+                    &execution_id,
                     focused_success,
-                );
-
-                // Save updated memory
-                self.store
-                    .update_agent_memory(&agent.id, updated_memory.clone())
-                    .await
-                    .map_err(|e| {
-                        NeoMindError::Storage(format!("Failed to update memory: {}", e))
-                    })?;
-
-                // Bridge: extract learned patterns into system memory
-                // DISABLED: per-execution memory extraction was turned off (token
-                // cost, wrong model). The memory scheduler (memory/scheduler.rs)
-                // does NOT compensate — it only does temp-file cleanup. So agents
-                // currently learn only via explicit memory-tool calls. Proper
-                // extraction is tracked as follow-up work (Mem0 single-pass).
+                    "",
+                    &per_exec_knowledge_files,
+                )
+                .await?;
 
                 // Calculate confidence from reasoning
                 let confidence = if reasoning_steps.is_empty() {

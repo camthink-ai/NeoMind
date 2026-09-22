@@ -76,6 +76,65 @@ impl AgentExecutor {
         Ok(memory)
     }
 
+    /// Shared end-of-execution memory finalization for both execution modes:
+    /// journal entry (`update_memory`) → sync the per-execution knowledge
+    /// handle → auto-init on first success → FIFO cap → persist.
+    ///
+    /// Previously duplicated in the Free and Focused branches of
+    /// `execute_internal`, which had drifted: the Focused copy lacked the
+    /// FIFO cap, so a Focused agent could accumulate unbounded knowledge
+    /// files.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn finalize_execution_memory(
+        &self,
+        agent: &AiAgent,
+        decisions: &[Decision],
+        conclusion: &str,
+        execution_id: &str,
+        success: bool,
+        stop_reason: &str,
+        per_exec_knowledge_files: &Option<
+            Arc<tokio::sync::RwLock<Vec<neomind_storage::KnowledgeFileRef>>>,
+        >,
+    ) -> AgentResult<()> {
+        let mut updated_memory = self
+            .update_memory(agent, decisions, conclusion, execution_id, success, stop_reason)
+            .await?;
+
+        // Sync knowledge_files from the per-execution MemoryTool handle
+        if let Some(handle) = per_exec_knowledge_files {
+            updated_memory.knowledge_files = handle.read().await.clone();
+        }
+
+        // Auto-init knowledge file on first SUCCESSFUL execution
+        self.auto_init_knowledge_file(agent, &mut updated_memory, conclusion, success);
+
+        // Cap knowledge_files FIFO (see MAX_KNOWLEDGE_FILES for why)
+        while updated_memory.knowledge_files.len() > MAX_KNOWLEDGE_FILES {
+            let dropped = updated_memory.knowledge_files.remove(0);
+            tracing::info!(
+                agent_id = %agent.id,
+                dropped_file = %dropped.name,
+                remaining = updated_memory.knowledge_files.len(),
+                "Trimmed knowledge file exceeding MAX_KNOWLEDGE_FILES (FIFO)"
+            );
+        }
+
+        self.store
+            .update_agent_memory(&agent.id, updated_memory)
+            .await
+            .map_err(|e| NeoMindError::Storage(format!("Failed to update memory: {}", e)))?;
+
+        // Extract learned patterns into system memory
+        // DISABLED: per-execution memory extraction was turned off (token
+        // cost, wrong model). The memory scheduler (memory/scheduler.rs)
+        // does NOT compensate — it only does temp-file cleanup. So agents
+        // currently learn only via explicit memory-tool calls. Proper
+        // extraction is tracked as follow-up work (Mem0 single-pass).
+
+        Ok(())
+    }
+
     /// Auto-initialize a knowledge file when the agent has none yet.
     /// Covers both newly-created agents (whose init happened at creation time)
     /// and legacy agents created before the init-at-creation feature was added.

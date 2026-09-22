@@ -2919,153 +2919,23 @@ impl ServerState {
         // file multiple times in the same process
         let time_series_store = Some(self.devices.telemetry.inner_store());
 
-        // Get LLM runtime from SessionManager if available
-        let llm_runtime = if let Ok(Some(backend)) =
-            self.agents.session_manager.get_llm_backend().await
-        {
-            use neomind_agent::llm_backends::{
-                CloudConfig, CloudRuntime, OllamaConfig, OllamaRuntime,
-            };
-            use neomind_agent::LlmBackend;
-            use neomind_core::llm::backend::LlmRuntime;
-
-            match backend {
-                LlmBackend::Ollama {
-                    endpoint,
-                    model,
-                    capabilities: _,
-                } => {
-                    let timeout = std::env::var("OLLAMA_TIMEOUT_SECS")
-                        .ok()
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(120);
-                    match OllamaRuntime::new(
-                        OllamaConfig::new(&model)
-                            .with_endpoint(&endpoint)
-                            .with_timeout_secs(timeout),
-                    ) {
-                        Ok(runtime) => Some(Arc::new(runtime) as Arc<dyn LlmRuntime + Send + Sync>),
-                        Err(e) => {
-                            tracing::warn!(category = "ai", error = %e, "Failed to create Ollama runtime for agents");
-                            None
-                        }
-                    }
+        // Unified LLM runtime for agents: resolve the ACTIVE backend through
+        // the platform instance manager — the single factory/cache/
+        // capability-detection path shared with the chat side (M0-2). The
+        // per-backend construction match that used to live here had drifted
+        // from the manager and was removed.
+        let llm_runtime = match neomind_agent::get_instance_manager() {
+            Ok(manager) => match manager.get_active_runtime().await {
+                Ok(runtime) => Some(runtime),
+                Err(e) => {
+                    tracing::info!(category = "ai", error = %e, "No active LLM backend for agents");
+                    None
                 }
-                LlmBackend::LlamaCpp {
-                    endpoint,
-                    model,
-                    capabilities: _,
-                } => {
-                    use neomind_agent::llm_backends::backends::llamacpp::{
-                        LlamaCppConfig, LlamaCppRuntime,
-                    };
-                    let timeout = std::env::var("LLAMACPP_TIMEOUT_SECS")
-                        .ok()
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(180);
-                    match LlamaCppRuntime::new(
-                        LlamaCppConfig::new(&model)
-                            .with_endpoint(&endpoint)
-                            .with_timeout_secs(timeout),
-                    ) {
-                        Ok(runtime) => Some(Arc::new(runtime) as Arc<dyn LlmRuntime + Send + Sync>),
-                        Err(e) => {
-                            tracing::warn!(category = "ai", error = %e, "Failed to create llama.cpp runtime for agents");
-                            None
-                        }
-                    }
-                }
-                LlmBackend::OpenAi {
-                    api_key,
-                    endpoint,
-                    model,
-                    capabilities: _,
-                } => {
-                    // Use CloudRuntime for OpenAI-compatible APIs
-                    let timeout = std::env::var("OPENAI_TIMEOUT_SECS")
-                        .ok()
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(60);
-                    match CloudRuntime::new(
-                        CloudConfig::custom(&api_key, &endpoint)
-                            .with_model(&model)
-                            .with_timeout_secs(timeout),
-                    ) {
-                        Ok(runtime) => Some(Arc::new(runtime) as Arc<dyn LlmRuntime + Send + Sync>),
-                        Err(e) => {
-                            tracing::warn!(category = "ai", error = %e, "Failed to create OpenAI runtime for agents");
-                            None
-                        }
-                    }
-                }
-                // Other cloud backends (Anthropic, Google, XAi, Qwen, DeepSeek, GLM, MiniMax)
-                _backend => {
-                    let (api_key, endpoint, model) = match &_backend {
-                        LlmBackend::Anthropic {
-                            api_key,
-                            endpoint,
-                            model,
-                            capabilities: _,
-                        }
-                        | LlmBackend::Google {
-                            api_key,
-                            endpoint,
-                            model,
-                            capabilities: _,
-                        }
-                        | LlmBackend::XAi {
-                            api_key,
-                            endpoint,
-                            model,
-                            capabilities: _,
-                        }
-                        | LlmBackend::Qwen {
-                            api_key,
-                            endpoint,
-                            model,
-                            capabilities: _,
-                        }
-                        | LlmBackend::DeepSeek {
-                            api_key,
-                            endpoint,
-                            model,
-                            capabilities: _,
-                        }
-                        | LlmBackend::GLM {
-                            api_key,
-                            endpoint,
-                            model,
-                            capabilities: _,
-                        }
-                        | LlmBackend::MiniMax {
-                            api_key,
-                            endpoint,
-                            model,
-                            capabilities: _,
-                        } => (api_key.clone(), endpoint.clone(), model.clone()),
-                        // This is unreachable since we've excluded Ollama and OpenAi above
-                        _ => unreachable!("Unexpected LLM backend type"),
-                    };
-                    let timeout = std::env::var("OPENAI_TIMEOUT_SECS")
-                        .ok()
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(60);
-                    match CloudRuntime::new(
-                        CloudConfig::custom(&api_key, &endpoint)
-                            .with_model(&model)
-                            .with_timeout_secs(timeout),
-                    ) {
-                        Ok(runtime) => Some(Arc::new(runtime) as Arc<dyn LlmRuntime + Send + Sync>),
-                        Err(e) => {
-                            tracing::warn!(category = "ai", error = %e, "Failed to create cloud runtime for agents");
-                            None
-                        }
-                    }
-                }
+            },
+            Err(e) => {
+                tracing::warn!(category = "ai", error = %e, "Instance manager unavailable");
+                None
             }
-        } else {
-            tracing::info!(category = "ai", "No LLM backend configured for agents");
-            None
         };
 
         let has_llm = llm_runtime.is_some();

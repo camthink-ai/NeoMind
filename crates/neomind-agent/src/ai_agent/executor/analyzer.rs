@@ -157,7 +157,7 @@ impl AgentExecutor {
     /// from the text output deterministically.
     pub(crate) async fn analyze_with_llm(
         &self,
-        llm: Arc<dyn neomind_core::llm::backend::LlmRuntime + Send + Sync>,
+        llm: Arc<dyn neomind_core::llm::backend::LlmRuntime>,
         agent: &AiAgent,
         data: &[DataCollected],
         _parsed_intent: Option<&neomind_storage::ParsedIntent>,

@@ -165,7 +165,7 @@ async fn normal_completion_returns_final_text() {
         MockResponse::tool_call("echo", serde_json::json!({ "msg": "hi" })),
         MockResponse::text("all done"),
     ]);
-    let rt_dyn: Arc<dyn LlmRuntime + Send + Sync> = Arc::new(rt.clone());
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt.clone());
     let (executor, agent, registry) = build_harness().await;
     let (filtered_tools, tool_name_map) =
         AgentExecutor::filter_tools(&registry, &agent.tool_config);
@@ -199,7 +199,7 @@ async fn all_duplicate_breaks_to_phase2() {
         MockResponse::tool_call("echo", serde_json::json!({ "msg": "x" })), // duplicate
         MockResponse::text("summary from results so far"),
     ]);
-    let rt_dyn: Arc<dyn LlmRuntime + Send + Sync> = Arc::new(rt.clone());
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt.clone());
     let (executor, agent, registry) = build_harness().await;
     let (filtered_tools, tool_name_map) =
         AgentExecutor::filter_tools(&registry, &agent.tool_config);
@@ -241,7 +241,7 @@ async fn max_rounds_graceful_exit_runs_phase2() {
         MockResponse::tool_call("echo", serde_json::json!({ "msg": "r2" })),
         MockResponse::text("synthesized conclusion"),
     ]);
-    let rt_dyn: Arc<dyn LlmRuntime + Send + Sync> = Arc::new(rt.clone());
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt.clone());
     let (executor, agent, registry) = build_harness().await;
     let (filtered_tools, tool_name_map) =
         AgentExecutor::filter_tools(&registry, &agent.tool_config);

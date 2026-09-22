@@ -143,7 +143,7 @@ struct LoadTestContext {
     pub executor: AgentExecutor,
     pub event_bus: Arc<EventBus>,
     pub devices: Vec<SimulatedDevice>,
-    pub llm_runtime: Option<Arc<dyn neomind_core::llm::backend::LlmRuntime + Send + Sync>>,
+    pub llm_runtime: Option<Arc<dyn neomind_core::llm::backend::LlmRuntime>>,
 }
 
 impl LoadTestContext {
@@ -159,7 +159,7 @@ impl LoadTestContext {
             };
             Some(Arc::new(OllamaRuntime::new(ollama_config)?)
                 as Arc<
-                    dyn neomind_core::llm::backend::LlmRuntime + Send + Sync,
+                    dyn neomind_core::llm::backend::LlmRuntime,
                 >)
         } else {
             None

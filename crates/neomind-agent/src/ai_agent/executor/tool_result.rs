@@ -225,7 +225,7 @@ impl AgentExecutor {
     pub(crate) async fn generate_phase2_summary(
         &self,
         agent: &AiAgent,
-        llm_runtime: &Arc<dyn LlmRuntime + Send + Sync>,
+        llm_runtime: &Arc<dyn LlmRuntime>,
         all_tool_results: &[crate::toolkit::ToolResult],
         round_count: usize,
     ) -> Option<String> {

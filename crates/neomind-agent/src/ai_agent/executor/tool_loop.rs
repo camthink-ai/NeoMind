@@ -28,7 +28,7 @@ impl AgentExecutor {
         &self,
         agent: &AiAgent,
         registry: &crate::toolkit::registry::ToolRegistry,
-        llm_runtime: &Arc<dyn LlmRuntime + Send + Sync>,
+        llm_runtime: &Arc<dyn LlmRuntime>,
         filtered_tools: &[neomind_core::llm::backend::ToolDefinition],
         messages: &mut Vec<Message>,
         execution_id: &str,

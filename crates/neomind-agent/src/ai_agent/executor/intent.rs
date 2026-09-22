@@ -18,7 +18,7 @@ impl AgentExecutor {
 
     async fn parse_intent_with_llm(
         &self,
-        llm: &Arc<dyn neomind_core::llm::backend::LlmRuntime + Send + Sync>,
+        llm: &Arc<dyn neomind_core::llm::backend::LlmRuntime>,
         user_prompt: &str,
     ) -> AgentResult<neomind_storage::ParsedIntent> {
         use neomind_core::llm::backend::{GenerationParams, LlmInput};

@@ -66,7 +66,7 @@ impl FullTestContext {
             event_bus: Some(event_bus.clone()),
             message_manager: Some(message_manager.clone()),
             llm_runtime: Some(llm_runtime.clone()
-                as Arc<dyn neomind_core::llm::backend::LlmRuntime + Send + Sync>),
+                as Arc<dyn neomind_core::llm::backend::LlmRuntime>),
             llm_backend_store: None,
             extension_registry: None,
             tool_registry: None,
