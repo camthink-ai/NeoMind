@@ -473,7 +473,6 @@ export function DataExplorerPage() {
     <>
       <PageLayout
         title={t('data:title', 'Data Explorer')}
-        subtitle={t('data:subtitle', 'Browse all data sources across devices, extensions, and transforms')}
         hideFooterOnMobile
         hasBottomNav
         headerContent={

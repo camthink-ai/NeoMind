@@ -739,7 +739,6 @@ export function DevicesPage() {
     <>
       <PageLayout
         title={deviceDetailView ? undefined : t('devices:title')}
-        subtitle={deviceDetailView ? undefined : t('devices:subtitle')}
         noPadding={!!deviceDetailView}
         hideFooterOnMobile
         hasBottomNav

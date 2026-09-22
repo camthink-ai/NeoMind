@@ -631,7 +631,6 @@ export function AutomationPage() {
     <>
       <PageLayout
         title={tAuto('title')}
-        subtitle={tAuto('pageDescription')}
         hideFooterOnMobile
         hasBottomNav
         headerContent={

@@ -587,7 +587,6 @@ export function AgentsPage() {
   return (
     <PageLayout
       title={tAgent('title')}
-      subtitle={tAgent('description')}
       headerContent={
         <PageTabsBar
           tabs={tabs}
@@ -630,7 +629,9 @@ export function AgentsPage() {
         {agents.length === 0 && loading ? (
           <LoadingState variant="page" />
         ) : agents.length === 0 ? (
-          <div className="flex min-h-[500px] items-center justify-center">
+          /* Card container matching the table pages' empty state — the
+             floating-in-whitespace variant broke the page rhythm. */
+          <div className="flex min-h-[420px] items-center justify-center rounded-lg border bg-card">
             {llmBackends.length === 0 && !llmBackendLoading ? (
               /* No backend — same empty-state visual, but the guidance swaps:
                  agents are inert without a model, so the CTAs lead with model
