@@ -140,7 +140,13 @@
       "tool": "Stateless tool — every run sees only the current input (your corrected standards still apply).",
       "assistant": "Has memory — each run carries the narrative of recent executions; it can say “worse than last time”."
     },
-    "sections": "Sections"
+    "sections": "Sections",
+    "sectionsDesc": {
+      "overview": "Status, output fields & config",
+      "history": "Every run, step by step",
+      "memory": "Journal & knowledge files",
+      "messages": "Notes for the next run"
+    }
   },
   "tabs": {
     "agents": "Agents",
