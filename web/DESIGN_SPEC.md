@@ -287,15 +287,19 @@ Every page must use `PageLayout` from `@/components/layout/PageLayout`.
 ```
 
 **Rules:**
-- Desktop title row via PageHeader: **title + one-line description** (subtitle prop); the row is `mx-auto` + maxWidth so the title left-aligns with the content below. The visual-dashboard page is the exception — title only (its toolbar with the dashboard name follows)
+- Desktop title row via PageHeader: **title only** — no `subtitle` on top-level pages. The tab labels already enumerate the page's sections; a description restating them is redundant text (audit 2026-09). Keep `subtitle` for drill-down sub-pages and dialogs where it carries real context. The row is `mx-auto` + maxWidth so the title left-aligns with the content below
 - Content area uses `overflow-auto` via PageLayout's scroll container — do NOT add your own scroll
-- Fixed headers (tabs/toolbars) go in `headerContent` prop — toolbar rows use `px-4 sm:px-6 md:px-8` matching the title row; NO border-b under the row (content separation is the capsule/toolbar's own affordances)
+- Fixed headers (tabs/toolbars) go in `headerContent` prop — toolbar rows use `px-4 sm:px-6 md:px-8` matching the title row; NO border under the toolbar row — the active tab's own 2px underline is the only line (other toolbars stay line-free)
 - Fixed footers (pagination) go in `footer` prop; the footer offsets past both sidebars via `--app-sidebar-width`
 - Page-level loading MUST use skeleton screens, never spinners
 
 ### Tabs Pattern: `PageTabsBar` + `PageTabsContent`
 
-**Page-level primary actions (Add / Configure / Create) live in `PageTabsBar` `actions` — level with the tabs, top-right — NOT inside the tab content.** Build `actions` per `activeTab` (e.g. "Add Channel" on the channels tab, "Configure IM bridge" on the IM tab). Do not render a separate toolbar or button row inside `PageTabsContent` for a primary add/configure action.
+**Tab-less pages** (e.g. Extensions) mirror the tabbed toolbar: **page actions left (the tab slot — an action group: primary dark + secondary outline), search right** anchored to the content's right edge (`ml-auto`, `max-w-md`, `h-9` input). Same `px-4 pt-2 sm:px-6 md:px-8` row rhythm as `PageTabsBar`. A status-filter row may sit between the toolbar and the content — pills left, a filtered count (`x / y`) right only while filters are active — and it hides entirely when every item shares one state (pills would just echo the total; they return when a second category exists). Content below gets the same `mt-3` gap as `PageTabsContent`.
+
+**Tab style (desktop): underline, not capsules.** The strip has no card surface (`border`/`bg-card` are gone) and the row has no full-width divider — tabs are plain text (`text-muted-foreground`, hover `text-foreground`). The active tab is `text-foreground` + a 2px `border-foreground` underline spanning the full tab width (the mainstream pattern: Tailwind Plus, GitHub Primer UnderlineNav, Ant Design); every tab carries `border-b-2` (transparent when inactive) so heights never shift. Mono accent — the indicator is `foreground`, not brand color. Mobile keeps bottom nav / segmented controls (touch patterns).
+
+**Page actions share the tab row's baseline.** `PageTabsBar`'s `actions` / `secondaryActions` render right of the tabs, bottom edge flush with the tabs' underline baseline, right edge aligned with the content below; `actionsExtra` (search/filter wide controls) joins the same baseline. Do not render a separate toolbar or button row inside `PageTabsContent` for a primary add/configure action, and do not place page actions in the PageHeader title row — that corner is reserved for `GlobalControlsFloating` (theme/language/alerts).
 
 ```tsx
 <PageLayout title="Title" headerContent={<PageTabsBar tabs={tabs} />}>
@@ -1593,7 +1597,7 @@ Three drag surfaces, all via `lib/windowDrag.ts` (mousedown → `startDragging`,
 
 ### Page chrome pattern (all desktop pages)
 
-Title row (`PageHeader`, single compact line, no descriptions, mx-auto maxWidth aligned with content) → optional toolbar row (PageTabsBar / DashboardToolbar: tabs left, actions right, `px-4 sm:px-6 md:px-8`, no border-b) → content. Chat has no title row; its floating controls carry a faint `bg-background/60` pill.
+Title row (`PageHeader`, single compact line, no descriptions, mx-auto maxWidth aligned with content; its right side is reserved for `GlobalControlsFloating`) → optional toolbar row (PageTabsBar / DashboardToolbar: tabs left, page actions + `actionsExtra` right on the tabs' baseline, `px-4 sm:px-6 md:px-8`, no full-width divider) → content. Chat has no title row; its floating controls carry a faint `bg-background/60` pill.
 
 Style: mono accent — no brand color in UI chrome (orange lives in the logo, semantic/data colors, login/setup washes). Rail = `--sidebar-bg` (light ~#F8F9FA, dark 0.10), drawers = content tone, separated by color contrast + the drawer's border-r.
 
