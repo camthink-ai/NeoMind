@@ -100,9 +100,9 @@ export function TransformsBadge({ deviceId, deviceTypeId, count: countProp, onRe
         onClick={(e) => { e.stopPropagation(); setDialogOpen(true) }}
       >
         <Database className="h-4 w-4 mr-1 text-accent-purple" />
-        <Badge variant="outline" className="text-xs">
-          {count}
-        </Badge>
+        {/* Plain count — the ghost button already carries the affordance;
+            an outlined chip inside it doubles the chrome. */}
+        <span className="text-xs tabular-nums">{count}</span>
       </Button>
 
       {/* Only mount the dialog when open to avoid N×3 API calls on page load */}

@@ -36,7 +36,9 @@ export function DeviceStatusBadge({ device, className, hideDot }: DeviceStatusBa
     success: 'badge-success',
     info: 'badge-info',
     warning: 'badge-warning',
-    muted: 'bg-muted-50 text-muted-foreground border border-border',
+    // No border — all four states are borderless tinted pills; the hollow
+    // dot below already carries the "never reported" semantic.
+    muted: 'bg-muted-50 text-muted-foreground',
   }[color]
 
   const dotClass = {

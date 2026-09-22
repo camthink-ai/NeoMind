@@ -221,19 +221,21 @@ export function DeviceList({
               )
 
             case 'type':
+              // Plain muted mono text — non-interactive metadata shouldn't
+              // wear a bordered chip (reads as a button and litters the table).
               return (
-                <Badge variant="outline" className="text-xs">
+                <span className="text-xs text-muted-foreground font-mono">
                   {device.device_type}
-                </Badge>
+                </span>
               )
 
             case 'adapter':
               return (
                 <div className="flex items-center gap-2">
                   <AdapterIcon className="h-4 w-4 text-muted-foreground" />
-                  <Badge variant="outline" className="text-xs">
+                  <span className="text-xs text-muted-foreground">
                     {device.adapter_type || 'mqtt'}
-                  </Badge>
+                  </span>
                 </div>
               )
 

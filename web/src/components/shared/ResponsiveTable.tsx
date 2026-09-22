@@ -146,12 +146,12 @@ export function ResponsiveTable<T extends object>({
               {Array.from({ length: skeletonRows }).map((_, i) => (
                 <tr key={i} className="border-b">
                   {columns.map((column) => (
-                    <td key={column.key} className="px-4 py-3">
+                    <td key={column.key} className="px-4 py-2.5">
                       <Skeleton className="h-4 w-full" />
                     </td>
                   ))}
                   {actions && actions.length > 0 && (
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-2.5">
                       <Skeleton className="h-4 w-6" />
                     </td>
                   )}
@@ -242,7 +242,7 @@ export function ResponsiveTable<T extends object>({
                       <td
                         key={column.key}
                         className={cn(
-                          "px-4 py-3 align-middle",
+                          "px-4 py-2.5 align-middle",
                           column.align === 'center' && 'text-center',
                           column.align === 'right' && 'text-right',
                           !column.align && 'text-left',
@@ -250,7 +250,7 @@ export function ResponsiveTable<T extends object>({
                         )}
                       >
                         <div className={cn(
-                          "flex items-center min-h-[36px]",
+                          "flex items-center min-h-[32px]",
                           column.align === 'center' && 'justify-center',
                           column.align === 'right' && 'justify-end',
                           (!column.align || column.align === 'left') && 'justify-start',
@@ -260,7 +260,7 @@ export function ResponsiveTable<T extends object>({
                       </td>
                     ))}
                     {visibleActions && visibleActions.length > 0 && (
-                      <td className="px-4 py-3 align-middle">
+                      <td className="px-4 py-2.5 align-middle">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button
