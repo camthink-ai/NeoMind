@@ -150,7 +150,7 @@ export function AgentUserMessagesComposer({ agentId, onSent }: AgentUserMessages
   }
 
   return (
-    <div className="flex items-center gap-1.5 rounded-lg border border-input bg-card py-1 pl-3 pr-1">
+    <div className="flex items-center gap-1.5 rounded-lg border border-input bg-card py-1.5 pl-3 pr-1.5">
       <Textarea
         ref={textareaRef}
         value={newMessage}
