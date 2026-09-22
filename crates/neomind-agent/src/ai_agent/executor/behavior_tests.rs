@@ -447,6 +447,136 @@ async fn event_agent_without_operator_config_keeps_per_source_cooldown_only() {
     );
 }
 
+/// The contract step must actually run inside a real execution. The helper
+/// tests below would still pass if nothing ever called `apply_output_contract` —
+/// this one drives `execute_agent`, the entry point the scheduler uses.
+#[tokio::test]
+async fn execute_agent_applies_the_output_contract_for_a_reasoning_agent() {
+    let (mut executor, mut agent, registry) = build_harness().await;
+    executor.set_tool_registry(registry);
+    agent.execution_mode = ExecutionMode::Free;
+    // Intent is parsed once and cached on the agent, so a re-run never asks again.
+    agent.parsed_intent = Some(neomind_storage::ParsedIntent {
+        intent_type: neomind_storage::IntentType::Monitoring,
+        target_metrics: vec![],
+        conditions: vec![],
+        actions: vec![],
+        confidence: 0.9,
+    });
+    agent.output_schema = Some(vec![neomind_storage::OperatorField {
+        name: "missing_count".into(),
+        field_type: neomind_storage::OperatorFieldType::Number,
+        unit: None,
+        description: None,
+    }]);
+    executor.store().save_agent(&agent).await.expect("seed store");
+
+    // 1) the tool loop's answer, 2) the contract extraction over it.
+    let rt: Arc<dyn LlmRuntime> = Arc::new(
+        MockLlmRuntime::new(vec![
+            MockResponse::text("画面里有 1 件漏装，批次待检"),
+            MockResponse::text(r#"{"missing_count": 1}"#),
+        ])
+        .with_function_calling(),
+    );
+    executor.set_llm_runtime(rt).await;
+
+    let record = executor
+        .execute_agent(agent, None, None)
+        .await
+        .expect("run completes");
+
+    assert!(
+        record
+            .decision_process
+            .decisions
+            .iter()
+            .any(|d| d.decision_type == "output_contract"),
+        "the contract step must run and be recorded; got {:?}",
+        record.decision_process.decisions
+    );
+}
+
+/// M2-2: a *reasoning* agent (not structured) that declares an output contract
+/// gets its conclusion rendered as schema fields, published as ai:* sources.
+#[tokio::test]
+async fn output_contract_publishes_fields_for_a_reasoning_agent() {
+    let (mut executor, mut agent, _registry) = build_harness().await;
+    agent.execution_mode = ExecutionMode::Focused;
+    agent.output_schema = Some(vec![neomind_storage::OperatorField {
+        name: "missing_count".into(),
+        field_type: neomind_storage::OperatorFieldType::Number,
+        unit: None,
+        description: None,
+    }]);
+    let rt: Arc<dyn LlmRuntime> = Arc::new(MockLlmRuntime::new(vec![MockResponse::text(
+        r#"{"missing_count": 1}"#,
+    )]));
+    executor.set_llm_runtime(rt).await;
+
+    let published = executor
+        .apply_output_contract(&agent, "画面里有 1 件漏装，批次待检")
+        .await;
+
+    assert_eq!(published, Some(1));
+}
+
+/// The contract is best-effort: the run already succeeded, so an extraction the
+/// model botches costs fields — never the run.
+#[tokio::test]
+async fn output_contract_failure_does_not_propagate() {
+    let (mut executor, mut agent, _registry) = build_harness().await;
+    agent.execution_mode = ExecutionMode::Focused;
+    agent.output_schema = Some(vec![neomind_storage::OperatorField {
+        name: "missing_count".into(),
+        field_type: neomind_storage::OperatorFieldType::Number,
+        unit: None,
+        description: None,
+    }]);
+    let rt: Arc<dyn LlmRuntime> = Arc::new(MockLlmRuntime::new(vec![MockResponse::text(
+        "画面太模糊了，我判断不出来",
+    )]));
+    executor.set_llm_runtime(rt).await;
+
+    let published = executor
+        .apply_output_contract(&agent, "画面模糊")
+        .await;
+
+    assert_eq!(published, None, "a botched extraction must not fail the run");
+}
+
+/// Structured agents already produce their schema directly — running the
+/// contract on them would be a second inference for the same answer.
+#[tokio::test]
+async fn output_contract_is_skipped_for_structured_agents() {
+    let (mut executor, mut agent, _registry) = build_harness().await;
+    agent.execution_mode = ExecutionMode::Structured;
+    agent.output_schema = Some(vec![neomind_storage::OperatorField {
+        name: "missing_count".into(),
+        field_type: neomind_storage::OperatorFieldType::Number,
+        unit: None,
+        description: None,
+    }]);
+    let rt: Arc<dyn LlmRuntime> = Arc::new(MockLlmRuntime::new(vec![MockResponse::text(
+        r#"{"missing_count": 1}"#,
+    )]));
+    executor.set_llm_runtime(rt).await;
+
+    assert_eq!(executor.apply_output_contract(&agent, "any conclusion").await, None);
+}
+
+/// Most agents declare no contract at all — the step must be free for them.
+#[tokio::test]
+async fn output_contract_is_skipped_without_a_schema() {
+    let (mut executor, agent, _registry) = build_harness().await;
+    let rt: Arc<dyn LlmRuntime> = Arc::new(MockLlmRuntime::new(vec![MockResponse::text(
+        r#"{"missing_count": 1}"#,
+    )]));
+    executor.set_llm_runtime(rt).await;
+
+    assert_eq!(executor.apply_output_contract(&agent, "any conclusion").await, None);
+}
+
 #[tokio::test]
 async fn structured_mode_without_schema_is_rejected() {
     let (executor, mut agent, _registry) = build_harness().await;

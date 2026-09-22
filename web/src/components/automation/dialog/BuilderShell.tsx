@@ -31,9 +31,6 @@ export interface BuilderShellProps {
   icon: ReactNode
   /** Optional node rendered in the header actions slot (e.g. enable-status dot). */
   statusIndicator?: ReactNode
-  /** Optional full-width band rendered under the header, above the
-   *  config/workspace split — for a chooser that frames the whole form. */
-  top?: ReactNode
   /** Config rail content (metadata fields). */
   config: ReactNode
   /** Main workspace content (the builder's core canvas). */
@@ -52,7 +49,6 @@ export function BuilderShell({
   subtitle,
   icon,
   statusIndicator,
-  top,
   config,
   workspace,
   footer,
@@ -71,11 +67,6 @@ export function BuilderShell({
         onClose={() => onOpenChange(false)}
         actions={statusIndicator}
       />
-      {top ? (
-        <div className="shrink-0 border-b border-border px-4 py-4 md:px-6 md:py-5">
-          {top}
-        </div>
-      ) : null}
       <FullScreenDialogContent>
         {isMobile ? (
           <FullScreenDialogMain className="p-4 md:p-5">

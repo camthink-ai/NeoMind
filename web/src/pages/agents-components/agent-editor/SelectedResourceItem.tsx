@@ -1,13 +1,13 @@
 // Selected-resource card with metric/command toggles — split from AgentEditorFullScreen.tsx
 
 import React, { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Badge } from '@/components/ui/badge'
 import { Target, X, Puzzle, ChevronRight } from 'lucide-react'
 import type { SelectedResource } from './types'
-import { inlineLinkBtn } from './constants'
 
 export interface SelectedResourceItemProps {
   resource: SelectedResource
@@ -19,9 +19,8 @@ export interface SelectedResourceItemProps {
 }
 
 export function SelectedResourceItem({ resource, setSelectedResources, onRemove, onToggleMetric, onToggleCommand, isMobile = false }: SelectedResourceItemProps) {
+  const { t: tAgent } = useTranslation('agents')
   const [expanded, setExpanded] = useState(false)
-  const [showAllMetrics, setShowAllMetrics] = useState(false)
-  const [showAllCommands, setShowAllCommands] = useState(false)
   const selectedMetricCount = resource.selectedMetrics.size
   const selectedCommandCount = resource.selectedCommands.size
   const allMetricCount = resource.allMetrics.length
@@ -97,7 +96,9 @@ export function SelectedResourceItem({ resource, setSelectedResources, onRemove,
           {hasMetrics && (
             <div className="space-y-1">
               <div className={cn("text-muted-foreground flex items-center justify-between", isMobile ? "text-sm" : "text-xs")}>
-                <span>Metrics ({selectedMetricCount}/{allMetricCount})</span>
+                <span>
+                  {tAgent('creator.resources.metrics')} ({selectedMetricCount}/{allMetricCount})
+                </span>
                 <button
                   type="button"
                   onClick={() => {
@@ -117,11 +118,16 @@ export function SelectedResourceItem({ resource, setSelectedResources, onRemove,
                   }}
                   className="text-primary hover:underline"
                 >
-                  {selectedMetricCount === allMetricCount ? 'Deselect All' : 'Select All'}
+                  {selectedMetricCount === allMetricCount
+                    ? tAgent('creator.resources.deselectAll')
+                    : tAgent('creator.resources.selectAll')}
                 </button>
               </div>
               <div className={cn("gap-1", isMobile ? "grid grid-cols-1" : "grid grid-cols-2")}>
-                {(showAllMetrics || selectedMetricCount === 0 ? resource.allMetrics : resource.allMetrics.filter(m => resource.selectedMetrics.has(m.name)))
+                {/* Every option stays visible. Hiding the unselected ones once
+                    a choice was made left no way to make a second one without
+                    first finding the "show all" link. */}
+                {resource.allMetrics
                   .map((metric) => (
                   <div key={metric.name} className="contents">
                     <div
@@ -149,16 +155,6 @@ export function SelectedResourceItem({ resource, setSelectedResources, onRemove,
                   </div>
                 ))}
               </div>
-              {!showAllMetrics && selectedMetricCount < allMetricCount && (
-                <button type="button" onClick={() => setShowAllMetrics(true)} className={inlineLinkBtn}>
-                  Show All ({allMetricCount})
-                </button>
-              )}
-              {showAllMetrics && selectedMetricCount < allMetricCount && (
-                <button type="button" onClick={() => setShowAllMetrics(false)} className={inlineLinkBtn}>
-                  Show Selected Only
-                </button>
-              )}
             </div>
           )}
 
@@ -166,7 +162,9 @@ export function SelectedResourceItem({ resource, setSelectedResources, onRemove,
           {hasCommands && (
             <div className="space-y-1">
               <div className={cn("text-muted-foreground flex items-center justify-between", isMobile ? "text-sm" : "text-xs")}>
-                <span>Commands ({selectedCommandCount}/{allCommandCount})</span>
+                <span>
+                  {tAgent('creator.resources.commands')} ({selectedCommandCount}/{allCommandCount})
+                </span>
                 <button
                   type="button"
                   onClick={() => {
@@ -186,11 +184,13 @@ export function SelectedResourceItem({ resource, setSelectedResources, onRemove,
                   }}
                   className="text-primary hover:underline"
                 >
-                  {selectedCommandCount === allCommandCount ? 'Deselect All' : 'Select All'}
+                  {selectedCommandCount === allCommandCount
+                    ? tAgent('creator.resources.deselectAll')
+                    : tAgent('creator.resources.selectAll')}
                 </button>
               </div>
               <div className={cn("gap-1", isMobile ? "grid grid-cols-1" : "grid grid-cols-2")}>
-                {(showAllCommands || selectedCommandCount === 0 ? resource.allCommands : resource.allCommands.filter(c => resource.selectedCommands.has(c.name)))
+                {resource.allCommands
                   .map((command) => (
                   <div
                     key={command.name}
@@ -213,21 +213,13 @@ export function SelectedResourceItem({ resource, setSelectedResources, onRemove,
                   </div>
                 ))}
               </div>
-              {!showAllCommands && selectedCommandCount < allCommandCount && (
-                <button type="button" onClick={() => setShowAllCommands(true)} className={inlineLinkBtn}>
-                  Show All ({allCommandCount})
-                </button>
-              )}
-              {showAllCommands && selectedCommandCount < allCommandCount && (
-                <button type="button" onClick={() => setShowAllCommands(false)} className={inlineLinkBtn}>
-                  Show Selected Only
-                </button>
-              )}
             </div>
           )}
 
           {!hasMetrics && !hasCommands && (
-            <p className={cn("text-muted-foreground italic", isMobile ? "text-xs" : "text-xs")}>No metrics or commands available</p>
+            <p className={cn("text-muted-foreground italic", isMobile ? "text-xs" : "text-xs")}>
+              {tAgent('creator.resources.noneAvailable')}
+            </p>
           )}
 
         </div>

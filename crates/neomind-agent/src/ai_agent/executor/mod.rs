@@ -1380,7 +1380,7 @@ impl AgentExecutor {
             // Tool-calling mode already produced a full DecisionProcess and
             // ExecutionResult.  We only need to update memory and return.
             AnalysisResult::Free {
-                decision_process,
+                mut decision_process,
                 execution_result,
             } => {
                 self.send_thinking(
@@ -1414,6 +1414,23 @@ impl AgentExecutor {
                     "[TOOL-CALLING] Returning direct results — skipped Focused JSON post-processing"
                 );
 
+                // M2-2: an output contract on a reasoning agent publishes this
+                // run's conclusion as data sources. Best-effort by design — the
+                // run already succeeded, so a failed extraction costs fields,
+                // never the run. Bound first: the borrow must end before the push.
+                let published = self
+                    .apply_output_contract(&agent, &decision_process.conclusion)
+                    .await;
+                if let Some(field_count) = published {
+                    decision_process.decisions.push(Decision {
+                        decision_type: "output_contract".to_string(),
+                        description: format!("Published {} schema field(s)", field_count),
+                        action: format!("ai:{}:* → {}", agent.id, field_count),
+                        rationale: "Output contract applied to the run's conclusion".to_string(),
+                        expected_outcome: "Fields available as ai:* data sources".to_string(),
+                    });
+                }
+
                 Ok((*decision_process, *execution_result))
             }
 
@@ -1423,7 +1440,7 @@ impl AgentExecutor {
             AnalysisResult::Focused {
                 situation_analysis,
                 reasoning_steps,
-                decisions,
+                mut decisions,
                 conclusion,
             } => {
                 // Send thinking event for analysis completion
@@ -1545,6 +1562,19 @@ impl AgentExecutor {
 
                 // No truncation — preserve full LLM output for quality
                 let summary_for_result = conclusion.clone();
+
+                // M2-2: the output contract, same best-effort step as the Free
+                // branch — recorded as a decision so it shows in the timeline.
+                let published = self.apply_output_contract(&agent, &conclusion).await;
+                if let Some(field_count) = published {
+                    decisions.push(Decision {
+                        decision_type: "output_contract".to_string(),
+                        description: format!("Published {} schema field(s)", field_count),
+                        action: format!("ai:{}:* → {}", agent.id, field_count),
+                        rationale: "Output contract applied to the run's conclusion".to_string(),
+                        expected_outcome: "Fields available as ai:* data sources".to_string(),
+                    });
+                }
 
                 let decision_process = DecisionProcess {
                     situation_analysis,

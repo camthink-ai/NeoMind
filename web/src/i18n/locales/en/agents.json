@@ -283,9 +283,6 @@
     "basicInfo": {
       "name": "Name",
       "namePlaceholder": "e.g., Warehouse Temperature Monitor, Equipment Anomaly Analysis",
-      "description": "Description",
-      "descriptionHint": "Brief description of this agent's purpose (optional)",
-      "descriptionPlaceholder": "e.g., Monitor warehouse environment, Analyze equipment energy trends",
       "requirement": "Requirements",
       "requirementHint": "Describe the goals you want the agent to accomplish in natural language",
       "requirementPlaceholder": "e.g.:\n• Send alert when temperature exceeds 30°C\n• Generate device status report at 9 AM daily\n• Detect abnormal energy consumption and analyze causes",
@@ -462,12 +459,10 @@
       }
     },
     "resources": {
-      "title": "Resources",
+      "title": "What it watches",
       "optional": "Optional",
-      "hintFocused": "Configure data sources for the Agent to focus on. Data will be auto-collected during execution.",
+      "hintFocused": "This is its entire input — collected automatically at run time, and the only thing it judges from.",
       "hintFree": "Configure preloaded data sources. If omitted, the Agent will query data via tools as needed.",
-      "preloadTitle": "Preloaded Data Sources",
-      "supplementalTitle": "Additional Data Sources",
       "hintReactive": "Trigger source data is collected automatically. Add additional sources here for cross-device correlation analysis.",
       "searchPlaceholder": "Search resource name or type...",
       "selectedCount": "{{count}} selected",
@@ -480,6 +475,7 @@
       "commandCount": "{{count}} commands",
       "topologyPreview": "Topology Preview",
       "selectResourceHint": "Please select at least one data resource",
+      "noneAvailable": "This resource has no metrics or commands",
       "noMetrics": "No metrics",
       "noOutputs": "No outputs",
       "moreMetrics": "+{{count}} metrics",
@@ -510,6 +506,7 @@
     "structured": {
       "sectionTitle": "Output Fields (ai:{id}:* data sources)",
       "hint": "Each field is published as a platform data source usable by dashboards, rules and data-push. Define what to extract, then bind it to inputs via resources.",
+      "multiRoundCost": "A multi-round conclusion is prose; turning it into fields costs one extra model call at the end of every run.",
       "colName": "Name",
       "colType": "Type",
       "colUnit": "Unit",
@@ -554,7 +551,7 @@
       "includeBaseline": "Include Baseline",
       "recommended": "Recommended",
       "agentPriority": "Agent Priority",
-      "priorityHint": "Execution priority (1=lowest, 10=highest)",
+      "priorityHint": "Higher runs first when agents compete for a slot (128 = default)",
       "contextWindow": "Recent Conversation Turns",
       "contextHint": "Number of recent conversation turns to load for execution context",
       "historyDepth": "Conversation History Depth",
@@ -614,29 +611,23 @@
       "America/Los_Angeles": "Los Angeles (UTC-8/-7)",
       "UTC": "UTC (UTC+0)"
     },
-    "task": {
-      "question": "What should it do for you?",
-      "examplePrefix": "e.g. ",
-      "watch": {
-        "title": "Watch for me",
-        "desc": "Checks data or camera views on a schedule and records the result as data",
-        "example": "read the gauge every hour and log it"
-      },
-      "guard": {
-        "title": "Guard for me",
-        "desc": "Watches for anomalies and notifies you the moment one triggers",
-        "example": "alert me if temperature stays high 10 minutes"
-      },
-      "investigate": {
-        "title": "Investigate for me",
-        "desc": "Diagnoses problems on its own and reports conclusions",
-        "example": "find out which machine caused the output drop"
-      },
-      "report": {
-        "title": "Report to me",
-        "desc": "Summarizes into a report delivered on schedule",
-        "example": "nightly summary every day at 8:00"
-      }
+    "section": {
+      "what": "What it should do",
+      "record": "What it records",
+      "when": "When it runs"
+    },
+    "autonomy": {
+      "label": "It can work things out itself",
+      "hint": "Calls tools and retries — for open-ended tasks like working out what went wrong. Off means it looks once and answers."
+    },
+    "memory": {
+      "title": "What it remembers",
+      "auto": "Derived from the mode",
+      "stateless": "Judged fresh each time",
+      "statelessHint": "Sees only this run's data. Cheaper, faster, repeatable",
+      "history": "Remembers past results",
+      "historyHint": "Can say \"worse than last time\". Carries history into every prompt",
+      "standardsKept": "Your standards and corrections always apply, whatever you pick here"
     }
   },
   "skills": {

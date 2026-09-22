@@ -2,7 +2,7 @@
  * Agent Editor Full Screen (Single Page Layout)
  *
  * All configuration in one page:
- * - Left: Basic info (name, description, prompt, schedule)
+ * - Left: Basic info (name, model)
  * - Right: Selected resources with dialog to add more
  *
  * Features:
@@ -31,6 +31,7 @@ import { Label } from '@/components/ui/label'
 import { Slider } from '@/components/ui/slider'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { } from '@/components/ui/dialog'
 import {
@@ -44,21 +45,19 @@ import {
   Puzzle,
   Plus,
   Info,
+  Database,
   ChevronRight,
   Brain,
-  Database,
   MousePointerClick,
   GitBranch,
-  Eye,
-  BellRing,
-  SearchCheck,
-  FileText,
 } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type {
   AiAgentDetail,
   AgentSchedule,
   CreateAgentRequest,
+  AgentExecutionMode,
+  AgentMemoryMode,
   OperatorField,
   OperatorConfig,
   DryRunResult,
@@ -77,6 +76,7 @@ import {
   SelectedResourceItem,
   INTERVALS,
   HOURS,
+  deriveExecutionMode,
   hasOutputContract,
 } from './agent-editor'
 import type {
@@ -112,6 +112,79 @@ interface AgentEditorFullScreenProps {
 // Main Component
 // ============================================================================
 
+/**
+ * The single way this dialog explains itself: a small info icon whose text
+ * appears on hover. Explanations stay off the surface, so the form reads as
+ * labels and controls rather than as prose.
+ */
+function InfoHint({ text }: { text: string }) {
+  return (
+    <TooltipProvider delayDuration={300}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Info className="h-3.5 w-3.5 shrink-0 cursor-help text-muted-foreground" />
+        </TooltipTrigger>
+        <TooltipContent side="top" className="max-w-xs">
+          <p>{text}</p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
+
+/**
+ * One section of the editor. Every section uses the same shell, so the dialog
+ * reads as a designed form: the header carries the title, the body carries only
+ * controls. No step numbers — this is a single-page form, not a wizard.
+ */
+function EditorSection({
+  title,
+  hint,
+  accessory,
+  collapsible = false,
+  defaultExpanded = true,
+  children,
+}: {
+  title: React.ReactNode
+  hint?: string
+  accessory?: React.ReactNode
+  /** Some sections are optional by nature and start folded. */
+  collapsible?: boolean
+  defaultExpanded?: boolean
+  children: React.ReactNode
+}) {
+  const [expanded, setExpanded] = useState(defaultExpanded)
+  const open = !collapsible || expanded
+  return (
+    <section className="overflow-hidden rounded-lg border border-border">
+      <header
+        className={cn(
+          "flex items-center gap-2 border-border px-4 py-3",
+          open && "border-b",
+          collapsible && "cursor-pointer select-none",
+        )}
+        onClick={collapsible ? () => setExpanded((v) => !v) : undefined}
+        role={collapsible ? 'button' : undefined}
+        tabIndex={collapsible ? 0 : undefined}
+        aria-expanded={collapsible ? open : undefined}
+      >
+        {collapsible ? (
+          <ChevronRight
+            className={cn(
+              "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+              open && "rotate-90",
+            )}
+          />
+        ) : null}
+        <Label className="text-sm font-medium">{title}</Label>
+        {hint ? <InfoHint text={hint} /> : null}
+        {accessory ? <div className="ml-auto flex items-center gap-2">{accessory}</div> : null}
+      </header>
+      {open ? <div className="space-y-3 p-4">{children}</div> : null}
+    </section>
+  )
+}
+
 export function AgentEditorFullScreen({
   open,
   onOpenChange,
@@ -138,7 +211,6 @@ export function AgentEditorFullScreen({
 
   // Basic info
   const [name, setName] = useState("")
-  const [description, setDescription] = useState("")
   const [userPrompt, setUserPrompt] = useState("")
   const [llmBackendId, setLlmBackendId] = useState<string | null>(null)
 
@@ -158,7 +230,6 @@ export function AgentEditorFullScreen({
   // Resource state
   const [selectedResources, setSelectedResources] = useState<SelectedResource[]>([])
   const [resourceDialogOpen, setResourceDialogOpen] = useState(false)
-  const [freeModeResourcesExpanded, setFreeModeResourcesExpanded] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [recommendations, setRecommendations] = useState<ResourceRecommendation[]>([])
   const [generatingRecommendations, setGeneratingRecommendations] = useState(false)
@@ -170,21 +241,20 @@ export function AgentEditorFullScreen({
   const [llmBackends, setLlmBackends] = useState<LlmBackendInstance[]>([])
   const [activeBackendId, setActiveBackendId] = useState<string | null>(null)
 
-  // Advanced configuration state
-  const [executionMode, setExecutionMode] = useState<'focused' | 'free' | 'structured'>('focused')
-  // 客户语言的任务类型（技术 executionMode/schedule 默认值由选卡编译而来）
-  const [taskKind, setTaskKind] = useState<'watch' | 'guard' | 'investigate' | 'report'>('watch')
+  // How much latitude the agent gets. It is the input the derivation needs to
+  // tell "investigate" from "summarise" — no resource or field can.
+  const [canActAutonomously, setCanActAutonomously] = useState(false)
+  const [memoryMode, setMemoryMode] = useState<AgentMemoryMode | null>(null)
   const [outputSchema, setOutputSchema] = useState<OperatorField[]>([])
   const [operatorConfig, setOperatorConfig] = useState<OperatorConfig>({
     debounce_secs: 30,
     timeout_secs: 60,
     consecutive_failure_threshold: 3,
   })
-  const [priority, setPriority] = useState(5)
+  const [priority, setPriority] = useState(128)
   const [contextWindowSize, setContextWindowSize] = useState(10)
   const [maxChainDepth, setMaxChainDepth] = useState(5)
   // Advanced knobs collapsed by default — defaults suit most agents
-  const [advancedOpen, setAdvancedOpen] = useState(false)
 
   // LLM validation state
   const [llmValidating, setLlmValidating] = useState(false)
@@ -198,8 +268,36 @@ export function AgentEditorFullScreen({
   // Mode Helpers
   // ========================================================================
 
+  // ── Derived execution mode ──────────────────────────────────────────────
+  // The user answers four questions — what it should do, what it watches, what
+  // it records, how often — and the mode follows from the answers.
+  const hasDeviceCommands = useMemo(
+    () => selectedResources.some((r) => r.selectedCommands.size > 0),
+    [selectedResources],
+  )
+  const hasContract = useMemo(() => hasOutputContract(outputSchema), [outputSchema])
+  const executionMode: AgentExecutionMode = deriveExecutionMode({
+    hasDeviceCommands,
+    canActAutonomously,
+    hasOutputContract: hasContract,
+  })
   const isFocusedMode = executionMode === 'focused'
   const isStructuredMode = executionMode === 'structured'
+  // Mirrors `MemoryMode::derived_for` on the server: a scanner carries no
+  // history, anything that reasons across turns does.
+  const effectiveMemoryMode: AgentMemoryMode = memoryMode ?? (isStructuredMode ? 'tool' : 'assistant')
+  // Resources say different things depending on the run: the only input for a
+  // single-pass agent, a supplement when an event triggers it, an optional
+  // preload when the agent fetches its own data.
+  const isResourcesProminent = scheduleType !== 'reactive' && isFocusedMode
+  // One question for this section in every mode; what changes per mode is the
+  // role, and that is the hint's job.
+  const resourcesTitle = tAgent('creator.resources.title')
+  const resourcesHint = scheduleType === 'reactive'
+    ? tAgent('creator.resources.hintReactive')
+    : isResourcesProminent
+      ? tAgent('creator.resources.hintFocused')
+      : tAgent('creator.resources.hintFree')
 
   // Helper: get metrics for a device (from deviceTypes)
   const getDeviceMetrics = useCallback((deviceId: string): Array<{ name: string; display_name: string }> => {
@@ -317,29 +415,19 @@ export function AgentEditorFullScreen({
       if (agent) {
         // Edit mode
         setName(agent.name || '')
-        setDescription(agent.description || '')
         setUserPrompt(agent.user_prompt || '')
         setLlmBackendId(agent.llm_backend_id || null)
-        // Load advanced config from agent
-        setExecutionMode(
-          agent.execution_mode === 'free' ? 'free'
-          : agent.execution_mode === 'structured' ? 'structured'
-          : 'focused'
-        )
-        setTaskKind(
-          agent.execution_mode === 'structured'
-            ? (agent.schedule?.schedule_type === 'event' ? 'guard' : 'watch')
-            : agent.execution_mode === 'free'
-              ? 'investigate'
-              : 'report'
-        )
+        // Seeded, not derived: re-saving must not silently change how an
+        // existing agent runs. A stored `free` means it was allowed latitude.
+        setCanActAutonomously(agent.execution_mode === 'free')
+        setMemoryMode(agent.memory_mode ?? null)
         setOutputSchema(agent.output_schema ?? [])
         setOperatorConfig(agent.operator_config ?? {
           debounce_secs: 30,
           timeout_secs: 60,
           consecutive_failure_threshold: 3,
         })
-        setPriority(agent.priority ?? 5)
+        setPriority(agent.priority ?? 128)
         setContextWindowSize(agent.context_window_size ?? 10)
         setMaxChainDepth(agent.max_chain_depth ?? 5)
         parseSchedule(agent.schedule)
@@ -347,11 +435,11 @@ export function AgentEditorFullScreen({
       } else {
         // Create mode - reset
         setName("")
-        setDescription("")
         setUserPrompt("")
         setLlmBackendId(null)
         // Reset to defaults
-        setExecutionMode('focused')
+        setCanActAutonomously(false)
+        setMemoryMode(null)
         setOutputSchema([])
         setOperatorConfig({ debounce_secs: 30, timeout_secs: 60, consecutive_failure_threshold: 3 })
         setPriority(5)
@@ -873,47 +961,6 @@ export function AgentEditorFullScreen({
     })
   }, [availableResources, searchQuery])
 
-  const agentSummary = useMemo(() => {
-    if (!name && !userPrompt) return null
-
-    const parts = []
-    if (name) parts.push(`"${name}"`)
-    if (scheduleType === 'timer') {
-      if (timerSubType === 'interval') parts.push(`runs every ${intervalValue} minutes`)
-      else if (timerSubType === 'daily') parts.push(`runs daily at ${scheduleHour}:${scheduleMinute.toString().padStart(2, '0')}`)
-      else if (timerSubType === 'weekly') parts.push(`runs weekly on ${selectedWeekdays.map(d => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d]).join(', ')} at ${scheduleHour}:${scheduleMinute.toString().padStart(2, '0')}`)
-    }
-    if (scheduleType === 'reactive') {
-      if (triggerSources.length > 0) {
-        parts.push(`triggers on ${triggerSources.map(s => s.name).join(', ')} data updates`)
-      } else {
-        parts.push('triggers on data updates (no sources configured)')
-      }
-    }
-    if (scheduleType === 'on-demand') parts.push('runs on demand only')
-
-    const selectedDeviceCount = selectedResources.filter(r => r.type === 'device').length
-    const selectedExtCount = selectedResources.filter(r => r.type === 'extension').length
-    const metricCount = selectedResources.reduce((sum, r) => sum + r.selectedMetrics.size, 0)
-    const commandCount = selectedResources.reduce((sum, r) => sum + r.selectedCommands.size, 0)
-
-    if (selectedDeviceCount > 0 || selectedExtCount > 0) {
-      parts.push(`monitors ${selectedDeviceCount} device(s) and ${selectedExtCount} extension(s)`)
-      parts.push(`tracks ${metricCount} metric(s) and ${commandCount} command(s)`)
-    }
-
-    return parts.join(', ')
-  }, [name, scheduleType, timerSubType, intervalValue, scheduleHour, scheduleMinute, selectedWeekdays, triggerSources, selectedResources])
-
-  // Validation - name and prompt are required
-  // Metric selection is optional for event-triggered agents (device-level deduplication prevents loops)
-  const _nameError = fieldErrors.name ??
-    (validateRequired(name, 'Name') || validateLength(name, 'Name', 1, 100))
-  const _promptError = fieldErrors.prompt ??
-    (validateRequired(userPrompt, 'Prompt') || validateLength(userPrompt, 'Prompt', 1, 5000))
-  // A structured (L0) agent publishes one data source per output field; with
-  // no named field there is nothing to publish and the executor rejects every
-  // run. Block the save here rather than failing after the user has left.
   const outputContractOk = !isStructuredMode || hasOutputContract(outputSchema)
   const isValid: boolean =
     name.trim().length > 0 && userPrompt.trim().length > 0 && outputContractOk
@@ -1121,7 +1168,6 @@ export function AgentEditorFullScreen({
 
       const data: CreateAgentRequest = {
         name: name.trim(),
-        description: description.trim(),
         user_prompt: userPrompt.trim(),
         llm_backend_id: llmBackendId ?? undefined,
         // Use new resources format
@@ -1137,11 +1183,14 @@ export function AgentEditorFullScreen({
           event_filter: eventFilter,
         },
         // Advanced configuration
-        priority: priority !== 5 ? priority : undefined,
+        priority: priority !== 128 ? priority : undefined,
         context_window_size: contextWindowSize !== 10 ? contextWindowSize : undefined,
         max_chain_depth: maxChainDepth !== 5 ? maxChainDepth : undefined,
         execution_mode: executionMode,
-        ...(isStructuredMode
+        memory_mode: memoryMode ?? undefined,
+        // The output contract is no longer structured-only: any mode may
+        // publish fields. A reasoning agent does it in a post-run step.
+        ...(hasContract
           ? {
               output_schema: outputSchema.filter((f) => f.name.trim() !== ''),
               operator_config: operatorConfig,
@@ -1203,77 +1252,14 @@ export function AgentEditorFullScreen({
   // Render
   // ========================================================================
 
+  // One header treatment for every workspace section, numbered to match the
+  // four questions the form asks — so the dialog reads as a flow rather than a
+  // stack of unrelated blocks.
   const rail: Record<string, React.ReactNode> = {}
   const canvas: Record<string, React.ReactNode> = {}
 
-  rail['task'] = (
+  rail['name'] = (
     <>
-            {/* Task-first entry: 客户语言四选一，技术模式隐入幕后 */}
-            <div className="space-y-2 min-w-0">
-              <Label className="text-sm font-medium">{tAgent('creator.task.question')}</Label>
-              <div className={cn("gap-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4")}>
-                {([
-                  {
-                    kind: 'watch', icon: Eye,
-                    title: tAgent('creator.task.watch.title'),
-                    desc: tAgent('creator.task.watch.desc'),
-                    example: tAgent('creator.task.watch.example'),
-                    apply: () => { setExecutionMode('structured'); setScheduleType('timer'); setTimerSubType('interval') },
-                  },
-                  {
-                    kind: 'guard', icon: BellRing,
-                    title: tAgent('creator.task.guard.title'),
-                    desc: tAgent('creator.task.guard.desc'),
-                    example: tAgent('creator.task.guard.example'),
-                    apply: () => { setExecutionMode('structured'); setScheduleType('reactive') },
-                  },
-                  {
-                    kind: 'investigate', icon: SearchCheck,
-                    title: tAgent('creator.task.investigate.title'),
-                    desc: tAgent('creator.task.investigate.desc'),
-                    example: tAgent('creator.task.investigate.example'),
-                    apply: () => { setExecutionMode('free'); setScheduleType('on-demand') },
-                  },
-                  {
-                    kind: 'report', icon: FileText,
-                    title: tAgent('creator.task.report.title'),
-                    desc: tAgent('creator.task.report.desc'),
-                    example: tAgent('creator.task.report.example'),
-                    apply: () => { setExecutionMode('focused'); setScheduleType('timer'); setTimerSubType('daily') },
-                  },
-                ] as const).map((card) => {
-                  const on = taskKind === card.kind
-                  return (
-                    <button
-                      key={card.kind}
-                      type="button"
-                      onClick={() => { setTaskKind(card.kind); card.apply() }}
-                      // The example rides on hover — it is the part users can
-                      // do without once they have read the card twice, and
-                      // showing it cost a third line of height.
-                      title={`${tAgent('creator.task.examplePrefix')}${card.example}`}
-                      className={cn(
-                        "flex min-w-0 items-center gap-2 rounded-lg border px-3 py-2.5 text-left transition-colors",
-                        on ? "border-primary bg-muted" : "border-border hover:border-muted-foreground"
-                      )}
-                    >
-                      <card.icon className={cn("h-4 w-4 shrink-0", on ? "text-foreground" : "text-muted-foreground")} />
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-medium">{card.title}</div>
-                        <div className="truncate text-xs text-muted-foreground">{card.desc}</div>
-                      </div>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-    </>
-  )
-
-  rail['namedesc'] = (
-    <>
-            {/* Name + Description — one row */}
-            <div className="grid grid-cols-1 gap-4">
             {/* Name */}
             <div className="space-y-2 min-w-0">
               <Label className={cn("font-medium", isMobile ? "text-base" : "text-sm")}>
@@ -1297,20 +1283,6 @@ export function AgentEditorFullScreen({
                 <p className="text-sm text-error mt-1">{fieldErrors.name}</p>
               )}
             </div>
-
-
-            {/* Description (Optional) */}
-            <div className="space-y-2 min-w-0">
-              <Label className={cn("font-medium", isMobile ? "text-base" : "text-sm")}>{tAgent('creator.basicInfo.description')}</Label>
-              <Input
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder={tAgent('creator.basicInfo.descriptionPlaceholder')}
-                className={cn(isMobile ? "h-12 text-base" : "h-10")}
-              />
-            </div>
-
-            </div>{/* end Name + Description row */}
     </>
   )
 
@@ -1407,100 +1379,10 @@ export function AgentEditorFullScreen({
     </>
   )
 
-  rail['advanced'] = (
-    <>
-            <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
-              <CollapsibleTrigger className="w-full flex items-center justify-between py-1 text-left">
-                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                  {tAgent('creator.advanced.title', 'Advanced Configuration')}
-                </span>
-                <ChevronRight className={cn(
-                  "h-4 w-4 text-muted-foreground transition-transform",
-                  advancedOpen && "rotate-90"
-                )} />
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                <div className="pt-3 space-y-6">
-            {/* Agent Priority */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label className="text-sm font-medium">{tAgent('creator.advanced.agentPriority', 'Agent Priority')}</Label>
-                <span className="text-sm font-medium tabular-nums">{priority}</span>
-              </div>
-              <Slider
-                min={1}
-                max={10}
-                step={1}
-                value={[priority]}
-                onValueChange={([v]) => setPriority(v)}
-              />
-              <p className="text-xs text-muted-foreground">
-                {tAgent('creator.advanced.priorityHint', 'Execution priority (1=lowest, 10=highest)')}
-              </p>
-            </div>
-
-{!isStructuredMode && (<>
-            {/* Max Chain Depth */}
-            <div className="space-y-2">
-              <Label className="text-sm font-medium">{tAgent('creator.advanced.chainDepth', 'Max Chain Depth')}</Label>
-              <Slider
-                min={1}
-                max={20}
-                step={1}
-                value={[maxChainDepth]}
-                onValueChange={([v]) => setMaxChainDepth(v)}
-              />
-              <p className="text-xs text-muted-foreground">
-                {tAgent('creator.advanced.chainDepthHint', 'Maximum tool-calling rounds per execution (1=single-pass, higher=more capable)')}
-              </p>
-            </div>
-
-            {/* Conversation History Depth */}
-            <div className="space-y-2">
-              <Label className="text-sm font-medium">{tAgent('creator.advanced.historyDepth', 'Conversation History Depth')}</Label>
-              <Select value={contextWindowSize.toString()} onValueChange={(v) => setContextWindowSize(parseInt(v))}>
-                <SelectTrigger className="h-9">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="5">5</SelectItem>
-                  <SelectItem value="10">10</SelectItem>
-                  <SelectItem value="20">20</SelectItem>
-                  <SelectItem value="30">30</SelectItem>
-                  <SelectItem value="50">50</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                {tAgent('creator.advanced.contextHint', 'Number of recent conversation turns to include as context')}
-              </p>
-            </div>
-</>)}
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
-    </>
-  )
-
   canvas['prompt'] = (
     <>
             {/* Prompt */}
             <div className="space-y-3">
-              <div className="flex items-center gap-1.5">
-                <Label className="text-sm font-medium">
-                  {tAgent('creator.basicInfo.requirement')} <span className="text-error">*</span>
-                </Label>
-                {/* Same affordance `Field` renders for its `tooltip` prop. */}
-                <TooltipProvider delayDuration={300}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Info className="h-3.5 w-3.5 cursor-help text-muted-foreground" />
-                    </TooltipTrigger>
-                    <TooltipContent side="top" className="max-w-xs">
-                      <p>{tAgent('creator.basicInfo.promptTip')}</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              </div>
 
               <Textarea
                 value={userPrompt}
@@ -1519,20 +1401,57 @@ export function AgentEditorFullScreen({
                 <p className="text-sm text-error mt-1">{fieldErrors.prompt}</p>
               )}
 
+              {/* The one input no resource or field can express: whether this
+                  task is open-ended enough that the agent must try things. It
+                  is what separates "investigate" from "summarise". */}
+              <div className="flex items-center gap-2 pt-1">
+                <Checkbox
+                  id="agent-autonomy"
+                  checked={canActAutonomously}
+                  onCheckedChange={(v) => setCanActAutonomously(v === true)}
+                />
+                <Label htmlFor="agent-autonomy" className="text-sm font-medium">
+                  {tAgent('creator.autonomy.label')}
+                </Label>
+                <InfoHint text={tAgent('creator.autonomy.hint')} />
+              </div>
+
+              {/* Rounds only mean anything once the agent may take them. */}
+              {canActAutonomously && (
+                <div className="space-y-2 pt-1">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-medium">
+                      {tAgent('creator.advanced.chainDepth', 'Max Chain Depth')}
+                    </Label>
+                    <span className="text-sm font-medium tabular-nums">{maxChainDepth}</span>
+                  </div>
+                  <Slider
+                    min={1}
+                    max={20}
+                    step={1}
+                    value={[maxChainDepth]}
+                    onValueChange={([v]) => setMaxChainDepth(v)}
+                  />
+                </div>
+              )}
             </div>
     </>
   )
 
   canvas['structured'] = (
     <>
-            {/* Structured (L0) output contract — only for structured mode */}
-            {isStructuredMode && (
-              <div className="space-y-2">
-                <Label className="text-sm font-medium flex items-center gap-2">
-                  <Database className="h-4 w-4 text-muted-foreground" />
-                  {tAgent('creator.structured.sectionTitle')}
-                </Label>
-                <p className="text-xs text-muted-foreground">{tAgent('creator.structured.hint')}</p>
+            {/* The output contract — every mode may publish fields. A
+                structured agent produces them directly; a reasoning agent gets
+                them from a post-run step, which costs one extra call. */}
+            <div className="space-y-2">
+                {/* The user only needs to know the price on the modes that pay
+                    it: a constrained read IS the output, a reasoning agent has
+                    to be asked again at the end. */}
+                {!isStructuredMode && hasContract && (
+                  <p className="text-xs text-muted-foreground">
+                    {tAgent('creator.structured.multiRoundCost')}
+                  </p>
+                )}
                 {!outputContractOk && (
                   <p className="text-sm text-error">{tAgent('creator.validation.outputFieldRequired')}</p>
                 )}
@@ -1713,7 +1632,7 @@ export function AgentEditorFullScreen({
                   </CollapsibleContent>
                 </Collapsible>
               </div>
-            )}
+            
             {/* Dry-run (试跑) result — capability zone feedback */}
             {dryRunResult && (
               <div className="space-y-2 rounded-lg border border-success bg-card p-3">
@@ -1747,11 +1666,83 @@ export function AgentEditorFullScreen({
     </>
   )
 
+  canvas['memory'] = (
+    <>
+            {/* What it remembers. The standards always apply (they are what the
+                judgement is made against); only past events are optional. */}
+            <div className="space-y-2">
+              {/* Sub-block of the output contract: the contract is what it
+                  records, this is how much of the past it carries alongside. */}
+              <div className="flex items-center gap-2">
+                <Label className="text-sm font-medium text-muted-foreground">
+                  {tAgent('creator.memory.title')}
+                </Label>
+                <InfoHint
+                  text={`${
+                    effectiveMemoryMode === 'tool'
+                      ? tAgent('creator.memory.statelessHint')
+                      : tAgent('creator.memory.historyHint')
+                  } ${tAgent('creator.memory.standardsKept')}`}
+                />
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {([
+                  { key: null, label: tAgent('creator.memory.auto') },
+                  { key: 'tool' as const, label: tAgent('creator.memory.stateless') },
+                  { key: 'assistant' as const, label: tAgent('creator.memory.history') },
+                ]).map(({ key, label }) => (
+                  <button
+                    key={String(key)}
+                    type="button"
+                    onClick={() => setMemoryMode(key)}
+                    className={cn(
+                      "rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors",
+                      memoryMode === key
+                        ? "border-primary bg-primary text-primary-foreground"
+                        : "border-border bg-background hover:bg-muted"
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {/* Depth only means anything once history is actually carried —
+                  and only appears when the user picked that, not when the
+                  derivation happens to land on it under "auto". */}
+              {memoryMode === 'assistant' && (
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">
+                    {tAgent('creator.advanced.historyDepth', 'Conversation History Depth')}
+                  </Label>
+                  <Select
+                    value={contextWindowSize.toString()}
+                    onValueChange={(v) => setContextWindowSize(parseInt(v))}
+                  >
+                    <SelectTrigger className="h-9">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="5">5</SelectItem>
+                      <SelectItem value="10">10</SelectItem>
+                      <SelectItem value="20">20</SelectItem>
+                      <SelectItem value="30">30</SelectItem>
+                      <SelectItem value="50">50</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {tAgent('creator.advanced.contextHint', 'Number of recent conversation turns to include as context')}
+                  </p>
+                </div>
+              )}
+
+            </div>
+    </>
+  )
+
   canvas['schedule'] = (
     <>
             {/* Execution Schedule */}
             <div className="space-y-3">
-              <Label className={cn("font-medium", isMobile ? "text-base" : "text-sm")}>{tAgent('creator.basicInfo.scheduleLabel')}</Label>
 
               {/* Strategy Cards - 3 modes */}
               <div className={cn(
@@ -2276,162 +2267,76 @@ export function AgentEditorFullScreen({
                   </div>
                 )}
               </div>
+
+              {/* Scheduling order — same axis as this section: when runs happen.
+                  A number, not a slider: priority is a value you may want
+                  exactly (128 is the default every untouched agent carries,
+                  so "+1 to go first" is a real intent a drag cannot express). */}
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="agent-priority" className="text-sm font-medium">
+                    {tAgent('creator.advanced.agentPriority', 'Agent Priority')}
+                  </Label>
+                  <InfoHint
+                    text={tAgent(
+                      'creator.advanced.priorityHint',
+                      'Higher runs first when agents compete for a slot (128 = default)',
+                    )}
+                  />
+                </div>
+                <Input
+                  id="agent-priority"
+                  type="number"
+                  min={0}
+                  max={255}
+                  step={1}
+                  value={priority}
+                  onChange={(e) => {
+                    const v = Number(e.target.value)
+                    if (e.target.value !== '' && Number.isFinite(v)) {
+                      setPriority(Math.max(0, Math.min(255, Math.round(v))))
+                    }
+                  }}
+                  className="h-9 w-24 text-right tabular-nums"
+                />
+              </div>
             </div>
     </>
   )
 
   canvas['resources'] = (
     <>
-            {/* Resources Section */}
-            {(() => {
-              // Determine Resources section style based on schedule type + execution mode
-              // Priority: scheduleType first (Reactive always supplemental), then executionMode
-              const isReactive = scheduleType === 'reactive'
-              const isProminent = !isReactive && isFocusedMode
-              // isCollapsed = Free mode OR Reactive mode
-
-              const sectionTitle = isReactive
-                ? tAgent('creator.resources.supplementalTitle')
-                : isProminent
-                  ? tAgent('creator.resources.title')
-                  : tAgent('creator.resources.preloadTitle')
-
-              const sectionHint = isReactive
-                ? tAgent('creator.resources.hintReactive')
-                : isProminent
-                  ? tAgent('creator.resources.hintFocused')
-                  : tAgent('creator.resources.hintFree')
-
-              if (isProminent) {
-                return (
-                  <div className="space-y-3 rounded-lg border border-border p-3">
-                    <div className={cn(
-                      "flex items-center justify-between",
-                      isMobile ? "flex-col items-start gap-3" : ""
-                    )}>
-                      <div className="flex items-center gap-2">
-                        <Label className={cn("font-medium", isMobile ? "text-base" : "text-sm")}>{sectionTitle}</Label>
-                        {selectedResources.length > 0 && (
-                          <Badge variant="secondary" className="text-xs h-5">
-                            {selectedResources.length}
-                          </Badge>
-                        )}
-                      </div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size={isMobile ? "default" : "sm"}
-                        onClick={() => setResourceDialogOpen(true)}
-                        className={isMobile ? "w-full justify-center h-11" : ""}
-                      >
-                        <Plus className={cn(isMobile ? "h-5 w-5" : "h-4 w-4", "mr-2")} />
-                        {tAgent('creator.resources.addResources')}
-                      </Button>
-                    </div>
-                    <p className="text-xs text-muted-foreground">{sectionHint}</p>
-                    {selectedResources.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center py-6 border rounded-lg">
-                        <Target className="h-6 w-6 text-muted-foreground mb-2" />
-                        <p className="text-xs text-muted-foreground">
-                          {tAgent('creator.resources.dialog.noResourcesHint')}
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="space-y-2">
-                        {selectedResources.map((resource) => (
-                          <SelectedResourceItem
-                            key={resource.id}
-                            resource={resource}
-                            setSelectedResources={setSelectedResources}
-                            onRemove={() => setSelectedResources(prev => prev.filter(r => r.id !== resource.id))}
-                            onToggleMetric={(resourceId, metricName) => {
-                              setSelectedResources((prev) => prev.map(r => r.id === resourceId ? { ...r, selectedMetrics: new Set(r.selectedMetrics.has(metricName) ? Array.from(r.selectedMetrics).filter(n => n !== metricName) : [...r.selectedMetrics, metricName]) } : r))
-                            }}
-                            onToggleCommand={(resourceId, commandName) => {
-                              setSelectedResources((prev) => prev.map(r => r.id === resourceId ? { ...r, selectedCommands: new Set(r.selectedCommands.has(commandName) ? Array.from(r.selectedCommands).filter(n => n !== commandName) : [...r.selectedCommands, commandName]) } : r))
-                            }}
-                            isMobile={isMobile}
-                                                      />
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )
-              }
-
-              // Collapsed style (Reactive / Free / On-demand)
-              return (
-                <div className="overflow-hidden rounded-lg border">
-                  <button
-                    type="button"
-                    onClick={() => setFreeModeResourcesExpanded(!freeModeResourcesExpanded)}
-                    className="w-full flex items-center justify-between p-3 text-left hover:bg-muted-30 transition-colors"
-                  >
-                    <div className="flex items-center gap-2">
-                      <ChevronRight className={cn("h-4 w-4 transition-transform", freeModeResourcesExpanded && "rotate-90")} />
-                      <Label className="text-sm font-medium">{sectionTitle}</Label>
-                      {selectedResources.length > 0 && (
-                        <Badge variant="secondary" className="text-xs h-5">
-                          {selectedResources.length}
-                        </Badge>
-                      )}
-                      <Badge variant="outline" className="text-xs h-5">
-                        {tAgent('creator.resources.optional')}
-                      </Badge>
-                    </div>
-                    <Plus
-                      className="h-4 w-4 text-muted-foreground cursor-pointer hover:text-foreground"
-                      onClick={(e) => { e.stopPropagation(); setResourceDialogOpen(true) }}
-                    />
-                  </button>
-                  {freeModeResourcesExpanded && (
-                    <div className="px-3 pb-3 pt-0 space-y-2 border-t">
-                      <p className="text-xs text-muted-foreground pt-2">{sectionHint}</p>
-                      {selectedResources.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center py-4 border rounded-lg">
-                          <Target className="h-6 w-6 text-muted-foreground mb-1" />
-                          <p className="text-xs text-muted-foreground">
-                            {tAgent('creator.resources.dialog.noResourcesHint')}
-                          </p>
-                        </div>
-                      ) : (
-                        <div className="space-y-2">
-                          {selectedResources.map((resource) => (
-                            <SelectedResourceItem
-                              key={resource.id}
-                              resource={resource}
-                              setSelectedResources={setSelectedResources}
-                              onRemove={() => setSelectedResources(prev => prev.filter(r => r.id !== resource.id))}
-                              onToggleMetric={(resourceId, metricName) => {
-                                setSelectedResources((prev) => prev.map(r => r.id === resourceId ? { ...r, selectedMetrics: new Set(r.selectedMetrics.has(metricName) ? Array.from(r.selectedMetrics).filter(n => n !== metricName) : [...r.selectedMetrics, metricName]) } : r))
-                              }}
-                              onToggleCommand={(resourceId, commandName) => {
-                                setSelectedResources((prev) => prev.map(r => r.id === resourceId ? { ...r, selectedCommands: new Set(r.selectedCommands.has(commandName) ? Array.from(r.selectedCommands).filter(n => n !== commandName) : [...r.selectedCommands, commandName]) } : r))
-                              }}
-                              isMobile={isMobile}
-                            />
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )
-            })()}
+            {selectedResources.length === 0 ? (
+              <div className="flex flex-col items-center justify-center rounded-lg border py-6">
+                <Target className="h-6 w-6 text-muted-foreground mb-2" />
+                <p className="text-xs text-muted-foreground">
+                  {tAgent('creator.resources.dialog.noResourcesHint')}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {selectedResources.map((resource) => (
+                  <SelectedResourceItem
+                    key={resource.id}
+                    resource={resource}
+                    setSelectedResources={setSelectedResources}
+                    onRemove={() => setSelectedResources(prev => prev.filter(r => r.id !== resource.id))}
+                    onToggleMetric={(resourceId, metricName) => {
+                      setSelectedResources((prev) => prev.map(r => r.id === resourceId ? { ...r, selectedMetrics: new Set(r.selectedMetrics.has(metricName) ? Array.from(r.selectedMetrics).filter(n => n !== metricName) : [...r.selectedMetrics, metricName]) } : r))
+                    }}
+                    onToggleCommand={(resourceId, commandName) => {
+                      setSelectedResources((prev) => prev.map(r => r.id === resourceId ? { ...r, selectedCommands: new Set(r.selectedCommands.has(commandName) ? Array.from(r.selectedCommands).filter(n => n !== commandName) : [...r.selectedCommands, commandName]) } : r))
+                    }}
+                    isMobile={isMobile}
+                  />
+                ))}
+              </div>
+            )}
     </>
   )
 
   const footerNode = (
     <div className="flex w-full flex-col gap-2">
-      {agentSummary && (
-          <div className={cn(
-            "flex items-center gap-2 text-muted-foreground",
-            isMobile ? "text-xs" : "text-xs"
-          )}>
-            <Info className={cn(isMobile ? "h-4 w-4" : "h-4 w-4", "shrink-0")} />
-            <span className="line-clamp-1">{agentSummary}</span>
-          </div>
-        )}
       <div className={cn(
           "flex gap-2",
           isMobile ? "justify-end" : "justify-end"
@@ -2479,9 +2384,65 @@ export function AgentEditorFullScreen({
       accent="indigo"
       title={agent ? tAgent('editAgent') : tAgent('createAgent')}
       icon={<Sparkles className="h-5 w-5" />}
-      top={rail.task}
-      config={<div className="space-y-5">{rail.namedesc}{rail.model}{rail.advanced}</div>}
-      workspace={<div className="space-y-5">{canvas.prompt}{canvas.structured}{canvas.schedule}{canvas.resources}</div>}
+      config={<div className="space-y-5">{rail.name}{rail.model}</div>}
+      workspace={
+        <div className="space-y-4">
+          <EditorSection
+            title={
+              <>
+                {tAgent('creator.section.what')} <span className="text-error">*</span>
+              </>
+            }
+            hint={tAgent('creator.basicInfo.promptTip')}
+          >
+            {canvas.prompt}
+          </EditorSection>
+          <EditorSection
+            title={resourcesTitle}
+            hint={resourcesHint}
+            collapsible={!isResourcesProminent}
+            defaultExpanded={isResourcesProminent}
+            accessory={
+              <>
+                {selectedResources.length > 0 && (
+                  <Badge variant="secondary" className="h-5 text-xs">
+                    {selectedResources.length}
+                  </Badge>
+                )}
+                {!isResourcesProminent && (
+                  <Badge variant="outline" className="h-5 text-xs">
+                    {tAgent('creator.resources.optional')}
+                  </Badge>
+                )}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setResourceDialogOpen(true)
+                  }}
+                >
+                  <Plus className="mr-1 h-4 w-4" />
+                  {tAgent('creator.resources.addResources')}
+                </Button>
+              </>
+            }
+          >
+            {canvas.resources}
+          </EditorSection>
+          <EditorSection
+            title={tAgent('creator.section.record')}
+            hint={tAgent('creator.structured.hint')}
+          >
+            {canvas.structured}
+            {canvas.memory}
+          </EditorSection>
+          <EditorSection title={tAgent('creator.section.when')}>
+            {canvas.schedule}
+          </EditorSection>
+        </div>
+      }
       footer={footerNode}
       mobileConfigLabel={tAgent('creator.steps.basic')}
     />

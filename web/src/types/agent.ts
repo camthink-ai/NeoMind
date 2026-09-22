@@ -64,6 +64,7 @@ export interface AiAgentDetail extends AiAgent {
   output_schema?: OperatorField[]
   /** Structured (L0) runtime tuning */
   operator_config?: OperatorConfig
+  memory_mode?: AgentMemoryMode
 }
 
 /**
@@ -250,6 +251,13 @@ export interface OperatorField {
   description?: string
 }
 
+/**
+ * How much history an agent carries into each run (mirrors the server's
+ * `MemoryMode`). `tool` = judged fresh each time; `assistant` = carries the
+ * recent-execution narrative. Omitted = derived from the execution mode.
+ */
+export type AgentMemoryMode = 'tool' | 'assistant'
+
 /** Structured (L0) runtime tuning */
 export interface OperatorConfig {
   debounce_secs?: number
@@ -276,6 +284,7 @@ export interface TestPreviewRequest {
   resources?: ResourceRequest[]
   output_schema?: OperatorField[]
   operator_config?: OperatorConfig
+  memory_mode?: AgentMemoryMode
   llm_backend_id?: string
 }
 
@@ -304,6 +313,7 @@ export interface CreateAgentRequest {
   output_schema?: OperatorField[]
   /** Structured (L0) runtime tuning */
   operator_config?: OperatorConfig
+  memory_mode?: AgentMemoryMode
 }
 
 /**
@@ -390,6 +400,7 @@ export interface UpdateAgentRequest {
   output_schema?: OperatorField[]
   /** Structured (L0) runtime tuning */
   operator_config?: OperatorConfig
+  memory_mode?: AgentMemoryMode
 }
 
 /**

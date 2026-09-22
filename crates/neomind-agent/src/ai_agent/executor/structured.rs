@@ -63,39 +63,7 @@ impl AgentExecutor {
         let outcome = self.infer_structured(agent, &schema, op.timeout_secs, &context).await?;
 
         // Publish every validated field as `ai:{agent_id}:{field}`.
-        let namespace = format!("ai:{}", agent.id);
-        let now = chrono::Utc::now().timestamp();
-        for (name, value) in &outcome.fields {
-            if let Some(store) = &self.time_series_storage {
-                let point = neomind_storage::timeseries::DataPoint {
-                    timestamp: now,
-                    value: value.clone(),
-                    quality: None,
-                    metadata: None,
-                };
-                if let Err(e) = store.write(&namespace, name, point).await {
-                    tracing::warn!(
-                        agent_id = %agent.id,
-                        namespace = %namespace,
-                        field = %name,
-                        error = %e,
-                        "Failed to store structured field to telemetry"
-                    );
-                }
-            }
-            if let Some(bus) = &self.event_bus {
-                let _ = bus
-                    .publish(NeoMindEvent::DeviceMetric {
-                        device_id: namespace.clone(),
-                        metric: name.clone(),
-                        value: json_to_core_metric(value),
-                        timestamp: now,
-                        quality: None,
-                        is_virtual: Some(true),
-                    })
-                    .await;
-            }
-        }
+        self.publish_output_fields(&agent.id, &outcome.fields).await;
 
         let conclusion =
             serde_json::to_string(&serde_json::Value::Object(outcome.fields.iter().map(
@@ -147,8 +115,8 @@ impl AgentExecutor {
             report: None,
             notifications_sent: vec![],
             summary: format!(
-                "Structured inference published {} field(s) to {}",
-                field_count, namespace
+                "Structured inference published {} field(s) to ai:{}",
+                field_count, agent.id
             ),
             success_rate: 1.0,
         };
@@ -191,8 +159,92 @@ pub async fn dry_run_structured(
     }))
 }
 
+    /// Publish validated fields as `ai:{agent_id}:{field}` data sources — dual
+    /// telemetry write + virtual `DeviceMetric`, the single publish path for
+    /// every output contract (L0 and, from M2-2, reasoning agents too).
+    pub(super) async fn publish_output_fields(
+        &self,
+        agent_id: &str,
+        fields: &std::collections::BTreeMap<String, serde_json::Value>,
+    ) {
+        let namespace = format!("ai:{}", agent_id);
+        let now = chrono::Utc::now().timestamp();
+        for (name, value) in fields {
+            if let Some(store) = &self.time_series_storage {
+                let point = neomind_storage::timeseries::DataPoint {
+                    timestamp: now,
+                    value: value.clone(),
+                    quality: None,
+                    metadata: None,
+                };
+                if let Err(e) = store.write(&namespace, name, point).await {
+                    tracing::warn!(
+                        agent_id = %agent_id,
+                        namespace = %namespace,
+                        field = %name,
+                        error = %e,
+                        "Failed to store output-contract field to telemetry"
+                    );
+                }
+            }
+            if let Some(bus) = &self.event_bus {
+                let _ = bus
+                    .publish(NeoMindEvent::DeviceMetric {
+                        device_id: namespace.clone(),
+                        metric: name.clone(),
+                        value: json_to_core_metric(value),
+                        timestamp: now,
+                        quality: None,
+                        is_virtual: Some(true),
+                    })
+                    .await;
+            }
+        }
+    }
+
+    /// M2-2 — an output contract on a *reasoning* agent (Free/Focused): ask the
+    /// model once more to render the run's conclusion as the schema. The run
+    /// itself has already succeeded, so this is best-effort: a failed
+    /// extraction costs fields, never the run.
+    ///
+    /// Returns the number of fields published, or `None` when there was nothing
+    /// to do or the extraction failed.
+    pub(super) async fn apply_output_contract(
+        &self,
+        agent: &AiAgent,
+        conclusion: &str,
+    ) -> Option<usize> {
+        let schema = agent.output_schema.clone().unwrap_or_default();
+        // Structured agents already produce their schema directly — re-running
+        // it here would be a second inference for the same answer.
+        if schema.is_empty()
+            || agent.execution_mode == neomind_storage::agents::ExecutionMode::Structured
+        {
+            return None;
+        }
+        let op = agent
+            .operator_config
+            .clone()
+            .unwrap_or_else(default_operator_config);
+        match self.infer_structured(agent, &schema, op.timeout_secs, conclusion).await {
+            Ok(outcome) => {
+                let published = outcome.fields.len();
+                self.publish_output_fields(&agent.id, &outcome.fields).await;
+                Some(published)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    agent_id = %agent.id,
+                    error = %e,
+                    "Output contract extraction failed — the run stands, its fields are missing"
+                );
+                None
+            }
+        }
+    }
+
 /// Shared inference step (runtime resolution + one constrained call).
-async fn infer_structured(
+pub(super) async fn infer_structured(
     &self,
     agent: &AiAgent,
     schema: &[neomind_storage::OperatorField],

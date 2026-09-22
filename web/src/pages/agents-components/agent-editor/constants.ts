@@ -3,9 +3,6 @@
 import { Zap, Activity, BarChart3, Bell } from 'lucide-react'
 
 
-// Shared className for inline link-styled buttons (not IconButton — these are
-// text links rendered as <button> for accessibility).
-export const inlineLinkBtn = 'text-xs text-primary hover:underline'
 
 // ============================================================================
 // Constants
