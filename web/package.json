@@ -28,7 +28,8 @@
     "tauri:build:dmg": "npm run build:extension-runner && tauri build --bundles dmg",
     "tauri:clean": "cd src-tauri && cargo clean && rm -rf target",
     "tauri:rebuild": "npm run tauri:clean && npm run tauri:build",
-    "desktop:test": "npm run build && npm run preview & sleep 3 && curl -s http://localhost:4173 | grep -q 'root' && echo 'Frontend OK' || echo 'Frontend FAILED'"
+    "desktop:test": "npm run build && npm run preview & sleep 3 && curl -s http://localhost:4173 | grep -q 'root' && echo 'Frontend OK' || echo 'Frontend FAILED'",
+    "check:contrast": "node scripts/check-contrast.mjs"
   },
   "dependencies": {
     "@codemirror/lang-javascript": "^6.2.4",

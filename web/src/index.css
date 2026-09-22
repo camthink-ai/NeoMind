@@ -377,15 +377,16 @@ html {
     --ease-spring-snappy: cubic-bezier(0.5, 1.5, 0.5, 1); /* light overshoot: micro-interactions, toggles, small elements */
     --ease-spring-soft: cubic-bezier(0.34, 1.4, 0.64, 1); /* soft overshoot: large elements, dialog/sheet entrance */
 
-    /* Semantic colors (light). Chroma matches the dark theme's vibrancy
-       while L stays put — white-background contrast is governed by L, so
-       this reads livelier at identical WCAG ratios. Warning hue 78 kills
-       the muddy 65 brown-yellow; washes at 10% mirror dark. */
-    --color-success: oklch(0.55 0.19 155);
+    /* Semantic colors (light). L is tuned so colored TEXT passes WCAG AA
+       (4.5:1) on cards and tinted pills — verified by
+       scripts/check-contrast.mjs; hue 78 keeps warning a clean amber
+       instead of mud. Washes (10%) stay light — they're carriers, not
+       text. */
+    --color-success: oklch(0.50 0.17 155);
     --color-success-bg: oklch(0.55 0.19 155 / 10%);
-    --color-warning: oklch(0.68 0.19 78);
+    --color-warning: oklch(0.54 0.15 78);
     --color-warning-bg: oklch(0.68 0.19 78 / 10%);
-    --color-error: oklch(0.55 0.24 25);
+    --color-error: oklch(0.52 0.24 25);
     --color-error-bg: oklch(0.55 0.24 25 / 10%);
     --color-info: oklch(0.52 0.17 250);
     --color-info-bg: oklch(0.52 0.17 250 / 10%);
@@ -561,8 +562,8 @@ html {
     --color-success-bg: oklch(0.72 0.19 155 / 10%);
     --color-warning: oklch(0.72 0.16 85);
     --color-warning-bg: oklch(0.72 0.16 85 / 10%);
-    --color-error: oklch(0.577 0.245 27);
-    --color-error-bg: oklch(0.577 0.245 27 / 10%);
+    --color-error: oklch(0.63 0.23 27);
+    --color-error-bg: oklch(0.62 0.23 27 / 10%);
     --color-info: oklch(0.65 0.15 250);
     --color-info-bg: oklch(0.65 0.15 250 / 10%);
 
