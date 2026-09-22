@@ -736,7 +736,6 @@ export function AgentsPage() {
           iconBg="bg-accent-purple-light"
           iconColor="text-accent-purple"
           title={selectedAgent?.name || tAgent('detailTitle')}
-          subtitle={selectedAgent?.user_prompt}
           onClose={() => setDetailDialogOpen(false)}
           actions={
             <>
