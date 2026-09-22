@@ -127,7 +127,18 @@
     "toolsColumnVersion": "Version",
     "toolsColumnNamespace": "Namespace",
     "toolsParamRequired": "required",
-    "toolsFilterAllSources": "All sources"
+    "toolsFilterAllSources": "All sources",
+    "outputFields": "Output fields",
+    "outputFieldsHint": "Each field is a platform data source (ai:{agent}:{field}) — bind it on dashboards, rules and data-push.",
+    "fieldType": {
+      "number": "number",
+      "text": "text",
+      "boolean": "boolean"
+    },
+    "memoryModeNote": {
+      "tool": "Stateless tool — every run sees only the current input (your corrected standards still apply).",
+      "assistant": "Has memory — each run carries the narrative of recent executions; it can say “worse than last time”."
+    }
   },
   "tabs": {
     "agents": "Agents",

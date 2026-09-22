@@ -360,12 +360,6 @@
       "night": "Good evening"
     },
     "tagline": "{{appName}} Smart IoT Assistant, at your service",
-    "stats": {
-      "devicesOnline": "{{online}}/{{total}} Devices Online",
-      "activeRules": "{{count}} Active Rules",
-      "pendingAlerts": "{{count}} Pending Alerts",
-      "pendingAlertsShort": "Alerts"
-    },
     "aiSuggestion": "AI Suggestions",
     "suggestions": {
       "pendingAlerts": "{{count}} alert(s) pending",
@@ -373,7 +367,6 @@
       "noRules": "No automation rules enabled yet"
     },
     "suggestionPrompts": {
-      "title": "Try these questions:",
       "checkDevices": "Check current online device status",
       "createRule": "Help me create a temperature monitoring rule",
       "checkAlerts": "What alerts need attention?",

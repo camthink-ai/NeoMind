@@ -356,12 +356,6 @@
       "night": "夜深了"
     },
     "tagline": "{{appName}} 智能物联网助手，随时为你服务",
-    "stats": {
-      "devicesOnline": "{{online}}/{{total}} 设备在线",
-      "activeRules": "{{count}} 活跃规则",
-      "pendingAlerts": "{{count}} 待处理告警",
-      "pendingAlertsShort": "告警"
-    },
     "aiSuggestion": "AI 建议",
     "suggestions": {
       "pendingAlerts": "有 {{count}} 条告警待处理",
@@ -369,7 +363,6 @@
       "noRules": "还没有启用自动化规则"
     },
     "suggestionPrompts": {
-      "title": "试试这些问题：",
       "checkDevices": "查看当前在线的设备状态",
       "createRule": "帮我创建一个温度监控规则",
       "checkAlerts": "有哪些告警需要处理?",

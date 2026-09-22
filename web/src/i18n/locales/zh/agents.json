@@ -127,7 +127,18 @@
     "toolsColumnVersion": "版本",
     "toolsColumnNamespace": "命名空间",
     "toolsParamRequired": "必填",
-    "toolsFilterAllSources": "全部来源"
+    "toolsFilterAllSources": "全部来源",
+    "outputFields": "输出字段",
+    "outputFieldsHint": "每个字段都是平台数据源（ai:{agent}:{field}）——可在仪表盘、规则、数据推送中绑定使用。",
+    "fieldType": {
+      "number": "数值",
+      "text": "文本",
+      "boolean": "布尔"
+    },
+    "memoryModeNote": {
+      "tool": "一次性工具——每次运行只看当前输入（你纠正过的标准仍会生效）。",
+      "assistant": "有记性——每次运行携带最近执行的叙事，能做“比上次更差”这类判断。"
+    }
   },
   "tabs": {
     "agents": "智能体",

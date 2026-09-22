@@ -12,6 +12,10 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import {
+  Database,
+  Workflow,
+  BrainCircuit,
+  Wrench,
   Bot,
   Clock,
   Activity,
@@ -298,6 +302,29 @@ export function AgentDetailPanel({
           <TabsContent value="overview" className={cn("h-full m-0 pt-2", isMobile ? "p-2" : "p-4")}>
             <ScrollArea className="h-full">
               <div className="space-y-4 pr-2">
+                {/* Profile row — the compiled axes in customer language */}
+                <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                  {(() => {
+                    const hasContract = (agent.output_schema?.length ?? 0) > 0
+                    const role = agent.execution_mode === 'structured' && hasContract
+                      ? 'recordData'
+                      : agent.execution_mode === 'free' ? 'actOrInvestigate' : 'answer'
+                    const RoleIcon = role === 'recordData' ? BarChart3 : role === 'actOrInvestigate' ? Workflow : MessageSquare
+                    const isTool = (agent.memory_mode ?? (agent.execution_mode === 'structured' ? 'tool' : 'assistant')) === 'tool'
+                    const MemIcon = isTool ? Wrench : BrainCircuit
+                    return (
+                      <>
+                        <span className="inline-flex items-center gap-1 rounded-md bg-muted-30 px-1.5 py-0.5">
+                          <RoleIcon className="h-3.5 w-3.5" />{t(`agents:card.role.${role}`)}
+                        </span>
+                        <span className="inline-flex items-center gap-1 rounded-md bg-muted-30 px-1.5 py-0.5">
+                          <MemIcon className="h-3.5 w-3.5" />{t(`agents:card.memory.${isTool ? 'tool' : 'assistant'}`)}
+                        </span>
+                      </>
+                    )
+                  })()}
+                </div>
+
                 {/* Stats Grid - Top section */}
                 <DetailSection title="" icon={null}>
                   <div className={cn("gap-2", isMobile ? "grid grid-cols-1" : "grid grid-cols-4")}>
@@ -348,7 +375,30 @@ export function AgentDetailPanel({
                 {/* Schedule & Config - Two columns */}
                 <div className={cn("gap-4", isMobile ? "grid grid-cols-1" : "grid grid-cols-2")}>
                   {/* Schedule */}
-                  <DetailSection title={t('agents:detail.schedule')} icon={Clock}>
+                  {(agent.output_schema?.length ?? 0) > 0 && (
+                  <DetailSection title={t('agents:detail.outputFields')} icon={Database}>
+                    <div className="space-y-1.5">
+                      {agent.output_schema!.map((f) => {
+                        const latest = (agent as { latest_output?: Record<string, unknown> }).latest_output?.[f.name]
+                        return (
+                          <div key={f.name} className="flex items-center gap-2 rounded-md bg-muted-30 px-2 py-1.5">
+                            <span className="font-mono text-xs">{f.name}</span>
+                            <span className="text-xs text-muted-foreground">
+                              {f.field_type.type === 'enum' ? `enum(${f.field_type.values.join('/')})` : t(`agents:detail.fieldType.${f.field_type.type}`)}
+                            </span>
+                            {f.unit && <span className="text-xs text-muted-foreground">{f.unit}</span>}
+                            <span className="ml-auto text-xs font-medium truncate">
+                              {latest !== undefined ? String(latest) : '—'}
+                            </span>
+                          </div>
+                        )
+                      })}
+                      <p className="text-xs text-muted-foreground">{t('agents:detail.outputFieldsHint')}</p>
+                    </div>
+                  </DetailSection>
+                )}
+
+                <DetailSection title={t('agents:detail.schedule')} icon={Clock}>
                     <div className="space-y-1.5">
                       <InfoRow label={t('agents:detail.type')} value={agent.schedule.schedule_type} />
                       {agent.schedule.interval_seconds && (
@@ -448,6 +498,18 @@ export function AgentDetailPanel({
 
           {/* Memory Tab */}
           <TabsContent value="memory" className={cn("h-full m-0 pt-2", isMobile ? "p-2" : "p-4")}>
+            <div className="mb-3 flex items-center gap-1.5 rounded-md bg-muted-30 px-2 py-1.5 text-xs text-muted-foreground">
+              {(() => {
+                const isTool = (agent.memory_mode ?? (agent.execution_mode === 'structured' ? 'tool' : 'assistant')) === 'tool'
+                const MemIcon = isTool ? Wrench : BrainCircuit
+                return (
+                  <>
+                    <MemIcon className="h-3.5 w-3.5 shrink-0" />
+                    <span>{t(`agents:detail.memoryModeNote.${isTool ? 'tool' : 'assistant'}`)}</span>
+                  </>
+                )
+              })()}
+            </div>
             <MemoryContent memory={memory} loading={memoryLoading} />
           </TabsContent>
 
