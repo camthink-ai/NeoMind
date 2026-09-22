@@ -147,6 +147,13 @@ pub struct AggregatedData {
 /// All MetricValue types (Integer, Float, String, Boolean, Binary, Null) are stored.
 pub struct TimeSeriesStorage {
     store: std::sync::RwLock<Arc<StorageTimeSeriesStore>>,
+    /// Signals whether the deferred persistent store has been resolved —
+    /// either swapped in, or open failed and memory is final. Holders that
+    /// pin `inner_store()` for their lifetime (the agent executor) wait on
+    /// this first, or they pin the throwaway placeholder forever: every AI
+    /// write then goes to memory and evaporates on restart.
+    loaded_rx: tokio::sync::watch::Receiver<bool>,
+    loaded_tx: tokio::sync::watch::Sender<bool>,
 }
 
 impl TimeSeriesStorage {
@@ -165,18 +172,43 @@ impl TimeSeriesStorage {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, DeviceError> {
         let store = StorageTimeSeriesStore::open(path)
             .map_err(|e| DeviceError::Io(std::io::Error::other(e.to_string())))?;
-        Ok(Self {
+        Ok(Self::with_store(store, true))
+    }
+
+    fn with_store(store: Arc<StorageTimeSeriesStore>, loaded: bool) -> Self {
+        let (loaded_tx, loaded_rx) = tokio::sync::watch::channel(loaded);
+        Self {
             store: std::sync::RwLock::new(store),
-        })
+            loaded_tx,
+            loaded_rx,
+        }
+    }
+
+    /// Wait until the deferred persistent store has been resolved (swapped
+    /// in, or open failed and memory is final). Safe to call any number of
+    /// times from any task.
+    pub async fn wait_for_storage_load(&self) {
+        if *self.loaded_rx.borrow() {
+            return;
+        }
+        let _ = self
+            .loaded_rx
+            .clone()
+            .wait_for(|v| *v)
+            .await;
     }
 
     /// Create an in-memory time series storage
     pub fn memory() -> Result<Self, DeviceError> {
         let store = StorageTimeSeriesStore::memory()
             .map_err(|e| DeviceError::Io(std::io::Error::other(e.to_string())))?;
-        Ok(Self {
-            store: std::sync::RwLock::new(store),
-        })
+        Ok(Self::with_store(store, false))
+    }
+
+    /// Resolve this storage as final without a swap — the open failed and
+    /// memory is where data will live. Unblocks [`wait_for_storage_load`].
+    pub fn finalize_memory(&self) {
+        let _ = self.loaded_tx.send(true);
     }
 
     /// Swap the underlying store (used for deferred persistent storage loading).
@@ -186,6 +218,51 @@ impl TimeSeriesStorage {
             Ok(mut guard) => *guard = new_store,
             Err(poisoned) => *poisoned.into_inner() = new_store,
         }
+    }
+
+    /// [`swap_store`] with a drain: anything written to the placeholder
+    /// before the swap is migrated into the persistent store first, then the
+    /// pointer flips and waiters are released. Without the drain, telemetry
+    /// that arrived during the open window silently evaporates.
+    pub async fn swap_store_with_drain(
+        &self,
+        new_store: Arc<StorageTimeSeriesStore>,
+    ) -> Result<u64, DeviceError> {
+        let old = self.store();
+        let mut migrated = 0u64;
+        if !Arc::ptr_eq(&old, &new_store) {
+            // Buffered writes would be invisible to the scan below — force
+            // them into the placeholder's storage first.
+            if let Err(e) = old.flush() {
+                tracing::warn!(category = "storage", error = %e,
+                    "flush of placeholder telemetry before drain failed — buffered points may be lost");
+            }
+            let series = old
+                .list_series_scan()
+                .await
+                .map_err(|e| DeviceError::Io(std::io::Error::other(e.to_string())))?;
+            for (source_id, metric) in series {
+                let points = old
+                    .query_range(&source_id, &metric, i64::MIN, i64::MAX, None)
+                    .await
+                    .map_err(|e| DeviceError::Io(std::io::Error::other(e.to_string())))?;
+                if points.points.is_empty() {
+                    continue;
+                }
+                migrated += points.points.len() as u64;
+                new_store
+                    .write_batch(&source_id, &metric, points.points)
+                    .await
+                    .map_err(|e| DeviceError::Io(std::io::Error::other(e.to_string())))?;
+            }
+            if let Err(e) = new_store.flush() {
+                tracing::warn!(category = "storage", error = %e,
+                    "flush of migrated telemetry failed — points may sit in the buffer");
+            }
+        }
+        self.swap_store(new_store);
+        let _ = self.loaded_tx.send(true);
+        Ok(migrated)
     }
 
     /// Write a data point (all value types are stored)
@@ -703,5 +780,82 @@ mod tests {
         let string_point = DataPoint::new(1000, MetricValue::String("hello".to_string()));
         let storage_point = string_point.to_storage();
         assert_eq!(storage_point.value, serde_json::json!("hello"));
+    }
+}
+
+#[cfg(test)]
+mod swap_drain_tests {
+    use super::*;
+    use neomind_storage::timeseries::DataPoint;
+
+    fn point(ts: i64, v: f64) -> DataPoint {
+        DataPoint {
+            timestamp: ts,
+            value: serde_json::json!(v),
+            quality: None,
+            metadata: None,
+        }
+    }
+
+    /// The startup race, compressed: telemetry lands in the placeholder
+    /// memory store while the real store is still opening; the swap must
+    /// carry it across, or it evaporates on restart.
+    #[tokio::test]
+    async fn swap_drains_placeholder_writes_into_persistent() {
+        let placeholder = std::sync::Arc::new(TimeSeriesStorage::memory().expect("memory"));
+        placeholder
+            .write("ai:agent-1", "status", crate::telemetry::DataPoint { timestamp: 100, value: MetricValue::String("正常".into()), quality: None })
+            .await
+            .expect("write to placeholder");
+        placeholder
+            .write("device:dev-1", "temperature", crate::telemetry::DataPoint { timestamp: 101, value: MetricValue::Float(21.5), quality: None })
+            .await
+            .expect("write to placeholder");
+
+        let store_inner = StorageTimeSeriesStore::memory().expect("persistent");
+
+        // Waiters must be released by the swap.
+        let waiter = {
+            let ph = placeholder.clone();
+            tokio::spawn(async move { ph.wait_for_storage_load().await })
+        };
+        assert!(!*placeholder.loaded_rx.borrow(), "memory starts unresolved");
+
+        let migrated = placeholder
+            .swap_store_with_drain(store_inner)
+            .await
+            .expect("drain+swap");
+        assert_eq!(migrated, 2, "both placeholder points migrate");
+
+        waiter.await.expect("waiter released");
+
+        // Read through the wrapper — the swapped store has the data.
+        let status = placeholder
+            .latest("ai:agent-1", "status")
+            .await
+            .expect("read")
+            .expect("present");
+        assert_eq!(status.value, MetricValue::String("正常".into()));
+        let temp = placeholder
+            .latest("device:dev-1", "temperature")
+            .await
+            .expect("read")
+            .expect("present");
+        assert_eq!(temp.value, MetricValue::Float(21.5));
+        let _ = point(0, 0.0); // keep helper linked
+    }
+
+    /// Open-failure path: memory becomes final and waiters are released with
+    /// no data lost.
+    #[tokio::test]
+    async fn finalize_memory_releases_waiters() {
+        let placeholder = std::sync::Arc::new(TimeSeriesStorage::memory().expect("memory"));
+        let waiter = {
+            let ph = placeholder.clone();
+            tokio::spawn(async move { ph.wait_for_storage_load().await })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        placeholder.finalize_memory();
+        waiter.await.expect("waiter released on finalize");
     }
 }

@@ -849,6 +849,8 @@ impl ServerState {
             .expect("telemetry open task panicked");
 
             if let Some(persistent) = t {
+                // NOTE: the drain inside matters as much as the swap — see
+                // swap_store_with_drain.
                 let inner = persistent.inner_store();
 
                 // Migrate legacy bare device_id keys to unified "device:" prefix format.
@@ -865,8 +867,29 @@ impl ServerState {
                     }
                 }
 
-                telemetry_for_bg.swap_store(inner);
-                tracing::info!("Persistent telemetry storage swapped in");
+                match telemetry_for_bg.swap_store_with_drain(inner).await {
+                    Ok(migrated) if migrated > 0 => {
+                        tracing::info!(
+                            migrated_points = migrated,
+                            "Persistent telemetry storage swapped in (drained placeholder)"
+                        );
+                    }
+                    Ok(_) => {
+                        tracing::info!("Persistent telemetry storage swapped in");
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            category = "storage",
+                            error = %e,
+                            "Drain into persistent telemetry failed — swapping anyway; data written before the swap is lost"
+                        );
+                        telemetry_for_bg.finalize_memory();
+                    }
+                }
+            } else {
+                // Open failed and memory is final — release waiters, or the
+                // agent manager blocks forever on the deferred load.
+                telemetry_for_bg.finalize_memory();
             }
         });
 
@@ -2917,6 +2940,12 @@ impl ServerState {
         // Reuse the TimeSeriesStore that's already opened by DeviceService
         // We can't reopen telemetry.redb because redb doesn't support opening the same
         // file multiple times in the same process
+        //
+        // WAIT for the deferred persistent load first: inner_store() pins the
+        // Arc for the executor's lifetime, and capturing the startup
+        // placeholder meant every AI-agent write landed in a throwaway
+        // memory store — values looked fine until the restart wiped them.
+        self.devices.telemetry.wait_for_storage_load().await;
         let time_series_store = Some(self.devices.telemetry.inner_store());
 
         // Unified LLM runtime for agents: resolve the ACTIVE backend through

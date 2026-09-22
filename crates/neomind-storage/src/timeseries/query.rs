@@ -661,6 +661,31 @@ impl TimeSeriesStore {
     }
 }
 impl TimeSeriesStore {
+    /// Every (source_id, metric) pair that has data, by scanning the table.
+    /// Used to drain one store into another (placeholder → persistent on
+    /// swap); the metrics_info index is keyed ambiguously for sources that
+    /// contain ':' (ai:{uuid}), so this scans keys directly.
+    pub async fn list_series_scan(&self) -> Result<Vec<(String, String)>, Error> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let read_txn = db.begin_read()?;
+            let table = match read_txn.open_table(TIMESERIES_TABLE) {
+                Ok(t) => t,
+                Err(redb::TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+                Err(e) => return Err(Error::Storage(format!("Failed to open table: {}", e))),
+            };
+            let mut pairs = Vec::new();
+            for result in table.range(("", "", i64::MIN)..=("\u{FF}", "\u{FF}", i64::MAX))? {
+                let (key, _) = result?;
+                let (source_id, metric, _) = key.value();
+                pairs.push((source_id.to_string(), metric.to_string()));
+            }
+            Ok(pairs)
+        })
+        .await
+        .map_err(|e| Error::Storage(format!("list_series_scan join error: {}", e)))?
+    }
+
     /// Get all metrics for a device.
     pub async fn list_metrics(&self, source_id: &str) -> Result<Vec<String>, Error> {
         // Fast path: extract from metrics_info DashMap (populated on every write).
