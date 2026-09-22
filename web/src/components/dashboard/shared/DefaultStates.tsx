@@ -30,8 +30,10 @@ const COMPACT_THRESHOLD_PX = 132
 /**
  * Dashboard grid cells vary per widget — the same state must collapse to a
  * single quiet line on short cards instead of cramming icon + two lines.
+ * Exported for hand-rolled card states outside this module (e.g. the
+ * registry's unknown-component / error fallbacks).
  */
-function useCompactCard<T extends HTMLElement>() {
+export function useCompactCard<T extends HTMLElement>() {
   const ref = useRef<T>(null)
   const [compact, setCompact] = useState(false)
   useLayoutEffect(() => {

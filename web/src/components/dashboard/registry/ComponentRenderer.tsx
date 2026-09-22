@@ -50,6 +50,7 @@ import { ImageDisplay } from '../generic/ImageDisplay'
 import { ImageHistory } from '../generic/ImageHistory'
 import { WebDisplay } from '../generic/WebDisplay'
 import { MarkdownDisplay } from '../generic/MarkdownDisplay'
+import { useCompactCard } from '@/components/dashboard/shared/DefaultStates'
 
 // Spatial & Media
 import { MapDisplay } from '../generic/MapDisplay'
@@ -140,19 +141,30 @@ interface UnknownComponentProps {
 
 function UnknownComponent({ type, className }: UnknownComponentProps) {
   const { t } = useTranslation('dashboardComponents')
+  const { ref, compact } = useCompactCard<HTMLDivElement>()
+  const hint = t('renderer.componentUnavailableHint')
+
   return (
     <Card className={cn('border-dashed border-2', className)}>
-      <div className="flex items-center justify-center h-full min-h-[120px] p-4 text-center">
-        <div className="text-muted-foreground">
-          <Puzzle className="h-5 w-5 mx-auto mb-2 opacity-70" />
-          <p className="font-medium">{t('renderer.componentUnavailable')}</p>
-          <p className="text-sm text-muted-foreground mt-1">
-            {t('renderer.componentUnavailableHint')}
-          </p>
-          <p className="text-xs text-muted-foreground/70 mt-2">
-            <code className="bg-muted px-1 py-0.5 rounded">{type}</code>
-          </p>
-        </div>
+      <div ref={ref} title={compact ? hint : undefined} className="flex items-center justify-center h-full min-h-[64px] p-4 text-center">
+        {compact ? (
+          // Short card: one line — icon + label + the type id; the hint
+          // survives as the hover title.
+          <div className="flex items-center justify-center gap-2 text-muted-foreground min-w-0">
+            <Puzzle className="h-4 w-4 shrink-0 opacity-70" />
+            <p className="font-medium text-xs truncate">{t('renderer.componentUnavailable')}</p>
+            <code className="shrink-0 text-xs bg-muted px-1 py-0.5 rounded">{type}</code>
+          </div>
+        ) : (
+          <div className="text-muted-foreground">
+            <Puzzle className="h-5 w-5 mx-auto mb-2 opacity-70" />
+            <p className="font-medium">{t('renderer.componentUnavailable')}</p>
+            <p className="text-sm text-muted-foreground mt-1">{hint}</p>
+            <p className="text-xs text-muted-foreground/70 mt-2">
+              <code className="bg-muted px-1 py-0.5 rounded">{type}</code>
+            </p>
+          </div>
+        )}
       </div>
     </Card>
   )
@@ -172,14 +184,30 @@ interface ComponentErrorFallbackProps {
 // no per-card boundary of its own (ComponentRenderer only covers dynamic,
 // community, and business components).
 export function ComponentErrorFallback({ className }: ComponentErrorFallbackProps) {
+  const { ref, compact } = useCompactCard<HTMLDivElement>()
   return (
     <Card className={cn('border-error-light', className)}>
-      <div className="flex flex-col items-center justify-center h-full min-h-[120px] p-4 text-center">
-        <div className="w-8 h-8 rounded-full bg-destructive-light flex items-center justify-center mb-2">
-          <AlertTriangle className="h-4 w-4 text-error" />
-        </div>
-        <p className="text-xs font-medium text-error">Component Error</p>
-        <p className="text-nano text-muted-foreground mt-1">Check config or remove this component</p>
+      <div
+        ref={ref}
+        title={compact ? 'Check config or remove this component' : undefined}
+        className="flex items-center justify-center h-full min-h-[64px] p-4 text-center"
+      >
+        {compact ? (
+          <div className="flex items-center justify-center gap-2 min-w-0">
+            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-destructive-light">
+              <AlertTriangle className="h-3 w-3 text-error" />
+            </span>
+            <p className="text-xs font-medium text-error truncate">Component Error</p>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center">
+            <div className="w-8 h-8 rounded-full bg-destructive-light flex items-center justify-center mb-2">
+              <AlertTriangle className="h-4 w-4 text-error" />
+            </div>
+            <p className="text-xs font-medium text-error">Component Error</p>
+            <p className="text-nano text-muted-foreground mt-1">Check config or remove this component</p>
+          </div>
+        )}
       </div>
     </Card>
   )
