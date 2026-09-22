@@ -1,5 +1,6 @@
 /// Smoke tests for PageTabsBar — guards the toolbar-row contract:
-/// capsule styling (border + bg-card, no wrapping), black active tab,
+/// underline styling (no card surface, no full-width divider — the active
+/// tab's own underline is the only line), text + underline active tab,
 /// tab content left-aligned.
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
@@ -31,27 +32,33 @@ describe('PageTabsBar (desktop)', () => {
     expect(screen.getByRole('button', { name: 'Tab B' })).toBeInTheDocument()
   })
 
-  it('capsule keeps the bordered card surface (no muted-30 regression)', () => {
+  it('tab strip drops the capsule card surface (underline style)', () => {
     const { container } = renderBar()
-    const capsule = container.querySelector('.overflow-x-auto')
-    expect(capsule).toBeTruthy()
-    expect(capsule!.className).toContain('border')
-    expect(capsule!.className).toContain('bg-card')
-    expect(capsule!.className).not.toContain('bg-muted-30')
+    const strip = container.querySelector('.overflow-x-auto')
+    expect(strip).toBeTruthy()
+    expect(strip!.className).not.toContain('bg-card')
+    expect(strip!.className).not.toContain('bg-muted-30')
   })
 
-  it('the toolbar row carries no bottom border (fewer-lines rule)', () => {
+  it('the toolbar row carries no full-width divider', () => {
     const { container } = renderBar()
-    const row = capsuleRow(container)
+    const row = stripRow(container)
     expect(row).toBeTruthy()
     expect(row!.className).not.toContain('border-b')
   })
 
-  it('active tab is the black-on-white state', () => {
+  it('active tab is text + solid underline (no pill background)', () => {
     renderBar('b')
     const active = screen.getByRole('button', { name: 'Tab B' })
-    expect(active.className).toContain('bg-foreground')
-    expect(active.className).toContain('text-background')
+    expect(active.className).toContain('text-foreground')
+    expect(active.className).toContain('border-foreground')
+    expect(active.className).not.toContain('bg-foreground')
+  })
+
+  it('inactive tab has a transparent underline', () => {
+    renderBar('b')
+    const inactive = screen.getByRole('button', { name: 'Tab A' })
+    expect(inactive.className).toContain('border-transparent')
   })
 
   it('tab buttons left-align their content', () => {
@@ -61,8 +68,8 @@ describe('PageTabsBar (desktop)', () => {
   })
 })
 
-function capsuleRow(container: HTMLElement) {
-  // the capsule's parent is the toolbar row
-  const capsule = container.querySelector('.overflow-x-auto')
-  return capsule ? capsule.parentElement : null
+function stripRow(container: HTMLElement) {
+  // the strip's parent is the toolbar row
+  const strip = container.querySelector('.overflow-x-auto')
+  return strip ? strip.parentElement : null
 }
