@@ -717,9 +717,12 @@ html {
 
   /* Checkbox border is handled by the Checkbox component itself */
 
-  /* Exception: Tabs component - no border */
+  /* Exception: Tabs component - no border.
+     [role="tab"] is deliberately NOT here: PageTabsBar's underline tabs
+     draw their active indicator with border-b-2, which this !important
+     rule would erase. Radix triggers carry no border classes, so they
+     don't need the exception either. */
   [role="tablist"],
-  [role="tab"],
   [role="tabpanel"] {
     border: none !important;
   }

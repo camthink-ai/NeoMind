@@ -3,7 +3,7 @@
 /// tab's own underline is the only line), text + underline active tab,
 /// tab content left-aligned.
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { PageTabsBar } from '@/components/shared/PageTabs'
 import { ThemeProvider } from '@/components/ui/theme'
 
@@ -26,10 +26,13 @@ function renderBar(active = 'a') {
 }
 
 describe('PageTabsBar (desktop)', () => {
-  it('renders every tab label as a button', () => {
+  it('renders every tab label as a tab', () => {
     renderBar()
-    expect(screen.getByRole('button', { name: 'Tab A' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Tab B' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Tab A' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Tab B' })).toBeInTheDocument()
+    // APG: exactly one tab stop — the active tab
+    expect(screen.getByRole('tab', { name: 'Tab A' }).tabIndex).toBe(0)
+    expect(screen.getByRole('tab', { name: 'Tab B' }).tabIndex).toBe(-1)
   })
 
   it('tab strip drops the capsule card surface (underline style)', () => {
@@ -49,7 +52,7 @@ describe('PageTabsBar (desktop)', () => {
 
   it('active tab is text + solid underline (no pill background)', () => {
     renderBar('b')
-    const active = screen.getByRole('button', { name: 'Tab B' })
+    const active = screen.getByRole('tab', { name: 'Tab B' })
     expect(active.className).toContain('text-foreground')
     expect(active.className).toContain('border-foreground')
     expect(active.className).not.toContain('bg-foreground')
@@ -57,14 +60,26 @@ describe('PageTabsBar (desktop)', () => {
 
   it('inactive tab has a transparent underline', () => {
     renderBar('b')
-    const inactive = screen.getByRole('button', { name: 'Tab A' })
+    const inactive = screen.getByRole('tab', { name: 'Tab A' })
     expect(inactive.className).toContain('border-transparent')
   })
 
   it('tab buttons left-align their content', () => {
     renderBar()
-    const btn = screen.getByRole('button', { name: 'Tab A' })
+    const btn = screen.getByRole('tab', { name: 'Tab A' })
     expect(btn.className).toContain('justify-start')
+  })
+
+  it('ArrowRight activates the next tab (APG automatic activation)', () => {
+    // Controlled component: assert the activation callback, not state
+    const onTabChange = vi.fn()
+    render(
+      <ThemeProvider>
+        <PageTabsBar tabs={tabs} activeTab="a" onTabChange={onTabChange} />
+      </ThemeProvider>
+    )
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'Tab A' }), { key: 'ArrowRight' })
+    expect(onTabChange).toHaveBeenCalledWith('b')
   })
 })
 

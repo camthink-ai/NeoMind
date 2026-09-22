@@ -129,6 +129,34 @@ export function PageTabsBar({
     // title above them.
     <div className="flex shrink-0 items-end gap-3 bg-background px-4 pt-2 sm:px-6 md:px-8">
       <div
+        role="tablist"
+        onKeyDown={(e) => {
+          // ARIA APG Tabs — arrow keys move between tabs (automatic
+          // activation), Home/End jump to the ends. Roving tabindex keeps
+          // a single tab stop in the page Tab order.
+          const keys = ['ArrowRight', 'ArrowLeft', 'Home', 'End']
+          if (!keys.includes(e.key)) return
+          const selectable = tabs.filter((t) => !t.disabled)
+          if (selectable.length === 0) return
+          const current = selectable.findIndex((t) => t.value === activeTab)
+          let next: number
+          if (e.key === 'Home') next = 0
+          else if (e.key === 'End') next = selectable.length - 1
+          else {
+            const delta = e.key === 'ArrowRight' ? 1 : -1
+            next = current === -1 ? 0 : (current + delta + selectable.length) % selectable.length
+          }
+          e.preventDefault()
+          const target = selectable[next]
+          onTabChange(target.value)
+          // Move focus too — the chip's tabIndex follows activeTab, so
+          // query the fresh node after activation. Capture the strip now:
+          // React nulls e.currentTarget after this handler returns.
+          const strip = e.currentTarget
+          requestAnimationFrame(() => {
+            ;(strip.querySelector(`#page-tab-${CSS.escape(target.value)}`) as HTMLElement | null)?.focus()
+          })
+        }}
         className={cn(
           'flex min-w-0 max-w-full items-center gap-1 overflow-x-auto scrollbar-none',
           tabsClassName
@@ -139,10 +167,15 @@ export function PageTabsBar({
           return (
             <button
               key={tab.value}
+              id={`page-tab-${tab.value}`}
+              role="tab"
+              aria-selected={isActive}
+              aria-controls={`page-tabpanel-${tab.value}`}
+              tabIndex={isActive ? 0 : -1}
               disabled={tab.disabled}
               onClick={() => onTabChange(tab.value)}
               className={cn(
-                'inline-flex shrink-0 items-center justify-start gap-2 border-b-2 px-3 h-9 text-sm font-medium whitespace-nowrap transition-colors',
+                'inline-flex shrink-0 items-center justify-start gap-2 border-b-2 px-3 h-9 text-sm font-medium whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
                 isActive
                   ? 'border-foreground text-foreground'
                   : 'border-transparent text-muted-foreground hover:text-foreground'
@@ -443,7 +476,13 @@ export function PageTabsContent({ value, activeTab, children, className }: PageT
     // air while keeping tabs nearer their content than the title above
     // (20px) — proximity says controls belong to what they control.
     // Mobile relies on the scroll container's own pt-2 instead.
-    <div className={cn('md:mt-4', className)}>
+    // APG tabpanel wiring — pairs with PageTabsBar's `page-tab-*` tab ids.
+    <div
+      role="tabpanel"
+      id={`page-tabpanel-${value}`}
+      aria-labelledby={`page-tab-${value}`}
+      className={cn('md:mt-4', className)}
+    >
       {children}
     </div>
   )
