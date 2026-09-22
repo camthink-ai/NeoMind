@@ -315,7 +315,11 @@ async fn collect_ai_sources(state: &ServerState, sources: &mut Vec<UnifiedDataSo
                 source_name: agent.id.clone(),
                 source_display_name: agent.name.clone(),
                 field: field.name.clone(),
-                field_display_name: field.description.clone().unwrap_or_else(|| field.name.clone()),
+                // The field NAME is the identity — it is the ai:{id}:{field}
+                // key a dashboard or rule binds to. The description is prompt
+                // semantics, often a sentence: it rides in `description`
+                // (picker tooltips) instead of masquerading as a label.
+                field_display_name: field.name.clone(),
                 data_type: match field.field_type {
                     neomind_storage::OperatorFieldType::Number => "number".to_string(),
                     neomind_storage::OperatorFieldType::Boolean => "boolean".to_string(),
