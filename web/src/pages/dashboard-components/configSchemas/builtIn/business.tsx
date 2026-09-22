@@ -74,7 +74,7 @@ export function getAIAnalystSchema(config: any, ctx: SchemaContext, u: Updaters)
               props: {
                 dataSource: config.dataSource,
                 onChange: updateDataSource,
-                allowedTypes: ['device-metric', 'extension', 'command', 'extension-command'],
+                allowedTypes: ['device-metric', 'extension', 'command', 'extension-command', 'ai'],
                 multiple: true,
               },
             },

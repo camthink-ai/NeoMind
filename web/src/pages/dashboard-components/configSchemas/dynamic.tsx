@@ -78,7 +78,7 @@ export function getDynamicSchema(
       // Data source section (if component supports it)
       let dataSourceSections: ConfigSection[] = []
       if (meta.has_data_source) {
-        const dsAllowedTypes = (meta.data_source_allowed_types || ['device-metric', 'extension', 'extension-command']) as any
+        const dsAllowedTypes = (meta.data_source_allowed_types || ['device-metric', 'extension', 'extension-command', 'ai']) as any
         const maxDs = meta.max_data_sources ?? 1
         dataSourceSections = [
           {
@@ -306,7 +306,7 @@ export function getDynamicSchema(
     // Add data source section if component supports it
     let dataSourceSections: ConfigSection[] = []
     if (schemaSource.has_data_source) {
-      const dsAllowedTypes = (schemaSource.data_source_allowed_types || ['device-metric', 'extension', 'extension-command']) as any
+      const dsAllowedTypes = (schemaSource.data_source_allowed_types || ['device-metric', 'extension', 'extension-command', 'ai']) as any
       const maxDs = schemaSource.max_data_sources ?? 1
       dataSourceSections = [
         {
