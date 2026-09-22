@@ -47,7 +47,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { LoadingState } from '../shared'
+import { LoadingState, EmptyState } from '../shared'
 import type { AiAgent, AgentExecution, DataCollected } from '@/types'
 import type {
   AgentExecutionStartedEvent,
@@ -661,7 +661,7 @@ export function AgentMonitorWidget({
     }
 
     try {
-      const data = await api.getAgent(agentId)
+      const data = await api.getAgent(agentId, { skipErrorToast: true })
       setAgent(data)
       agentNotFoundRef.current = false
       setAgentNotFound(false)
@@ -681,7 +681,7 @@ export function AgentMonitorWidget({
   const loadExecutions = useCallback(async () => {
     if (!agentId || agentNotFoundRef.current) return
     try {
-      const data = await api.getAgentExecutions(agentId, 20)
+      const data = await api.getAgentExecutions(agentId, 20, { skipErrorToast: true })
       setExecutions(data.executions || [])
     } catch (error) {
       if (!agentNotFoundRef.current) {
@@ -695,7 +695,7 @@ export function AgentMonitorWidget({
   const loadUserMessages = useCallback(async () => {
     if (!agentId) return
     try {
-      const data = await api.getAgentUserMessages(agentId)
+      const data = await api.getAgentUserMessages(agentId, { skipErrorToast: true })
       setUserMessages(data || [])
     } catch (error) {
       console.error('Failed to load user messages:', error)
@@ -882,14 +882,15 @@ export function AgentMonitorWidget({
     )
   }
 
-  // Agent not found
+  // Agent not found — shared EmptyState so short grid cells get the same
+  // single-line collapse as every other dashboard card state.
   if (!agent && !editMode) {
     return (
-      <div className={cn(dashboardCardBase, "overflow-hidden flex items-center justify-center min-h-[200px]", className)}>
-        <div className="text-center">
-          <AlertCircle className="h-12 w-12 opacity-20 text-muted-foreground mx-auto mb-3" />
-          <p className="text-sm text-muted-foreground">{t('dashboardComponents:agentMonitorWidget.agentNotFound')}</p>
-        </div>
+      <div className={cn(dashboardCardBase, "overflow-hidden min-h-full", className)}>
+        <EmptyState
+          icon={<AlertCircle className="h-8 w-8 opacity-40 text-muted-foreground" />}
+          message={t('dashboardComponents:agentMonitorWidget.agentNotFound')}
+        />
       </div>
     )
   }

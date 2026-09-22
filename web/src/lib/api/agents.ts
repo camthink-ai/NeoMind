@@ -31,8 +31,10 @@ export const agentsApi = {
    * Get an AI Agent by ID
    * GET /api/agents/:id
    */
-  getAgent: (id: string) =>
-    fetchAPI<AiAgentDetail>(`/agents/${id}`),
+  // options lets polling callers (dashboard widgets) suppress the global
+  // error toast — they render their own not-found state instead.
+  getAgent: (id: string, options?: { skipErrorToast?: boolean }) =>
+    fetchAPI<AiAgentDetail>(`/agents/${id}`, options),
 
   /**
    * Create a new AI Agent
@@ -123,8 +125,8 @@ export const agentsApi = {
    * Get execution history for an agent
    * GET /api/agents/:id/executions
    */
-  getAgentExecutions: (id: string, limit = 50) =>
-    fetchAPI<AgentExecutionsResponse>(`/agents/${id}/executions?limit=${limit}`),
+  getAgentExecutions: (id: string, limit = 50, options?: { skipErrorToast?: boolean }) =>
+    fetchAPI<AgentExecutionsResponse>(`/agents/${id}/executions?limit=${limit}`, options),
 
   /**
    * Get a specific execution record
@@ -184,8 +186,8 @@ export const agentsApi = {
    * Get user messages for an agent
    * GET /api/agents/:id/messages
    */
-  getAgentUserMessages: (id: string) =>
-    fetchAPI<UserMessage[]>(`/agents/${id}/messages`),
+  getAgentUserMessages: (id: string, options?: { skipErrorToast?: boolean }) =>
+    fetchAPI<UserMessage[]>(`/agents/${id}/messages`, options),
 
   /**
    * Add a user message to an agent
