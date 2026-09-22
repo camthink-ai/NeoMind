@@ -500,6 +500,71 @@ async fn execute_agent_applies_the_output_contract_for_a_reasoning_agent() {
 
 
 
+
+/// Freshness with an age gate, through the shared windowed-latest helper the
+/// device-level collector uses: a point written milliseconds ago (still in
+/// the write buffer) MUST be visible; a point older than the window MUST
+/// stay excluded — cache-first must not turn into latest-ever.
+#[tokio::test]
+async fn windowed_latest_is_fresh_but_not_stale() {
+    use neomind_storage::timeseries::DataPoint as TsPoint;
+    use neomind_storage::TimeSeriesStore;
+
+    let store = TimeSeriesStore::memory().expect("memory timeseries");
+    let now = chrono::Utc::now().timestamp();
+
+    // Fresh point — written, deliberately NOT flushed.
+    store
+        .write(
+            "device:dev-3",
+            "temperature",
+            TsPoint {
+                timestamp: now,
+                value: serde_json::json!(23.5),
+                quality: None,
+                metadata: None,
+            },
+        )
+        .await
+        .expect("seed fresh");
+    // Stale point — 2h old, flushed to redb (the durable old world).
+    store
+        .write(
+            "device:dev-3",
+            "humidity",
+            TsPoint {
+                timestamp: now - 7200,
+                value: serde_json::json!(60),
+                quality: None,
+                metadata: None,
+            },
+        )
+        .await
+        .expect("seed stale");
+    store.flush().expect("flush (stale point only reaches redb here)");
+
+    let fresh = AgentExecutor::latest_point_in_window(
+        &store,
+        "dev-3",
+        "temperature",
+        now - 3600,
+    )
+    .await
+    .expect("fresh metric visible before flush")
+    .expect("Some");
+    assert_eq!(fresh.value, serde_json::json!(23.5));
+
+    let stale = AgentExecutor::latest_point_in_window(
+        &store,
+        "dev-3",
+        "humidity",
+        now - 3600,
+    )
+    .await
+    .expect("no error");
+    assert!(stale.is_none(), "a point older than the window must stay excluded");
+}
+
 /// Telemetry writes are buffered; `query_range` reads only redb. A device
 /// report triggers execution within milliseconds, so collection ran before
 /// the flush and saw none of the just-written values — 12 bound metrics,
@@ -622,7 +687,7 @@ async fn two_field_contract_publishes_both_metrics() {
         execution_semaphore: None,
     };
     let mut executor = AgentExecutor::new(config).await.expect("executor");
-    let mut agent = AiAgent {
+    let agent = AiAgent {
         id: "two-field-agent".into(),
         name: "two".into(),
         description: None,

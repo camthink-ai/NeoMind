@@ -390,7 +390,14 @@ impl AgentExecutor {
             range_points = Some(result);
             (latest, n)
         } else {
-            match storage.query_latest(&storage_key, metric_name).await {
+            // Age-gated like the device path: cache-first must not decay into
+            // latest-ever — the range query it replaced excluded points older
+            // than the window, and so must this.
+            match storage
+                .query_latest(&storage_key, metric_name)
+                .await
+                .map(|p| p.filter(|p| p.timestamp >= start_time))
+            {
                 Ok(Some(point)) => (point, 1),
                 Ok(None) | Err(_) => {
                     tracing::debug!(
@@ -529,6 +536,28 @@ impl AgentExecutor {
         Ok(collected)
     }
 
+    /// Newest point for `device:{id}/{metric}` within `window_start..=now`.
+    ///
+    /// Cache-first: the latest-value cache is updated synchronously on write,
+    /// so a report that triggered this very execution is visible before its
+    /// buffered write flushes to redb. Age-gated: cache-first must not decay
+    /// into latest-ever — a point older than the window stays excluded, as
+    /// the old range query excluded it.
+    pub(crate) async fn latest_point_in_window(
+        storage: &Arc<neomind_storage::TimeSeriesStore>,
+        device_id: &str,
+        metric: &str,
+        window_start: i64,
+    ) -> AgentResult<Option<neomind_storage::timeseries::DataPoint>> {
+        let storage_key = format!("device:{}", device_id);
+        Ok(storage
+            .query_latest(&storage_key, metric)
+            .await
+            .ok()
+            .flatten()
+            .filter(|p| p.timestamp >= window_start))
+    }
+
     /// Collect data from a single device resource.
     ///
     /// This collects:
@@ -618,18 +647,22 @@ impl AgentExecutor {
                 }
 
                 // Query for data points
-                let time_range = if image_metric_names.contains(&metric_name.as_str()) {
-                    (end_time - 300, end_time) // 5 minutes for images
+                // Windowed-latest through the cache: a report that triggered
+                // this execution is still in the write buffer, and the old
+                // range query read only flushed redb — 12 metrics bound, 0
+                // collected, every time the freshest report is the point.
+                // Images get a tighter window (5 min) than regular (1 h).
+                let window_start = if image_metric_names.contains(&metric_name.as_str()) {
+                    end_time - 300
                 } else {
-                    (start_time, end_time) // 1 hour for regular metrics
+                    start_time
                 };
 
-                if let Ok(result) = storage
-                    .query_range(&format!("device:{}", device_id), &metric_name, time_range.0, time_range.1, None)
-                    .await
+                if let Ok(Some(latest)) =
+                    Self::latest_point_in_window(&storage, device_id, &metric_name, window_start)
+                        .await
                 {
-                    if !result.points.is_empty() {
-                        let latest = &result.points[result.points.len() - 1];
+                    {
                         let is_image = is_image_metric(&metric_name, &latest.value);
 
                         if is_image {
@@ -639,7 +672,7 @@ impl AgentExecutor {
                             let values_json = serde_json::json!({
                                 "value": latest.value,
                                 "timestamp": latest.timestamp,
-                                "points_count": result.points.len(),
+                                "points_count": 1,
                                 "_is_image": true,
                                 "image_url": image_url,
                                 "image_base64": image_base64,
@@ -660,7 +693,7 @@ impl AgentExecutor {
                             let values_json = serde_json::json!({
                                 "value": latest.value,
                                 "timestamp": latest.timestamp,
-                                "points_count": result.points.len(),
+                                "points_count": 1,
                             });
 
                             data.push(DataCollected {
