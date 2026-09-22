@@ -53,7 +53,7 @@ export interface DualModeSourceFieldProps {
   /** Callback when data source changes */
   onDataSourceChange: (ds: DataSourceOrList | undefined) => void
   /** Allowed data source types */
-  allowedTypes?: Array<'device-metric' | 'device-command' | 'device-info' | 'device' | 'metric' | 'command' | 'system' | 'extension' | 'extension-command' | 'transform'>
+  allowedTypes?: Array<'device-metric' | 'device-command' | 'device-info' | 'device' | 'metric' | 'command' | 'system' | 'extension' | 'extension-command' | 'transform' | 'ai'>
   /** Label for the field */
   label: string
   /** Placeholder text for manual input */

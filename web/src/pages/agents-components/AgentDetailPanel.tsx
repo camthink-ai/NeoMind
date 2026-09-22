@@ -35,7 +35,7 @@ import { cn } from "@/lib/utils"
 import { textNano } from "@/design-system/tokens/typography"
 import { useIsMobile } from "@/hooks/useMobile"
 import { api } from "@/lib/api"
-import type { AiAgentDetail, AgentAvailableResources, AgentExecution, AgentMemory, KnowledgeFileRef, JournalExecutionRecord } from "@/types"
+import type { AiAgentDetail, AgentAvailableResources, AgentExecution, AgentMemory, KnowledgeFileRef, JournalExecutionRecord, LlmBackendInstance } from "@/types"
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { AgentExecutionStartedEvent, AgentExecutionCompletedEvent } from "@/lib/events"
@@ -82,6 +82,8 @@ export function AgentDetailPanel({
 
   // Real-time status from WebSocket events
   const [realtimeStatus, setRealtimeStatus] = useState<string | null>(null)
+  // Backend id → human-readable name/model (the raw id means nothing to users)
+  const [llmBackends, setLlmBackends] = useState<LlmBackendInstance[]>([])
   const [section, setSection] = useState<'overview' | 'history' | 'memory' | 'messages'>('overview')
 
   // Load executions immediately when agent is selected (preload)
@@ -91,6 +93,15 @@ export function AgentDetailPanel({
       loadExecutions()
     }
   }, [agent?.id])
+
+  // Backends for id→name resolution (cheap, cached by the API layer)
+  useEffect(() => {
+    let cancelled = false
+    api.listLlmBackends()
+      .then((res) => { if (!cancelled) setLlmBackends(res.backends) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
 
   // Memory loads with the agent — the panel is a single page now
   useEffect(() => {
@@ -398,7 +409,28 @@ export function AgentDetailPanel({
 
                                 <div className="mt-4 space-y-1.5 border-t border-border pt-4">
                                   <h4 className="text-sm font-medium">{t('agents:creator.basicInfo.llmBackend')}</h4>
-                                  <InfoRow label={t('agents:detail.model')} value={agent.llm_backend_id || t('agents:creator.basicInfo.useActiveBackend')} mono={!!agent.llm_backend_id} />
+                                  {(() => {
+                                    const backend = llmBackends.find((b) => b.id === agent.llm_backend_id)
+                                    if (backend) {
+                                      return (
+                                        <>
+                                          <InfoRow label={t('agents:detail.model')} value={backend.name} />
+                                          {backend.model && (
+                                            <InfoRow label={t('agents:detail.modelId', 'Model')} value={backend.model} mono />
+                                          )}
+                                        </>
+                                      )
+                                    }
+                                    return (
+                                      <InfoRow
+                                        label={t('agents:detail.model')}
+                                        value={agent.llm_backend_id
+                                          ? `${agent.llm_backend_id.slice(0, 8)}…`
+                                          : t('agents:creator.basicInfo.useActiveBackend')}
+                                        mono={!!agent.llm_backend_id}
+                                      />
+                                    )
+                                  })()}
                                   <InfoRow label={t('common:priority')} value={agent.priority ?? '-'} />
                                 </div>
                               </div>

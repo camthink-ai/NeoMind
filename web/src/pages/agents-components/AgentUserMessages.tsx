@@ -175,7 +175,7 @@ function MessageBubble({ message, onDelete }: MessageBubbleProps) {
   const { t } = useTranslation(['common', 'agents'])
 
   return (
-    <div className="group relative rounded-lg border border-border bg-card p-3 transition-colors hover:border-foreground/20">
+    <div className="group relative rounded-lg border border-border bg-card px-3 py-2 transition-colors hover:border-foreground/20">
       <button
         onClick={onDelete}
         aria-label={t('common:delete')}
@@ -189,18 +189,12 @@ function MessageBubble({ message, onDelete }: MessageBubbleProps) {
         <Trash2 className="h-4 w-4" />
       </button>
 
-      <div className="flex items-center gap-2 pr-6">
-        <span className="text-xs tabular-nums text-muted-foreground">
-          {formatTimestamp(message.timestamp, false)}
-        </span>
-        {message.message_type && (
-          <span className="rounded border border-border px-1.5 text-xs text-muted-foreground">
-            {message.message_type}
-          </span>
-        )}
-      </div>
-      <p className="mt-1 pr-6 text-sm whitespace-pre-wrap break-words">
+      <p className="pr-5 text-sm leading-relaxed whitespace-pre-wrap break-words">
         {message.content}
+      </p>
+      <p className="mt-1 text-xs tabular-nums text-muted-foreground">
+        {formatTimestamp(message.timestamp, false)}
+        {message.message_type ? ` · ${message.message_type}` : ''}
       </p>
     </div>
   )

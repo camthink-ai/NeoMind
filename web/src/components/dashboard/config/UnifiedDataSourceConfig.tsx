@@ -294,7 +294,9 @@ export function UnifiedDataSourceConfig({
   // Fetch extension + unified data sources when needed
   useEffect(() => {
     const needsExt = availableCategories.some(c => c.id === 'extension' || c.id === 'extension-command')
-    const needsUnified = availableCategories.some(c => c.id === 'transform')
+    // AI fields ride in the same unified listing as transforms — a widget
+    // may allow 'ai' without 'transform', and the fetch must still happen.
+    const needsUnified = availableCategories.some(c => c.id === 'transform' || c.id === 'ai')
     if (!needsExt && !needsUnified) {
       hasFetchedUnifiedSources.current = false
       return
@@ -1547,10 +1549,11 @@ export function UnifiedDataSourceConfig({
                   setSelectedExtensionId(null)
                 }}
                 className={cn(
-                  'flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors shrink-0',
+                  'relative flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors shrink-0',
+                  'after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:rounded-full after:transition-colors',
                   isActive
-                    ? 'border-primary text-primary'
-                    : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-muted-50'
+                    ? 'text-primary after:bg-primary'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted-50'
                 )}
               >
                 <Icon className="h-4 w-4" />

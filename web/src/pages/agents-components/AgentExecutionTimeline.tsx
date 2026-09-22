@@ -4,6 +4,7 @@ import { LoadingState } from "@/components/shared/LoadingState"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
 import {
+  History,
   Clock,
   CheckCircle2,
   XCircle,
@@ -229,20 +230,15 @@ export function AgentExecutionTimeline({
           {loading ? (
             <LoadingState size="md" className="py-12" />
           ) : executions.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              <Clock className="h-12 w-12 mx-auto mb-3 opacity-20" />
-              <p>{t('agents:noExecutions')}</p>
+            <div className="flex flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-border py-12 text-center">
+              <History className="h-8 w-8 text-muted-foreground/40" />
+              <p className="text-sm text-muted-foreground">{t('agents:noExecutions')}</p>
             </div>
           ) : (
-            <div className="relative">
-              {/* Timeline Line - center-aligned to dots: the line is 2px wide
-                  (w-0.5), so left-[15px] puts its CENTER at 16px — matching the
-                  16px dot's center (left-2 = 8px + 8px half). left-[16px] would
-                  center the line at 17px (1px off, visible at this scale). */}
-              <div className="absolute left-[15px] top-2 bottom-2 w-0.5 bg-border" />
-
-              {/* Timeline Items */}
-              <div className="space-y-4">
+            <div>
+              {/* Execution list — quiet cards; the old rail+dot timeline spent
+                  48px on decoration and double-encoded status. */}
+              <div className="space-y-2">
                 {executions.map((execution, index) => {
                   const isExpanded = expandedExecutions.has(execution.id)
                   const detail = executionDetails[execution.id]
@@ -251,17 +247,8 @@ export function AgentExecutionTimeline({
                   const StatusIcon = statusConfig.icon
 
                   return (
-                    <div key={execution.id} className="relative pl-12">
-                      {/* Timeline Node - position at left-2 (8px) with w-4 (16px) so center is at 16px */}
-                      <div className={cn(
-                        "absolute left-2 top-3 w-4 h-4 rounded-full border-2 flex items-center justify-center bg-background",
-                        statusConfig.bg.replace('/10', '/30'),
-                        statusConfig.color.replace('text-', 'border-')
-                      )}>
-                        <div className={cn("w-2 h-2 rounded-full", statusConfig.color.replace('text-', 'bg-'))} />
-                      </div>
-
-                      {/* Timeline Card */}
+                    <div key={execution.id}>
+                      {/* Execution card */}
                       <div
                         className={cn(
                           "rounded-lg border bg-card overflow-hidden transition-colors",
@@ -275,44 +262,34 @@ export function AgentExecutionTimeline({
                         <button
                           type="button"
                           onClick={() => void toggleExecution(execution.id)}
-                          className="w-full p-3 flex items-start gap-3 text-left"
+                          className="flex w-full items-center gap-2.5 p-3 text-left"
                         >
-                          <StatusIcon className={cn("h-5 w-5 mt-0.5 shrink-0", execution.status === 'Running' && "animate-spin")} />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap mb-1">
-                              <Badge variant="outline" className="text-xs">
-                                #{executions.length - index}
-                              </Badge>
-                              <Badge variant="outline" className={cn("text-xs border-0", statusConfig.color)}>
-                                {statusConfig.label}
-                              </Badge>
-                            </div>
-                            <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                              <span className="flex items-center gap-1">
-                                <Clock className="h-4 w-4" />
-                                {formatTimestamp(execution.timestamp, false)}
-                              </span>
-                              {execution.duration_ms > 0 && (
-                                <span className="flex items-center gap-1">
-                                  <Zap className="h-4 w-4" />
-                                  {formatDuration(execution.duration_ms)}
-                                </span>
-                              )}
-                              {execution.error && (
-                                <span className="flex items-center gap-1 text-error">
-                                  <AlertCircle className="h-4 w-4" />
-                                  <span className="truncate max-w-[200px]">{execution.error}</span>
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                          <div className="shrink-0 mt-1">
-                            {isExpanded ? (
-                              <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                            ) : (
-                              <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                            )}
-                          </div>
+                          <StatusIcon className={cn("h-4 w-4 shrink-0", statusConfig.color, execution.status === 'Running' && "animate-spin")} />
+                          <span className="shrink-0 text-sm font-medium tabular-nums">
+                            #{executions.length - index}
+                          </span>
+                          <span className="min-w-0 truncate text-sm text-muted-foreground tabular-nums">
+                            {formatTimestamp(execution.timestamp, false)}
+                          </span>
+                          {execution.duration_ms > 0 && (
+                            <span className="shrink-0 text-xs text-muted-foreground">
+                              {formatDuration(execution.duration_ms)}
+                            </span>
+                          )}
+                          {execution.error && (
+                            <span className="flex min-w-0 items-center gap-1 text-error">
+                              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                              <span className="truncate">{execution.error}</span>
+                            </span>
+                          )}
+                          <span className={cn("ml-auto shrink-0 text-xs", statusConfig.color)}>
+                            {statusConfig.label}
+                          </span>
+                          {isExpanded ? (
+                            <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                          ) : (
+                            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                          )}
                         </button>
 
                         {/* Expanded Details */}
