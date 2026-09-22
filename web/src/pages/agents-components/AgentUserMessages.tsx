@@ -134,27 +134,27 @@ export function AgentUserMessages({ agentId, onMessageAdded }: AgentUserMessages
       </div>
 
       {/* Input Area */}
-      <div className="rounded-lg border border-border bg-card p-3">
+      <div className="rounded-lg border border-border bg-card p-2.5">
         <Textarea
           ref={textareaRef}
           value={newMessage}
           onChange={(e) => setNewMessage(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={t('agents:userMessages.placeholder')}
-          className="resize-none min-h-[64px] max-h-[140px] border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
+          className="resize-none min-h-[52px] max-h-[140px] border-0 bg-transparent p-1 shadow-none focus-visible:ring-0"
           disabled={sending}
         />
-        <div className="mt-2 flex items-center justify-between gap-2 border-t border-border pt-2">
-          <span className="text-xs text-muted-foreground">
-            {t('agents:userMessages.hint')} ⌘⏎ / Ctrl+Enter
+        <div className="flex items-center justify-between gap-2">
+          <span className="pl-1 text-[11px] text-muted-foreground">
+            {t('agents:userMessages.hint')} ⌘⏎
           </span>
           <Button
             size="sm"
             onClick={handleSendMessage}
             disabled={!newMessage.trim() || sending}
-            className="shrink-0"
+            className="h-7 shrink-0 px-2.5"
           >
-            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+            {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
           </Button>
         </div>
       </div>
@@ -175,24 +175,23 @@ function MessageBubble({ message, onDelete }: MessageBubbleProps) {
   const { t } = useTranslation(['common', 'agents'])
 
   return (
-    <div className="group relative rounded-lg border border-border bg-card px-3 py-2 transition-colors hover:border-foreground/20">
+    <div className="group relative rounded-lg bg-muted px-3 py-2">
       <button
         onClick={onDelete}
         aria-label={t('common:delete')}
         className={cn(
-          "absolute top-2 right-2 opacity-0 group-hover:opacity-100",
-          "transition-opacity p-1 rounded hover:bg-muted",
-          "text-muted-foreground hover:text-error"
+          "absolute right-1.5 top-1.5 rounded p-1 opacity-0 transition-opacity group-hover:opacity-100",
+          "text-muted-foreground hover:bg-card hover:text-error"
         )}
         title={t('common:delete')}
       >
-        <Trash2 className="h-4 w-4" />
+        <Trash2 className="h-3.5 w-3.5" />
       </button>
 
-      <p className="pr-5 text-sm leading-relaxed whitespace-pre-wrap break-words">
+      <p className="pr-6 text-sm leading-relaxed whitespace-pre-wrap break-words">
         {message.content}
       </p>
-      <p className="mt-1 text-xs tabular-nums text-muted-foreground">
+      <p className="mt-1 text-[11px] tabular-nums text-muted-foreground">
         {formatTimestamp(message.timestamp, false)}
         {message.message_type ? ` · ${message.message_type}` : ''}
       </p>
