@@ -71,7 +71,8 @@
       "tool": "Stateless tool",
       "assistant": "Has memory"
     },
-    "errorUnknown": "Execution failed — open details for the log"
+    "errorUnknown": "Execution failed — open details for the log",
+    "runsSuffix": " runs"
   },
   "confirm": {
     "pauseTitle": "Confirm pause agent?",

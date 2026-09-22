@@ -71,7 +71,8 @@
       "tool": "一次性工具",
       "assistant": "有记性"
     },
-    "errorUnknown": "执行失败——打开详情查看记录"
+    "errorUnknown": "执行失败——打开详情查看记录",
+    "runsSuffix": "次"
   },
   "confirm": {
     "pauseTitle": "确认暂停智能体？",
