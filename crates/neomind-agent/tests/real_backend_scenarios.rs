@@ -349,3 +349,88 @@ async fn reasoning_agent_publishes_its_output_contract() {
         "a reasoning agent's output contract must reach telemetry under {namespace}:*; got {published:?}"
     );
 }
+
+/// A structured (L0) agent whose input is a **bound device metric** rather than
+/// event data.
+///
+/// The vision scenario above also runs structured, but it hands the model an
+/// event payload directly — its log line reads `NO DATA COLLECTED from bound
+/// sources`. This one exercises `data_collector`: read the device's recent
+/// points out of telemetry, feed them to the constrained inference, land the
+/// schema fields under `ai:{id}:*`. That is the path this release fixed a run
+/// of "a value written milliseconds ago is invisible" bugs on, and no live test
+/// covered it.
+///
+/// The reading is deliberately unambiguous — 85℃ against a prompt that calls
+/// anything over 40℃ too hot — so a wrong answer means the bound metric never
+/// reached the model, not that the model reasoned badly about a borderline case.
+#[tokio::test]
+#[ignore = "Requires Ollama LLM backend"]
+async fn structured_agent_infers_over_a_metric_it_reads_from_telemetry() {
+    if !ollama_available() {
+        println!("⚠️  Ollama not running — skipping");
+        return;
+    }
+
+    use neomind_storage::timeseries::DataPoint as TsPoint;
+
+    let store = AgentStore::memory().expect("store");
+    let ts = TimeSeriesStore::memory().expect("ts");
+
+    // Three points, all inside the default 60-minute lookback.
+    let now = chrono::Utc::now().timestamp();
+    for (i, v) in [84.0_f64, 85.0, 85.5].iter().enumerate() {
+        ts.write(
+            "device:furnace-01",
+            "temperature",
+            TsPoint {
+                timestamp: now - (2 - i as i64) * 30,
+                value: serde_json::json!(v),
+                quality: None,
+                metadata: None,
+            },
+        )
+        .await
+        .expect("seed telemetry");
+    }
+    ts.flush().expect("flush");
+
+    let agent = agent_json(
+        "struct-bound",
+        serde_json::json!({
+            "schedule": { "schedule_type": "manual" },
+            "user_prompt": "炉温超过 40 度就算过高。判断当前是否过高。",
+            "resources": [
+                { "resource_type": "metric", "resource_id": "furnace-01:temperature",
+                  "name": "temperature", "config": {} }
+            ],
+            "execution_mode": "structured",
+            "output_schema": [
+                { "name": "overheated", "field_type": { "type": "enum", "values": ["是", "否"] } }
+            ],
+        }),
+    );
+    store.save_agent(&agent).await.expect("seed");
+
+    let executor = live_executor(store, ts.clone()).await;
+    init_tracing();
+    let run = executor
+        .execute_agent(agent, None, None)
+        .await
+        .expect("structured run completes");
+    eprintln!("bound-metric run error: {:?}", run.error);
+
+    ts.flush().expect("flush");
+    let published = ts
+        .query_latest("ai:struct-bound", "overheated")
+        .await
+        .expect("read back")
+        .expect("the schema field must reach telemetry under ai:struct-bound:*");
+
+    assert_eq!(
+        published.value,
+        serde_json::json!("是"),
+        "85℃ is over the 40 the prompt names — a miss means the bound metric \
+         never made it into the inference"
+    );
+}
