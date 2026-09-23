@@ -1220,7 +1220,13 @@ pub async fn create_agent(
 
     // Initialize knowledge file at creation time (not first execution)
     // This gives the agent immediate context for its first run.
-    init_agent_knowledge_file(&state, &agent).await;
+    // Stateless (Tool-memory) agents skip it: their inference path never
+    // loads knowledge files (MemoryMode::Tool = no history in the prompt),
+    // so the file would be dead weight the detail panel shows as "unused".
+    let stateless = agent.effective_memory_mode() == neomind_storage::MemoryMode::Tool;
+    if !stateless {
+        init_agent_knowledge_file(&state, &agent).await;
+    }
 
     // Schedule the agent if it's interval/cron type (not event-triggered)
     if agent.schedule.schedule_type != neomind_storage::ScheduleType::Event {

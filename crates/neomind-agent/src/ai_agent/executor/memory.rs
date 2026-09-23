@@ -145,6 +145,13 @@ impl AgentExecutor {
         _conclusion: &str,
         success: bool,
     ) {
+        // Stateless (Tool-memory) agents never load knowledge files into
+        // their prompt — creating one would be dead weight shown as "unused"
+        // in the detail panel.
+        if agent.effective_memory_mode() == neomind_storage::MemoryMode::Tool {
+            return;
+        }
+
         // Skip if agent already has knowledge files
         if !updated_memory.knowledge_files.is_empty() {
             return;
