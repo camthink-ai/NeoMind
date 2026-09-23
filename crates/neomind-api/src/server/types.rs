@@ -3302,6 +3302,25 @@ impl ServerState {
             );
         }
 
+        // Publish IM as a notification channel. Agents route by channel *name*
+        // (`notify.channels`), so being a channel is what makes "IM" appear in
+        // the editor's notify picker — and it is the only way a run's outcome
+        // can reach a bound chat, since the executor has no session concept and
+        // cannot address one directly. Registered here, after the persisted
+        // bridges reload, so the registry the channel reads from is populated.
+        {
+            let im_channel: Arc<dyn neomind_messages::channels::MessageChannel> = Arc::new(
+                neomind_messages::im_bridge::channel::ImChannel::new(router.clone()),
+            );
+            let channel_registry = self.message_manager().channels().await;
+            channel_registry.read().await.register(im_channel).await;
+            tracing::info!(
+                category = "im",
+                channel = neomind_messages::im_bridge::channel::IM_CHANNEL_NAME,
+                "IM registered as a notification channel"
+            );
+        }
+
         *self.im_router.write().await = Some(router);
         tracing::info!(category = "im", "IM router started");
 

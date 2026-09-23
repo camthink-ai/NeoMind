@@ -1,5 +1,6 @@
 //! Platform-agnostic two-way IM bridge.
 
+pub mod channel;
 #[cfg(feature = "feishu")]
 pub mod feishu;
 #[cfg(test)]
