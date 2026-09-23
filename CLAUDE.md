@@ -12,6 +12,18 @@ cd web && npm install && npm run dev                              # frontend :51
 cd web && npm run tauri:dev                                       # desktop app
 ```
 
+### The gate CI actually runs
+
+**`cargo test --workspace` is NOT it.** `behavior_tests.rs` and the mock-LLM
+suites are gated behind `neomind-agent/test-utils`, so a plain workspace run
+skips them and reports green on a tree CI would fail. Use:
+
+```bash
+cargo test --workspace --locked --features neomind-agent/test-utils
+```
+
+`scripts/verify-all.sh` already uses this exact command — prefer it.
+
 ## Ecosystem Repositories
 
 NeoMind is the **core platform**; three companion repos hold community content. This repo defines the **format contracts** each must follow.

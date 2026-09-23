@@ -906,17 +906,14 @@ pub enum DraftCommand {
     ///
     /// Settings:
     ///   --enabled true/false     Enable/disable auto-discovery
-    ///   --auto-approve true/false  Auto-approve new drafts
     ///   --max-samples <N>        Max samples to keep per draft
     ///
-    /// Example: `neomind device drafts config --enabled true --auto-approve false`
+    /// Example: `neomind device drafts config --enabled true --max-samples 5`
     Config {
         /// Enable or disable auto-discovery.
         #[arg(long)]
         enabled: Option<bool>,
         /// Auto-approve new drafts without manual review.
-        #[arg(long)]
-        auto_approve: Option<bool>,
         /// Maximum data samples to keep per draft.
         #[arg(long)]
         max_samples: Option<u32>,

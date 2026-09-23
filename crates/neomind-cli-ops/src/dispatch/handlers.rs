@@ -303,12 +303,11 @@ pub async fn run_draft_cmd(cmd: DraftCommand) -> Result<(CliResponse, OutputForm
         DraftCommand::Reject { id } => (reject_draft(&client, &id).await?, base_format),
         DraftCommand::Config {
             enabled,
-            auto_approve,
             max_samples,
         } => {
-            if enabled.is_some() || auto_approve.is_some() || max_samples.is_some() {
+            if enabled.is_some() || max_samples.is_some() {
                 (
-                    update_onboard_config(&client, enabled, max_samples, auto_approve).await?,
+                    update_onboard_config(&client, enabled, max_samples).await?,
                     base_format,
                 )
             } else {

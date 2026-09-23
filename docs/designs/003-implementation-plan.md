@@ -80,22 +80,22 @@
 
 | # | 工作项 | 文件 | 规模 |
 |---|--------|------|------|
-| M1-1 | 算子落 ai_agent 域：`ExecutionMode` 尾加 `Structured` + `AiAgent` 尾部追加字段（输出 schema/防抖/平滑/预算，bincode 兼容）；存储 agents.redb（2026-09-22 评审修订，见 001） | neomind-storage/agents.rs | M |
-| M1-2 | `InferenceClient` 薄接口（单次受约束调用 + schema 解析，thinking 强制关闭 gotcha #7） | neomind-agent（基于 M0-2 工厂） | M |
-| M1-3 | `OperatorEngine`：触发（OnInputChange/Interval/Manual + 摄像头三档采样）→ 采集（M0-5）→ prompt 组装（含纠正样本注入钩子）→ 推理 → schema 校验（重试一次）→ `publish_virtual_metric`（M0-4） | automation/transform/operator/（新目录） | L |
-| M1-4 | 状态机 + 熔断 + 预算（Healthy/Degraded/Paused，保旧值+stale TTL） | 同上 | M |
-| M1-5 | 触发复用现有 AgentScheduler（interval/cron/manual；OnInputChange 防抖映射为 interval+事件冷却）——无需新事件服务 | — | S |
-| M1-6 | handlers：CRUD + `/run`（手动同步）+ `/test`（dry-run 不入库）+ `/executions`（滚动 100 条）+ 数据源列表纳入 `ai:*` | handlers/automations.rs + router.rs + **OpenAPI schema 注册** | M |
-| M1-7 | 证据存储：执行记录携带输入引用（图片路径/来源值），evidence 可回查 | operator 执行记录 | S |
+| M1-1 | ✅ **已完成**（`ExecutionMode::Structured` 尾追加 + `AiAgent` 输出契约/防抖/预算字段；**落点在 ai_agent 域**，非独立算子域——M1-1 原文即如此约定） | 算子落 ai_agent 域：`ExecutionMode` 尾加 `Structured` + `AiAgent` 尾部追加字段（输出 schema/防抖/平滑/预算，bincode 兼容）；存储 agents.redb（2026-09-22 评审修订，见 001） | neomind-storage/agents.rs | M |
+| M1-2 | ✅ **已完成**（`inference.rs` 的受约束单次调用 + schema 解析，thinking 强制关闭） | `InferenceClient` 薄接口（单次受约束调用 + schema 解析，thinking 强制关闭 gotcha #7） | neomind-agent（基于 M0-2 工厂） | M |
+| M1-3 | ✅ **已完成**（**落在 `ai_agent/executor/structured.rs`，非 `automation/transform/operator/`**——执行引擎复用既有 executor，触发/采集/发布三段都接的现成件） | `OperatorEngine`：触发（OnInputChange/Interval/Manual + 摄像头三档采样）→ 采集（M0-5）→ prompt 组装（含纠正样本注入钩子）→ 推理 → schema 校验（重试一次）→ `publish_virtual_metric`（M0-4） | automation/transform/operator/（新目录） | L |
+| M1-4 | ✅ **已完成**（熔断 + 日预算 + 保旧值/stale，见 `OperatorConfig` 与 `07f469a5`） | 状态机 + 熔断 + 预算（Healthy/Degraded/Paused，保旧值+stale TTL） | 同上 | M |
+| M1-5 | ✅ **已完成**（复用 AgentScheduler，无新事件服务） | 触发复用现有 AgentScheduler（interval/cron/manual；OnInputChange 防抖映射为 interval+事件冷却）——无需新事件服务 | — | S |
+| M1-6 | ✅ **已完成**（CRUD + `/test` dry-run + `/executions`；`ai:*` 进数据源列表） | handlers：CRUD + `/run`（手动同步）+ `/test`（dry-run 不入库）+ `/executions`（滚动 100 条）+ 数据源列表纳入 `ai:*` | handlers/automations.rs + router.rs + **OpenAPI schema 注册** | M |
+| M1-7 | ✅ **已完成**（执行记录即证据所在，图片/来源值可回查） | 证据存储：执行记录携带输入引用（图片路径/来源值），evidence 可回查 | operator 执行记录 | S |
 
 **前端**：
 
 | # | 工作项 | 文件 | 规模 |
 |---|--------|------|------|
-| M1-8 | automation 页新增**算子 tab**（与 rules/transforms 并列，**过渡形态**——终态统一进智能体页：算子是智能体的一种类型、不分组，M4 落地后此 tab 保留为高级入口或移除）；`lib/api/operators.ts` 新建 + `lib/api/agents.ts` 顺手拆分 | pages/automation.tsx、lib/api/ | M |
-| M1-9 | 算子编辑器：照现有 AgentEditorFullScreen 单页表单模式做增量（类型字段、调度扩展行、预算护栏、"输出与试跑"区块含 dry-run 即时预览 + schema 预生成），复用 FullScreenDialog 与资源选择/AI 推荐组件 | automation-components/（新目录） | L |
-| M1-10 | `ai:` 数据源语义收编：types/dashboard.ts 旧 'ai'（agentId+status）映射兼容 + `ai:<prefix>:<field>` 新形态；UnifiedDataSourceConfig 列表纳入；fromDashboardDTO 全链过测 | types/dashboard.ts、UnifiedDataSourceConfig、persistence/ | M |
-| M1-11 | i18n en/zh 成对 + namespace 注册 | i18n/ | S |
+| M1-8 | ❌ **有意跳过**——过渡形态的 automation 算子 tab 未做。终态本就要把算子合进智能体页，M1-9 直接落在 agent 编辑器，做过渡 tab 是返工 | automation 页新增**算子 tab**（与 rules/transforms 并列，**过渡形态**——终态统一进智能体页：算子是智能体的一种类型、不分组，M4 落地后此 tab 保留为高级入口或移除）；`lib/api/operators.ts` 新建 + `lib/api/agents.ts` 顺手拆分 | pages/automation.tsx、lib/api/ | M |
+| M1-9 | ✅ **已完成**（**落点是 `AgentEditorFullScreen`**，非 automation-components；编辑器含输出契约、预算护栏、dry-run 试跑） | 算子编辑器：照现有 AgentEditorFullScreen 单页表单模式做增量（类型字段、调度扩展行、预算护栏、"输出与试跑"区块含 dry-run 即时预览 + schema 预生成），复用 FullScreenDialog 与资源选择/AI 推荐组件 | automation-components/（新目录） | L |
+| M1-10 | ✅ **已完成**（`dashboard.ts` 的 `'ai'` 类型 + `ai:<prefix>:<field>` + 旧 `agentId+status` 映射兼容） | `ai:` 数据源语义收编：types/dashboard.ts 旧 'ai'（agentId+status）映射兼容 + `ai:<prefix>:<field>` 新形态；UnifiedDataSourceConfig 列表纳入；fromDashboardDTO 全链过测 | types/dashboard.ts、UnifiedDataSourceConfig、persistence/ | M |
+| M1-11 | ✅ **已完成**（中英成对） | i18n en/zh 成对 + namespace 注册 | i18n/ | S |
 
 **CLI**：`neomind operator list/run/test`（agent_cmd.rs 旁新增，纯 HTTP）——S。
 

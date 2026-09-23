@@ -897,7 +897,6 @@ pub async fn update_onboard_config(
     client: &ApiClient,
     enabled: Option<bool>,
     max_samples: Option<u32>,
-    auto_approve: Option<bool>,
 ) -> Result<CliResponse> {
     let mut body = json!({});
     if let Some(e) = enabled {
@@ -905,9 +904,6 @@ pub async fn update_onboard_config(
     }
     if let Some(m) = max_samples {
         body["max_samples"] = json!(m);
-    }
-    if let Some(a) = auto_approve {
-        body["auto_approve"] = json!(a);
     }
     let data = client.put("/devices/drafts/config", &body).await?;
     Ok(CliResponse::success(data, "Onboard config updated"))
