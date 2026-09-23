@@ -30,9 +30,9 @@
 //! }
 //! ```
 
+pub mod chain;
 pub mod device_integration;
 pub mod device_status_emitter;
-pub mod chain;
 pub mod engine;
 pub mod error;
 pub mod extension_integration;

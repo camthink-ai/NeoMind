@@ -221,7 +221,10 @@ mod tests {
 
     #[test]
     fn the_matching_execution_is_found_by_its_millisecond_key() {
-        let history = vec![execution_at(1_700_000_000_000), execution_at(1_700_000_000_500)];
+        let history = vec![
+            execution_at(1_700_000_000_000),
+            execution_at(1_700_000_000_500),
+        ];
 
         let hit = find_execution(&history, 1_700_000_000_500).expect("the row must be found");
         assert_eq!(hit.triggered_at.timestamp_millis(), 1_700_000_000_500);
