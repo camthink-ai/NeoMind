@@ -14,6 +14,7 @@
  */
 
 import { useTranslation } from "react-i18next"
+import { Card, CardContent } from "@/components/ui/card"
 import { IconButton } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { useConfirm } from "@/components/ui/use-confirm"
@@ -37,7 +38,7 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { formatTimestamp } from "@/lib/utils/format"
-import { interactiveCard } from "@/design-system/tokens/size"
+import { interactiveCardHover } from "@/design-system/tokens/size"
 import type { AiAgent } from "@/types"
 
 interface AgentCardProps {
@@ -96,25 +97,34 @@ export function AgentCard({
   const isError = agent.status === 'Error'
 
   return (
-    <div
-      className={cn("group relative flex h-full flex-col p-4 cursor-pointer", interactiveCard)}
+    <Card
+      role="button"
+      tabIndex={0}
       onClick={onClick}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() } }}
+      className={cn(
+        "group relative flex h-full flex-col cursor-pointer",
+        interactiveCardHover,
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+      )}
     >
+      <CardContent className="p-4 flex flex-col flex-1">
       {/* ── Header: identity + health ─────────────────────────────── */}
       <div className="flex items-start gap-3">
         <div className={cn(
-          "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors",
-          agent.status === 'Active' && "bg-success-light",
-          isExecuting && "bg-info-light",
-          isError && "bg-error-light",
-          (agent.status === 'Paused' || agent.status === 'Completed') && "bg-muted-50"
+          "relative w-11 h-11 rounded-xl flex items-center justify-center shrink-0 transition-colors",
+          isExecuting ? "bg-info-light" : isError ? "bg-error-light"
+            : agent.status === 'Paused' ? "bg-muted" : "bg-success-light"
         )}>
           <Bot className={cn(
-            "h-[18px] w-[18px]",
-            agent.status === 'Active' && "text-success",
-            isExecuting && "text-info",
-            isError && "text-error",
-            (agent.status === 'Paused' || agent.status === 'Completed') && "text-muted-foreground"
+            "h-5 w-5",
+            isExecuting ? "text-info" : isError ? "text-error"
+              : agent.status === 'Paused' ? "text-muted-foreground" : "text-success"
+          )} />
+          <span className={cn(
+            "absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-background",
+            isError ? "bg-error" : isExecuting ? "bg-info"
+              : agent.status === 'Paused' ? "bg-muted-foreground" : "bg-success"
           )} />
         </div>
 
@@ -214,6 +224,7 @@ export function AgentCard({
           aria-label={t('agents:card.toggleStatus', { name: agent.name })}
         />
       </div>
-    </div>
+      </CardContent>
+    </Card>
   )
 }
