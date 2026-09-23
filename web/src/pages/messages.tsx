@@ -15,6 +15,7 @@ import { confirm } from '@/hooks/use-confirm'
 import { useErrorHandler } from '@/hooks/useErrorHandler'
 import { useIsMobile } from '@/hooks/useMobile'
 import type { NotificationMessage, MessageSeverity, MessageStatus, MessageChannel, ChannelFilter } from '@/types'
+import type { MessageChain } from '@/lib/api/onboarding'
 
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -412,6 +413,10 @@ export default function MessagesPage() {
   // Dialogs
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [selectedMessage, setSelectedMessage] = useState<NotificationMessage | null>(null)
+  // Why the selected alert fired (M2-5). Fetched on open — it is the question
+  // the user opened the alert with. Failure is silent: the section simply does
+  // not render and the message itself stays fully usable.
+  const [messageChain, setMessageChain] = useState<MessageChain | null>(null)
   const [channelEditorOpen, setChannelEditorOpen] = useState(false)
   const [editingChannel, setEditingChannel] = useState<MessageChannel | null>(null)
 
@@ -421,6 +426,27 @@ export default function MessagesPage() {
   useEffect(() => {
     setActiveTab(getTabFromPath(location.pathname))
   }, [location.pathname])
+
+  useEffect(() => {
+    if (!selectedMessage) {
+      setMessageChain(null)
+      return
+    }
+    let cancelled = false
+    setMessageChain(null)
+    api
+      .getMessageChain(selectedMessage.id)
+      .then(chain => {
+        if (!cancelled) setMessageChain(chain)
+      })
+      .catch(() => {
+        // An alert we cannot explain is still an alert; do not block it.
+        if (!cancelled) setMessageChain(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [selectedMessage])
 
   // Update URL when tab changes
   const handleTabChange = (tab: TabValue) => {
@@ -1617,6 +1643,81 @@ export default function MessagesPage() {
                 </div>
               </div>
             </FormSection>
+
+            {/* Why this fired (M2-5). Rendered only when there is something to
+                say: a message that is not a rule alert has no chain at all, and
+                announcing that on every system message would be noise. */}
+            {messageChain &&
+              (messageChain.resolved || messageChain.reason === 'execution_not_found') && (
+                <FormSection
+                  title={t('messages.chain.title', 'Why this fired')}
+                  description={t(
+                    'messages.chain.description',
+                    'The rule execution behind this alert, and what it acted on',
+                  )}
+                >
+                  {messageChain.resolved ? (
+                    <div className="space-y-2 text-sm">
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-muted-foreground text-xs w-20 shrink-0">
+                          {t('messages.chain.rule', 'Rule')}
+                        </span>
+                        <span className="font-medium">
+                          {messageChain.rule?.name || messageChain.rule?.id || '-'}
+                        </span>
+                      </div>
+                      {messageChain.trigger?.source && (
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-muted-foreground text-xs w-20 shrink-0">
+                            {t('messages.chain.evidence', 'Evidence')}
+                          </span>
+                          <span className="font-mono text-xs">
+                            {messageChain.trigger.source}
+                            {messageChain.trigger.value ? ` = ${messageChain.trigger.value}` : ''}
+                          </span>
+                        </div>
+                      )}
+                      {messageChain.execution && (
+                        <>
+                          <div className="flex items-baseline gap-2">
+                            <span className="text-muted-foreground text-xs w-20 shrink-0">
+                              {t('messages.chain.firedAt', 'Fired')}
+                            </span>
+                            <span>{formatTimestamp(messageChain.execution.triggered_at, true)}</span>
+                          </div>
+                          <div className="flex items-baseline gap-2">
+                            <span className="text-muted-foreground text-xs w-20 shrink-0">
+                              {t('messages.chain.actions', 'Actions')}
+                            </span>
+                            {/* Shown raw: this is the honest record of what the
+                                system did, not a paraphrase of it. */}
+                            <span className="flex flex-wrap gap-1">
+                              {messageChain.execution.actions_executed.length > 0 ? (
+                                messageChain.execution.actions_executed.map((action, i) => (
+                                  <Badge key={i} variant="secondary" className="text-xs font-mono">
+                                    {action}
+                                  </Badge>
+                                ))
+                              ) : (
+                                <span className="text-muted-foreground">
+                                  {t('messages.chain.noActions', 'none')}
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      {t(
+                        'messages.chain.expired',
+                        'This alert points at a rule execution whose record has expired — rule history is kept for 30 days.',
+                      )}
+                    </p>
+                  )}
+                </FormSection>
+              )}
 
             {/* Content Section */}
             <FormSection

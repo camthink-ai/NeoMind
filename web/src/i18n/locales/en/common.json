@@ -10,6 +10,16 @@
     "moreAlerts": "+{{count}} more alerts"
   },
   "messages": {
+    "chain": {
+      "title": "Why this fired",
+      "description": "The rule execution behind this alert, and what it acted on",
+      "rule": "Rule",
+      "evidence": "Evidence",
+      "firedAt": "Fired",
+      "actions": "Actions",
+      "noActions": "none",
+      "expired": "This alert points at a rule execution whose record has expired — rule history is kept for 30 days."
+    },
     "title": "Messages",
     "description": "Notifications, channels, and IM sessions",
     "tabs": {

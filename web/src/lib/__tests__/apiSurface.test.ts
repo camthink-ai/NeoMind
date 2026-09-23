@@ -23,7 +23,7 @@ describe('api surface (post-split composition)', () => {
       'get', 'post', // http
       'login', // auth
       'getDevices', // devices
-      'getDraftDevices', // onboarding
+      'getDraftDevices', 'getMessageChain', // onboarding (the message API lives here)
       'listMessageChannels', // channels
       'listLlmBackends', // llm
       'listImBridges', // imBridges
@@ -56,9 +56,10 @@ describe('api surface (post-split composition)', () => {
   // A ratchet, not a snapshot. The split had to conserve the pre-split member
   // set exactly, and every later addition to the surface has to be
   // acknowledged here. 266 -> 267 when the agent editor's dry-run added
-  // `testAgentPreview` (bcd026fe) — a real, called member, not surface bloat.
-  it('member count grows only by deliberate additions (267)', () => {
+  // `testAgentPreview` (bcd026fe); 267 -> 268 when the alert detail added
+  // `getMessageChain` (M2-5) — real, called members, not surface bloat.
+  it('member count grows only by deliberate additions (268)', () => {
     const keys = Object.keys(api)
-    expect(keys.length).toBe(267)
+    expect(keys.length).toBe(268)
   })
 })

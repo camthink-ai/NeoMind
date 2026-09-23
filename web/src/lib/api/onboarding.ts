@@ -2,6 +2,31 @@
 import type { NotificationMessage } from '@/types'
 import { fetchAPI } from "./client"
 
+/** One layer of a rule alert's judgment chain (M2-5). */
+export interface MessageChainExecution {
+  triggered_at: string
+  success: boolean
+  duration_ms: number
+  actions_executed: string[]
+  error: string | null
+}
+
+export interface MessageChainRule {
+  id: string
+  name: string
+  enabled: boolean
+}
+
+export interface MessageChain {
+  message_id: string
+  resolved: boolean
+  /** Why it did not resolve; `null` when it did. */
+  reason: 'no_rule_reference' | 'execution_not_found' | null
+  rule?: MessageChainRule | null
+  trigger?: { source: string | null; value: string | null }
+  execution?: MessageChainExecution | null
+}
+
 export const onboardingApi = {
   // ========== Auto-onboarding Configuration ==========
   // Get auto-onboarding configuration (simplified to 3 fields)
@@ -40,6 +65,15 @@ export const onboardingApi = {
       `/messages${params ? `?${new URLSearchParams(params)}` : ''}`
     ),
   getMessage: (id: string) => fetchAPI<NotificationMessage>(`/messages/${id}`),
+  /**
+   * How this alert came to be (M2-5): the rule execution behind it, what that
+   * execution did, and the value that tripped the condition.
+   *
+   * `resolved: false` is an ordinary answer, not an error — most messages are
+   * not rule alerts at all, and rule history is pruned after 30 days, so an
+   * alert can outlive the execution it points at.
+   */
+  getMessageChain: (id: string) => fetchAPI<MessageChain>(`/messages/${id}/chain`),
   createMessage: (req: {
     category?: string
     title: string
