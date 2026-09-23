@@ -756,7 +756,7 @@ export function AgentsPage() {
           }
         />
         <FullScreenDialogContent>
-          <FullScreenDialogMain className="overflow-auto">
+          <FullScreenDialogMain className="flex min-h-0 flex-col overflow-hidden">
             {selectedAgent && (
               <AgentDetailPanel
                 agent={selectedAgent}
