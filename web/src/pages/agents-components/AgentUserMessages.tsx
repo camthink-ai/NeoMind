@@ -82,7 +82,7 @@ export function AgentUserMessages({ agentId, onMessageAdded, refreshToken = 0 }:
   }
 
   return (
-    <div className="flex min-h-[320px] flex-1 flex-col gap-3">
+    <div className="flex h-full flex-col gap-3">
             {loading ? (
               <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />

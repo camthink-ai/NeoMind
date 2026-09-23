@@ -303,15 +303,28 @@ export function AgentDetailPanel({
         )}
 
         <div className="flex min-w-0 flex-1 flex-col">
+        {/* Messages owns its own scroll container — a native overflow div with a
+            definite height (flex-1 in this column) lets h-full/min-h-full work,
+            so the empty state can flex-centre. Radix ScrollArea's inner content
+            div is height-auto and defeats that. */}
+        {section === 'messages' ? (
+          <div className="min-h-0 flex-1 overflow-y-auto bg-muted-20">
+            <div className={cn(
+              "flex h-full flex-col",
+              isMobile ? "px-3 py-3" : "px-5 py-4"
+            )}>
+              <AgentUserMessages
+                agentId={agent.id}
+                refreshToken={messagesVersion}
+                onMessageAdded={onRefresh}
+              />
+            </div>
+          </div>
+        ) : (
         <ScrollArea className="min-h-0 flex-1 bg-muted-20">
           <div className={cn(
             "space-y-5",
-            isMobile ? "px-3 py-3" : "px-5 py-4",
-            // Radix ScrollArea sizes its viewport to the visible box, but the
-            // content div inside is height-auto by default — flex-1 children
-            // (the empty state) would compute to 0. Stretch to the viewport so
-            // sparse sections can centre/flex within the visible area.
-            section === 'messages' && "flex min-h-full flex-col [&>div]:min-h-0"
+            isMobile ? "px-3 py-3" : "px-5 py-4"
           )}>
             {section === 'overview' && (
               <>
@@ -497,17 +510,9 @@ export function AgentDetailPanel({
                           <MemoryContent memory={memory} loading={memoryLoading} />
               </>
             )}
-            {section === 'messages' && (
-              <AgentUserMessages
-                agentId={agent.id}
-                refreshToken={messagesVersion}
-                onMessageAdded={onRefresh}
-              />
-            )}
           </div>
         </ScrollArea>
-
-        {/* Pinned composer — chat-style bottom bar, Messages section only */}
+        )}
         {section === 'messages' && (
           <div className={cn(
             "shrink-0 border-t border-border bg-muted-20",
