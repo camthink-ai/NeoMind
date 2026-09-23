@@ -258,7 +258,9 @@ export function AgentExecutionTimeline({
                           isExpanded ? "border-foreground/20" : "border-border hover:bg-muted-30"
                         )}
                       >
-                        {/* Header - Always Visible */}
+                        {/* Header - Always Visible. Status only — a failure
+                            reason runs long and already fills the Situation
+                            Analysis and Conclusion sections below. */}
                         <button
                           type="button"
                           onClick={() => void toggleExecution(execution.id)}
@@ -274,12 +276,6 @@ export function AgentExecutionTimeline({
                           {execution.duration_ms > 0 && (
                             <span className="shrink-0 text-xs text-muted-foreground">
                               {formatDuration(execution.duration_ms)}
-                            </span>
-                          )}
-                          {execution.error && (
-                            <span className="flex min-w-0 items-center gap-1 text-error">
-                              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                              <span className="truncate">{execution.error}</span>
                             </span>
                           )}
                           <span className={cn("ml-auto shrink-0 text-xs", statusConfig.color)}>
