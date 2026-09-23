@@ -8,10 +8,15 @@ import "./i18n/config"
 import App from "./App"
 import { ThemeProvider } from "@/components/ui/theme"
 import { initVisualViewport } from "@/hooks/useVisualViewport"
+import { installGlobalTauriWindowDrag } from "@/lib/windowDrag"
 
 // Expose React and JSX runtime as globals for community component bundles (IIFE)
 ;(window as any).React = React
 ;(window as any).jsxRuntime = jsxRuntime
+
+// Tauri desktop: keep the top edge of the window draggable even when a
+// fullscreen dialog/overlay is on top of the per-element drag strips.
+installGlobalTauriWindowDrag()
 
 // Expose NeoMind API for community/extension components
 ;(window as any).neomind = {
