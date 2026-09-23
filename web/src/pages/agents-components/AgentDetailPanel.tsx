@@ -304,7 +304,15 @@ export function AgentDetailPanel({
 
         <div className="flex min-w-0 flex-1 flex-col">
         <ScrollArea className="min-h-0 flex-1 bg-muted-20">
-          <div className={cn("space-y-5", isMobile ? "px-3 py-3" : "px-5 py-4")}>
+          <div className={cn(
+            "space-y-5",
+            isMobile ? "px-3 py-3" : "px-5 py-4",
+            // Radix ScrollArea sizes its viewport to the visible box, but the
+            // content div inside is height-auto by default — flex-1 children
+            // (the empty state) would compute to 0. Stretch to the viewport so
+            // sparse sections can centre/flex within the visible area.
+            section === 'messages' && "flex min-h-full flex-col [&>div]:min-h-0"
+          )}>
             {section === 'overview' && (
               <>
                               <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
