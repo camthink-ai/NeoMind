@@ -751,8 +751,12 @@ pub struct DecisionProcess {
     pub decisions: Vec<Decision>,
     /// Final conclusion
     pub conclusion: String,
-    /// Confidence level (0-1)
-    pub confidence: f32,
+    /// Confidence level (0-1), as the model reported it. `None` when it did
+    /// not report one — a missing claim rather than an invented default, since
+    /// 002 §4.2 gates behaviour on this number. `default` keeps the records
+    /// written before the field existed readable.
+    #[serde(default)]
+    pub confidence: Option<f32>,
     /// Why the tool loop ended (StopReason label); threaded to the journal so
     /// the agent can learn from prior stop reasons. Empty when no loop ran.
     #[serde(default)]
@@ -785,8 +789,10 @@ pub struct ReasoningStep {
     pub input: Option<String>,
     /// Output of this step
     pub output: String,
-    /// Confidence in this step (0-1)
-    pub confidence: f32,
+    /// Confidence in this step (0-1). `None` where nothing actually produced
+    /// one — the same rule as [`DecisionProcess::confidence`].
+    #[serde(default)]
+    pub confidence: Option<f32>,
 }
 
 /// A decision made during execution.
@@ -1853,7 +1859,7 @@ mod tests {
                 reasoning_steps: vec![],
                 decisions: vec![],
                 conclusion: "No action needed".to_string(),
-                confidence: 0.95,
+                confidence: Some(0.95),
                 stop_reason: String::new(),
             },
             result: None,

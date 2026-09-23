@@ -28,7 +28,18 @@ pub struct InferenceOutcome {
     pub raw_text: String,
     /// 1 = first attempt validated; 2 = needed the repair retry.
     pub attempts: u8,
+    /// The model's own answer to "how sure are you", 0–1. `None` when it did
+    /// not give one — an absent claim rather than an invented default, because
+    /// 002 §4.2 gates real behaviour on this number.
+    pub confidence: Option<f32>,
 }
+
+/// Key the model is asked to answer with, alongside the schema fields.
+///
+/// Deliberately NOT a schema field: this is the inference's self-report, and
+/// making it part of the contract the user authored would publish it as one of
+/// their outputs.
+pub const CONFIDENCE_KEY: &str = "confidence";
 
 /// Everything a single inference call needs.
 #[derive(Debug, Clone)]
@@ -182,6 +193,7 @@ impl InferenceClient {
             if errors.is_empty() {
                 return Ok(InferenceOutcome {
                     fields,
+                    confidence: object.get(CONFIDENCE_KEY).and_then(read_confidence),
                     raw_text: raw,
                     attempts: attempt,
                 });
@@ -238,6 +250,12 @@ impl InferenceClient {
             lines.push_str(&line);
             lines.push('\n');
         }
+        lines.push_str(&format!(
+            "- \"{CONFIDENCE_KEY}\": number from 0 to 1 — how sure you are that the values \
+             above are right, given what you were shown. Say a LOW number when the input is \
+             missing, unclear or ambiguous, or when you had to guess; do not default to a \
+             high number.\n"
+        ));
         lines
     }
 
@@ -250,6 +268,26 @@ impl InferenceClient {
         m.push_str("\nJSON object:");
         m
     }
+}
+
+/// Read the model's confidence, best-effort.
+///
+/// Not a validation error when missing: a run should never fail over a
+/// secondary self-report, and the existing happy-path tests assert exactly that
+/// a response without one still validates. Out-of-range values are clamped
+/// rather than discarded — a model that said 1.7 meant "very sure".
+fn read_confidence(v: &serde_json::Value) -> Option<f32> {
+    let n = match v {
+        serde_json::Value::Number(n) => n.as_f64(),
+        // Models wrap numbers in strings often enough that the field coercer
+        // already tolerates it; do the same here.
+        serde_json::Value::String(s) => s.trim().parse::<f64>().ok(),
+        _ => None,
+    }?;
+    if !n.is_finite() {
+        return None;
+    }
+    Some(n.clamp(0.0, 1.0) as f32)
 }
 
 /// Human words for a field type, used in the contract message.
@@ -440,6 +478,77 @@ mod tests {
         assert_eq!(out.attempts, 1);
         assert_eq!(out.fields["missing_count"], serde_json::json!(1));
         assert_eq!(out.fields["batch_status"], serde_json::json!("待检"));
+    }
+
+    /// Design 002 §4.2 gates behaviour on confidence ("low confidence is not
+    /// taken at face value"), which makes a fabricated number worse than none:
+    /// a constant makes every threshold compare against the same value forever.
+    /// So the model is asked for its own — as an inference-level key, NOT a
+    /// schema field, which would put it in the user's output contract and
+    /// publish it as data they never asked for.
+    #[tokio::test]
+    async fn the_model_is_asked_for_its_confidence_and_that_number_is_kept() {
+        let runtime = rt(vec![MockResponse::text(
+            r#"{"missing_count": 1, "batch_status": "待检", "confidence": 0.35}"#,
+        )]);
+        let out = InferenceClient::new()
+            .run_with_runtime(&runtime, &req())
+            .await
+            .unwrap();
+
+        assert_eq!(out.confidence, Some(0.35));
+        assert_eq!(out.fields["missing_count"], serde_json::json!(1));
+        assert!(
+            !out.fields.contains_key("confidence"),
+            "confidence is the inference's, not the user's contract: {:?}",
+            out.fields.keys().collect::<Vec<_>>()
+        );
+    }
+
+    /// A response that omits it yields no claim rather than a default. The
+    /// happy-path test above already covers absence surviving validation; this
+    /// pins what the value is.
+    #[tokio::test]
+    async fn an_absent_confidence_is_absent_rather_than_invented() {
+        let runtime = rt(vec![MockResponse::text(
+            r#"{"missing_count": 1, "batch_status": "待检"}"#,
+        )]);
+        let out = InferenceClient::new()
+            .run_with_runtime(&runtime, &req())
+            .await
+            .unwrap();
+
+        assert_eq!(out.confidence, None);
+    }
+
+    /// Models put the decimal point in the wrong place. Clamping keeps the
+    /// intent — 1.7 means "very sure" — where rejecting it would discard an
+    /// answer the model did give.
+    #[tokio::test]
+    async fn an_out_of_range_confidence_is_clamped_not_discarded() {
+        for (raw, expected) in [("1.7", 1.0f32), ("-0.2", 0.0)] {
+            let runtime = rt(vec![MockResponse::text(format!(
+                r#"{{"missing_count": 1, "batch_status": "待检", "confidence": {raw}}}"#
+            ))]);
+            let out = InferenceClient::new()
+                .run_with_runtime(&runtime, &req())
+                .await
+                .unwrap();
+
+            assert_eq!(out.confidence, Some(expected), "raw confidence {raw}");
+        }
+    }
+
+    /// The number is only real if it was actually asked for.
+    #[test]
+    fn the_contract_asks_the_model_for_a_confidence() {
+        let message = InferenceClient::contract_message(&schema());
+
+        assert!(message.contains("confidence"), "contract: {message}");
+        assert!(
+            message.to_lowercase().contains("sure"),
+            "the model has to be told what the number means: {message}"
+        );
     }
 
     #[tokio::test]

@@ -397,9 +397,14 @@ export function ExecutionDetailDialog({
                           <div className="text-xs font-medium">{step.description}</div>
                           <div className="flex items-center gap-2 mt-1">
                             <Badge variant="outline" className={cn(badgeSize.micro, "h-4 px-1")}>{step.step_type}</Badge>
-                            <span className={cn(textNano, "text-muted-foreground")}>
-                              {Math.round(step.confidence * 100)}%
-                            </span>
+                            {/* Only when the step reported one. A missing
+                                confidence is not a percentage, and rendering
+                                `undefined * 100` would say "NaN%". */}
+                            {step.confidence !== undefined && (
+                              <span className={cn(textNano, "text-muted-foreground")}>
+                                {Math.round(step.confidence * 100)}%
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>

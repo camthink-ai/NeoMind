@@ -474,7 +474,12 @@ export interface DecisionProcess {
   reasoning_steps: ReasoningStep[]
   decisions: Decision[]
   conclusion: string
-  confidence: number
+  /**
+   * The model's own confidence, 0–1. Absent when it reported none — the
+   * backend omits the key rather than sending `null`, because these consumers
+   * guard on `undefined` and `null * 100` would render as "0%".
+   */
+  confidence?: number
 }
 
 /**
@@ -496,7 +501,7 @@ export interface ReasoningStep {
   step_type: string
   input?: string
   output: string
-  confidence: number
+  confidence?: number
 }
 
 /**

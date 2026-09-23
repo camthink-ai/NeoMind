@@ -344,7 +344,7 @@ impl AgentExecutor {
                     step_type: "fallback".to_string(),
                     input: None,
                     output: String::new(),
-                    confidence: 0.3,
+                    confidence: Some(0.3),
                 }],
                 vec![Decision {
                     decision_type: "info".to_string(),
@@ -378,7 +378,7 @@ impl AgentExecutor {
             step_type: "llm_analysis".to_string(),
             input: Some(format!("{} data sources", data.len())),
             output: truncate_to(&text, 500),
-            confidence: 0.7,
+            confidence: Some(0.7),
         }];
         let decisions = vec![Decision {
             decision_type: "info".to_string(),
@@ -451,7 +451,7 @@ impl AgentExecutor {
             step_type: "data_collection".to_string(),
             input: Some(format!("{} data sources", data.len())),
             output: format!("Data collected from {} sources", data.len()),
-            confidence: 1.0,
+            confidence: Some(1.0),
         });
 
         // Step 2: Evaluate conditions based on parsed intent
@@ -466,7 +466,7 @@ impl AgentExecutor {
                     step_type: "condition_eval".to_string(),
                     input: Some(condition.clone()),
                     output: format!("Condition result: {}", result),
-                    confidence: 0.8,
+                    confidence: Some(0.8),
                 });
 
                 if result {
@@ -492,7 +492,7 @@ impl AgentExecutor {
                     step_type: "action_planning".to_string(),
                     input: Some(action.clone()),
                     output: format!("Action '{}' queued for execution", action),
-                    confidence: 0.7,
+                    confidence: Some(0.7),
                 });
             }
         }

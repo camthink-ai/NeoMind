@@ -377,6 +377,126 @@ async fn structured_mode_refuses_to_publish_without_input() {
     );
 }
 
+/// Design 002 §4.2, "every output carries its evidence": click an AI field and
+/// see what it actually read. The execution record already holds that — the
+/// collected sources, the rendered context, the conclusion. What a published
+/// value lacks is the way *back* to it, so a dashboard showing `ai:x:status`
+/// has no route to the run behind it.
+#[tokio::test]
+async fn published_fields_point_back_at_the_execution_that_produced_them() {
+    let (mut executor, mut agent, _registry) = build_harness().await;
+    let ts = neomind_storage::TimeSeriesStore::memory().expect("memory timeseries");
+    executor.set_time_series_storage(ts.clone());
+    agent.execution_mode = neomind_storage::agents::ExecutionMode::Structured;
+    agent.output_schema = Some(vec![neomind_storage::OperatorField {
+        name: "anomaly_count".into(),
+        field_type: neomind_storage::OperatorFieldType::Number,
+        unit: None,
+        description: None,
+    }]);
+    let rt: Arc<dyn LlmRuntime> = Arc::new(MockLlmRuntime::new(vec![MockResponse::text(
+        r#"{"anomaly_count": 2}"#,
+    )]));
+    executor.set_llm_runtime(rt).await;
+
+    executor
+        .execute_structured(
+            "exec-pointer-1",
+            &agent,
+            vec![neomind_storage::DataCollected {
+                source: "cam-01".into(),
+                data_type: "values.parts".into(),
+                values: serde_json::json!({"parts": 3}),
+                timestamp: 0,
+            }],
+        )
+        .await
+        .expect("structured execution succeeds");
+
+    ts.flush().expect("flush buffer");
+    let point = ts
+        .query_latest("ai:test-agent", "anomaly_count")
+        .await
+        .expect("query succeeds")
+        .expect("the field was published");
+
+    assert_eq!(
+        point
+            .metadata
+            .as_ref()
+            .and_then(|m| m.get("execution_id"))
+            .and_then(|v| v.as_str()),
+        Some("exec-pointer-1"),
+        "a published AI field must say which run produced it: {:?}",
+        point.metadata
+    );
+    // The mock answered without a confidence, and the published value says so
+    // rather than filling in a default.
+    assert_eq!(
+        point.quality, None,
+        "no reported confidence means no quality claim, not a made-up one"
+    );
+}
+
+/// The number the model reports is the number everything downstream sees —
+/// the record and the published value both. A fabricated constant made every
+/// threshold compare against the same figure forever; this is the assertion
+/// that there is nothing left to fabricate.
+#[tokio::test]
+async fn the_reported_confidence_reaches_the_record_and_the_published_value() {
+    let (mut executor, mut agent, _registry) = build_harness().await;
+    let ts = neomind_storage::TimeSeriesStore::memory().expect("memory timeseries");
+    executor.set_time_series_storage(ts.clone());
+    agent.execution_mode = neomind_storage::agents::ExecutionMode::Structured;
+    agent.output_schema = Some(vec![neomind_storage::OperatorField {
+        name: "anomaly_count".into(),
+        field_type: neomind_storage::OperatorFieldType::Number,
+        unit: None,
+        description: None,
+    }]);
+    let rt: Arc<dyn LlmRuntime> = Arc::new(MockLlmRuntime::new(vec![MockResponse::text(
+        r#"{"anomaly_count": 2, "confidence": 0.42}"#,
+    )]));
+    executor.set_llm_runtime(rt).await;
+
+    let (dp, _record) = executor
+        .execute_structured(
+            "exec-confidence-1",
+            &agent,
+            vec![neomind_storage::DataCollected {
+                source: "cam-01".into(),
+                data_type: "values.parts".into(),
+                values: serde_json::json!({"parts": 3}),
+                timestamp: 0,
+            }],
+        )
+        .await
+        .expect("structured execution succeeds");
+
+    assert_eq!(
+        dp.confidence,
+        Some(0.42),
+        "the record keeps the model's own number"
+    );
+
+    ts.flush().expect("flush buffer");
+    let point = ts
+        .query_latest("ai:test-agent", "anomaly_count")
+        .await
+        .expect("query succeeds")
+        .expect("the field was published");
+    assert_eq!(
+        point.quality,
+        Some(0.42),
+        "and the value downstream reads carries it too"
+    );
+    assert!(
+        !point.value.to_string().contains("0.42"),
+        "confidence is not one of the user's fields: {:?}",
+        point.value
+    );
+}
+
 /// The dispatch in `execute_internal` must route a structured agent to the L0
 /// branch. Its sibling above calls `execute_structured` directly, so it cannot
 /// catch a dispatch that routes elsewhere — this one enters through the same
@@ -1234,7 +1354,7 @@ async fn output_contract_publishes_fields_for_a_reasoning_agent() {
     executor.set_llm_runtime(rt).await;
 
     let published = executor
-        .apply_output_contract(&agent, "画面里有 1 件漏装，批次待检")
+        .apply_output_contract(&agent, "exec-contract", "画面里有 1 件漏装，批次待检")
         .await;
 
     assert_eq!(published, Some(1));
@@ -1258,7 +1378,7 @@ async fn output_contract_failure_does_not_propagate() {
     executor.set_llm_runtime(rt).await;
 
     let published = executor
-        .apply_output_contract(&agent, "画面模糊")
+        .apply_output_contract(&agent, "exec-contract", "画面模糊")
         .await;
 
     assert_eq!(published, None, "a botched extraction must not fail the run");
@@ -1281,7 +1401,7 @@ async fn output_contract_is_skipped_for_structured_agents() {
     )]));
     executor.set_llm_runtime(rt).await;
 
-    assert_eq!(executor.apply_output_contract(&agent, "any conclusion").await, None);
+    assert_eq!(executor.apply_output_contract(&agent, "exec-contract", "any conclusion").await, None);
 }
 
 /// Most agents declare no contract at all — the step must be free for them.
@@ -1293,7 +1413,7 @@ async fn output_contract_is_skipped_without_a_schema() {
     )]));
     executor.set_llm_runtime(rt).await;
 
-    assert_eq!(executor.apply_output_contract(&agent, "any conclusion").await, None);
+    assert_eq!(executor.apply_output_contract(&agent, "exec-contract", "any conclusion").await, None);
 }
 
 #[tokio::test]

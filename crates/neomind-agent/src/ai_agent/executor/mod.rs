@@ -1093,7 +1093,9 @@ impl AgentExecutor {
                         reasoning_steps: vec![],
                         decisions: vec![],
                         conclusion: format!("Failed: {}", e),
-                        confidence: 0.0,
+                        // A run that failed has nothing to be confident about;
+                        // 0.0 would read as "0% sure", which is a different claim.
+                        confidence: None,
                         stop_reason: String::new(),
                     },
                     result: None,
@@ -1319,7 +1321,7 @@ impl AgentExecutor {
                 reasoning_steps: vec![],
                 decisions: vec![],
                 conclusion: "Execution skipped: event data was recognized as an image metric but image extraction failed. Check device data format and field names.".to_string(),
-                confidence: 0.0,
+                confidence: None,
                 stop_reason: String::new(),
             };
             let exec_result = neomind_storage::ExecutionResult {
@@ -1447,9 +1449,12 @@ impl AgentExecutor {
                     &execution_id,
                     step_num,
                     &format!(
-                        "Tool-calling analysis completed: {} tool call(s), confidence {:.0}%",
+                        "Tool-calling analysis completed: {} tool call(s){}",
                         decision_process.decisions.len(),
-                        decision_process.confidence * 100.0
+                        match decision_process.confidence {
+                            Some(c) => format!(", confidence {:.0}%", c * 100.0),
+                            None => String::new(),
+                        }
                     ),
                 )
                 .await;
@@ -1478,7 +1483,7 @@ impl AgentExecutor {
                 // run already succeeded, so a failed extraction costs fields,
                 // never the run. Bound first: the borrow must end before the push.
                 let published = self
-                    .apply_output_contract(&agent, &decision_process.conclusion)
+                    .apply_output_contract(&agent, &execution_id, &decision_process.conclusion)
                     .await;
                 if let Some(field_count) = published {
                     decision_process.decisions.push(Decision {
@@ -1611,12 +1616,16 @@ impl AgentExecutor {
                 )
                 .await?;
 
-                // Calculate confidence from reasoning
-                let confidence = if reasoning_steps.is_empty() {
-                    0.5
+                // Average of the confidences the steps actually reported. No
+                // steps claiming one means no claim here either — the old 0.5
+                // fallback was an invented number wearing the same face as a
+                // measured one.
+                let reported: Vec<f32> =
+                    reasoning_steps.iter().filter_map(|s| s.confidence).collect();
+                let confidence = if reported.is_empty() {
+                    None
                 } else {
-                    reasoning_steps.iter().map(|s| s.confidence).sum::<f32>()
-                        / reasoning_steps.len() as f32
+                    Some(reported.iter().sum::<f32>() / reported.len() as f32)
                 };
 
                 // No truncation — preserve full LLM output for quality
@@ -1624,7 +1633,7 @@ impl AgentExecutor {
 
                 // M2-2: the output contract, same best-effort step as the Free
                 // branch — recorded as a decision so it shows in the timeline.
-                let published = self.apply_output_contract(&agent, &conclusion).await;
+                let published = self.apply_output_contract(&agent, &execution_id, &conclusion).await;
                 if let Some(field_count) = published {
                     decisions.push(Decision {
                         decision_type: "output_contract".to_string(),

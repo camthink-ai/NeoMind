@@ -426,7 +426,7 @@ pub(crate) fn build_tool_result(
                 step_type: "thought".to_string(),
                 input: None,
                 output: String::new(),
-                confidence: 0.8,
+                confidence: Some(0.8),
             });
         }
 
@@ -453,7 +453,7 @@ pub(crate) fn build_tool_result(
                 step_type: step_type.to_string(),
                 input: input_str,
                 output: output_str,
-                confidence: conf,
+                confidence: Some(conf),
             });
         }
     }
@@ -493,7 +493,10 @@ pub(crate) fn build_tool_result(
         reasoning_steps,
         decisions,
         conclusion,
-        confidence: final_confidence,
+        // The share of tool calls that succeeded. Real data, but it answers
+        // "did the tools work", not "how sure is the model" — see the note on
+        // `DecisionProcess::confidence`.
+        confidence: Some(final_confidence),
         stop_reason: stop_reason.label().to_string(),
     };
 

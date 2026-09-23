@@ -9,6 +9,12 @@
 //! still gets an entry via the shared `finalize_execution_memory` path so
 //! history/trend features and the detail page see every run.
 
+/// Telemetry-metadata key carrying the id of the run that produced a published
+/// AI field. Written here, read by whatever renders the field (design 002 §4.2:
+/// click a value and see what it read) — one constant so the two ends cannot
+/// drift the way a repeated string would.
+pub const EXECUTION_ID_KEY: &str = "execution_id";
+
 use super::data_collector::is_observation;
 use super::*;
 
@@ -71,7 +77,13 @@ impl AgentExecutor {
             .await?;
 
         // Publish every validated field as `ai:{agent_id}:{field}`.
-        self.publish_output_fields(&agent.id, &outcome.fields).await;
+self.publish_output_fields(
+            &agent.id,
+            execution_id,
+            outcome.confidence,
+            &outcome.fields,
+        )
+        .await;
 
         let conclusion =
             serde_json::to_string(&serde_json::Value::Object(outcome.fields.iter().map(
@@ -105,7 +117,9 @@ impl AgentExecutor {
                 step_type: "inference".to_string(),
                 input: Some(context.clone()),
                 output: outcome.raw_text.clone(),
-                confidence: 0.9,
+                // The model's own answer, not a constant. That is the whole
+                // point: 002 §4.2 acts on this number.
+                confidence: outcome.confidence,
             }],
             decisions: vec![Decision {
                 decision_type: "structured_extraction".to_string(),
@@ -115,7 +129,7 @@ impl AgentExecutor {
                 expected_outcome: "Fields available as ai:* data sources".to_string(),
             }],
             conclusion,
-            confidence: 0.9,
+            confidence: outcome.confidence,
             stop_reason: "structured".to_string(),
         };
         let execution_result = neomind_storage::ExecutionResult {
@@ -173,17 +187,27 @@ pub async fn dry_run_structured(
     pub(super) async fn publish_output_fields(
         &self,
         agent_id: &str,
+        execution_id: &str,
+        confidence: Option<f32>,
         fields: &std::collections::BTreeMap<String, serde_json::Value>,
     ) {
         let namespace = format!("ai:{}", agent_id);
         let now = chrono::Utc::now().timestamp();
         for (name, value) in fields {
             if let Some(store) = &self.time_series_storage {
+                // The value carries the way back to the run that produced it:
+                // the execution record is where the evidence lives — what was
+                // collected, what the model was shown, what it answered — and
+                // without this pointer a dashboard showing `ai:x:status` has no
+                // route to any of it.
                 let point = neomind_storage::timeseries::DataPoint {
                     timestamp: now,
                     value: value.clone(),
-                    quality: None,
-                    metadata: None,
+                    // The model's own confidence, absent when it gave none.
+                    // `quality` is exactly this field's shape (0–1), so a
+                    // consumer can threshold on it without a second lookup.
+                    quality: confidence,
+                    metadata: Some(serde_json::json!({ EXECUTION_ID_KEY: execution_id })),
                 };
                 if let Err(e) = store.write(&namespace, name, point).await {
                     tracing::warn!(
@@ -220,6 +244,7 @@ pub async fn dry_run_structured(
     pub(super) async fn apply_output_contract(
         &self,
         agent: &AiAgent,
+        execution_id: &str,
         conclusion: &str,
     ) -> Option<usize> {
         let schema = agent.output_schema.clone().unwrap_or_default();
@@ -237,7 +262,13 @@ pub async fn dry_run_structured(
         match self.infer_structured(agent, &schema, op.timeout_secs, conclusion).await {
             Ok(outcome) => {
                 let published = outcome.fields.len();
-                self.publish_output_fields(&agent.id, &outcome.fields).await;
+        self.publish_output_fields(
+            &agent.id,
+            execution_id,
+            outcome.confidence,
+            &outcome.fields,
+        )
+        .await;
                 Some(published)
             }
             Err(e) => {

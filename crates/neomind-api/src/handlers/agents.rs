@@ -348,7 +348,10 @@ struct ReasoningStepDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     input: Option<String>,
     output: String,
-    confidence: f32,
+    // Omitted when the step reported none: the frontend guards on `undefined`,
+    // and a `null` would slip past `!== undefined` and render as 0%.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    confidence: Option<f32>,
 }
 
 /// Decision for API responses.
@@ -369,7 +372,8 @@ struct DecisionProcessDto {
     reasoning_steps: Vec<ReasoningStepDto>,
     decisions: Vec<DecisionDto>,
     conclusion: String,
-    confidence: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    confidence: Option<f32>,
 }
 
 /// Execution result for API responses.
@@ -2197,7 +2201,7 @@ pub async fn invoke_agent(
                         .collect();
                     (conclusion, confidence, actions)
                 }
-                None => (summary.summary.clone(), 0.0, vec![]),
+                None => (summary.summary.clone(), None, vec![]),
             };
 
             ok(json!({
