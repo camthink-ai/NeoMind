@@ -69,12 +69,54 @@ neomind agent control agent-abc123 active
 
 ## Execution Modes
 
-| Mode | Description | When to Use |
-|------|-------------|-------------|
-| `free` (default) | No bound resources, agent has full platform access | General monitoring, analysis tasks |
-| `focused` | Bound to specific devices/rules | Requires `--device-ids` or `--resources` |
+| Mode | What happens | When to Use |
+|------|--------------|-------------|
+| `focused` (default) | Single-pass analysis of the bound data; plainest agent | "Look once and answer" — summaries, checks |
+| `free` | Multi-round tool calling: the agent queries, calls tools, executes bound commands until done | Open-ended investigation, linked actions |
+| `structured` | ONE constrained inference; schema-validated fields published as `ai:{id}:{field}` data sources | Meter reading, QC verdicts, anything that feeds a dashboard/rule |
 
-### Binding Resources (Focused Mode)
+Any mode works with zero bindings — a prompt alone is a valid agent.
+Structure of the task decides the mode; when in doubt, omit `--execution-mode`.
+
+### Output Contract (structured & reasoning agents)
+
+`--output-schema` declares the fields the agent must produce. Every field is
+published as a live data source `ai:{agent_id}:{field}` — dashboards, rules
+and data-push bind to it like any device metric.
+
+```bash
+neomind agent create --name '冷库巡检' --prompt '判断冷库状态' \
+  --execution-mode structured --every 15m \
+  --output-schema '[{"name":"status","field_type":{"type":"enum","values":["正常","异常"]},"description":"整体状态"},{"name":"score","field_type":{"type":"number"},"unit":"分"}]'
+```
+
+Field types: `number`, `text`, `boolean`, `{"type":"enum","values":[...]}`.
+On structured agents the fields come from the single inference. On free/
+focused agents the contract rides along: after the run, one extra step
+renders the conclusion into the schema. Field NAMES become data-source keys
+(ASCII recommended); descriptions localize.
+
+### Memory axis
+
+`--memory-mode tool` — judged fresh each run (cheapest, predictable; the
+default for structured). `--memory-mode assistant` — carries the recent
+run narrative ("worse than yesterday" needs this). Omit to derive from the
+mode.
+
+### Notification routing
+
+`--notify` picks WHERE and WHEN — no more inferring from the conclusion
+text:
+
+```bash
+neomind agent update 冷库巡检 --notify '{"channels":["telegram:main","webhook:ops"],"on":"always"}'
+```
+
+`on: "failure"` (default) = silence is health; `on: "always"` = every
+verdict delivered. Channel names come from `neomind message channel-list`.
+Agents without a notify config keep the legacy keyword behavior.
+
+### Binding Resources
 
 **`--device-ids`** (simple): comma-separated device IDs.
 ```bash
@@ -166,7 +208,10 @@ neomind agent create \
   [--description '<desc>'] \
   [--llm-backend '<llm_backend_id>'] \
   [--system-prompt '<instructions>'] \
-  [--execution-mode <free|focused>] \
+  [--execution-mode <focused|free|structured>] \
+  [--output-schema '<json array of fields>'] \
+  [--memory-mode <tool|assistant>] \
+  [--notify '{"channels":["name"],"on":"failure|always"}'] \
   [--device-ids 'id1,id2']
 ```
 
