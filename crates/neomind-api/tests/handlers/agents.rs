@@ -5,10 +5,10 @@
 
 use axum::extract::{Path, Query, State};
 use axum::Json;
-use neomind_api::handlers::data::{list_all_data_sources_handler, ListDataSourcesQuery};
 use neomind_api::handlers::agents::{
     create_agent, get_agent, update_agent, CreateAgentRequest, UpdateAgentRequest,
 };
+use neomind_api::handlers::data::{list_all_data_sources_handler, ListDataSourcesQuery};
 use neomind_api::handlers::ServerState;
 use serde_json::json;
 
@@ -251,9 +251,63 @@ async fn test_ai_series_read_back_carries_the_run_it_came_from() {
         "a value read back has to say which run produced it: {point}"
     );
     // `quality` is an f32, so it arrives as 0.41999998688697815.
-    let quality = point["quality"].as_f64().expect("the point carries a quality");
+    let quality = point["quality"]
+        .as_f64()
+        .expect("the point carries a quality");
     assert!(
         (quality - 0.42).abs() < 1e-6,
         "and carry the confidence it was published with: {quality}"
     );
+}
+
+/// The detail view's output-fields section needs more than the reading: when it
+/// was published, how sure the model was, and which run produced it. The DTO
+/// kept only the value, so freshness and provenance were dropped at the last
+/// step — the same shape of bug as the telemetry boundary, one layer up.
+#[tokio::test]
+async fn test_agent_list_carries_output_field_provenance() {
+    let state = create_test_server_state().await;
+    let id = create_agent_with(&state, json!({ "execution_mode": "structured" })).await;
+
+    state
+        .devices
+        .telemetry
+        .write(
+            &format!("ai:{id}"),
+            "missing_count",
+            neomind_devices::telemetry::DataPoint {
+                timestamp: 1_700_000_000,
+                value: neomind_devices::MetricValue::Integer(2),
+                quality: Some(0.42),
+                metadata: Some(json!({ "execution_id": "exec-field-1" })),
+            },
+        )
+        .await
+        .expect("seed a published field");
+    state.devices.telemetry.flush().expect("flush the buffer");
+
+    let response = neomind_api::handlers::agents::list_agents(
+        State(state),
+        Query(serde_json::from_value(json!({})).expect("an empty query is the default view")),
+    )
+    .await
+    .expect("list agents");
+
+    let data = response.0.data.expect("the envelope carries data");
+    let agent = data["agents"]
+        .as_array()
+        .expect("agents is a list")
+        .iter()
+        .find(|a| a["id"] == id.as_str())
+        .expect("our agent is in the list");
+
+    let field = &agent["latest_output_state"]["missing_count"];
+    assert_eq!(field["value"], 2, "the reading: {field}");
+    assert_eq!(field["at"], 1_700_000_000, "when it was published");
+    assert_eq!(
+        field["execution_id"], "exec-field-1",
+        "and which run produced it, so the value can be checked"
+    );
+    let confidence = field["confidence"].as_f64().expect("a confidence");
+    assert!((confidence - 0.42).abs() < 1e-6, "got {confidence}");
 }

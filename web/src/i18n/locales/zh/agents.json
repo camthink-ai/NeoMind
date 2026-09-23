@@ -130,7 +130,8 @@
     "toolsParamRequired": "必填",
     "toolsFilterAllSources": "全部来源",
     "outputFields": "输出字段",
-    "outputFieldsHint": "每个字段都是平台数据源（ai:{agent}:{field}）——可在仪表盘、规则、数据推送中绑定使用。",
+    "viewEvidence": "查看依据",
+      "outputFieldsHint": "每个字段都是平台数据源（ai:{agent}:{field}）——可在仪表盘、规则、数据推送中绑定使用。",
     "fieldType": {
       "number": "数值",
       "text": "文本",

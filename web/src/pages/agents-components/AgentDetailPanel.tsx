@@ -30,8 +30,10 @@ import {
 
 
   ChevronDown,
+  ChevronRight,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { formatRelativeTime } from "@/lib/utils/format"
 import { textNano } from "@/design-system/tokens/typography"
 import { useIsMobile } from "@/hooks/useMobile"
 import { api } from "@/lib/api"
@@ -388,17 +390,45 @@ export function AgentDetailPanel({
                                 <DetailSection title={t('agents:detail.outputFields')} icon={Database}>
                                   <div className="space-y-1">
                                     {agent.output_schema!.map((f) => {
-                                      const latest = (agent as { latest_output?: Record<string, unknown> }).latest_output?.[f.name]
+                                      // The rich state when the backend sends
+                                      // it; the bare value map is the fallback.
+                                      const state = agent.latest_output_state?.[f.name]
+                                      const latest = state?.value ?? agent.latest_output?.[f.name]
                                       return (
-                                        <div key={f.name} className="flex items-baseline gap-2 border-b border-border py-1.5 last:border-0">
-                                          <span className="font-mono text-xs">{f.name}</span>
-                                          <span className="text-xs text-muted-foreground truncate">
-                                            {f.field_type.type === 'enum' ? `enum(${f.field_type.values.join('/')})` : t(`agents:detail.fieldType.${f.field_type.type}`)}
-                                            {f.unit ? ` · ${f.unit}` : ''}
-                                          </span>
-                                          <span className="ml-auto shrink-0 text-sm font-medium tabular-nums">
-                                            {latest !== undefined ? String(latest) : '—'}
-                                          </span>
+                                        <div key={f.name} className="border-b border-border py-1.5 last:border-0">
+                                          <div className="flex items-baseline gap-2">
+                                            <span className="font-mono text-xs">{f.name}</span>
+                                            <span className="text-xs text-muted-foreground truncate">
+                                              {f.field_type.type === 'enum' ? `enum(${f.field_type.values.join('/')})` : t(`agents:detail.fieldType.${f.field_type.type}`)}
+                                              {f.unit ? ` · ${f.unit}` : ''}
+                                            </span>
+                                            <span className="ml-auto shrink-0 text-sm font-medium tabular-nums">
+                                              {latest !== undefined ? String(latest) : '—'}
+                                            </span>
+                                          </div>
+                                          {/* When it was published, how sure the
+                                              model was, and the way back to the
+                                              run behind the reading (002 §4.2). */}
+                                          {latest !== undefined && (
+                                            <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+                                              {state && <span>{formatRelativeTime(state.at)}</span>}
+                                              {state?.confidence !== undefined && (
+                                                <span>{Math.round(state.confidence * 100)}%</span>
+                                              )}
+                                              {state?.execution_id && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() =>
+                                                    onViewExecutionDetail(agent.id, state.execution_id!)
+                                                  }
+                                                  className="ml-auto inline-flex items-center gap-0.5 text-primary transition-colors hover:underline"
+                                                >
+                                                  {t('agents:detail.viewEvidence')}
+                                                  <ChevronRight className="h-3 w-3" />
+                                                </button>
+                                              )}
+                                            </div>
+                                          )}
                                         </div>
                                       )
                                     })}

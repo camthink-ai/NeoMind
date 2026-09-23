@@ -182,6 +182,30 @@ struct AgentDto {
     /// best-effort from telemetry for the card's 最新产出 row.
     #[serde(skip_serializing_if = "Option::is_none")]
     latest_output: Option<serde_json::Map<String, serde_json::Value>>,
+    /// The same readings with everything needed to check them: when each was
+    /// published, how sure the model was, and which run produced it.
+    ///
+    /// `latest_output` stays a bare value map because the card only shows the
+    /// reading; this exists for the detail view, which is where design 002
+    /// §4.2's "click a value and see what it read" belongs. Both are built from
+    /// one telemetry read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    latest_output_state: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+/// One published field, as the detail view needs it.
+#[derive(Debug, serde::Serialize)]
+struct OutputFieldStateDto {
+    value: serde_json::Value,
+    /// Unix seconds — when this value was published. Freshness is the whole
+    /// question for a field nothing has refreshed since the input went away.
+    at: i64,
+    /// The model's confidence, absent when it reported none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    confidence: Option<f32>,
+    /// The run that produced it — the way back to its evidence.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    execution_id: Option<String>,
 }
 
 /// Lightweight agent summary for dropdowns/selectors.
@@ -639,9 +663,12 @@ impl From<AiAgent> for AgentDto {
                 .as_ref()
                 .map(|schema| schema.iter().map(|f| f.name.clone()).collect()),
             memory_mode: agent.memory_mode.or_else(|| {
-                Some(neomind_storage::MemoryMode::derived_for(agent.execution_mode))
+                Some(neomind_storage::MemoryMode::derived_for(
+                    agent.execution_mode,
+                ))
             }),
             latest_output: None,
+            latest_output_state: None,
         }
     }
 }
@@ -897,18 +924,42 @@ pub async fn list_agents(
         // Latest published output per agent (ai:{id}:{field}) — best-effort,
         // batched per agent; contract-less agents just omit the row.
         for dto in &mut dtos {
-            let Some(fields) = &dto.output_fields else { continue };
+            let Some(fields) = &dto.output_fields else {
+                continue;
+            };
             let ns = format!("ai:{}", dto.id);
             let field_refs: Vec<&str> = fields.iter().map(String::as_str).collect();
             if let Ok(points) = state.devices.telemetry.latest_batch(&ns, &field_refs).await {
-                let values: serde_json::Map<String, serde_json::Value> = points
-                    .into_iter()
-                    .filter_map(|(metric, point)| {
-                        serde_json::to_value(point.value).ok().map(|v| (metric, v))
-                    })
-                    .collect();
+                let mut values = serde_json::Map::new();
+                let mut states = serde_json::Map::new();
+                for (metric, point) in points {
+                    // `to_json_value`, not `serde_json::to_value`: the enum's
+                    // derived form is `{"Integer": 2}`, which the card renders
+                    // as "[object Object]".
+                    let value = point.value.to_json_value();
+                    // The pointer the executor stamps on every published field.
+                    let execution_id = point
+                        .metadata
+                        .as_ref()
+                        .and_then(|m| m.get(neomind_agent::EXECUTION_ID_KEY))
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string);
+                    let state = OutputFieldStateDto {
+                        value: value.clone(),
+                        at: point.timestamp,
+                        confidence: point.quality,
+                        execution_id,
+                    };
+                    states.insert(
+                        metric.clone(),
+                        // A plain struct of string keys — this cannot fail.
+                        serde_json::to_value(&state).unwrap_or(serde_json::Value::Null),
+                    );
+                    values.insert(metric, value);
+                }
                 if !values.is_empty() {
                     dto.latest_output = Some(values);
+                    dto.latest_output_state = Some(states);
                 }
             }
         }
@@ -2033,9 +2084,7 @@ pub async fn test_agent_preview(
         // Mode follows the request; structured stays the default so the
         // original dry-run contract is unchanged for existing callers.
         execution_mode: match request.execution_mode.as_deref() {
-            Some("free") | Some("react") => {
-                neomind_storage::agents::ExecutionMode::Free
-            }
+            Some("free") | Some("react") => neomind_storage::agents::ExecutionMode::Free,
             Some("focused") | None | Some("") => {
                 // Focused IS the dry-run for plain prompts; structured is
                 // requested explicitly by name.

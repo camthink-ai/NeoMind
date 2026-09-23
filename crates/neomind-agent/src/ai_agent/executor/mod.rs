@@ -174,6 +174,7 @@ pub use context::{DataSourceRef, EventTriggerData};
 // Re-export functions needed by sibling modules (via use super::*)
 pub(crate) use context::{build_history_context, format_timestamp, truncate_to, HistoryConfig};
 pub(crate) use data_collector::get_time_context;
+pub use structured::EXECUTION_ID_KEY;
 pub(crate) use intent::extract_threshold;
 pub(crate) use response_parser::{
     extract_command_from_description, extract_device_from_description, extract_json_from_codeblock,

@@ -40,6 +40,12 @@ export interface AiAgent {
   output_fields?: string[]
   /** Latest published ai:{id}:{field} values (list endpoint, best-effort) */
   latest_output?: Record<string, unknown>
+  /**
+   * The same readings with what it takes to check them: when each was
+   * published, the model's own confidence, and the run that produced it.
+   * Absent pieces are omitted rather than nulled.
+   */
+  latest_output_state?: Record<string, OutputFieldState>
   /** Last error message (Error status) */
   error?: string
   execution_mode?: AgentExecutionMode
@@ -208,6 +214,16 @@ export interface AgentAvailableResources {
 /**
  * Agent execution record - matches backend AgentExecutionDto
  */
+/** One published output field, as the detail view shows it. */
+export interface OutputFieldState {
+  value: unknown
+  /** Unix seconds. */
+  at: number
+  confidence?: number
+  /** The run that produced it — the way back to its evidence. */
+  execution_id?: string
+}
+
 export interface AgentExecution {
   id: string
   agent_id: string
