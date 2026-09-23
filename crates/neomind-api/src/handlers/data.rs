@@ -307,7 +307,9 @@ async fn collect_ai_sources(state: &ServerState, sources: &mut Vec<UnifiedDataSo
         // Any agent with an output contract, not just the L0 ones: since M2-2 a
         // reasoning agent publishes its fields too, and a field the picker
         // refuses to list is a field nothing can bind to.
-        let Some(schema) = agent.output_schema else { continue };
+        let Some(schema) = agent.output_schema else {
+            continue;
+        };
         for field in schema {
             sources.push(UnifiedDataSourceInfo {
                 id: format!("ai:{}:{}", agent.id, field.name),

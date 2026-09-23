@@ -51,8 +51,9 @@ pub fn devices_to_core(value: &DevicesMetricValue) -> CoreMetricValue {
         DevicesMetricValue::Integer(i) => CoreMetricValue::Integer(*i),
         DevicesMetricValue::Boolean(b) => CoreMetricValue::Boolean(*b),
         DevicesMetricValue::String(s) => CoreMetricValue::String(s.clone()),
-        DevicesMetricValue::Array(items) => CoreMetricValue::Json(serde_json::to_value(items)
-            .unwrap_or(serde_json::json!(null))),
+        DevicesMetricValue::Array(items) => {
+            CoreMetricValue::Json(serde_json::to_value(items).unwrap_or(serde_json::json!(null)))
+        }
         DevicesMetricValue::Binary(_) | DevicesMetricValue::Null => {
             CoreMetricValue::Json(serde_json::json!(null))
         }
@@ -277,10 +278,22 @@ mod tests {
 
     #[test]
     fn core_to_rule_value_matches_transform_pipeline_mapping() {
-        assert_eq!(core_to_rule_value(&CoreMetricValue::Float(2.5)), RuleValue::Number(2.5));
-        assert_eq!(core_to_rule_value(&CoreMetricValue::Integer(7)), RuleValue::Number(7.0));
-        assert_eq!(core_to_rule_value(&CoreMetricValue::Boolean(true)), RuleValue::Number(1.0));
-        assert_eq!(core_to_rule_value(&CoreMetricValue::Boolean(false)), RuleValue::Number(0.0));
+        assert_eq!(
+            core_to_rule_value(&CoreMetricValue::Float(2.5)),
+            RuleValue::Number(2.5)
+        );
+        assert_eq!(
+            core_to_rule_value(&CoreMetricValue::Integer(7)),
+            RuleValue::Number(7.0)
+        );
+        assert_eq!(
+            core_to_rule_value(&CoreMetricValue::Boolean(true)),
+            RuleValue::Number(1.0)
+        );
+        assert_eq!(
+            core_to_rule_value(&CoreMetricValue::Boolean(false)),
+            RuleValue::Number(0.0)
+        );
         assert_eq!(
             core_to_rule_value(&CoreMetricValue::String("s".into())),
             RuleValue::Text("s".into())

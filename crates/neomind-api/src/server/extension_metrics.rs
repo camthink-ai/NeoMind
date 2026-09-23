@@ -445,8 +445,7 @@ impl ExtensionMetricsCollector {
                             // Unified conversion: the producer above only emits
                             // Float/String/Boolean device values, so the shared
                             // converter's Array/Binary/Null arms are unreachable here.
-                            let core_value =
-                                metric_publish::devices_to_core(&value_for_event);
+                            let core_value = metric_publish::devices_to_core(&value_for_event);
                             bus.publish_sync(neomind_core::NeoMindEvent::ExtensionOutput {
                                 extension_id: extension_id.clone(),
                                 output_name: metric_value.name.clone(),

@@ -48,12 +48,10 @@ mod tests {
         let sent = state.core.message_manager.list_messages().await;
         assert_eq!(sent.len(), 1, "one notify action, one alert");
 
-        let response = get_message_chain_handler(
-            State(state.clone()),
-            Path(sent[0].id.to_string()),
-        )
-        .await
-        .expect("the chain handler must not error");
+        let response =
+            get_message_chain_handler(State(state.clone()), Path(sent[0].id.to_string()))
+                .await
+                .expect("the chain handler must not error");
         let chain = response.0.data.expect("the envelope carries data");
 
         assert_eq!(chain["resolved"], true, "chain: {chain}");
@@ -158,9 +156,10 @@ mod tests {
 
         // Two dismissals: a ruled-out fluke, not yet a pattern.
         for id in &ids[..2] {
-            let verdict = mark_message_false_positive_handler(State(state.clone()), Path(id.clone()))
-                .await
-                .expect("the verdict must be recorded");
+            let verdict =
+                mark_message_false_positive_handler(State(state.clone()), Path(id.clone()))
+                    .await
+                    .expect("the verdict must be recorded");
             assert_eq!(
                 verdict.0.data.expect("data")["status"],
                 "false_positive",

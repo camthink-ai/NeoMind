@@ -277,7 +277,6 @@ impl ValueProvider for UnifiedValueProvider {
 mod tests {
     use super::*;
 
-
     /// An agent's published field is a rule-bindable source like any other
     /// (M1/M2-2): parse `ai:{agent}:{field}`, feed it a value the way the
     /// event bus would, and a rule reading the same DataSourceId sees it.
@@ -289,8 +288,8 @@ mod tests {
 
         // The round trip through the typed DataSourceId — this is what a
         // rule condition's source parses into.
-        let ds = DataSourceId::parse("ai:agent-1:anomaly_count")
-            .expect("ai:{agent}:{field} must parse");
+        let ds =
+            DataSourceId::parse("ai:agent-1:anomaly_count").expect("ai:{agent}:{field} must parse");
         assert_eq!(ds.source_part(), "ai:agent-1");
 
         tokio::runtime::Runtime::new().unwrap().block_on(async {
@@ -305,7 +304,9 @@ mod tests {
         // String fields (enum verdicts) ride the string update path too.
         let verdict = DataSourceId::ai("agent-1", "status");
         tokio::runtime::Runtime::new().unwrap().block_on(async {
-            provider.update_string_from_data_source_id(&verdict, "异常").await;
+            provider
+                .update_string_from_data_source_id(&verdict, "异常")
+                .await;
         });
         assert_eq!(
             provider.get_by_source(&verdict),
