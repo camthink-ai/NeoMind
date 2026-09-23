@@ -11,16 +11,19 @@
 #   scripts/im-smoke.sh --token <BOT_TOKEN>
 #   scripts/im-smoke.sh --token <BOT_TOKEN> --api http://localhost:9375 --api-key <KEY>
 #
+# 也认环境变量，免得 token 出现在 ps / shell history 里：
+#   NEOMIND_BOT_TOKEN=... NEOMIND_API_KEY=... scripts/im-smoke.sh
+#
 # 前置：服务在跑（scripts/smoke-serve.sh）
 #
 # 退出码：0 全部通过 / 1 某一步失败 / 2 用法错误
 set -uo pipefail
 
 API="http://localhost:9375"
-TOKEN=""
+TOKEN="${NEOMIND_BOT_TOKEN:-}"
 API_KEY="${NEOMIND_API_KEY:-}"
 WAIT_SECS=180
-BIND_TIMEOUT=300
+BIND_TIMEOUT=600
 
 usage() {
   sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
@@ -92,18 +95,24 @@ fi
 
 # ── 3. 邀请 → 人工扫码 ───────────────────────────────────────────────────────
 step "3/5  绑定（需要你扫码）"
-inv=$("${CURL[@]}" -X POST "$API/api/im-bridges/telegram/invites")
-link=$(echo "$inv" | jq -r '.data.deep_link // empty')
-token=$(echo "$inv" | jq -r '.data.token // empty')
-if [ -z "$token" ]; then
-  bad "生成邀请失败：$(echo "$inv" | jq -c '.')"
-  exit 1
-fi
+# deep_link 需要 bridge 先跑完 getMe 拿到 bot_username —— 那发生在 start()
+# 这个 spawn 出去的任务里，POST /im-bridges 返回时通常还没跑完。所以刚建完
+# bridge 就取邀请，deep_link 会是 null（token 明明有效）。轮询到识别为止。
+link=""; token=""
+for i in $(seq 1 10); do
+  inv=$("${CURL[@]}" -X POST "$API/api/im-bridges/telegram/invites")
+  token=$(echo "$inv" | jq -r '.data.token // empty')
+  link=$(echo "$inv" | jq -r '.data.deep_link // empty')
+  [ -n "$token" ] || { bad "生成邀请失败：$(echo "$inv" | jq -c '.')"; exit 1; }
+  [ -n "$link" ] && break
+  [ "$i" = "1" ] && note "等 bridge 完成 getMe（识别 bot 用户名）…"
+  sleep 3
+done
 if [ -n "$link" ]; then
   ok "邀请链接："
   printf '\n      \033[36m%s\033[0m\n\n' "$link"
 else
-  bad "拿不到 deep_link —— bot 未识别（token 失效，或 getMe 不通）"
+  bad "等了 30s，bot 仍未识别 —— getMe 不通（token 无效，或到 Telegram 的网络有问题）"
   note "可手动发送：/start $token"
 fi
 note "用手机 Telegram 打开上面的链接（或给 bot 发 /start $token）"
