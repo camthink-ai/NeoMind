@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased.2] — M2: multi-source triggering, the decision chain, and the feedback loop
+
+The milestone that makes an agent's *inputs* expressible and its *outputs* checkable. An event agent could only say "any of these sources"; it can now say "all of them, within this window". An alert could not say why it fired; it now carries the execution behind it, what that execution did, and — when the operator disagrees — the fact that they disagreed. Plus three quiet correctness fixes that this work surfaced, each of which had been losing data without saying so.
+
+### feat(agent): an event agent can require every source, inside a time window
+- `EventFilter` gains `all` + `within_secs` beside the existing group (design 001 §5.2.2), read through `AgentSchedule::parsed_event_filter()`. **The stored column keeps its `Option<String>` type** — polymorphism lives in the parser, because changing the field type would desynchronise every agent already in `agents.redb`. `sources` is an alias for `any`, and the older `event_type` shape is *translated* (parsed into nothing, it would have been an agent that silently never fires).
+- `all` aggregates in a window: the first hit opens it, the event that completes it fires, an expired window is dropped rather than revived. `within_secs: None` reads as "the same instant, the same event", so nothing carries between events. Partial hits do **not** consume the 60s per-source cooldown, or an AND could never be completed.
+- Editor: the mode is two cards ("Any of them / All of them", each with a plain-language description) instead of a bare toggle, and the window is a sentence — "All of them must happen within [10] minutes". Both are hidden when a single source is selected, where they would be a choice without a difference.
+- The collection lookback is now editable per bound source (it was read, carried through save, and had no control — and the save path rebuilt it from a map that only held what the server sent, so an edit would not have reached the payload anyway).
+
+### feat(rules): RunOperator — a rule can run a Structured operator
+- `RuleAction::RunOperator { agent_id }` appended LAST (rules are stored as tagged JSON; the three existing shapes are pinned by a test). Distinct from `TriggerAgent`: an operator takes no prompt, it collects its own bound sources.
+- Both agent-running actions share one extracted `spawn_agent_run()`, preserving the property that a run is never awaited inline — one slow agent must not stall every other rule's evaluation.
+
+### feat(messages, api, web): a dismissed alert, and what the dismissals add up to
+- `MessageStatus::FalsePositive` (appended last) + `POST /api/messages/:id/false-positive`. The verdict is recorded on the alert itself rather than in a separate sample store: it is already persisted there, and a second copy could only drift.
+- The chain endpoint counts a rule's dismissals and, at three, suggests its condition is too tight. Advice only — the end-to-end test asserts the rule is untouched. Counting is by number, not rate: three false alarms on a quiet rule and three on a noisy one mean the same thing to the person being told things that are not true.
+- Web: the alert detail gains "Not a real alert" beside acknowledge/resolve, and the rule's track record. `false_positive` had been a status label in the UI since before the status existed.
+
+### feat(api, web): an alert says which execution sent it
+- A `Notify` action stamps the alert's metadata with `(rule_id, triggered_at)` — the pair its history row is keyed by, so the chain needs no new id — plus the value and source that tripped the condition. `GET /api/messages/:id/chain` walks that hop and reports three outcomes: resolved, not a rule alert, or an execution whose record has aged out of the 30-day history.
+- Alert detail: "Why this fired" — rule, evidence, fired-at, the executed actions **verbatim** (002 §3.4 asks for an honest record, and a paraphrase is not one), and a link to the run.
+
+### feat(agent, web): a published field carries its run and the model's confidence
+- Every published `ai:<agent>:<field>` carries `metadata.execution_id` (a shared constant, so writer and reader cannot drift) and `quality` = the model's own confidence. The agent detail shows freshness, confidence and a "See what it read" link.
+- The confidence **is** the model's: `InferenceOutcome` had no such field, and the detail had been showing a hardcoded `0.9` for every run of every agent. It is now asked for as an inference-level key (not a schema field — that would publish it as one of the user's outputs), clamped rather than discarded, and left absent when the model gives none. `DecisionProcess::confidence` and `ReasoningStep::confidence` became `Option<f32>` — the web guards were already written for that — and the key is omitted rather than sent as `null`, because `null * 100` renders as "0%".
+
+### fix(agent): a run with nothing to read no longer publishes a conclusion
+- Reported from a live deployment: a camera went offline for three hours while its agent kept publishing a confident "正常" every fifteen minutes, each run feeding on the previous one. Two defects: the collector's "no data collected" guard was **dead** (it tested emptiness *after* the memory summary had been appended, and that summary exists for any agent with history), and the structured branch had no input guard at all. It now refuses, which is the designed behaviour for missing input — the last published value stands, the run is journaled as a failure, and the breaker paces retries.
+- The refusal explains itself: which sources were bound and when each last reported, read from the *unbounded* latest (the collection window is the thing that came back empty). It also stopped calling itself a configuration error — an offline camera is not a misconfiguration.
+
+### fix(api, web): a point's metadata reaches the caller — it was never only a JSON gap
+- The provenance pointer was discarded one layer **below** the response: `neomind_devices::DataPoint`, the view every read path goes through, had no `metadata` field at all while the storage point it is built from has always carried one. `metadata` is back on the view, carried both ways, and written out of the telemetry query response.
+- Found while fixing it: the published *value* was serialised with `serde_json::to_value`, and `MetricValue`'s derived form is `{"Integer": 2}` — so the agent card had been rendering "[object Object]" for any structured agent's numeric field.
+
+### fix(storage): a restart no longer moves AI fields out from under their source
+- Reported: an AI metric's History is empty in the Data Center after a restart. The startup key migration prefixes bare device ids with `device:`, and it decided "bare" by *absence from a hard-coded list* of known prefixes — `ai:` was never added to it. Every restart rewrote `ai:{agent}:{field}` to `device:ai:{agent}:{field}`. It now keys off the absence of a prefix, so a source type added later cannot be caught the same way, and it **puts back what it already moved** (verified with a probe: the point is readable under `ai:` again and gone from the mangled key). The latest-value cache is invalidated with it, since it is keyed by the old source id.
+
+### feat(chat, im): ask an agent what it concluded, or ask it to look again
+- Two tools, deliberately a pair. `query_conclusion` reads what the agent already decided, with how long ago — instant and free, because the agent has been running on its own schedule all along. `run_now` asks for a fresh look, returning the conclusion if it finishes within a minute and "still running" otherwise. A model with only the first cannot act on a stale answer; a model with only the second re-runs to answer a question already settled. Both take the agent's **name** as the user said it; an ambiguous reference runs and answers nothing.
+- The base system prompt's tool hierarchy, the `agent-management` skill and the tool descriptions all now say the same thing — the tools were otherwise capabilities with nothing pointing at them. The skill also stopped teaching `agent control <pause|resume>`, which the CLI does not accept (it takes `<active|paused>`).
+- IM: a run that outlives ten seconds says so once, instead of leaving the chat silent for minutes. It is a timeout, not an acknowledgement — a question answered in two seconds must not be preceded by "working on it", and the existing "exactly 1 reply" test guards that side.
+
+### fix(storage): the in-memory stores are actually in memory
+- Eight `memory()` constructors created a real redb file in the temp directory and never removed it. A test suite that calls them thousands of times had left the temp directory at **48 GB and 9,509 `.redb` files**, growing on every run. They now use redb's `InMemoryBackend` — which the pinned 2.6.3 provides, though `Cargo.toml` still declares `redb = "2.1"`, the version whose absence of the feature three of these sites cite in a comment. The test helpers that legitimately need a file now prune stale siblings by age, which survives the `kill -9` that defeats a `Drop`-based cleanup.
+- One of them was a correctness bug, not litter: `new_for_testing()` pointed every test state at the same memory directory while its own doc promised each call was isolated.
+
 ## [Unreleased.1] — M1: the structured agent (L0 operator) — S1 end to end
 
 The first business-layer milestone on the M0 kernel (design: docs/designs/001 §5.1, revised to live in the ai_agent domain — operators are a TYPE of agent, one list, one API). Create a "structured" agent in the editor, bind resources, define output fields, 试跑, schedule — the fields flow into dashboards/rules/data-push as live data sources.

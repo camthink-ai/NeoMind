@@ -105,15 +105,23 @@
 
 | # | 工作项 | 文件 | 规模 |
 |---|--------|------|------|
-| M2-1 | `EventFilter` 结构化（any/all/within_secs，serde 字符串/结构体双态兼容）+ 事件触发器改造 + 时间窗聚合 + per-source dedup 扩展 | neomind-storage/agents.rs + event_trigger.rs | L |
-| M2-2 | agent `output_contract`（尾部追加，bincode 兼容）+ 执行收尾发布 `ai:<agent_id>:<field>`（走 M0-4） | agents.rs + executor | M |
-| M2-3 | TriggerAgent 证据透传（载荷携带触发源执行记录+关键帧/数值） | rules TriggerAgent action + executor 触发上下文 | M |
-| M2-4 | 规则动作 `RunOperator`（事件触发算子） | neomind-rules actions | S |
-| M2-5 | 判定链 v1：算子/agent 执行记录 → 规则触发记录 → 通知，三层外键关联 + 查询端点 | storage + handlers | M |
-| M2-6 | 前端：agent 编辑器多源触发 UI（EventFilter 可视化：任一/全部+时间窗）；告警详情展示判定链（messages 页） | agents-components/、messages 页族 | L |
-| M2-7 | 前端：agent 资源 schema 联动 `useAnalystSession.ts` + `AgentMonitorWidget.tsx`（已识别交叉点） | 两文件 | M |
+| M2-1 ✅ | ~~`EventFilter` 结构化~~（已完成 **2026-09-23**：`EventSource`/`EventFilter`/`WindowState` 落地在 neomind-storage，**磁盘类型不动**——多态落在 `parsed_event_filter()` 解析层，`sources` 作为 `any` 的别名，旧 `event_type` 形态翻译而非解析成空；窗口聚合在 executor 的 `event_fires()`，部分命中**不消耗** 60s 冷却。**前端**：编辑器任一/全部卡片 + 时间窗一句化 + 单源时隐去选择） | neomind-storage/agents.rs + event_trigger.rs + agents-components | L |
+| M2-2 ✅ | ~~agent `output_contract`~~（已完成：`AiAgent.output_schema` 尾部追加 + `ai:<agent_id>:<field>` 发布，结构化分支与推理 agent 收尾两条路都覆盖） | agents.rs + executor | M |
+| M2-3 ⏸ | ~~TriggerAgent 证据透传~~ —— **按约定并入「证据专题」**（与 M2-5 第二跳、F4、M3-4 同批做，避免分三次各碰一半） | rules TriggerAgent action + executor 触发上下文 | M |
+| M2-4 ✅ | ~~规则动作 `RunOperator`~~（已完成：`RuleAction::RunOperator` 尾追加 + 两个动作共用抽取出的 `spawn_agent_run()`（保持原有的 spawn 不阻塞语义）+ 校验/预览/API DTO 三处齐） | neomind-rules actions | S |
+| M2-5 🔶 | ~~判定链 v1~~ —— **第一跳已交付**（通知 → 规则执行：告警 metadata 带 `(rule_id, triggered_at)`，`GET /api/messages/:id/chain` 走回来，含三种未解析态）；**第二跳**（→ 算子执行 → 原始输入）并入证据专题 | storage + handlers | M |
+| M2-6 ✅ | ~~前端：多源触发 UI + 告警详情判定链~~（两半都完成：编辑器任一/全部卡片 + 时间窗；告警详情「为什么发出来的」一节，含依据/时刻/已执行动作 + 「查看依据」跳执行） | agents-components/、messages 页族 | L |
+| M2-7 ❌ | ~~两个交叉点联动~~ —— **实测不需要联动**：M1 全为尾部追加，两处读取侧本来就防御，没有静默错。真正的缺口是它们**不认识结构化模式**（能力缺口非 bug），**并入 M4-1** 一起做 | 两文件 | M |
 
 **验证**：S2（算子输出→规则→通知+命令）与 S3（双源 AND 时间窗触发智能体→结论字段进仪表盘）端到端演示；旧 event_filter 字符串行为回归；判定链从通知点开可回溯到原始输入。
+
+### M2 期间额外完成（不在本表内，但同批交付）
+
+| 项 | 说明 |
+|---|---|
+| 002 §3.4 反馈闭环 | 两半齐了：**联动回显**（判定链，见 M2-5）+ **误报反馈**（`MessageStatus::FalsePositive` → 按规则累计 → 阈值建议）。建议只提示，从不改规则 —— 端到端测试断言规则一字节未动 |
+| F4 证据随输出 | 发布的 AI 字段带 `metadata.execution_id`（回指那次执行）+ `quality`（**模型自报的置信度**，不是常量）；详情页「输出字段」可看新鲜度/置信度并跳到那次执行 |
+| 静默失败三修 | ① 结构化 agent **零输入不再发布结论**（原先拿自己的旧结论当输入循环）；② 采集器那道「没采到数据」的守卫**从未触发过**（在混入 memory 之后才判空）；③ 启动的**键迁移会把 `ai:` 前缀误伤**成 `device:ai:`，导致重启后 AI 指标历史为空 —— 已修并**回搬**受损数据 |
 
 ### M3 — 交互深化（chat 三身份落地）
 
