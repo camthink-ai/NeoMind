@@ -122,7 +122,7 @@
       "channelDetails": "通道详情",
       "empty": {
         "title": "暂无通道",
-        "description": "创建通知通道来发送消息"
+        "description": "告警始终会出现在这里。添加通道，可以同时推送到你更快看到的地方。"
       },
       "webhookUrl": "Webhook URL",
       "webhookUrlPlaceholder": "https://example.com/webhook",

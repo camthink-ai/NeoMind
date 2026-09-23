@@ -705,13 +705,14 @@
         "notify": {
       "title": "Notify",
       "channelsLabel": "Channels",
-      "noChannels": "No channels configured yet (add one on the Messages page)",
+      "noChannels": "No external channels yet — alerts still land in Messages either way.",
       "onLabel": "When to notify",
       "onFailure": "On failure",
       "onFailureDesc": "Silence is health — only failures interrupt you",
       "onAlways": "Every run",
       "onAlwaysDesc": "Watch mode — every verdict is worth reading",
-      "hint": "Pick where to deliver and when. Without a config the legacy behavior (inferring from the conclusion text) applies."
+      "hint": "Pick where to deliver and when. Without a config the legacy behavior (inferring from the conclusion text) applies.",
+        "configureChannels": "Configure channels"
     },
     "workstyle": {
       "title": "How it works",

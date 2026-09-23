@@ -125,7 +125,7 @@
       "emailFrom": "From Address",
       "empty": {
         "title": "No Channels",
-        "description": "Create a notification channel to send messages"
+        "description": "Alerts always land here. Add a channel to also send them somewhere you will see sooner."
       },
       "webhookUrl": "Webhook URL",
       "webhookUrlPlaceholder": "https://example.com/webhook",

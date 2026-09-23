@@ -1205,6 +1205,10 @@ export default function MessagesPage() {
                   icon={<Radio className="h-12 w-12" />}
                   title={t('messages.channels.empty.title')}
                   description={t('messages.channels.empty.description')}
+                  action={{
+                    label: t('messages.channels.create'),
+                    onClick: () => setCreateDialogOpen(true),
+                  }}
                 />
               ) : (
                 channels.map((channel) => {
@@ -1525,6 +1529,10 @@ export default function MessagesPage() {
                   icon={<Radio className="h-12 w-12" />}
                   title={t('messages.channels.empty.title')}
                   description={t('messages.channels.empty.description')}
+                  action={{
+                    label: t('messages.channels.create'),
+                    onClick: () => setCreateDialogOpen(true),
+                  }}
                 />
               ) : undefined
             }

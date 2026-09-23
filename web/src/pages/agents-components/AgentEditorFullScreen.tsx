@@ -48,6 +48,7 @@ import {
   GitBranch,
 } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Link } from 'react-router-dom'
 import { channelsApi } from '@/lib/api/channels'
 import type { AlertChannel } from '@/types/message'
 import type {
@@ -1972,7 +1973,14 @@ export function AgentEditorFullScreen({
                 <InfoHint text={tAgent('creator.notify.hint')} />
               </div>
               {channels.length === 0 ? (
-                <p className="text-xs text-muted-foreground">{tAgent('creator.notify.noChannels')}</p>
+                <p className="text-xs text-muted-foreground">
+                  {tAgent('creator.notify.noChannels')}{' '}
+                  {/* A way forward, not just a note: the old text pointed at
+                      the Messages page in prose and left it there. */}
+                  <Link to="/messages" className="text-primary hover:underline">
+                    {tAgent('creator.notify.configureChannels')}
+                  </Link>
+                </p>
               ) : (
                 <>
                   <div className="flex flex-wrap gap-1.5">

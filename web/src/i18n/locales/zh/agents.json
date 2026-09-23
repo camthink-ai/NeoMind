@@ -705,13 +705,14 @@
         "notify": {
       "title": "通知",
       "channelsLabel": "通知渠道",
-      "noChannels": "尚未配置任何通知渠道（消息页可添加）",
+      "noChannels": "还没有外部通道 —— 告警仍会出现在「消息」里，不会漏。",
       "onLabel": "何时通知",
       "onFailure": "失败时",
       "onFailureDesc": "静默即健康——只有运行失败才打扰你",
       "onAlways": "每次运行",
       "onAlwaysDesc": "盯守模式——每个判定都值得读",
-      "hint": "选择往哪发、什么时候发。未配置时沿用旧行为（从结论文本推断）。"
+      "hint": "选择往哪发、什么时候发。未配置时沿用旧行为（从结论文本推断）。",
+        "configureChannels": "去配置通道"
     },
     "workstyle": {
       "title": "工作方式",
