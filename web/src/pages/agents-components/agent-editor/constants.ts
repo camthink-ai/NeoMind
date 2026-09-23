@@ -21,6 +21,19 @@ import { Zap, Activity, BarChart3, Bell } from 'lucide-react'
  */
 export const DEFAULT_LOOKBACK_MINUTES = 60
 
+/**
+ * How many tool rounds a new agent starts with.
+ *
+ * MUST stay equal to `DEFAULT_MAX_CHAIN_DEPTH` in
+ * `crates/neomind-storage/src/agents.rs` — for the same reason as the lookback
+ * above, plus one: the editor also uses this number as its "unchanged"
+ * sentinel. A create request that leaves the field here sends nothing, and the
+ * API applies its own default. Drift, and the form shows one budget while the
+ * agent is created with another. A drift test locks the pair, in `mod tests`
+ * of that same Rust file.
+ */
+export const DEFAULT_MAX_CHAIN_DEPTH = 10
+
 export const INTERVALS = [5, 10, 15, 30, 60]
 export const HOURS = Array.from({ length: 24 }, (_, i) => i)
 

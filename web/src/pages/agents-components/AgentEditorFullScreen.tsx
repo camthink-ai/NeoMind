@@ -79,6 +79,7 @@ import {
   hasOutputContract,
   AGENT_PRESETS,
   DEFAULT_LOOKBACK_MINUTES,
+  DEFAULT_MAX_CHAIN_DEPTH,
   parseTriggerFilter,
   buildTriggerFilter,
   reasonTriggerFilterInvalid,
@@ -246,7 +247,7 @@ export function AgentEditorFullScreen({
   })
   const [priority, setPriority] = useState(128)
   const [contextWindowSize, setContextWindowSize] = useState(10)
-  const [maxChainDepth, setMaxChainDepth] = useState(5)
+  const [maxChainDepth, setMaxChainDepth] = useState(DEFAULT_MAX_CHAIN_DEPTH)
   // Advanced knobs collapsed by default — defaults suit most agents
 
   // LLM validation state
@@ -423,7 +424,7 @@ export function AgentEditorFullScreen({
         })
         setPriority(agent.priority ?? 128)
         setContextWindowSize(agent.context_window_size ?? 10)
-        setMaxChainDepth(agent.max_chain_depth ?? 5)
+        setMaxChainDepth(agent.max_chain_depth ?? DEFAULT_MAX_CHAIN_DEPTH)
         parseSchedule(agent.schedule)
         loadAgentResources(agent)
       } else {
@@ -440,7 +441,7 @@ export function AgentEditorFullScreen({
         setOperatorConfig({ debounce_secs: 30, timeout_secs: 60, consecutive_failure_threshold: 3 })
         setPriority(5)
         setContextWindowSize(10)
-        setMaxChainDepth(5)
+        setMaxChainDepth(DEFAULT_MAX_CHAIN_DEPTH)
         setScheduleType('timer')
         setTimerSubType('interval')
         setIntervalValue(5)
@@ -1211,7 +1212,8 @@ export function AgentEditorFullScreen({
         // Advanced configuration
         priority: priority !== 128 ? priority : undefined,
         context_window_size: contextWindowSize !== 10 ? contextWindowSize : undefined,
-        max_chain_depth: maxChainDepth !== 5 ? maxChainDepth : undefined,
+        max_chain_depth:
+          maxChainDepth !== DEFAULT_MAX_CHAIN_DEPTH ? maxChainDepth : undefined,
         execution_mode: executionMode,
         memory_mode: memoryMode ?? undefined,
         notify: notify ?? undefined,

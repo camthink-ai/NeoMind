@@ -1682,6 +1682,40 @@ impl AgentStore {
 mod tests {
     use super::*;
 
+    /// Read `export const <name> = <digits>` out of the editor's shared
+    /// constants module. `None` when the file is absent (source tarball without
+    /// `web/`) or the constant is not declared.
+    fn editor_constant(name: &str) -> Option<u64> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../web/src/pages/agents-components/agent-editor/constants.ts");
+        let text = std::fs::read_to_string(path).ok()?;
+        let marker = format!("export const {} =", name);
+        let start = text.find(&marker)? + marker.len();
+        let rest = &text[start..];
+        let end = rest
+            .find(|c: char| !c.is_ascii_digit() && c != '_' && c != ' ')
+            .unwrap_or(rest.len());
+        rest[..end].trim().replace('_', "").parse().ok()
+    }
+
+    /// The editor *shows* this number and uses it as its "untouched" sentinel:
+    /// a create request that leaves the field there sends nothing, and
+    /// `create_agent` applies this same default. Drift, and the form shows one
+    /// budget while the agent is created with another — the lie the lookback
+    /// window used to tell. No constant crosses the Rust/TS boundary, so the
+    /// invariant is held by test.
+    #[test]
+    fn default_max_chain_depth_matches_the_editor_constant() {
+        let Some(editor) = editor_constant("DEFAULT_MAX_CHAIN_DEPTH") else {
+            return; // no web/ tree to compare against
+        };
+        assert_eq!(
+            editor, DEFAULT_MAX_CHAIN_DEPTH as u64,
+            "DEFAULT_MAX_CHAIN_DEPTH (web/.../agent-editor/constants.ts) drifted from \
+             DEFAULT_MAX_CHAIN_DEPTH (neomind-storage/src/agents.rs) — update both"
+        );
+    }
+
     fn test_store() -> Arc<AgentStore> {
         AgentStore::memory().unwrap()
     }
