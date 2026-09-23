@@ -196,7 +196,7 @@ function MessageBubble({ message, onDelete }: MessageBubbleProps) {
         onClick={onDelete}
         aria-label={t('common:delete')}
         className={cn(
-          "absolute inset-y-0 right-1.5 my-auto h-fit rounded p-1 opacity-0 transition-opacity group-hover:opacity-100",
+          "absolute inset-y-0 right-1.5 my-auto flex h-7 w-7 items-center justify-center rounded-md opacity-0 transition-opacity group-hover:opacity-100",
           "text-muted-foreground hover:bg-card hover:text-error"
         )}
         title={t('common:delete')}
