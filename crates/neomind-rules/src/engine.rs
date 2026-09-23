@@ -775,12 +775,7 @@ impl RuleEngine {
                     NotifySeverity::Info => neomind_messages::MessageSeverity::Info,
                     NotifySeverity::Warning => neomind_messages::MessageSeverity::Warning,
                     NotifySeverity::Critical => neomind_messages::MessageSeverity::Critical,
-                    NotifySeverity::Emergency => {
-                        tracing::warn!(
-                            "Emergency severity mapped to Critical (MessageManager has no Emergency level)"
-                        );
-                        neomind_messages::MessageSeverity::Critical
-                    }
+                    NotifySeverity::Emergency => neomind_messages::MessageSeverity::Emergency,
                 };
 
                 let mgr = self.message_manager.read().await;
@@ -910,8 +905,11 @@ impl RuleEngine {
             }
         };
 
-        let (spawn_id, log_id, spawn_label) =
-            (agent_id.to_string(), agent_id.to_string(), label.to_string());
+        let (spawn_id, log_id, spawn_label) = (
+            agent_id.to_string(),
+            agent_id.to_string(),
+            label.to_string(),
+        );
         tokio::spawn(async move {
             if let Err(e) = cb(spawn_id, input, data).await {
                 tracing::warn!(
@@ -1125,6 +1123,54 @@ mod tests {
         );
     }
 
+    /// The operator picks a severity in the rule editor and it must survive to
+    /// the delivered message. Emergency used to be downgraded to Critical on
+    /// the way out ("MessageManager has no Emergency level" — a claim that
+    /// stopped being true when the severity was added), so a rule configured
+    /// as Emergency alerted as Critical: wrong label, wrong emoji, and it
+    /// ranked below nothing in the emergency filter.
+    #[tokio::test]
+    async fn emergency_severity_reaches_the_message_unchanged() {
+        let provider = Arc::new(InMemoryValueProvider::new());
+        let engine = RuleEngine::new(provider);
+        let messages = Arc::new(neomind_messages::MessageManager::new());
+        engine.set_message_manager(messages.clone()).await;
+
+        for (configured, expected) in [
+            (
+                NotifySeverity::Emergency,
+                neomind_messages::MessageSeverity::Emergency,
+            ),
+            (
+                NotifySeverity::Critical,
+                neomind_messages::MessageSeverity::Critical,
+            ),
+        ] {
+            let mut rule = CompiledRule::new("Alarm");
+            rule.trigger = RuleTrigger::Manual;
+            rule.actions = vec![RuleAction::Notify {
+                message: format!("{configured:?} alarm"),
+                severity: configured,
+            }];
+            rule.finalize();
+            let rule_id = rule.id.clone();
+            engine.add_rule(rule).await.unwrap();
+
+            let result = engine.execute_rule(&rule_id).await;
+            assert!(result.success, "the notify action must run");
+
+            let sent = messages.list_messages().await;
+            let msg = sent
+                .iter()
+                .find(|m| m.message == format!("{configured:?} alarm"))
+                .expect("each notify action must produce its own message");
+            assert_eq!(
+                msg.severity, expected,
+                "{configured:?} must arrive as {expected:?}, not be silently downgraded"
+            );
+        }
+    }
+
     /// M2-4: a rule that runs an operator must actually invoke it — and with
     /// no prompt input, because an operator collects its own bound sources
     /// rather than being told what to look at.
@@ -1136,13 +1182,15 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(1);
         engine
             .set_agent_trigger_callback(Arc::new(
-                move |agent_id: String,
-                      input: Option<String>,
-                      data: Option<serde_json::Value>| {
+                move |agent_id: String, input: Option<String>, data: Option<serde_json::Value>| {
                     let tx = tx.clone();
                     Box::pin(async move {
                         let _ = tx
-                            .send(format!("{agent_id}|in={}|data={}", input.is_some(), data.is_some()))
+                            .send(format!(
+                                "{agent_id}|in={}|data={}",
+                                input.is_some(),
+                                data.is_some()
+                            ))
                             .await;
                         Ok(())
                     })
