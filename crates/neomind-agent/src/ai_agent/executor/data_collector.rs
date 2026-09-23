@@ -1,5 +1,16 @@
 use super::*;
 
+/// How far back collection reaches for a source whose `config.data_collection`
+/// carries no `time_range_minutes` — i.e. an agent created through the CLI/API,
+/// or one predating the field. The editor's "Look back" control writes an
+/// explicit value, so this only decides what a *silent* source is read over.
+///
+/// MUST stay equal to `DEFAULT_LOOKBACK_MINUTES` in
+/// `web/src/pages/agents-components/agent-editor/types.ts`. The editor shows
+/// that number; this is the one execution actually applies. A drift test below
+/// locks the pair.
+pub(crate) const DEFAULT_TIME_RANGE_MINUTES: u64 = 60;
+
 fn metric_value_to_json(
     v: &neomind_core::extension::system::ParamMetricValue,
 ) -> serde_json::Value {
@@ -262,7 +273,7 @@ impl AgentExecutor {
                     .get("data_collection")
                     .and_then(|dc| dc.get("time_range_minutes"))
                     .and_then(|v| v.as_u64())
-                    .unwrap_or(60);
+                    .unwrap_or(DEFAULT_TIME_RANGE_MINUTES);
 
                 let include_history = resource
                     .config
@@ -1549,6 +1560,41 @@ pub(crate) fn is_image_metric(metric_name: &str, value: &serde_json::Value) -> b
 mod tests {
     use super::*;
     use std::fs;
+
+    /// Read `export const <name> = <digits>` out of the editor's shared
+    /// constants module. `None` when the file is absent (source tarball without
+    /// `web/`) or the constant is not declared.
+    fn editor_constant(name: &str) -> Option<u64> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+            "../../web/src/pages/agents-components/agent-editor/constants.ts",
+        );
+        let text = std::fs::read_to_string(path).ok()?;
+        let marker = format!("export const {} =", name);
+        let start = text.find(&marker)? + marker.len();
+        let rest = &text[start..];
+        let end = rest
+            .find(|c: char| !c.is_ascii_digit() && c != '_' && c != ' ')
+            .unwrap_or(rest.len());
+        rest[..end].trim().replace('_', "").parse().ok()
+    }
+
+    /// The editor *displays* this number; the executor *applies* it. If the
+    /// two literals drift, the editor silently lies about how far back the
+    /// agent will read — which is exactly the failure that made the window
+    /// configurable in the first place. There is no shared constant to import
+    /// across the Rust/TS boundary, so the invariant is held by test.
+    #[test]
+    fn default_time_range_minutes_matches_the_editor_constant() {
+        let Some(editor) = editor_constant("DEFAULT_LOOKBACK_MINUTES") else {
+            return; // no web/ tree to compare against
+        };
+        assert_eq!(
+            editor,
+            DEFAULT_TIME_RANGE_MINUTES,
+            "DEFAULT_LOOKBACK_MINUTES (web/.../agent-editor/constants.ts) drifted from \
+             DEFAULT_TIME_RANGE_MINUTES (data_collector.rs) — update both"
+        );
+    }
 
     #[serial_test::serial]
     #[test]

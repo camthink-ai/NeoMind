@@ -8,6 +8,19 @@ import { Zap, Activity, BarChart3, Bell } from 'lucide-react'
 // Constants
 // ============================================================================
 
+/**
+ * How far back collection reaches for a source that has no explicit
+ * `time_range_minutes` — the "Look back" control in the selected-resource card.
+ *
+ * MUST stay equal to `DEFAULT_TIME_RANGE_MINUTES` in
+ * `crates/neomind-agent/src/ai_agent/executor/data_collector.rs`. The editor
+ * displays this number; the executor is what actually applies it to a resource
+ * saved without one — if the two disagree, the editor silently lies about what
+ * the agent will read. A drift test locks the pair, in `mod tests` of that
+ * same Rust file.
+ */
+export const DEFAULT_LOOKBACK_MINUTES = 60
+
 export const INTERVALS = [5, 10, 15, 30, 60]
 export const HOURS = Array.from({ length: 24 }, (_, i) => i)
 

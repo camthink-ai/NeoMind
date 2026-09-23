@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Target, X, Puzzle, ChevronRight } from 'lucide-react'
 import type { SelectedResource } from './types'
+import { DEFAULT_LOOKBACK_MINUTES } from './constants'
 
 export interface SelectedResourceItemProps {
   resource: SelectedResource
@@ -34,10 +35,10 @@ export function SelectedResourceItem({ resource, setSelectedResources, onRemove,
   const hasCommands = resource.allCommands.length > 0
 
   // How far back collection reaches for this source. A device that reports
-  // every few hours is invisible to the 60-minute default, and the agent then
-  // has nothing to read — which looks like a broken agent rather than a window
-  // set too narrow.
-  const lookbackMinutes = resource.config?.data_collection?.time_range_minutes ?? 60
+  // every few hours is invisible to the default window, and the agent then has
+  // nothing to read — which looks like a broken agent rather than a window set
+  // too narrow. This control is how the user widens it for such a source.
+  const lookbackMinutes = resource.config?.data_collection?.time_range_minutes ?? DEFAULT_LOOKBACK_MINUTES
   const setLookbackMinutes = (minutes: number) => {
     if (!Number.isFinite(minutes) || minutes < 1) return
     setSelectedResources((prev: SelectedResource[]) =>

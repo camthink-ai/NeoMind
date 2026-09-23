@@ -78,6 +78,7 @@ import {
   deriveExecutionMode,
   hasOutputContract,
   AGENT_PRESETS,
+  DEFAULT_LOOKBACK_MINUTES,
   parseTriggerFilter,
   buildTriggerFilter,
   reasonTriggerFilterInvalid,
@@ -597,7 +598,7 @@ export function AgentEditorFullScreen({
         if (res.config?.data_collection && !resourceDataCollectionConfigs.has(deviceId)) {
           const dc = res.config.data_collection as { time_range_minutes?: number; include_history?: boolean; include_trend?: boolean; include_baseline?: boolean }
           resourceDataCollectionConfigs.set(deviceId, {
-            time_range_minutes: dc.time_range_minutes ?? 60,
+            time_range_minutes: dc.time_range_minutes ?? DEFAULT_LOOKBACK_MINUTES,
             include_history: dc.include_history ?? false,
             include_trend: dc.include_trend ?? false,
             include_baseline: dc.include_baseline ?? false,
@@ -624,7 +625,7 @@ export function AgentEditorFullScreen({
           if (res.config?.data_collection && !resourceDataCollectionConfigs.has(extId)) {
             const dc = res.config.data_collection as { time_range_minutes?: number; include_history?: boolean; include_trend?: boolean; include_baseline?: boolean }
             resourceDataCollectionConfigs.set(extId, {
-              time_range_minutes: dc.time_range_minutes ?? 60,
+              time_range_minutes: dc.time_range_minutes ?? DEFAULT_LOOKBACK_MINUTES,
               include_history: dc.include_history ?? false,
               include_trend: dc.include_trend ?? false,
               include_baseline: dc.include_baseline ?? false,
