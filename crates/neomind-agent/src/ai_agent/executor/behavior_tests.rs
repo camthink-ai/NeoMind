@@ -1080,6 +1080,93 @@ async fn notify_on_always_reports_successes() {
     assert!(hit.message.contains("正常"), "body carries the verdict: {}", hit.message);
 }
 
+/// An alert is the *record* of what happened; channels are only how it
+/// travels. The rule path already works that way — `create_message` stores
+/// unconditionally and fans out best-effort ("don't fail if channels fail -
+/// message is already stored").
+///
+/// This path returned early when no channel was configured, so switching
+/// notifications on with nowhere to push them produced nothing at all: no
+/// external delivery *and* no in-app entry. Turning notifications on should
+/// never mean "tell nobody".
+#[tokio::test]
+async fn an_agent_without_channels_still_records_its_alert_in_app() {
+    let store = AgentStore::memory().expect("store");
+    let message_manager = Arc::new(neomind_messages::MessageManager::new());
+    let config = AgentExecutorConfig {
+        store: store.clone(),
+        time_series_storage: None,
+        device_service: None,
+        event_bus: None,
+        message_manager: Some(message_manager.clone()),
+        llm_runtime: None,
+        llm_backend_store: None,
+        extension_registry: None,
+        tool_registry: None,
+        memory_store: None,
+        backend_semaphores: None,
+        skill_registry: None,
+        execution_semaphore: None,
+    };
+    let executor = AgentExecutor::new(config).await.expect("executor");
+
+    let agent: AiAgent = serde_json::from_value(serde_json::json!({
+        "id": "no-channel-agent",
+        "name": "盯守",
+        "user_prompt": "判断状态",
+        "resources": [],
+        "schedule": { "schedule_type": "manual" },
+        "status": "active",
+        "created_at": 0, "updated_at": 0,
+        "stats": {
+            "total_executions": 0, "successful_executions": 0,
+            "failed_executions": 0, "avg_duration_ms": 0, "last_duration_ms": null
+        },
+        "memory": {},
+        "notify": { "channels": [], "on": "always" },
+    }))
+    .expect("fixture");
+    store.save_agent(&agent).await.expect("seed");
+
+    let record = neomind_storage::AgentExecutionRecord {
+        id: "exec-no-channel".to_string(),
+        agent_id: agent.id.clone(),
+        timestamp: 0,
+        trigger_type: "schedule".to_string(),
+        status: neomind_storage::ExecutionStatus::Completed,
+        decision_process: neomind_storage::DecisionProcess {
+            situation_analysis: String::new(),
+            data_collected: vec![],
+            reasoning_steps: vec![],
+            decisions: vec![],
+            conclusion: "冷库温度正常".to_string(),
+            confidence: None,
+            stop_reason: String::new(),
+        },
+        result: None,
+        duration_ms: 12,
+        error: None,
+    };
+
+    executor
+        .dispatch_agent_notifications(&agent.id, &agent.name, &record)
+        .await;
+
+    let sent = message_manager.list_messages().await;
+    assert_eq!(
+        sent.len(),
+        1,
+        "the alert must exist even when there is nowhere to push it"
+    );
+    assert_eq!(sent[0].source, "agent:no-channel-agent");
+    assert!(sent[0].message.contains("冷库温度正常"));
+    assert_eq!(
+        sent[0].target_channels,
+        Some(Vec::new()),
+        "and it must be addressed to nobody externally, not broadcast"
+    );
+}
+
 /// Explicit notification routing (2026-09-23): a failed run with
 /// notify={channels, on: failure} must land a message targeted at exactly
 /// those channels; a passing run must stay silent for on: failure.

@@ -668,9 +668,14 @@ impl AgentExecutor {
         else {
             return;
         };
-        if notify.channels.is_empty() {
-            return;
-        }
+        // No channel is not "no alert". The message IS the record of the run —
+        // it is what the Messages page lists, what the judgment chain hangs
+        // off, and what the false-positive feedback acts on — while channels
+        // are only how it travels. Returning here meant turning notifications
+        // on with nowhere to push them told nobody at all, not even in-app; the
+        // rule path has always stored unconditionally and fanned out
+        // best-effort. With an empty target list the message is still created
+        // and simply reaches no external channel.
         let failed = record.status != neomind_storage::ExecutionStatus::Completed;
         let should_send = match notify.on {
             neomind_storage::NotifyOn::Always => true,
