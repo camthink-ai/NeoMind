@@ -108,9 +108,6 @@ export function AgentCard({
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
       )}
     >
-      {isExecuting && (
-        <span className="absolute inset-y-0 left-0 w-0.5 bg-info animate-pulse" aria-hidden />
-      )}
       <CardContent className="p-4 flex flex-col flex-1">
       {/* ── Header: identity + health ─────────────────────────────── */}
       <div className="flex items-start gap-3">
