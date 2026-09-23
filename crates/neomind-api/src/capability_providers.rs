@@ -143,6 +143,7 @@ impl DeviceCapabilityProvider {
             timestamp: timestamp_secs,
             value: metric_value.clone(),
             quality: Some(1.0),
+            metadata: None,
         };
 
         let write_source_id = format!("device:{}", device_id);

@@ -574,6 +574,7 @@ impl DeviceService {
                                 timestamp,
                                 value: metric_value,
                                 quality: None,
+                            metadata: None,
                             };
 
                             if let Err(e) = storage

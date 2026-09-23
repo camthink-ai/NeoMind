@@ -191,6 +191,7 @@ pub async fn write_virtual_metric_handler(
         timestamp,
         value: device_metric_value,
         quality: Some(1.0), // High quality for virtual metrics
+        metadata: None,
     };
 
     // Write to time series storage

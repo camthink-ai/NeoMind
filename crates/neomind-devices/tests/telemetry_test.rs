@@ -27,6 +27,7 @@ async fn test_telemetry_write_performance() {
             timestamp: now + i as i64,
             value: MetricValue::Float(20.0 + (i as f64 % 10.0)),
             quality: None,
+            metadata: None,
         };
         storage.write(device_id, metric, point).await.unwrap();
     }
@@ -66,6 +67,7 @@ async fn test_telemetry_batch_write_performance() {
             timestamp: now + i as i64,
             value: MetricValue::Float(40.0 + (i as f64 % 20.0)),
             quality: None,
+            metadata: None,
         });
     }
 
@@ -104,6 +106,7 @@ async fn test_telemetry_query_performance() {
             timestamp: now + i as i64,
             value: MetricValue::Float(1000.0 + (i as f64)),
             quality: Some(0.95),
+            metadata: None,
         };
         storage.write(device_id, metric, point).await.unwrap();
     }
@@ -142,6 +145,7 @@ async fn test_telemetry_aggregation_performance() {
             timestamp: now + i as i64,
             value: MetricValue::Float(100.0 + (i as f64 % 50.0)),
             quality: None,
+            metadata: None,
         };
         storage.write(device_id, metric, point).await.unwrap();
     }
@@ -193,6 +197,7 @@ async fn test_telemetry_latest_performance() {
             timestamp: now + i as i64,
             value: MetricValue::Float(220.0 + (i as f64 % 10.0)),
             quality: None,
+            metadata: None,
         };
         storage.write(device_id, metric, point).await.unwrap();
     }
@@ -240,6 +245,7 @@ async fn test_telemetry_concurrent_write_performance() {
                     timestamp: now + i as i64,
                     value: MetricValue::Float((writer_id * 1000 + i) as f64),
                     quality: None,
+                    metadata: None,
                 };
                 storage_clone
                     .write(&device_id, metric, point)
@@ -302,6 +308,7 @@ async fn test_telemetry_multi_metric_performance() {
                 timestamp: now + i as i64,
                 value: MetricValue::Float(i as f64),
                 quality: None,
+                metadata: None,
             };
             storage.write(device_id, metric, point).await.unwrap();
         }
@@ -342,6 +349,7 @@ async fn test_telemetry_delete_old_data_performance() {
             timestamp: old_timestamp + i as i64,
             value: MetricValue::Float(i as f64),
             quality: None,
+            metadata: None,
         };
         storage.write(device_id, metric, point).await.unwrap();
     }
@@ -402,6 +410,7 @@ async fn test_image_storage_performance() {
             timestamp: now + i as i64,
             value: MetricValue::Binary(image_data),
             quality: None,
+            metadata: None,
         };
         storage.write(device_id, metric, point).await.unwrap();
     }
@@ -450,6 +459,7 @@ async fn test_image_retrieval_performance() {
             timestamp: now + i as i64,
             value: MetricValue::Binary(image_data),
             quality: None,
+            metadata: None,
         };
         storage.write(device_id, metric, point).await.unwrap();
     }

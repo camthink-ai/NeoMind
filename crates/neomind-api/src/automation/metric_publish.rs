@@ -145,6 +145,10 @@ impl VirtualMetricPublisher {
             timestamp,
             value: core_to_devices(value),
             quality,
+            // No producer on this path attaches provenance yet. The field is
+            // here because the storage point has always had it and the view
+            // type used to swallow it.
+            metadata: None,
         };
         if let Err(e) = self
             .time_series

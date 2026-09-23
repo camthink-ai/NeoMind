@@ -618,6 +618,7 @@ impl WebhookAdapter {
                     timestamp,
                     value: value.clone(),
                     quality: None,
+                metadata: None,
                 };
                 if let Err(e) = storage
                     .write(&format!("device:{}", device_id), &metric_name, data_point)

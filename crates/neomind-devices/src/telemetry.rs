@@ -25,6 +25,12 @@ pub struct DataPoint {
     pub value: MetricValue,
     /// Quality indicator (0-1, optional)
     pub quality: Option<f32>,
+    /// Optional metadata carried alongside the value. Storage has always had
+    /// this field; this view simply never forwarded it, so anything attached
+    /// to a point — a published AI field's link back to its run, for instance
+    /// — was dropped one layer below the API.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
 }
 
 impl DataPoint {
@@ -34,6 +40,7 @@ impl DataPoint {
             timestamp,
             value,
             quality: None,
+        metadata: None,
         }
     }
 
@@ -103,6 +110,9 @@ impl DataPoint {
         if let Some(q) = self.quality {
             point = point.with_quality(q);
         }
+        if let Some(m) = &self.metadata {
+            point = point.with_metadata(m.clone());
+        }
         point
     }
 
@@ -113,6 +123,7 @@ impl DataPoint {
             timestamp: storage_point.timestamp,
             value,
             quality: storage_point.quality,
+            metadata: storage_point.metadata,
         })
     }
 }
@@ -816,11 +827,11 @@ mod swap_drain_tests {
     async fn swap_drains_placeholder_writes_into_persistent() {
         let placeholder = std::sync::Arc::new(TimeSeriesStorage::memory_deferred().expect("memory-deferred"));
         placeholder
-            .write("ai:agent-1", "status", crate::telemetry::DataPoint { timestamp: 100, value: MetricValue::String("正常".into()), quality: None })
+            .write("ai:agent-1", "status", crate::telemetry::DataPoint { timestamp: 100, value: MetricValue::String("正常".into()), quality: None, metadata: None })
             .await
             .expect("write to placeholder");
         placeholder
-            .write("device:dev-1", "temperature", crate::telemetry::DataPoint { timestamp: 101, value: MetricValue::Float(21.5), quality: None })
+            .write("device:dev-1", "temperature", crate::telemetry::DataPoint { timestamp: 101, value: MetricValue::Float(21.5), quality: None, metadata: None })
             .await
             .expect("write to placeholder");
 

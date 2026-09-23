@@ -195,3 +195,65 @@ async fn test_ai_series_detail_endpoint_accepts_ai_source() {
     .await
     .expect("ai:{agent} must parse as a source, not 400");
 }
+
+/// The pointer an AI field carries — back to the run that produced it — has to
+/// survive the read path, or the provenance feature is invisible end to end.
+///
+/// It did not: the storage point has had a `metadata` field all along, but the
+/// device-side view type the API reads through had no such field, so anything
+/// attached to a point was silently dropped one layer below the response.
+/// Verified as far as storage before; this is the assertion that it reaches a
+/// caller.
+#[tokio::test]
+async fn test_ai_series_read_back_carries_the_run_it_came_from() {
+    let state = create_test_server_state().await;
+    let id = create_agent_with(&state, json!({ "execution_mode": "structured" })).await;
+
+    state
+        .devices
+        .telemetry
+        .write(
+            &format!("ai:{id}"),
+            "missing_count",
+            neomind_devices::telemetry::DataPoint {
+                timestamp: chrono::Utc::now().timestamp(),
+                value: neomind_devices::MetricValue::Integer(0),
+                quality: Some(0.42),
+                metadata: Some(json!({ "execution_id": "exec-boundary-1" })),
+            },
+        )
+        .await
+        .expect("seed a published field");
+    // Writes are buffered; this handler reads redb, not the cache.
+    state.devices.telemetry.flush().expect("flush the buffer");
+
+    let response = neomind_api::handlers::data::query_telemetry_handler(
+        State(state),
+        Query(neomind_api::handlers::data::TelemetryQueryParams {
+            source: Some(format!("ai:{id}")),
+            metric: Some("missing_count".to_string()),
+            start: None,
+            end: None,
+            limit: None,
+            offset: None,
+            aggregate: None,
+            bucketed: None,
+        }),
+    )
+    .await
+    .expect("the series must be queryable");
+
+    let data = response.0.data.expect("the envelope carries data");
+    let point = &data["data"][0];
+
+    assert_eq!(
+        point["metadata"]["execution_id"], "exec-boundary-1",
+        "a value read back has to say which run produced it: {point}"
+    );
+    // `quality` is an f32, so it arrives as 0.41999998688697815.
+    let quality = point["quality"].as_f64().expect("the point carries a quality");
+    assert!(
+        (quality - 0.42).abs() < 1e-6,
+        "and carry the confidence it was published with: {quality}"
+    );
+}

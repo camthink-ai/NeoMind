@@ -730,6 +730,11 @@ pub async fn query_telemetry_handler(
                 "timestamp": p.timestamp,
                 "value": p.value.to_json_value(),
                 "quality": p.quality,
+                // A published AI field points back at the run that produced it
+                // via this. Without it the pointer exists in redb and reaches
+                // nobody: every other field on a point was already forwarded,
+                // metadata was simply never written out.
+                "metadata": p.metadata,
             })
         })
         .collect();
