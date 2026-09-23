@@ -252,6 +252,7 @@ impl MessageManager {
             status: MessageStatus::from_string(&stored.status).unwrap_or(MessageStatus::Active),
             metadata: stored.metadata,
             tags: stored.tags.unwrap_or_default(),
+            target_channels: None,
         }
     }
 
@@ -360,6 +361,16 @@ impl MessageManager {
                 // Calling `channel.is_enabled()` directly would bypass the
                 // override and keep delivering to "disabled" channels.
                 if channels.is_enabled_effective(channel_name).await {
+                    // Explicit routing narrows delivery; None broadcasts.
+                    if let Some(targets) = &message.target_channels {
+                        if !targets.iter().any(|t| t == channel_name) {
+                            tracing::debug!(
+                                "Channel '{}' not in target_channels, skipping",
+                                channel_name
+                            );
+                            continue;
+                        }
+                    }
                     // Apply filter before sending
                     let filter = channels.get_filter(channel_name).await;
                     if !filter.matches(&message) {

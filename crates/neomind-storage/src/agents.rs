@@ -121,6 +121,10 @@ pub struct AiAgent {
     /// defaulted — existing rows decode unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_mode: Option<MemoryMode>,
+    /// Explicit notification routing; None keeps legacy behavior
+    /// (intent-keyword alerts) untouched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notify: Option<AgentNotify>,
 }
 
 /// Tool configuration for AI Agent function calling mode.
@@ -328,6 +332,31 @@ pub struct OperatorConfig {
     /// Consecutive failures before the circuit breaker opens (default 3)
     #[serde(default = "default_operator_failure_threshold")]
     pub consecutive_failure_threshold: u8,
+}
+
+/// Explicit notification routing (2026-09-23). Replaces the old
+/// keyword-sniffing on decision text: the user picks the channels and when
+/// to notify; the executor routes accordingly. Channels are names from the
+/// messages domain (`listMessageChannels`).
+#[derive(utoipa::ToSchema, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum NotifyOn {
+    /// Notify only when a run FAILS (the ops heartbeat — silence is health).
+    #[default]
+    Failure,
+    /// Notify after every run (watch-style: each verdict is worth reading).
+    Always,
+}
+
+/// Per-agent notification routing.
+#[derive(utoipa::ToSchema, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct AgentNotify {
+    /// Channel names to deliver to. Empty = config present but nowhere to
+    /// send (valid; effectively muted).
+    #[serde(default)]
+    pub channels: Vec<String>,
+    #[serde(default)]
+    pub on: NotifyOn,
 }
 
 /// How much history an agent carries into each run (2026-09-22 review —
@@ -1493,6 +1522,7 @@ mod tests {
             output_schema: None,
             operator_config: None,
             memory_mode,
+        notify: None,
         }
     }
 
@@ -1571,6 +1601,7 @@ mod tests {
             output_schema: None,
             operator_config: None,
             memory_mode: None,
+            notify: None,
         };
 
         store.save_agent(&agent).await.unwrap();
@@ -1620,6 +1651,7 @@ mod tests {
             output_schema: None,
             operator_config: None,
             memory_mode: None,
+            notify: None,
         };
 
         store.save_agent(&agent).await.unwrap();
@@ -1703,6 +1735,7 @@ mod tests {
             output_schema: None,
             operator_config: None,
             memory_mode: None,
+            notify: None,
         };
 
         // Save initial agent
@@ -1773,6 +1806,7 @@ mod tests {
             output_schema: None,
             operator_config: None,
             memory_mode: None,
+            notify: None,
         };
 
         store.save_agent(&agent).await.unwrap();

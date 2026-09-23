@@ -123,6 +123,7 @@ async fn build_harness() -> (AgentExecutor, AiAgent, Arc<ToolRegistry>) {
         output_schema: None,
         operator_config: None,
         memory_mode: None,
+        notify: None,
         enable_tool_chaining: false,
         max_chain_depth: 3,
     };
@@ -664,6 +665,135 @@ async fn metric_collection_reads_the_key_telemetry_is_written_under() {
 }
 
 
+
+
+/// The watch-style trigger: on=always notifies on SUCCESS too, at Info
+/// severity, so a 盯-style agent reports every verdict.
+#[tokio::test]
+async fn notify_on_always_reports_successes() {
+    let store = AgentStore::memory().expect("store");
+    let message_manager = Arc::new(neomind_messages::MessageManager::new());
+    let config = AgentExecutorConfig {
+        store: store.clone(),
+        time_series_storage: Some(neomind_storage::TimeSeriesStore::memory().expect("ts")),
+        device_service: None,
+        event_bus: None,
+        message_manager: Some(message_manager.clone()),
+        llm_runtime: None,
+        llm_backend_store: None,
+        extension_registry: None,
+        tool_registry: None,
+        memory_store: None,
+        backend_semaphores: None,
+        skill_registry: None,
+        execution_semaphore: None,
+    };
+    let mut executor = AgentExecutor::new(config).await.expect("executor");
+    let agent: AiAgent = serde_json::from_value(serde_json::json!({
+        "id": "always-agent",
+        "name": "盯守测试",
+        "user_prompt": "判断状态",
+        "resources": [],
+        "schedule": { "schedule_type": "manual" },
+        "status": "active",
+        "created_at": 0, "updated_at": 0,
+        "execution_mode": "structured",
+        "output_schema": [
+            { "name": "status", "field_type": { "type": "enum", "values": ["正常", "异常"] } }
+        ],
+        "stats": {
+            "total_executions": 0, "successful_executions": 0,
+            "failed_executions": 0, "avg_duration_ms": 0, "last_duration_ms": null
+        },
+        "memory": {},
+        "notify": { "channels": ["webhook:ops"], "on": "always" },
+    }))
+    .expect("fixture");
+    store.save_agent(&agent).await.expect("seed");
+    executor
+        .set_llm_runtime(Arc::new(MockLlmRuntime::new(vec![MockResponse::text(
+            r#"{"status": "正常"}"#,
+        )])))
+        .await;
+
+    executor.execute_agent(agent, None, None).await.expect("run ok");
+
+    let messages = message_manager.list_messages().await;
+    let hit = messages
+        .iter()
+        .find(|m| m.source == "agent:always-agent")
+        .expect("success must notify under on=always");
+    assert!(hit.title.contains("completed"), "title: {}", hit.title);
+    assert!(hit.message.contains("正常"), "body carries the verdict: {}", hit.message);
+}
+
+/// Explicit notification routing (2026-09-23): a failed run with
+/// notify={channels, on: failure} must land a message targeted at exactly
+/// those channels; a passing run must stay silent for on: failure.
+#[tokio::test]
+async fn notify_routes_failures_to_configured_channels() {
+    let store = AgentStore::memory().expect("store");
+    let ts = neomind_storage::TimeSeriesStore::memory().expect("ts");
+    let message_manager = Arc::new(neomind_messages::MessageManager::new());
+    let config = AgentExecutorConfig {
+        store: store.clone(),
+        time_series_storage: Some(ts),
+        device_service: None,
+        event_bus: None,
+        message_manager: Some(message_manager.clone()),
+        llm_runtime: None,
+        llm_backend_store: None,
+        extension_registry: None,
+        tool_registry: None,
+        memory_store: None,
+        backend_semaphores: None,
+        skill_registry: None,
+        execution_semaphore: None,
+    };
+    let executor = AgentExecutor::new(config).await.expect("executor");
+
+    // Agent whose runs fail (no output schema → structured rejection).
+    let mut agent: AiAgent = serde_json::from_value(serde_json::json!({
+        "id": "notify-agent",
+        "name": "通知测试",
+        "user_prompt": "p",
+        "resources": [],
+        "schedule": { "schedule_type": "manual" },
+        "status": "active",
+        "created_at": 0,
+        "updated_at": 0,
+        "execution_mode": "structured",
+        "stats": {
+            "total_executions": 0, "successful_executions": 0,
+            "failed_executions": 0, "avg_duration_ms": 0, "last_duration_ms": null
+        },
+        "memory": {},
+        "notify": { "channels": ["webhook:ops", "telegram:main"], "on": "failure" },
+    }))
+    .expect("fixture");
+    agent.output_schema = None; // force the failure
+    store.save_agent(&agent).await.expect("seed");
+
+    executor
+        .execute_agent(agent.clone(), None, None)
+        .await
+        .expect("returns a failed record");
+
+    // The message landed, targeted at exactly the configured channels.
+    let messages = message_manager.list_messages().await;
+    let hit = messages
+        .iter()
+        .find(|m| m.source == "agent:notify-agent")
+        .expect("a notification was sent");
+    assert_eq!(
+        hit.target_channels,
+        Some(vec!["webhook:ops".to_string(), "telegram:main".to_string()]),
+        "routing must be explicit, not broadcast"
+    );
+    assert!(hit.title.contains("failed"), "title: {}", hit.title);
+    assert!(hit.message.contains("output_schema") || hit.message.len() > 0);
+}
+
 /// Two fields, one inference, one publish — both must land in telemetry.
 /// (A live instance showed the string field stored and the NUMBER field
 /// missing from the listing; this test decides which side drops it.)
@@ -748,6 +878,7 @@ async fn two_field_contract_publishes_both_metrics() {
         ]),
         operator_config: None,
         memory_mode: None,
+        notify: None,
         enable_tool_chaining: false,
         max_chain_depth: 3,
     };

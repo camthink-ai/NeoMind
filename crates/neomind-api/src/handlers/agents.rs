@@ -238,6 +238,9 @@ struct AgentDetailDto {
     /// Memory axis (None = mode-derived default)
     #[serde(skip_serializing_if = "Option::is_none")]
     memory_mode: Option<neomind_storage::MemoryMode>,
+    /// Notification routing (None = legacy keyword behavior)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    notify: Option<neomind_storage::AgentNotify>,
 }
 
 /// Agent resource for API responses.
@@ -466,6 +469,9 @@ pub struct CreateAgentRequest {
     /// Memory axis: "tool" (stateless) | "assistant" (carries history narrative)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_mode: Option<neomind_storage::MemoryMode>,
+    /// Explicit notification routing (channels + when to notify)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notify: Option<neomind_storage::AgentNotify>,
     /// Tool scoping: restrict which tools this agent may call. Omit (or set
     /// `allowed_tools: []`) for all tools — the default. Scoping the tool set
     /// per task is the highest-leverage fix for small-model tool selection.
@@ -566,6 +572,9 @@ pub struct UpdateAgentRequest {
     /// Memory axis override
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_mode: Option<neomind_storage::MemoryMode>,
+    /// Notification routing override
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notify: Option<neomind_storage::AgentNotify>,
     /// Tool scoping override. Send an object to set/replace it; omit to leave
     /// unchanged. Set `allowed_tools: []` to mean "all tools".
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -716,6 +725,7 @@ impl From<&AiAgent> for AgentDetailDto {
             output_schema: agent.output_schema.clone(),
             operator_config: agent.operator_config.clone(),
             memory_mode: agent.memory_mode,
+            notify: agent.notify.clone(),
         }
     }
 }
@@ -1191,6 +1201,7 @@ pub async fn create_agent(
         output_schema: request.output_schema,
         operator_config: request.operator_config,
         memory_mode: request.memory_mode,
+        notify: request.notify,
         conversation_history: Default::default(),
         user_messages: Default::default(),
         conversation_summary: Default::default(),
@@ -1459,6 +1470,9 @@ pub async fn update_agent(
     }
     if let Some(memory_mode) = request.memory_mode {
         agent.memory_mode = Some(memory_mode);
+    }
+    if let Some(notify) = request.notify {
+        agent.notify = Some(notify);
     }
     if let Some(status_str) = request.status {
         agent.status = match status_str.as_str() {
@@ -1999,6 +2013,7 @@ pub async fn test_agent_preview(
         output_schema: request.output_schema,
         operator_config: request.operator_config,
         memory_mode: None,
+        notify: None,
         execution_mode: neomind_storage::agents::ExecutionMode::Structured,
         error_message: None,
     };

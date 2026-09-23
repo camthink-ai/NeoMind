@@ -243,6 +243,13 @@ pub struct Message {
     /// Additional metadata
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
+    /// Explicit channel routing. `None` (the default) keeps broadcast
+    /// semantics: every channel whose filter accepts the message gets it.
+    /// `Some(names)` narrows delivery to exactly those channels (still
+    /// respecting enabled state and per-channel filters) — the primitive
+    /// per-agent notification routing builds on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_channels: Option<Vec<String>>,
     /// Associated tags
     #[serde(default)]
     pub tags: Vec<String>,
@@ -269,6 +276,7 @@ impl Message {
             timestamp: now,
             status: MessageStatus::Active,
             metadata: None,
+            target_channels: None,
             tags: Vec::new(),
         }
     }

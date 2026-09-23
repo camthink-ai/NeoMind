@@ -649,6 +649,86 @@ impl AgentExecutor {
         Ok((actions_executed, notifications_sent))
     }
 
+    /// Explicit per-agent notification routing: deliver the run outcome to
+    /// exactly the configured channels, when the configured trigger fires.
+    /// `None` config = legacy keyword path (see send_alert_for_decision).
+    pub(crate) async fn dispatch_agent_notifications(
+        &self,
+        agent_id: &str,
+        agent_name: &str,
+        record: &neomind_storage::AgentExecutionRecord,
+    ) {
+        let Some(notify) = self
+            .store
+            .get_agent(agent_id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|a| a.notify)
+        else {
+            return;
+        };
+        if notify.channels.is_empty() {
+            return;
+        }
+        let failed = record.status != neomind_storage::ExecutionStatus::Completed;
+        let should_send = match notify.on {
+            neomind_storage::NotifyOn::Always => true,
+            neomind_storage::NotifyOn::Failure => failed,
+        };
+        if !should_send {
+            return;
+        }
+
+        let title = if failed {
+            format!("Agent '{}' failed", agent_name)
+        } else {
+            format!("Agent '{}' completed", agent_name)
+        };
+        let body = record
+            .error
+            .clone()
+            .unwrap_or_else(|| {
+                truncate_for_notify(&record.decision_process.conclusion)
+            });
+
+        tracing::info!(
+            agent_id = %agent_id,
+            channels = ?notify.channels,
+            failed,
+            "Agent notification routed"
+        );
+        if let Some(ref message_manager) = self.message_manager {
+            use neomind_messages::{Message, MessageId, MessageSeverity, MessageStatus};
+            let severity = if failed {
+                MessageSeverity::Warning
+            } else {
+                MessageSeverity::Info
+            };
+            let msg = Message {
+                id: MessageId::new(),
+                category: "agent".to_string(),
+                severity,
+                title,
+                message: body,
+                source: format!("agent:{}", agent_id),
+                source_type: "agent".to_string(),
+                timestamp: chrono::Utc::now(),
+                status: MessageStatus::Active,
+                metadata: None,
+                tags: Vec::new(),
+                target_channels: Some(notify.channels.clone()),
+            };
+            if let Err(e) = message_manager.create_message(msg).await {
+                tracing::warn!(
+                    agent_id = %agent_id,
+                    error = %e,
+                    "Agent notification delivery failed"
+                );
+            }
+        }
+    }
+
     pub(crate) async fn send_alert_for_decision(
         &self,
         agent: &AiAgent,
@@ -835,5 +915,16 @@ impl AgentExecutor {
         report.push_str(&agent.user_prompt);
 
         Ok(report)
+    }
+}
+
+/// Keep the notification body readable: a full conclusion can be long.
+fn truncate_for_notify(s: &str) -> String {
+    const MAX: usize = 500;
+    if s.chars().count() <= MAX {
+        s.to_string()
+    } else {
+        let cut: String = s.chars().take(MAX).collect();
+        format!("{}…", cut)
     }
 }

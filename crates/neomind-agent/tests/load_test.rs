@@ -245,6 +245,7 @@ impl LoadTestContext {
             output_schema: None,
             operator_config: None,
             memory_mode: None,
+        notify: None,
             priority: 128,
             conversation_history: vec![],
             user_messages: vec![],

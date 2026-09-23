@@ -99,7 +99,7 @@ pub use agents::{
     ExecutionStatus, GeneratedReport, IntentType, KnowledgeFileRef, NotificationSent, ParsedIntent,
     ReasoningStep, ResourceType, ScheduleType, UserMessage,
     OperatorConfig, OperatorField, OperatorFieldType,
-    MemoryMode,
+    MemoryMode, AgentNotify, NotifyOn,
 };
 
 pub use device_registry::DeviceRegistryStore;

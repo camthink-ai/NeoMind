@@ -178,6 +178,7 @@ impl AiAgentManager {
             output_schema: None,
             operator_config: None,
             memory_mode: None,
+            notify: None,
             conversation_history: Default::default(),
             user_messages: Default::default(),
             conversation_summary: Default::default(),

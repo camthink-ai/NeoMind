@@ -122,6 +122,7 @@ impl LlmTestContext {
             output_schema: None,
             operator_config: None,
             memory_mode: None,
+        notify: None,
             enable_tool_chaining: false,
             max_chain_depth: 3,
         };
