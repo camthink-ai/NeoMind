@@ -77,7 +77,12 @@ import {
   deriveExecutionMode,
   hasOutputContract,
   AGENT_PRESETS,
+  parseTriggerFilter,
+  buildTriggerFilter,
+  reasonTriggerFilterInvalid,
   type AgentPreset,
+  type TriggerFilter,
+  type TriggerSource,
 } from './agent-editor'
 import type {
   MetricInfo,
@@ -197,7 +202,15 @@ export function AgentEditorFullScreen({
   // Trigger sources for reactive mode
   // When field is undefined → match all fields from this source
   // When field is specified → match only that field
-  const [triggerSources, setTriggerSources] = useState<Array<{ type: string; id: string; name: string; field?: string }>>([])
+  const [triggerSources, setTriggerSources] = useState<TriggerSource[]>([])
+  // How the selected trigger sources combine (M2). `any` fires on the first
+  // match; `all` waits for every source inside `triggerWindowSecs`.
+  const [triggerMode, setTriggerMode] = useState<TriggerFilter['mode']>('any')
+  // null = the stored filter carries no window, which the backend reads as
+  // "one single event must satisfy every source". Kept null (not repaired to a
+  // default) so the editor can show the user the problem instead of quietly
+  // changing what their rule means.
+  const [triggerWindowSecs, setTriggerWindowSecs] = useState<number | null>(null)
   const [activeTriggerEntity, setActiveTriggerEntity] = useState<{ type: string; id: string } | null>(null)
   // Resource state
   const [selectedResources, setSelectedResources] = useState<SelectedResource[]>([])
@@ -533,23 +546,23 @@ export function AgentEditorFullScreen({
       }
     } else if (schedule.schedule_type === 'event') {
       setScheduleType('reactive')
-      // Parse trigger sources from event_filter
-      try {
-        const filter = JSON.parse(schedule.event_filter || '{}')
-        if (filter.sources && Array.isArray(filter.sources)) {
-          const sources = filter.sources.map((s: Record<string, string>) =>
+      // Trigger sources from event_filter — `any` (the legacy `sources`
+      // shape included) or `all` with its window.
+      const parsedFilter = parseTriggerFilter(schedule.event_filter)
+      setTriggerMode(parsedFilter.mode)
+      setTriggerWindowSecs(parsedFilter.withinSecs)
+      setTriggerSources(
+        parsedFilter.sources
+          .map(s =>
             restoreFromBackendSourceType({
               type: s.type || 'device',
               id: s.id || '',
               name: s.name || s.id || '',
               ...(s.field ? { field: s.field } : {}),
             })
-          ).filter((s: { id: string }) => s.id)
-          setTriggerSources(sources)
-        }
-      } catch {
-        // Legacy event_filter format - ignore
-      }
+          )
+          .filter((s: { id: string }) => s.id),
+      )
     }
   }
 
@@ -943,8 +956,25 @@ export function AgentEditorFullScreen({
   }, [availableResources, searchQuery])
 
   const outputContractOk = !isStructuredMode || hasOutputContract(outputSchema)
+  const triggerFilter: TriggerFilter = {
+    mode: triggerMode,
+    sources: triggerSources,
+    withinSecs: triggerMode === 'all' ? triggerWindowSecs : null,
+  }
+  // Both shapes this catches would silently never fire, so neither is
+  // saveable — see `reasonTriggerFilterInvalid`.
+  const triggerFilterIssue =
+    scheduleType === 'reactive'
+      ? reasonTriggerFilterInvalid(triggerFilter, {
+          hasBoundResources: selectedResources.length > 0,
+        })
+      : null
+
   const isValid: boolean =
-    name.trim().length > 0 && userPrompt.trim().length > 0 && outputContractOk
+    name.trim().length > 0 &&
+    userPrompt.trim().length > 0 &&
+    outputContractOk &&
+    !triggerFilterIssue
 
   // ========================================================================
   // Handlers
@@ -1104,14 +1134,12 @@ export function AgentEditorFullScreen({
         }
       } else if (scheduleType === 'reactive') {
         finalScheduleType = 'event'
-        // Save trigger sources to event_filter with backend type mapping
-        const eventFilterObj: { sources: Array<{ type: string; id: string; name: string; field?: string }> } = {
-          sources: triggerSources.map(s => {
-            const mapped = mapToBackendSourceType(s.type, s.id)
-            return { type: mapped.type, id: mapped.id, name: s.name, ...(s.field ? { field: s.field } : {}) }
-          }),
-        }
-        eventFilter = JSON.stringify(eventFilterObj)
+        // Backend source-type mapping first, then the any/all envelope.
+        const mappedSources: TriggerSource[] = triggerSources.map(s => {
+          const mapped = mapToBackendSourceType(s.type, s.id)
+          return { type: mapped.type, id: mapped.id, name: s.name, ...(s.field ? { field: s.field } : {}) }
+        })
+        eventFilter = buildTriggerFilter({ ...triggerFilter, sources: mappedSources })
       } else { // on-demand
         finalScheduleType = 'manual'
         intervalSeconds = undefined  // Manual needs no interval — never auto-scheduled
@@ -2461,6 +2489,66 @@ export function AgentEditorFullScreen({
                         )}
                       </div>
                     </div>
+
+                    {/* How the selected sources combine (M2). "any" fires on
+                        the first match — what this editor has always meant.
+                        "all" waits for every source inside a window, which is
+                        what "occupancy AND not booked" needs. */}
+                    {triggerSources.length > 0 && (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-1">
+                          {(['any', 'all'] as const).map(mode => (
+                            <button
+                              key={mode}
+                              type="button"
+                              onClick={() => {
+                                setTriggerMode(mode)
+                                // An `all` group with no window never fires, so
+                                // offer a starting point rather than leaving the
+                                // field empty.
+                                if (mode === 'all' && triggerWindowSecs === null) {
+                                  setTriggerWindowSecs(600)
+                                }
+                              }}
+                              className={cn(
+                                'h-8 rounded-md px-3 text-sm transition-colors',
+                                triggerMode === mode
+                                  ? 'bg-muted font-medium text-foreground ring-1 ring-primary'
+                                  : 'text-muted-foreground hover:text-foreground'
+                              )}
+                            >
+                              {tAgent(`creator.schedule.reactive.mode.${mode}`)}
+                            </button>
+                          ))}
+                        </div>
+                        {triggerMode === 'all' && (
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm text-muted-foreground">
+                              {tAgent('creator.schedule.reactive.window')}
+                            </span>
+                            <Input
+                              type="number"
+                              min={1}
+                              value={triggerWindowSecs === null ? '' : Math.round(triggerWindowSecs / 60)}
+                              onChange={e => {
+                                const minutes = Number(e.target.value)
+                                setTriggerWindowSecs(minutes > 0 ? minutes * 60 : null)
+                              }}
+                              className="h-8 w-24"
+                            />
+                            <span className="text-sm text-muted-foreground">
+                              {tAgent('creator.schedule.reactive.minutes')}
+                            </span>
+                          </div>
+                        )}
+                        {triggerFilterIssue && (
+                          <div className="flex items-start gap-2 text-sm text-warning">
+                            <Info className="h-4 w-4 mt-0.5 shrink-0" />
+                            <p>{tAgent(`creator.schedule.reactive.issue.${triggerFilterIssue}`)}</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     {/* Selected trigger sources summary */}
                     {triggerSources.length > 0 && (() => {

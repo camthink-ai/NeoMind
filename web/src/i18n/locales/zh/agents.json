@@ -392,6 +392,16 @@
         "noExtensions": "暂无可用扩展",
         "emptyWarning": "未选择触发源。Agent 将不会自动执行。",
         "fallbackToResources": "未配置显式触发源。将根据已绑定的 Resources 触发（兼容模式）。",
+        "mode": {
+          "any": "任一命中",
+          "all": "全部命中"
+        },
+        "window": "时间窗",
+        "minutes": "分钟",
+        "issue": {
+          "window_required": "请设置时间窗。不设时间窗意味着所有来源必须在同一个事件里凑齐，Agent 实际上永远不会执行。",
+          "sources_required": "请至少选择一个触发源，或绑定一个资源供 Agent 监控。"
+        },
         "allMetrics": "全部",
         "selectSource": "选择一个源进行配置",
         "noMetrics": "暂无可用指标",

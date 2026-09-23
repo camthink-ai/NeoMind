@@ -392,6 +392,16 @@
         "noExtensions": "No extensions available",
         "emptyWarning": "No trigger sources selected. The agent will not run automatically.",
         "fallbackToResources": "No explicit trigger sources configured. Will trigger based on Resources bindings (legacy mode).",
+        "mode": {
+          "any": "Any source",
+          "all": "All sources"
+        },
+        "window": "within",
+        "minutes": "minutes",
+        "issue": {
+          "window_required": "Choose a time window. Without one, all sources would have to arrive in a single event and the agent would effectively never run.",
+          "sources_required": "Select at least one trigger source, or bind a resource for the agent to watch."
+        },
         "allMetrics": "All",
         "selectSource": "Select a source to configure",
         "noMetrics": "No metrics available",
