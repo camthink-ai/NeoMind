@@ -2399,7 +2399,12 @@ export function AgentEditorFullScreen({
                     )}>
                       {/* Left: entity list */}
                       <div className={cn(
-                        "overflow-y-auto shrink-0",
+                        // `overflow-x-hidden` as well as `overflow-y-auto`:
+                        // a row wider than the column would otherwise scroll
+                        // sideways, and the row background paints across the
+                        // whole scroll area — which is what made the hover and
+                        // selected blocks look like they overflowed the column.
+                        "overflow-y-auto overflow-x-hidden shrink-0",
                         isMobile ? "w-full border-b max-h-[120px]" : "w-[180px] border-r"
                       )}>
                         {entities.length === 0 ? (
@@ -2427,7 +2432,11 @@ export function AgentEditorFullScreen({
                                 )}
                               >
                                 {getSourceIcon(e.type, "h-4 w-4 shrink-0 text-muted-foreground")}
-                                <span className="truncate flex-1">{e.name}</span>
+                                {/* `min-w-0` is what actually lets a flex item
+                                    shrink below its text width. Without it
+                                    `truncate` never engages on a long name and
+                                    the row grows past the column. */}
+                                <span className="min-w-0 flex-1 truncate">{e.name}</span>
                                 {hasTrigger && (
                                   <Badge variant="secondary" className={cn("h-4 min-w-[18px]", textNano, "px-1 rounded-full")}>
                                     {activeAllSelected && isViewing ? tAgent('creator.schedule.reactive.allMetrics') : fieldCount}
@@ -2493,54 +2502,79 @@ export function AgentEditorFullScreen({
                     {/* How the selected sources combine (M2). "any" fires on
                         the first match — what this editor has always meant.
                         "all" waits for every source inside a window, which is
-                        what "occupancy AND not booked" needs. */}
-                    {triggerSources.length > 0 && (
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-1">
-                          {(['any', 'all'] as const).map(mode => (
-                            <button
-                              key={mode}
-                              type="button"
-                              onClick={() => {
-                                setTriggerMode(mode)
-                                // An `all` group with no window never fires, so
-                                // offer a starting point rather than leaving the
-                                // field empty.
-                                if (mode === 'all' && triggerWindowSecs === null) {
-                                  setTriggerWindowSecs(600)
-                                }
-                              }}
-                              className={cn(
-                                'h-8 rounded-md px-3 text-sm transition-colors',
-                                triggerMode === mode
-                                  ? 'bg-muted font-medium text-foreground ring-1 ring-primary'
-                                  : 'text-muted-foreground hover:text-foreground'
-                              )}
-                            >
-                              {tAgent(`creator.schedule.reactive.mode.${mode}`)}
-                            </button>
-                          ))}
+                        what "occupancy AND not booked" needs.
+
+                        Cards rather than a segmented strip: this is the same
+                        "pick one, and here is what it means" choice as the
+                        schedule cards above, so it speaks the same language. */}
+                    {(triggerSources.length > 1 || triggerMode === 'all') && (
+                      <div className="space-y-2.5">
+                        <div className={cn('grid gap-2', isMobile ? 'grid-cols-1' : 'grid-cols-2')}>
+                          {(['any', 'all'] as const).map(mode => {
+                            const selected = triggerMode === mode
+                            return (
+                              <button
+                                key={mode}
+                                type="button"
+                                aria-pressed={selected}
+                                onClick={() => {
+                                  setTriggerMode(mode)
+                                  // An `all` group with no window never fires,
+                                  // so offer a starting point rather than
+                                  // leaving the field empty.
+                                  if (mode === 'all' && triggerWindowSecs === null) {
+                                    setTriggerWindowSecs(600)
+                                  }
+                                }}
+                                className={cn(
+                                  'flex items-start gap-2 rounded-lg border p-2.5 text-left transition-colors',
+                                  selected
+                                    ? 'border-primary bg-muted'
+                                    : 'border-border hover:border-muted-foreground'
+                                )}
+                              >
+                                <span className="mt-0.5 shrink-0">
+                                  {mode === 'any'
+                                    ? <Sparkles className="h-4 w-4" />
+                                    : <GitBranch className="h-4 w-4" />}
+                                </span>
+                                <span className="min-w-0">
+                                  <span className={cn(
+                                    'block text-sm font-medium',
+                                    selected ? 'text-foreground' : 'text-muted-foreground'
+                                  )}>
+                                    {tAgent(`creator.schedule.reactive.mode.${mode}`)}
+                                  </span>
+                                  <span className="block text-xs text-muted-foreground">
+                                    {tAgent(`creator.schedule.reactive.modeHint.${mode}`)}
+                                  </span>
+                                </span>
+                              </button>
+                            )
+                          })}
                         </div>
+
+                        {/* The window phrased as a sentence, with the number in
+                            it — "within [10] minutes" as a bare field read like
+                            an unfinished form. */}
                         {triggerMode === 'all' && (
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm text-muted-foreground">
-                              {tAgent('creator.schedule.reactive.window')}
-                            </span>
+                          <div className="flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
+                            <span>{tAgent('creator.schedule.reactive.windowBefore')}</span>
                             <Input
                               type="number"
                               min={1}
+                              aria-label={tAgent('creator.schedule.reactive.windowLabel')}
                               value={triggerWindowSecs === null ? '' : Math.round(triggerWindowSecs / 60)}
                               onChange={e => {
                                 const minutes = Number(e.target.value)
                                 setTriggerWindowSecs(minutes > 0 ? minutes * 60 : null)
                               }}
-                              className="h-8 w-24"
+                              className="h-8 w-16 text-center"
                             />
-                            <span className="text-sm text-muted-foreground">
-                              {tAgent('creator.schedule.reactive.minutes')}
-                            </span>
+                            <span>{tAgent('creator.schedule.reactive.windowAfter')}</span>
                           </div>
                         )}
+
                         {triggerFilterIssue && (
                           <div className="flex items-start gap-2 text-sm text-warning">
                             <Info className="h-4 w-4 mt-0.5 shrink-0" />
@@ -2550,7 +2584,10 @@ export function AgentEditorFullScreen({
                       </div>
                     )}
 
-                    {/* Selected trigger sources summary */}
+                    {/* What the picker above produced. Same `border rounded-lg`
+                        surface as the picker, and one row per source, so this
+                        reads as the result of that box rather than a loose list
+                        floating under it. */}
                     {triggerSources.length > 0 && (() => {
                       const grouped = new Map<string, { type: string; id: string; name: string; fields: (string | undefined)[] }>()
                       for (const s of triggerSources) {
@@ -2559,47 +2596,78 @@ export function AgentEditorFullScreen({
                         grouped.get(key)!.fields.push(s.field)
                       }
                       return (
-                        <div className="space-y-1">
-                          {[...grouped.values()].map(g => {
-                            const hasAll = g.fields.includes(undefined)
-                            const specificFields = g.fields.filter((f): f is string => f !== undefined)
-                            const removeEntity = () => {
-                              setTriggerSources(prev => prev.filter(s => !(s.type === g.type && s.id === g.id)))
-                              // Remove corresponding resource
-                              if (g.type === 'device' || g.type === 'extension') {
-                                const resourceKey = g.type === 'extension' ? `extension:${g.id}` : g.id
-                                setSelectedResources(prev => prev.filter(r => r.id !== resourceKey))
+                        <div className="space-y-1.5">
+                          <span className="block text-xs font-medium text-muted-foreground">
+                            {tAgent('creator.schedule.reactive.selectedSources')}
+                          </span>
+                          <div className="rounded-lg border divide-y">
+                            {[...grouped.values()].map(g => {
+                              const hasAll = g.fields.includes(undefined)
+                              const specificFields = g.fields.filter((f): f is string => f !== undefined)
+                              const removeEntity = () => {
+                                setTriggerSources(prev => prev.filter(s => !(s.type === g.type && s.id === g.id)))
+                                // Remove corresponding resource
+                                if (g.type === 'device' || g.type === 'extension') {
+                                  const resourceKey = g.type === 'extension' ? `extension:${g.id}` : g.id
+                                  setSelectedResources(prev => prev.filter(r => r.id !== resourceKey))
+                                }
                               }
-                            }
-                            return (
-                              <div key={`${g.type}-${g.id}`} className="flex items-center gap-1.5 flex-wrap">
-                                {getSourceIcon(g.type, "h-4 w-4 shrink-0 text-muted-foreground")}
-                                <span className="text-xs font-medium truncate max-w-[100px]">{g.name}</span>
-                                {hasAll ? (
-                                  <Badge
-                                    variant="secondary"
-                                    className={cn(textNano, "h-5 px-1.5 gap-0.5 cursor-pointer hover:bg-muted transition-colors")}
-                                    onClick={removeEntity}
-                                  >
-                                    {tAgent('creator.schedule.reactive.allMetrics')}
-                                    <X className="h-2.5 w-2.5" />
-                                  </Badge>
-                                ) : (
-                                  specificFields.map(f => (
-                                    <Badge
-                                      key={f}
-                                      variant="outline"
-                                      className={cn(textNano, "h-5 px-1.5 gap-0.5 font-normal cursor-pointer hover:bg-muted transition-colors")}
-                                      onClick={() => removeTriggerField(g.type, g.id, f)}
-                                    >
-                                      {f}
-                                      <X className="h-2.5 w-2.5" />
-                                    </Badge>
-                                  ))
-                                )}
-                              </div>
-                            )
-                          })}
+                              // A real button, not a clickable Badge: the old chips
+                              // were status pills pretending to be controls, which
+                              // said nothing about being removable until you hovered.
+                              const chip = (key: string, label: string, onClick: () => void, aria: string) => (
+                                <button
+                                  key={key}
+                                  type="button"
+                                  onClick={onClick}
+                                  aria-label={aria}
+                                  className={cn(
+                                    textNano,
+                                    "inline-flex h-5 items-center gap-1 rounded-md border border-border bg-muted-30 px-1.5",
+                                    "text-muted-foreground transition-colors hover:border-muted-foreground hover:text-foreground"
+                                  )}
+                                >
+                                  {label}
+                                  <X className="h-2.5 w-2.5 opacity-60" />
+                                </button>
+                              )
+                              return (
+                                <div
+                                  key={`${g.type}-${g.id}`}
+                                  className="flex flex-wrap items-center gap-x-2 gap-y-2 px-2.5 py-2"
+                                >
+                                  <span className="shrink-0">
+                                    {getSourceIcon(g.type, "h-4 w-4 text-muted-foreground")}
+                                  </span>
+                                  {/* A floor, not just `flex-1`: many chips make
+                                      a wide block beside the name, and a bare
+                                      `flex-1` on a zero basis lets that block
+                                      squeeze the name to nothing — which is how
+                                      it disappeared once the chips ran past two
+                                      lines. The row wraps instead, so the name
+                                      keeps its line and the chips fall below. */}
+                                  <span className="min-w-[8rem] flex-1 truncate text-xs font-medium">{g.name}</span>
+                                  <span className="flex flex-wrap items-center gap-1">
+                                    {hasAll
+                                      ? chip(
+                                          'all',
+                                          tAgent('creator.schedule.reactive.allMetrics'),
+                                          removeEntity,
+                                          tAgent('creator.schedule.reactive.removeAllMetrics', { name: g.name }),
+                                        )
+                                      : specificFields.map(f =>
+                                          chip(
+                                            f,
+                                            f,
+                                            () => removeTriggerField(g.type, g.id, f),
+                                            tAgent('creator.schedule.reactive.removeField', { field: f, name: g.name }),
+                                          ),
+                                        )}
+                                  </span>
+                                </div>
+                              )
+                            })}
+                          </div>
                         </div>
                       )
                     })()}

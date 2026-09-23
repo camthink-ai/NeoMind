@@ -396,8 +396,16 @@
           "any": "任一命中",
           "all": "全部命中"
         },
-        "window": "时间窗",
-        "minutes": "分钟",
+        "modeHint": {
+          "any": "任意一个源有新数据就触发",
+          "all": "所有源都在时间窗内出现才触发"
+        },
+        "selectedSources": "已选触发源",
+        "removeAllMetrics": "不再由 {{name}} 的任意指标触发",
+        "removeField": "不再由 {{name}} 的 {{field}} 触发",
+        "windowBefore": "全部命中需发生在",
+        "windowAfter": "分钟内",
+        "windowLabel": "时间窗（分钟）",
         "issue": {
           "window_required": "请设置时间窗。不设时间窗意味着所有来源必须在同一个事件里凑齐，Agent 实际上永远不会执行。",
           "sources_required": "请至少选择一个触发源，或绑定一个资源供 Agent 监控。"
