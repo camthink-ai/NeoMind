@@ -658,14 +658,10 @@ impl AgentExecutor {
         agent_name: &str,
         record: &neomind_storage::AgentExecutionRecord,
     ) {
-        let Some(notify) = self
-            .store
-            .get_agent(agent_id)
-            .await
-            .ok()
-            .flatten()
-            .and_then(|a| a.notify)
-        else {
+        let Some(agent) = self.store.get_agent(agent_id).await.ok().flatten() else {
+            return;
+        };
+        let Some(notify) = agent.notify.clone() else {
             return;
         };
         // No channel is not "no alert". The message IS the record of the run —
@@ -690,12 +686,7 @@ impl AgentExecutor {
         } else {
             format!("Agent '{}' completed", agent_name)
         };
-        let body = record
-            .error
-            .clone()
-            .unwrap_or_else(|| {
-                truncate_for_notify(&record.decision_process.conclusion)
-            });
+        let body = notification_body(&agent, record);
 
         tracing::info!(
             agent_id = %agent_id,
@@ -924,6 +915,91 @@ impl AgentExecutor {
 }
 
 /// Keep the notification body readable: a full conclusion can be long.
+/// What a person actually reads in the notification.
+///
+/// A structured (L0) agent's conclusion is the JSON object it published —
+/// `{"status":"正常"}`. That shape is right for the `ai:*` data sources and the
+/// detail page, and wrong for a chat message. The fix belongs here, at the
+/// notification boundary, and NOT in `conclusion` itself: the API, the
+/// `query_conclusion` tool and the journal all read that same field.
+fn notification_body(
+    agent: &neomind_storage::AiAgent,
+    record: &neomind_storage::AgentExecutionRecord,
+) -> String {
+    if let Some(err) = &record.error {
+        return truncate_for_notify(err);
+    }
+    let conclusion = &record.decision_process.conclusion;
+    if agent.execution_mode == neomind_storage::ExecutionMode::Structured {
+        if let Some(schema) = agent.output_schema.as_deref() {
+            if let Some(prose) = prose_from_structured_conclusion(schema, conclusion) {
+                return truncate_for_notify(&prose);
+            }
+        }
+    }
+    truncate_for_notify(conclusion)
+}
+
+/// Render a structured conclusion against the agent's own schema:
+/// `{"status":"正常","night_temp":18}` -> `"运行状态: 正常\n夜间温度: 18℃"`.
+///
+/// `None` when the conclusion is not the JSON object we expect, so the caller
+/// sends it verbatim rather than replacing one unreadable form with an empty
+/// message.
+/// A JSON scalar as a person would write it. `Display` on `serde_json::Value`
+/// renders strings *with* their quotes, which is right for JSON and wrong for
+/// a sentence — `status: "正常"` reads as a code snippet.
+fn render_scalar(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
+fn prose_from_structured_conclusion(
+    schema: &[neomind_storage::OperatorField],
+    conclusion: &str,
+) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(conclusion).ok()?;
+    let fields = value.as_object()?;
+    if fields.is_empty() {
+        return None;
+    }
+
+    let mut lines: Vec<String> = Vec::new();
+    for field in schema {
+        let Some(value) = fields.get(&field.name) else {
+            continue;
+        };
+        let with_unit = match field.unit.as_deref() {
+            Some(unit) if !unit.is_empty() => {
+                format!("{}{unit}", render_scalar(value))
+            }
+            _ => render_scalar(value),
+        };
+        // The schema's own words for the field when it has them — a
+        // notification is read by a person, and `description` is what the
+        // author wrote for one. `name` is for the data source, not for them.
+        let label = field
+            .description
+            .as_deref()
+            .map(str::trim)
+            .filter(|d| !d.is_empty())
+            .unwrap_or(&field.name);
+        lines.push(format!("{label}: {with_unit}"));
+    }
+
+    // A field the model emitted that the schema no longer lists would
+    // otherwise vanish from the notification without a trace.
+    for (name, value) in fields {
+        if schema.iter().all(|f| &f.name != name) {
+            lines.push(format!("{name}: {}", render_scalar(value)));
+        }
+    }
+
+    (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
 fn truncate_for_notify(s: &str) -> String {
     const MAX: usize = 500;
     if s.chars().count() <= MAX {
@@ -931,5 +1007,79 @@ fn truncate_for_notify(s: &str) -> String {
     } else {
         let cut: String = s.chars().take(MAX).collect();
         format!("{}…", cut)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use neomind_storage::{OperatorField, OperatorFieldType};
+
+    fn field(name: &str, unit: Option<&str>, description: Option<&str>) -> OperatorField {
+        OperatorField {
+            name: name.into(),
+            field_type: OperatorFieldType::Text,
+            unit: unit.map(Into::into),
+            description: description.map(Into::into),
+        }
+    }
+
+    /// The whole point of the renderer: a structured agent publishes a JSON
+    /// object, and a chat message is read by a person.
+    #[test]
+    fn a_structured_conclusion_reaches_the_chat_as_prose() {
+        let schema = vec![
+            field("status", None, Some("运行状态")),
+            field("night_temp", Some("℃"), Some("夜间温度")),
+        ];
+        let rendered =
+            prose_from_structured_conclusion(&schema, r#"{"status":"正常","night_temp":18}"#)
+                .expect("a well-formed conclusion renders");
+
+        assert!(
+            !rendered.contains('{') && !rendered.contains("\":"),
+            "JSON braces must not reach the user: {rendered}"
+        );
+        assert!(rendered.contains("运行状态: 正常"), "{rendered}");
+        assert!(rendered.contains("夜间温度: 18℃"), "{rendered}");
+    }
+
+    /// `description` is what the schema author wrote for a human to read;
+    /// `name` is the data-source key. Prefer the former.
+    #[test]
+    fn the_author_s_words_label_the_field_when_they_gave_any() {
+        let described = vec![field("t", None, Some("库温"))];
+        let bare = vec![field("t", None, None)];
+
+        let a = prose_from_structured_conclusion(&described, r#"{"t":"3"}"#).unwrap();
+        let b = prose_from_structured_conclusion(&bare, r#"{"t":"3"}"#).unwrap();
+        assert_eq!(a, "库温: 3");
+        assert_eq!(b, "t: 3", "falls back to the field name");
+    }
+
+    /// The model can emit a field the schema no longer lists (schema edited
+    /// after the run, or the model volunteered one). Dropping it silently
+    /// would hide data the agent actually produced.
+    #[test]
+    fn a_field_the_schema_does_not_list_still_survives() {
+        let schema = vec![field("status", None, None)];
+        let rendered =
+            prose_from_structured_conclusion(&schema, r#"{"status":"ok","extra":"kept"}"#).unwrap();
+
+        assert!(rendered.contains("status: ok"), "{rendered}");
+        assert!(rendered.contains("extra: kept"), "{rendered}");
+    }
+
+    /// Not every conclusion is the object we expect. Sending it verbatim beats
+    /// replacing an odd message with an empty one.
+    #[test]
+    fn an_unexpected_conclusion_falls_back_to_verbatim() {
+        let schema = vec![field("status", None, None)];
+        for weird in ["", "not json", "[1,2,3]", "{}"] {
+            assert!(
+                prose_from_structured_conclusion(&schema, weird).is_none(),
+                "{weird:?} should not render, so the caller sends it as-is"
+            );
+        }
     }
 }
