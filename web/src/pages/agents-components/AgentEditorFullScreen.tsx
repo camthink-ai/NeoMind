@@ -679,7 +679,11 @@ export function AgentEditorFullScreen({
         selectedMetrics: selectedMetrics,
         selectedCommands: selectedCmds,
         config: {
-          data_collection: resourceDataCollectionConfigs.get(deviceId),
+          // The edited value wins: the lookback field writes onto the selected
+          // resource, and the map only carries what was loaded from the server.
+          data_collection:
+            selectedResources.find(r => r.id === deviceId)?.config?.data_collection ??
+            resourceDataCollectionConfigs.get(deviceId),
         },
       })
     }

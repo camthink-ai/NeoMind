@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
 import { Target, X, Puzzle, ChevronRight } from 'lucide-react'
 import type { SelectedResource } from './types'
 
@@ -31,6 +32,34 @@ export function SelectedResourceItem({ resource, setSelectedResources, onRemove,
 
   const hasMetrics = resource.allMetrics.length > 0
   const hasCommands = resource.allCommands.length > 0
+
+  // How far back collection reaches for this source. A device that reports
+  // every few hours is invisible to the 60-minute default, and the agent then
+  // has nothing to read — which looks like a broken agent rather than a window
+  // set too narrow.
+  const lookbackMinutes = resource.config?.data_collection?.time_range_minutes ?? 60
+  const setLookbackMinutes = (minutes: number) => {
+    if (!Number.isFinite(minutes) || minutes < 1) return
+    setSelectedResources((prev: SelectedResource[]) =>
+      prev.map(r =>
+        r.id === resource.id
+          ? {
+              ...r,
+              config: {
+                ...r.config,
+                data_collection: {
+                  include_history: false,
+                  include_trend: false,
+                  include_baseline: false,
+                  ...(r.config?.data_collection ?? {}),
+                  time_range_minutes: minutes,
+                },
+              },
+            }
+          : r
+      )
+    )
+  }
 
   return (
     <div
@@ -102,6 +131,20 @@ export function SelectedResourceItem({ resource, setSelectedResources, onRemove,
       {/* Expandable Metrics/Commands — partition folding: show only selected by default */}
       {expanded && (hasMetrics || hasCommands) && (
         <div className={cn("space-y-2", isMobile ? "mt-3 pl-7" : "mt-2 pl-6")}>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <label htmlFor={`lookback-${resource.id}`}>
+              {tAgent('creator.resources.lookback')}
+            </label>
+            <Input
+              id={`lookback-${resource.id}`}
+              type="number"
+              min={1}
+              value={lookbackMinutes}
+              onChange={e => setLookbackMinutes(Number(e.target.value))}
+              className="h-7 w-20"
+            />
+            <span>{tAgent('creator.resources.lookbackUnit')}</span>
+          </div>
           {/* Metrics */}
           {hasMetrics && (
             <div className="space-y-1">

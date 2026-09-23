@@ -536,6 +536,8 @@
       "clearAll": "清空",
       "selectAll": "全选",
       "deselectAll": "取消全选",
+      "lookback": "回看",
+      "lookbackUnit": "分钟",
       "dataStream": "数据流",
       "device": "设备",
       "externalData": "外部数据",

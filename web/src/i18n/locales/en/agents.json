@@ -536,6 +536,8 @@
       "clearAll": "Clear All",
       "selectAll": "Select All",
       "deselectAll": "Deselect All",
+      "lookback": "Look back",
+      "lookbackUnit": "minutes",
       "dataStream": "Data Stream",
       "device": "Device",
       "externalData": "External Data",
