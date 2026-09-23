@@ -734,4 +734,172 @@ mod tests {
             "deep_link must be None when bot is unidentified"
         );
     }
+    // ──────────────── 端到端：入站 → router → 出站 ────────────────
+
+    /// 假 Telegram API：getUpdates 首轮给一条消息，之后空转；sendMessage 记录。
+    type SentLog = Arc<Mutex<Vec<serde_json::Value>>>;
+    type PollCount = Arc<std::sync::atomic::AtomicU64>;
+    /// axum 只认一个 State —— 计数、chat id、已发消息装进同一个元组。
+    type E2eState = (PollCount, i64, SentLog);
+
+    async fn e2e_get_updates(
+        State((polls, chat_id, _)): State<E2eState>,
+    ) -> Json<serde_json::Value> {
+        let n = polls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if n == 0 {
+            Json(serde_json::json!({
+                "ok": true,
+                "result": [{
+                    "update_id": 900,
+                    "message": {
+                        "message_id": 7,
+                        "chat": {"id": chat_id},
+                        "from": {"id": chat_id},
+                        "text": "冷库怎么样"
+                    }
+                }]
+            }))
+        } else {
+            Json(serde_json::json!({"ok": true, "result": []}))
+        }
+    }
+
+    async fn e2e_send_message(
+        State((_, _, sent)): State<E2eState>,
+        Json(body): Json<serde_json::Value>,
+    ) -> Json<serde_json::Value> {
+        sent.lock().unwrap().push(body);
+        Json(serde_json::json!({"ok": true, "result": {"message_id": 11}}))
+    }
+
+    async fn e2e_get_me() -> Json<serde_json::Value> {
+        Json(serde_json::json!({"ok": true, "result": {"id": 1, "username": "e2ebot"}}))
+    }
+
+    /// 端到端：一条 Telegram 消息进来，经 ImRouter 处理，回复再从**同一个**
+    /// bridge 发回。
+    ///
+    /// 用的是真的 `TelegramBridge` 而不是 `MockBridge`，所以长轮询、事件发布、
+    /// router 的会话映射与 per-chat 串行锁、出站 `sendMessage` 全在链路上；接线
+    /// 逐句复刻 `start_im_router`（`neomind-api/src/server/types.rs`）里那段
+    /// `ImMessageReceived → handle_inbound` 的转发——它此前没有任何测试覆盖。
+    ///
+    /// 边界（不在这条链路里）：Telegram 那一侧的服务器是本地假实现。真 token 的
+    /// 身份校验、真人扫码 `/start` 绑定、公网链路仍未覆盖。
+    #[tokio::test]
+    async fn a_telegram_message_survives_the_whole_round_trip() {
+        use crate::im_bridge::router::{ImRouter, InboundMessage};
+        use crate::im_bridge::session_store::ImSessionStore;
+        use crate::im_bridge::{AgentRunner, ImPlatform};
+        use axum::{routing::post, Router};
+        use neomind_core::event::NeoMindEvent;
+        use neomind_core::eventbus::EventBus;
+
+        struct EchoRunner;
+
+        #[async_trait]
+        impl AgentRunner for EchoRunner {
+            async fn create_session(&self) -> anyhow::Result<String> {
+                Ok("e2e-session".into())
+            }
+            async fn run(&self, _sid: &str, text: &str) -> anyhow::Result<String> {
+                Ok(format!("echo:{text}"))
+            }
+        }
+
+        const TOKEN: &str = "e2e-token";
+        const CHAT_ID: i64 = 4242;
+
+        let sent: SentLog = Arc::new(Mutex::new(Vec::new()));
+        let polls: PollCount = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let app = Router::new()
+            .route(&format!("/bot{TOKEN}/getUpdates"), post(e2e_get_updates))
+            .route(&format!("/bot{TOKEN}/sendMessage"), post(e2e_send_message))
+            .route(&format!("/bot{TOKEN}/getMe"), post(e2e_get_me))
+            .with_state((polls.clone(), CHAT_ID, sent.clone()));
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let bus = Arc::new(EventBus::new());
+        let bridge = Arc::new(TelegramBridge::new(
+            TOKEN.into(),
+            Some(format!("http://{addr}")),
+        ));
+
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Arc::new(ImSessionStore::open(tmp.path()).unwrap());
+        let router = Arc::new(ImRouter::new(
+            store,
+            Arc::new(EchoRunner),
+            Arc::new(|| Box::pin(async { Some("agent-1".to_string()) })),
+            None,
+        ));
+        // router 出站时按 platform 从自己的 registry 取 bridge —— 不注册就发不出去。
+        router.registry.register(bridge.clone()).await;
+
+        // 复刻 start_im_router 的接线：订阅 → 逐条交给 router。
+        let mut rx =
+            bus.subscribe_filtered(|e| matches!(e, NeoMindEvent::ImMessageReceived { .. }));
+        let router_fwd = router.clone();
+        tokio::spawn(async move {
+            while let Some((ev, _)) = rx.recv().await {
+                if let NeoMindEvent::ImMessageReceived {
+                    platform,
+                    im_chat_id,
+                    sender_id,
+                    text,
+                    msg_id,
+                    timestamp,
+                } = ev
+                {
+                    router_fwd
+                        .handle_inbound(InboundMessage {
+                            platform: ImPlatform::parse(&platform).unwrap_or(ImPlatform::Telegram),
+                            chat_id: im_chat_id,
+                            sender_id,
+                            text,
+                            msg_id,
+                            timestamp,
+                        })
+                        .await;
+                }
+            }
+        });
+
+        let bridge_run = bridge.clone();
+        let bus_run = bus.clone();
+        let task = tokio::spawn(async move { bridge_run.start(bus_run).await });
+
+        // 等回复落到假 Telegram。
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while sent.lock().unwrap().is_empty() && std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+
+        let msgs = sent.lock().unwrap().clone();
+        assert_eq!(
+            msgs.len(),
+            1,
+            "the run's answer must come back out through the same bridge; got {msgs:?}"
+        );
+        // chat_id 在 router 里是 String，出站按原样发 —— Telegram 两者都接受，
+        // 断言用字符串才是这条链路真实发出的形状。
+        assert_eq!(
+            msgs[0].get("chat_id").and_then(|c| c.as_str()),
+            Some(CHAT_ID.to_string().as_str()),
+            "it must go back to the chat that asked"
+        );
+        assert_eq!(
+            msgs[0].get("text").and_then(|t| t.as_str()),
+            Some("echo:冷库怎么样"),
+            "and carry the runner's answer, not a placeholder"
+        );
+
+        let _ = bridge.stop().await;
+        task.abort();
+    }
 }
