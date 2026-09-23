@@ -705,9 +705,13 @@ export const createDeviceSlice: StateCreator<
 
           const now = new Date().toISOString()
           for (const [devId, props] of deviceUpdates) {
-            // Skip devices that no longer exist (deleted between push and flush)
+            // Skip devices that no longer exist (deleted between push and flush).
+            // Derived namespaces (ai:{agent} / transform:{id}) are exempt: they
+            // are not registered devices, but their events ARE the realtime
+            // feed for bindings on those sources.
+            const isDerivedNamespace = devId.startsWith('ai:') || devId.startsWith('transform:')
             const device = findDevice(state.devices, devId)
-            if (!device && !state.deviceTelemetry[devId]) continue
+            if (!isDerivedNamespace && !device && !state.deviceTelemetry[devId]) continue
 
             const existing = state.deviceTelemetry[devId] || {}
             let merged = { ...existing }
