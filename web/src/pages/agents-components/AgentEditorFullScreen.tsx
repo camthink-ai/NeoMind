@@ -1056,6 +1056,7 @@ export function AgentEditorFullScreen({
     try {
       const result = await api.testAgentPreview({
         user_prompt: userPrompt,
+        execution_mode: executionMode,
         resources: buildResourceRequests(),
         output_schema: outputSchema.filter((f) => f.name.trim() !== ''),
         operator_config: operatorConfig,
@@ -2499,18 +2500,18 @@ export function AgentEditorFullScreen({
           >
             {tCommon('cancel')}
           </Button>
-          {isStructuredMode && (
-            <Button
-              variant="outline"
-              size={isMobile ? "default" : "sm"}
-              onClick={handleDryRun}
+          {/* 试跑 open to every mode: structured previews the constrained
+              extraction; reasoning modes preview through the same endpoint. */}
+          <Button
+            variant="outline"
+            size={isMobile ? "default" : "sm"}
+            onClick={handleDryRun}
               disabled={!userPrompt.trim() || !outputContractOk || dryRunning || saving}
               className={isMobile ? "min-w-[100px] h-12" : ""}
             >
               {dryRunning ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
               {dryRunning ? tAgent('creator.structured.dryRunRunning') : tAgent('creator.structured.dryRun')}
             </Button>
-          )}
           <Button
             size={isMobile ? "default" : "sm"}
             onClick={handleSave}

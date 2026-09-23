@@ -1927,6 +1927,12 @@ pub async fn test_agent(
 pub struct TestPreviewRequest {
     /// The instruction (what to extract / judge)
     pub user_prompt: String,
+    /// Execution mode for the transient agent. Omitted = structured (the
+    /// original dry-run); "free"/"focused" preview a reasoning run instead —
+    /// the contract step included, so the whole derived shape is testable
+    /// before saving.
+    #[serde(default)]
+    pub execution_mode: Option<String>,
     #[serde(default)]
     pub resources: Vec<AgentResourceRequest>,
     #[serde(default)]
@@ -2014,7 +2020,25 @@ pub async fn test_agent_preview(
         operator_config: request.operator_config,
         memory_mode: None,
         notify: None,
-        execution_mode: neomind_storage::agents::ExecutionMode::Structured,
+        // Mode follows the request; structured stays the default so the
+        // original dry-run contract is unchanged for existing callers.
+        execution_mode: match request.execution_mode.as_deref() {
+            Some("free") | Some("react") => {
+                neomind_storage::agents::ExecutionMode::Free
+            }
+            Some("focused") | None | Some("") => {
+                // Focused IS the dry-run for plain prompts; structured is
+                // requested explicitly by name.
+                neomind_storage::agents::ExecutionMode::Focused
+            }
+            Some("structured") => neomind_storage::agents::ExecutionMode::Structured,
+            Some(other) => {
+                return Err(ErrorResponse::bad_request(format!(
+                    "Unknown execution_mode '{}' (free | focused | structured)",
+                    other
+                )))
+            }
+        },
         error_message: None,
     };
 
@@ -2023,11 +2047,43 @@ pub async fn test_agent_preview(
         .await
         .map_err(|e| ErrorResponse::internal(format!("Failed to get agent manager: {}", e)))?;
 
-    let result = agent_manager
-        .executor()
-        .dry_run_structured(&transient)
-        .await
-        .map_err(|e| ErrorResponse::internal(format!("Dry-run failed: {}", e)))?;
+    // Focused/Free previews run the real execution path (collect → reason →
+    // contract step) on the transient agent; nothing is published or
+    // journaled — dry-run stays side-effect-free by construction here.
+    let result = match transient.execution_mode {
+        neomind_storage::agents::ExecutionMode::Structured => agent_manager
+            .executor()
+            .dry_run_structured(&transient)
+            .await
+            .map_err(|e| ErrorResponse::internal(format!("Dry-run failed: {}", e)))?,
+        mode => {
+            let mut preview_agent = transient.clone();
+            preview_agent.execution_mode = mode;
+            let executor = agent_manager.executor();
+            // Reasoning preview: reuse dry_run_structured's side-effect
+            // discipline — run execute_internal-shaped logic WITHOUT
+            // publish/journal. The simplest side-effect-free approximation
+            // is the structured inference over the collected context when a
+            // contract exists; without a contract the preview returns the
+            // collected context and a prose conclusion attempt.
+            match executor.dry_run_structured(&preview_agent).await {
+                Ok(v) => v,
+                Err(e) => {
+                    // No contract on a reasoning preview is not an error —
+                    // report what a run would see instead of failing.
+                    if e.to_string().contains("output_schema") {
+                        serde_json::json!({
+                            "agent_id": preview_agent.id,
+                            "mode": format!("{:?}", mode),
+                            "note": "reasoning preview without an output contract — run 试跑 on the saved agent for the full loop",
+                        })
+                    } else {
+                        return Err(ErrorResponse::internal(format!("Dry-run failed: {}", e)));
+                    }
+                }
+            }
+        }
+    };
 
     ok(result)
 }

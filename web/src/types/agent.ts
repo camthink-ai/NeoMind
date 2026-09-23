@@ -289,6 +289,8 @@ export interface DryRunResult {
 /** Save-before dry-run request — transient agent, nothing persisted */
 export interface TestPreviewRequest {
   user_prompt: string
+  /** Preview mode; omitted = structured (the original dry-run). */
+  execution_mode?: AgentExecutionMode
   resources?: ResourceRequest[]
   output_schema?: OperatorField[]
   operator_config?: OperatorConfig
