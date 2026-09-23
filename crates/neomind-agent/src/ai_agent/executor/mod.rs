@@ -417,6 +417,13 @@ impl AgentExecutor {
         self.llm_runtime = Some(llm);
     }
 
+    /// Attach time-series storage after construction. The collector reads
+    /// bound metrics from it, so a harness that leaves it `None` can never
+    /// collect anything.
+    pub fn set_time_series_storage(&mut self, storage: Arc<neomind_storage::TimeSeriesStore>) {
+        self.time_series_storage = Some(storage);
+    }
+
     /// Reserve one of today's runs for this agent.
     ///
     /// `max_calls_per_day` caps **runs**, not L0 inferences: a reasoning agent

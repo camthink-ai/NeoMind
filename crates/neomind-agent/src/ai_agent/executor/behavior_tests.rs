@@ -324,14 +324,96 @@ async fn structured_mode_publishes_schema_fields_on_first_pass() {
     assert!(dp.decisions[0].action.contains("ai:test-agent"));
 }
 
+/// A structured agent is inference over its bound sources. When none of them
+/// produced anything inside the window there is nothing to infer from — and the
+/// memory summary it would otherwise fall back on is its *own previous
+/// conclusion*. Publishing that is reasoning in a circle.
+///
+/// This is the 2026-09-23 report: a camera went idle for three hours while the
+/// agent kept stamping out a confident "正常" every 15 minutes, each one feeding
+/// the next, with downstream dashboards reading it as fresh data.
+#[tokio::test]
+async fn structured_mode_refuses_to_publish_without_input() {
+    let (mut executor, mut agent, _registry) = build_harness().await;
+    agent.execution_mode = neomind_storage::agents::ExecutionMode::Structured;
+    agent.output_schema = Some(vec![neomind_storage::OperatorField {
+        name: "anomaly_count".into(),
+        field_type: neomind_storage::OperatorFieldType::Number,
+        unit: None,
+        description: None,
+    }]);
+    // What the branch would answer if it were allowed to run at all.
+    let rt: Arc<dyn LlmRuntime> = Arc::new(MockLlmRuntime::new(vec![MockResponse::text(
+        r#"{"anomaly_count": 0}"#,
+    )]));
+    executor.set_llm_runtime(rt).await;
+
+    // Exactly what the collector hands over when every bound source missed the
+    // window: the memory summary, and nothing else.
+    let outcome = executor
+        .execute_structured(
+            "exec-no-input",
+            &agent,
+            vec![neomind_storage::DataCollected {
+                source: "memory".into(),
+                data_type: "summary".into(),
+                values: serde_json::json!({
+                    "last_conclusion": "{\"anomaly_count\":0}",
+                    "total_executions": 20,
+                }),
+                timestamp: 0,
+            }],
+        )
+        .await;
+
+    assert!(
+        outcome.is_err(),
+        "an inference with no observation behind it must not be published as a conclusion"
+    );
+    let message = outcome.expect_err("checked above").to_string();
+    assert!(
+        message.contains("bound sources"),
+        "the failure must say what was missing, not just that it failed: {message}"
+    );
+}
+
 /// The dispatch in `execute_internal` must route a structured agent to the L0
 /// branch. Its sibling above calls `execute_structured` directly, so it cannot
 /// catch a dispatch that routes elsewhere — this one enters through the same
 /// production entry point the scheduler uses.
 #[tokio::test]
 async fn structured_mode_is_dispatched_from_the_production_entry_point() {
+    use neomind_storage::timeseries::DataPoint as TsPoint;
+    use neomind_storage::TimeSeriesStore;
+
+    // This test is about routing, not about data — but since 2026-09-23 a
+    // structured agent with nothing to read is refused before the branch, so
+    // reaching it now means giving the agent something to read.
+    let storage = TimeSeriesStore::memory().expect("memory timeseries");
+    storage
+        .write(
+            "device:dev-1",
+            "temperature",
+            TsPoint {
+                timestamp: chrono::Utc::now().timestamp(),
+                value: serde_json::json!(23.5),
+                quality: None,
+                metadata: None,
+            },
+        )
+        .await
+        .expect("seed telemetry");
+    storage.flush().expect("flush to storage");
+
     let (mut executor, mut agent, _registry) = build_harness().await;
+    executor.set_time_series_storage(storage);
     agent.execution_mode = neomind_storage::agents::ExecutionMode::Structured;
+    agent.resources = vec![neomind_storage::AgentResource {
+        resource_type: neomind_storage::ResourceType::Metric,
+        resource_id: "dev-1:temperature".to_string(),
+        name: "temperature".to_string(),
+        config: serde_json::json!({}),
+    }];
     agent.output_schema = Some(vec![neomind_storage::OperatorField {
         name: "missing_count".into(),
         field_type: neomind_storage::OperatorFieldType::Number,
@@ -800,11 +882,30 @@ async fn metric_collection_reads_the_key_telemetry_is_written_under() {
 /// severity, so a 盯-style agent reports every verdict.
 #[tokio::test]
 async fn notify_on_always_reports_successes() {
+    use neomind_storage::timeseries::DataPoint as TsPoint;
+
     let store = AgentStore::memory().expect("store");
     let message_manager = Arc::new(neomind_messages::MessageManager::new());
+    // A structured agent is inference over its bound sources; since 2026-09-23
+    // it refuses to run with nothing to read, so this test has to give it a
+    // reading before it can have a success to notify about.
+    let ts = neomind_storage::TimeSeriesStore::memory().expect("ts");
+    ts.write(
+        "device:dev-1",
+        "temperature",
+        TsPoint {
+            timestamp: chrono::Utc::now().timestamp(),
+            value: serde_json::json!(23.5),
+            quality: None,
+            metadata: None,
+        },
+    )
+    .await
+    .expect("seed telemetry");
+    ts.flush().expect("flush");
     let config = AgentExecutorConfig {
         store: store.clone(),
-        time_series_storage: Some(neomind_storage::TimeSeriesStore::memory().expect("ts")),
+        time_series_storage: Some(ts),
         device_service: None,
         event_bus: None,
         message_manager: Some(message_manager.clone()),
@@ -822,7 +923,10 @@ async fn notify_on_always_reports_successes() {
         "id": "always-agent",
         "name": "盯守测试",
         "user_prompt": "判断状态",
-        "resources": [],
+        "resources": [
+            { "resource_type": "metric", "resource_id": "dev-1:temperature",
+              "name": "temperature", "config": {} }
+        ],
         "schedule": { "schedule_type": "manual" },
         "status": "active",
         "created_at": 0, "updated_at": 0,
@@ -1018,8 +1122,20 @@ async fn two_field_contract_publishes_both_metrics() {
     )]));
     executor.set_llm_runtime(rt).await;
 
+    // Since 2026-09-23 a structured run with no observation is refused, so the
+    // subject of this test — that BOTH schema fields land in telemetry — needs
+    // something to infer from.
     let (_dp, record) = executor
-        .execute_structured("exec-two-field", &agent, vec![])
+        .execute_structured(
+            "exec-two-field",
+            &agent,
+            vec![neomind_storage::DataCollected {
+                source: "dev-1".into(),
+                data_type: "values.parts".into(),
+                values: serde_json::json!({"parts": 3}),
+                timestamp: 0,
+            }],
+        )
         .await
         .expect("run");
     assert!(record.success_rate >= 1.0);

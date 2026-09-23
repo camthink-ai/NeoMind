@@ -56,6 +56,19 @@ pub(crate) fn get_time_context() -> String {
     )
 }
 
+/// Whether a collected entry is an observation — something a bound source
+/// actually reported.
+///
+/// `memory` is the agent's own past conclusions and `system` is the collector's
+/// own placeholder for "found nothing". Neither is something the world told us,
+/// and a structured inference fed only those is reasoning in a circle.
+pub(super) fn is_observation(data: &DataCollected) -> bool {
+    data.source != "memory" && data.source != "system"
+}
+
+/// Source name the collector's own placeholder carries.
+const SYSTEM_PLACEHOLDER_SOURCE: &str = "system";
+
 impl AgentExecutor {
     pub(crate) async fn collect_data(&self, agent: &AiAgent) -> AgentResult<Vec<DataCollected>> {
         let timestamp = chrono::Utc::now().timestamp();
@@ -174,6 +187,11 @@ impl AgentExecutor {
             }
         }
         let deduped_count = data.len();
+        // Counted before memory is mixed in. The guard below is about what the
+        // bound sources gave us, and the memory summary exists for any agent
+        // with history — appending it first meant `is_empty` could never be
+        // true and an empty collection read as a successful one (2026-09-23).
+        let observations = data.len();
 
         // Add condensed memory context
         let memory_data = self.collect_memory_summary(agent, timestamp)?;
@@ -188,14 +206,15 @@ impl AgentExecutor {
             "[COLLECT] Data collection summary"
         );
 
-        // If no data collected, add a placeholder
-        if data.is_empty() {
+        // Nothing from the bound sources: say so rather than let the memory
+        // summary stand in for input.
+        if observations == 0 {
             tracing::warn!(
                 agent_id = %agent.id,
-                "[COLLECT] NO DATA COLLECTED - adding placeholder"
+                "[COLLECT] NO DATA COLLECTED from bound sources - adding placeholder"
             );
             data.push(DataCollected {
-                source: "system".to_string(),
+                source: SYSTEM_PLACEHOLDER_SOURCE.to_string(),
                 data_type: "info".to_string(),
                 values: serde_json::json!({
                     "message": "No pre-collected data available. Use available tools to query device data as needed, or analyze based on user instructions and historical patterns."

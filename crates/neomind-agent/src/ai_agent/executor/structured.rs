@@ -9,6 +9,7 @@
 //! still gets an entry via the shared `finalize_execution_memory` path so
 //! history/trend features and the detail page see every run.
 
+use super::data_collector::is_observation;
 use super::*;
 
 impl AgentExecutor {
@@ -38,6 +39,22 @@ impl AgentExecutor {
             Some(&format!("Single constrained inference over {} data source(s)...", data_collected.len())),
         )
         .await;
+
+        // A structured agent's entire input is its bound sources. The memory
+        // summary is not input — it is the agent's own past conclusions — and a
+        // structured inference fed only that is reasoning in a circle.
+        //
+        // Refusing here is the designed behaviour for missing input
+        // (design 001 §5.1.4): the last published value stays as it was, the
+        // run is recorded as a failure, and the breaker paces the retries.
+        // Not publishing is the point — it is what stops a downstream dashboard
+        // from reading a stale "正常" as freshly computed.
+        if !data_collected.iter().any(is_observation) {
+            return Err(NeoMindError::Config(format!(
+                "structured agent '{}' collected no data from its bound sources — nothing to                  infer from (the memory summary is its own previous conclusion, not an                  observation). Publishing would replace a real reading with a guess.",
+                agent.name
+            )));
+        }
 
         let images = extract_images(&data_collected);
         if !images.is_empty() {
