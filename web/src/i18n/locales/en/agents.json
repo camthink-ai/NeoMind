@@ -684,6 +684,17 @@
         "prompt": "Describe your task — four things make a good brief:\n1. Goal — what to achieve;\n2. Input — which data or cameras to look at;\n3. Judgement — what counts as normal, what as trouble;\n4. Action — what to do and who to notify when trouble shows."
       }
     },
+        "notify": {
+      "title": "Notify",
+      "channelsLabel": "Channels",
+      "noChannels": "No channels configured yet (add one on the Messages page)",
+      "onLabel": "When to notify",
+      "onFailure": "On failure",
+      "onFailureDesc": "Silence is health — only failures interrupt you",
+      "onAlways": "Every run",
+      "onAlwaysDesc": "Watch mode — every verdict is worth reading",
+      "hint": "Pick where to deliver and when. Without a config the legacy behavior (inferring from the conclusion text) applies."
+    },
     "workstyle": {
       "title": "How it works",
       "bound": "Bound data only",

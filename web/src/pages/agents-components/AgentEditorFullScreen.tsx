@@ -48,12 +48,15 @@ import {
   GitBranch,
 } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { channelsApi } from '@/lib/api/channels'
+import type { AlertChannel } from '@/types/message'
 import type {
   AiAgentDetail,
   AgentSchedule,
   CreateAgentRequest,
   AgentExecutionMode,
   AgentMemoryMode,
+  AgentNotify,
   OperatorField,
   OperatorConfig,
   DryRunResult,
@@ -217,6 +220,9 @@ export function AgentEditorFullScreen({
   // an existing agent already has its content.
   const [appliedPreset, setAppliedPreset] = useState<AgentPreset['key'] | null>(null)
   const [memoryMode, setMemoryMode] = useState<AgentMemoryMode | null>(null)
+  // Notification routing: null = 未配置(走旧的关键词行为)。
+  const [notify, setNotify] = useState<AgentNotify | null>(null)
+  const [channels, setChannels] = useState<AlertChannel[]>([])
   const [outputSchema, setOutputSchema] = useState<OperatorField[]>([])
   const [operatorConfig, setOperatorConfig] = useState<OperatorConfig>({
     debounce_secs: 30,
@@ -375,6 +381,7 @@ export function AgentEditorFullScreen({
   useEffect(() => {
     if (open) {
       loadBackends()
+      channelsApi.listMessageChannels().then((r) => setChannels(r.channels)).catch(() => {})
     }
   }, [open, loadBackends])
 
@@ -391,6 +398,8 @@ export function AgentEditorFullScreen({
         // existing agent runs. A stored `free` means it was allowed latitude.
         setCanActAutonomously(agent.execution_mode === 'free')
         setMemoryMode(agent.memory_mode ?? null)
+        setNotify(agent.notify ?? null)
+        setNotify(agent.notify ?? null)
         setOutputSchema(agent.output_schema ?? [])
         setOperatorConfig(agent.operator_config ?? {
           debounce_secs: 30,
@@ -410,6 +419,7 @@ export function AgentEditorFullScreen({
         // Reset to defaults
         setCanActAutonomously(false)
         setMemoryMode(null)
+        setNotify(null)
         setAppliedPreset(null)
         setOutputSchema([])
         setOperatorConfig({ debounce_secs: 30, timeout_secs: 60, consecutive_failure_threshold: 3 })
@@ -1160,6 +1170,7 @@ export function AgentEditorFullScreen({
         max_chain_depth: maxChainDepth !== 5 ? maxChainDepth : undefined,
         execution_mode: executionMode,
         memory_mode: memoryMode ?? undefined,
+        notify: notify ?? undefined,
         // The output contract is no longer structured-only: any mode may
         // publish fields. A reasoning agent does it in a post-run step.
         ...(hasContract
@@ -1920,6 +1931,85 @@ export function AgentEditorFullScreen({
     </>
   )
 
+
+  canvas['notify'] = (
+    <>
+            {/* Notification routing — the channels and the moment, chosen
+                explicitly instead of sniffed from the conclusion text. */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Label className="text-sm font-medium text-muted-foreground">
+                  {tAgent('creator.notify.title')}
+                </Label>
+                <InfoHint text={tAgent('creator.notify.hint')} />
+              </div>
+              {channels.length === 0 ? (
+                <p className="text-xs text-muted-foreground">{tAgent('creator.notify.noChannels')}</p>
+              ) : (
+                <>
+                  <div className="flex flex-wrap gap-1.5">
+                    {channels.map((ch) => {
+                      const on = notify?.channels.includes(ch.name) ?? false
+                      return (
+                        <button
+                          key={ch.name}
+                          type="button"
+                          onClick={() =>
+                            setNotify((prev) => {
+                              const base = prev ?? { channels: [], on: 'failure' as const }
+                              const next = on
+                                ? base.channels.filter((c) => c !== ch.name)
+                                : [...base.channels, ch.name]
+                              return next.length === 0 ? null : { ...base, channels: next }
+                            })
+                          }
+                          className={cn(
+                            'inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs transition-colors',
+                            on
+                              ? 'border-primary bg-muted text-foreground'
+                              : 'border-border text-muted-foreground hover:border-muted-foreground',
+                            !ch.enabled && 'opacity-50',
+                          )}
+                          title={ch.channel_type + (ch.enabled ? '' : ' (disabled)')}
+                        >
+                          {on && <Check className="h-3 w-3" />}
+                          <span className="max-w-[10rem] truncate">{ch.name}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                  {notify && (
+                    <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                      {(['failure', 'always'] as const).map((k) => (
+                        <button
+                          key={k}
+                          type="button"
+                          onClick={() => setNotify((prev) => prev && { ...prev, on: k })}
+                          className={cn(
+                            'flex flex-col items-start rounded-md border p-2 text-left transition-colors',
+                            notify.on === k
+                              ? 'border-primary bg-muted'
+                              : 'border-border hover:border-muted-foreground',
+                          )}
+                        >
+                          <span className="text-sm font-medium">
+                            {tAgent(`creator.notify.on${k === 'failure' ? 'Failure' : 'Always'}`)}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            {tAgent(
+                              `creator.notify.on${k === 'failure' ? 'Failure' : 'Always'}Desc`,
+                            )}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+    </>
+  )
+
   canvas['schedule'] = (
     <>
             {/* Execution Schedule */}
@@ -2553,6 +2643,7 @@ export function AgentEditorFullScreen({
           >
             {canvas.structured}
             {canvas.memory}
+            {canvas.notify}
           </EditorSection>
           <EditorSection title={tAgent('creator.section.when')}>
             {canvas.schedule}

@@ -45,6 +45,7 @@ export interface AiAgent {
   execution_mode?: AgentExecutionMode
   /** Memory axis — absent means the mode-derived default */
   memory_mode?: AgentMemoryMode
+  notify?: AgentNotify
 }
 
 /**
@@ -73,6 +74,7 @@ export interface AiAgentDetail extends AiAgent {
   /** Structured (L0) runtime tuning */
   operator_config?: OperatorConfig
   memory_mode?: AgentMemoryMode
+  notify?: AgentNotify
 }
 
 /**
@@ -259,6 +261,15 @@ export interface OperatorField {
   description?: string
 }
 
+/** When an agent notifies (mirrors the server's `NotifyOn`). */
+export type AgentNotifyOn = 'failure' | 'always'
+
+/** Explicit notification routing (mirrors the server's `AgentNotify`). */
+export interface AgentNotify {
+  channels: string[]
+  on: AgentNotifyOn
+}
+
 /**
  * How much history an agent carries into each run (mirrors the server's
  * `MemoryMode`). `tool` = judged fresh each time; `assistant` = carries the
@@ -295,6 +306,7 @@ export interface TestPreviewRequest {
   output_schema?: OperatorField[]
   operator_config?: OperatorConfig
   memory_mode?: AgentMemoryMode
+  notify?: AgentNotify
   llm_backend_id?: string
 }
 
@@ -324,6 +336,7 @@ export interface CreateAgentRequest {
   /** Structured (L0) runtime tuning */
   operator_config?: OperatorConfig
   memory_mode?: AgentMemoryMode
+  notify?: AgentNotify
 }
 
 /**
@@ -411,6 +424,7 @@ export interface UpdateAgentRequest {
   /** Structured (L0) runtime tuning */
   operator_config?: OperatorConfig
   memory_mode?: AgentMemoryMode
+  notify?: AgentNotify
 }
 
 /**
