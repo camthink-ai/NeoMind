@@ -82,14 +82,14 @@ export function AgentUserMessages({ agentId, onMessageAdded, refreshToken = 0 }:
   }
 
   return (
-    <div className="space-y-3">
+    <div className="flex min-h-[320px] flex-1 flex-col gap-3">
             {loading ? (
               <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
                 {t('common:loading')}
               </div>
             ) : messages.length === 0 ? (
-              <div className="flex min-h-[280px] flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-border text-center">
+              <div className="flex flex-1 flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-border text-center">
                 <MessageSquare className="h-8 w-8 text-muted-foreground/40" />
                 <p className="text-sm text-muted-foreground">{t('agents:userMessages.empty')}</p>
                 <p className="text-xs text-muted-foreground/70">{t('agents:userMessages.emptyHint')}</p>
