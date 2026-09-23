@@ -93,6 +93,46 @@ describe('SimpleRuleBuilderSplit', () => {
       { type: 'notify', message: 'Rule triggered', severity: 'info' },
     ])
   })
+
+  it('an action this editor does not know survives an edit and save', async () => {
+    // The editor used to fold every unrecognised action type onto a hardcoded
+    // notify ("Rule triggered"). A rule created through the API/CLI — e.g. one
+    // carrying the M2-4 `run_operator` action, which this builder has no form
+    // for — was therefore rewritten the moment it was opened, and saving
+    // destroyed the original action. Preserve what we cannot render.
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    const operatorAction = { type: 'run_operator', agent_id: 'cam01-view' }
+    render(
+      <SimpleRuleBuilderSplit
+        open
+        onOpenChange={noop}
+        onSave={onSave}
+        rule={{
+          id: 'r-9',
+          name: '运行算子',
+          enabled: true,
+          trigger: { trigger_type: 'manual' },
+          actions: [operatorAction],
+        } as never}
+        resources={{
+          devices: [],
+          deviceTypes: [],
+          extensions: [],
+          extensionDataSources: [],
+          transformDataSources: [],
+          messageChannels: [],
+        }}
+      />,
+    )
+    const overlay = document.querySelector('.fixed.inset-0') as HTMLElement
+    const nameInput = overlay.querySelector('#rule-name') as HTMLInputElement
+    await waitFor(() => expect(nameInput.value).toBe('运行算子')) // restore ran
+
+    fireEvent.click(screen.getByRole('button', { name: /save/ }))
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+
+    expect(onSave.mock.calls[0][0].actions).toEqual([operatorAction])
+  })
 })
 
 describe('TransformBuilderSplit', () => {

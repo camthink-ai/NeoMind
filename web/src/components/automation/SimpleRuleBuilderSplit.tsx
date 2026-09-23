@@ -1239,8 +1239,13 @@ export function SimpleRuleBuilderSplit({
               case 'trigger_agent':
                 return { type: 'trigger_agent', agent_id: action.agent_id || '', input: action.input, data: action.data }
               default:
-                // Unknown action type, default to notify
-                return { type: 'notify', message: 'Rule triggered', severity: 'info' } as RuleAction
+                // Unknown action type — keep it verbatim rather than
+                // fabricating a notify. This editor has no form for every
+                // action the backend accepts (rules created through the API or
+                // CLI arrive with whatever they were authored with), and
+                // rewriting an action we cannot render means merely opening a
+                // rule silently rewrites it — and saving destroys the original.
+                return action as RuleAction
             }
           })
           setActions(cleanedActions)
