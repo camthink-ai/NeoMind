@@ -166,6 +166,7 @@ fn render_action(action: &RuleAction) -> String {
             }
             parts.join(" ")
         }
+        RuleAction::RunOperator { agent_id } => format!("RUN OPERATOR {}", agent_id),
     }
 }
 
@@ -192,6 +193,18 @@ mod tests {
     use super::*;
     use crate::models::*;
     use neomind_core::datasource::DataSourceId;
+
+    /// M2-4: the read-only DSL preview must name the operator, or the editor
+    /// shows an action whose target the user cannot see.
+    #[test]
+    fn run_operator_preview_names_the_operator() {
+        let text = render_action(&RuleAction::RunOperator {
+            agent_id: "cam01-view".to_string(),
+        });
+
+        assert!(text.contains("cam01-view"), "preview: {text}");
+        assert!(text.contains("OPERATOR"), "preview: {text}");
+    }
 
     #[test]
     fn test_preview_simple_rule() {

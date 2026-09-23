@@ -822,39 +822,66 @@ impl RuleEngine {
                 input,
                 data,
             } => {
-                let trigger = self.agent_trigger.read().await;
-                if let Some(cb) = trigger.as_ref() {
-                    // [decoupled] The full agent run used to be awaited INLINE
-                    // here — one rule with a TriggerAgent action stalled every
-                    // other rule's evaluation platform-wide for the entire
-                    // agent execution (bounded only by the global 5-min cap),
-                    // because on_data_update awaits evaluate_and_fire
-                    // sequentially per affected rule. Spawn it: rule
-                    // processing continues, and the agent's own executor
-                    // (semaphores, timeout, journaling) governs the run.
-                    let cb = cb.clone();
-                    let (spawn_id, spawn_input, spawn_data, log_id) = (
-                        agent_id.clone(),
-                        input.clone(),
-                        data.clone(),
-                        agent_id.clone(),
-                    );
-                    tokio::spawn(async move {
-                        if let Err(e) = cb(spawn_id, spawn_input, spawn_data).await {
-                            tracing::warn!(
-                                agent_id = %log_id,
-                                error = %e,
-                                "TRIGGER_AGENT execution failed"
-                            );
-                        }
-                    });
-                    Ok(format!("TRIGGER_AGENT: {} (spawned)", agent_id))
-                } else {
-                    tracing::warn!("TRIGGER_AGENT: {} (no callback wired)", agent_id);
-                    Err("TRIGGER_AGENT failed: agent trigger callback not initialized".to_string())
-                }
+                self.spawn_agent_run(agent_id, input.clone(), data.clone(), "TRIGGER_AGENT")
+                    .await
+            }
+
+            RuleAction::RunOperator { agent_id } => {
+                // No input: an operator collects its own bound sources and
+                // answers with schema-validated fields — there is no prompt to
+                // hand it. Which execution branch actually runs is decided by
+                // the agent's own mode downstream, not here.
+                self.spawn_agent_run(agent_id, None, None, "RUN_OPERATOR")
+                    .await
             }
         }
+    }
+
+    /// Spawn a run through the wired agent-trigger callback and return the
+    /// action summary the engine logs.
+    ///
+    /// [decoupled] The full agent run used to be awaited INLINE in the
+    /// `TriggerAgent` arm — one rule with that action stalled every other
+    /// rule's evaluation platform-wide for the entire agent execution (bounded
+    /// only by the global 5-min cap), because `on_data_update` awaits
+    /// `evaluate_and_fire` sequentially per affected rule. Every agent-running
+    /// action spawns instead: rule processing continues, and the agent's own
+    /// executor (semaphores, timeout, journaling) governs the run.
+    async fn spawn_agent_run(
+        &self,
+        agent_id: &str,
+        input: Option<String>,
+        data: Option<serde_json::Value>,
+        label: &str,
+    ) -> Result<String, String> {
+        let cb = {
+            let trigger = self.agent_trigger.read().await;
+            match trigger.as_ref() {
+                Some(cb) => cb.clone(),
+                None => {
+                    tracing::warn!("{}: {} (no callback wired)", label, agent_id);
+                    return Err(format!(
+                        "{} failed: agent trigger callback not initialized",
+                        label
+                    ));
+                }
+            }
+        };
+
+        let (spawn_id, log_id, spawn_label) =
+            (agent_id.to_string(), agent_id.to_string(), label.to_string());
+        tokio::spawn(async move {
+            if let Err(e) = cb(spawn_id, input, data).await {
+                tracing::warn!(
+                    agent_id = %log_id,
+                    error = %e,
+                    "{} execution failed",
+                    spawn_label
+                );
+            }
+        });
+
+        Ok(format!("{}: {} (spawned)", label, agent_id))
     }
 
     // -- State helpers --
@@ -1015,6 +1042,54 @@ impl RuleEngine {
 mod tests {
     use super::*;
     use crate::models::*;
+
+    /// M2-4: a rule that runs an operator must actually invoke it — and with
+    /// no prompt input, because an operator collects its own bound sources
+    /// rather than being told what to look at.
+    #[tokio::test]
+    async fn run_operator_action_invokes_the_operator_without_input() {
+        let provider = Arc::new(InMemoryValueProvider::new());
+        let engine = RuleEngine::new(provider);
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(1);
+        engine
+            .set_agent_trigger_callback(Arc::new(
+                move |agent_id: String,
+                      input: Option<String>,
+                      data: Option<serde_json::Value>| {
+                    let tx = tx.clone();
+                    Box::pin(async move {
+                        let _ = tx
+                            .send(format!("{agent_id}|in={}|data={}", input.is_some(), data.is_some()))
+                            .await;
+                        Ok(())
+                    })
+                },
+            ))
+            .await;
+
+        let summary = engine
+            .execute_action(
+                &RuleAction::RunOperator {
+                    agent_id: "cam01-view".to_string(),
+                },
+                None,
+                None,
+            )
+            .await
+            .expect("running an operator must not error");
+
+        assert!(summary.contains("cam01-view"), "summary: {summary}");
+
+        let seen = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .expect("the operator must be invoked")
+            .expect("callback channel must stay open");
+        assert_eq!(
+            seen, "cam01-view|in=false|data=false",
+            "an operator takes no input — it collects its own sources"
+        );
+    }
 
     #[tokio::test]
     async fn test_add_and_list_rules() {

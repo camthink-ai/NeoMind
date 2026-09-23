@@ -447,6 +447,14 @@ pub enum RuleAction {
         #[serde(skip_serializing_if = "Option::is_none")]
         data: Option<serde_json::Value>,
     },
+    /// Run a Structured (L0) operator, which collects its own bound sources
+    /// and answers with schema-validated fields. Appended LAST so every
+    /// action already stored in `rules.redb` keeps its tag.
+    ///
+    /// Distinct from `TriggerAgent`, which runs a reasoning agent with a
+    /// prompt: an operator takes no input, so this action names only which
+    /// one to run.
+    RunOperator { agent_id: String },
 }
 
 impl RuleAction {
@@ -456,6 +464,7 @@ impl RuleAction {
             RuleAction::Notify { .. } => "notify",
             RuleAction::Execute { .. } => "execute",
             RuleAction::TriggerAgent { .. } => "trigger_agent",
+            RuleAction::RunOperator { .. } => "run_operator",
         }
     }
 }
@@ -922,6 +931,59 @@ mod tests {
                 assert_eq!(sources[1].storage_key(), "extension:ext1:field");
             }
             _ => panic!("Expected DataChange"),
+        }
+    }
+
+    /// M2-4: a rule can run a Structured (L0) operator — "run this operator"
+    /// as an action, so an operator gains an event trigger without having to
+    /// subscribe to events itself (design 001 §5.1: event triggering is the
+    /// `RunOperator` rule action).
+    #[test]
+    fn run_operator_action_round_trips_through_json() {
+        let action = RuleAction::RunOperator {
+            agent_id: "cam01-view".to_string(),
+        };
+
+        assert_eq!(action.action_type(), "run_operator");
+
+        let json = serde_json::to_value(&action).unwrap();
+        assert_eq!(json["type"], "run_operator");
+        assert_eq!(json["agent_id"], "cam01-view");
+
+        let back: RuleAction = serde_json::from_value(json).unwrap();
+        assert!(
+            matches!(back, RuleAction::RunOperator { ref agent_id } if agent_id == "cam01-view"),
+            "the action must survive a round trip"
+        );
+    }
+
+    /// Rules live in `rules.redb` as tagged JSON. Every action shape already
+    /// stored must keep deserializing — adding `run_operator` must not have
+    /// shifted how the existing three are tagged.
+    #[test]
+    fn the_existing_action_shapes_are_unchanged_on_the_wire() {
+        let cases = [
+            (
+                serde_json::json!({"type": "notify", "message": "m", "severity": "info"}),
+                "notify",
+            ),
+            (
+                serde_json::json!({
+                    "type": "execute", "target": "dev", "target_type": "device",
+                    "command": "on", "params": {}
+                }),
+                "execute",
+            ),
+            (
+                serde_json::json!({"type": "trigger_agent", "agent_id": "a-1"}),
+                "trigger_agent",
+            ),
+        ];
+
+        for (json, expected) in cases {
+            let action: RuleAction = serde_json::from_value(json)
+                .unwrap_or_else(|e| panic!("{expected} must still deserialize: {e}"));
+            assert_eq!(action.action_type(), expected);
         }
     }
 }

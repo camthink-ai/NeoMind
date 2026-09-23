@@ -244,6 +244,12 @@ fn action_to_json(action: &RuleAction) -> Value {
                 "data": data,
             })
         }
+        RuleAction::RunOperator { agent_id } => {
+            json!({
+                "type": "run_operator",
+                "agent_id": agent_id,
+            })
+        }
     }
 }
 
@@ -1149,7 +1155,7 @@ pub async fn create_rule_handler(
                     "Provide a valid JSON rule object. Required fields: 'name'. \
                      `trigger` defaults to {{\"trigger_type\":\"data_change\"}} when omitted. \
                      Condition types: 'comparison', 'range', 'logical'. \
-                     Action types: 'notify', 'execute', 'trigger_agent'. \
+                     Action types: 'notify', 'execute', 'trigger_agent', 'run_operator'. \
                      Trigger shape (internally tagged, field is 'trigger_type'): \
                      {{\"trigger\":{{\"trigger_type\":\"data_change\"}}}} | \
                      {{\"trigger\":{{\"trigger_type\":\"schedule\",\"cron\":\"* * * * *\"}}}} | \
@@ -1749,4 +1755,43 @@ pub async fn validate_rule_handler(
         "errors": result.errors,
         "warnings": result.warnings,
     }))
+}
+
+#[cfg(test)]
+mod action_dto_tests {
+    use super::action_to_json;
+
+    /// M2-4: the rule detail DTO must carry the operator action — the editor
+    /// renders actions from this JSON, so an action missing here is an action
+    /// the user cannot see or edit.
+    #[test]
+    fn run_operator_action_reaches_the_dto() {
+        let json = action_to_json(&neomind_rules::RuleAction::RunOperator {
+            agent_id: "cam01-view".to_string(),
+        });
+
+        assert_eq!(json["type"], "run_operator");
+        assert_eq!(json["agent_id"], "cam01-view");
+    }
+
+    /// Adding a fourth action must not have shifted the three already stored
+    /// and already rendered.
+    #[test]
+    fn existing_action_dtos_are_unchanged() {
+        let notify = action_to_json(&neomind_rules::RuleAction::Notify {
+            message: "m".to_string(),
+            severity: neomind_rules::NotifySeverity::Info,
+        });
+        assert_eq!(notify["type"], "notify");
+        assert_eq!(notify["message"], "m");
+        assert_eq!(notify["severity"], "info");
+
+        let trigger = action_to_json(&neomind_rules::RuleAction::TriggerAgent {
+            agent_id: "a-1".to_string(),
+            input: None,
+            data: None,
+        });
+        assert_eq!(trigger["type"], "trigger_agent");
+        assert_eq!(trigger["agent_id"], "a-1");
+    }
 }

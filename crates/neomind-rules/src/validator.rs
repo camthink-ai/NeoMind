@@ -452,6 +452,16 @@ impl RuleValidator {
                     });
                 }
             }
+            RuleAction::RunOperator { agent_id } => {
+                if agent_id.is_empty() {
+                    issues.push(ValidationIssue {
+                        code: "EMPTY_AGENT_ID".to_string(),
+                        message: "Operator agent ID cannot be empty".to_string(),
+                        field: Some("actions.run_operator.agent_id".to_string()),
+                        severity: ValidationSeverity::Error,
+                    });
+                }
+            }
         }
 
         Ok(issues)
@@ -569,6 +579,35 @@ mod tests {
     use super::*;
     use crate::models::*;
     use neomind_core::datasource::DataSourceId;
+
+    /// M2-4: an operator action must name an operator — the same gate the
+    /// `trigger_agent` action has.
+    #[test]
+    fn run_operator_requires_a_non_empty_agent_id() {
+        let context = ValidationContext::new();
+
+        let unnamed = RuleAction::RunOperator {
+            agent_id: String::new(),
+        };
+        let issues = RuleValidator::validate_action(&unnamed, &context)
+            .expect("validation itself must not fail");
+        assert!(
+            issues.iter().any(|i| i.code == "EMPTY_AGENT_ID"),
+            "an unnamed operator must be rejected: {issues:?}"
+        );
+
+        let named = RuleAction::RunOperator {
+            agent_id: "cam01-view".to_string(),
+        };
+        let issues = RuleValidator::validate_action(&named, &context)
+            .expect("validation itself must not fail");
+        assert!(
+            !issues
+                .iter()
+                .any(|i| matches!(i.severity, ValidationSeverity::Error)),
+            "a named operator must validate clean: {issues:?}"
+        );
+    }
 
     #[test]
     fn test_validate_device_not_found() {
