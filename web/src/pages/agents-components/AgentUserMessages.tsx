@@ -82,7 +82,10 @@ export function AgentUserMessages({ agentId, onMessageAdded, refreshToken = 0 }:
   }
 
   return (
-    <div className="flex h-full flex-col gap-3">
+    <div className="flex h-full min-h-0 flex-col gap-3">
+      {/* The list scrolls itself (min-h-0 + overflow) — many notes never
+          overflow the outer page container. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
             {loading ? (
               <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -106,6 +109,7 @@ export function AgentUserMessages({ agentId, onMessageAdded, refreshToken = 0 }:
                 <div ref={bottomRef} />
               </>
             )}
+      </div>
     </div>
   )
 }
@@ -192,7 +196,7 @@ function MessageBubble({ message, onDelete }: MessageBubbleProps) {
         onClick={onDelete}
         aria-label={t('common:delete')}
         className={cn(
-          "absolute right-1.5 top-1.5 rounded p-1 opacity-0 transition-opacity group-hover:opacity-100",
+          "absolute inset-y-0 right-1.5 my-auto h-fit rounded p-1 opacity-0 transition-opacity group-hover:opacity-100",
           "text-muted-foreground hover:bg-card hover:text-error"
         )}
         title={t('common:delete')}
