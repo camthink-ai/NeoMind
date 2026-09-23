@@ -280,7 +280,10 @@ pub(crate) async fn resolve_agent(
     store: &AgentStore,
     needle: &str,
 ) -> std::result::Result<AiAgent, Vec<String>> {
-    let agents = store.query_agents(Default::default()).await.unwrap_or_default();
+    let agents = store
+        .query_agents(Default::default())
+        .await
+        .unwrap_or_default();
 
     if let Some(agent) = agents.iter().find(|a| a.id == needle) {
         return Ok(agent.clone());
@@ -310,7 +313,10 @@ pub(crate) async fn resolve_agent(
 /// The user's agents, named, for a "no such agent" message that leaves the
 /// model somewhere to go.
 pub(crate) async fn agent_names(store: &AgentStore) -> String {
-    let agents = store.query_agents(Default::default()).await.unwrap_or_default();
+    let agents = store
+        .query_agents(Default::default())
+        .await
+        .unwrap_or_default();
     if agents.is_empty() {
         return "none — no agents have been created yet".to_string();
     }
@@ -375,8 +381,14 @@ mod tests {
         let tool = tool_with(&[("a1", "冷库温度盯守"), ("a2", "车间能耗预警")]).await;
 
         assert!(resolve_agent(&tool.store, "冷库").await.is_ok());
-        assert!(resolve_agent(&tool.store, "a2").await.is_ok(), "an id works too");
-        assert!(resolve_agent(&tool.store, "车间能耗预警").await.is_ok(), "so does the full name");
+        assert!(
+            resolve_agent(&tool.store, "a2").await.is_ok(),
+            "an id works too"
+        );
+        assert!(
+            resolve_agent(&tool.store, "车间能耗预警").await.is_ok(),
+            "so does the full name"
+        );
     }
 
     /// Answering about the wrong agent is worse than asking which one.
@@ -384,7 +396,9 @@ mod tests {
     async fn an_ambiguous_name_is_refused_with_the_candidates() {
         let tool = tool_with(&[("a1", "冷库温度盯守"), ("a2", "冷库湿度盯守")]).await;
 
-        let candidates = resolve_agent(&tool.store, "冷库").await.expect_err("ambiguous");
+        let candidates = resolve_agent(&tool.store, "冷库")
+            .await
+            .expect_err("ambiguous");
         assert_eq!(candidates.len(), 2, "both are offered: {candidates:?}");
     }
 
@@ -503,7 +517,8 @@ mod run_now_tests {
     /// model would read it out as one.
     #[tokio::test]
     async fn a_run_that_is_still_going_says_so_rather_than_inventing_an_answer() {
-        let (tool, _recorder) = tool_with(&[("a1", "冷库温度盯守")], RunOutcome::StillRunning).await;
+        let (tool, _recorder) =
+            tool_with(&[("a1", "冷库温度盯守")], RunOutcome::StillRunning).await;
 
         let out = tool
             .execute(serde_json::json!({ "agent": "冷库" }))
@@ -518,9 +533,11 @@ mod run_now_tests {
     /// Running the wrong agent is worse than asking which one.
     #[tokio::test]
     async fn an_ambiguous_name_runs_nothing() {
-        let (tool, recorder) =
-            tool_with(&[("a1", "冷库温度盯守"), ("a2", "冷库湿度盯守")], RunOutcome::StillRunning)
-                .await;
+        let (tool, recorder) = tool_with(
+            &[("a1", "冷库温度盯守"), ("a2", "冷库湿度盯守")],
+            RunOutcome::StillRunning,
+        )
+        .await;
 
         let out = tool
             .execute(serde_json::json!({ "agent": "冷库" }))

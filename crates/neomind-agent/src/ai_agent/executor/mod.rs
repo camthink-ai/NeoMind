@@ -1122,7 +1122,8 @@ impl AgentExecutor {
         // channels and the trigger; route accordingly. Replaces the old
         // intent-keyword sniffing — which still runs for agents WITHOUT a
         // notify config, so legacy behavior is unchanged.
-        self.dispatch_agent_notifications(&agent_id, &agent_name, &record).await;
+        self.dispatch_agent_notifications(&agent_id, &agent_name, &record)
+            .await;
 
         // Reset agent status based on result.
         //
