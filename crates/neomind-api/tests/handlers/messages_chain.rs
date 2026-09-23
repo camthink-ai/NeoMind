@@ -6,7 +6,10 @@
 
 use axum::extract::{Path, State};
 use axum::Json;
-use neomind_api::handlers::messages::{create_message_handler, get_message_chain_handler, CreateMessageRequest};
+use neomind_api::handlers::messages::{
+    create_message_handler, get_message_chain_handler, mark_message_false_positive_handler,
+    CreateMessageRequest,
+};
 use neomind_api::handlers::ServerState;
 use neomind_rules::models::{CompiledRule, NotifySeverity, RuleAction, RuleTrigger};
 
@@ -102,6 +105,95 @@ mod tests {
 
         assert_eq!(chain["resolved"], false);
         assert_eq!(chain["reason"], "no_rule_reference");
+    }
+
+    /// The loop, closed (002 §3.4): dismiss an alert, the rule's quality
+    /// reflects it, and enough dismissals turn into a suggestion.
+    ///
+    /// The suggestion is the whole point of counting — and it stays a
+    /// suggestion: nothing here edits the rule's condition.
+    #[tokio::test]
+    async fn dismissing_alerts_closes_the_feedback_loop() {
+        let state = create_test_server_state().await;
+
+        let mut rule = CompiledRule::new("Freezer watch");
+        rule.trigger = RuleTrigger::Manual;
+        // Three alerts, now — the loop is about how they were received, not
+        // about how far apart they were.
+        rule.cooldown = std::time::Duration::from_secs(0);
+        rule.actions = vec![RuleAction::Notify {
+            message: "Cold room out of range".to_string(),
+            severity: NotifySeverity::Warning,
+        }];
+        rule.finalize();
+        let rule_id = rule.id.clone();
+        state
+            .automation
+            .rule_engine
+            .add_rule(rule)
+            .await
+            .expect("rule added");
+
+        for _ in 0..3 {
+            assert!(
+                state
+                    .automation
+                    .rule_engine
+                    .execute_rule(&rule_id)
+                    .await
+                    .success
+            );
+        }
+        let sent = state.core.message_manager.list_messages().await;
+        assert_eq!(sent.len(), 3, "three runs, three alerts");
+
+        let chain_for = |state: neomind_api::handlers::ServerState, id: String| async move {
+            let response = get_message_chain_handler(State(state), Path(id))
+                .await
+                .expect("the chain handler must not error");
+            response.0.data.expect("the envelope carries data")
+        };
+
+        let ids: Vec<String> = sent.iter().map(|m| m.id.to_string()).collect();
+
+        // Two dismissals: a ruled-out fluke, not yet a pattern.
+        for id in &ids[..2] {
+            let verdict = mark_message_false_positive_handler(State(state.clone()), Path(id.clone()))
+                .await
+                .expect("the verdict must be recorded");
+            assert_eq!(
+                verdict.0.data.expect("data")["status"],
+                "false_positive",
+                "the wire name the i18n label and the frontend map already use"
+            );
+        }
+        let chain = chain_for(state.clone(), ids[0].clone()).await;
+        assert_eq!(chain["rule_quality"]["false_positives"], 2);
+        assert_eq!(chain["rule_quality"]["alerts"], 3);
+        assert_eq!(
+            chain["rule_quality"]["suggest_threshold_review"], false,
+            "two is not yet a pattern"
+        );
+
+        // The third crosses the threshold.
+        let _ = mark_message_false_positive_handler(State(state.clone()), Path(ids[2].clone()))
+            .await
+            .expect("the verdict must be recorded");
+        let chain = chain_for(state.clone(), ids[0].clone()).await;
+        assert_eq!(chain["rule_quality"]["false_positives"], 3);
+        assert_eq!(
+            chain["rule_quality"]["suggest_threshold_review"], true,
+            "three dismissals is the signal the rule is too tight"
+        );
+
+        // And the rule is untouched — this suggests, it does not act.
+        let rule_after = state
+            .automation
+            .rule_engine
+            .get_rule(&rule_id)
+            .await
+            .expect("rule still there");
+        assert_eq!(rule_after.cooldown, std::time::Duration::from_secs(0));
     }
 
     /// Rule history is pruned after 30 days, so an alert can outlive its

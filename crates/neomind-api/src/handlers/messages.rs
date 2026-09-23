@@ -338,6 +338,25 @@ pub async fn get_message_chain_handler(
 
     let execution = neomind_rules::chain::find_execution(&history, reference.execution_ms);
 
+    // The other half of the loop (002 §3.4): how this rule's alerts have been
+    // received, and whether that is enough to suggest the condition is too
+    // tight. Derived from the messages themselves — the verdict is already
+    // stored on each alert, so a separate sample store could only drift from
+    // it. This scans the message set; when that set is large it wants an index
+    // rather than a second source of truth.
+    let rule_quality = if rule.is_some() {
+        let all = state.core.message_manager.list_messages().await;
+        let quality = neomind_rules::chain::rule_quality(&all, &reference.rule_id);
+        Some(json!({
+            "alerts": quality.alerts,
+            "false_positives": quality.false_positives,
+            "suggest_threshold_review":
+                neomind_rules::chain::suggest_threshold_review(quality.false_positives),
+        }))
+    } else {
+        None
+    };
+
     ok(json!({
         "message_id": id,
         "resolved": execution.is_some(),
@@ -358,6 +377,49 @@ pub async fn get_message_chain_handler(
             "actions_executed": e.actions_executed,
             "error": e.error,
         })),
+        "rule_quality": rule_quality,
+    }))
+}
+
+/// Dismiss an alert as a false positive (002 §3.4).
+///
+/// POST /api/messages/:id/false-positive
+///
+/// The human half of the feedback loop: the operator says "this should not have
+/// fired". The verdict is stored on the alert itself, and the chain endpoint
+/// counts them per rule so the platform can suggest the condition is too tight.
+/// A verdict, never an automatic change — nothing here edits the rule.
+#[utoipa::path(
+    post,
+    path = "/api/messages/{id}/false-positive",
+    tag = "messages",
+    params(
+        ("id" = String, Path, description = "Message id"),
+    ),
+    responses(
+        (status = 200, description = "Marked as a false positive"),
+        (status = 400, description = "Invalid message id"),
+        (status = 404, description = "Message not found"),
+    )
+)]
+pub async fn mark_message_false_positive_handler(
+    State(state): State<ServerState>,
+    Path(id): Path<String>,
+) -> HandlerResult<serde_json::Value> {
+    let msg_id = MessageId(
+        uuid::Uuid::parse_str(&id).map_err(|_| ErrorResponse::bad_request("Invalid message ID"))?,
+    );
+
+    state
+        .core
+        .message_manager
+        .mark_false_positive(&msg_id)
+        .await
+        .map_err(|e| ErrorResponse::internal(e.to_string()))?;
+
+    ok(json!({
+        "message_id": id,
+        "status": "false_positive",
     }))
 }
 

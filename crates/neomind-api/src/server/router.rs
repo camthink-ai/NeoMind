@@ -610,6 +610,10 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             get(messages::get_message_chain_handler),
         )
         .route(
+            "/api/messages/:id/false-positive",
+            post(messages::mark_message_false_positive_handler),
+        )
+        .route(
             "/api/messages/:id/acknowledge",
             post(messages::acknowledge_message_handler),
         )

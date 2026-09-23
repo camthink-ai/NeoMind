@@ -268,6 +268,7 @@ route index (including not-yet-schematized endpoints): /api/docs/routes.json."
         crate::handlers::messages::bulk_delete_handler,
         crate::handlers::messages::get_message_handler,
         crate::handlers::messages::get_message_chain_handler,
+        crate::handlers::messages::mark_message_false_positive_handler,
         crate::handlers::messages::delete_message_handler,
         crate::handlers::messages::acknowledge_message_handler,
         crate::handlers::messages::resolve_message_handler,
