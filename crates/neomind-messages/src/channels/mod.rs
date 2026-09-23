@@ -357,9 +357,21 @@ impl ChannelRegistry {
         };
 
         if removed {
+            // Clear per-channel overrides too. The enabled toggle and (email)
+            // recipients used to survive a delete — re-creating a channel with
+            // the same name silently inherited the deleted channel's state.
+            {
+                let mut state = self.state.write().await;
+                state.enabled_states.remove(name);
+                state.recipients.remove(name);
+            }
+
             // Remove from persistent storage
             if let Err(e) = self.delete_channel(name).await {
                 tracing::warn!("Failed to delete channel from storage: {}", e);
+            }
+            if let Err(e) = self.delete_recipients(name).await {
+                tracing::warn!("Failed to delete channel recipients from storage: {}", e);
             }
         }
 
@@ -797,6 +809,36 @@ impl ChannelRegistry {
         Ok(())
     }
 
+    /// Delete a channel's recipients row from persistent storage (called on
+    /// unregister so a future channel with the same name starts clean).
+    async fn delete_recipients(&self, channel_name: &str) -> Result<()> {
+        let db = {
+            let storage = self.storage.read().await;
+            storage.as_ref().cloned()
+        };
+        if let Some(db) = db {
+            let write_txn = db
+                .begin_write()
+                .map_err(|e| Error::Storage(format!("Failed to begin write: {}", e)))?;
+
+            {
+                let mut table = write_txn
+                    .open_table(redb::TableDefinition::<&str, &str>::new("recipients"))
+                    .map_err(|e| {
+                        Error::Storage(format!("Failed to open recipients table: {}", e))
+                    })?;
+                table
+                    .remove(channel_name)
+                    .map_err(|e| Error::Storage(format!("Failed to delete recipients: {}", e)))?;
+            }
+
+            write_txn
+                .commit()
+                .map_err(|e| Error::Storage(format!("Failed to commit: {}", e)))?;
+        }
+        Ok(())
+    }
+
     /// Load recipients for a channel from persistent storage.
     pub async fn load_recipients(&self, channel_name: &str) {
         let db = {
@@ -1024,10 +1066,24 @@ pub struct ChannelTypeInfo {
     pub description_zh: String,
     pub icon: String,
     pub category: String,
+    /// Official vendor doc explaining how to obtain this channel's
+    /// credentials (bot token, webhook key, SMTP authorization code, …).
+    /// English where the vendor maintains one; empty when there is nothing
+    /// external to obtain.
+    #[serde(default)]
+    pub docs_url: String,
+    /// Chinese variant of `docs_url` where the vendor maintains a separate
+    /// zh doc; empty otherwise (fall back to `docs_url`).
+    #[serde(default)]
+    pub docs_url_zh: String,
 }
 
 /// List all available channel types.
 pub fn list_channel_types() -> Vec<ChannelTypeInfo> {
+    // Doc links point at the page that walks a customer through creating the
+    // bot/webhook and copying the values the config form asks for. Verified
+    // live 2026-09; Slack's old api.slack.dev URL 302s to docs.slack.dev, so
+    // link the target directly.
     vec![
         #[cfg(feature = "webhook")]
         ChannelTypeInfo {
@@ -1038,6 +1094,9 @@ pub fn list_channel_types() -> Vec<ChannelTypeInfo> {
             description_zh: "通过 HTTP POST 将消息发送到 Webhook URL".to_string(),
             icon: "webhook".to_string(),
             category: "external".to_string(),
+            docs_url: "https://wiki.camthink.ai/docs/neomind/user-guide/notifications".to_string(),
+            docs_url_zh: "https://wiki.camthink.ai/docs/neomind/user-guide/notifications"
+                .to_string(),
         },
         #[cfg(feature = "email")]
         ChannelTypeInfo {
@@ -1048,6 +1107,8 @@ pub fn list_channel_types() -> Vec<ChannelTypeInfo> {
             description_zh: "通过邮件发送消息".to_string(),
             icon: "mail".to_string(),
             category: "external".to_string(),
+            docs_url: "https://support.google.com/mail/answer/7126229".to_string(),
+            docs_url_zh: "https://service.mail.qq.com/detail/0/75".to_string(),
         },
         #[cfg(feature = "telegram")]
         ChannelTypeInfo {
@@ -1058,6 +1119,8 @@ pub fn list_channel_types() -> Vec<ChannelTypeInfo> {
             description_zh: "通过 Telegram 机器人发送消息".to_string(),
             icon: "send".to_string(),
             category: "external".to_string(),
+            docs_url: "https://core.telegram.org/bots/features".to_string(),
+            docs_url_zh: "https://core.telegram.org/bots/features".to_string(),
         },
         #[cfg(feature = "wecom")]
         ChannelTypeInfo {
@@ -1068,6 +1131,8 @@ pub fn list_channel_types() -> Vec<ChannelTypeInfo> {
             description_zh: "通过企业微信机器人发送消息".to_string(),
             icon: "message-square".to_string(),
             category: "external".to_string(),
+            docs_url: "https://developer.work.weixin.qq.com/document/path/91745".to_string(),
+            docs_url_zh: "https://developer.work.weixin.qq.com/document/path/91745".to_string(),
         },
         #[cfg(feature = "dingtalk")]
         ChannelTypeInfo {
@@ -1078,6 +1143,9 @@ pub fn list_channel_types() -> Vec<ChannelTypeInfo> {
             description_zh: "通过钉钉自定义机器人发送消息".to_string(),
             icon: "message-circle".to_string(),
             category: "external".to_string(),
+            docs_url: "https://open.dingtalk.com/document/robots/custom-robot-access".to_string(),
+            docs_url_zh: "https://open.dingtalk.com/document/robots/custom-robot-access"
+                .to_string(),
         },
         #[cfg(feature = "slack")]
         ChannelTypeInfo {
@@ -1088,6 +1156,11 @@ pub fn list_channel_types() -> Vec<ChannelTypeInfo> {
             description_zh: "通过 Slack Incoming Webhook 发送消息".to_string(),
             icon: "hash".to_string(),
             category: "external".to_string(),
+            docs_url: "https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks"
+                .to_string(),
+            docs_url_zh:
+                "https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks"
+                    .to_string(),
         },
         #[cfg(feature = "feishu")]
         ChannelTypeInfo {
@@ -1098,6 +1171,11 @@ pub fn list_channel_types() -> Vec<ChannelTypeInfo> {
             description_zh: "通过飞书自定义机器人发送消息".to_string(),
             icon: "messages-square".to_string(),
             category: "external".to_string(),
+            docs_url: "https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot"
+                .to_string(),
+            docs_url_zh:
+                "https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot?lang=zh-CN"
+                    .to_string(),
         },
     ]
 }
@@ -1145,7 +1223,7 @@ pub fn get_channel_schema(channel_type: &str) -> Option<serde_json::Value> {
             "type": "object",
             "properties": {
                 "name": {"type": "string"},
-                "key": {"type": "string", "description": "WeCom robot webhook key"}
+                "key": {"type": "string", "description": "The group robot's webhook address (…/webhook/send?key=…) or just the key"}
             },
             "required": ["key"]
         })),
@@ -1154,7 +1232,7 @@ pub fn get_channel_schema(channel_type: &str) -> Option<serde_json::Value> {
             "type": "object",
             "properties": {
                 "name": {"type": "string"},
-                "access_token": {"type": "string", "description": "DingTalk robot access token"},
+                "access_token": {"type": "string", "description": "The robot's webhook address (…/robot/send?access_token=…) or just the token"},
                 "secret": {"type": "string", "description": "Secret for sign verification (optional)"}
             },
             "required": ["access_token"]
@@ -1173,7 +1251,7 @@ pub fn get_channel_schema(channel_type: &str) -> Option<serde_json::Value> {
             "type": "object",
             "properties": {
                 "name": {"type": "string"},
-                "hook_id": {"type": "string", "description": "Feishu bot hook ID"},
+                "hook_id": {"type": "string", "description": "The custom bot's webhook address (open.feishu.cn/open-apis/bot/v2/hook/…) or just its trailing id"},
                 "secret": {"type": "string", "description": "Secret for sign verification (optional)"}
             },
             "required": ["hook_id"]
@@ -1184,14 +1262,21 @@ pub fn get_channel_schema(channel_type: &str) -> Option<serde_json::Value> {
 
 /// Detect an error signal in a webhook/channel response body.
 ///
-/// Many webhook APIs (Feishu, DingTalk, WeCom, …) return HTTP 200 with an error
-/// code in the JSON body for semantic errors (invalid payload, disabled bot, bad
-/// token). Checking HTTP status alone hides these as false "success" — the
-/// channel-test reports success but no message actually arrives. Returns
-/// `Some(error description)` when the body signals an error, `None` otherwise.
 /// The channel HTTP client: 30s total / 10s connect — one place so a
 /// future policy change (proxy, TLS pins, longer streams budget) can't
 /// drift across the seven senders.
+///
+/// Gated on the features that pull in reqwest AND route through it: webhook
+/// builds its own client (it has a per-channel timeout_secs), so on a
+/// webhook-only build these two helpers are genuinely unused; with `email`
+/// alone they used to fail to compile for want of reqwest.
+#[cfg(any(
+    feature = "telegram",
+    feature = "wecom",
+    feature = "dingtalk",
+    feature = "slack",
+    feature = "feishu"
+))]
 pub(crate) fn channel_http_client() -> reqwest::Client {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -1204,6 +1289,13 @@ pub(crate) fn channel_http_client() -> reqwest::Client {
 /// map → non-2xx map → 200-with-error-body validation (detect_error_body).
 /// The five senders used to carry byte-identical copies of this ladder with
 /// only the channel name differing.
+#[cfg(any(
+    feature = "telegram",
+    feature = "wecom",
+    feature = "dingtalk",
+    feature = "slack",
+    feature = "feishu"
+))]
 pub(crate) async fn post_json(
     channel: &str,
     client: &reqwest::Client,
@@ -1236,6 +1328,24 @@ pub(crate) async fn post_json(
     Ok(())
 }
 
+/// Detect an error signal in a webhook/channel response body.
+///
+/// Many webhook APIs (Feishu, DingTalk, WeCom, …) return HTTP 200 with an error
+/// code in the JSON body for semantic errors (invalid payload, disabled bot, bad
+/// token). Checking HTTP status alone hides these as false "success" — the
+/// channel-test reports success but no message actually arrives. Returns
+/// `Some(error description)` when the body signals an error, `None` otherwise.
+///
+/// Only the HTTP-based channels validate response bodies, so this is gated
+/// with them — an email-only build would otherwise warn about dead code.
+#[cfg(any(
+    feature = "webhook",
+    feature = "telegram",
+    feature = "wecom",
+    feature = "dingtalk",
+    feature = "slack",
+    feature = "feishu"
+))]
 pub(crate) fn detect_error_body(body: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(body.trim()).ok()?;
     let obj = v.as_object()?;
@@ -1263,10 +1373,143 @@ pub(crate) fn detect_error_body(body: &str) -> Option<String> {
     None
 }
 
+/// Pull a credential out of the whole webhook address a vendor console shows.
+///
+/// Feishu, WeCom and DingTalk all hand the customer a complete URL
+/// (`…/hook/<id>`, `…/webhook/send?key=<k>`, `…/robot/send?access_token=<t>`)
+/// while the config field names only the fragment inside it. Nobody can copy
+/// the fragment, because no console displays it separately — so the fields
+/// accept both forms and the fragment is read out here. A bare value still
+/// works, which keeps every already-saved channel working unchanged.
+///
+/// `marker` is the path segment the credential follows (Feishu: `"/hook/"`).
+#[cfg(feature = "feishu")]
+pub(crate) fn credential_after_path(raw: &str, marker: &str) -> Option<String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let tail = match raw.split_once(marker) {
+        // The vendor's URL shape.
+        Some((_, tail)) => tail,
+        // Already the bare value the field asks for.
+        None if !raw.contains("://") => raw,
+        // Some other URL shape — likely pasted from the wrong channel type.
+        None => return None,
+    };
+    let value = tail
+        .split(['?', '#'])
+        .next()
+        .unwrap_or("")
+        .trim_end_matches('/');
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+/// Same idea for the query-parameter vendors: wecom's `?key=`, dingtalk's
+/// `?access_token=`. See [`credential_after_path`].
+#[cfg(any(feature = "wecom", feature = "dingtalk"))]
+pub(crate) fn credential_in_query(raw: &str, param: &str) -> Option<String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    if let Some((_, query)) = raw.split_once('?') {
+        for pair in query.split('&') {
+            if let Some((key, value)) = pair.split_once('=') {
+                if key == param {
+                    let value = value.trim_end_matches('/');
+                    return (!value.is_empty()).then(|| value.to_string());
+                }
+            }
+        }
+        // A URL that does not carry the parameter we need.
+        return None;
+    }
+    // No query string: the bare value, unless it is some other URL.
+    if raw.contains("://") {
+        return None;
+    }
+    Some(raw.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// The vendor consoles only ever show the whole webhook address, so the
+    /// fields have to read the fragment out of it — while still accepting the
+    /// bare value that already-saved channels hold.
+    #[cfg(feature = "feishu")]
+    #[test]
+    fn path_credential_accepts_both_the_url_and_the_bare_value() {
+        let bare = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+        assert_eq!(credential_after_path(bare, "/hook/").as_deref(), Some(bare));
+
+        let url = format!("https://open.feishu.cn/open-apis/bot/v2/hook/{bare}");
+        assert_eq!(credential_after_path(&url, "/hook/").as_deref(), Some(bare));
+        // Padded and/or trailing-slash copies must not smuggle whitespace or a
+        // trailing slash into the request path.
+        let padded = format!("  {url}/  ");
+        assert_eq!(
+            credential_after_path(&padded, "/hook/").as_deref(),
+            Some(bare)
+        );
+        // Query strings never belong to the credential.
+        let with_query = format!("{url}?from=console");
+        assert_eq!(
+            credential_after_path(&with_query, "/hook/").as_deref(),
+            Some(bare)
+        );
+
+        // A URL from a different platform must be rejected rather than turned
+        // into a silently-wrong request.
+        assert_eq!(
+            credential_after_path(
+                "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=x",
+                "/hook/"
+            ),
+            None
+        );
+        assert_eq!(credential_after_path("   ", "/hook/"), None);
+    }
+
+    #[cfg(any(feature = "wecom", feature = "dingtalk"))]
+    #[test]
+    fn query_credential_accepts_both_the_url_and_the_bare_value() {
+        let bare = "693a91f6-7xxx-4bc4-97a0-0ec2sifa5aaa";
+        assert_eq!(credential_in_query(bare, "key").as_deref(), Some(bare));
+
+        let url = format!("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key={bare}");
+        assert_eq!(credential_in_query(&url, "key").as_deref(), Some(bare));
+        // Extra parameters around it are fine.
+        let url_extra =
+            format!("https://oapi.dingtalk.com/robot/send?foo=1&access_token={bare}&bar=2");
+        assert_eq!(
+            credential_in_query(&url_extra, "access_token").as_deref(),
+            Some(bare)
+        );
+
+        // A URL without the parameter, or one from another platform, is an
+        // error rather than a value we invent.
+        assert_eq!(
+            credential_in_query("https://open.feishu.cn/open-apis/bot/v2/hook/abc", "key"),
+            None
+        );
+        assert_eq!(
+            credential_in_query("https://example.com/send?other=1", "key"),
+            None
+        );
+        assert_eq!(credential_in_query("", "key"), None);
+    }
+
+    #[cfg(any(
+        feature = "webhook",
+        feature = "telegram",
+        feature = "wecom",
+        feature = "dingtalk",
+        feature = "slack",
+        feature = "feishu"
+    ))]
     #[test]
     fn detect_error_body_flags_feishu_code() {
         assert_eq!(detect_error_body(r#"{"code":0,"msg":"success"}"#), None);
@@ -1274,6 +1517,14 @@ mod tests {
         assert!(e.contains("19001") && e.contains("invalid msg_type"), "{e}");
     }
 
+    #[cfg(any(
+        feature = "webhook",
+        feature = "telegram",
+        feature = "wecom",
+        feature = "dingtalk",
+        feature = "slack",
+        feature = "feishu"
+    ))]
     #[test]
     fn detect_error_body_flags_errcode_and_ok() {
         // DingTalk/WeCom: errcode != 0
@@ -1285,6 +1536,14 @@ mod tests {
         assert_eq!(detect_error_body(r#"{"ok":true}"#), None);
     }
 
+    #[cfg(any(
+        feature = "webhook",
+        feature = "telegram",
+        feature = "wecom",
+        feature = "dingtalk",
+        feature = "slack",
+        feature = "feishu"
+    ))]
     #[test]
     fn detect_error_body_flags_generic_false() {
         assert!(detect_error_body(r#"{"success":false}"#).is_some());
@@ -1292,6 +1551,14 @@ mod tests {
         assert_eq!(detect_error_body(r#"{"success":true}"#), None);
     }
 
+    #[cfg(any(
+        feature = "webhook",
+        feature = "telegram",
+        feature = "wecom",
+        feature = "dingtalk",
+        feature = "slack",
+        feature = "feishu"
+    ))]
     #[test]
     fn detect_error_body_ignores_non_error_bodies() {
         assert_eq!(detect_error_body(""), None);
@@ -1362,6 +1629,43 @@ mod tests {
         let removed = registry.unregister("test").await;
         assert!(removed);
         assert_eq!(registry.len().await, 0);
+    }
+
+    /// Deleting a channel must also drop its enabled override and recipients,
+    /// in memory AND in storage — a channel re-created later under the same
+    /// name used to silently inherit the deleted channel's toggle and
+    /// recipient list.
+    #[tokio::test]
+    async fn test_unregister_clears_recipients_and_enabled_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = ChannelRegistry::with_storage(dir.path()).unwrap();
+
+        registry
+            .register(Arc::new(MockChannel::new("ch".to_string())))
+            .await;
+        // Seed a persisted recipients row and a disable override directly —
+        // the email-channel plumbing that normally writes them sits above the
+        // registry.
+        registry
+            .state
+            .write()
+            .await
+            .recipients
+            .insert("ch".to_string(), vec!["a@example.com".to_string()]);
+        registry.save_recipients("ch").await.unwrap();
+        registry.set_enabled("ch", false).await.unwrap();
+
+        assert!(registry.unregister("ch").await);
+
+        assert!(registry.get_recipients("ch").await.is_empty());
+        assert!(!registry.is_enabled_effective("ch").await);
+
+        // The recipients row must be gone from disk too, not just memory.
+        registry.load_all_recipients().await;
+        assert!(
+            registry.get_recipients("ch").await.is_empty(),
+            "recipients resurrected from storage after unregister"
+        );
     }
 
     #[tokio::test]

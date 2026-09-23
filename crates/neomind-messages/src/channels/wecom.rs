@@ -8,6 +8,14 @@ use super::super::{Error, Message, MessageSeverity, Result};
 #[cfg(feature = "wecom")]
 use super::MessageChannel;
 
+/// Read the robot key out of the webhook address WeCom displays
+/// (`https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=<key>`), or accept
+/// the bare key for channels configured before this was understood.
+#[cfg(feature = "wecom")]
+fn normalize_webhook_key(raw: &str) -> Option<String> {
+    super::credential_in_query(raw, "key")
+}
+
 /// WeCom channel for sending messages via robot webhook.
 #[cfg(feature = "wecom")]
 #[derive(Debug, Clone)]
@@ -115,10 +123,19 @@ impl super::ChannelFactory for WeComChannelFactory {
     }
 
     fn create(&self, config: &serde_json::Value) -> Result<std::sync::Arc<dyn MessageChannel>> {
-        let key = config
+        let raw = config
             .get("key")
             .and_then(|v| v.as_str())
             .ok_or_else(|| Error::InvalidConfiguration("Missing key".to_string()))?;
+
+        // WeCom's console shows the robot's whole webhook address and nothing
+        // named "key", so accept either it or the bare key.
+        let key = normalize_webhook_key(raw).ok_or_else(|| {
+            Error::InvalidConfiguration(format!(
+                "Invalid key: expected the group robot's webhook address \
+                 (https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…) or the key itself, got {raw:?}"
+            ))
+        })?;
 
         let name = config
             .get("name")
@@ -126,7 +143,7 @@ impl super::ChannelFactory for WeComChannelFactory {
             .unwrap_or("wecom")
             .to_string();
 
-        let mut channel = WeComChannel::new(name, key.to_string());
+        let mut channel = WeComChannel::new(name, key);
 
         if !config
             .get("enabled")
@@ -176,6 +193,44 @@ mod tests {
         let channel = result.unwrap();
         assert_eq!(channel.channel_type(), "wecom");
         assert!(channel.is_enabled());
+    }
+
+    /// The console shows the robot's whole webhook address, so the field must
+    /// take exactly that — and land on the URL WeCom documents.
+    #[test]
+    fn the_console_webhook_address_is_accepted_like_a_bare_key() {
+        let key = "693a91f6-7xxx-4bc4-97a0-0ec2sifa5aaa";
+        let address = format!("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key={key}");
+
+        let factory = WeComChannelFactory;
+        assert!(factory
+            .create(&serde_json::json!({ "key": address }))
+            .is_ok());
+        assert!(factory.create(&serde_json::json!({ "key": key })).is_ok());
+
+        let parsed = normalize_webhook_key(&address).expect("the address parses");
+        assert_eq!(parsed, key);
+        let channel = WeComChannel::new("test".to_string(), parsed);
+        assert_eq!(
+            channel.webhook_url(),
+            format!("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key={key}")
+        );
+    }
+
+    #[test]
+    fn a_url_without_the_key_parameter_is_rejected() {
+        let factory = WeComChannelFactory;
+        let result = factory.create(&serde_json::json!({
+            "hook_id": "https://open.feishu.cn/open-apis/bot/v2/hook/abc",
+            "key": "https://open.feishu.cn/open-apis/bot/v2/hook/abc"
+        }));
+        match result {
+            Ok(_) => panic!("a Feishu address is not a WeCom robot key"),
+            Err(e) => assert!(
+                e.to_string().contains("webhook address"),
+                "the error must say what was expected, got: {e}"
+            ),
+        }
     }
 
     #[test]

@@ -8,6 +8,40 @@ use super::super::{Error, Message, MessageSeverity, Result};
 #[cfg(feature = "dingtalk")]
 use super::MessageChannel;
 
+/// Compute the HMAC-SHA256 signature DingTalk requires when the robot's
+/// security setting is "加签" (signed): key = secret, message =
+/// `timestamp + "\n" + secret`, with a **millisecond** timestamp. The result
+/// is Base64; the caller URL-encodes it.
+///
+/// Lives here rather than in the feishu module: Feishu happens to sign with
+/// the same ingredients but the opposite key/message layout, and sharing one
+/// helper between them sent wrong (DingTalk-style) signatures to Feishu.
+#[cfg(feature = "dingtalk")]
+pub fn compute_hmac_sha256_sign(secret: &str, timestamp: i64) -> String {
+    use base64::Engine;
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+
+    type HmacSha256 = Hmac<Sha256>;
+
+    let string_to_sign = format!("{}\n{}", timestamp, secret);
+
+    let mut mac =
+        HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
+    mac.update(string_to_sign.as_bytes());
+    let result = mac.finalize().into_bytes();
+
+    base64::engine::general_purpose::STANDARD.encode(result)
+}
+
+/// Read the access token out of the webhook address DingTalk displays
+/// (`https://oapi.dingtalk.com/robot/send?access_token=<token>`), or accept
+/// the bare token for channels configured before this was understood.
+#[cfg(feature = "dingtalk")]
+fn normalize_access_token(raw: &str) -> Option<String> {
+    super::credential_in_query(raw, "access_token")
+}
+
 /// DingTalk channel for sending messages via custom robot webhook.
 #[cfg(feature = "dingtalk")]
 #[derive(Debug, Clone)]
@@ -100,7 +134,7 @@ impl MessageChannel for DingTalkChannel {
 
         let url = if let Some(ref secret) = self.secret {
             let timestamp = chrono::Utc::now().timestamp_millis();
-            let sign = super::feishu::compute_hmac_sha256_sign(secret, timestamp);
+            let sign = super::dingtalk::compute_hmac_sha256_sign(secret, timestamp);
             // URL-encode the sign
             let sign_encoded = urlencoding::encode(&sign);
             format!(
@@ -126,10 +160,21 @@ impl super::ChannelFactory for DingTalkChannelFactory {
     }
 
     fn create(&self, config: &serde_json::Value) -> Result<std::sync::Arc<dyn MessageChannel>> {
-        let access_token = config
+        let raw = config
             .get("access_token")
             .and_then(|v| v.as_str())
             .ok_or_else(|| Error::InvalidConfiguration("Missing access_token".to_string()))?;
+
+        // DingTalk's console shows the robot's whole webhook address, so accept
+        // either it or the bare access_token. When signing is enabled the
+        // console URL carries no timestamp/sign — those are generated per
+        // request — so the `secret` field stays a separate input.
+        let access_token = normalize_access_token(raw).ok_or_else(|| {
+            Error::InvalidConfiguration(format!(
+                "Invalid access_token: expected the robot's webhook address \
+                 (https://oapi.dingtalk.com/robot/send?access_token=…) or the token itself, got {raw:?}"
+            ))
+        })?;
 
         let name = config
             .get("name")
@@ -142,7 +187,7 @@ impl super::ChannelFactory for DingTalkChannelFactory {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let mut channel = DingTalkChannel::new(name, access_token.to_string(), secret);
+        let mut channel = DingTalkChannel::new(name, access_token, secret);
 
         if !config
             .get("enabled")
@@ -205,6 +250,30 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    /// The console shows the robot's whole webhook address, so the field must
+    /// take exactly that — and land on the URL DingTalk documents.
+    #[test]
+    fn the_console_webhook_address_is_accepted_like_a_bare_token() {
+        let token = "xxx-token-abc123";
+        let address = format!("https://oapi.dingtalk.com/robot/send?access_token={token}");
+
+        let factory = DingTalkChannelFactory;
+        assert!(factory
+            .create(&serde_json::json!({ "access_token": address }))
+            .is_ok());
+        assert!(factory
+            .create(&serde_json::json!({ "access_token": token }))
+            .is_ok());
+
+        let parsed = normalize_access_token(&address).expect("the address parses");
+        assert_eq!(parsed, token);
+        let channel = DingTalkChannel::new("test".to_string(), parsed, None);
+        assert_eq!(
+            channel.webhook_url_no_sign(),
+            format!("https://oapi.dingtalk.com/robot/send?access_token={token}")
+        );
+    }
+
     #[test]
     fn test_channel_disabled_send() {
         let channel = DingTalkChannel::new(
@@ -232,5 +301,18 @@ mod tests {
         assert!(text.contains("Test Alert"));
         assert!(text.contains("WARNING"));
         assert!(text.contains("sensor_1"));
+    }
+
+    #[test]
+    fn test_hmac_sign() {
+        // Deterministic, sensitive to the timestamp, and valid base64.
+        let sign1 = compute_hmac_sha256_sign("test_secret", 1700000000);
+        assert_eq!(sign1, compute_hmac_sha256_sign("test_secret", 1700000000));
+        assert_ne!(sign1, compute_hmac_sha256_sign("test_secret", 1700000001));
+
+        use base64::Engine;
+        assert!(base64::engine::general_purpose::STANDARD
+            .decode(&sign1)
+            .is_ok());
     }
 }

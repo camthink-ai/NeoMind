@@ -187,7 +187,9 @@ impl MessageManager {
                 }
                 _ => {
                     tracing::warn!("Unknown channel type: {}, skipping", stored.channel_type);
-                    Ok(None)
+                    // Type pinned here so a build with every channel feature
+                    // disabled (only this arm survives) still infers.
+                    Ok::<_, Error>(None)
                 }
             };
 
@@ -303,13 +305,23 @@ impl MessageManager {
         let _is_active = message.is_active();
         let severity = message.severity;
 
-        // Deduplication: skip if same title+source+severity was sent recently
-        let dedup_key = format!(
-            "{}|{}|{}",
-            message.title,
-            message.source,
-            message.severity.as_str()
-        );
+        // Deduplication: skip if the same alert was sent recently.
+        //
+        // The fallback key is title+source+severity, but that is not enough
+        // for rule alerts: every one of them is titled "Rule Triggered" with
+        // source "rule_engine", so two different rules firing seconds apart
+        // collapsed into a single key and the second one's push was silently
+        // dropped. When the message carries the triggering rule's identity,
+        // that identity — not the boilerplate title — is what gets deduped.
+        let dedup_key = match alert_identity(&message) {
+            Some(identity) => format!("{}|{}", identity, message.severity.as_str()),
+            None => format!(
+                "{}|{}|{}",
+                message.title,
+                message.source,
+                message.severity.as_str()
+            ),
+        };
         {
             let cache = self.dedup_cache.read().await;
             if let Some(last_sent) = cache.get(&dedup_key) {
@@ -354,61 +366,85 @@ impl MessageManager {
         let channel_names = channels.list_names().await;
         let mut send_results: Vec<(String, std::result::Result<(), String>)> = Vec::new();
 
-        for channel_name in &channel_names {
-            if let Some(channel) = channels.get(channel_name).await {
-                // Use the registry's effective enabled state — this honors
-                // the `set_enabled` override (`PUT /channels/:name/enabled`).
-                // Calling `channel.is_enabled()` directly would bypass the
-                // override and keep delivering to "disabled" channels.
-                if channels.is_enabled_effective(channel_name).await {
-                    // Explicit routing narrows delivery; None broadcasts.
-                    if let Some(targets) = &message.target_channels {
-                        if !targets.iter().any(|t| t == channel_name) {
-                            tracing::debug!(
-                                "Channel '{}' not in target_channels, skipping",
-                                channel_name
-                            );
-                            continue;
-                        }
-                    }
-                    // Apply filter before sending
-                    let filter = channels.get_filter(channel_name).await;
-                    if !filter.matches(&message) {
-                        tracing::debug!(
-                            "Channel '{}' filter rejected message '{}'",
-                            channel_name,
-                            message.title
-                        );
-                        continue;
-                    }
-
-                    tracing::info!(
-                        "Sending message through channel '{}' (type: {})",
-                        channel_name,
-                        channel.channel_type()
+        // Fan out concurrently. Sends used to be awaited sequentially, so one
+        // slow channel (a webhook eating its full 30s timeout) delayed alert
+        // delivery to every channel behind it — and a hung SMTP server, which
+        // has no timeout of its own, stalled the rule engine's notify action.
+        let mut tasks: Vec<(String, tokio::task::JoinHandle<Result<()>>)> = Vec::new();
+        for channel_name in channel_names {
+            let Some(channel) = channels.get(&channel_name).await else {
+                continue;
+            };
+            // Use the registry's effective enabled state — this honors
+            // the `set_enabled` override (`PUT /channels/:name/enabled`).
+            // Calling `channel.is_enabled()` directly would bypass the
+            // override and keep delivering to "disabled" channels.
+            if !channels.is_enabled_effective(&channel_name).await {
+                continue;
+            }
+            // Explicit routing narrows delivery; None broadcasts.
+            if let Some(targets) = &message.target_channels {
+                if !targets.iter().any(|t| t == &channel_name) {
+                    tracing::debug!(
+                        "Channel '{}' not in target_channels, skipping",
+                        channel_name
                     );
+                    continue;
+                }
+            }
+            // Apply filter before sending
+            let filter = channels.get_filter(&channel_name).await;
+            if !filter.matches(&message) {
+                tracing::debug!(
+                    "Channel '{}' filter rejected message '{}'",
+                    channel_name,
+                    message.title
+                );
+                continue;
+            }
 
-                    match channel.send(&message).await {
-                        Ok(()) => {
-                            tracing::info!(
-                                "Successfully sent message through channel '{}'",
-                                channel_name
-                            );
-                            send_results.push((channel_name.clone(), Ok(())));
-                        }
-                        Err(e) => {
-                            // Log channel failure but don't fail the entire
-                            // operation. Scrub first: reqwest errors embed the
-                            // request URL, and channel tokens live in URLs.
-                            let scrubbed = scrub_credentials(&e.to_string());
-                            tracing::warn!(
-                                "Failed to send message through channel '{}': {}",
-                                channel_name,
-                                scrubbed
-                            );
-                            send_results.push((channel_name.clone(), Err(scrubbed)));
-                        }
-                    }
+            tracing::info!(
+                "Sending message through channel '{}' (type: {})",
+                channel_name,
+                channel.channel_type()
+            );
+
+            let msg = message.clone();
+            tasks.push((
+                channel_name,
+                tokio::spawn(async move { channel.send(&msg).await }),
+            ));
+        }
+
+        for (channel_name, handle) in tasks {
+            match handle.await {
+                Ok(Ok(())) => {
+                    tracing::info!(
+                        "Successfully sent message through channel '{}'",
+                        channel_name
+                    );
+                    send_results.push((channel_name, Ok(())));
+                }
+                Ok(Err(e)) => {
+                    // Log channel failure but don't fail the entire
+                    // operation. Scrub first: reqwest errors embed the
+                    // request URL, and channel tokens live in URLs.
+                    let scrubbed = scrub_credentials(&e.to_string());
+                    tracing::warn!(
+                        "Failed to send message through channel '{}': {}",
+                        channel_name,
+                        scrubbed
+                    );
+                    send_results.push((channel_name, Err(scrubbed)));
+                }
+                Err(join_err) => {
+                    let scrubbed = scrub_credentials(&join_err.to_string());
+                    tracing::warn!(
+                        "Channel '{}' send task panicked: {}",
+                        channel_name,
+                        scrubbed
+                    );
+                    send_results.push((channel_name, Err(scrubbed)));
                 }
             }
         }
@@ -890,6 +926,28 @@ where
     }
 }
 
+/// The identity of the *event* behind a message, when its producer supplies
+/// one. Rule alerts are the case that needs it: they all share the title
+/// "Rule Triggered" and the source "rule_engine", so a title+source dedup key
+/// cannot tell two rules apart and drops the second rule's push.
+///
+/// The `rule_id` / `trigger_source` keys are written by
+/// `neomind_rules::chain` (`RULE_ID_KEY`, `TRIGGER_SOURCE_KEY`) and cannot be
+/// imported here — neomind-rules depends on this crate, not the other way
+/// round. The pair is what makes two alerts distinct: the rule that fired and
+/// the source that satisfied its condition, so one rule flapping across ten
+/// devices still reports each device while a single device's repeats are
+/// suppressed.
+fn alert_identity(message: &Message) -> Option<String> {
+    let metadata = message.metadata.as_ref()?;
+    let rule_id = metadata.get("rule_id")?.as_str()?;
+    let trigger_source = metadata
+        .get("trigger_source")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    Some(format!("rule:{rule_id}|{trigger_source}"))
+}
+
 /// Scrub credential-looking substrings from a channel error text before it
 /// is logged or returned to an API client. reqwest error Display embeds the
 /// full request URL, and the notification channels carry their tokens in
@@ -1067,6 +1125,166 @@ mod tests {
         assert_eq!(manager.list_messages().await.len(), 0);
         let stats = manager.get_stats().await;
         assert_eq!(stats.total, 0);
+    }
+
+    /// Two different rules firing within the dedup window must both be pushed;
+    /// repeats of the SAME rule on the same source must still be suppressed.
+    /// The rule engine titles every alert "Rule Triggered" from "rule_engine",
+    /// so keying on title+source dropped the second rule's notification —
+    /// an alarm that exists in the list but never reaches anyone.
+    #[tokio::test]
+    async fn distinct_rules_are_not_deduped_against_each_other() {
+        use crate::channels::MessageChannel;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct CountingChannel {
+            name: String,
+            sends: Arc<AtomicUsize>,
+        }
+
+        #[async_trait::async_trait]
+        impl MessageChannel for CountingChannel {
+            fn name(&self) -> &str {
+                &self.name
+            }
+            fn channel_type(&self) -> &str {
+                "counting"
+            }
+            fn is_enabled(&self) -> bool {
+                true
+            }
+            async fn send(&self, _message: &Message) -> Result<()> {
+                self.sends.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+        }
+
+        /// A rule alert exactly as `RuleEngine::execute_action` builds one.
+        fn rule_alert(rule_id: &str, trigger_source: &str) -> Message {
+            let mut msg = Message::alert(
+                MessageSeverity::Warning,
+                "Rule Triggered".to_string(),
+                format!("{rule_id} fired on {trigger_source}"),
+                "rule_engine".to_string(),
+            );
+            msg.metadata = Some(serde_json::json!({
+                "rule_id": rule_id,
+                "trigger_source": trigger_source,
+            }));
+            msg
+        }
+
+        let manager = MessageManager::new();
+        let sends = Arc::new(AtomicUsize::new(0));
+        {
+            let registry = manager.channels.read().await;
+            registry
+                .register(Arc::new(CountingChannel {
+                    name: "counter".to_string(),
+                    sends: sends.clone(),
+                }))
+                .await;
+        }
+
+        // Two different rules, same severity, seconds apart.
+        manager
+            .create_message(rule_alert("rule-a", "sensor_1"))
+            .await
+            .unwrap();
+        manager
+            .create_message(rule_alert("rule-b", "sensor_1"))
+            .await
+            .unwrap();
+        assert_eq!(
+            sends.load(Ordering::SeqCst),
+            2,
+            "the second rule's alert was swallowed by the first rule's dedup key"
+        );
+
+        // The same rule on the same source right after: still suppressed.
+        manager
+            .create_message(rule_alert("rule-a", "sensor_1"))
+            .await
+            .unwrap();
+        assert_eq!(
+            sends.load(Ordering::SeqCst),
+            2,
+            "a repeating alert from one rule/source must stay suppressed"
+        );
+
+        // The same rule on a different device is a different alarm.
+        manager
+            .create_message(rule_alert("rule-a", "sensor_2"))
+            .await
+            .unwrap();
+        assert_eq!(
+            sends.load(Ordering::SeqCst),
+            3,
+            "a second device satisfying the same rule is its own alarm"
+        );
+
+        // All four are recorded regardless of what was pushed.
+        assert_eq!(manager.list_messages().await.len(), 4);
+    }
+
+    /// Delivery must fan out concurrently. Both channels here block until the
+    /// other one has entered `send()`, so a sequential loop deadlocks and the
+    /// timeout fires — which is exactly what one slow channel used to do to
+    /// every channel behind it (and to the rule engine's notify action).
+    #[tokio::test]
+    async fn test_channel_sends_run_concurrently() {
+        use crate::channels::MessageChannel;
+
+        struct BarrierChannel {
+            name: String,
+            barrier: Arc<tokio::sync::Barrier>,
+        }
+
+        #[async_trait::async_trait]
+        impl MessageChannel for BarrierChannel {
+            fn name(&self) -> &str {
+                &self.name
+            }
+            fn channel_type(&self) -> &str {
+                "barrier"
+            }
+            fn is_enabled(&self) -> bool {
+                true
+            }
+            async fn send(&self, _message: &Message) -> Result<()> {
+                self.barrier.wait().await;
+                Ok(())
+            }
+        }
+
+        let manager = MessageManager::new();
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        {
+            let registry = manager.channels.read().await;
+            for name in ["a", "b"] {
+                registry
+                    .register(Arc::new(BarrierChannel {
+                        name: name.to_string(),
+                        barrier: barrier.clone(),
+                    }))
+                    .await;
+            }
+        }
+
+        let sent = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            manager.create_message(Message::system(
+                "Concurrent".to_string(),
+                "Both channels must be in flight".to_string(),
+            )),
+        )
+        .await;
+
+        assert!(
+            sent.is_ok(),
+            "channel sends did not overlap — delivery is sequential again"
+        );
+        assert!(sent.unwrap().is_ok());
     }
 
     #[tokio::test]

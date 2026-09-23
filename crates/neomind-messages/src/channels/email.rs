@@ -35,6 +35,36 @@ impl std::fmt::Debug for SmtpTransportHandle {
     }
 }
 
+/// How a TLS SMTP session is established. Port 465 speaks TLS from the first
+/// byte (implicit TLS / SMTPS); 587 and 25 start plaintext and upgrade via
+/// STARTTLS. lettre models these as `Tls::Wrapper` and `Tls::Required`
+/// respectively — this used to hardcode `Required`, which made every 465
+/// server (smtp.qq.com, smtp.163.com, Gmail SSL) fail the handshake while
+/// waiting for a plaintext greeting that never comes.
+#[cfg(feature = "email")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SmtpTlsMode {
+    /// Implicit TLS (`Tls::Wrapper`) — port 465 convention.
+    ImplicitTls,
+    /// STARTTLS (`Tls::Required`) — ports 587/25 convention.
+    StartTls,
+}
+
+#[cfg(feature = "email")]
+fn tls_mode_for_port(smtp_port: u16) -> SmtpTlsMode {
+    if smtp_port == 465 {
+        SmtpTlsMode::ImplicitTls
+    } else {
+        SmtpTlsMode::StartTls
+    }
+}
+
+/// Cap on any single SMTP exchange (connect, handshake, DATA). lettre has no
+/// default timeout, and send() runs on a blocking thread awaited by the
+/// delivery loop — without this a hung server stalls every alert behind it.
+#[cfg(feature = "email")]
+const SMTP_TIMEOUT_SECS: u64 = 30;
+
 /// Build the SMTP transport from config.
 #[cfg(feature = "email")]
 fn build_smtp_transport(
@@ -54,16 +84,23 @@ fn build_smtp_transport(
             .build()
             .map_err(|e| Error::SendFailed(format!("Failed to build TLS params: {}", e)))?;
 
+        let tls = match tls_mode_for_port(smtp_port) {
+            SmtpTlsMode::ImplicitTls => Tls::Wrapper(tls_params),
+            SmtpTlsMode::StartTls => Tls::Required(tls_params),
+        };
+
         Ok(lettre::SmtpTransport::relay(smtp_server)
             .map_err(|e| Error::SendFailed(format!("Invalid SMTP server: {}", e)))?
             .port(smtp_port)
-            .tls(Tls::Required(tls_params))
+            .tls(tls)
             .credentials(creds)
+            .timeout(Some(std::time::Duration::from_secs(SMTP_TIMEOUT_SECS)))
             .build())
     } else {
         Ok(lettre::SmtpTransport::builder_dangerous(smtp_server)
             .port(smtp_port)
             .credentials(creds)
+            .timeout(Some(std::time::Duration::from_secs(SMTP_TIMEOUT_SECS)))
             .build())
     }
 }
@@ -452,5 +489,22 @@ impl super::ChannelFactory for EmailChannelFactory {
         }
 
         Ok(std::sync::Arc::new(channel))
+    }
+}
+
+#[cfg(feature = "email")]
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 465 is the implicit-TLS (SMTPS) convention and must map to
+    /// `Tls::Wrapper`; 587/25 use STARTTLS and must map to `Tls::Required`.
+    /// Sending STARTTLS to a 465 endpoint waits for a plaintext greeting
+    /// that never arrives — every QQ/163-style mail config used to fail.
+    #[test]
+    fn test_tls_mode_by_port() {
+        assert_eq!(tls_mode_for_port(465), SmtpTlsMode::ImplicitTls);
+        assert_eq!(tls_mode_for_port(587), SmtpTlsMode::StartTls);
+        assert_eq!(tls_mode_for_port(25), SmtpTlsMode::StartTls);
     }
 }
