@@ -18,7 +18,10 @@
       "firedAt": "Fired",
       "actions": "Actions",
       "noActions": "none",
-      "expired": "This alert points at a rule execution whose record has expired — rule history is kept for 30 days."
+      "expired": "This alert points at a rule execution whose record has expired — rule history is kept for 30 days.",
+      "trackRecord": "Track record",
+      "dismissedOf": "{{fp}} of {{total}} alerts dismissed as false",
+      "thresholdAdvice": "this rule probably fires too easily — consider tightening its condition"
     },
     "title": "Messages",
     "description": "Notifications, channels, and IM sessions",
@@ -39,6 +42,9 @@
     "resolve": "Resolve",
     "archive": "Archive",
     "acknowledge": "Acknowledge",
+    "markFalsePositive": "Not a real alert",
+    "falsePositiveSuccess": "Marked as a false positive",
+    "falsePositiveError": "Failed",
     "source": "Source",
     "filter": {
       "title": "Filter",

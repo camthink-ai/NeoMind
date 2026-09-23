@@ -25,6 +25,13 @@ export interface MessageChain {
   rule?: MessageChainRule | null
   trigger?: { source: string | null; value: string | null }
   execution?: MessageChainExecution | null
+  /** How this rule's alerts have been received, and whether that suggests its
+   *  condition is too tight. Null when the alert's rule no longer exists. */
+  rule_quality?: {
+    alerts: number
+    false_positives: number
+    suggest_threshold_review: boolean
+  } | null
 }
 
 export const onboardingApi = {
@@ -74,6 +81,15 @@ export const onboardingApi = {
    * alert can outlive the execution it points at.
    */
   getMessageChain: (id: string) => fetchAPI<MessageChain>(`/messages/${id}/chain`),
+  /**
+   * Dismiss an alert as a false positive (002 §3.4) — the human half of the
+   * feedback loop. The verdict is stored on the alert and counted per rule by
+   * `getMessageChain`; the rule itself is never edited.
+   */
+  markMessageFalsePositive: (id: string) =>
+    fetchAPI<{ message_id: string; status: string }>(`/messages/${id}/false-positive`, {
+      method: 'POST',
+    }),
   createMessage: (req: {
     category?: string
     title: string

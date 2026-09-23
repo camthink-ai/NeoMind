@@ -23,7 +23,7 @@ describe('api surface (post-split composition)', () => {
       'get', 'post', // http
       'login', // auth
       'getDevices', // devices
-      'getDraftDevices', 'getMessageChain', // onboarding (the message API lives here)
+      'getDraftDevices', 'getMessageChain', 'markMessageFalsePositive', // onboarding (the message API lives here)
       'listMessageChannels', // channels
       'listLlmBackends', // llm
       'listImBridges', // imBridges
@@ -57,9 +57,10 @@ describe('api surface (post-split composition)', () => {
   // set exactly, and every later addition to the surface has to be
   // acknowledged here. 266 -> 267 when the agent editor's dry-run added
   // `testAgentPreview` (bcd026fe); 267 -> 268 when the alert detail added
-  // `getMessageChain` (M2-5) — real, called members, not surface bloat.
-  it('member count grows only by deliberate additions (268)', () => {
+  // `getMessageChain` (M2-5); 268 -> 269 when the feedback loop added
+  // `markMessageFalsePositive` — real, called members, not surface bloat.
+  it('member count grows only by deliberate additions (269)', () => {
     const keys = Object.keys(api)
-    expect(keys.length).toBe(268)
+    expect(keys.length).toBe(269)
   })
 })

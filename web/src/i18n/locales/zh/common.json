@@ -18,7 +18,10 @@
       "firedAt": "触发时刻",
       "actions": "已执行",
       "noActions": "无",
-      "expired": "这条告警指向的规则执行记录已过期 —— 规则历史保留 30 天。"
+      "expired": "这条告警指向的规则执行记录已过期 —— 规则历史保留 30 天。",
+      "trackRecord": "历史准确率",
+      "dismissedOf": "共 {{total}} 次告警，其中 {{fp}} 次被标记为误报",
+      "thresholdAdvice": "这条规则可能过于敏感，建议收紧触发条件"
     },
     "title": "消息",
     "description": "查看通知消息，管理通知通道与 IM 会话",
@@ -39,6 +42,9 @@
     "resolve": "解决",
     "archive": "归档",
     "acknowledge": "确认",
+    "markFalsePositive": "不是真告警",
+    "falsePositiveSuccess": "已标记为误报",
+    "falsePositiveError": "操作失败",
     "source": "来源",
     "filter": {
       "title": "筛选",

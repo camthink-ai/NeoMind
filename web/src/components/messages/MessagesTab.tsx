@@ -63,6 +63,7 @@ const STATUS_CONFIG: Record<MessageStatus, { label: string; variant: 'default' |
   acknowledged: { label: 'messages.status.acknowledged', variant: 'secondary' as const },
   resolved: { label: 'messages.status.resolved', variant: 'outline' as const },
   archived: { label: 'messages.status.archived', variant: 'outline' as const },
+  false_positive: { label: 'messages.status.false_positive', variant: 'outline' as const },
 }
 
 // Category badge mapping

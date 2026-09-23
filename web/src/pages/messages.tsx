@@ -11,6 +11,7 @@ import { api } from '@/lib/api'
 import { useStore } from '@/store'
 import { useDataVersion } from '@/hooks/useDataVersion'
 import { useToast } from '@/hooks/use-toast'
+import { Flag } from 'lucide-react'
 import { confirm } from '@/hooks/use-confirm'
 import { useErrorHandler } from '@/hooks/useErrorHandler'
 import { useIsMobile } from '@/hooks/useMobile'
@@ -590,6 +591,25 @@ export default function MessagesPage() {
     }
   }
 
+  /**
+   * Dismiss an alert as a false positive (002 §3.4) — the human half of the
+   * feedback loop. The verdict is the operator's; nothing here touches the rule
+   * that fired, and the count that may later suggest a threshold change is read
+   * back through the chain.
+   */
+  const handleFalsePositive = async (id: string) => {
+    try {
+      await api.markMessageFalsePositive(id)
+      setMessages(prev => prev.map(m =>
+        m.id === id ? { ...m, status: 'false_positive' as MessageStatus } : m
+      ))
+      toast({ title: t('messages.falsePositiveSuccess', 'Marked as a false positive') })
+    } catch (error) {
+      handleError(error, { operation: 'Mark message as false positive', showToast: true })
+      toast({ title: t('messages.falsePositiveError', 'Failed'), variant: 'destructive' })
+    }
+  }
+
   const _handleArchive = async (id: string) => {
     try {
       await api.archiveMessage(id)
@@ -725,12 +745,15 @@ export default function MessagesPage() {
               <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{t('messages.status.label')}</span>
             </div>
             <div className="flex flex-wrap gap-1.5">
-              {(['active', 'acknowledged', 'resolved', 'archived'] as MessageStatus[]).map((stat) => {
+              {(['active', 'acknowledged', 'resolved', 'archived', 'false_positive'] as MessageStatus[]).map((stat) => {
                 const colors = {
                   active: "text-info bg-info-light border-info",
                   acknowledged: "text-warning bg-warning-light border-warning",
                   resolved: "text-success bg-success-light border-success",
                   archived: "text-muted-foreground bg-muted border-border",
+                  // Quiet: a dismissed alert is not something to act on. It is
+                  // filterable so the dismissals can be reviewed.
+                  false_positive: "text-muted-foreground bg-muted border-border",
                 }
                 return (
                   <button
@@ -1569,6 +1592,22 @@ export default function MessagesPage() {
                 {t('messages.acknowledge', 'Acknowledge')}
               </Button>
             )}
+            {selectedMessage?.status !== 'false_positive' &&
+              selectedMessage?.status !== 'archived' && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    if (selectedMessage) {
+                      handleFalsePositive(selectedMessage.id)
+                      setSelectedMessage(null)
+                    }
+                  }}
+                >
+                  <Flag className="h-4 w-4 mr-1" />
+                  {t('messages.markFalsePositive', 'Not a real alert')}
+                </Button>
+              )}
             {selectedMessage?.status !== 'resolved' && selectedMessage?.status !== 'archived' && (
               <Button
                 variant="outline"
@@ -1706,6 +1745,31 @@ export default function MessagesPage() {
                             </span>
                           </div>
                         </>
+                      )}
+                      {/* The loop's other half: what the dismissals add up to.
+                          Advice only — the rule is never changed for you. */}
+                      {messageChain.rule_quality && messageChain.rule_quality.alerts > 0 && (
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-muted-foreground text-xs w-20 shrink-0">
+                            {t('messages.chain.trackRecord', 'Track record')}
+                          </span>
+                          <span>
+                            {t('messages.chain.dismissedOf', {
+                              defaultValue: '{{fp}} of {{total}} alerts dismissed as false',
+                              fp: messageChain.rule_quality.false_positives,
+                              total: messageChain.rule_quality.alerts,
+                            })}
+                            {messageChain.rule_quality.suggest_threshold_review && (
+                              <span className="text-warning">
+                                {' · '}
+                                {t(
+                                  'messages.chain.thresholdAdvice',
+                                  'this rule probably fires too easily — consider tightening its condition',
+                                )}
+                              </span>
+                            )}
+                          </span>
+                        </div>
                       )}
                     </div>
                   ) : (
