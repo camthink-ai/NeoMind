@@ -532,6 +532,21 @@ pub async fn get_conversation(
     Ok(CliResponse::success(data, "Agent conversation retrieved"))
 }
 
+/// The body `POST /agents/{id}/messages` expects.
+///
+/// The key is `message_type`, not `type`: `AddUserMessageRequest` declares the
+/// former, and the API has no `deny_unknown_fields` — so a wrong key is
+/// accepted and silently dropped, and the tag never reaches storage. It was
+/// `type` until this was noticed; the assertion below is the only thing that
+/// catches that class of mistake, since nothing else reads the body.
+fn user_message_body(message: &str, message_type: Option<&str>) -> serde_json::Value {
+    let mut body = json!({ "content": message });
+    if let Some(mt) = message_type {
+        body["message_type"] = json!(mt);
+    }
+    body
+}
+
 /// Send message to agent
 pub async fn send_message(
     client: &ApiClient,
@@ -540,14 +555,37 @@ pub async fn send_message(
     message_type: Option<&str>,
 ) -> Result<CliResponse> {
     let id = resolve_agent_id(client, id).await?;
-    let mut body = json!({
-        "content": message,
-    });
-    if let Some(mt) = message_type {
-        body["type"] = json!(mt);
-    }
+    let body = user_message_body(message, message_type);
     let data = client
         .post(&format!("/agents/{}/messages", id), &body)
         .await?;
     Ok(CliResponse::success(data, "Message sent"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The field name is the whole point — a wrong one is dropped in silence,
+    /// because `AddUserMessageRequest` has no `deny_unknown_fields` to catch it.
+    #[test]
+    fn the_message_body_uses_the_key_the_api_declares() {
+        let body = user_message_body("hello", Some("note"));
+        assert_eq!(body["content"], json!("hello"));
+        assert_eq!(
+            body["message_type"],
+            json!("note"),
+            "must match AddUserMessageRequest::message_type"
+        );
+        assert!(
+            body.get("type").is_none(),
+            "the old key would be silently discarded by the API"
+        );
+    }
+
+    #[test]
+    fn the_type_key_is_omitted_when_there_is_none() {
+        let body = user_message_body("hello", None);
+        assert_eq!(body, json!({ "content": "hello" }));
+    }
 }
