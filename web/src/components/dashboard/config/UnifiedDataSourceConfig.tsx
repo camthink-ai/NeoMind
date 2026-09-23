@@ -319,35 +319,23 @@ export function UnifiedDataSourceConfig({
           promises.push(storeRef.current.fetchExtensions())
         }
 
-        // Single unified API call for all data source types (extension metrics, transforms, AI)
+        // Unified API call for transform/ai source types. Both are served by
+        // the same endpoint, but requested WITH source_type filters so the
+        // backend skips the heavy device/extension collectors — without the
+        // filter those run on every picker open and the tab spins for ages.
         if (!unifiedAlreadyLoaded) {
+          const merge = (result: { data?: UnifiedDataSourceInfo[] }) => {
+            if (cancelled) return
+            const sources = result?.data ?? []
+            setUnifiedDataSources(prev => {
+              const seen = new Set(prev.map(s => s.id))
+              return [...prev, ...sources.filter(s => !seen.has(s.id))]
+            })
+            hasFetchedUnifiedSources.current = true
+          }
           promises.push(
-            api.listUnifiedDataSources({ limit: 500, skip_telemetry: 'true' })
-              .then((result) => {
-                if (cancelled) return
-                const sources = (result as { data?: UnifiedDataSourceInfo[] })?.data ?? []
-                setUnifiedDataSources(sources)
-                hasFetchedUnifiedSources.current = true
-
-                // Feed extension data into store if needed (same data, no extra request)
-                if (needsExt && !extAlreadyLoaded) {
-                  const extSources = sources
-                    .filter(s => s.source_type === 'extension')
-                    .map(ds => ({
-                      id: ds.id,
-                      extension_id: ds.source_name,
-                      command: '',
-                      field: ds.field,
-                      display_name: ds.source_display_name + ': ' + ds.field_display_name,
-                      data_type: (ds.data_type as any) || 'float',
-                      unit: ds.unit,
-                      description: ds.description || ds.field_display_name,
-                      aggregatable: true,
-                      default_agg_func: 'last' as const,
-                    }))
-                  storeRef.current.setExtensionDataSources(extSources)
-                }
-              })
+            api.listUnifiedDataSources({ limit: 500, skip_telemetry: 'true', source_type: 'transform' }).then(merge),
+            api.listUnifiedDataSources({ limit: 500, skip_telemetry: 'true', source_type: 'ai' }).then(merge),
           )
         }
 

@@ -510,6 +510,12 @@ async function flushBatch() {
 }
 
 export async function fetchDeviceTelemetry(deviceId: string): Promise<{ success: boolean; metricsCount: number }> {
+  // ai:{agent} / transform:{id} namespaces are NOT devices — their latest
+  // values live in the unified telemetry store, not device.current_values.
+  // Calling the device endpoints yields "Device not found" noise.
+  if (deviceId.startsWith('ai:') || deviceId.startsWith('transform:')) {
+    return { success: false, metricsCount: 0 }
+  }
   const existing = activeFetches.get(deviceId)
   if (existing) return existing
 
