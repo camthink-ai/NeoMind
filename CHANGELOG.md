@@ -54,6 +54,12 @@ The milestone that makes an agent's *inputs* expressible and its *outputs* check
 - Eight `memory()` constructors created a real redb file in the temp directory and never removed it. A test suite that calls them thousands of times had left the temp directory at **48 GB and 9,509 `.redb` files**, growing on every run. They now use redb's `InMemoryBackend` — which the pinned 2.6.3 provides, though `Cargo.toml` still declares `redb = "2.1"`, the version whose absence of the feature three of these sites cite in a comment. The test helpers that legitimately need a file now prune stale siblings by age, which survives the `kill -9` that defeats a `Drop`-based cleanup.
 - One of them was a correctness bug, not litter: `new_for_testing()` pointed every test state at the same memory directory while its own doc promised each call was isolated.
 
+### fix(cli, agent): a flag that promised tool chaining and did nothing
+
+- `neomind agent create/update --enable-tool-chaining` is gone. It has been a dead field end to end since 2026-08-26 — dropped from the API DTOs, never read by the executor (tool-calling follows LLM capability), kept in storage only for bincode compatibility. But the CLI went on accepting it, putting it in the request body, and the API — which has no `deny_unknown_fields` — silently discarded it. Setting it printed success and changed nothing. Removing the flag turns that into a hard error.
+- `max_chain_depth` no longer has two defaults. The API created agents with `unwrap_or(3)` while storage's serde default was `5`, each documented as "the default"; both now read `DEFAULT_MAX_CHAIN_DEPTH`. The value is **10** (was 3): three rounds is not enough for the multi-step Focused analysis the mode exists for, and a run that exhausts its budget spends its last rounds summarising rather than working.
+- The `--max-chain-depth` help no longer says it is "Only used when --enable-tool-chaining is true". It was always used — it is the tool loop's round ceiling.
+
 ## [Unreleased.1] — M1: the structured agent (L0 operator) — S1 end to end
 
 The first business-layer milestone on the M0 kernel (design: docs/designs/001 §5.1, revised to live in the ai_agent domain — operators are a TYPE of agent, one list, one API). Create a "structured" agent in the editor, bind resources, define output fields, 试跑, schedule — the fields flow into dashboards/rules/data-push as live data sources.

@@ -150,9 +150,14 @@ fn default_context_window() -> usize {
     10
 }
 
-/// Default value for max chain depth.
+/// How many tool rounds a Focused agent may take in one run, when the caller
+/// does not say. Public so the API layer defaults to the same number instead of
+/// carrying its own copy — it used to be 3 there and 5 here, both calling
+/// themselves "the default".
+pub const DEFAULT_MAX_CHAIN_DEPTH: usize = 10;
+
 fn default_max_chain_depth() -> usize {
-    5 // Allow up to 5 chain steps by default (enough for multi-step Focused analysis)
+    DEFAULT_MAX_CHAIN_DEPTH
 }
 
 /// Default value for agent priority.

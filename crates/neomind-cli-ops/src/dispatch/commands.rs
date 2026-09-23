@@ -1564,10 +1564,8 @@ pub enum AgentCommand {
         /// Example: --commands '[{"device_id":"switch-001","command_name":"toggle","display_name":"Toggle","parameters":{}}]'
         #[arg(long)]
         commands: Option<String>,
-        /// Enable tool chaining (agent can call multiple tools in sequence). Default: false.
-        #[arg(long)]
-        enable_tool_chaining: Option<bool>,
-        /// Maximum tool chain depth (1-20). Only used when --enable-tool-chaining is true. Default: 3.
+        /// Maximum tool chain depth (1-30): how many tool rounds a Focused agent may
+        /// take in one run. Default: 10.
         #[arg(long)]
         max_chain_depth: Option<usize>,
         /// Agent priority (0-255, higher = more important). Default: 128.
@@ -1634,9 +1632,6 @@ pub enum AgentCommand {
         /// Example: --commands '[{"device_id":"switch-001","command_name":"toggle","display_name":"Toggle","parameters":{}}]'
         #[arg(long)]
         commands: Option<String>,
-        /// Enable/disable tool chaining.
-        #[arg(long)]
-        enable_tool_chaining: Option<bool>,
         /// Max tool chain depth.
         #[arg(long)]
         max_chain_depth: Option<usize>,

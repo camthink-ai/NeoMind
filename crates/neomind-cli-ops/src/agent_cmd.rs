@@ -120,7 +120,6 @@ pub async fn create_agent(
     resources: Option<&str>,
     metrics: Option<&str>,
     commands: Option<&str>,
-    enable_tool_chaining: Option<bool>,
     max_chain_depth: Option<usize>,
     priority: Option<u8>,
     context_window_size: Option<usize>,
@@ -189,7 +188,6 @@ pub async fn create_agent(
         body["notify"] = parsed;
     }
 
-
     if let Some(desc) = description {
         body["description"] = json!(desc);
     }
@@ -224,9 +222,6 @@ pub async fn create_agent(
             }
         };
         body["resources"] = parsed;
-    }
-    if let Some(etc) = enable_tool_chaining {
-        body["enable_tool_chaining"] = json!(etc);
     }
     if let Some(mcd) = max_chain_depth {
         body["max_chain_depth"] = json!(mcd);
@@ -324,7 +319,6 @@ pub async fn update_agent(
     resources: Option<&str>,
     metrics: Option<&str>,
     commands: Option<&str>,
-    enable_tool_chaining: Option<bool>,
     max_chain_depth: Option<usize>,
     priority: Option<u8>,
     context_window_size: Option<usize>,
@@ -402,9 +396,6 @@ pub async fn update_agent(
             }
         };
         body["resources"] = parsed;
-    }
-    if let Some(etc) = enable_tool_chaining {
-        body["enable_tool_chaining"] = json!(etc);
     }
     if let Some(mcd) = max_chain_depth {
         body["max_chain_depth"] = json!(mcd);

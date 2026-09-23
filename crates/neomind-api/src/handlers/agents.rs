@@ -1281,7 +1281,9 @@ pub async fn create_agent(
         user_messages: Default::default(),
         conversation_summary: Default::default(),
         context_window_size: request.context_window_size.unwrap_or(10),
-        max_chain_depth: request.max_chain_depth.unwrap_or(3),
+        max_chain_depth: request
+            .max_chain_depth
+            .unwrap_or(neomind_storage::DEFAULT_MAX_CHAIN_DEPTH),
         tool_config: request.tool_config,
         execution_mode,
     };

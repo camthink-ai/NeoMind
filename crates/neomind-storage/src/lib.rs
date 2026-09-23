@@ -100,6 +100,7 @@ pub use agents::{
     ReasoningStep, ResourceType, ScheduleType, UserMessage,
     OperatorConfig, OperatorField, OperatorFieldType,
     MemoryMode, AgentNotify, NotifyOn,
+    DEFAULT_MAX_CHAIN_DEPTH,
 };
 
 pub use device_registry::DeviceRegistryStore;
