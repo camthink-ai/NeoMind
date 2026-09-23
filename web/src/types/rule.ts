@@ -68,6 +68,9 @@ export type RuleAction =
   | { type: 'notify'; message: string; severity: 'info' | 'warning' | 'critical' | 'emergency' }
   | { type: 'execute'; target: string; target_type: 'device' | 'extension'; command: string; params: Record<string, unknown> }
   | { type: 'trigger_agent'; agent_id: string; input?: string; data?: unknown }
+  // Run a Structured (L0) operator. Unlike trigger_agent this carries no
+  // prompt — the operator collects its own bound sources.
+  | { type: 'run_operator'; agent_id: string }
 
 export interface RuleExecutionResult {
   rule_id: string

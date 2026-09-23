@@ -68,6 +68,15 @@ function getActionInfo(action: Rule['actions'][number], t: (k: string, o?: any) 
       return { icon: Code2, label: t('actions.execute', { defaultValue: 'Execute' }), detail: `${action.target_type}: ${action.target} → ${action.command}` }
     case 'trigger_agent':
       return { icon: Bot, label: t('actions.triggerAgent', { defaultValue: 'Trigger Agent' }), detail: action.agent_id }
+    case 'run_operator':
+      // Keyed off ruleBuilder.actionType — the `actions.*` keys the sibling
+      // cases reference do not exist in the locale files, so those always
+      // render their English defaultValue.
+      return {
+        icon: Bot,
+        label: t('ruleBuilder.actionType.runOperator', { defaultValue: 'Run Operator' }),
+        detail: action.agent_id,
+      }
     default:
       return { icon: Zap, label: String((action as any).type), detail: '' }
   }

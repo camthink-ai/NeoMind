@@ -572,7 +572,8 @@
     "actionType": {
       "execute": "Execute Command",
       "notify": "Send Notification",
-      "triggerAgent": "Trigger AI Agent"
+      "triggerAgent": "Trigger AI Agent",
+      "runOperator": "Run Operator"
     },
     "logContentPlaceholder": "Log content",
     "propertyNamePlaceholder": "Property name",
@@ -613,6 +614,8 @@
     "triggerSchedule": "Schedule Trigger",
     "triggerManual": "Manual Trigger",
     "triggerAgent": "Trigger AI Agent",
+    "runOperator": "Run Operator",
+    "operator": "Operator",
     "transform": "Transform",
     "selectTransform": "Select transform",
     "selectTransformFirst": "Please select a transform first",

@@ -2571,6 +2571,20 @@ function ActionEditorCompact({ action, devices, deviceTypes, extensions, message
         )
       }
 
+      case 'run_operator': {
+        // This builder has no form for an operator action — it is created
+        // through the API/CLI. Show what it is read-only; the load path
+        // preserves it verbatim, so an empty body here would just look like a
+        // blank action the user cannot account for.
+        const operatorAction = action as { type: 'run_operator'; agent_id: string }
+        return (
+          <div className="flex items-center gap-2 w-full">
+            <span className="text-xs text-muted-foreground w-20">{tBuilder('operator')}:</span>
+            <span className="text-xs font-mono truncate">{operatorAction.agent_id}</span>
+          </div>
+        )
+      }
+
       default:
         return null
     }
@@ -2581,6 +2595,7 @@ function ActionEditorCompact({ action, devices, deviceTypes, extensions, message
       case 'execute': return <Zap className="h-4 w-4" />
       case 'notify': return <Bell className="h-4 w-4" />
       case 'trigger_agent': return <Bot className="h-4 w-4" />
+      case 'run_operator': return <Bot className="h-4 w-4" />
       default: return <Zap className="h-4 w-4" />
     }
   }
@@ -2590,6 +2605,12 @@ function ActionEditorCompact({ action, devices, deviceTypes, extensions, message
       case 'execute': return tBuilder('executeCommand')
       case 'notify': return tBuilder('sendNotification')
       case 'trigger_agent': return tBuilder('triggerAgent') || 'Trigger Agent'
+      case 'run_operator': return tBuilder('runOperator') || 'Run Operator'
+      // Never blank: an action we have no form for still has to be named, or
+      // the rule reads as if it contained an empty action. Reachable only for
+      // a type outside the union above (the API may accept more than this
+      // editor knows), which is why the cast is needed.
+      default: return (action as { type: string }).type
     }
   }
 
@@ -2598,6 +2619,7 @@ function ActionEditorCompact({ action, devices, deviceTypes, extensions, message
       case 'execute': return 'text-warning bg-warning-light border-warning'
       case 'notify': return 'text-info bg-info-light border-info'
       case 'trigger_agent': return 'text-accent-purple bg-accent-purple-light border-accent-purple-light'
+      case 'run_operator': return 'text-accent-purple bg-accent-purple-light border-accent-purple-light'
       default: return 'text-muted-foreground bg-muted border-border'
     }
   }

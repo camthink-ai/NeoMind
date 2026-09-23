@@ -15,7 +15,7 @@ import {
   FullScreenDialogMain,
 } from "@/components/automation/dialog"
 import { ResponsiveTable, EmptyState, Pagination } from "@/components/shared"
-import { Edit, Play, Trash2, Bell, Sparkles, Zap, MoreVertical, Timer, History, CheckCircle2, XCircle, Clock, Download } from "lucide-react"
+import { Edit, Play, Trash2, Bell, Bot, Sparkles, Zap, MoreVertical, Timer, History, CheckCircle2, XCircle, Clock, Download } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import type { Rule, RuleAction, RuleExecutionResult } from "@/types"
 import { cn } from "@/lib/utils"
@@ -43,6 +43,7 @@ const ACTION_CONFIG: Record<string, { icon: typeof Zap; label: string; color: st
   execute: { icon: Zap, label: 'automation:ruleBuilder.actionType.execute', color: 'text-warning bg-warning-light border-warning' },
   notify: { icon: Bell, label: 'automation:ruleBuilder.actionType.notify', color: 'text-info bg-info-light border-info' },
   trigger_agent: { icon: Sparkles, label: 'automation:ruleBuilder.actionType.triggerAgent', color: 'text-accent-purple bg-accent-purple-light border-accent-purple-light' },
+  run_operator: { icon: Bot, label: 'automation:ruleBuilder.actionType.runOperator', color: 'text-accent-purple bg-accent-purple-light border-accent-purple-light' },
 }
 
 export const ITEMS_PER_PAGE = 10

@@ -570,7 +570,8 @@
     "actionType": {
       "execute": "执行命令",
       "notify": "发送通知",
-      "triggerAgent": "触发 AI 智能体"
+      "triggerAgent": "触发 AI 智能体",
+      "runOperator": "运行算子"
     },
     "logContentPlaceholder": "日志内容",
     "propertyNamePlaceholder": "属性名",
@@ -611,6 +612,8 @@
     "triggerSchedule": "定时触发",
     "triggerManual": "手动触发",
     "triggerAgent": "触发 AI 智能体",
+    "runOperator": "运行算子",
+    "operator": "算子",
     "transform": "数据转换",
     "selectTransform": "选择数据转换",
     "selectTransformFirst": "请先选择数据转换",
