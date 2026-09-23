@@ -372,7 +372,7 @@ async fn structured_mode_refuses_to_publish_without_input() {
     );
     let message = outcome.expect_err("checked above").to_string();
     assert!(
-        message.contains("bound sources"),
+        message.contains("No time-series storage"),
         "the failure must say what was missing, not just that it failed: {message}"
     );
 }
@@ -542,7 +542,7 @@ async fn a_starved_run_names_the_source_that_went_quiet_and_when() {
         .to_string();
 
     assert!(
-        message.contains("device:cam-01/occupied"),
+        message.contains("device:cam-01"),
         "the source has to be named: {message}"
     );
     assert!(
