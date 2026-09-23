@@ -173,6 +173,8 @@
       "typeSlackDesc": "Incoming webhook",
       "typeFeishu": "Feishu",
       "typeFeishuDesc": "Custom bot",
+      "howToGet": "How do I get these values? → official guide",
+      "pasteAddressHint": "Paste the whole webhook address shown on that page — we read the needed part out of it",
       "webhookConfig": "Webhook Configuration",
       "emailConfig": "Email Configuration",
       "botToken": "Bot Token",

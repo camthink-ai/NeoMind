@@ -123,6 +123,10 @@ export interface ChannelTypeInfo {
   description_zh: string
   icon: string
   category: string
+  /** Vendor doc explaining how to obtain this channel's credentials (English). */
+  docs_url: string
+  /** Chinese variant of docs_url when the vendor maintains one. */
+  docs_url_zh: string
 }
 
 export interface ChannelStats {
@@ -160,6 +164,8 @@ export interface ChannelSchemaResponse {
   icon: string
   category: string
   config_schema: JsonSchema
+  docs_url: string
+  docs_url_zh: string
 }
 
 // ========== Message Channel Types ==========

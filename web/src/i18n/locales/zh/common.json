@@ -173,6 +173,8 @@
       "typeSlackDesc": "Incoming Webhook",
       "typeFeishu": "飞书",
       "typeFeishuDesc": "自定义机器人",
+      "howToGet": "这些信息怎么获取？→ 官方文档",
+      "pasteAddressHint": "直接粘贴那个页面上显示的完整 Webhook 地址即可，需要的部分会自动解析出来",
       "webhookConfig": "Webhook 配置",
       "emailConfig": "邮件配置",
       "botToken": "机器人令牌",

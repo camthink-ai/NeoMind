@@ -16,6 +16,7 @@ import {
   Settings,
   Trash2,
   Check,
+  ExternalLink,
   type LucideIcon,
 } from 'lucide-react'
 import { api } from '@/lib/api'
@@ -62,6 +63,8 @@ interface ChannelTypeDef {
   labelKey: string
   descKey: string
   color: string
+  /** Vendor doc walking the user through obtaining the config values (en/zh). Mirrors ChannelTypeInfo.docs_url on the backend. */
+  docs?: { en: string; zh: string }
 }
 
 // ---------------------------------------------------------------------------
@@ -75,6 +78,10 @@ const CHANNEL_TYPES: ChannelTypeDef[] = [
     labelKey: 'messages.channels.typeWebhook',
     descKey: 'messages.channels.typeWebhookDesc',
     color: 'bg-success-light text-success',
+    docs: {
+      en: 'https://wiki.camthink.ai/docs/neomind/user-guide/notifications',
+      zh: 'https://wiki.camthink.ai/docs/neomind/user-guide/notifications',
+    },
   },
   {
     value: 'email',
@@ -82,6 +89,10 @@ const CHANNEL_TYPES: ChannelTypeDef[] = [
     labelKey: 'messages.channels.typeEmail',
     descKey: 'messages.channels.typeEmailDesc',
     color: 'bg-info-light text-info',
+    docs: {
+      en: 'https://support.google.com/mail/answer/7126229',
+      zh: 'https://service.mail.qq.com/detail/0/75',
+    },
   },
   {
     value: 'telegram',
@@ -89,6 +100,10 @@ const CHANNEL_TYPES: ChannelTypeDef[] = [
     labelKey: 'messages.channels.typeTelegram',
     descKey: 'messages.channels.typeTelegramDesc',
     color: 'bg-warning-light text-warning',
+    docs: {
+      en: 'https://core.telegram.org/bots/features',
+      zh: 'https://core.telegram.org/bots/features',
+    },
   },
   {
     value: 'wecom',
@@ -96,6 +111,10 @@ const CHANNEL_TYPES: ChannelTypeDef[] = [
     labelKey: 'messages.channels.typeWeCom',
     descKey: 'messages.channels.typeWeComDesc',
     color: 'bg-success-light text-success',
+    docs: {
+      en: 'https://developer.work.weixin.qq.com/document/path/91745',
+      zh: 'https://developer.work.weixin.qq.com/document/path/91745',
+    },
   },
   {
     value: 'dingtalk',
@@ -103,6 +122,10 @@ const CHANNEL_TYPES: ChannelTypeDef[] = [
     labelKey: 'messages.channels.typeDingTalk',
     descKey: 'messages.channels.typeDingTalkDesc',
     color: 'bg-info-light text-info',
+    docs: {
+      en: 'https://open.dingtalk.com/document/robots/custom-robot-access',
+      zh: 'https://open.dingtalk.com/document/robots/custom-robot-access',
+    },
   },
   {
     value: 'slack',
@@ -110,6 +133,10 @@ const CHANNEL_TYPES: ChannelTypeDef[] = [
     labelKey: 'messages.channels.typeSlack',
     descKey: 'messages.channels.typeSlackDesc',
     color: 'bg-warning-light text-warning',
+    docs: {
+      en: 'https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks',
+      zh: 'https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks',
+    },
   },
   {
     value: 'feishu',
@@ -117,6 +144,10 @@ const CHANNEL_TYPES: ChannelTypeDef[] = [
     labelKey: 'messages.channels.typeFeishu',
     descKey: 'messages.channels.typeFeishuDesc',
     color: 'bg-info-light text-info',
+    docs: {
+      en: 'https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot',
+      zh: 'https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot?lang=zh-CN',
+    },
   },
 ]
 
@@ -371,11 +402,15 @@ function WeComConfig({ config, onChange }: {
 
   return (
     <div className="space-y-3">
-      <FormField label={t('messages.channels.webhookKey')} required>
+      <FormField
+        label={t('messages.channels.webhookUrl')}
+        required
+        helpText={t('messages.channels.pasteAddressHint', 'Paste the full address from the robot\'s page — the key is read out of it')}
+      >
         <Input
           value={(config.key as string) || ''}
           onChange={(e) => onChange(prev => ({ ...prev, key: e.target.value }))}
-          placeholder="xxx-xxx-xxx"
+          placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxxx"
         />
       </FormField>
     </div>
@@ -390,11 +425,15 @@ function DingTalkConfig({ config, onChange }: {
 
   return (
     <div className="space-y-3">
-      <FormField label={t('messages.channels.accessToken')} required>
+      <FormField
+        label={t('messages.channels.webhookUrl')}
+        required
+        helpText={t('messages.channels.pasteAddressHint', 'Paste the full address from the robot\'s page — the token is read out of it')}
+      >
         <Input
           value={(config.access_token as string) || ''}
           onChange={(e) => onChange(prev => ({ ...prev, access_token: e.target.value }))}
-          placeholder="xxx"
+          placeholder="https://oapi.dingtalk.com/robot/send?access_token=xxxx"
         />
       </FormField>
       <FormField label={t('messages.channels.secret')}>
@@ -436,11 +475,15 @@ function FeishuConfig({ config, onChange }: {
 
   return (
     <div className="space-y-3">
-      <FormField label={t('messages.channels.hookId')} required>
+      <FormField
+        label={t('messages.channels.webhookUrl')}
+        required
+        helpText={t('messages.channels.pasteAddressHint', 'Paste the full address from the bot\'s page — the id is read out of it')}
+      >
         <Input
           value={(config.hook_id as string) || ''}
           onChange={(e) => onChange(prev => ({ ...prev, hook_id: e.target.value }))}
-          placeholder="xxx"
+          placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/xxxx"
         />
       </FormField>
       <FormField label={t('messages.channels.secret')}>
@@ -478,7 +521,7 @@ export function ChannelEditorDialog({
   editingChannel,
   onSaved,
 }: ChannelEditorDialogProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { handleError } = useErrorHandler()
   const { toast } = useToast()
   const isMobile = useIsMobile()
@@ -488,6 +531,19 @@ export function ChannelEditorDialog({
   const [channelType, setChannelType] = useState('webhook')
   const [channelConfig, setChannelConfig] = useState<Record<string, unknown>>({})
   const [creating, setCreating] = useState(false)
+
+  // Vendor doc for the selected type: how to create the bot/webhook and copy
+  // the values the config form below asks for. Falls back to the en URL.
+  // Derived AFTER the state above — `channelType` is read by the `.find()`
+  // callback, which runs during render, so reading it from above the
+  // declaration was a temporal-dead-zone crash ("Cannot access uninitialized
+  // variable") that took the whole messages page down through the error
+  // boundary. TypeScript cannot see it: a reference inside a callback is not
+  // a use-before-declaration error.
+  const selectedDocs = CHANNEL_TYPES.find(ct => ct.value === channelType)?.docs
+  const selectedDocsUrl = selectedDocs
+    ? (i18n.language.toLowerCase().startsWith('zh') ? selectedDocs.zh : selectedDocs.en) || selectedDocs.en
+    : null
 
   // Reset form when dialog opens / editingChannel changes
   const resetForm = useCallback((channel?: MessageChannel | null) => {
@@ -691,6 +747,19 @@ export function ChannelEditorDialog({
 
           <FullScreenDialogMain>
             <div className="p-4 md:p-6 space-y-4 max-w-2xl mx-auto">
+              {/* How to obtain the config values (official vendor doc) */}
+              {selectedDocsUrl && (
+                <a
+                  href={selectedDocsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 text-xs text-info hover:underline"
+                >
+                  <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                  {t('messages.channels.howToGet', 'How do I get these values? → official guide')}
+                </a>
+              )}
+
               {/* Channel name */}
               <FormField
                 label={t('messages.channels.name')}
