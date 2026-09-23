@@ -1992,9 +1992,11 @@ export function AgentEditorFullScreen({
                     {channels.map((ch) => {
                       const on = notify?.channels.includes(ch.name) ?? false
                       return (
-                        <button
+                        <Button
                           key={ch.name}
                           type="button"
+                          variant="outline"
+                          size="sm"
                           onClick={() =>
                             setNotify((prev) => {
                               const base = prev ?? { channels: [], on: 'failure' as const }
@@ -2005,17 +2007,17 @@ export function AgentEditorFullScreen({
                             })
                           }
                           className={cn(
-                            'inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs transition-colors',
+                            'gap-1.5',
                             on
                               ? 'border-primary bg-muted text-foreground'
-                              : 'border-border text-muted-foreground hover:border-muted-foreground',
+                              : 'text-muted-foreground hover:border-muted-foreground',
                             !ch.enabled && 'opacity-50',
                           )}
                           title={ch.channel_type + (ch.enabled ? '' : ' (disabled)')}
                         >
-                          {on && <Check className="h-3 w-3" />}
+                          {on && <Check className="h-4 w-4" />}
                           <span className="max-w-[10rem] truncate">{ch.name}</span>
-                        </button>
+                        </Button>
                       )
                     })}
                   </div>
