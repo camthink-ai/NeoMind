@@ -958,3 +958,92 @@ async fn test_timeseries_bucket_is_empty() {
     assert!(!bucket.is_empty());
     assert_eq!(bucket.count, 1);
 }
+
+/// The startup key migration prefixes bare device ids with `device:`.
+///
+/// It decided "bare" by *not* being in a known-prefix list, so anything with a
+/// colon that the list did not know about — `ai:{agent_id}`, i.e. every
+/// published AI field — got `device:` stuck in front of it on the next
+/// restart. The data moved, the Data Center went on asking for `ai:{agent}`,
+/// and the history read as empty until something wrote the value again.
+///
+/// It has to key off the absence of a prefix, not membership in a list that a
+/// new source type cannot know to update.
+#[tokio::test]
+async fn test_migration_leaves_prefixed_sources_alone() {
+    let store = TimeSeriesStore::memory().expect("memory store");
+
+    store
+        .write(
+            "ai:agent-1",
+            "status",
+            DataPoint::new_string(1000, "正常".to_string()),
+        )
+        .await
+        .unwrap();
+    store
+        .write("sensor-01", "temperature", DataPoint::new(1000, 21.5))
+        .await
+        .unwrap();
+    store.flush().unwrap();
+
+    let migrated = store.migrate_device_prefix().unwrap();
+
+    assert_eq!(migrated, 1, "only the bare id is a migration candidate");
+    assert!(
+        store
+            .query_latest("ai:agent-1", "status")
+            .await
+            .unwrap()
+            .is_some(),
+        "a published AI field must stay where it was written"
+    );
+    assert!(
+        store
+            .query_latest("device:sensor-01", "temperature")
+            .await
+            .unwrap()
+            .is_some(),
+        "a bare device id still migrates"
+    );
+}
+
+/// And the fields that were already moved have to come back.
+///
+/// Anyone who restarted their server since `ai:` became a source type has
+/// their published AI fields sitting under `device:ai:{agent}`, while the Data
+/// Center asks for `ai:{agent}` and shows an empty history. Fixing the rule
+/// stops it happening again; this puts the data back where it is looked for.
+#[tokio::test]
+async fn test_migration_repairs_source_keys_it_mangled() {
+    let store = TimeSeriesStore::memory().expect("memory store");
+
+    store
+        .write(
+            "device:ai:agent-1",
+            "status",
+            DataPoint::new_string(1000, "正常".to_string()),
+        )
+        .await
+        .unwrap();
+    store.flush().unwrap();
+
+    store.migrate_device_prefix().unwrap();
+
+    assert!(
+        store
+            .query_latest("ai:agent-1", "status")
+            .await
+            .unwrap()
+            .is_some(),
+        "the field is readable from the source everything asks for again"
+    );
+    assert!(
+        store
+            .query_latest("device:ai:agent-1", "status")
+            .await
+            .unwrap()
+            .is_none(),
+        "and no longer stranded under the mangled key"
+    );
+}

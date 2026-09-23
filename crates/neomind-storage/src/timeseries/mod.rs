@@ -720,48 +720,69 @@ impl TimeSeriesStore {
     ///
     /// Returns the number of migrated keys.
     pub fn migrate_device_prefix(&self) -> Result<u64, Error> {
-        // Known prefixes that are already correct — skip them
-        const KNOWN_PREFIXES: &[&str] = &["device:", "extension:", "transform:"];
-
         let write_txn = self.db.begin_write()?;
         let migrated;
 
         {
             let mut table = write_txn.open_table(TIMESERIES_TABLE)?;
 
-            // Collect keys that need migration
-            let mut to_migrate: Vec<((String, String, i64), Vec<u8>)> = Vec::new();
+            // (new key, value, old source id) — the old key is carried rather
+            // than derived from the new one, because a repair entry does not
+            // add a prefix that can simply be stripped back off.
+            let mut to_migrate: Vec<((String, String, i64), Vec<u8>, String)> = Vec::new();
 
             for result in table.iter()? {
                 let (key, value) = result?;
                 let (source_id, metric, ts) = key.value();
                 let sid = source_id;
 
-                // Only migrate bare IDs (no colon prefix)
-                if KNOWN_PREFIXES.iter().any(|p| sid.starts_with(p)) {
+                if sid.contains(':') {
+                    // A source id that carries a prefix is already in its final
+                    // form — EXCEPT the ones an earlier version of this
+                    // migration mangled. It decided "bare" by absence from a
+                    // hard-coded list of known prefixes, so `ai:{agent}` — the
+                    // source every published AI field is read back from — was
+                    // treated as bare and became `device:ai:{agent}` on the
+                    // next restart, taking the field's history with it. Put
+                    // those back.
+                    if let Some(agent_source) = sid.strip_prefix("device:ai:") {
+                        to_migrate.push((
+                            (format!("ai:{agent_source}"), metric.to_string(), ts),
+                            value.value().to_vec(),
+                            sid.to_string(),
+                        ));
+                    }
                     continue;
                 }
 
-                let new_source_id = format!("device:{}", sid);
                 to_migrate.push((
-                    (new_source_id, metric.to_string(), ts),
+                    (format!("device:{sid}"), metric.to_string(), ts),
                     value.value().to_vec(),
+                    sid.to_string(),
                 ));
             }
 
             // Write new keys and delete old ones
-            for (new_key, value) in &to_migrate {
+            for (new_key, value, _) in &to_migrate {
                 table.insert(
                     (new_key.0.as_str(), new_key.1.as_str(), new_key.2),
                     value.as_slice(),
                 )?;
             }
 
-            // Delete old keys (use original bare source_id)
-            for ((new_source, metric, ts), _) in &to_migrate {
-                // Extract bare ID from "device:{id}"
-                let bare_id = &new_source[7..]; // Skip "device:"
-                table.remove((bare_id, metric.as_str(), *ts))?;
+            // Delete the keys that were replaced, by their original source id.
+            for ((_, metric, ts), _, old_source) in &to_migrate {
+                table.remove((old_source.as_str(), metric.as_str(), *ts))?;
+            }
+
+            // The latest-value cache is keyed by the OLD source id — it was
+            // populated when the point was written — and would keep answering
+            // for that key until its TTL ran out, shadowing the move.
+            for ((new_source, metric, _), _, old_source) in &to_migrate {
+                self.latest_cache
+                    .invalidate(&(old_source.clone(), metric.clone()));
+                self.latest_cache
+                    .invalidate(&(new_source.clone(), metric.clone()));
             }
 
             migrated = to_migrate.len() as u64;
