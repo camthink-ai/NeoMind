@@ -44,7 +44,21 @@ pub struct ImRouter {
     seen: Mutex<HashSet<String>>,
     /// per-chat 串行锁。
     chat_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// How long a run may stay silent before the user is told it is still
+    /// working. A reply that arrives in two seconds should not be preceded by
+    /// "working on it", so the notice is a timeout, not an acknowledgement.
+    interim_after: std::time::Duration,
 }
+
+/// Sent once if a run is still going. Silence for minutes reads as broken;
+/// silence for seconds does not.
+const INTERIM_NOTICE: &str = "⏳ 正在处理，可能需要几分钟，完成后我会回复你";
+
+/// How long a run may run before the notice goes out (production default).
+const INTERIM_AFTER_DEFAULT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Hard ceiling on one run.
+const RUN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
 
 impl ImRouter {
     pub fn new(
@@ -61,7 +75,15 @@ impl ImRouter {
             allowlist: Mutex::new(allowlist),
             seen: Mutex::new(HashSet::new()),
             chat_locks: Mutex::new(HashMap::new()),
+            interim_after: INTERIM_AFTER_DEFAULT,
         }
+    }
+
+    /// Override when the "still working" notice goes out. Tests set it low; the
+    /// production default is [`INTERIM_AFTER_DEFAULT`].
+    pub fn with_interim_after(mut self, after: std::time::Duration) -> Self {
+        self.interim_after = after;
+        self
     }
 
     pub async fn handle_inbound(&self, m: InboundMessage) {
@@ -202,19 +224,38 @@ impl ImRouter {
             }
         };
 
-        // 6) Run agent with a 10-min timeout; surface timeout/failure as the reply
-        //    (English, no silent wait — user gets told instead of hanging).
-        let reply_text = match tokio::time::timeout(
-            std::time::Duration::from_secs(600),
-            self.runner.run(&rec.neo_session_id, &m.text),
-        )
-        .await
-        {
-            Ok(Ok(t)) => t,
-            Ok(Err(e)) => format!("Failed to process: {e}"),
-            Err(_elapsed) => {
-                "Request timed out after 10 minutes. Please try again or simplify your request."
-                    .to_string()
+        // 6) Run the agent. Three things can end the wait:
+        //    - the answer, which is sent as-is;
+        //    - the interim notice, sent ONCE if the run is still going after a
+        //      while. It is a timeout rather than an acknowledgement on purpose:
+        //      a question answered in two seconds must not be preceded by
+        //      "working on it", and a question that takes three minutes must not
+        //      be met with silence;
+        //    - the hard timeout, which reports itself rather than hanging.
+        let run = self.runner.run(&rec.neo_session_id, &m.text);
+        tokio::pin!(run);
+        let mut interim = Box::pin(tokio::time::sleep(self.interim_after));
+        let mut deadline = Box::pin(tokio::time::sleep(RUN_TIMEOUT));
+        let mut announced = false;
+
+        let reply_text = loop {
+            tokio::select! {
+                result = &mut run => {
+                    break match result {
+                        Ok(t) => t,
+                        Err(e) => format!("Failed to process: {e}"),
+                    };
+                }
+                _ = &mut interim, if !announced => {
+                    announced = true;
+                    if let Some(bridge) = self.registry.get(&m.platform).await {
+                        let _ = bridge.reply(&m.chat_id, INTERIM_NOTICE).await;
+                    }
+                }
+                _ = &mut deadline => {
+                    break "Request timed out after 10 minutes. Please try again or simplify your request."
+                        .to_string();
+                }
             }
         };
         if let Err(e) = self.store.touch(&key) {
@@ -343,6 +384,62 @@ mod tests {
         assert_eq!(replies.len(), 1, "agent runs → exactly 1 reply (no ack)");
         assert_eq!(replies[0].1, "echo:hi");
         assert_eq!(runner.creates(), 1, "first inbound creates a session");
+    }
+
+    /// A run that takes a while has to say something. Three minutes of silence
+    /// reads as broken — and the notice is a *timeout*, not an acknowledgement:
+    /// the test above is the other half, asserting a quick reply stays a single
+    /// message.
+    #[tokio::test]
+    async fn a_slow_run_says_it_is_still_working() {
+        struct SlowRunner;
+
+        #[async_trait]
+        impl AgentRunner for SlowRunner {
+            async fn create_session(&self) -> anyhow::Result<String> {
+                Ok("slow-session".into())
+            }
+            async fn run(&self, _sid: &str, text: &str) -> anyhow::Result<String> {
+                tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+                Ok(format!("done:{text}"))
+            }
+        }
+
+        let bridge = MockBridge::new(ImPlatform::Telegram);
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Arc::new(ImSessionStore::open(tmp.path()).unwrap());
+        let router = ImRouter::new(
+            store,
+            Arc::new(SlowRunner),
+            Arc::new(|| Box::pin(async { Some("agent-1".to_string()) })),
+            None,
+        )
+        .with_interim_after(std::time::Duration::from_millis(20));
+        router.registry.register(bridge.clone()).await;
+
+        router
+            .handle_inbound(InboundMessage {
+                platform: ImPlatform::Telegram,
+                chat_id: "123".into(),
+                sender_id: "123".into(),
+                text: "hi".into(),
+                msg_id: "slow-1".into(),
+                timestamp: 1,
+            })
+            .await;
+
+        let replies = bridge.replies_snapshot();
+        assert_eq!(
+            replies.len(),
+            2,
+            "the notice, then the answer: {replies:?}"
+        );
+        assert!(
+            replies[0].1.contains("正在处理"),
+            "the first message is the notice: {:?}",
+            replies[0]
+        );
+        assert_eq!(replies[1].1, "done:hi", "and the answer still arrives");
     }
 
     #[tokio::test]
