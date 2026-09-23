@@ -429,11 +429,7 @@ mod tests {
             .await;
 
         let replies = bridge.replies_snapshot();
-        assert_eq!(
-            replies.len(),
-            2,
-            "the notice, then the answer: {replies:?}"
-        );
+        assert_eq!(replies.len(), 2, "the notice, then the answer: {replies:?}");
         assert!(
             replies[0].1.contains("正在处理"),
             "the first message is the notice: {:?}",

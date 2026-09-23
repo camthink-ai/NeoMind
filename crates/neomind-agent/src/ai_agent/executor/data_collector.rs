@@ -1565,9 +1565,8 @@ mod tests {
     /// constants module. `None` when the file is absent (source tarball without
     /// `web/`) or the constant is not declared.
     fn editor_constant(name: &str) -> Option<u64> {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
-            "../../web/src/pages/agents-components/agent-editor/constants.ts",
-        );
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../web/src/pages/agents-components/agent-editor/constants.ts");
         let text = std::fs::read_to_string(path).ok()?;
         let marker = format!("export const {} =", name);
         let start = text.find(&marker)? + marker.len();
@@ -1589,8 +1588,7 @@ mod tests {
             return; // no web/ tree to compare against
         };
         assert_eq!(
-            editor,
-            DEFAULT_TIME_RANGE_MINUTES,
+            editor, DEFAULT_TIME_RANGE_MINUTES,
             "DEFAULT_LOOKBACK_MINUTES (web/.../agent-editor/constants.ts) drifted from \
              DEFAULT_TIME_RANGE_MINUTES (data_collector.rs) — update both"
         );
