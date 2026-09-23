@@ -2140,6 +2140,82 @@ impl ServerState {
             registry.register(Arc::new(tool));
         }
 
+        // Ask an agent what it already concluded. Registered ahead of the
+        // CLI-routed tools on purpose: "what does the cold room look like"
+        // should reach for the conclusion the agent already computed, not a
+        // shell command that lists executions and parses them.
+        registry.register(Arc::new(
+            neomind_agent::toolkit::agent_tools::QueryConclusionTool::new(
+                self.agents.agent_store.clone(),
+            ),
+        ));
+
+        // Run an agent now, from chat. The manager lives in the application
+        // state, so the callback is built here and the toolkit stays out of it.
+        {
+            let state = self.clone();
+            let run: neomind_agent::toolkit::agent_tools::RunAgentCallback = Arc::new(
+                move |agent_id: String, input: Option<String>| {
+                    let state = state.clone();
+                    Box::pin(async move {
+                        use neomind_agent::toolkit::agent_tools::RunOutcome;
+
+                        let manager = state
+                            .get_or_init_agent_manager()
+                            .await
+                            .map_err(|e| format!("the agent manager is unavailable: {e}"))?;
+
+                        let invocation = input.map(|content| neomind_agent::AgentInput {
+                            content: Some(content),
+                            data: None,
+                            source: Some("chat".to_string()),
+                        });
+
+                        let spawned = manager.clone();
+                        let id = agent_id.clone();
+                        let handle =
+                            tokio::spawn(async move { spawned.execute_agent_now(&id, invocation).await });
+
+                        // The same patience the invoke endpoint uses: past it the
+                        // run is detached and keeps going, so the caller is told
+                        // it is still working rather than kept waiting.
+                        match tokio::time::timeout(std::time::Duration::from_secs(60), handle).await
+                        {
+                            Err(_) => Ok(RunOutcome::StillRunning),
+                            Ok(Err(join)) => Err(format!("the run panicked: {join}")),
+                            Ok(Ok(Err(e))) => Err(e.to_string()),
+                            Ok(Ok(Ok(summary))) => {
+                                // The summary carries the id; the conclusion lives
+                                // on the execution record it just wrote.
+                                let record = manager
+                                    .executor()
+                                    .store()
+                                    .get_execution(&summary.execution_id)
+                                    .await
+                                    .ok()
+                                    .flatten();
+                                Ok(RunOutcome::Finished {
+                                    conclusion: record
+                                        .as_ref()
+                                        .map(|r| r.decision_process.conclusion.clone())
+                                        .unwrap_or(summary.execution_id),
+                                    confidence: record
+                                        .as_ref()
+                                        .and_then(|r| r.decision_process.confidence),
+                                })
+                            }
+                        }
+                    })
+                },
+            );
+            registry.register(Arc::new(
+                neomind_agent::toolkit::agent_tools::RunAgentTool::new(
+                    self.agents.agent_store.clone(),
+                    run,
+                ),
+            ));
+        }
+
         // Web fetch tool — retrieves URL content
         registry.register(Arc::new(neomind_agent::toolkit::WebFetchTool::new()));
         // File write tool — creates/overwrites files in data/
