@@ -1035,8 +1035,7 @@
     "topologyHint": "选择设备资源后显示拓扑",
     "validation": {
       "nameRequired": "请输入智能体名称",
-      "requirementRequired": "请描述你的需求",
-      "resourcesRequired": "请至少选择一个设备资源"
+      "requirementRequired": "请描述你的需求"
     },
     "save": "保存",
     "creating": "创建",

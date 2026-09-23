@@ -339,33 +339,6 @@
       "fromAiGroup": "AI group name",
       "manualHint": "The agent will only run when manually triggered via API or UI"
     },
-    "promptTemplates": {
-      "label": "Template",
-      "empty": {
-        "label": "Custom",
-        "description": "Blank, write your own prompt"
-      },
-      "monitor": {
-        "label": "Monitor",
-        "description": "Continuously monitor data changes, detect anomalies, and send alerts",
-        "template": "Monitor the following metrics and alert when anomalies are detected:\n\nMonitoring Targets:\n- Data Range: Check if values exceed thresholds (e.g., temperature > 30°C)\n- Anomaly Detection: Look for sudden changes or abnormal patterns\n- Alert Method: Send notification when conditions are met\n\nPlease analyze the current data and compare with historical baselines to identify:\n1. Values outside normal range\n2. Sudden spikes or drops\n3. Data gaps or missing readings\n\nWhen an anomaly is detected, send an alert with:\n- What metric is affected\n- Current value vs expected range\n- Severity level (info/warning/critical)"
-      },
-      "control": {
-        "label": "Control",
-        "description": "Automatically execute device control operations based on conditions",
-        "template": "Automatically control devices based on the following conditions:\n\nTrigger Conditions:\n- Check current sensor readings\n- Compare against threshold values\n- Verify device states before taking action\n\nControl Actions:\n- Device ID: [target device]\n- Command: [turn_on / turn_off / adjust]\n- Parameters: [any required settings]\n\nPlease:\n1. First verify the current condition by checking sensor data\n2. Only execute commands when the condition is clearly met\n3. Confirm the action was successful\n4. Avoid rapid repeated switching (add a cooldown between same actions)"
-      },
-      "analysis": {
-        "label": "Analysis",
-        "description": "Periodically analyze data trends and generate reports",
-        "template": "Analyze the following data and generate a comprehensive report:\n\nAnalysis Scope:\n- Time Range: Use available historical data\n- Metrics: All selected metrics\n- Comparison: Compare with previous periods if available\n\nReport Contents:\n1. **Data Overview**: Summary of current values and status\n2. **Trend Analysis**: Increasing, decreasing, or stable patterns\n3. **Anomalies**: Any unusual readings or deviations\n4. **Correlations**: Relationships between different metrics\n5. **Recommendations**: Actionable insights based on the data\n\nPlease provide specific numbers and percentages when describing trends and changes."
-      },
-      "alert": {
-        "label": "Alert",
-        "description": "Send notifications based on conditions",
-        "template": "Monitor the selected metrics and send alerts when specific conditions occur:\n\nAlert Conditions:\n- Threshold exceeded: When metric goes above/below a value\n- Rate of change: When value changes too quickly\n- Status change: When device state changes\n\nAlert Content:\n- Which metric/device triggered the alert\n- Current value and threshold\n- Time of occurrence\n- Suggested actions if applicable\n\nPlease avoid duplicate alerts - only alert when:\n1. This is a new incident (not previously reported)\n2. The condition has significantly worsened\n3. A sufficient cooldown period has passed since the last alert"
-      }
-    },
     "schedule": {
       "selectStrategy": "Select Execution Strategy",
       "strategies": {

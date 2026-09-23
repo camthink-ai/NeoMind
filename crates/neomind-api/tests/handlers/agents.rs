@@ -312,10 +312,28 @@ async fn test_agent_list_carries_output_field_provenance() {
     assert!((confidence - 0.42).abs() < 1e-6, "got {confidence}");
 }
 
+/// Read `export const <name> = '<value>'` out of the editor's shared constants
+/// module. `None` when the file is absent (source tarball without `web/`) or
+/// the constant is not declared.
+fn editor_string_constant(name: &str) -> Option<String> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../web/src/pages/agents-components/agent-editor/constants.ts");
+    let text = std::fs::read_to_string(path).ok()?;
+    let marker = format!("export const {name} = '");
+    let start = text.find(&marker)? + marker.len();
+    let rest = &text[start..];
+    Some(rest[..rest.find('\'')?].to_string())
+}
+
 /// Silence was the old default, and it is indistinguishable from a broken
 /// agent: a scheduled run that reports only into the in-app Messages page looks
 /// exactly like one that never ran. Every agent must come out of creation with
 /// somewhere to report to.
+///
+/// Asserted against the editor's own constants rather than literals: the notify
+/// card is initialled from those, so they are what the user reads while filling
+/// the form. Literals here would let the two drift into showing one routing and
+/// creating another.
 #[tokio::test]
 async fn a_new_agent_defaults_to_somewhere_it_can_report() {
     let state = create_test_server_state().await;
@@ -327,14 +345,22 @@ async fn a_new_agent_defaults_to_somewhere_it_can_report() {
         .and_then(|n| n.as_object())
         .expect("a new agent carries a notify target");
 
+    let (Some(channel), Some(on)) = (
+        editor_string_constant("DEFAULT_NOTIFY_CHANNEL"),
+        editor_string_constant("DEFAULT_NOTIFY_ON"),
+    ) else {
+        return; // no web/ tree to compare against
+    };
+
     assert_eq!(
         notify.get("channels"),
-        Some(&json!(["IM"])),
-        "the built-in channel that reaches a human is the default target"
+        Some(&json!([channel])),
+        "the built-in channel that reaches a human is the default target — and \
+         the one the editor's notify card displays"
     );
     assert_eq!(
         notify.get("on"),
-        Some(&json!("failure")),
+        Some(&json!(on)),
         "silence is still health — a report only when there is one"
     );
 }

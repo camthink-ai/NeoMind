@@ -82,6 +82,8 @@ import {
   FEATURED_PRESETS,
   DEFAULT_LOOKBACK_MINUTES,
   DEFAULT_MAX_CHAIN_DEPTH,
+  DEFAULT_NOTIFY_CHANNEL,
+  DEFAULT_NOTIFY_ON,
   parseTriggerFilter,
   buildTriggerFilter,
   reasonTriggerFilterInvalid,
@@ -240,7 +242,14 @@ export function AgentEditorFullScreen({
   const [presetDialogOpen, setPresetDialogOpen] = useState(false)
   const [memoryMode, setMemoryMode] = useState<AgentMemoryMode | null>(null)
   // Notification routing: null = 未配置(走旧的关键词行为)。
-  const [notify, setNotify] = useState<AgentNotify | null>(null)
+  // Seeded with the API's floor rather than null: `create_agent` applies that
+  // floor to any request that omits `notify`, so an empty card here would show
+  // "nothing configured" while the agent that gets created routes to IM on
+  // failure. What the card shows is what will be saved.
+  const [notify, setNotify] = useState<AgentNotify | null>({
+    channels: [DEFAULT_NOTIFY_CHANNEL],
+    on: DEFAULT_NOTIFY_ON,
+  })
   const [channels, setChannels] = useState<AlertChannel[]>([])
   const [outputSchema, setOutputSchema] = useState<OperatorField[]>([])
   const [operatorConfig, setOperatorConfig] = useState<OperatorConfig>({
@@ -438,7 +447,7 @@ export function AgentEditorFullScreen({
         // Reset to defaults
         setCanActAutonomously(false)
         setMemoryMode(null)
-        setNotify(null)
+        setNotify({ channels: [DEFAULT_NOTIFY_CHANNEL], on: DEFAULT_NOTIFY_ON })
         setAppliedPreset(null)
         setOutputSchema([])
         setOperatorConfig({ debounce_secs: 30, timeout_secs: 60, consecutive_failure_threshold: 3 })
@@ -2048,11 +2057,20 @@ export function AgentEditorFullScreen({
                           size="sm"
                           onClick={() =>
                             setNotify((prev) => {
-                              const base = prev ?? { channels: [], on: 'failure' as const }
+                              const base = prev ?? {
+                                channels: [],
+                                on: DEFAULT_NOTIFY_ON,
+                              }
                               const next = on
                                 ? base.channels.filter((c) => c !== ch.name)
                                 : [...base.channels, ch.name]
-                              return next.length === 0 ? null : { ...base, channels: next }
+                              // An empty list is not "unset": the storage layer
+                              // reads it as a config that is present and routes
+                              // nowhere, which is what unchecking every channel
+                              // means. Returning `null` would let the API's
+                              // floor put IM back — the user's wish, undone by
+                              // a default they cannot see.
+                              return { ...base, channels: next }
                             })
                           }
                           className={cn(

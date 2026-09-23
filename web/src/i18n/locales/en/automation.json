@@ -1037,8 +1037,7 @@
     "topologyHint": "Select device resources to show topology",
     "validation": {
       "nameRequired": "Please enter agent name",
-      "requirementRequired": "Please describe your requirements",
-      "resourcesRequired": "Please select at least one device resource"
+      "requirementRequired": "Please describe your requirements"
     },
     "save": "Save",
     "creating": "Creating",
