@@ -1106,14 +1106,14 @@ impl MdlStorage {
 
     /// Create an in-memory MDL storage
     pub fn memory() -> Result<Arc<Self>, DeviceError> {
-        let temp_path =
-            std::env::temp_dir().join(format!("mdl_test_{}.redb", uuid::Uuid::new_v4()));
-        // Use create for in-memory temp file
-        let db = redb::Database::create(&temp_path)
+        // A real in-memory database: this used to create a temp file that was
+        // never removed.
+        let db = redb::Database::builder()
+            .create_with_backend(redb::backends::InMemoryBackend::new())
             .map_err(|e| DeviceError::Io(std::io::Error::other(e.to_string())))?;
         let storage = Arc::new(MdlStorage {
             db,
-            path: temp_path.to_string_lossy().to_string(),
+            path: ":memory:".to_string(),
         });
         storage.ensure_tables()?;
         Ok(storage)

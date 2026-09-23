@@ -358,19 +358,23 @@ impl SessionStore {
     /// code should keep using [`open`](Self::open).
     pub fn open_isolated<P: AsRef<Path>>(path: P) -> Result<Arc<Self>, Error> {
         let path_str = path.as_ref().to_string_lossy().to_string();
-        // ":memory:" → unique temp file. redb 2.1 has no in-memory backend,
-        // and the global singleton would make parallel tests share one store.
-        // A unique path guarantees each call gets an independent store
-        // (matches TimeSeriesStorage::memory's pattern).
-        let db_path: std::path::PathBuf = if path_str == ":memory:" {
-            std::env::temp_dir().join(format!("session_isolated_{}.redb", uuid::Uuid::new_v4()))
+        // ":memory:" gets a genuine in-memory database, so each call is
+        // independent (the singleton would otherwise make parallel tests share
+        // one store). It used to fall back to a unique temp file because "redb
+        // 2.1 has no in-memory backend" — true when that note was written, and
+        // not any more; the file was never removed, so a test run left
+        // thousands behind.
+        let db = if path_str == ":memory:" {
+            Database::builder()
+                .create_with_backend(redb::backends::InMemoryBackend::new())
+                .map_err(|e| Error::Storage(e.to_string()))?
         } else {
-            path.as_ref().to_path_buf()
-        };
-        let db = if db_path.exists() {
-            Database::open(&db_path)?
-        } else {
-            Database::create(&db_path)?
+            let db_path = path.as_ref();
+            if db_path.exists() {
+                Database::open(db_path)?
+            } else {
+                Database::create(db_path)?
+            }
         };
         Ok(Arc::new(SessionStore {
             db: Arc::new(db),

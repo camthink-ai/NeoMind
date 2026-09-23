@@ -305,11 +305,32 @@ impl DashboardStore {
         Ok(store)
     }
 
-    /// Create an in-memory dashboard store for testing.
+    /// An in-memory dashboard store.
+    ///
+    /// Genuinely in memory — it used to write a redb file into the temp
+    /// directory on every call and never remove it, so a test run left
+    /// thousands of them behind.
     pub fn memory() -> Result<Arc<Self>, Error> {
-        let temp_path =
-            std::env::temp_dir().join(format!("dashboards_test_{}.redb", uuid::Uuid::new_v4()));
-        Self::open(temp_path)
+        let db = Database::builder()
+            .create_with_backend(redb::backends::InMemoryBackend::new())
+            .map_err(|e| Error::Storage(e.to_string()))?;
+        // Rollback guard: refuse databases stamped by a newer build (see schema.rs).
+        crate::schema::check_or_stamp(&db)
+            .map_err(|e| Error::Storage(format!("schema version: {e}")))?;
+
+        let store = Arc::new(DashboardStore {
+            db: Arc::new(db),
+            // Not a path anything can be opened by; kept because the struct
+            // carries one and `open` keys the singleton on it.
+            path: ":memory:".to_string(),
+        });
+
+        {
+            let mut singleton = DASHBOARD_STORE_SINGLETON.lock();
+            *singleton = Some(store.clone());
+        }
+
+        Ok(store)
     }
 
     /// Save a dashboard.

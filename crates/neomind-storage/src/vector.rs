@@ -905,8 +905,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_persistent_vector_store() {
-        let temp_path =
-            std::env::temp_dir().join(format!("vector_test_{}.redb", uuid::Uuid::new_v4()));
+        // A `TempDir`, not a bare path in the temp directory: this test is
+        // about persistence, so it needs a real file — but the file it used to
+        // create was never removed.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let temp_path = dir.path().join("vector.redb");
         let store = PersistentVectorStore::open(&temp_path).unwrap();
 
         // Insert documents

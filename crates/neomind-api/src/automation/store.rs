@@ -45,10 +45,9 @@ impl AutomationStore {
 
     /// Create a new in-memory store for testing
     pub fn memory() -> Result<Self> {
-        // Use a temp file since redb doesn't support true in-memory mode
-        let temp_path =
-            std::env::temp_dir().join(format!("automation_store_{}.redb", uuid::Uuid::new_v4()));
-        let db = Database::create(&temp_path)?;
+        // redb does have a true in-memory mode — the note that it does not is
+        // stale. The temp file this used to create was never removed.
+        let db = Database::builder().create_with_backend(redb::backends::InMemoryBackend::new())?;
 
         // Write transaction to create tables
         let write_txn = db.begin_write()?;

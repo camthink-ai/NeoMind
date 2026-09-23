@@ -113,20 +113,23 @@ impl RuleStore {
         Ok(store)
     }
 
-    /// Create an in-memory store.
+    /// An in-memory store.
+    ///
+    /// Genuinely in memory. It used to create a temp file and rely on `Drop`
+    /// to remove it, which a killed process never runs — so the temp directory
+    /// accumulated their corpses.
     pub fn memory() -> Result<Arc<Self>> {
-        let temp_path =
-            std::env::temp_dir().join(format!("rules_store_{}.redb", uuid::Uuid::new_v4()));
-        Self::open(temp_path)
+        Self::open(":memory:")
     }
 
     fn open_db(path_str: &str) -> Result<(Database, Option<PathBuf>)> {
         let (db, temp_path) = if path_str == ":memory:" {
-            // Use temp file for in-memory mode
-            let temp_path =
-                std::env::temp_dir().join(format!("rules_store_{}.redb", uuid::Uuid::new_v4()));
-            let db = Database::create(&temp_path)?;
-            (db, Some(temp_path))
+            // redb has an in-memory backend; the note that it did not is stale.
+            // Nothing is written, so there is no temp file to clean up and no
+            // `Drop` to depend on — a killed process leaves nothing behind.
+            let db = Database::builder()
+                .create_with_backend(redb::backends::InMemoryBackend::new())?;
+            (db, None)
         } else {
             let path_ref = Path::new(path_str);
             if let Some(parent) = path_ref.parent() {

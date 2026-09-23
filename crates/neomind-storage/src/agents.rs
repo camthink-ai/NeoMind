@@ -920,7 +920,23 @@ pub struct ExecutionFilter {
 impl AgentStore {
     /// Open or create an agent store at the given path.
     pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Arc<Self>, Error> {
-        let db = Database::create(path)?;
+        Self::from_db(Database::create(path)?)
+    }
+
+    /// An in-memory agent store.
+    ///
+    /// Genuinely in memory. It used to create a real redb file in the temp
+    /// directory and never remove it, so every call — and the test suite makes
+    /// thousands — left ~1.5 MB behind for good.
+    pub fn memory() -> Result<Arc<Self>, Error> {
+        Self::from_db(
+            Database::builder()
+                .create_with_backend(redb::backends::InMemoryBackend::new())
+                .map_err(|e| Error::Storage(e.to_string()))?,
+        )
+    }
+
+    fn from_db(db: Database) -> Result<Arc<Self>, Error> {
         // Rollback guard: refuse databases stamped by a newer build (see schema.rs).
         crate::schema::check_or_stamp(&db)
             .map_err(|e| Error::Storage(format!("schema version: {e}")))?;
@@ -933,13 +949,6 @@ impl AgentStore {
         write_txn.commit()?;
 
         Ok(Arc::new(Self { db: Arc::new(db) }))
-    }
-
-    /// Create an in-memory agent store for testing.
-    pub fn memory() -> Result<Arc<Self>, Error> {
-        let temp_path =
-            std::env::temp_dir().join(format!("agents_test_{}.redb", uuid::Uuid::new_v4()));
-        Self::open(temp_path)
     }
 
     /// Save an agent to the store.

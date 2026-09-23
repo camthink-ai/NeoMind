@@ -660,6 +660,28 @@ impl TimeSeriesStore {
         } else {
             builder.create(path_ref)?
         };
+        Self::from_db(db, path_str, config)
+    }
+
+    /// An in-memory time series store.
+    ///
+    /// Genuinely in memory — it used to create a redb file in the temp
+    /// directory on every call and never remove it, so the test suite left
+    /// thousands of them behind.
+    pub fn memory() -> Result<Arc<Self>, Error> {
+        let mut builder = Database::builder();
+        builder.set_cache_size(telemetry_cache_size_bytes());
+        let db = builder
+            .create_with_backend(redb::backends::InMemoryBackend::new())
+            .map_err(|e| Error::Storage(e.to_string()))?;
+        Self::from_db(db, ":memory:".to_string(), TimeSeriesConfig::default())
+    }
+
+    fn from_db(
+        db: Database,
+        path_str: String,
+        config: TimeSeriesConfig,
+    ) -> Result<Arc<Self>, Error> {
         // Rollback guard: refuse databases stamped by a newer build (see schema.rs).
         crate::schema::check_or_stamp(&db)
             .map_err(|e| Error::Storage(format!("schema version: {e}")))?;
@@ -687,13 +709,6 @@ impl TimeSeriesStore {
 
         *TIMESERIES_STORE_SINGLETON.lock() = Some(store.clone());
         Ok(store)
-    }
-}
-impl TimeSeriesStore {
-    /// Create an in-memory time series store (for testing).
-    pub fn memory() -> Result<Arc<Self>, Error> {
-        let temp_path = std::env::temp_dir().join(format!("ts_test_{}.redb", uuid::Uuid::new_v4()));
-        Self::open(temp_path)
     }
 }
 impl TimeSeriesStore {
