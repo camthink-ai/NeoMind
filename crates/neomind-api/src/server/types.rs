@@ -1373,7 +1373,9 @@ impl ServerState {
                     continue;
                 }
                 let Ok(meta) = entry.metadata() else { continue };
-                let Ok(modified) = meta.modified() else { continue };
+                let Ok(modified) = meta.modified() else {
+                    continue;
+                };
                 if now
                     .duration_since(modified)
                     .map(|age| age > std::time::Duration::from_secs(3600))
@@ -2154,8 +2156,8 @@ impl ServerState {
         // state, so the callback is built here and the toolkit stays out of it.
         {
             let state = self.clone();
-            let run: neomind_agent::toolkit::agent_tools::RunAgentCallback = Arc::new(
-                move |agent_id: String, input: Option<String>| {
+            let run: neomind_agent::toolkit::agent_tools::RunAgentCallback =
+                Arc::new(move |agent_id: String, input: Option<String>| {
                     let state = state.clone();
                     Box::pin(async move {
                         use neomind_agent::toolkit::agent_tools::RunOutcome;
@@ -2173,8 +2175,9 @@ impl ServerState {
 
                         let spawned = manager.clone();
                         let id = agent_id.clone();
-                        let handle =
-                            tokio::spawn(async move { spawned.execute_agent_now(&id, invocation).await });
+                        let handle = tokio::spawn(async move {
+                            spawned.execute_agent_now(&id, invocation).await
+                        });
 
                         // The same patience the invoke endpoint uses: past it the
                         // run is detached and keeps going, so the caller is told
@@ -2206,8 +2209,7 @@ impl ServerState {
                             }
                         }
                     })
-                },
-            );
+                });
             registry.register(Arc::new(
                 neomind_agent::toolkit::agent_tools::RunAgentTool::new(
                     self.agents.agent_store.clone(),
