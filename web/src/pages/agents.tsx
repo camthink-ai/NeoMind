@@ -682,8 +682,8 @@ export function AgentsPage() {
             {paginatedAgents.map((agent, index) => (
               <div
                 key={agent.id}
-                className="animate-fade-in-up"
-                style={{ animationDelay: `${index * 50}ms`, animationFillMode: 'both' }}
+                className="animate-fade-in-up motion-reduce:animate-none"
+                style={{ animationDelay: `${Math.min(index, 12) * 40}ms`, animationFillMode: 'both' }}
               >
                 <AgentCard
                   agent={agent}
