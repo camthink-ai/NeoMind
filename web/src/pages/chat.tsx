@@ -651,6 +651,31 @@ export function ChatPage() {
     return <LlmSetupGuide />
   }
 
+  // One composer element shared by its two hosts: centered in the welcome
+  // screen (mainstream empty-state pattern — greeting, input, suggestions as
+  // one centered group) and docked at the bottom during a conversation. A
+  // React element is immutable, so only one instance is ever mounted.
+  const composerEl = (
+    <ChatComposer
+      value={input}
+      onChange={setInput}
+      onSend={() => handleSend()}
+      onKeyDown={handleKeyDown}
+      textareaRef={inputRef}
+      placeholder={t('chat:input.placeholder')}
+      isStreaming={isStreaming}
+      onCancel={handleCancelRequest}
+      attachments={attachedImages}
+      onAttachmentsChange={setAttachedImages}
+      supportsMultimodal={supportsMultimodal}
+      backends={llmBackends}
+      activeBackendId={activeBackendId}
+      onActivateBackend={activateBackend}
+      contextUsage={contextUsage}
+      maxHeight={isDesktop ? 160 : 100}
+    />
+  )
+
   return (
     <>
     <div className="fixed left-0 right-0 flex flex-row overflow-hidden safe-top" style={{
@@ -842,7 +867,11 @@ export function ChatPage() {
               handleBackdropClick()
             }}
           >
-            <WelcomeArea className="min-h-full" onQuickAction={handleQuickAction} />
+            {/* Composer slots in as the middle of the centered group
+                (greeting → input → suggestions), ChatGPT-style */}
+            <WelcomeArea className="min-h-full" onQuickAction={handleQuickAction}>
+              {composerEl}
+            </WelcomeArea>
           </div>
         ) : isLoadingSession || (urlSessionId && sessionId !== urlSessionId) ? (
           /* Loading State - shown while a session loads: during an explicit
@@ -946,7 +975,10 @@ export function ChatPage() {
             (iOS 16.4+ / Android Chrome), and `shrink-0` keeps the input
             pinned to the bottom of the visible area — no fixed-position
             hacks needed. No background: transparent to match the
-            conversation area above and the desktop input. */}
+            conversation area above and the desktop input.
+            Welcome mode doesn't render this dock at all: its composer is
+            centered inside WelcomeArea instead. */}
+        {!isWelcomeMode && (
         <div
           className="shrink-0 px-2.5 sm:px-4 pt-3 pb-[calc(1.25rem+env(safe-area-inset-bottom,0px))] sm:pt-3 sm:pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] border-0"
           style={isDesktop ? undefined : { paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 12px))' }}
@@ -979,26 +1011,10 @@ export function ChatPage() {
               </div>
             )}
 
-            <ChatComposer
-              value={input}
-              onChange={setInput}
-              onSend={() => handleSend()}
-              onKeyDown={handleKeyDown}
-              textareaRef={inputRef}
-              placeholder={t('chat:input.placeholder')}
-              isStreaming={isStreaming}
-              onCancel={handleCancelRequest}
-              attachments={attachedImages}
-              onAttachmentsChange={setAttachedImages}
-              supportsMultimodal={supportsMultimodal}
-              backends={llmBackends}
-              activeBackendId={activeBackendId}
-              onActivateBackend={activateBackend}
-              contextUsage={contextUsage}
-              maxHeight={isDesktop ? 160 : 100}
-            />
+            {composerEl}
           </div>
         </div>
+        )}
       </div>
     </div>
 
