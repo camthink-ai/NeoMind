@@ -539,6 +539,27 @@ impl MessageManager {
     }
 
     /// Acknowledge a message.
+    /// Dismiss an alert as a false positive (002 §3.4).
+    pub async fn mark_false_positive(&self, id: &MessageId) -> Result<()> {
+        let stored_msg = {
+            let mut messages = self.messages.write().await;
+            let message = messages
+                .get_mut(id)
+                .ok_or_else(|| Error::NotFound(format!("Message not found: {}", id)))?;
+            message.mark_false_positive();
+            Self::message_to_stored(message)
+        };
+
+        if let Some(store) = self.storage.read().await.as_ref() {
+            store
+                .update_async(stored_msg)
+                .await
+                .map_err(|e| Error::Storage(format!("Failed to update message: {}", e)))?;
+        }
+
+        Ok(())
+    }
+
     pub async fn acknowledge(&self, id: &MessageId) -> Result<()> {
         // Mutate in-memory, then drop write lock before I/O
         let stored_msg = {
@@ -1103,6 +1124,24 @@ mod tests {
 
         let retrieved = manager.get_message(&created.id).await.unwrap();
         assert_eq!(retrieved.status, MessageStatus::Resolved);
+    }
+
+    /// The verdict has to survive the manager round trip, not just the
+    /// in-memory object: the feedback loop counts these by reading messages
+    /// back (`list_messages_by_status`), so a status that only lives in RAM
+    /// would lose every sample on restart.
+    #[tokio::test]
+    async fn test_mark_false_positive() {
+        let manager = MessageManager::new();
+        let msg = Message::system("Test".to_string(), "Test message".to_string());
+
+        let created = manager.create_message(msg).await.unwrap();
+        assert!(created.is_active());
+
+        manager.mark_false_positive(&created.id).await.unwrap();
+
+        let retrieved = manager.get_message(&created.id).await.unwrap();
+        assert_eq!(retrieved.status, MessageStatus::FalsePositive);
     }
 
     #[tokio::test]

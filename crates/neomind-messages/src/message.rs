@@ -155,6 +155,12 @@ pub enum MessageStatus {
     Resolved,
     /// Message has been archived
     Archived,
+    /// An operator dismissed this alert as a false positive (002 §3.4). Not a
+    /// lifecycle step like the others: it is a verdict on the alert's quality,
+    /// and it is what the feedback loop counts when it suggests a threshold
+    /// change. Appended LAST — the wire form is a string, but stored rows are
+    /// read back by name and the order has always been append-only.
+    FalsePositive,
 }
 
 impl MessageStatus {
@@ -164,6 +170,7 @@ impl MessageStatus {
             Self::Acknowledged => "acknowledged",
             Self::Resolved => "resolved",
             Self::Archived => "archived",
+            Self::FalsePositive => "false_positive",
         }
     }
 
@@ -191,6 +198,7 @@ impl MessageStatus {
             Self::Acknowledged => "Acknowledged",
             Self::Resolved => "Resolved",
             Self::Archived => "Archived",
+            Self::FalsePositive => "False Positive",
         }
     }
 
@@ -200,6 +208,7 @@ impl MessageStatus {
             "acknowledged" | "已确认" => Some(Self::Acknowledged),
             "resolved" | "已解决" => Some(Self::Resolved),
             "archived" | "已归档" => Some(Self::Archived),
+            "false_positive" | "误报" => Some(Self::FalsePositive),
             _ => None,
         }
     }
@@ -366,6 +375,15 @@ impl Message {
         self.status = MessageStatus::Resolved;
     }
 
+    /// Mark this alert as a false positive.
+    ///
+    /// The verdict the feedback loop counts: 002 §3.4 turns "this should not
+    /// have fired" into a correction sample, and enough of them into a
+    /// suggested threshold change.
+    pub fn mark_false_positive(&mut self) {
+        self.status = MessageStatus::FalsePositive;
+    }
+
     /// Archive the message.
     pub fn archive(&mut self) {
         self.status = MessageStatus::Archived;
@@ -379,6 +397,35 @@ impl Message {
 
 #[cfg(test)]
 mod tests {
+    /// M2-5 / 002 §3.4: the alert-level feedback loop needs a verdict that
+    /// means "this should not have fired". It is its own status rather than a
+    /// flag, because it replaces the alert's lifecycle state the way
+    /// acknowledge/resolve do — and the web UI has been carrying a
+    /// `false_positive` label for it since before the status existed.
+    #[test]
+    fn a_false_positive_is_its_own_status() {
+        let mut message = Message::new(
+            "alert",
+            MessageSeverity::Warning,
+            "Cold room".to_string(),
+            "out of range".to_string(),
+            "rule_engine".to_string(),
+        );
+        assert_eq!(message.status, MessageStatus::Active);
+
+        message.mark_false_positive();
+        assert_eq!(message.status, MessageStatus::FalsePositive);
+
+        // The wire name is what every other consumer keys on: the i18n label,
+        // the frontend status map, and the stored rows.
+        assert_eq!(MessageStatus::FalsePositive.as_str(), "false_positive");
+        assert_eq!(
+            MessageStatus::from_string("false_positive"),
+            Some(MessageStatus::FalsePositive),
+            "a stored verdict must read back"
+        );
+    }
+
     use super::*;
 
     #[test]
