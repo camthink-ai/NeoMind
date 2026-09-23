@@ -113,6 +113,9 @@ pub async fn create_agent(
     llm_backend: Option<&str>,
     system_prompt: Option<&str>,
     execution_mode: Option<&str>,
+    output_schema: Option<&str>,
+    memory_mode: Option<&str>,
+    notify: Option<&str>,
     device_ids: Option<&str>,
     resources: Option<&str>,
     metrics: Option<&str>,
@@ -148,7 +151,9 @@ pub async fn create_agent(
         schedule["timezone"] = json!(tz);
     }
 
-    let exec_mode = execution_mode.unwrap_or("free");
+    // Default aligned with the API's (focused = the plainest agent); the
+    // editor, CLI and API now agree on one default.
+    let exec_mode = execution_mode.unwrap_or("focused");
     let has_resources = resources.is_some() || device_ids.map(|d| !d.is_empty()).unwrap_or(false);
 
     let mut body = json!({
@@ -157,6 +162,34 @@ pub async fn create_agent(
         "schedule": schedule,
         "execution_mode": exec_mode,
     });
+    if let Some(schema_json) = output_schema {
+        let parsed: serde_json::Value = serde_json::from_str(schema_json).map_err(|e| {
+            anyhow::anyhow!(
+                "--output-schema is not valid JSON: {} — expected an array of fields, e.g. a status enum field",
+                e
+            )
+        })?;
+        body["output_schema"] = parsed;
+    }
+    if let Some(mm) = memory_mode {
+        anyhow::ensure!(
+            mm == "tool" || mm == "assistant",
+            "--memory-mode must be 'tool' or 'assistant' (got '{}')",
+            mm
+        );
+        body["memory_mode"] = json!(mm);
+    }
+    if let Some(notify_json) = notify {
+        let parsed: serde_json::Value = serde_json::from_str(notify_json).map_err(|e| {
+            anyhow::anyhow!(
+                "--notify is not valid JSON: {} — expected an object with channels[] and on (failure|always)",
+                e
+            )
+        })?;
+        body["notify"] = parsed;
+    }
+
+
     if let Some(desc) = description {
         body["description"] = json!(desc);
     }
@@ -284,6 +317,9 @@ pub async fn update_agent(
     schedule_type: Option<&str>,
     schedule_config: Option<&str>,
     execution_mode: Option<&str>,
+    output_schema: Option<&str>,
+    memory_mode: Option<&str>,
+    notify: Option<&str>,
     device_ids: Option<&str>,
     resources: Option<&str>,
     metrics: Option<&str>,
@@ -331,6 +367,17 @@ pub async fn update_agent(
     }
     if let Some(em) = execution_mode {
         body["execution_mode"] = json!(em);
+    }
+    if let Some(schema_json) = output_schema {
+        body["output_schema"] = serde_json::from_str::<serde_json::Value>(schema_json)
+            .map_err(|e| anyhow::anyhow!("--output-schema is not valid JSON: {}", e))?;
+    }
+    if let Some(mm) = memory_mode {
+        body["memory_mode"] = json!(mm);
+    }
+    if let Some(notify_json) = notify {
+        body["notify"] = serde_json::from_str::<serde_json::Value>(notify_json)
+            .map_err(|e| anyhow::anyhow!("--notify is not valid JSON: {}", e))?;
     }
     if let Some(ids) = device_ids {
         let id_list: Vec<&str> = ids

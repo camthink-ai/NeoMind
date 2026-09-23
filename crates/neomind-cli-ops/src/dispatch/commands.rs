@@ -1528,10 +1528,25 @@ pub enum AgentCommand {
         /// System prompt for the LLM (overrides default agent system prompt).
         #[arg(short, long)]
         system_prompt: Option<String>,
-        /// Execution mode: "free" (multi-round tool calling) or "focused" (single-pass with bound resources).
-        /// "focused" requires --resources or --device-ids. Default: "free".
+        /// Execution mode: "focused" (single-pass, default — plainest agent),
+        /// "free" (multi-round tool calling), or "structured" (one constrained
+        /// inference; needs --output-schema). Any mode works without bindings.
         #[arg(long)]
         execution_mode: Option<String>,
+        /// Output contract (JSON array) — fields published as ai:{id}:{field}
+        /// data sources. Required for structured mode; optional ride-along for
+        /// free/focused (published in a post-run step).
+        /// Example: --output-schema '[{"name":"status","field_type":{"type":"enum","values":["正常","异常"]}}]'
+        #[arg(long)]
+        output_schema: Option<String>,
+        /// Memory axis: "tool" (judged fresh each run) | "assistant" (carries
+        /// recent history). Omit to derive from the mode.
+        #[arg(long)]
+        memory_mode: Option<String>,
+        /// Notification routing (JSON): {"channels":["name"],"on":"failure|always"}.
+        /// Example: --notify '{"channels":["telegram:main"],"on":"always"}'
+        #[arg(long)]
+        notify: Option<String>,
         /// Device IDs to bind (comma-separated). Used in focused mode.
         /// Example: --device-ids "device-001,device-002"
         #[arg(long)]
@@ -1593,9 +1608,18 @@ pub enum AgentCommand {
         /// New schedule config (seconds for interval, cron expression for cron).
         #[arg(long)]
         schedule_config: Option<String>,
-        /// New execution mode: "free" or "focused".
+        /// New execution mode: "focused" | "free" | "structured".
         #[arg(long)]
         execution_mode: Option<String>,
+        /// New output contract (JSON array); replaces the existing one.
+        #[arg(long)]
+        output_schema: Option<String>,
+        /// New memory axis: "tool" | "assistant".
+        #[arg(long)]
+        memory_mode: Option<String>,
+        /// New notification routing (JSON): {"channels":[...],"on":"failure|always"}.
+        #[arg(long)]
+        notify: Option<String>,
         /// New device IDs (comma-separated). Replaces existing bindings.
         #[arg(long)]
         device_ids: Option<String>,
