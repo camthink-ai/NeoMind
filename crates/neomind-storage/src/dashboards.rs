@@ -666,6 +666,7 @@ mod tests {
 
     /// Helper to create a temporary DashboardStore for tests
     fn create_temp_store() -> Arc<DashboardStore> {
+        crate::prune_stale_temp_entries("dashboard_test_", std::time::Duration::from_secs(3600));
         let temp_dir =
             std::env::temp_dir().join(format!("dashboard_test_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::remove_dir_all(&temp_dir);

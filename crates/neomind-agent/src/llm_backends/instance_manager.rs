@@ -1578,6 +1578,7 @@ mod tests {
     /// databases — ":memory:" would be shared across tests and leak instances.
     #[cfg(feature = "llamacpp")]
     fn test_store(tag: &str) -> Arc<LlmBackendStore> {
+        crate::prune_stale_temp_entries("neomind-test-", std::time::Duration::from_secs(3600));
         let path =
             std::env::temp_dir().join(format!("neomind-test-{}-{}.redb", tag, std::process::id()));
         let _ = std::fs::remove_file(&path);

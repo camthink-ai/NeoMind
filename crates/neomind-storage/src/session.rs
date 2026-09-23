@@ -986,6 +986,7 @@ mod tests {
 
     /// Helper to create a temporary SessionStore for tests
     fn create_temp_store() -> Arc<SessionStore> {
+        crate::prune_stale_temp_entries("session_test_", std::time::Duration::from_secs(3600));
         let temp_dir = std::env::temp_dir().join(format!("session_test_{}", uuid::Uuid::new_v4()));
         // Remove existing directory if it exists
         let _ = std::fs::remove_dir_all(&temp_dir);

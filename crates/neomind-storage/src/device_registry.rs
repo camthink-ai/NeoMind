@@ -982,6 +982,7 @@ mod tests {
     use std::fs;
 
     fn create_temp_store() -> Arc<DeviceRegistryStore> {
+        crate::prune_stale_temp_entries("device_registry_test_", std::time::Duration::from_secs(3600));
         let temp_dir =
             std::env::temp_dir().join(format!("device_registry_test_{}", uuid::Uuid::new_v4()));
         let _ = fs::remove_dir_all(&temp_dir);

@@ -115,6 +115,44 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// # Changelog
 ///
+/// Remove leftovers from earlier runs of a test helper that parks a store in
+/// the temp directory.
+///
+/// Those helpers open a database by path and nothing removes it afterwards.
+/// A `TempDir` would not fix it either: its cleanup runs in `Drop`, which a
+/// killed process never reaches — and this suite gets killed. Pruning by age
+/// bounds the temp directory however a run ends, and the age gate keeps
+/// concurrent runs from deleting each other's live directories.
+#[cfg(test)]
+pub(crate) fn prune_stale_temp_entries(prefix: &str, max_age: std::time::Duration) {
+    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
+        return;
+    };
+    let now = std::time::SystemTime::now();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !name.starts_with(prefix) {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else { continue };
+        let Ok(modified) = meta.modified() else { continue };
+        if !now
+            .duration_since(modified)
+            .map(|age| age > max_age)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let path = entry.path();
+        let _ = if meta.is_dir() {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+    }
+}
+
 /// ## v0.2.0 (2026-01) - Storage Migration
 ///
 /// ### Breaking Changes

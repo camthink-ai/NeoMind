@@ -282,6 +282,7 @@ mod tests {
     use super::*;
 
     fn test_store() -> FrontendComponentStore {
+        crate::prune_stale_temp_entries("neomind-test-fc-", std::time::Duration::from_secs(3600));
         let dir = std::env::temp_dir().join(format!("neomind-test-fc-{}", uuid::Uuid::new_v4()));
         FrontendComponentStore::open(&dir).expect("failed to open test store")
     }

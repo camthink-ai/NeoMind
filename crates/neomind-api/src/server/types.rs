@@ -1353,6 +1353,44 @@ impl ServerState {
     /// - In-memory device registry
     /// - In-memory time-series storage
     /// - In-memory session manager
+    ///
+    /// A private, freshly-pruned directory for a test state's markdown memory.
+    ///
+    /// Unique per call — the states are meant to be isolated, and a fixed path
+    /// meant every one of them shared a single directory — and pruned of older
+    /// siblings, so a run does not leave one behind for ever.
+    #[cfg(any(test, feature = "testing"))]
+    fn fresh_test_memory_dir() -> std::path::PathBuf {
+        const PREFIX: &str = "neomind-test-memory-";
+        // Pruning by age rather than relying on a cleanup that runs at drop:
+        // a killed test process never reaches it.
+        if let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) {
+            let now = std::time::SystemTime::now();
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let Some(name) = name.to_str() else { continue };
+                if !name.starts_with(PREFIX) {
+                    continue;
+                }
+                let Ok(meta) = entry.metadata() else { continue };
+                let Ok(modified) = meta.modified() else { continue };
+                if now
+                    .duration_since(modified)
+                    .map(|age| age > std::time::Duration::from_secs(3600))
+                    .unwrap_or(false)
+                {
+                    let path = entry.path();
+                    let _ = if meta.is_dir() {
+                        std::fs::remove_dir_all(&path)
+                    } else {
+                        std::fs::remove_file(&path)
+                    };
+                }
+            }
+        }
+        std::env::temp_dir().join(format!("{PREFIX}{}", uuid::Uuid::new_v4()))
+    }
+
     /// - Fresh event bus and message manager
     /// - No API key generation
     #[cfg(any(test, feature = "testing"))]
@@ -1456,7 +1494,7 @@ impl ServerState {
         let session_manager = SessionManager::memory();
         let agent_store = neomind_storage::AgentStore::memory().unwrap();
         let system_memory_store = Arc::new(neomind_storage::MarkdownMemoryStore::new(
-            std::env::temp_dir().join("neomind-test-memory"),
+            Self::fresh_test_memory_dir(),
         ));
 
         let agents = AgentState::new(

@@ -2624,6 +2624,7 @@ mod tests {
     /// pattern in `instance_manager.rs`). The store layer keeps a process-global
     /// singleton keyed by path, so distinct paths yield isolated databases.
     fn test_store(tag: &str) -> Arc<neomind_storage::LlmBackendStore> {
+        crate::prune_stale_temp_entries("neomind-test-", std::time::Duration::from_secs(3600));
         let path =
             std::env::temp_dir().join(format!("neomind-test-{}-{}.redb", tag, std::process::id()));
         let _ = std::fs::remove_file(&path);
