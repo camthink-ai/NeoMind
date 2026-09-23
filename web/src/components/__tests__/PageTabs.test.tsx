@@ -54,14 +54,16 @@ describe('PageTabsBar (desktop)', () => {
     renderBar('b')
     const active = screen.getByRole('tab', { name: 'Tab B' })
     expect(active.className).toContain('text-foreground')
-    expect(active.className).toContain('border-foreground')
-    expect(active.className).not.toContain('bg-foreground')
+    expect(active.className).toContain('after:bg-foreground')
+    // the pill background is gone (after:bg-foreground is the underline bar,
+    // not the button's own background — match on the class boundary)
+    expect(active.className).not.toMatch(/(^|\s)bg-foreground/)
   })
 
   it('inactive tab has a transparent underline', () => {
     renderBar('b')
     const inactive = screen.getByRole('tab', { name: 'Tab A' })
-    expect(inactive.className).toContain('border-transparent')
+    expect(inactive.className).toContain('after:bg-transparent')
   })
 
   it('tab buttons left-align their content', () => {

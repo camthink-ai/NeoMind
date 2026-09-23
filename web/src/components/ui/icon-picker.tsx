@@ -178,10 +178,11 @@ export function IconPicker({
                   type="button"
                   onClick={() => setActiveCategory('all')}
                   className={cn(
-                    'flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors whitespace-nowrap',
+                    'relative flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors whitespace-nowrap',
+                    'after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:rounded-full after:transition-colors',
                     activeCategory === 'all'
-                      ? 'border-primary text-primary'
-                      : 'border-transparent text-muted-foreground hover:text-foreground'
+                      ? 'text-primary after:bg-primary'
+                      : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
                   {CATEGORY_LABELS.all}
@@ -192,10 +193,11 @@ export function IconPicker({
                     type="button"
                     onClick={() => setActiveCategory(cat)}
                     className={cn(
-                      'flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors whitespace-nowrap',
+                      'relative flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors whitespace-nowrap',
+                      'after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:rounded-full after:transition-colors',
                       activeCategory === cat
-                        ? 'border-primary text-primary'
-                        : 'border-transparent text-muted-foreground hover:text-foreground'
+                        ? 'text-primary after:bg-primary'
+                        : 'text-muted-foreground hover:text-foreground'
                     )}
                   >
                     {CATEGORY_LABELS[cat]}

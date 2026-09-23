@@ -175,10 +175,13 @@ export function PageTabsBar({
               disabled={tab.disabled}
               onClick={() => onTabChange(tab.value)}
               className={cn(
-                'inline-flex shrink-0 items-center justify-start gap-2 border-b-2 px-3 h-9 text-sm font-medium whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
+                /* 2px rounded underline — an ::after bar, not border-b-2:
+                   border-radius can't round a one-sided border */
+                'relative inline-flex shrink-0 items-center justify-start gap-2 px-3 h-9 text-sm font-medium whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
+                'after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:rounded-full after:transition-colors',
                 isActive
-                  ? 'border-foreground text-foreground'
-                  : 'border-transparent text-muted-foreground hover:text-foreground'
+                  ? 'text-foreground after:bg-foreground'
+                  : 'text-muted-foreground after:bg-transparent hover:text-foreground'
               )}
             >
               {tab.icon && <span className="shrink-0 h-4 w-4">{tab.icon}</span>}
@@ -308,10 +311,11 @@ export function PageTabs({
                       disabled={tab.disabled}
                       onClick={() => onTabChange(tab.value)}
                       className={cn(
-                        'inline-flex items-center justify-start gap-2 border-b-2 px-3 h-9 text-sm font-medium whitespace-nowrap transition-colors',
+                        'relative inline-flex items-center justify-start gap-2 px-3 h-9 text-sm font-medium whitespace-nowrap transition-colors',
+                        'after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:rounded-full after:transition-colors',
                         isActive
-                          ? 'border-foreground text-foreground'
-                          : 'border-transparent text-muted-foreground hover:text-foreground'
+                          ? 'text-foreground after:bg-foreground'
+                          : 'text-muted-foreground after:bg-transparent hover:text-foreground'
                       )}
                     >
                       {tab.icon && <span className="shrink-0 h-4 w-4">{tab.icon}</span>}
@@ -414,10 +418,11 @@ export function PageTabs({
                     isActive
                       ? 'bg-foreground text-background'
                       : 'text-muted-foreground',
-                    /* desktop: underline tab, full text display, centered */
-                    'md:inline-flex md:h-9 md:min-w-max md:shrink-0 md:rounded-none md:px-4 md:py-0 md:whitespace-nowrap md:border-b-2',
-                    !isActive && 'md:hover:text-foreground md:border-transparent',
-                    isActive && 'md:bg-transparent md:text-foreground md:border-foreground'
+                    /* desktop: rounded underline tab, full text display, centered */
+                    'md:relative md:inline-flex md:h-9 md:min-w-max md:shrink-0 md:rounded-none md:px-4 md:py-0 md:whitespace-nowrap',
+                    'md:after:absolute md:after:inset-x-0 md:after:bottom-0 md:after:h-0.5 md:after:rounded-full md:after:transition-colors',
+                    !isActive && 'md:hover:text-foreground',
+                    isActive && 'md:bg-transparent md:text-foreground md:after:bg-foreground'
                   )}
                 >
                   {tab.icon && <span className="shrink-0 h-4 w-4">{tab.icon}</span>}
@@ -544,10 +549,11 @@ export function PageTabsGrid({
                     isActive
                       ? 'bg-foreground text-background'
                       : 'text-muted-foreground',
-                    /* desktop: compact underline tab */
-                    'md:min-h-0 md:rounded-none md:px-3 md:py-0 md:border-b-2',
-                    !isActive && 'md:hover:text-foreground md:border-transparent',
-                    isActive && 'md:bg-transparent md:text-foreground md:border-foreground'
+                    /* desktop: compact rounded underline tab */
+                    'md:min-h-0 md:relative md:rounded-none md:px-3 md:py-0',
+                    'md:after:absolute md:after:inset-x-0 md:after:bottom-0 md:after:h-0.5 md:after:rounded-full md:after:transition-colors',
+                    !isActive && 'md:hover:text-foreground',
+                    isActive && 'md:bg-transparent md:text-foreground md:after:bg-foreground'
                   )}
                 >
                   {tab.icon && <span className="shrink-0">{tab.icon}</span>}
