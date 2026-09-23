@@ -76,6 +76,15 @@ export function PendingDevicesList({
   const [typeInputValue, setTypeInputValue] = useState('')
   // Keyboard-highlighted option in the type dropdown (combobox navigation)
   const [highlightedTypeIndex, setHighlightedTypeIndex] = useState(0)
+  /**
+   * The input doubles as the dropdown's search filter — but only once the
+   * user actually types. Auto-selection (exact match / high score) also
+   * writes into the input, and treating that as a filter hid every existing
+   * type the moment the dialog opened: the dropdown showed nothing but
+   * "Create new type". So filtering stays off until real keystrokes land,
+   * and turns off again when a suggestion is committed.
+   */
+  const [typeFilterActive, setTypeFilterActive] = useState(false)
 
   // New type additional fields (only shown when creating a new type)
   const [newTypeFields, setNewTypeFields] = useState({
@@ -125,15 +134,13 @@ export function PendingDevicesList({
     return !suggestedTypes.some(t => t.device_type === selectedDeviceType)
   }, [selectedDeviceType, suggestedTypes])
 
-  // Combobox options: suggestions filtered by the input text, plus a
-  // "create new type" entry when the typed id doesn't match an existing
-  // suggestion — typing a novel id previously showed an unfiltered list that
-  // ignored the query entirely.
+  // Combobox options. Filtering only engages once the user has typed
+  // (typeFilterActive) — a bare open must always list every existing type.
   const typeOptions = useMemo<Array<
     | { kind: 'existing'; type: SuggestedDeviceType }
     | { kind: 'create'; value: string }
   >>(() => {
-    const q = typeInputValue.trim().toLowerCase()
+    const q = typeFilterActive ? typeInputValue.trim().toLowerCase() : ''
     const filtered = q
       ? suggestedTypes.filter(t =>
           t.name?.toLowerCase().includes(q) ||
@@ -149,7 +156,7 @@ export function PendingDevicesList({
       options.unshift({ kind: 'create', value: trimmed })
     }
     return options
-  }, [typeInputValue, suggestedTypes])
+  }, [typeInputValue, typeFilterActive, suggestedTypes])
 
   // Keep the keyboard highlight inside the (shrinking) option list
   useEffect(() => {
@@ -161,6 +168,9 @@ export function PendingDevicesList({
     setSelectedDeviceType(value)
     setTypeInputValue(value)
     setShowTypeDropdown(false)
+    // Committed — back to browse mode so reopening the dropdown lists
+    // everything again instead of filtering on the just-selected value
+    setTypeFilterActive(false)
     setFormErrors(errors => ({ ...errors, type: undefined }))
   }, [])
 
@@ -298,6 +308,7 @@ export function PendingDevicesList({
     setSuggestedTypes([])
     setSelectedDeviceType('')
     setTypeInputValue('')
+    setTypeFilterActive(false)
     setHighlightedTypeIndex(0)
     setNewTypeFields({ name: '', type_name: '', description: '', device_type: '' })
     setFormErrors({})
@@ -325,14 +336,24 @@ export function PendingDevicesList({
     try {
       const response = await api.suggestDeviceTypes(draft.device_id)
       if (!applyIfCurrent()) return
-      setSuggestedTypes(response.suggestions || [])
-      // Auto-select exact match if found
-      if (response.exact_match) {
-        setSelectedDeviceType(response.exact_match)
-        setTypeInputValue(response.exact_match)
+      const suggestions = response.suggestions || []
+      setSuggestedTypes(suggestions)
+      // Auto-select the exact match only when it actually refers to one of
+      // the existing types. The signature table also contains the draft's
+      // own auto-generated id (registered during analysis), so exact_match
+      // can point back at the draft itself — an id that doesn't exist yet.
+      // Trusting it pre-filled the input with a phantom type and pre-selected
+      // "create new" even when a strong existing match was available.
+      const validExact = response.exact_match &&
+        suggestions.some(s => s.device_type === response.exact_match)
+        ? response.exact_match
+        : null
+      if (validExact) {
+        setSelectedDeviceType(validExact)
+        setTypeInputValue(validExact)
       } else {
         // Auto-select type with match_score > 50%
-        const highMatch = response.suggestions?.find(s => s.match_score > 50)
+        const highMatch = suggestions.find(s => s.match_score > 50)
         if (highMatch) {
           setSelectedDeviceType(highMatch.device_type)
           setTypeInputValue(highMatch.device_type)
@@ -943,6 +964,8 @@ export function PendingDevicesList({
                       const value = e.target.value
                       setTypeInputValue(value)
                       setSelectedDeviceType(value)
+                      // Real keystrokes — now the input filters the list
+                      setTypeFilterActive(true)
                       setShowTypeDropdown(true)
                       setHighlightedTypeIndex(0)
                       setFormErrors(errors => ({ ...errors, type: undefined }))
@@ -993,8 +1016,10 @@ export function PendingDevicesList({
                             onClick={() => commitTypeSelection(option)}
                             onMouseEnter={() => setHighlightedTypeIndex(index)}
                             className={cn(
-                              'p-3 cursor-pointer transition-colors border-b last:border-b-0',
-                              highlighted ? 'bg-muted border-primary' : 'hover:bg-muted-50 border-transparent'
+                              // no border line on hover — the bg change is
+                              // the only hover feedback
+                              'p-3 cursor-pointer transition-colors',
+                              highlighted ? 'bg-muted' : 'hover:bg-muted-50'
                             )}
                             style={{ touchAction: 'manipulation' }}
                           >
