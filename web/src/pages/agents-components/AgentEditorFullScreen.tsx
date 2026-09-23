@@ -1580,6 +1580,13 @@ export function AgentEditorFullScreen({
                     ))
                 )}
                 </div>
+                {/* Where the choice is made, not two cards down: a Structured
+                    agent's whole input is its bound sources and it refuses to
+                    run without one, so this is the only place the requirement
+                    can be acted on. */}
+                {!resourceOk && (
+                  <p className="text-sm text-error">{tAgent('creator.validation.resourceRequired')}</p>
+                )}
               </div>
 
               {/* The one input nothing else can express: whether the AI may
@@ -1675,9 +1682,6 @@ export function AgentEditorFullScreen({
                   <p className="text-xs text-muted-foreground">
                     {tAgent('creator.structured.multiRoundCost')}
                   </p>
-                )}
-                {!resourceOk && (
-                  <p className="text-sm text-error">{tAgent('creator.validation.resourceRequired')}</p>
                 )}
                 {!outputContractOk && (
                   <p className="text-sm text-error">{tAgent('creator.validation.outputFieldRequired')}</p>
