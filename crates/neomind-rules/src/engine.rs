@@ -133,6 +133,19 @@ pub struct RuleEngine {
     event_bus: Arc<tokio::sync::RwLock<Option<Arc<neomind_core::EventBus>>>>,
 }
 
+/// Identifies the rule execution an action is running under.
+///
+/// `(rule_id, triggered_at)` *is* this execution's identity: that pair is what
+/// `RuleStore::save_history` keys the history row by. Pointing the artifacts an
+/// action leaves behind at their execution therefore needs no new id field and
+/// no storage format change — and the timestamp used here must be the same one
+/// the history row is written with, or the reference dangles.
+#[derive(Debug, Clone)]
+struct RuleExecutionRef {
+    rule_id: String,
+    triggered_at: chrono::DateTime<chrono::Utc>,
+}
+
 impl RuleEngine {
     /// Create a new engine.
     pub fn new(value_provider: Arc<dyn ValueProvider>) -> Self {
@@ -459,9 +472,18 @@ impl RuleEngine {
         let mut actions_executed = Vec::new();
         let mut error = None;
 
+        let execution = RuleExecutionRef {
+            rule_id: id.to_string(),
+            triggered_at: now,
+        };
         for action in &rule.actions {
             match self
-                .execute_action(action, trigger_value.as_deref(), trigger_source.as_deref())
+                .execute_action(
+                    action,
+                    &execution,
+                    trigger_value.as_deref(),
+                    trigger_source.as_deref(),
+                )
                 .await
             {
                 Ok(name) => actions_executed.push(name),
@@ -619,14 +641,22 @@ impl RuleEngine {
         })
         .await;
 
-        // Fire actions
+        // Fire actions. The instant is captured once and reused for the
+        // history row below: it is the execution's identity, so the reference
+        // stamped on the artifacts must be the same one the row is keyed by.
         let start = Instant::now();
+        let triggered_at = Utc::now();
+        let execution = RuleExecutionRef {
+            rule_id: rule_id.to_string(),
+            triggered_at,
+        };
         let mut actions_executed = Vec::new();
         let mut first_error = None;
         for action in &rule.actions {
             match self
                 .execute_action(
                     action,
+                    &execution,
                     trigger_value_display.as_deref(),
                     trigger_source.as_deref(),
                 )
@@ -658,7 +688,7 @@ impl RuleEngine {
             actions_executed,
             error: first_error,
             duration_ms: start.elapsed().as_millis() as u64,
-            triggered_at: Utc::now(),
+            triggered_at,
         })
         .await;
 
@@ -732,6 +762,7 @@ impl RuleEngine {
     async fn execute_action(
         &self,
         action: &RuleAction,
+        execution: &RuleExecutionRef,
         trigger_value_display: Option<&str>,
         trigger_source: Option<&str>,
     ) -> Result<String, String> {
@@ -754,12 +785,23 @@ impl RuleEngine {
 
                 let mgr = self.message_manager.read().await;
                 if let Some(manager) = mgr.as_ref() {
-                    let msg = neomind_messages::Message::alert(
+                    let mut msg = neomind_messages::Message::alert(
                         msg_sev,
                         "Rule Triggered".to_string(),
                         formatted.clone(),
                         "rule_engine".to_string(),
                     );
+                    // M2-5: an alert has to be able to say which execution
+                    // produced it, and on what evidence. The identity is the
+                    // history key; the source and value are what satisfied the
+                    // condition — cheap here, and they make the alert
+                    // self-explanatory without a second lookup.
+                    msg.metadata = Some(serde_json::json!({
+                        (crate::chain::RULE_ID_KEY): execution.rule_id,
+                        (crate::chain::RULE_EXECUTION_MS_KEY): execution.triggered_at.timestamp_millis(),
+                        (crate::chain::TRIGGER_SOURCE_KEY): trigger_source,
+                        (crate::chain::TRIGGER_VALUE_KEY): trigger_value_display,
+                    }));
                     match manager.create_message(msg).await {
                         Ok(_) => Ok(format!("NOTIFY: {}", formatted)),
                         Err(e) => Err(format!("Failed to create message: {}", e)),
@@ -1043,6 +1085,46 @@ mod tests {
     use super::*;
     use crate::models::*;
 
+    /// M2-5, first hop: an alert has to say which rule execution produced it.
+    /// The message carries that execution's identity — the same
+    /// `(rule_id, triggered_at)` pair its history row is keyed by — so the
+    /// chain needs no new id and no storage format change.
+    #[tokio::test]
+    async fn a_notification_identifies_the_rule_execution_that_sent_it() {
+        let provider = Arc::new(InMemoryValueProvider::new());
+        let engine = RuleEngine::new(provider);
+        let messages = Arc::new(neomind_messages::MessageManager::new());
+        engine.set_message_manager(messages.clone()).await;
+
+        let mut rule = CompiledRule::new("Freezer watch");
+        rule.trigger = RuleTrigger::Manual;
+        rule.actions = vec![RuleAction::Notify {
+            message: "Cold room out of range".to_string(),
+            severity: NotifySeverity::Warning,
+        }];
+        rule.finalize();
+        let rule_id = rule.id.clone();
+        engine.add_rule(rule).await.unwrap();
+
+        let result = engine.execute_rule(&rule_id).await;
+        assert!(result.success, "the notify action must run");
+
+        let sent = messages.list_messages().await;
+        assert_eq!(sent.len(), 1, "one notify action, one message");
+
+        let metadata = sent[0]
+            .metadata
+            .as_ref()
+            .expect("an alert must record which rule execution sent it");
+        let expected_rule = rule_id.to_string();
+        assert_eq!(metadata["rule_id"].as_str(), Some(expected_rule.as_str()));
+        assert_eq!(
+            metadata["rule_execution_ms"].as_i64(),
+            Some(result.triggered_at.timestamp_millis()),
+            "the chain key must be the one the history row is stored under"
+        );
+    }
+
     /// M2-4: a rule that runs an operator must actually invoke it — and with
     /// no prompt input, because an operator collects its own bound sources
     /// rather than being told what to look at.
@@ -1072,6 +1154,10 @@ mod tests {
             .execute_action(
                 &RuleAction::RunOperator {
                     agent_id: "cam01-view".to_string(),
+                },
+                &RuleExecutionRef {
+                    rule_id: "r-1".to_string(),
+                    triggered_at: Utc::now(),
                 },
                 None,
                 None,
