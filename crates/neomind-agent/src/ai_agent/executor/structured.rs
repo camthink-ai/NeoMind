@@ -33,6 +33,141 @@ fn humanize_age(seconds: i64) -> String {
     }
 }
 
+/// `1 metric` / `11 metrics` — a count that reads as prose, where a naive
+/// `format!` gives you `metric(s)`.
+fn plural(n: usize, unit: &str) -> String {
+    if n == 1 {
+        format!("{n} {unit}")
+    } else {
+        format!("{n} {unit}s")
+    }
+}
+
+/// Comma-joined with a closing "and", capped so a diagnostic line stays one
+/// line no matter how much is bound; anything past the cap becomes a count.
+fn join_capped(items: Vec<String>, unit: &str) -> String {
+    const MAX_NAMED: usize = 4;
+    match items.len() {
+        0 => String::new(),
+        1 => items[0].clone(),
+        n if n <= MAX_NAMED => {
+            let (last, rest) = items.split_last().expect("n >= 2");
+            format!("{} and {last}", rest.join(", "))
+        }
+        n => {
+            let hidden = n - MAX_NAMED;
+            format!(
+                "{}, and {hidden} more {unit}{}",
+                items[..MAX_NAMED].join(", "),
+                if hidden == 1 { "" } else { "s" }
+            )
+        }
+    }
+}
+
+/// Bound sources, rolled up: source name → (metrics bound, seconds since the
+/// most recent report — `None` when nothing has ever arrived).
+type BoundSources = BTreeMap<String, (usize, Option<i64>)>;
+
+/// Fold one bound source into the roll-up. `age_secs` is how long ago that
+/// source last reported, or `None` if it never has.
+fn record_source(devices: &mut BoundSources, source: String, age_secs: Option<i64>) {
+    let entry = devices.entry(source).or_insert((0, None));
+    entry.0 += 1;
+    if let Some(age) = age_secs {
+        // A device's own "last reported" is its *freshest* metric: one metric
+        // arriving a minute ago means the device is alive, however long its
+        // slowest sibling has been quiet.
+        entry.1 = Some(entry.1.map_or(age, |seen| seen.min(age)));
+    }
+}
+
+/// The full text of the "nothing came back" failure: what happened, the
+/// evidence, and why the agent refused to publish rather than guess.
+/// `diagnostic` is [`render_silence`]'s sentence, or one of the two
+/// early-return messages when there was nothing to inspect.
+fn silence_message(agent_name: &str, diagnostic: &str) -> String {
+    format!(
+        "agent '{agent_name}' has nothing to work from. {diagnostic} The last published \
+         value still stands; replacing it with a guess would make a stale reading look \
+         freshly computed."
+    )
+}
+
+/// The sentence the operator actually reads. Kept separate from the storage
+/// walk so its shape — grouping, capping, plurals — is testable without a
+/// time-series store.
+fn render_silence(devices: &BoundSources) -> String {
+    let metrics: usize = devices.values().map(|(count, _)| count).sum();
+    // A device that once reported is the interesting one: its age varies, so it
+    // gets named. "Never reported" carries no such detail, so those collapse
+    // into one clause instead of repeating the same sentence per device.
+    let quiet: Vec<String> = devices
+        .iter()
+        .filter_map(|(device, (count, age))| {
+            age.map(|age| {
+                format!(
+                    "{device} ({}) last reported {}",
+                    plural(*count, "metric"),
+                    humanize_age(age)
+                )
+            })
+        })
+        .collect();
+    let never: Vec<(&str, usize)> = devices
+        .iter()
+        .filter(|(_, (_, age))| age.is_none())
+        .map(|(device, (count, _))| (device.as_str(), *count))
+        .collect();
+
+    let mut clauses = Vec::new();
+    let has_quiet = !quiet.is_empty();
+    if has_quiet {
+        clauses.push(join_capped(quiet, "device"));
+    }
+    if !never.is_empty() {
+        let silent: usize = never.iter().map(|(_, count)| count).sum();
+        let names = join_capped(
+            never.iter().map(|(device, _)| (*device).to_string()).collect(),
+            "device",
+        );
+        // The count leads and the names trail, so a capped list ends on
+        // "and 36 more devices" rather than leaving a metric total dangling
+        // after names it does not describe. With nothing *but* never-reporting
+        // devices the scope line already carried that total, and repeating it
+        // reads "40 metrics are silent: 40 metrics have never reported".
+        clauses.push(if has_quiet {
+            // The metric total is the subject here, so the verb follows *it* —
+            // the two counts differ whenever a device binds more than one
+            // metric, and "2 metrics has never reported" is the tell.
+            format!(
+                "{} {} never reported: {names}",
+                plural(silent, "metric"),
+                if silent == 1 { "has" } else { "have" }
+            )
+        } else {
+            // "none" is the subject, so the verb follows the device count.
+            format!(
+                "none {} ever reported: {names}",
+                if never.len() == 1 { "has" } else { "have" }
+            )
+        });
+    }
+
+    let scope = if devices.len() == 1 && metrics == 1 {
+        "Its only bound source is silent".to_string()
+    } else {
+        format!(
+            "All {} and {} are silent",
+            plural(devices.len(), "device"),
+            plural(metrics, "metric")
+        )
+    };
+    format!("{scope}: {}.", clauses.join("; "))
+}
+
+use std::collections::BTreeMap;
+
 use super::data_collector::is_observation;
 use super::*;
 
@@ -78,12 +213,7 @@ impl AgentExecutor {
             // operator needs is "your camera stopped reporting three hours ago",
             // which is a different problem from "it never reported at all".
             let silence = self.describe_bound_source_silence(agent).await;
-            return Err(NeoMindError::Device(format!(
-                "agent '{}' has nothing to work from — nothing came back from its bound \
-                 sources. {silence} The last published value still stands; replacing it \
-                 with a guess would make a stale reading look freshly computed.",
-                agent.name
-            )));
+            return Err(NeoMindError::Device(silence_message(&agent.name, &silence)));
         }
 
         let images = extract_images(&data_collected);
@@ -205,20 +335,24 @@ pub async fn dry_run_structured(
     }))
 }
 
-    /// Publish validated fields as `ai:{agent_id}:{field}` data sources — dual
-    /// telemetry write + virtual `DeviceMetric`, the single publish path for
-    /// every output contract (L0 and, from M2-2, reasoning agents too).
     /// Which sources the agent binds, and when each last reported.
     ///
     /// Reads the *unbounded* latest per source rather than the collection
     /// window, precisely because the window is what came back empty — the
     /// point is to say how far back the silence goes.
+    ///
+    /// Rolled up per device and capped, because the per-metric list does not
+    /// survive contact with a real agent: thirty bound metrics across five
+    /// devices is a paragraph nobody finishes, and it says the same thing
+    /// thirty times. The device is the thing an operator can go and look at;
+    /// how many of its metrics are silent is the detail worth keeping.
     async fn describe_bound_source_silence(&self, agent: &AiAgent) -> String {
         let Some(storage) = &self.time_series_storage else {
             return "No time-series storage is attached, so nothing could be read.".to_string();
         };
 
-        let mut parts = Vec::new();
+        // device → (metrics bound, most recent report age in seconds if any)
+        let mut devices: BTreeMap<String, (usize, Option<i64>)> = BTreeMap::new();
         for resource in &agent.resources {
             let (source, metric) = match resource.resource_type {
                 ResourceType::Metric => match resource.resource_id.split_once(':') {
@@ -234,21 +368,20 @@ pub async fn dry_run_structured(
                 _ => continue,
             };
 
-            match storage.query_latest(&source, &metric).await.ok().flatten() {
-                Some(point) => {
-                    let age = (chrono::Utc::now().timestamp() - point.timestamp).max(0);
-                    parts.push(format!("{source}/{metric} last reported {}", humanize_age(age)));
-                }
-                None => parts.push(format!("{source}/{metric} has never reported")),
-            }
+            let latest = storage.query_latest(&source, &metric).await.ok().flatten();
+            let age = latest.map(|p| (chrono::Utc::now().timestamp() - p.timestamp).max(0));
+            record_source(&mut devices, source, age);
         }
 
-        if parts.is_empty() {
+        if devices.is_empty() {
             return "It has no readable data sources bound at all.".to_string();
         }
-        format!("Bound sources: {}.", parts.join("; "))
+        render_silence(&devices)
     }
 
+    /// Publish validated fields as `ai:{agent_id}:{field}` data sources — dual
+    /// telemetry write + virtual `DeviceMetric`, the single publish path for
+    /// every output contract (L0 and, from M2-2, reasoning agents too).
     pub(super) async fn publish_output_fields(
         &self,
         agent_id: &str,
@@ -491,5 +624,134 @@ fn json_to_core_metric(v: &serde_json::Value) -> MetricValue {
         serde_json::Value::String(s) => MetricValue::String(s.clone()),
         serde_json::Value::Bool(b) => MetricValue::Boolean(*b),
         other => MetricValue::Json(other.clone()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sources(entries: &[(&str, usize, Option<i64>)]) -> BoundSources {
+        entries
+            .iter()
+            .map(|(device, count, age)| ((*device).to_string(), (*count, *age)))
+            .collect()
+    }
+
+    /// The real report that prompted this: five devices, thirty-one metrics.
+    /// The per-metric list ran to ~1500 characters of the same sentence thirty
+    /// times over; the rolled-up form says the same thing in two clauses.
+    #[test]
+    fn silence_rolls_up_per_device_and_stays_readable() {
+        let text = render_silence(&sources(&[
+            ("device:9999", 12, Some(21 * 86_400)),
+            ("device:898989", 12, None),
+            ("device:demo-001", 2, None),
+            ("device:test_sensor_37641d43", 3, None),
+            ("device:light-sensor-001", 2, None),
+        ]));
+
+        assert_eq!(
+            text,
+            "All 5 devices and 31 metrics are silent: device:9999 (12 metrics) last \
+             reported 21d ago; 19 metrics have never reported: device:898989, \
+             device:demo-001, device:light-sensor-001 and device:test_sensor_37641d43."
+        );
+    }
+
+    /// The whole string the operator reads, end to end. The per-metric version
+    /// of this ran to ~1500 characters in the history card; the point of the
+    /// roll-up is that the same facts fit in three sentences.
+    #[test]
+    fn the_full_message_reads_as_prose() {
+        let text = silence_message(
+            "数据监控分析",
+            &render_silence(&sources(&[
+                ("device:9999", 12, Some(21 * 86_400)),
+                ("device:898989", 12, None),
+                ("device:demo-001", 2, None),
+                ("device:test_sensor_37641d43", 3, None),
+                ("device:light-sensor-001", 2, None),
+            ])),
+        );
+
+        assert_eq!(
+            text,
+            "agent '数据监控分析' has nothing to work from. All 5 devices and 31 metrics \
+             are silent: device:9999 (12 metrics) last reported 21d ago; 19 metrics have \
+             never reported: device:898989, device:demo-001, device:light-sensor-001 and \
+             device:test_sensor_37641d43. The last published value still stands; replacing \
+             it with a guess would make a stale reading look freshly computed."
+        );
+    }
+
+    /// An agent bound to a hundred devices must not produce a hundred-device
+    /// paragraph — past the cap the rest become a count.
+    #[test]
+    fn naming_is_capped_however_many_devices_are_bound() {
+        let mut entries: Vec<(String, (usize, Option<i64>))> = Vec::new();
+        for i in 0..40 {
+            entries.push((format!("device:{i}"), (1, None)));
+        }
+        let text = render_silence(&entries.into_iter().collect());
+
+        assert!(text.contains("All 40 devices and 40 metrics are silent"), "{text}");
+        assert!(text.contains("none have ever reported"), "{text}");
+        assert!(text.contains("and 36 more devices"), "{text}");
+        assert!(!text.contains("device:39"), "{text}");
+    }
+
+    /// One device that reported, plus one that never has: two clauses, both
+    /// correctly pluralized, and the device that went quiet leads.
+    #[test]
+    fn a_device_that_went_quiet_is_named_before_one_that_never_reported() {
+        let text = render_silence(&sources(&[
+            ("device:camera", 1, Some(3 * 3600)),
+            ("device:sensor", 2, None),
+        ]));
+
+        assert_eq!(
+            text,
+            "All 2 devices and 3 metrics are silent: device:camera (1 metric) last \
+             reported 3h ago; 2 metrics have never reported: device:sensor."
+        );
+    }
+
+    /// A device's own age is its *freshest* metric, not its oldest — otherwise
+    /// five metrics whose slowest one reported a month ago would date the
+    /// device a month back while it is in fact reporting right now.
+    #[test]
+    fn a_devices_age_comes_from_its_freshest_metric() {
+        let mut devices = BoundSources::new();
+        record_source(&mut devices, "device:mixed".to_string(), Some(30 * 86_400));
+        record_source(&mut devices, "device:mixed".to_string(), Some(60));
+        record_source(&mut devices, "device:mixed".to_string(), None);
+
+        assert_eq!(devices["device:mixed"], (3, Some(60)));
+        assert!(render_silence(&devices).contains("last reported 1m ago"));
+    }
+
+    /// A metric that has never arrived must not drag a live device's age to
+    /// "never" — it counts toward the silent metrics, not the verdict.
+    #[test]
+    fn one_never_reporting_metric_does_not_erase_a_devices_last_report() {
+        let mut devices = BoundSources::new();
+        record_source(&mut devices, "device:flaky".to_string(), None);
+        record_source(&mut devices, "device:flaky".to_string(), Some(2 * 86_400));
+
+        assert_eq!(devices["device:flaky"], (2, Some(2 * 86_400)));
+        assert!(render_silence(&devices).contains("last reported 2d ago"));
+    }
+
+    /// The degenerate agent — one source, one metric — reads as a sentence
+    /// rather than as "All 1 device and 1 metric are silent".
+    #[test]
+    fn a_single_silent_source_avoids_the_all_one_construction() {
+        let text = render_silence(&sources(&[("device:solo", 1, Some(45))]));
+
+        assert_eq!(
+            text,
+            "Its only bound source is silent: device:solo (1 metric) last reported 45s ago."
+        );
     }
 }
