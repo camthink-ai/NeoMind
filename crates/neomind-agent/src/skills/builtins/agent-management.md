@@ -120,12 +120,20 @@ mode.
 text:
 
 ```bash
-neomind agent update 冷库巡检 --notify '{"channels":["telegram:main","webhook:ops"],"on":"always"}'
+neomind agent update 冷库巡检 --notify '{"channels":["IM","webhook:ops"],"on":"always"}'
 ```
 
 `on: "failure"` (default) = silence is health; `on: "always"` = every
 verdict delivered. Channel names come from `neomind message channel-list`.
 Agents without a notify config keep the legacy keyword behavior.
+
+`IM` is a built-in channel — no setup, and always available. Reach for it
+whenever the user asks to be told where they are already talking to you
+("在 Telegram 告诉我", "给我发消息"), because it is the only channel that
+reaches their chat: it delivers to every IM chat bound under Settings → IM
+Bridges (the `/start` handshake). Without it, a run's outcome lands in the
+in-app Messages page and nowhere else — a scheduled agent that reports only
+in-app is indistinguishable from one that never ran.
 
 ### Binding Resources
 
