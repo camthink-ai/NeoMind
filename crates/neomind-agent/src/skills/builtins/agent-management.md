@@ -19,9 +19,20 @@ anti_triggers:
 
 Agents are LLM-powered automated tasks. They can be scheduled (interval/cron) or event-driven, and have access to the shell tool to execute CLI commands.
 
+## Two calls have their own tools — prefer them
+
+Both take the agent's **name** (or part of it) as the user said it, so there is no id lookup first. Reach for these before `shell`:
+
+| Tool | Use it when |
+|---|---|
+| `query_conclusion` | The user asks how something an agent watches is doing ("冷库现在怎么样"). Returns the conclusion the agent already reached, and how long ago. Instant, no inference. **Try this first.** |
+| `run_now` | The user wants a fresh look or an action ("再检查一下"). Runs the agent; returns its conclusion if it finishes within a minute, otherwise reports that it is still running. Read that result shortly after with `query_conclusion`. |
+
+Do not use `run_now` to answer a question the agent has already answered — re-running takes an inference and a minute to say the same thing.
+
 ## Command Cheat-Sheet (run these via `shell`)
 
-Always RUN the command yourself and report the real output.
+Everything else — creating, configuring, inspecting agents — goes through `shell`. Always RUN the command yourself and report the real output.
 
 | Command | Purpose |
 |---|---|
@@ -30,7 +41,7 @@ Always RUN the command yourself and report the real output.
 | `neomind agent create` | Create a new agent |
 | `neomind agent update <id>` | Update an agent |
 | `neomind agent delete <id>` | Delete an agent |
-| `neomind agent control <id> <pause|resume>` | Control agent status |
+| `neomind agent control <id> <active|paused>` | Control agent status |
 | `neomind agent invoke <id> [input]` | Invoke / run an agent now with input |
 | `neomind agent memory <id>` | Get agent memory |
 | `neomind agent clear-memory <id>` | Clear agent memory |
