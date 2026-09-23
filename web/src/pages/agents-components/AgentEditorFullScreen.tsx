@@ -2035,8 +2035,8 @@ export function AgentEditorFullScreen({
                     })}
                   </div>
                   {notify && (
-                    <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-                      {(['failure', 'always'] as const).map((k) => (
+                    <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
+                      {(['failure', 'always', 'judgment'] as const).map((k) => (
                         <button
                           key={k}
                           type="button"
@@ -2049,11 +2049,11 @@ export function AgentEditorFullScreen({
                           )}
                         >
                           <span className="text-sm font-medium">
-                            {tAgent(`creator.notify.on${k === 'failure' ? 'Failure' : 'Always'}`)}
+                            {tAgent(`creator.notify.on${k[0].toUpperCase()}${k.slice(1)}`)}
                           </span>
                           <span className="text-xs text-muted-foreground">
                             {tAgent(
-                              `creator.notify.on${k === 'failure' ? 'Failure' : 'Always'}Desc`,
+                              `creator.notify.on${k[0].toUpperCase()}${k.slice(1)}Desc`,
                             )}
                           </span>
                         </button>

@@ -131,7 +131,7 @@
     "toolsFilterAllSources": "All sources",
     "outputFields": "Output fields",
     "viewEvidence": "See what it read",
-      "outputFieldsHint": "Each field is a platform data source (ai:{agent}:{field}) — bind it on dashboards, rules and data-push.",
+    "outputFieldsHint": "Each field is a platform data source (ai:{agent}:{field}) — bind it on dashboards, rules and data-push.",
     "fieldType": {
       "number": "number",
       "text": "text",
@@ -705,7 +705,7 @@
         "prompt": "Describe your task — four things make a good brief:\n1. Goal — what to achieve;\n2. Input — which data or cameras to look at;\n3. Judgement — what counts as normal, what as trouble;\n4. Action — what to do and who to notify when trouble shows."
       }
     },
-        "notify": {
+    "notify": {
       "title": "Notify",
       "channelsLabel": "Channels",
       "noChannels": "No external channels yet — alerts still land in Messages either way.",
@@ -714,8 +714,10 @@
       "onFailureDesc": "Silence is health — only failures interrupt you",
       "onAlways": "Every run",
       "onAlwaysDesc": "Watch mode — every verdict is worth reading",
-      "hint": "Pick where to deliver and when. Without a config the legacy behavior (inferring from the conclusion text) applies.",
-        "configureChannels": "Configure channels"
+      "hint": "Where to send, and when. \"Let the agent decide\" configures no routed notification and does not fall back to the old keyword sniffing.",
+      "configureChannels": "Configure channels",
+      "onJudgment": "Let the agent decide",
+      "onJudgmentDesc": "The run decides whether this is worth your attention — it speaks through its own tools, and stays quiet when there is nothing to say"
     },
     "workstyle": {
       "title": "How it works",

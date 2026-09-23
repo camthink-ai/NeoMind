@@ -60,6 +60,30 @@ The milestone that makes an agent's *inputs* expressible and its *outputs* check
 - `max_chain_depth` no longer has two defaults. The API created agents with `unwrap_or(3)` while storage's serde default was `5`, each documented as "the default"; both now read `DEFAULT_MAX_CHAIN_DEPTH`. The value is **10** (was 3): three rounds is not enough for the multi-step Focused analysis the mode exists for, and a run that exhausts its budget spends its last rounds summarising rather than working.
 - The `--max-chain-depth` help no longer says it is "Only used when --enable-tool-chaining is true". It was always used — it is the tool loop's round ceiling.
 
+### feat(agent, web): a task can decide for itself whether to say anything
+
+A periodic agent had two triggers — `failure` and `always` — and both send.
+An operator who wanted "watch this, but only tell me if it matters" had no way
+to say so: clearing the channels fell through to the legacy keyword sniffing
+and sent anyway.
+
+`notify.on` gains **`judgment`**: the machinery sends nothing, and the task
+decides in its own prompt whether the operator needs to hear from it, reaching
+them through the tools it already has (`neomind message send`). The prompt
+carries that instruction **only under `judgment`** — under `always`/`failure`
+the machinery already sends, and telling the model to also send would produce
+the double notification this setting exists to remove. The editor gets a third
+card, and the wording is deliberate in both directions: staying quiet is the
+usual and correct outcome, and a message that reports "I ran, nothing happened"
+teaches the operator to ignore the ones that matter.
+
+**Fixing this surfaced a second bug.** `is_alert_decision` had no `notify`
+guard, so the keyword sniffing ran for *every* agent — the code comment and
+CLAUDE.md both claimed it only ran for agents without a config. A configured
+agent could therefore be notified twice: once by the explicit routing, once by
+the sniffing. The gate now exists, which is also what makes `judgment` mean
+silence rather than "silence plus a sniffed alert".
+
 ## [Unreleased.1] — M1: the structured agent (L0 operator) — S1 end to end
 
 The first business-layer milestone on the M0 kernel (design: docs/designs/001 §5.1, revised to live in the ai_agent domain — operators are a TYPE of agent, one list, one API). Create a "structured" agent in the editor, bind resources, define output fields, 试跑, schedule — the fields flow into dashboards/rules/data-push as live data sources.

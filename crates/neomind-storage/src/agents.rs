@@ -524,6 +524,19 @@ pub enum NotifyOn {
     Failure,
     /// Notify after every run (watch-style: each verdict is worth reading).
     Always,
+    /// The operator decides per-run at the source: no routed notification is
+    /// built, AND the legacy keyword path is suppressed too. That second half
+    /// matters — otherwise "let the agent decide" still produced a keyword-
+    /// sniffed alert, which is the very thing an agent that speaks for itself
+    /// is replacing.
+    ///
+    /// The agent's own judgement reaches the operator through the tools it
+    /// already has (`neomind message send`), so a run that finds something
+    /// worth saying says it, and a run that does not stays quiet.
+    ///
+    /// Appended LAST: agents.redb holds JSON, so a row written before this
+    /// variant existed simply never decodes to it.
+    Judgment,
 }
 
 /// Per-agent notification routing.

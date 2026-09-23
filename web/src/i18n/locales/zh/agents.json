@@ -131,7 +131,7 @@
     "toolsFilterAllSources": "全部来源",
     "outputFields": "输出字段",
     "viewEvidence": "查看依据",
-      "outputFieldsHint": "每个字段都是平台数据源（ai:{agent}:{field}）——可在仪表盘、规则、数据推送中绑定使用。",
+    "outputFieldsHint": "每个字段都是平台数据源（ai:{agent}:{field}）——可在仪表盘、规则、数据推送中绑定使用。",
     "fieldType": {
       "number": "数值",
       "text": "文本",
@@ -705,7 +705,7 @@
         "prompt": "描述你的任务，建议写清四件事：\n1. 目标——要达成什么；\n2. 输入——看哪些数据或画面；\n3. 判断——怎样算正常、怎样算异常；\n4. 行动——发现问题时做什么、通知谁。"
       }
     },
-        "notify": {
+    "notify": {
       "title": "通知",
       "channelsLabel": "通知渠道",
       "noChannels": "还没有外部通道 —— 告警仍会出现在「消息」里，不会漏。",
@@ -714,8 +714,10 @@
       "onFailureDesc": "静默即健康——只有运行失败才打扰你",
       "onAlways": "每次运行",
       "onAlwaysDesc": "盯守模式——每个判定都值得读",
-      "hint": "选择往哪发、什么时候发。未配置时沿用旧行为（从结论文本推断）。",
-        "configureChannels": "去配置通道"
+      "hint": "选择往哪发、什么时候发。「由 AI 判断」不给机制配通知，也不回落到旧的关键词推断。",
+      "configureChannels": "去配置通道",
+      "onJudgment": "由 AI 判断",
+      "onJudgmentDesc": "agent 自己决定这次值不值得打扰你——它用现成的工具说话，安静时不发"
     },
     "workstyle": {
       "title": "工作方式",

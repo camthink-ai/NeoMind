@@ -278,7 +278,7 @@ export interface OperatorField {
 }
 
 /** When an agent notifies (mirrors the server's `NotifyOn`). */
-export type AgentNotifyOn = 'failure' | 'always'
+export type AgentNotifyOn = 'failure' | 'always' | 'judgment'
 
 /** Explicit notification routing (mirrors the server's `AgentNotify`). */
 export interface AgentNotify {

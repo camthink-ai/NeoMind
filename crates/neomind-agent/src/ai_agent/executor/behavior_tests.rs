@@ -1138,6 +1138,95 @@ async fn notify_on_always_reports_successes() {
     assert!(hit.message.contains("正常"), "body carries the verdict: {}", hit.message);
 }
 
+/// `judgment` hands the decision to the agent: the machinery sends nothing,
+/// and must not fall back to sniffing the conclusion for keywords either.
+///
+/// That second half is the point. A silent run is the expected outcome here,
+/// and a "run completed" message would be a second voice saying something the
+/// operator chose this setting to stop hearing. The agent's own judgement
+/// reaches them through `neomind message send`, which this test does not
+/// exercise — it only asserts the machinery keeps quiet.
+#[tokio::test]
+async fn notify_on_judgment_keeps_the_machinery_silent() {
+    use neomind_storage::timeseries::DataPoint as TsPoint;
+
+    let store = AgentStore::memory().expect("store");
+    let message_manager = Arc::new(neomind_messages::MessageManager::new());
+    let ts = neomind_storage::TimeSeriesStore::memory().expect("ts");
+    ts.write(
+        "device:dev-1",
+        "temperature",
+        TsPoint {
+            timestamp: chrono::Utc::now().timestamp(),
+            value: serde_json::json!(23.5),
+            quality: None,
+            metadata: None,
+        },
+    )
+    .await
+    .expect("seed telemetry");
+    ts.flush().expect("flush");
+
+    let config = AgentExecutorConfig {
+        store: store.clone(),
+        time_series_storage: Some(ts),
+        device_service: None,
+        event_bus: None,
+        message_manager: Some(message_manager.clone()),
+        llm_runtime: None,
+        llm_backend_store: None,
+        extension_registry: None,
+        tool_registry: None,
+        memory_store: None,
+        backend_semaphores: None,
+        skill_registry: None,
+        execution_semaphore: None,
+    };
+    let mut executor = AgentExecutor::new(config).await.expect("executor");
+
+    // The verdict is deliberately alarming: under the old keyword sniffing a
+    // conclusion like this would have been picked up and sent.
+    let agent: AiAgent = serde_json::from_value(serde_json::json!({
+        "id": "judgment-agent",
+        "name": "判断档",
+        "user_prompt": "判断状态",
+        "resources": [
+            { "resource_type": "metric", "resource_id": "dev-1:temperature",
+              "name": "temperature", "config": {} }
+        ],
+        "schedule": { "schedule_type": "manual" },
+        "status": "active",
+        "created_at": 0, "updated_at": 0,
+        "execution_mode": "structured",
+        "output_schema": [
+            { "name": "status", "field_type": { "type": "enum", "values": ["正常", "异常"] } }
+        ],
+        "stats": {
+            "total_executions": 0, "successful_executions": 0,
+            "failed_executions": 0, "avg_duration_ms": 0, "last_duration_ms": null
+        },
+        "memory": {},
+        "notify": { "channels": ["webhook:ops"], "on": "judgment" },
+    }))
+    .expect("fixture");
+    store.save_agent(&agent).await.expect("seed");
+    executor
+        .set_llm_runtime(Arc::new(MockLlmRuntime::new(vec![MockResponse::text(
+            r#"{"status": "异常"}"#,
+        )])))
+        .await;
+
+    executor.execute_agent(agent, None, None).await.expect("run ok");
+
+    let messages = message_manager.list_messages().await;
+    let from_agent: Vec<_> = messages.iter().filter(|m| m.source == "agent:judgment-agent").collect();
+    assert!(
+        from_agent.is_empty(),
+        "the machinery must send nothing under on=judgment, got: {:?}",
+        from_agent.iter().map(|m| &m.title).collect::<Vec<_>>()
+    );
+}
+
 /// An alert is the *record* of what happened; channels are only how it
 /// travels. The rule path already works that way — `create_message` stores
 /// unconditionally and fans out best-effort ("don't fail if channels fail -

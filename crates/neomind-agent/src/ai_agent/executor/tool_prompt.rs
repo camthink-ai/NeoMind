@@ -48,6 +48,36 @@ Respond in the same language as the task definition and operator messages. Never
 3. **`memory`** — cross-execution persistence (see Guidelines below).\n\
 4. Supplementary: extension commands `{ext_id}:{cmd}(...)`.\n";
 
+    // ── When to speak (only where the routing leaves it to the agent) ──
+    //
+    // With `Always`/`Failure` the machinery already sends, and telling the
+    // model to also send would produce the double notification this variant
+    // exists to remove. With `Judgment` the machinery deliberately sends
+    // nothing, so the agent has to know both that it may speak and that
+    // silence is a legitimate outcome — otherwise the operator configures
+    // "let the agent decide" and hears nothing, ever.
+    let speak_guidance = match agent.notify.as_ref().map(|n| n.on.clone()) {
+        Some(neomind_storage::NotifyOn::Judgment) => "\
+## When to Notify\n\
+No notification is sent on your behalf — this task decides for itself whether the\n\
+operator needs to hear from it.\n\
+\n\
+Send one yourself when the run found something they would act on, or would want to\n\
+know before the next run:\n\
+`neomind message send --title \"<what happened>\" --body \"<the evidence and what it means>\"`\n\
+\n\
+Staying quiet is a correct outcome, and the usual one. A run that checked, found\n\
+nothing, and says nothing is the system working. Do not send a message to report\n\
+that you ran, that everything is normal, or that you had nothing to do — the\n\
+operator reads silence as those things already, and a message that says nothing\n\
+teaches them to ignore the ones that do.\n\
+\n\
+Before sending, ask whether they could act on it. If the honest answer is no, say\n\
+nothing.\n\n"
+            .to_string(),
+        _ => String::new(),
+    };
+
     // ── Event trigger callout (if triggered by data event) ──
     let event_callout = data_collected
         .iter()
@@ -208,7 +238,7 @@ Respond in the same language as the task definition and operator messages. Never
     let identity = resolve_role(agent, &default_identity);
 
     format!(
-        "{}\n\n{}\nTime: {}\nTask: {}\n{}{}\n{}\n{}\n{}\n\n{}\n",
+        "{}\n\n{}\nTime: {}\nTask: {}\n{}{}\n{}\n{}\n{}\n\n{}{}\n",
         preamble,
         identity,
         time_ctx,
@@ -218,6 +248,7 @@ Respond in the same language as the task definition and operator messages. Never
         resource_data_section,
         invocation_section,
         mode_constraints,
+        speak_guidance,
         combined_guidance,
     )
 }

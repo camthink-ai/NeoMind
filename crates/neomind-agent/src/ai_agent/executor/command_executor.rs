@@ -621,8 +621,15 @@ impl AgentExecutor {
                 continue;
             }
 
-            // Handle alert-type decisions
-            if Self::is_alert_decision(decision) {
+            // Handle alert-type decisions.
+            //
+            // Only for agents that route their own notifications: an explicit
+            // `notify` config means the operator (or, with `Judgment`, the
+            // agent itself) decides what is worth sending, and the keyword
+            // sniffing below would send a second, redundant copy. The comment
+            // here has claimed this gate since the routing landed; the code
+            // did not have it, so both paths ran.
+            if agent.notify.is_none() && Self::is_alert_decision(decision) {
                 self.handle_alert_decision(agent, decision, &mut notifications_sent)
                     .await;
             }
@@ -676,6 +683,9 @@ impl AgentExecutor {
         let should_send = match notify.on {
             neomind_storage::NotifyOn::Always => true,
             neomind_storage::NotifyOn::Failure => failed,
+            // The agent speaks for itself through its tools; a routed
+            // notification would be a second voice saying the same thing.
+            neomind_storage::NotifyOn::Judgment => false,
         };
         if !should_send {
             return;

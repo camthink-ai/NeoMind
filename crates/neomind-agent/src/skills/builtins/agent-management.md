@@ -123,9 +123,24 @@ text:
 neomind agent update 冷库巡检 --notify '{"channels":["IM","webhook:ops"],"on":"always"}'
 ```
 
-`on: "failure"` (default) = silence is health; `on: "always"` = every
-verdict delivered. Channel names come from `neomind message channel-list`.
-Agents without a notify config keep the legacy keyword behavior.
+Three triggers:
+
+| `on` | Sends |
+|---|---|
+| `"failure"` (default) | only when the run failed — silence is health |
+| `"always"` | every run, success or failure |
+| `"judgment"` | **nothing.** The task decides for itself, in its own prompt, whether the operator needs to hear from it |
+
+Channel names come from `neomind message channel-list`. Agents with **no**
+notify config keep the legacy keyword behavior (the conclusion is scanned for
+words like 异常/critical); once a config exists, that path is off — which is
+what makes `"judgment"` mean silence rather than "silence plus a sniffed alert".
+
+Reach for `"judgment"` when the user asks for something periodic but does not
+want a message every time — "only tell me if it matters", "别每次都发", "让它自己判断".
+The task gets the tools and the instruction to judge; you do not need to write
+that logic. Do **not** combine it with `"always"` reasoning ("it should also
+send every time") — pick one.
 
 `IM` is a built-in channel — no setup, and always available. Reach for it
 whenever the user asks to be told where they are already talking to you
