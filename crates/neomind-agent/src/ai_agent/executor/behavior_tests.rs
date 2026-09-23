@@ -497,6 +497,64 @@ async fn the_reported_confidence_reaches_the_record_and_the_published_value() {
     );
 }
 
+/// The error has to say *why*, not just that. "No data" sends the operator
+/// looking at the agent; "device:cam-01/occupied last reported 3h ago" sends
+/// them to the camera, which is where the problem actually is.
+#[tokio::test]
+async fn a_starved_run_names_the_source_that_went_quiet_and_when() {
+    use neomind_storage::timeseries::DataPoint as TsPoint;
+
+    let (mut executor, mut agent, _registry) = build_harness().await;
+    let ts = neomind_storage::TimeSeriesStore::memory().expect("memory timeseries");
+    ts.write(
+        "device:cam-01",
+        "occupied",
+        TsPoint {
+            timestamp: chrono::Utc::now().timestamp() - 3 * 3600,
+            value: serde_json::json!(true),
+            quality: None,
+            metadata: None,
+        },
+    )
+    .await
+    .expect("seed an old reading");
+    ts.flush().expect("flush");
+    executor.set_time_series_storage(ts);
+
+    agent.execution_mode = neomind_storage::agents::ExecutionMode::Structured;
+    agent.resources = vec![neomind_storage::AgentResource {
+        resource_type: neomind_storage::ResourceType::Metric,
+        resource_id: "cam-01:occupied".to_string(),
+        name: "occupied".to_string(),
+        config: serde_json::json!({}),
+    }];
+    agent.output_schema = Some(vec![neomind_storage::OperatorField {
+        name: "status".into(),
+        field_type: neomind_storage::OperatorFieldType::Number,
+        unit: None,
+        description: None,
+    }]);
+
+    let message = executor
+        .execute_structured("exec-silent", &agent, vec![])
+        .await
+        .expect_err("a run with nothing to read must fail")
+        .to_string();
+
+    assert!(
+        message.contains("device:cam-01/occupied"),
+        "the source has to be named: {message}"
+    );
+    assert!(
+        message.contains("3h"),
+        "and how long it has been quiet: {message}"
+    );
+    assert!(
+        !message.contains("Configuration"),
+        "the camera being offline is not a configuration mistake: {message}"
+    );
+}
+
 /// The dispatch in `execute_internal` must route a structured agent to the L0
 /// branch. Its sibling above calls `execute_structured` directly, so it cannot
 /// catch a dispatch that routes elsewhere — this one enters through the same

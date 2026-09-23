@@ -15,6 +15,24 @@
 /// drift the way a repeated string would.
 pub const EXECUTION_ID_KEY: &str = "execution_id";
 
+/// A compact "how long ago" for a diagnostic line: `45s ago`, `12m ago`,
+/// `3h20m ago`, `2d ago`.
+fn humanize_age(seconds: i64) -> String {
+    match seconds {
+        s if s < 60 => format!("{s}s ago"),
+        s if s < 3600 => format!("{}m ago", s / 60),
+        s if s < 86_400 => {
+            let (h, m) = (s / 3600, (s % 3600) / 60);
+            if m == 0 {
+                format!("{h}h ago")
+            } else {
+                format!("{h}h{m}m ago")
+            }
+        }
+        s => format!("{}d ago", s / 86_400),
+    }
+}
+
 use super::data_collector::is_observation;
 use super::*;
 
@@ -56,8 +74,14 @@ impl AgentExecutor {
         // Not publishing is the point — it is what stops a downstream dashboard
         // from reading a stale "正常" as freshly computed.
         if !data_collected.iter().any(is_observation) {
-            return Err(NeoMindError::Config(format!(
-                "structured agent '{}' collected no data from its bound sources — nothing to                  infer from (the memory summary is its own previous conclusion, not an                  observation). Publishing would replace a real reading with a guess.",
+            // Say *why*, not just that. "No data" is the symptom; what the
+            // operator needs is "your camera stopped reporting three hours ago",
+            // which is a different problem from "it never reported at all".
+            let silence = self.describe_bound_source_silence(agent).await;
+            return Err(NeoMindError::Device(format!(
+                "agent '{}' has nothing to work from — nothing came back from its bound \
+                 sources. {silence} The last published value still stands; replacing it \
+                 with a guess would make a stale reading look freshly computed.",
                 agent.name
             )));
         }
@@ -184,6 +208,47 @@ pub async fn dry_run_structured(
     /// Publish validated fields as `ai:{agent_id}:{field}` data sources — dual
     /// telemetry write + virtual `DeviceMetric`, the single publish path for
     /// every output contract (L0 and, from M2-2, reasoning agents too).
+    /// Which sources the agent binds, and when each last reported.
+    ///
+    /// Reads the *unbounded* latest per source rather than the collection
+    /// window, precisely because the window is what came back empty — the
+    /// point is to say how far back the silence goes.
+    async fn describe_bound_source_silence(&self, agent: &AiAgent) -> String {
+        let Some(storage) = &self.time_series_storage else {
+            return "No time-series storage is attached, so nothing could be read.".to_string();
+        };
+
+        let mut parts = Vec::new();
+        for resource in &agent.resources {
+            let (source, metric) = match resource.resource_type {
+                ResourceType::Metric => match resource.resource_id.split_once(':') {
+                    Some((device, metric)) => (format!("device:{device}"), metric.to_string()),
+                    None => continue,
+                },
+                ResourceType::ExtensionMetric => {
+                    match neomind_core::datasource::DataSourceId::parse(&resource.resource_id) {
+                        Some(ds) => (ds.source_part(), ds.metric_part().to_string()),
+                        None => continue,
+                    }
+                }
+                _ => continue,
+            };
+
+            match storage.query_latest(&source, &metric).await.ok().flatten() {
+                Some(point) => {
+                    let age = (chrono::Utc::now().timestamp() - point.timestamp).max(0);
+                    parts.push(format!("{source}/{metric} last reported {}", humanize_age(age)));
+                }
+                None => parts.push(format!("{source}/{metric} has never reported")),
+            }
+        }
+
+        if parts.is_empty() {
+            return "It has no readable data sources bound at all.".to_string();
+        }
+        format!("Bound sources: {}.", parts.join("; "))
+    }
+
     pub(super) async fn publish_output_fields(
         &self,
         agent_id: &str,
