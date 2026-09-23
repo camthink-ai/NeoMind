@@ -12,6 +12,8 @@
 
 use serde_json::Value;
 
+use neomind_messages::{Message, MessageStatus};
+
 use crate::models::{RuleExecutionResult, RuleId};
 
 /// Metadata key: which rule fired.
@@ -77,16 +79,81 @@ pub fn find_execution(
         .find(|r| r.triggered_at.timestamp_millis() == execution_ms)
 }
 
+/// How many dismissals are enough to suggest the rule's condition is too
+/// tight (002 §3.4). A count rather than a rate: three false alarms on a quiet
+/// rule and three on a noisy one mean the same thing to the person being told
+/// things that are not true.
+pub const FALSE_POSITIVE_REVIEW_THRESHOLD: usize = 3;
+
+/// One rule's alert quality, as the feedback loop sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RuleQuality {
+    pub alerts: usize,
+    pub false_positives: usize,
+}
+
+/// The rule an alert came from, when it came from one.
+///
+/// Deliberately weaker than [`execution_reference`]: counting dismissals needs
+/// to know *which rule*, and unlike a chain lookup it must keep working after
+/// the execution itself has aged out of history.
+pub fn alert_rule_id(metadata: Option<&Value>) -> Option<RuleId> {
+    let rule_id = metadata?.get(RULE_ID_KEY)?.as_str()?;
+    RuleId::from_string(rule_id).ok()
+}
+
+/// How one rule's alerts have been received.
+///
+/// Derived from the messages themselves rather than a separate sample store:
+/// the verdict is already persisted on the alert, and the rule it belongs to is
+/// already in that alert's metadata, so a second copy could only drift.
+pub fn rule_quality(alerts: &[Message], rule_id: &RuleId) -> RuleQuality {
+    alerts
+        .iter()
+        .filter(|m| alert_rule_id(m.metadata.as_ref()).as_ref() == Some(rule_id))
+        .fold(RuleQuality::default(), |mut acc, m| {
+            acc.alerts += 1;
+            if m.status == MessageStatus::FalsePositive {
+                acc.false_positives += 1;
+            }
+            acc
+        })
+}
+
+/// Whether to tell the operator this rule's condition probably needs loosening.
+/// A suggestion, never an automatic change — the operator decides.
+pub fn suggest_threshold_review(false_positives: usize) -> bool {
+    false_positives >= FALSE_POSITIVE_REVIEW_THRESHOLD
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
+    use neomind_messages::MessageSeverity;
     use serde_json::json;
 
     /// A real UUID: `RuleId` wraps one, so a readable placeholder like "r-1"
     /// does not parse — which is itself the property the malformed-reference
     /// test below relies on.
     const RULE_ID: &str = "11111111-1111-1111-1111-111111111111";
+
+    fn alert(rule_id: &str, status: MessageStatus) -> Message {
+        let mut message = Message::new(
+            "alert",
+            MessageSeverity::Warning,
+            "Cold room".to_string(),
+            "out of range".to_string(),
+            "rule_engine".to_string(),
+        );
+        message.metadata = Some(json!({ RULE_ID_KEY: rule_id }));
+        message.status = status;
+        message
+    }
+
+    fn dismissed_alert(rule_id: &str) -> Message {
+        alert(rule_id, MessageStatus::FalsePositive)
+    }
 
     fn execution_at(ms: i64) -> RuleExecutionResult {
         RuleExecutionResult {
@@ -158,6 +225,33 @@ mod tests {
 
         let hit = find_execution(&history, 1_700_000_000_500).expect("the row must be found");
         assert_eq!(hit.triggered_at.timestamp_millis(), 1_700_000_000_500);
+    }
+
+    /// M2-5 / 002 §3.4, the second half of the loop: dismissals are counted
+    /// per rule so the platform can suggest the condition is too tight.
+    #[test]
+    fn the_loop_counts_only_this_rules_dismissed_alerts() {
+        let other = "22222222-2222-2222-2222-222222222222";
+        let messages = vec![
+            dismissed_alert(RULE_ID),
+            dismissed_alert(RULE_ID),
+            alert(RULE_ID, MessageStatus::Active),
+            dismissed_alert(other),
+            Message::system("System".to_string(), "not a rule alert".to_string()),
+        ];
+
+        let quality = rule_quality(&messages, &RuleId::from_string(RULE_ID).unwrap());
+
+        assert_eq!(quality.alerts, 3, "only this rule's alerts");
+        assert_eq!(quality.false_positives, 2);
+    }
+
+    /// A suggestion, never an automatic change: the operator decides.
+    #[test]
+    fn a_threshold_review_is_suggested_only_after_enough_dismissals() {
+        assert!(!suggest_threshold_review(0));
+        assert!(!suggest_threshold_review(2), "two is not yet a pattern");
+        assert!(suggest_threshold_review(3));
     }
 
     /// The history is pruned after 30 days (`RULE_HISTORY_RETENTION_DAYS`), so
