@@ -703,7 +703,37 @@
         "name": "Advanced",
         "desc": "High freedom, your words",
         "prompt": "Describe your task — four things make a good brief:\n1. Goal — what to achieve;\n2. Input — which data or cameras to look at;\n3. Judgement — what counts as normal, what as trouble;\n4. Action — what to do and who to notify when trouble shows."
-      }
+      },
+      "event": {
+        "name": "Event judgement",
+        "desc": "Judge each change as it arrives",
+        "prompt": "Something changed — judge it now.\n\nWhen a bound source reports, decide what it means:\n1. Read the current values of the bound sources;\n2. Say whether this is normal, worth watching, or a problem;\n3. Put what happened in one line an operator can act on.\nA single reading is evidence, not proof — when the data is ambiguous, say so rather than picking a verdict.",
+        "fStatusValues": "normal, watch, problem",
+        "fStatusDesc": "What this reading means",
+        "fDetailDesc": "One line on what happened"
+      },
+      "rootCause": {
+        "name": "Root cause",
+        "desc": "Several sources, one conclusion",
+        "prompt": "You are the engineer on call. Something is wrong, or looks like it may be.\n1. Work out what actually happened — query other sources and use your tools to test your hunches; do not stop at the first plausible story;\n2. Keep what the data shows separate from what you are inferring;\n3. Name the most likely cause, and how far the evidence actually goes;\n4. Give the one thing the operator should do next.\nIf the evidence does not support a cause, say that — a wrong root cause costs more than an honest \"not enough to tell\".",
+        "fCauseDesc": "Most likely cause",
+        "fConfValues": "high, medium, low",
+        "fConfDesc": "How far the evidence actually goes",
+        "fSuggestDesc": "The next thing to do"
+      },
+      "weekly": {
+        "name": "Weekly report",
+        "desc": "Summarise the week",
+        "prompt": "You are the operations analyst. Summarise the bound sources over the last 7 days:\n1. The week's overall status and the totals that matter;\n2. Recurring problems — what happened more than once, and how often;\n3. Comparison with the week before (better / worse / flat);\n4. The 1–3 things worth changing next week.\nWrite about the week as a whole; a one-off spike is only worth a mention if it keeps coming back or is still unresolved."
+      },
+      "shift": {
+        "name": "Shift check",
+        "desc": "Look every half hour, report what changed",
+        "prompt": "You are on inspection duty. Take a quick look at the bound sources:\n1. Compare against the last time you looked;\n2. Report only what changed — a reading that held steady is not news;\n3. If something is drifting toward trouble, say which way and how fast.\nTwo lines is usually enough. Say \"nothing new\" when that is the truth; a report that pads every round is one nobody reads."
+      },
+      "all": "All templates",
+      "allTitle": "Start from a template",
+      "allSubtitle": "Starting points, not locks — every field a template fills stays editable."
     },
     "notify": {
       "title": "Notify",

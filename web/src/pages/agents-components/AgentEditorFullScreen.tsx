@@ -46,6 +46,7 @@ import {
   Brain,
   MousePointerClick,
   GitBranch,
+  ArrowRight,
 } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Link } from 'react-router-dom'
@@ -72,12 +73,13 @@ import type {
 import { BuilderShell } from '@/components/automation/dialog/BuilderShell'
 import {
   ResourceSelectionDialog,
+  PresetPickerDialog,
   ScheduleCard,
   INTERVALS,
   HOURS,
   deriveExecutionMode,
   hasOutputContract,
-  AGENT_PRESETS,
+  FEATURED_PRESETS,
   DEFAULT_LOOKBACK_MINUTES,
   DEFAULT_MAX_CHAIN_DEPTH,
   parseTriggerFilter,
@@ -235,6 +237,7 @@ export function AgentEditorFullScreen({
   // The chosen starting point, or null while the picker is showing. Create-only:
   // an existing agent already has its content.
   const [appliedPreset, setAppliedPreset] = useState<AgentPreset['key'] | null>(null)
+  const [presetDialogOpen, setPresetDialogOpen] = useState(false)
   const [memoryMode, setMemoryMode] = useState<AgentMemoryMode | null>(null)
   // Notification routing: null = 未配置(走旧的关键词行为)。
   const [notify, setNotify] = useState<AgentNotify | null>(null)
@@ -1303,6 +1306,15 @@ export function AgentEditorFullScreen({
     setCanActAutonomously(preset.fill.autonomy)
     setOutputSchema(preset.fill.outputSchema ? preset.fill.outputSchema(tAgent).map((f) => ({ ...f })) : [])
     setMemoryMode(preset.fill.memoryMode)
+    // A preset that says nothing about routing leaves `notify` null, and the
+    // API's floor applies. A preset that does say — the two whose conclusions
+    // are the point — routes nowhere on purpose: `judgment` means the task
+    // speaks through its own tools, not through the machinery.
+    setNotify(
+      preset.fill.notify
+        ? { channels: [...preset.fill.notify.channels], on: preset.fill.notify.on }
+        : null,
+    )
     const sched = preset.fill.schedule
     setScheduleType(sched.type)
     if (sched.type === 'timer') {
@@ -1312,8 +1324,10 @@ export function AgentEditorFullScreen({
         setScheduleHour(sched.hour)
         setScheduleMinute(0)
       }
+      if (sched.weekday !== undefined) setSelectedWeekdays([sched.weekday])
     }
     setAppliedPreset(preset.key)
+    setPresetDialogOpen(false)
   }
 
   const rail: Record<string, React.ReactNode> = {}
@@ -1344,23 +1358,39 @@ export function AgentEditorFullScreen({
                 </div>
               ) : (
                 <div className="space-y-2">
-                  <Label className="text-sm font-medium">{tAgent('creator.preset.title')}</Label>
-                  <div className="grid grid-cols-1 gap-1.5">
-                    {AGENT_PRESETS.map((preset) => (
-                      <button
-                        key={preset.key}
-                        type="button"
-                        onClick={() => applyPreset(preset)}
-                        className="flex flex-col items-start rounded-lg border border-border px-3 py-2 text-left transition-colors hover:border-muted-foreground hover:bg-muted"
-                      >
-                        <span className="text-sm font-medium">
-                          {tAgent(`creator.preset.${preset.key}.name`)}
-                        </span>
-                        <span className="truncate text-xs text-muted-foreground">
-                          {tAgent(`creator.preset.${preset.key}.desc`)}
-                        </span>
-                      </button>
-                    ))}
+                  <div className="flex items-center justify-between gap-2">
+                    <Label className="text-sm font-medium">{tAgent('creator.preset.title')}</Label>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="xs"
+                      className="text-muted-foreground"
+                      onClick={() => setPresetDialogOpen(true)}
+                    >
+                      {tAgent('creator.preset.all')}
+                      <ArrowRight className="ml-1 h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-1 gap-1">
+                    {FEATURED_PRESETS.map((preset) => {
+                      const Icon = preset.icon
+                      return (
+                        <button
+                          key={preset.key}
+                          type="button"
+                          onClick={() => applyPreset(preset)}
+                          className="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-left transition-colors hover:border-muted-foreground hover:bg-muted"
+                        >
+                          <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <span className="shrink-0 text-sm font-medium">
+                            {tAgent(`creator.preset.${preset.key}.name`)}
+                          </span>
+                          <span className="min-w-0 truncate text-xs text-muted-foreground">
+                            {tAgent(`creator.preset.${preset.key}.desc`)}
+                          </span>
+                        </button>
+                      )
+                    })}
                   </div>
                 </div>
               )
@@ -2860,6 +2890,13 @@ export function AgentEditorFullScreen({
         toggleResource={toggleResource}
         toggleRecommendation={toggleRecommendation}
         scheduleType={scheduleType}
+      />
+
+      {/* Sibling of the editor dialog for the same reason as the one above. */}
+      <PresetPickerDialog
+        open={presetDialogOpen}
+        onOpenChange={setPresetDialogOpen}
+        onSelect={applyPreset}
       />
     </>
   )
