@@ -137,6 +137,20 @@ in-app is indistinguishable from one that never ran.
 
 ### Binding Resources
 
+**Never invent these IDs.** The examples below are shapes, not values — a real
+`sensor-001` may not exist, and an agent bound to a device that does not exist
+collects nothing. Find them first:
+
+- `neomind device list` — the real device IDs. It lists devices only; it does
+  **not** carry metric names.
+- `neomind device get <ID>` — one device's actual metric fields.
+- `neomind device types list` — a type's `metric_fields`, for what a device of
+  that type can report.
+
+A Structured agent with no bound source **refuses to run** rather than publish
+a guess, so binding the wrong (or no) source is an agent that never succeeds.
+Confirm the IDs exist before creating.
+
 **`--device-ids`** (simple): comma-separated device IDs.
 ```bash
 --device-ids 'sensor-001,sensor-002'

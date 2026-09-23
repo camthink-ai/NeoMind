@@ -962,6 +962,15 @@ export function AgentEditorFullScreen({
   }, [availableResources, searchQuery])
 
   const outputContractOk = !isStructuredMode || hasOutputContract(outputSchema)
+  // A Structured agent whose bound sources are all silent *refuses to run* —
+  // `execute_structured` errors rather than publish a guess. So an agent saved
+  // with no resources is one that can never succeed, and the editor is the only
+  // place that can say so before the user waits for a schedule to fire.
+  //
+  // Focused and Free are NOT held to this: Focused keeps a tool loop and can
+  // gather its own inputs, Free takes none by design. Blocking those would
+  // reject agents that work.
+  const resourceOk = !isStructuredMode || selectedResources.length > 0
   const triggerFilter: TriggerFilter = {
     mode: triggerMode,
     sources: triggerSources,
@@ -980,6 +989,7 @@ export function AgentEditorFullScreen({
     name.trim().length > 0 &&
     userPrompt.trim().length > 0 &&
     outputContractOk &&
+    resourceOk &&
     !triggerFilterIssue
 
   // ========================================================================
@@ -1665,6 +1675,9 @@ export function AgentEditorFullScreen({
                   <p className="text-xs text-muted-foreground">
                     {tAgent('creator.structured.multiRoundCost')}
                   </p>
+                )}
+                {!resourceOk && (
+                  <p className="text-sm text-error">{tAgent('creator.validation.resourceRequired')}</p>
                 )}
                 {!outputContractOk && (
                   <p className="text-sm text-error">{tAgent('creator.validation.outputFieldRequired')}</p>

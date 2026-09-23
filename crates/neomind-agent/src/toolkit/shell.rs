@@ -1117,7 +1117,7 @@ impl ShellTool {
                     Some("Device not found. Run 'neomind device list' first, then 'neomind device control <ID> <COMMAND> --params {json}' (COMMAND is positional, not a flag).".to_string())
                 } else if (action == "history" || action == "latest") && combined.contains("metric")
                 {
-                    Some("Don't guess metric names. Run 'neomind device list' to see all metric_fields per type, or 'neomind device get <ID>' for a specific device's actual field names.".to_string())
+                    Some("Don't guess metric names. 'neomind device list' shows devices only — it carries no field names. Use 'neomind device get <ID>' for one device's actual metric fields, or 'neomind device types list' for a type's metric_fields.".to_string())
                 } else {
                     Some("Available actions: list, get, create, update, delete, latest, history, control, write-metric, webhook-url, types, drafts. ID is positional: neomind device <action> <ID> [flags].".to_string())
                 }
@@ -1150,7 +1150,7 @@ impl ShellTool {
                 if is_not_found {
                     Some("Run 'neomind agent list' to see available agents.".to_string())
                 } else if action == "create" && is_validation {
-                    Some("Required fields: --name, --prompt, --schedule-type (event|interval|cron|manual). Example: neomind agent create --name \"monitor\" --prompt \"Check devices\" --schedule-type event".to_string())
+                    Some("Required fields: --name, --prompt, --schedule-type (event|interval|cron|manual). Example: neomind agent create --name \"monitor\" --prompt \"Check devices\" --schedule-type event. Never invent device IDs or metric names: run 'neomind device list' for real IDs, then 'neomind device get <ID>' for that device's metric fields. A structured agent with no bound source refuses to run.".to_string())
                 } else if action == "control" && is_validation {
                     Some("Status is positional: neomind agent control <ID> <active|paused>. Example: neomind agent control abc123 active".to_string())
                 } else {
