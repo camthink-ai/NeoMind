@@ -26,6 +26,33 @@ function platformDisplayName(platform: string, t: TFunction): string {
   return platform.charAt(0).toUpperCase() + platform.slice(1)
 }
 
+/**
+ * Copy-to-clipboard icon button with its own "copied" check feedback.
+ * Per-instance state so several of these (one per invite row, plus the
+ * bind-command cards) can coexist without stealing each other's checkmark.
+ */
+function CopyIconButton({ text, label, copiedToast }: { text: string; label: string; copiedToast: string }) {
+  const { t } = useTranslation(['settings'])
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = async () => {
+    try {
+      await copyToClipboard(text)
+      setCopied(true)
+      notifySuccess(copiedToast)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      notifyError(t('settings:im.copyFailed'))
+    }
+  }
+
+  return (
+    <IconButton size="sm" aria-label={label} onClick={handleCopy}>
+      {copied ? <Check className="h-4 w-4 text-success" /> : <Copy className="h-4 w-4" />}
+    </IconButton>
+  )
+}
+
 /** Normalize a backend bridge status into { label, className } for a Badge. */
 function statusBadge(status: string): { label: string; className: string } {
   const s = (status || '').toLowerCase()
@@ -58,9 +85,8 @@ export function ImBridgesTab() {
   const [selectedPlatform, setSelectedPlatform] = useState<ImPlatformDef | null>(null)
   const [creating, setCreating] = useState(false)
 
-  // Invite generation + clipboard
+  // Invite generation
   const [generating, setGenerating] = useState(false)
-  const [copiedLink, setCopiedLink] = useState(false)
 
   useEffect(() => {
     loadBridges()
@@ -202,17 +228,6 @@ export function ImBridgesTab() {
       setAllowlist(prev => prev.filter(c => c !== chatId))
     } catch (error) {
       handleError(error, { operation: 'Remove allowed chat' })
-    }
-  }
-
-  const handleCopyLink = async (text: string) => {
-    try {
-      await copyToClipboard(text)
-      setCopiedLink(true)
-      notifySuccess(t('settings:im.linkCopied'))
-      setTimeout(() => setCopiedLink(false), 2000)
-    } catch {
-      notifyError(t('settings:im.copyFailed'))
     }
   }
 
@@ -375,13 +390,11 @@ export function ImBridgesTab() {
                       <code className="flex-1 min-w-0 truncate text-xs font-mono bg-muted-30 px-2 py-1 rounded">
                         {deepLink}
                       </code>
-                      <IconButton
-                        size="sm"
-                        aria-label={t('settings:im.copyLink', { defaultValue: 'Copy link' })}
-                        onClick={() => handleCopyLink(deepLink)}
-                      >
-                        {copiedLink ? <Check className="h-4 w-4 text-success" /> : <Copy className="h-4 w-4" />}
-                      </IconButton>
+                      <CopyIconButton
+                        text={deepLink}
+                        label={t('settings:im.copyLink', { defaultValue: 'Copy link' })}
+                        copiedToast={t('settings:im.linkCopied')}
+                      />
                     </div>
                   </div>
                 </div>
@@ -390,43 +403,42 @@ export function ImBridgesTab() {
           )}
 
           {/* Invite generated but no deep link / QR available.
-              Two distinct causes:
-              (a) Telegram: the bot was not identified yet (token not validated
-                  / username unknown) — show a generic "not ready" note.
-              (b) Feishu: there is no deep-link concept at all; the user binds
-                  a chat by sending the bot `/start <token>` manually. Without
-                  this branch the invite card silently disappears after a
-                  "generate" success, looking broken. */}
+              The token is still the only way to bind a chat — `/start <token>`
+              is handled platform-agnostically by the backend router (before
+              the allowlist guard), so always surface the command with a copy
+              button; only the hint text differs:
+              (a) Feishu: no deep-link concept at all, by design.
+              (b) Telegram (or any platform) with the bot not yet identified
+                  (token not validated / username unknown). */}
           {lastInvite && !deepLink && (
             <Card className="mb-3 border-dashed">
               <CardContent className="py-4">
-                {selectedBridge.platform === 'feishu' ? (
-                  <div className="flex items-start gap-2 text-sm text-muted-foreground">
-                    <MessageSquare className="h-4 w-4 mt-0.5 shrink-0" />
-                    <div className="min-w-0 flex-1">
-                      <p>{t('settings:im.feishuBindHint')}</p>
-                      <div className="mt-2 flex items-center gap-2">
-                        <code className="flex-1 min-w-0 truncate text-xs font-mono bg-muted-30 px-2 py-1 rounded">
-                          /start {lastInvite.token}
-                        </code>
-                        <IconButton
-                          size="sm"
-                          aria-label={t('settings:im.copyLink', { defaultValue: 'Copy link' })}
-                          onClick={() => handleCopyLink(`/start ${lastInvite.token}`)}
-                        >
-                          {copiedLink ? <Check className="h-4 w-4 text-success" /> : <Copy className="h-4 w-4" />}
-                        </IconButton>
-                      </div>
+                <div className="flex items-start gap-2 text-sm text-muted-foreground">
+                  <MessageSquare className="h-4 w-4 mt-0.5 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p>
+                      {selectedBridge.platform === 'feishu'
+                        ? t('settings:im.feishuBindHint')
+                        : t('settings:im.manualBindHint', {
+                            defaultValue:
+                              'Deep link is unavailable until the bot is identified. Send the bot the following command to bind this chat:',
+                          })}
+                    </p>
+                    <div className="mt-2 flex items-center gap-2">
+                      <code
+                        className="flex-1 min-w-0 truncate text-xs font-mono bg-muted-30 px-2 py-1 rounded"
+                        title={`/start ${lastInvite.token}`}
+                      >
+                        /start {lastInvite.token}
+                      </code>
+                      <CopyIconButton
+                        text={`/start ${lastInvite.token}`}
+                        label={t('settings:im.copyCommand', { defaultValue: 'Copy command' })}
+                        copiedToast={t('settings:im.commandCopied')}
+                      />
                     </div>
                   </div>
-                ) : (
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <QrCode className="h-4 w-4" />
-                    {t('settings:im.deepLinkUnavailable', {
-                      defaultValue: 'Deep link is unavailable until the bot is identified.',
-                    })}
-                  </div>
-                )}
+                </div>
               </CardContent>
             </Card>
           )}
@@ -446,14 +458,21 @@ export function ImBridgesTab() {
           ) : (
             <div className="space-y-2">
               {invites.map(inv => {
-                const short = inv.token.length > 10 ? `${inv.token.slice(0, 8)}…` : inv.token
                 return (
                   <Card key={inv.token}>
                     <CardContent className="py-3">
                       <div className="flex items-center justify-between gap-3">
                         <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <code className="text-xs font-mono">{short}</code>
+                          <div className="flex items-center gap-2 flex-wrap min-w-0">
+                            {/* Full token in the DOM (CSS-truncated, title on
+                                hover): the generate-time card with its copy
+                                button is gone once the user leaves this view,
+                                so this list is the only place an old invite's
+                                token can still be recovered — keep it complete
+                                and copyable. */}
+                            <code className="text-xs font-mono truncate min-w-0" title={inv.token}>
+                              {inv.token}
+                            </code>
                             {inv.used ? (
                               <Badge className="bg-success-light text-success border-success-light text-xs">
                                 {t('settings:im.used')}
@@ -461,21 +480,28 @@ export function ImBridgesTab() {
                             ) : (
                               <Badge variant="secondary" className="text-xs">{t('settings:im.unused')}</Badge>
                             )}
-                            {inv.used && inv.bound_chat_id && (
-                              <span className="text-xs text-muted-foreground">
-                                {t('settings:im.boundTo', { chatId: inv.bound_chat_id })}
-                              </span>
-                            )}
                           </div>
+                          {inv.used && inv.bound_chat_id && (
+                            <span className="text-xs text-muted-foreground">
+                              {t('settings:im.boundTo', { chatId: inv.bound_chat_id })}
+                            </span>
+                          )}
                         </div>
-                        <IconButton
-                          size="sm"
-                          aria-label={t('settings:im.revoke', { defaultValue: 'Revoke' })}
-                          className="hover:text-error hover:bg-error-light"
-                          onClick={() => handleRevoke(inv.token)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </IconButton>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <CopyIconButton
+                            text={inv.token}
+                            label={t('settings:im.copyToken', { defaultValue: 'Copy token' })}
+                            copiedToast={t('settings:im.tokenCopied')}
+                          />
+                          <IconButton
+                            size="sm"
+                            aria-label={t('settings:im.revoke', { defaultValue: 'Revoke' })}
+                            className="hover:text-error hover:bg-error-light"
+                            onClick={() => handleRevoke(inv.token)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </IconButton>
+                        </div>
                       </div>
                     </CardContent>
                   </Card>
