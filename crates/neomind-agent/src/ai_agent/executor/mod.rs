@@ -325,6 +325,13 @@ pub struct AgentExecutor {
     /// this is per AGENT: one physical event can match several of its sources,
     /// and the guardrail merges them into a single inference.
     pub(crate) last_event_inference: parking_lot::RwLock<HashMap<String, i64>>,
+    /// `all`-window aggregation state (M2-1): agent_id -> the open window.
+    /// At most one entry per agent, so this is bounded by the agent count.
+    /// Entries are dropped when the window expires or the agent fires — an
+    /// expired window is caught lazily inside `EventFilter::observe`, so no
+    /// separate sweep is needed.
+    pub(crate) event_windows:
+        parking_lot::RwLock<HashMap<String, neomind_storage::agents::WindowState>>,
     /// Structured (L0) daily inference budget: agent_id -> (YYYY-MM-DD, calls).
     /// In-memory v1 — resets on restart, which only ever grants extra calls
     /// for one day; the scheduler gate reads it, execute_structured increments.
@@ -378,6 +385,7 @@ impl AgentExecutor {
             event_agents: Arc::new(RwLock::new(HashMap::new())),
             recent_executions: Arc::new(RwLock::new(HashMap::new())),
             last_event_inference: parking_lot::RwLock::new(HashMap::new()),
+            event_windows: parking_lot::RwLock::new(HashMap::new()),
             daily_call_counts: parking_lot::RwLock::new(HashMap::new()),
             extension_registry,
             tool_registry: parking_lot::RwLock::new(config.tool_registry.clone()),

@@ -448,6 +448,135 @@ async fn event_agent_without_operator_config_keeps_per_source_cooldown_only() {
     );
 }
 
+/// Seed an event agent whose filter uses the M2 `all` form: the agent runs
+/// only once BOTH sources have reported inside the window.
+async fn build_event_agent_with_filter(filter: String) -> (AgentExecutor, AiAgent) {
+    let (mut executor, mut agent, _registry) = build_harness().await;
+    agent.schedule = AgentSchedule {
+        schedule_type: ScheduleType::Event,
+        interval_seconds: None,
+        cron_expression: None,
+        timezone: None,
+        event_filter: Some(filter),
+    };
+    executor.store().save_agent(&agent).await.expect("seed store");
+    let rt: Arc<dyn LlmRuntime> = Arc::new(MockLlmRuntime::new(vec![MockResponse::text("ok")]));
+    executor.set_llm_runtime(rt).await;
+    (executor, agent)
+}
+
+async fn build_all_filter_event_agent(within_secs: Option<u64>) -> (AgentExecutor, AiAgent) {
+    let window = within_secs
+        .map(|w| format!(r#","within_secs":{w}"#))
+        .unwrap_or_default();
+    build_event_agent_with_filter(format!(
+        r#"{{"all":[{{"type":"device","id":"cam-01","field":"occupied"}},{{"type":"extension","id":"booking","field":"reserved"}}]{window}}}"#
+    ))
+    .await
+}
+
+/// Drive one data event through the production trigger entry point.
+async fn fire_event(executor: &AgentExecutor, source_type: &str, source_id: &str, field: &str) {
+    executor
+        .check_and_trigger_data_event(
+            source_type,
+            source_id.to_string(),
+            field.to_string(),
+            &neomind_core::event::MetricValue::Boolean(true),
+        )
+        .await
+        .expect("trigger must not error");
+}
+
+/// The reason multi-source triggering exists at all: "occupancy AND not
+/// booked" must not fire on either source alone — firing on one of them is
+/// exactly what today's OR-only filter does.
+#[tokio::test]
+async fn all_filter_waits_for_every_source_before_firing() {
+    let (executor, _agent) = build_all_filter_event_agent(Some(1200)).await;
+
+    executor
+        .check_and_trigger_data_event(
+            "device",
+            "cam-01".to_string(),
+            "occupied".to_string(),
+            &neomind_core::event::MetricValue::Boolean(true),
+        )
+        .await
+        .expect("trigger must not error");
+
+    assert!(
+        !executor
+            .recent_executions
+            .read()
+            .await
+            .contains_key("test-agent:device:cam-01"),
+        "one of the two sources must NOT fire the agent"
+    );
+
+    executor
+        .check_and_trigger_data_event(
+            "extension",
+            "booking".to_string(),
+            "reserved".to_string(),
+            &neomind_core::event::MetricValue::Boolean(false),
+        )
+        .await
+        .expect("trigger must not error");
+
+    assert!(
+        executor
+            .recent_executions
+            .read()
+            .await
+            .contains_key("test-agent:extension:booking"),
+        "the source that completes the window must fire the agent"
+    );
+}
+
+/// `any` and `all` are two independent groups in one filter, not nested
+/// logic: an `any` match fires immediately and does not wait for the `all`
+/// window (design 001 §5.2.2 — the filter is `any` OR `all`, nothing more).
+#[tokio::test]
+async fn an_any_group_fires_on_its_own_alongside_an_all_group() {
+    let (executor, _agent) = build_event_agent_with_filter(
+        r#"{"any":[{"type":"device","id":"door-01","field":"open"}],"all":[{"type":"device","id":"cam-01","field":"occupied"},{"type":"extension","id":"booking","field":"reserved"}],"within_secs":1200}"#
+            .to_string(),
+    )
+    .await;
+
+    fire_event(&executor, "device", "door-01", "open").await;
+
+    assert!(
+        executor
+            .recent_executions
+            .read()
+            .await
+            .contains_key("test-agent:device:door-01"),
+        "an `any` match must fire straight away, without waiting for the `all` window"
+    );
+}
+
+/// The regression that matters most: a saved agent still using the legacy
+/// `sources` shape must keep firing exactly as it did before M2.
+#[tokio::test]
+async fn a_legacy_sources_filter_still_fires_on_a_single_match() {
+    let (executor, _agent) =
+        build_event_agent_with_filter(r#"{"sources":[{"type":"device","id":"dev-a","field":"temp"}]}"#.to_string())
+            .await;
+
+    fire_event(&executor, "device", "dev-a", "temp").await;
+
+    assert!(
+        executor
+            .recent_executions
+            .read()
+            .await
+            .contains_key("test-agent:device:dev-a"),
+        "the legacy sources shape must keep firing on one match"
+    );
+}
+
 /// The contract step must actually run inside a real execution. The helper
 /// tests below would still pass if nothing ever called `apply_output_contract` —
 /// this one drives `execute_agent`, the entry point the scheduler uses.

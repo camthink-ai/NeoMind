@@ -231,6 +231,179 @@ pub struct AgentSchedule {
     pub timezone: Option<String>,
 }
 
+/// One source inside a structured `EventFilter` (M2-1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EventSource {
+    /// Source kind as the trigger path names it: "device" | "extension" | ...
+    #[serde(rename = "type")]
+    pub source_type: String,
+    /// Concrete source id, or "all" to match every source of this type.
+    #[serde(default)]
+    pub id: String,
+    /// Metric/output field; None matches any field on the source.
+    #[serde(default)]
+    pub field: Option<String>,
+}
+
+/// Structured event filter (M2-1) — the polymorphic view over the stored
+/// `event_filter` string. `any` fires on the first matching source (what the
+/// legacy shape has always meant); `all` fires only once every listed source
+/// has been seen inside `within_secs`.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct EventFilter {
+    /// Fires when ANY of these sources reports. Aliased from the legacy
+    /// `sources` key so saved agents keep matching exactly as before.
+    #[serde(default, alias = "sources")]
+    pub any: Vec<EventSource>,
+    /// Fires only when ALL of these sources have reported.
+    #[serde(default)]
+    pub all: Vec<EventSource>,
+    /// Aggregation window for `all`, in seconds. None = the sources must be
+    /// seen together with no window.
+    #[serde(default)]
+    pub within_secs: Option<u64>,
+}
+
+/// Aggregation state for one agent's `all` window (M2-1). Held in memory by
+/// the trigger path, one entry per agent — never persisted.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WindowState {
+    /// When the window opened — the first source hit that started the clock.
+    pub opened_at: i64,
+    /// Indexes into `EventFilter::all` already seen inside the window.
+    pub seen: Vec<usize>,
+}
+
+/// What one event does to an `all` window.
+#[derive(Debug, Clone, PartialEq)]
+pub enum WindowOutcome {
+    /// Not a trigger yet; carry this state forward.
+    Pending(Option<WindowState>),
+    /// Every source matched inside the window — fire, and clear the window.
+    Fire,
+}
+
+impl EventFilter {
+    /// Fold one event into the `all` window and decide whether it completes.
+    pub fn observe(
+        &self,
+        state: Option<&WindowState>,
+        source_type: &str,
+        source_id: &str,
+        field: &str,
+        now: i64,
+    ) -> WindowOutcome {
+        // With no window configured, "the same instant, the same event" is
+        // the only reading: nothing may carry over between events.
+        let live = match self.within_secs {
+            None => None,
+            Some(window) => match state {
+                // An expired window is dead. Reviving it would let a late
+                // hit complete an AND whose sources never actually overlapped.
+                Some(s) if now - s.opened_at > window as i64 => None,
+                carried => carried,
+            },
+        };
+
+        let mut seen = live.map(|s| s.seen.clone()).unwrap_or_default();
+        let opened_at = live.map(|s| s.opened_at).unwrap_or(now);
+
+        for (index, spec) in self.all.iter().enumerate() {
+            if spec.matches_event(source_type, source_id, field) && !seen.contains(&index) {
+                seen.push(index);
+            }
+        }
+
+        if !self.all.is_empty() && seen.len() == self.all.len() {
+            return WindowOutcome::Fire;
+        }
+
+        // Nothing to carry forward: either there is no window at all, or this
+        // event matched none of the sources (a window only exists once
+        // something has hit it — an empty one would be pruned state that
+        // looks like an open window).
+        if self.within_secs.is_none() || seen.is_empty() {
+            return WindowOutcome::Pending(None);
+        }
+
+        WindowOutcome::Pending(Some(WindowState { opened_at, seen }))
+    }
+}
+
+impl EventSource {
+    /// Does this configured source match one concrete event?
+    ///
+    /// Semantics are the pre-M2 trigger path's, case for case — including the
+    /// wildcard's early return, which the tests pin deliberately.
+    pub fn matches_event(&self, source_type: &str, source_id: &str, field: &str) -> bool {
+        if self.source_type != source_type {
+            return false;
+        }
+        // "all" is the wildcard the editor offers for "any source of this
+        // type". It answers before the field is consulted: the old path
+        // returned here too, so a wildcard that also names a field still
+        // matches every field.
+        if self.id == "all" {
+            return true;
+        }
+        // An empty id is ambiguous, not a wildcard.
+        if self.id.is_empty() || self.id != source_id {
+            return false;
+        }
+        // A configured field must match exactly; no field matches any.
+        match self.field.as_deref() {
+            Some(f) if !f.is_empty() => f == field,
+            _ => true,
+        }
+    }
+}
+
+impl AgentSchedule {
+    /// Parse the stored `event_filter` string into a structured filter.
+    ///
+    /// The column keeps its `Option<String>` type on purpose: it is the
+    /// on-disk contract with every agent already in `agents.redb`.
+    /// `None` means "no filter / unparseable" and callers then fall back to
+    /// the resource bindings, exactly as before.
+    pub fn parsed_event_filter(&self) -> Option<EventFilter> {
+        let value: serde_json::Value = serde_json::from_str(self.event_filter.as_deref()?).ok()?;
+
+        // A non-empty sources shape (the legacy `sources` key, or the new
+        // `any`/`all` ones) wins outright — the trigger path has always
+        // consulted `event_type` only when no sources are configured.
+        let has_sources = ["any", "all", "sources"].iter().any(|key| {
+            value
+                .get(*key)
+                .and_then(|v| v.as_array())
+                .is_some_and(|sources| !sources.is_empty())
+        });
+        if has_sources {
+            return serde_json::from_value(value).ok();
+        }
+
+        // The pre-`sources` shape names its source in `event_type`/`device_id`
+        // instead of a sources array. Translate it rather than let it fall
+        // through: a filter that parses into "no sources" is an agent that
+        // silently never fires.
+        let (source_type, id) = match value.get("event_type").and_then(|v| v.as_str()) {
+            Some("device.metric") => ("device", value.get("device_id")),
+            Some("extension.output") => ("extension", value.get("extension_id")),
+            _ => return None,
+        };
+        let id = id.and_then(|v| v.as_str())?;
+
+        Some(EventFilter {
+            any: vec![EventSource {
+                source_type: source_type.to_string(),
+                id: id.to_string(),
+                field: None,
+            }],
+            all: Vec::new(),
+            within_secs: None,
+        })
+    }
+}
+
 /// Schedule type.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -1832,5 +2005,299 @@ mod tests {
         assert_eq!(retrieved.stats.total_executions, 2);
         assert_eq!(retrieved.stats.failed_executions, 1);
         assert_eq!(retrieved.stats.avg_duration_ms, 150); // (200 + 100) / 2
+    }
+}
+
+/// `EventFilter` structured (M2-1) — the polymorphic parse layer.
+///
+/// The stored `event_filter` column stays an `Option<String>`; this module is
+/// what makes it polymorphic, so every shape already in `agents.redb` keeps
+/// working. Change these tests only when the on-disk shape changes.
+#[cfg(test)]
+mod event_filter_tests {
+    use super::*;
+
+    fn schedule_with(filter: &str) -> AgentSchedule {
+        AgentSchedule {
+            schedule_type: ScheduleType::Event,
+            cron_expression: None,
+            interval_seconds: None,
+            event_filter: Some(filter.to_string()),
+            timezone: None,
+        }
+    }
+
+    /// The shape the web editor has been writing since before this change
+    /// (`AgentEditorFullScreen.tsx` builds `{sources:[{type,id,field}]}`).
+    /// It must keep parsing to exactly the same source triples, or every
+    /// event agent already saved silently stops firing.
+    #[test]
+    fn legacy_sources_shape_parses_to_any() {
+        let s = schedule_with(
+            r#"{"sources":[{"type":"device","id":"cam-01","field":"occupied"},{"type":"device","id":"gate","field":"reserved"}]}"#,
+        );
+
+        let f = s
+            .parsed_event_filter()
+            .expect("the legacy sources shape must parse");
+
+        assert_eq!(f.any.len(), 2);
+        assert_eq!(f.any[0].source_type, "device");
+        assert_eq!(f.any[0].id, "cam-01");
+        assert_eq!(f.any[0].field.as_deref(), Some("occupied"));
+        assert_eq!(f.any[1].id, "gate");
+        assert_eq!(f.any[1].field.as_deref(), Some("reserved"));
+        assert!(f.all.is_empty(), "the legacy shape carries no AND semantics");
+        assert_eq!(f.within_secs, None);
+    }
+
+    /// The pre-`sources` shape, still present in older rows. Today it matches
+    /// through a dedicated branch in the trigger path; once matching runs off
+    /// the parsed filter, a shape that "parses" into an empty filter turns
+    /// the agent into one that silently never fires — the worst failure mode
+    /// this feature has. So it must translate into an equivalent source.
+    #[test]
+    fn legacy_event_type_shape_parses_to_an_equivalent_source() {
+        let f = schedule_with(r#"{"event_type":"device.metric","device_id":"sensor-01"}"#)
+            .parsed_event_filter()
+            .expect("the legacy event_type shape must parse");
+
+        assert_eq!(f.any.len(), 1, "an empty filter would never fire");
+        assert_eq!(f.any[0].source_type, "device");
+        assert_eq!(f.any[0].id, "sensor-01");
+        assert_eq!(
+            f.any[0].field, None,
+            "the legacy shape names no field, so it matches any field"
+        );
+    }
+
+    #[test]
+    fn new_any_and_all_shapes_parse_with_their_window() {
+        let f = schedule_with(
+            r#"{"any":[{"type":"device","id":"cam-01","field":"occupied"}],"all":[{"type":"device","id":"cam-01","field":"occupied"},{"type":"extension","id":"booking","field":"reserved"}],"within_secs":1200}"#,
+        )
+        .parsed_event_filter()
+        .expect("the new shape must parse");
+
+        assert_eq!(f.any.len(), 1);
+        assert_eq!(f.any[0].field.as_deref(), Some("occupied"));
+        assert_eq!(f.all.len(), 2);
+        assert_eq!(f.all[1].source_type, "extension");
+        assert_eq!(f.all[1].id, "booking");
+        assert_eq!(f.within_secs, Some(1200));
+    }
+
+    /// An `all` entry without a field matches any field of that source.
+    #[test]
+    fn source_without_a_field_matches_any_field() {
+        let f = schedule_with(r#"{"all":[{"type":"device","id":"cam-01"}]}"#)
+            .parsed_event_filter()
+            .expect("must parse");
+
+        assert_eq!(f.all[0].field, None);
+    }
+
+    /// Nothing recognised must yield `None`, never an empty filter: `None`
+    /// sends the caller down the resource-binding fallback (today's
+    /// behaviour), whereas an empty filter would match nothing at all and
+    /// turn the agent into one that silently never fires.
+    #[test]
+    fn unrecognised_filters_fall_back_instead_of_matching_nothing() {
+        for raw in [
+            r#"{"foo":1}"#,
+            r#"{"event_type":"something.else","device_id":"x"}"#,
+            r#"{"sources":[]}"#,
+            r#"{"any":[],"all":[]}"#,
+            "not json at all",
+        ] {
+            assert!(
+                schedule_with(raw).parsed_event_filter().is_none(),
+                "expected None (fall back to resources) for {raw}"
+            );
+        }
+    }
+
+    fn source(source_type: &str, id: &str, field: Option<&str>) -> EventSource {
+        EventSource {
+            source_type: source_type.to_string(),
+            id: id.to_string(),
+            field: field.map(str::to_string),
+        }
+    }
+
+    /// The predicate every `any`/`all` decision runs through. Its semantics
+    /// are read straight off the pre-M2 trigger path
+    /// (`matches_data_source_filter`'s sources branch), so this test is the
+    /// equivalence contract: a change here changes which agents fire.
+    #[test]
+    fn source_requires_the_exact_triple() {
+        let cam = source("device", "cam-01", Some("occupied"));
+
+        assert!(
+            cam.matches_event("device", "cam-01", "occupied"),
+            "the same triple must match"
+        );
+        assert!(
+            !cam.matches_event("device", "cam-01", "temperature"),
+            "a different field on the same source must not match"
+        );
+        assert!(
+            !cam.matches_event("device", "cam-02", "occupied"),
+            "a different source must not match"
+        );
+        assert!(
+            !cam.matches_event("extension", "cam-01", "occupied"),
+            "a different source type must not match"
+        );
+    }
+
+    /// `id: "all"` is the wildcard the editor offers for "any source of this
+    /// type".
+    #[test]
+    fn id_all_matches_every_source_of_its_type() {
+        let any_device = source("device", "all", Some("occupied"));
+
+        assert!(any_device.matches_event("device", "cam-99", "occupied"));
+        assert!(
+            !any_device.matches_event("extension", "cam-99", "occupied"),
+            "the wildcard is scoped to its own source type"
+        );
+    }
+
+    /// Pre-M2 behaviour, pinned deliberately rather than left as an
+    /// accident: the old path returned on `id == "all"` *before* consulting
+    /// the field, so a wildcard with a field set still matches every field.
+    #[test]
+    fn id_all_short_circuits_the_field_check() {
+        let any_device = source("device", "all", Some("occupied"));
+
+        assert!(
+            any_device.matches_event("device", "cam-99", "temperature"),
+            "id=all ignores the configured field (pre-M2 behaviour)"
+        );
+    }
+
+    /// A source with no field matches any field reported by that source.
+    #[test]
+    fn a_source_without_a_field_matches_any_field() {
+        let open = source("device", "cam-01", None);
+
+        assert!(open.matches_event("device", "cam-01", "temperature"));
+        assert!(open.matches_event("device", "cam-01", "occupied"));
+    }
+
+    /// An empty id is ambiguous — the old path skipped such entries rather
+    /// than treating them as a wildcard.
+    #[test]
+    fn an_empty_id_never_matches() {
+        let empty = source("device", "", None);
+
+        assert!(!empty.matches_event("device", "cam-01", "temperature"));
+    }
+
+    // ---- the `all` window state machine (M2-1) ----
+
+    fn filter_with_all(sources: &[(&str, &str, Option<&str>)], within_secs: Option<u64>) -> EventFilter {
+        EventFilter {
+            any: Vec::new(),
+            all: sources.iter().map(|(t, i, f)| source(t, i, *f)).collect(),
+            within_secs,
+        }
+    }
+
+    /// Unwrap a Pending outcome, failing loudly if the filter fired.
+    fn pending(outcome: WindowOutcome) -> Option<WindowState> {
+        match outcome {
+            WindowOutcome::Pending(state) => state,
+            WindowOutcome::Fire => panic!("expected Pending, got Fire"),
+        }
+    }
+
+    fn two_source_filter() -> EventFilter {
+        filter_with_all(
+            &[("device", "cam-01", Some("occupied")), ("extension", "booking", Some("reserved"))],
+            Some(1200),
+        )
+    }
+
+    /// The whole point of M2: "occupancy AND not-booked" must not fire on
+    /// either source alone — that is exactly what today's OR-only filter
+    /// does, and the reason this feature exists.
+    #[test]
+    fn all_fires_only_once_every_source_is_seen() {
+        let f = two_source_filter();
+
+        let first = pending(f.observe(None, "device", "cam-01", "occupied", 1_000));
+
+        let second = f.observe(
+            first.as_ref(),
+            "extension",
+            "booking",
+            "reserved",
+            1_010,
+        );
+        assert!(
+            matches!(second, WindowOutcome::Fire),
+            "both sources inside the window must fire"
+        );
+    }
+
+    /// A source arriving after the window must NOT complete the AND — those
+    /// two hits never actually happened together. It opens a fresh window.
+    #[test]
+    fn a_source_past_the_window_restarts_instead_of_firing() {
+        let f = two_source_filter(); // within_secs = 1200
+        let opened = pending(f.observe(None, "device", "cam-01", "occupied", 1_000));
+
+        // 1300s later — outside the 1200s window.
+        let outcome = f.observe(opened.as_ref(), "extension", "booking", "reserved", 2_300);
+
+        let state = pending(outcome).expect("a late source opens a fresh window");
+        assert_eq!(state.opened_at, 2_300, "the clock restarts from the late hit");
+        assert_eq!(state.seen, vec![1], "only the late hit is in the new window");
+    }
+
+    /// An expired window is dropped rather than revived: otherwise it lingers
+    /// for the life of the process and can be completed by an unrelated event
+    /// hours later.
+    #[test]
+    fn an_expired_window_is_dropped_instead_of_revived() {
+        let f = two_source_filter();
+        let opened = pending(f.observe(None, "device", "cam-01", "occupied", 1_000));
+
+        // Unrelated, and long past the window.
+        let after = f.observe(opened.as_ref(), "device", "cam-01", "temperature", 9_999);
+
+        assert_eq!(pending(after), None, "the expired window must be gone");
+    }
+
+    /// `within_secs: None` reads as "the same instant, the same event"
+    /// (design 001 §5.2.2): nothing carries between events, so the AND must
+    /// be satisfiable by one event alone or not at all.
+    #[test]
+    fn without_a_window_only_a_single_event_can_complete_the_all() {
+        let two_separate = filter_with_all(
+            &[("device", "cam-01", Some("occupied")), ("extension", "booking", Some("reserved"))],
+            None,
+        );
+        let alone = two_separate.observe(None, "device", "cam-01", "occupied", 1_000);
+        assert_eq!(
+            pending(alone),
+            None,
+            "with no window, nothing carries over to the next event"
+        );
+
+        // One event that satisfies every entry (exact + wildcard) does fire.
+        let one_event = filter_with_all(
+            &[("device", "cam-01", Some("occupied")), ("device", "all", None)],
+            None,
+        );
+        assert!(
+            matches!(
+                one_event.observe(None, "device", "cam-01", "occupied", 1_000),
+                WindowOutcome::Fire
+            ),
+            "a single event satisfying every entry must fire"
+        );
     }
 }

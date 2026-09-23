@@ -114,9 +114,11 @@ impl AgentExecutor {
                 continue;
             }
 
-            // Check if agent's data source filter matches this event
+            // Does this event fire the agent? With an `all` filter this folds
+            // the event into the agent's window and answers `true` only on the
+            // one that completes it.
             if !self
-                .matches_data_source_filter(agent, source_type, &source_id, &field)
+                .event_fires(agent, source_type, &source_id, &field, now)
                 .await
             {
                 continue;
@@ -552,6 +554,71 @@ impl AgentExecutor {
                 }
             }
         }
+    }
+
+    /// Decide whether one event fires `agent`, folding it into the agent's
+    /// `all` window when the filter has one (M2-1).
+    ///
+    /// `any` keeps the pre-M2 behaviour exactly — the first matching source
+    /// fires immediately. `all` fires only on the event that completes the
+    /// window. A filter the parser does not recognise falls back to the
+    /// resource bindings, which is what it has always done.
+    async fn event_fires(
+        &self,
+        agent: &AiAgent,
+        source_type: &str,
+        source_id: &str,
+        field: &str,
+        now: i64,
+    ) -> bool {
+        let filter = match agent.schedule.parsed_event_filter() {
+            Some(filter) => filter,
+            None => {
+                return self
+                    .matches_data_source_filter(agent, source_type, source_id, field)
+                    .await
+            }
+        };
+
+        if filter
+            .any
+            .iter()
+            .any(|spec| spec.matches_event(source_type, source_id, field))
+        {
+            self.clear_event_window(&agent.id);
+            return true;
+        }
+
+        if filter.all.is_empty() {
+            return false;
+        }
+
+        let state = self.event_windows.read().get(&agent.id).cloned();
+        match filter.observe(state.as_ref(), source_type, source_id, field, now) {
+            neomind_storage::agents::WindowOutcome::Fire => {
+                // The window is consumed by the firing.
+                self.clear_event_window(&agent.id);
+                true
+            }
+            neomind_storage::agents::WindowOutcome::Pending(next) => {
+                match next {
+                    Some(window) => {
+                        self.event_windows.write().insert(agent.id.clone(), window);
+                    }
+                    // Nothing to carry forward — make sure no stale window is
+                    // left behind to be completed by some later event.
+                    None => self.clear_event_window(&agent.id),
+                }
+                false
+            }
+        }
+    }
+
+    /// Drop an agent's open `all` window. Called whenever the agent fires, so a
+    /// half-collected window cannot complete straight after a run and produce
+    /// a duplicate execution.
+    fn clear_event_window(&self, agent_id: &str) {
+        self.event_windows.write().remove(agent_id);
     }
 
     /// Check if a data source update matches an agent's trigger conditions.
