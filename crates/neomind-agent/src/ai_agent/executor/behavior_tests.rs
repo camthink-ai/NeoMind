@@ -791,7 +791,7 @@ async fn notify_routes_failures_to_configured_channels() {
         "routing must be explicit, not broadcast"
     );
     assert!(hit.title.contains("failed"), "title: {}", hit.title);
-    assert!(hit.message.contains("output_schema") || hit.message.len() > 0);
+    assert!(hit.message.contains("output_schema"));
 }
 
 /// Two fields, one inference, one publish — both must land in telemetry.

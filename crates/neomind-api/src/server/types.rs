@@ -819,7 +819,7 @@ impl ServerState {
         // load the persistent database in the background so that a large
         // telemetry.redb does not block server startup.
         let time_series_storage =
-            Arc::new(TimeSeriesStorage::memory().expect("in-memory telemetry storage"));
+            Arc::new(TimeSeriesStorage::memory_deferred().expect("deferred telemetry placeholder"));
         let telemetry_for_bg = time_series_storage.clone();
         let telemetry_path = neomind_core::paths::store_path("telemetry.redb");
         tokio::spawn(async move {

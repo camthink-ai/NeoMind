@@ -198,8 +198,20 @@ impl TimeSeriesStorage {
             .await;
     }
 
-    /// Create an in-memory time series storage
+    /// Create an in-memory time series storage. This is a FINAL store —
+    /// nothing is deferred, so waiters proceed immediately. (Tests and
+    /// embedded uses construct this directly; making it "unresolved" here
+    /// deadlocked anything that waited for the load.)
     pub fn memory() -> Result<Self, DeviceError> {
+        let store = StorageTimeSeriesStore::memory()
+            .map_err(|e| DeviceError::Io(std::io::Error::other(e.to_string())))?;
+        Ok(Self::with_store(store, true))
+    }
+
+    /// An in-memory PLACEHOLDER whose persistent replacement is still being
+    /// opened — the server startup state. `wait_for_storage_load` blocks
+    /// until `swap_store_with_drain` or `finalize_memory` resolves it.
+    pub fn memory_deferred() -> Result<Self, DeviceError> {
         let store = StorageTimeSeriesStore::memory()
             .map_err(|e| DeviceError::Io(std::io::Error::other(e.to_string())))?;
         Ok(Self::with_store(store, false))
@@ -802,7 +814,7 @@ mod swap_drain_tests {
     /// carry it across, or it evaporates on restart.
     #[tokio::test]
     async fn swap_drains_placeholder_writes_into_persistent() {
-        let placeholder = std::sync::Arc::new(TimeSeriesStorage::memory().expect("memory"));
+        let placeholder = std::sync::Arc::new(TimeSeriesStorage::memory_deferred().expect("memory-deferred"));
         placeholder
             .write("ai:agent-1", "status", crate::telemetry::DataPoint { timestamp: 100, value: MetricValue::String("正常".into()), quality: None })
             .await
@@ -849,7 +861,7 @@ mod swap_drain_tests {
     /// no data lost.
     #[tokio::test]
     async fn finalize_memory_releases_waiters() {
-        let placeholder = std::sync::Arc::new(TimeSeriesStorage::memory().expect("memory"));
+        let placeholder = std::sync::Arc::new(TimeSeriesStorage::memory_deferred().expect("memory-deferred"));
         let waiter = {
             let ph = placeholder.clone();
             tokio::spawn(async move { ph.wait_for_storage_load().await })
