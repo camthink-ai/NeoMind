@@ -311,3 +311,46 @@ async fn test_agent_list_carries_output_field_provenance() {
     let confidence = field["confidence"].as_f64().expect("a confidence");
     assert!((confidence - 0.42).abs() < 1e-6, "got {confidence}");
 }
+
+/// Silence was the old default, and it is indistinguishable from a broken
+/// agent: a scheduled run that reports only into the in-app Messages page looks
+/// exactly like one that never ran. Every agent must come out of creation with
+/// somewhere to report to.
+#[tokio::test]
+async fn a_new_agent_defaults_to_somewhere_it_can_report() {
+    let state = create_test_server_state().await;
+    let id = create_agent_with(&state, json!({})).await;
+
+    let agent = read_back(&state, &id).await;
+    let notify = agent
+        .get("notify")
+        .and_then(|n| n.as_object())
+        .expect("a new agent carries a notify target");
+
+    assert_eq!(
+        notify.get("channels"),
+        Some(&json!(["IM"])),
+        "the built-in channel that reaches a human is the default target"
+    );
+    assert_eq!(
+        notify.get("on"),
+        Some(&json!("failure")),
+        "silence is still health — a report only when there is one"
+    );
+}
+
+/// The default is a floor, not an override: an agent that names its own target
+/// must keep it.
+#[tokio::test]
+async fn an_explicit_notify_target_is_not_overwritten() {
+    let state = create_test_server_state().await;
+    let id = create_agent_with(
+        &state,
+        json!({ "notify": { "channels": ["webhook:ops"], "on": "always" } }),
+    )
+    .await;
+
+    let agent = read_back(&state, &id).await;
+    assert_eq!(agent["notify"]["channels"], json!(["webhook:ops"]));
+    assert_eq!(agent["notify"]["on"], json!("always"));
+}

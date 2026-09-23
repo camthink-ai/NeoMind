@@ -1000,6 +1000,26 @@ pub async fn get_agent(
     ok(json!(dto))
 }
 
+/// The notification target a new agent gets when the caller names none.
+///
+/// Silence was the old default, and it is indistinguishable from a broken
+/// agent: a scheduled run that reports only into the in-app Messages page
+/// looks exactly like one that never ran at all. Every agent now starts with
+/// somewhere to report to.
+///
+/// `IM` is the channel that reaches a human — it delivers to whatever chats
+/// the operator bound under Settings -> IM Bridges. With nobody bound it is a
+/// no-op, not an error: the run is still recorded in-app either way. The
+/// `on: Failure` default keeps the old bargain that silence is health, so this
+/// adds a report only when there is something to report; a watch-style agent
+/// whose every verdict is worth reading wants `on: "always"`.
+fn default_notify() -> neomind_storage::AgentNotify {
+    neomind_storage::AgentNotify {
+        channels: vec![neomind_messages::im_bridge::channel::IM_CHANNEL_NAME.to_string()],
+        on: neomind_storage::NotifyOn::Failure,
+    }
+}
+
 /// Create a new AI Agent.
 #[utoipa::path(
     post,
@@ -1256,7 +1276,7 @@ pub async fn create_agent(
         output_schema: request.output_schema,
         operator_config: request.operator_config,
         memory_mode: request.memory_mode,
-        notify: request.notify,
+        notify: Some(request.notify.unwrap_or_else(default_notify)),
         conversation_history: Default::default(),
         user_messages: Default::default(),
         conversation_summary: Default::default(),
