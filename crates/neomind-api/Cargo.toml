@@ -17,6 +17,9 @@ neomind-api = { path = ".", features = ["testing"] }
 # Cross-crate auth-format check: neomind-cli-ops' offline reset must read/write
 # the same users.redb bincode format (it duplicates our User struct).
 neomind-cli-ops = { path = "../neomind-cli-ops" }
+# Integration tests drive the rule engine directly to produce the artifacts
+# (alerts carrying an execution reference) the chain endpoint reads back.
+neomind-rules = { path = "../neomind-rules" }
 tower = { version = "0.5", features = ["util"] }
 
 [features]

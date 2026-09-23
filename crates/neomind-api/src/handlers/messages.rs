@@ -258,6 +258,109 @@ pub async fn get_message_handler(
     ok(json!(message))
 }
 
+/// The judgment chain behind one alert (M2-5, first hop).
+///
+/// GET /api/messages/:id/chain
+///
+/// A rule-generated alert records, in its own metadata, the execution that
+/// produced it — `(rule_id, triggered_at)`, the pair the history row is keyed
+/// by. This walks that one hop and returns the rule, the execution and the
+/// evidence that tripped the condition, so the alert page can answer "why did
+/// this fire" without the user guessing which agent to open.
+///
+/// A missing link is reported as `resolved: false` with a reason rather than an
+/// error: most messages are not rule alerts at all, and rule history is pruned
+/// after 30 days, so an alert can legitimately outlive its execution.
+#[utoipa::path(
+    get,
+    path = "/api/messages/{id}/chain",
+    tag = "messages",
+    params(
+        ("id" = String, Path, description = "Message id"),
+    ),
+    responses(
+        (status = 200, description = "The chain, resolved or with a reason it is not"),
+        (status = 400, description = "Invalid message id"),
+        (status = 404, description = "Message not found"),
+    )
+)]
+pub async fn get_message_chain_handler(
+    State(state): State<ServerState>,
+    Path(id): Path<String>,
+) -> HandlerResult<serde_json::Value> {
+    let msg_id = MessageId(
+        uuid::Uuid::parse_str(&id).map_err(|_| ErrorResponse::bad_request("Invalid message ID"))?,
+    );
+
+    let message = state
+        .core
+        .message_manager
+        .get_message(&msg_id)
+        .await
+        .ok_or_else(|| ErrorResponse::not_found("Message not found"))?;
+
+    let Some(reference) = neomind_rules::chain::execution_reference(message.metadata.as_ref())
+    else {
+        return ok(json!({
+            "message_id": id,
+            "resolved": false,
+            "reason": "no_rule_reference",
+        }));
+    };
+
+    let rule = state
+        .automation
+        .rule_engine
+        .get_rule(&reference.rule_id)
+        .await;
+
+    // Persistent history first, in-memory as the fallback — the same order the
+    // rule-history endpoint uses.
+    let history = match state.automation.rule_store.as_ref() {
+        Some(store) => match store.load_history(&reference.rule_id) {
+            Ok(h) if !h.is_empty() => h,
+            _ => {
+                state
+                    .automation
+                    .rule_engine
+                    .get_rule_history(&reference.rule_id)
+                    .await
+            }
+        },
+        None => {
+            state
+                .automation
+                .rule_engine
+                .get_rule_history(&reference.rule_id)
+                .await
+        }
+    };
+
+    let execution = neomind_rules::chain::find_execution(&history, reference.execution_ms);
+
+    ok(json!({
+        "message_id": id,
+        "resolved": execution.is_some(),
+        "reason": if execution.is_some() { serde_json::Value::Null } else { json!("execution_not_found") },
+        "rule": rule.as_ref().map(|r| json!({
+            "id": r.id.to_string(),
+            "name": r.name,
+            "enabled": r.enabled,
+        })),
+        "trigger": {
+            "source": reference.trigger_source,
+            "value": reference.trigger_value,
+        },
+        "execution": execution.map(|e| json!({
+            "triggered_at": e.triggered_at.to_rfc3339(),
+            "success": e.success,
+            "duration_ms": e.duration_ms,
+            "actions_executed": e.actions_executed,
+            "error": e.error,
+        })),
+    }))
+}
+
 /// Delete a message.
 /// DELETE /api/messages/:id
 #[utoipa::path(

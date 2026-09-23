@@ -850,6 +850,11 @@ pub static ROUTES: &[RouteDoc] = &[
         auth: "jwt-or-api-key",
     },
     RouteDoc {
+        method: "GET",
+        path: "/api/messages/:id/chain",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
         method: "DELETE",
         path: "/api/messages/:id",
         auth: "jwt-or-api-key",

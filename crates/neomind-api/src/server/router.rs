@@ -606,6 +606,10 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             delete(messages::delete_message_handler),
         )
         .route(
+            "/api/messages/:id/chain",
+            get(messages::get_message_chain_handler),
+        )
+        .route(
             "/api/messages/:id/acknowledge",
             post(messages::acknowledge_message_handler),
         )
