@@ -33,7 +33,7 @@ anti_triggers:
 | `neomind settings set-timezone <IANA>` | Set the timezone, e.g. `neomind settings set-timezone Asia/Shanghai` |
 | `neomind settings timezones` | List available timezones |
 | `neomind settings retention` | Get data retention configuration |
-| `neomind settings set-retention <days>` | Update retention (in days), e.g. `neomind settings set-retention 30` |
+| `neomind settings set-retention <days>` | Update retention (in days), e.g. `neomind settings set-retention --enabled --interval-hours 1 --default-retention 30` |
 | `neomind settings cleanup` | Trigger a manual data cleanup now |
 
 ### Examples
@@ -42,6 +42,6 @@ anti_triggers:
 neomind settings set-timezone Asia/Shanghai
 neomind settings timezones
 neomind settings retention
-neomind settings set-retention 30
+neomind settings set-retention --enabled --interval-hours 1 --default-retention 30
 neomind settings cleanup
 ```

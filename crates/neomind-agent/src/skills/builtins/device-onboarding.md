@@ -289,8 +289,8 @@ neomind device drafts reject <DRAFT_ID>
 # View current settings
 neomind device drafts config
 
-# Enable auto-approve (skip manual review)
-neomind device drafts config --auto-approve true
+# Turn auto-discovery on, keeping 5 sample readings per draft
+neomind device drafts config --enabled true --max-samples 5
 
 # Disable auto-discovery
 neomind device drafts config --enabled false
@@ -442,7 +442,7 @@ neomind system info
 
 2. **Create the device first:**
 ```bash
-neomind device create --name 'Weather Station' --adapter-type webhook
+neomind device create --name 'Weather Station' --device-type weather_station --adapter-type webhook
 # Record the device ID from response
 ```
 

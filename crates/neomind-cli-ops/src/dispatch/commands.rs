@@ -913,7 +913,6 @@ pub enum DraftCommand {
         /// Enable or disable auto-discovery.
         #[arg(long)]
         enabled: Option<bool>,
-        /// Auto-approve new drafts without manual review.
         /// Maximum data samples to keep per draft.
         #[arg(long)]
         max_samples: Option<u32>,

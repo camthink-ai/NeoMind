@@ -86,19 +86,24 @@ static INDEX_INJECTED: std::sync::atomic::AtomicBool = std::sync::atomic::Atomic
 const DOMAIN_INDEX: &str = r#"
 
 [neomind CLI domain index — the exact subcommands that exist (one line per domain; `neomind <domain> --help` for flags)]
-- device: list get create update delete history control <ID> <CMD> types write-metric webhook-url drafts
-- agent: list get create update delete invoke memory clear-memory executions <ID> latest-execution conversation <ID> send-message <ID> (talking to an agent, NOT `message`)
+- device: list get create update delete history latest control <ID> <CMD> types write-metric webhook-url drafts
+- agent: list get create update delete control <ID> <active|paused> invoke memory clear-memory executions <ID> latest-execution conversation <ID> send-message <ID> (talking to an agent, NOT `message`)
 - rule: list get create update delete enable disable test history
 - dashboard: list get create update delete add-components update-component remove-components share (ADD widgets → add-components (append); TWEAK one widget → update-component; `update --components` replaces ALL and needs --replace-all — almost never what you want; `dashboard get <ID>` first to see layout/ids)
-- connector: list get create update delete enable disable test subscribe (external I/O bridges: MQTT broker / webhook / HTTP — NOT devices)
+- connector: list get create update delete enable disable test subscribe subscriptions unsubscribe (external I/O bridges: MQTT broker / webhook / HTTP — NOT devices)
 - extension: list get install uninstall status logs config reload create build market-list market-install validate
 - transform: list get create update delete enable disable metrics test-code data-sources executions (executions = recent run records; check it when a transform outputs nothing or fails)
 - widget: list get create install uninstall bundle market-list market-install
-- message: list get send read channel-list channel-get channel-types channel-type-schema channel-create channel-update channel-delete channel-test (platform alerts — NOT for talking to agents)
-- push: list get create update delete enable disable test logs stats
+- message: list get send read delete channel-list channel-get channel-types channel-type-schema channel-create channel-update channel-delete channel-test (platform alerts — NOT for talking to agents)
+- push: list get create update delete enable disable start stop test logs stats
 - llm: list get models create update delete activate test
 - settings: timezone set-timezone timezones retention set-retention cleanup
-- system: info — api-key: create list delete
+- system: info
+- api-key: create list delete
+Deliberately not available here (do not try them): serve prompt chat logs health list-models
+check-update upgrade uninstall login logout whoami user config data — the first group only runs as a
+separate process, the rest are operator commands with their own session or irreversible effects.
+
 Anything not listed above does not exist as a subcommand — do not invent near-misses; use the exact name or `neomind <domain> --help`."#;
 
 pub struct ShellTool {
@@ -1929,5 +1934,199 @@ mod dispatch_edge_tests {
         assert_eq!(find_safe_truncation_point(s, 6), 6);
         assert_eq!(find_safe_truncation_point(s, 999), s.len());
         assert_eq!(find_safe_truncation_point("", 10), 0);
+    }
+
+    /// The domain index in the tool description must match the CLI it describes.
+    ///
+    /// That index is the model's map of what exists: `neomind <domain> --help`
+    /// gives flags, but this line decides which domains and subcommands it even
+    /// considers. Nothing compared the two, which is how `--auto-approve` stayed
+    /// in a skill after 8ec68e2c deleted the flag, and how a subcommand could be
+    /// renamed and simply vanish from the model's world.
+    #[test]
+    fn the_domain_index_lists_exactly_what_the_cli_has() {
+        use clap::CommandFactory;
+
+        let root = neomind_cli_ops::dispatch::commands::Args::command();
+        let mut problems: Vec<String> = Vec::new();
+        let mut domains_seen = 0usize;
+
+        for line in DOMAIN_INDEX.lines() {
+            let Some(rest) = line.strip_prefix("- ") else {
+                continue;
+            };
+            let Some((domain, listed)) = rest.split_once(": ") else {
+                continue;
+            };
+            let Some(cmd) = root.get_subcommands().find(|c| c.get_name() == domain) else {
+                problems.push(format!("`{domain}` is listed but the CLI has no such domain"));
+                continue;
+            };
+            domains_seen += 1;
+
+            let real: std::collections::BTreeSet<&str> =
+                cmd.get_subcommands().map(|c| c.get_name()).collect();
+
+            // The line is `- <domain>: a b c — <sub>: d e`, where the part after
+            // the em dash names a nested group's own subcommands. Check each
+            // level against the level it belongs to.
+            // Strip parenthetical asides FIRST: a connector line's aside contains
+            // its own em dash and colon, and splitting before removing it turned
+            // "MQTT broker / webhook / HTTP — NOT devices" into a nested group.
+            let listed = listed.split('(').next().unwrap_or(listed);
+            let segments: Vec<&str> = listed.split('—').map(str::trim).collect();
+            for (level, segment) in segments.iter().enumerate() {
+                let (parent, names) = match segment.split_once(':') {
+                    Some((sub, names)) => (sub.trim(), names),
+                    None => (domain, *segment),
+                };
+                let owner = if level == 0 {
+                    cmd
+                } else {
+                    match cmd.get_subcommands().find(|c| c.get_name() == parent) {
+                        Some(c) => c,
+                        None => {
+                            problems.push(format!("`{domain} {parent}` is named but does not exist"));
+                            continue;
+                        }
+                    }
+                };
+                let real_here: std::collections::BTreeSet<&str> =
+                    owner.get_subcommands().map(|c| c.get_name()).collect();
+                // `<ID>` and friends are arguments, not commands.
+                let named: std::collections::BTreeSet<&str> = names
+                    .split_whitespace()
+                    .filter(|t| {
+                        !t.starts_with('<')
+                            && !t.starts_with('`')
+                            && t.chars().all(|c| c.is_ascii_lowercase() || c == '-')
+                    })
+                    .collect();
+                let where_ = if level == 0 { domain.to_string() } else { format!("{domain} {parent}") };
+                for ghost in named.difference(&real_here) {
+                    problems.push(format!("`{where_} {ghost}` is listed but does not exist"));
+                }
+                for missing in real_here.difference(&named) {
+                    problems.push(format!(
+                        "`{where_} {missing}` exists but is not in the index, so the model \
+                         will not know to use it"
+                    ));
+                }
+            }
+        }
+
+        // The other direction: a whole domain the model never learns about. The
+        // index carries its own exclusion list — commands that only run as a
+        // separate process, or that an agent must not run at all — so this also
+        // checks that a domain is either offered or explicitly ruled out.
+        let indexed: std::collections::BTreeSet<&str> = DOMAIN_INDEX
+            .lines()
+            .filter_map(|l| l.strip_prefix("- "))
+            .filter_map(|l| l.split(':').next())
+            .collect();
+        let excluded: std::collections::BTreeSet<&str> = DOMAIN_INDEX
+            .split("Deliberately not available here")
+            .nth(1)
+            .and_then(|rest| rest.split('—').next())
+            .unwrap_or("")
+            .split_whitespace()
+            .collect();
+        for cmd in root.get_subcommands() {
+            let name = cmd.get_name();
+            if name == "help" || indexed.contains(name) || excluded.contains(name) {
+                continue;
+            }
+            problems.push(format!(
+                "domain `{name}` is neither in the index nor in the exclusion list — the model \
+                 has no way to know whether it can use it"
+            ));
+        }
+
+        assert!(domains_seen > 8, "parsed only {domains_seen} domains — the scan is broken");
+        assert!(problems.is_empty(), "domain index drift:\n  {}", problems.join("\n  "));
+    }
+
+    /// Every `neomind ...` command the builtin skills show the model must parse.
+    ///
+    /// The skills are what the model copies from. `25a908f5` fixed five examples
+    /// whose syntax had drifted from the real commands — each had been steering
+    /// a retry into a second failure — and nothing was comparing them, so this
+    /// does: pull the command lines out of the fenced blocks and hand them to
+    /// the same clap definition the CLI runs.
+    ///
+    /// Lines the in-process tokenizer refuses (pipes, redirections, `$`,
+    /// backticks) are real shell lines, not `neomind` invocations, and are
+    /// skipped by the same rule the runtime uses.
+    #[test]
+    fn every_command_the_skills_show_the_model_parses() {
+        use clap::Parser;
+
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/skills/builtins");
+        let mut checked = 0usize;
+        let mut failures: Vec<String> = Vec::new();
+
+        let mut files: Vec<_> = std::fs::read_dir(&dir)
+            .expect("skills dir")
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "md"))
+            .collect();
+        files.sort();
+
+        for path in files {
+            let skill = path.file_stem().unwrap().to_string_lossy().to_string();
+            let text = std::fs::read_to_string(&path).expect("read skill");
+            let lines: Vec<&str> = text.lines().collect();
+            let mut i = 0usize;
+            while i < lines.len() {
+                let start_line = i + 1;
+                // A recipe may be wrapped: `neomind agent create \` and the
+                // flags on the following lines. Join them back into one.
+                let mut full = String::new();
+                loop {
+                    let piece = lines[i].trim();
+                    let continues = piece.ends_with('\\');
+                    let piece = piece.trim_end_matches('\\').trim();
+                    if full.is_empty() {
+                        full.push_str(piece);
+                    } else {
+                        full.push(' ');
+                        full.push_str(piece);
+                    }
+                    i += 1;
+                    if !continues || i >= lines.len() {
+                        break;
+                    }
+                }
+                // Drop a trailing `# comment`, but only when the `#` is outside
+                // quotes — a `#` inside a prompt is text.
+                if let Some(at) = full.find(" #") {
+                    if full[..at].matches('"').count() % 2 == 0 {
+                        full.truncate(at);
+                    }
+                }
+                let full = full.trim().to_string();
+                if !full.starts_with("neomind ") {
+                    continue;
+                }
+                if full.contains('<') || full.contains("...") || full.contains("neomind x") {
+                    continue;
+                }
+                let Ok(argv) = tokenize_neomind_command(&full) else {
+                    continue; // a shell line, by the runtime's own rule
+                };
+                checked += 1;
+                if let Err(e) = neomind_cli_ops::dispatch::commands::Args::try_parse_from(&argv) {
+                    failures.push(format!("{skill}.md:{start_line}  {full}\n      -> {e}"));
+                }
+            }
+        }
+
+        assert!(checked > 50, "only found {checked} commands — the scan is not reading the skills");
+        assert!(
+            failures.is_empty(),
+            "{} skill example(s) do not parse:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
     }
 }

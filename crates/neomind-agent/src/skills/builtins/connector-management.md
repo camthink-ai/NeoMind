@@ -124,7 +124,7 @@ neomind connector subscribe --topic 'factory/sensors/#'
 neomind connector create --name 'Cloud Broker' \
   --host broker.example.com \
   --port 8883 \
-  --tls \
+  --tls true \
   --username myuser \
   --password mypass \
   --topics "devices/telemetry,devices/status"

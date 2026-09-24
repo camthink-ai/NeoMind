@@ -227,7 +227,7 @@ neomind message read <ID>
 ### Update Channel Config
 
 ```bash
-neomind message channel-update alerts \
+neomind message channel-update --name alerts \
   --config '{"url": "https://new-hook.example.com/alert", "headers": {"Authorization": "Bearer new-token"}}'
 ```
 
