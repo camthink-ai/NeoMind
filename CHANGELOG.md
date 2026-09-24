@@ -20,6 +20,9 @@ The three milestones of the agent kernel, released together. **M0** made a run a
 - **CLI**: `--auto-approve` and `--enable-tool-chaining` are gone (both were accepted and did nothing); `--schedule-type cron` accepts the standard five-field form the help has always shown; `--message-type` writes the key the API actually reads; `--notify` accepts `judgment`.
 - **No storage migration.** Every new field and enum variant is appended and serde-defaulted, so an existing `data/` directory upgrades by swapping the binary. `output_schema` / `operator_config` are new API surface, not a changed one.
 
+### feat(web): an IM bridge says where to get its credentials
+- Binding a Telegram or Feishu bridge asks for values — a bot token, an app id and secret — that only exist after you have been through the platform's own console, and the form gave no way to find out how. Both configure views carry a "how do I get these?" link into the wiki guide, per-locale, resolved the way the notification-channel editor already resolves its channel-type docs.
+
 ### M2 — multi-source triggering, the decision chain, and the feedback loop
 
 The milestone that makes an agent's *inputs* expressible and its *outputs* checkable. An event agent could only say "any of these sources"; it can now say "all of them, within this window". An alert could not say why it fired; it now carries the execution behind it, what that execution did, and — when the operator disagrees — the fact that they disagreed. Plus three quiet correctness fixes that this work surfaced, each of which had been losing data without saying so.
