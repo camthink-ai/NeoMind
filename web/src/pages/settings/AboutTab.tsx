@@ -65,8 +65,12 @@ interface ProcessInfo {
   pid: number
   memory_bytes: number
   virtual_memory_bytes: number
-  /** Percentage of **one** core, as `top` reports it — can exceed 100. */
-  cpu_usage: number
+  /**
+   * Percentage of **one** core, as `top` reports it — can exceed 100.
+   * Null on the first reading after boot, which has nothing to difference
+   * against; the row is absent rather than showing a zero that means "no idea".
+   */
+  cpu_usage?: number | null
   /** Absent on platforms where the OS will not report it (anything but Linux). */
   threads?: number | null
   uptime_secs: number
@@ -567,12 +571,17 @@ export function AboutTab() {
                         }
                       />
                     </InfoRow>
-                    <InfoRow label={t("settings:processCpu")}>
-                      <TwoLineValue
-                        value={`${systemInfo.process.cpu_usage.toFixed(1)}%`}
-                        caption={t("settings:ofOneCore")}
-                      />
-                    </InfoRow>
+                    {/* Absent on the first reading after boot, which has no
+                        previous sample to difference against. A zero there
+                        would read like a measurement. */}
+                    {systemInfo.process.cpu_usage != null && (
+                      <InfoRow label={t("settings:processCpu")}>
+                        <TwoLineValue
+                          value={`${systemInfo.process.cpu_usage.toFixed(1)}%`}
+                          caption={t("settings:ofOneCore")}
+                        />
+                      </InfoRow>
+                    )}
                     {/* Only where the OS actually counts them — Linux. Everywhere
                         else this row is absent rather than showing a made-up 1. */}
                     {systemInfo.process.threads != null && (

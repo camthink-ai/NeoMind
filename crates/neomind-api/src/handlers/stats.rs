@@ -95,7 +95,10 @@ pub struct ProcessInfo {
     /// process saturating two cores reads 200. `SystemInfo::cpu_usage` is the
     /// machine-wide average across cores and is capped at 100; the two are
     /// deliberately not the same scale, and the UI says which is which.
-    pub cpu_usage: f32,
+    ///
+    /// `None` on the first call after boot: there is no previous sample to
+    /// difference against, and a zero there would read like a measurement.
+    pub cpu_usage: Option<f32>,
     /// Threads in this process, when the OS will say.
     ///
     /// `None` on every platform but Linux and Android: `sysinfo::Process::tasks`
@@ -379,44 +382,27 @@ pub async fn get_system_stats_handler(
     // in time (first refresh establishes a baseline; the value is meaningful on
     // the next refresh), so take a ~200ms sample. The 5s response cache means
     // this only runs once per cache window.
-    let (total_memory, used_memory, free_memory, available_memory, cpu_usage, process) = {
+    let (total_memory, used_memory, free_memory, available_memory, cpu_usage) = {
         let mut sys = sysinfo::System::new();
         sys.refresh_memory();
         sys.refresh_cpu_usage();
-        // Our own process rides the same two-sample window: its CPU figure is a
-        // delta between refreshes too, and a second sleep would double the
-        // response time for a reading taken 200ms later anyway.
-        let me = sysinfo::Pid::from_u32(std::process::id());
-        sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[me]), true);
         tokio::time::sleep(Duration::from_millis(200)).await;
         sys.refresh_cpu_usage();
-        sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[me]), true);
-        // A third sample, and a second wait, because a process's CPU figure is a
-        // delta and a fresh `System` has nothing to subtract from: the first
-        // refresh files the process, the second files its baseline, and only the
-        // third has anything to compare. Two — which is all the machine-wide
-        // figure needs — reported 0.0% on every platform, every time. Measured:
-        // two refreshes 0.0, three refreshes 98-103% under load, 3.7% idle.
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        sys.refresh_cpu_usage();
-        sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[me]), true);
-        let process = sys.process(me).map(|p| ProcessInfo {
-            pid: me.as_u32(),
-            memory_bytes: p.memory(),
-            virtual_memory_bytes: p.virtual_memory(),
-            cpu_usage: p.cpu_usage(),
-            threads: p.tasks().map(|t| t.len()),
-            uptime_secs: p.run_time(),
-        });
         (
             sys.total_memory(),
             sys.used_memory(),
             sys.free_memory(),
             sys.available_memory(),
             sys.global_cpu_usage(),
-            process,
         )
     };
+
+    // Our own process, from a sampler that outlives this call — see
+    // `ProcessSampler` for why one that does not cannot work.
+    let process = PROCESS_SAMPLER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .sample();
 
     // Mounted filesystems (storage usage)
     let disks: Vec<DiskInfo> = {
@@ -552,6 +538,64 @@ pub async fn get_system_stats_handler(
     );
 
     Ok(response)
+}
+
+/// A `System` kept alive between calls, because a process's CPU usage is a
+/// delta and a fresh one has nothing to subtract from.
+///
+/// Two refreshes inside one call — all the machine-wide figure needs — leave a
+/// process reading 0.0% forever. Three happen to work on macOS and not on
+/// Linux, which is how the first version of this shipped and then failed on CI
+/// the moment it ran anywhere else. Keeping the sampler alive makes the delta
+/// span the gap between calls, which is the same on every platform: the first
+/// call after boot has no previous sample and says so, every call after that is
+/// real, and the About tab polls on a five-second cache so the second call is
+/// never far off.
+static PROCESS_SAMPLER: std::sync::LazyLock<std::sync::Mutex<ProcessSampler>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(ProcessSampler::new()));
+
+struct ProcessSampler {
+    sys: sysinfo::System,
+    me: sysinfo::Pid,
+    /// False until one sample has been taken. The first has no previous CPU
+    /// time to difference against.
+    baseline: bool,
+}
+
+impl ProcessSampler {
+    fn new() -> Self {
+        let mut sys = sysinfo::System::new();
+        let me = sysinfo::Pid::from_u32(std::process::id());
+        sys.refresh_memory();
+        sys.refresh_cpu_usage();
+        sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[me]), true);
+        Self {
+            sys,
+            me,
+            baseline: false,
+        }
+    }
+
+    /// One sample. `None` only when the OS will not report the process at all.
+    fn sample(&mut self) -> Option<ProcessInfo> {
+        self.sys.refresh_cpu_usage();
+        self.sys
+            .refresh_processes(sysinfo::ProcessesToUpdate::Some(&[self.me]), true);
+        let had_baseline = self.baseline;
+        self.baseline = true;
+
+        let p = self.sys.process(self.me)?;
+        Some(ProcessInfo {
+            pid: self.me.as_u32(),
+            memory_bytes: p.memory(),
+            virtual_memory_bytes: p.virtual_memory(),
+            cpu_usage: had_baseline.then(|| p.cpu_usage()),
+            // Linux-only in sysinfo; `None` everywhere else rather than a
+            // made-up 1.
+            threads: p.tasks().map(|t| t.len()),
+            uptime_secs: p.run_time(),
+        })
+    }
 }
 
 /// Recompute the data-directory footprint on demand and return it.
@@ -847,5 +891,40 @@ mod tests {
         let json_str = serde_json::to_string(&stats).unwrap();
         assert!(json_str.contains("total_devices"));
         assert!(json_str.contains("total_rules"));
+    }
+}
+
+#[cfg(test)]
+mod sampler_tests {
+    use super::*;
+
+    /// The property the whole design rests on: the first sample has no previous
+    /// CPU time to difference against and says so, and the second — after any
+    /// real interval — carries a figure.
+    ///
+    /// This is what CI caught the hard way. The first version refreshed twice
+    /// inside one call and read 0.0% forever on Linux; three refreshes happened
+    /// to work on macOS, which is where it was checked. A sampler that outlives
+    /// the call makes the delta span the gap between calls, and this asserts
+    /// that on whatever platform it runs.
+    #[test]
+    fn the_first_sample_has_no_baseline_and_the_second_has_a_figure() {
+        let mut sampler = ProcessSampler::new();
+
+        let first = sampler.sample().expect("the OS reports this process");
+        assert!(
+            first.cpu_usage.is_none(),
+            "with no previous sample there is nothing to difference against, and a \
+             zero here would read like a measurement: {first:?}"
+        );
+        assert!(first.pid > 0);
+
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        let second = sampler.sample().expect("the OS reports this process");
+        assert!(
+            second.cpu_usage.is_some_and(|v| v.is_finite() && v >= 0.0),
+            "the second sample has a delta to report: {second:?}"
+        );
+        assert_eq!(second.pid, first.pid);
     }
 }
