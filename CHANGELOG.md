@@ -23,6 +23,10 @@ The three milestones of the agent kernel, released together. **M0** made a run a
 ### feat(web): an IM bridge says where to get its credentials
 - Binding a Telegram or Feishu bridge asks for values — a bot token, an app id and secret — that only exist after you have been through the platform's own console, and the form gave no way to find out how. Both configure views carry a "how do I get these?" link into the wiki guide, per-locale, resolved the way the notification-channel editor already resolves its channel-type docs.
 
+### docs: the ADR set and the design docs are gone
+- `docs/adr/` (18 ADRs + index) and `docs/designs/` (the AI capability redesign set: technical design, product & interaction design, M0–M4 implementation plan, UI mockup) were removed. The two entries that advertised them as deliverables are gone with them, and `docs/configuration.md` no longer links to ADR 0018.
+- References of the form `design 001 §5.2.2` in source comments are left as they are: they record which section a decision came from, and rewriting comments across six files to drop the citation would lose more than it tidies. They now point at git history rather than at a file in the tree.
+
 ### fix(im): a conversation held over Telegram survives a restart
 - The session manager keeps a running conversation in memory and writes it to `sessions.redb` only when asked. The HTTP chat path asks after its stream and the WS path on disconnect; the IM runner asked never. So an IM conversation lived until the next restart and then showed as an empty one — the session row is written at creation and survives, while its messages never reached the disk.
 - The turn is persisted whether or not the reply succeeded: the user's own message is part of the conversation either way, and persisting only on success would still lose it whenever the model was unreachable.
@@ -147,7 +151,6 @@ No API, storage or DTO changes — a binary swap. The design context lives in `d
 
 ### chore(web) / docs
 - Deleted the unreferenced `components/alerts/UnifiedAlertChannelsTab` (819 lines; superseded by `MessageChannelsTab`).
-- `docs/designs/` added: the AI capability redesign set — product & interaction design (four hiring modes 看/盯/查/报, care-item concept, decision chains, correction samples, value recap; operators are a type of agent, no new menu/tab; disposal workflow scoped out), technical design, M0–M4 implementation plan with full frontend+backend impact map, and a six-screen UI mockup on the real design tokens with keep/new/modified delta badges.
 - Gates: workspace `check --tests` and clippy (0.1.92) clean, agent 715 + api 471 tests green, web `tsc` clean.
 
 ## [1.0.0] - 2026-09-20 — the architecture release: seven monoliths split, first-load bundle halved, cancellation tested, 96 any-typed
@@ -267,9 +270,6 @@ No API, storage or DTO changes — a binary swap. The design context lives in `d
 
 ### web: first component/hook tests for the chat core
 - 16 new tests: `useChatStream` (full turn lifecycle, multi-round semantics, session filter, cancellation, token usage), `sessionSlice` history pagination (newest-page load, backward cursor, guards), `ChatMessages` rendering (user bubble, assistant three-layer layout, streaming synthetic message, load-earlier affordance), `ChatComposer` interactions (controlled input, send/cancel). Frontend suite: 188 → 207 (incl. the api-split runtime smoke below).
-
-### docs: Architecture Decision Records
-- `docs/adr/` — 18 one-page ADRs (Chinese) + index capturing the *why* behind EventBus, per-domain redb, edge single-box, dual extension isolation, ABI lock, in-process CLI dispatch, dual memory systems, DTO conversion layer, JSON rule tree, 4-state device model, JSON device types, design tokens, OpenAPI drift guard, LLM capability chain, and the 2026-09 decisions (shared stream machine, history pagination, BuildCard removal, WASM resource limits). CLAUDE.md/CHANGELOG record what — the ADRs record the trade-offs, lowering the bus-factor cost of a single-maintainer codebase.
 
 ### chat: BuildCard / build_meta removed — speculative feature, zero observable behavior change
 - The "AI Build Mode" rich result card (introduced 2026-05 as part of the AI-Build-CLI plan) is deleted end-to-end: `BuildCard.tsx` + `parseBuildResponse`, the hand-duplicated `BuildMeta`/`CliBuildResponse` frontend types, the `onSendCommand` prop threading, the i18n `build.*` keys, and on the backend the `BuildMeta` struct, `CliResponse.build_meta` field, `success_with_meta`, and the 14 construction sites across 10 CLI command files (plus the meta-only variable extractions they existed to feed).
