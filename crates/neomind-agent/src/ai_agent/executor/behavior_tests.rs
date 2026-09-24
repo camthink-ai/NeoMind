@@ -652,6 +652,29 @@ async fn build_event_agent(
     (executor, agent)
 }
 
+/// Wait for every execution the event trigger has spawned to finish.
+///
+/// `refresh_event_agents` only caches agents whose status is `Active`, and a run
+/// in flight has set it to `Executing`. So an event that arrives while the
+/// previous one is still running finds an *empty* cache and is dropped before
+/// the cooldown is ever consulted. That is the production behaviour — an agent
+/// does not re-enter itself — and it is a race in any test that fires twice
+/// back to back: under load the second event loses, and the assertion then reads
+/// a map the first run never touched.
+///
+/// Draining between fires makes the trigger actually reach the code under test.
+async fn drain_event_tasks(executor: &AgentExecutor) {
+    loop {
+        let handles: Vec<_> = executor.event_task_handles.lock().drain(..).collect();
+        if handles.is_empty() {
+            return;
+        }
+        for handle in handles {
+            let _ = handle.await;
+        }
+    }
+}
+
 /// One physical event can match several of a structured agent's sources. The
 /// debounce window must merge them so the agent pays for one inference, not
 /// one per match — that is what the editor's "防抖" field promises.
@@ -669,6 +692,9 @@ async fn structured_event_agent_debounces_across_sources() {
             )
             .await
             .expect("trigger must not error");
+        // Let the run this just spawned finish, so the next source meets an
+        // agent that is Active again instead of an empty cache.
+        drain_event_tasks(&executor).await;
     }
 
     let recent = executor.recent_executions.read().await;
@@ -699,6 +725,9 @@ async fn event_agent_without_operator_config_keeps_per_source_cooldown_only() {
             )
             .await
             .expect("trigger must not error");
+        // Let the run this just spawned finish, so the next source meets an
+        // agent that is Active again instead of an empty cache.
+        drain_event_tasks(&executor).await;
     }
 
     let recent = executor.recent_executions.read().await;
