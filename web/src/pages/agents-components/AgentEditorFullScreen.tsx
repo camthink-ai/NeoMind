@@ -1383,10 +1383,14 @@ export function AgentEditorFullScreen({
                     </Button>
                   </div>
                   {presetNextStep && (
-                    <p className="mt-1.5 flex items-start gap-1.5 text-xs text-primary">
+                    // A tinted strip rather than coloured text: this is the one
+                    // thing on the card the user has to act on, and `bg-primary-light`
+                    // bakes its alpha in at the variable level — `bg-primary/10`
+                    // would silently render nothing.
+                    <div className="mt-1.5 flex items-start gap-1.5 rounded-md bg-primary-light px-2 py-1.5 text-xs text-primary">
                       <ArrowRight className="mt-0.5 h-3 w-3 shrink-0" />
                       <span>{tAgent(`creator.preset.next.${presetNextStep}`)}</span>
-                    </p>
+                    </div>
                   )}
                 </div>
               ) : (
