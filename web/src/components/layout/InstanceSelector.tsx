@@ -40,7 +40,11 @@ export function InstanceSelector({ onManageInstances, compact = false }: Instanc
       disabled={isSwitching}
       onClick={onManageInstances}
       className={cn(
-        "rounded-lg text-sm font-medium transition-colors cursor-pointer hover:opacity-80 disabled:opacity-50",
+        "rounded-lg text-sm font-medium transition-colors cursor-pointer disabled:opacity-50",
+        // Same muted resting color + hover as every other sidebar utility
+        // row/icon (nav items, Setup Guide, collapse toggle) — an unstyled
+        // inherit renders the Server icon a step darker than its neighbors.
+        "text-muted-foreground hover:text-foreground hover:bg-muted-50",
         compact
           ? "flex items-center justify-center h-10 w-10"
           // Expanded: full-width row matching the other sidebar footer rows
@@ -52,7 +56,10 @@ export function InstanceSelector({ onManageInstances, compact = false }: Instanc
       )}
     >
       <div className="relative shrink-0">
-        <Server className="h-5 w-5" />
+        {/* 18px, not the rail's 20px: the Server glyph is the densest ink in
+            the rail (full-width stacked slabs vs. airy Rocket/gear) — at the
+            shared size it reads a step larger. Optical, not pixel, parity. */}
+        <Server className="h-[18px] w-[18px]" />
         {/* Status dot on the icon's top-right corner — same anchor as the
             Setup Guide badge, so both markers align across rows. */}
         <span

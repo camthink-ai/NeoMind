@@ -365,6 +365,11 @@ pub static ROUTES: &[RouteDoc] = &[
         auth: "jwt-or-api-key",
     },
     RouteDoc {
+        method: "POST",
+        path: "/api/stats/data-dir/refresh",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
         method: "GET",
         path: "/api/logs/download",
         auth: "jwt-or-api-key",

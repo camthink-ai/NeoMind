@@ -58,9 +58,11 @@ describe('api surface (post-split composition)', () => {
   // acknowledged here. 266 -> 267 when the agent editor's dry-run added
   // `testAgentPreview` (bcd026fe); 267 -> 268 when the alert detail added
   // `getMessageChain` (M2-5); 268 -> 269 when the feedback loop added
-  // `markMessageFalsePositive` — real, called members, not surface bloat.
-  it('member count grows only by deliberate additions (269)', () => {
+  // `markMessageFalsePositive`; 269 -> 270 when the About tab added
+  // `refreshDataDirUsage`, the manual recompute behind the data-directory
+  // footprint — real, called members, not surface bloat.
+  it('member count grows only by deliberate additions (270)', () => {
     const keys = Object.keys(api)
-    expect(keys.length).toBe(269)
+    expect(keys.length).toBe(270)
   })
 })

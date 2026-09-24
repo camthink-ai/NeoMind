@@ -96,11 +96,30 @@ pub struct ProcessInfo {
     /// machine-wide average across cores and is capped at 100; the two are
     /// deliberately not the same scale, and the UI says which is which.
     pub cpu_usage: f32,
-    /// Threads in this process.
-    pub threads: usize,
+    /// Threads in this process, when the OS will say.
+    ///
+    /// `None` on every platform but Linux and Android: `sysinfo::Process::tasks`
+    /// is Linux-only and returns `None` elsewhere, so there is nothing to count.
+    /// It is optional rather than defaulted because the first version of this
+    /// field fell back to `1`, and the About page then reported "Threads: 1" for
+    /// a Tokio server on macOS — a fabricated number that reads exactly like a
+    /// measurement. Unknown has to look unknown.
+    pub threads: Option<usize>,
     /// Seconds since this process started, from the OS — not the same as
     /// `SystemInfo::uptime`, which is when the in-app server started.
     pub uptime_secs: u64,
+}
+
+/// Disk footprint of NeoMind's own data directory (databases, telemetry,
+/// images, keys). Walking the tree is expensive on big dirs, so the value is
+/// computed once, cached, and only recomputed when a client explicitly asks
+/// (`POST /api/stats/data-dir/refresh`) — never on the stats polling path.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DataDirInfo {
+    /// Path of the data directory (honors `NEOMIND_DATA_DIR`).
+    pub path: String,
+    /// Sum of regular-file sizes under the data directory.
+    pub bytes: u64,
 }
 
 /// System information.
@@ -136,6 +155,9 @@ pub struct SystemInfo {
     /// (a sandbox without process visibility), which is why consumers handle
     /// absence rather than reading zeroes.
     pub process: Option<ProcessInfo>,
+    /// Disk footprint of NeoMind's own data directory. `None` until the first
+    /// walk completes (it runs in the background, never inline).
+    pub data_dir: Option<DataDirInfo>,
 }
 
 /// One mounted filesystem.
@@ -166,6 +188,54 @@ pub struct NetInfo {
     pub rx_bytes: u64,
     /// Total bytes transmitted (cumulative)
     pub tx_bytes: u64,
+}
+
+/// Cached data-directory footprint. `Err` poison is treated as "no cache" —
+/// the next caller recomputes.
+static DATA_DIR_USAGE: std::sync::Mutex<Option<DataDirInfo>> = std::sync::Mutex::new(None);
+
+/// One-shot latch: the stats handler kicks the background walk at most once
+/// per process. Without it, every poll before a (slow) walk lands would spawn
+/// another concurrent full scan of the tree.
+static DATA_DIR_KICKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn cached_data_dir_usage() -> Option<DataDirInfo> {
+    DATA_DIR_USAGE.lock().ok()?.clone()
+}
+
+/// Sum regular-file sizes under the data directory. Deliberately dumb DFS:
+/// `read_dir`'s `file_type` never follows symlinks, so symlinked dirs can't
+/// cause cycles or double counting. Runs on the blocking pool (caller's job).
+fn compute_data_dir_usage() -> std::io::Result<DataDirInfo> {
+    let root = neomind_core::paths::data_dir();
+    let mut total = 0u64;
+    let mut stack = vec![root.clone()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            let ft = entry.file_type()?;
+            if ft.is_dir() {
+                stack.push(entry.path());
+            } else if ft.is_file() {
+                total += entry.metadata()?.len();
+            }
+        }
+    }
+    Ok(DataDirInfo {
+        path: root.to_string_lossy().to_string(),
+        bytes: total,
+    })
+}
+
+/// Recompute on the blocking pool and store into the cache.
+async fn refresh_data_dir_usage() -> std::io::Result<DataDirInfo> {
+    let info = tokio::task::spawn_blocking(compute_data_dir_usage)
+        .await
+        .map_err(|e| std::io::Error::other(format!("walk task panicked: {e}")))??;
+    if let Ok(mut guard) = DATA_DIR_USAGE.lock() {
+        *guard = Some(info.clone());
+    }
+    Ok(info)
 }
 
 /// Get overall system statistics.
@@ -321,12 +391,21 @@ pub async fn get_system_stats_handler(
         tokio::time::sleep(Duration::from_millis(200)).await;
         sys.refresh_cpu_usage();
         sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[me]), true);
+        // A third sample, and a second wait, because a process's CPU figure is a
+        // delta and a fresh `System` has nothing to subtract from: the first
+        // refresh files the process, the second files its baseline, and only the
+        // third has anything to compare. Two — which is all the machine-wide
+        // figure needs — reported 0.0% on every platform, every time. Measured:
+        // two refreshes 0.0, three refreshes 98-103% under load, 3.7% idle.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        sys.refresh_cpu_usage();
+        sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[me]), true);
         let process = sys.process(me).map(|p| ProcessInfo {
             pid: me.as_u32(),
             memory_bytes: p.memory(),
             virtual_memory_bytes: p.virtual_memory(),
             cpu_usage: p.cpu_usage(),
-            threads: p.tasks().map(|t| t.len()).unwrap_or(1),
+            threads: p.tasks().map(|t| t.len()),
             uptime_secs: p.run_time(),
         });
         (
@@ -403,6 +482,18 @@ pub async fn get_system_stats_handler(
         }
     };
 
+    // Data-directory footprint. Never walked inline here: if it has never
+    // been computed, kick ONE background walk and let this response report
+    // None — the value lands in the cache and shows up on the next poll.
+    // Recompute (including retry after failure) happens only via the manual
+    // refresh endpoint.
+    if cached_data_dir_usage().is_none()
+        && !DATA_DIR_KICKED.swap(true, std::sync::atomic::Ordering::Relaxed)
+    {
+        tokio::spawn(refresh_data_dir_usage());
+    }
+    let data_dir = cached_data_dir_usage();
+
     // Version from env or default
     let version = env!("CARGO_PKG_VERSION");
 
@@ -421,6 +512,7 @@ pub async fn get_system_stats_handler(
         disks,
         networks,
         process,
+        data_dir,
     };
 
     let stats = SystemStats {
@@ -446,6 +538,7 @@ pub async fn get_system_stats_handler(
         "disks": system_info.disks,
         "networks": system_info.networks,
         "process": system_info.process,
+        "data_dir": system_info.data_dir,
     }))?;
 
     // Cache the response for 5 seconds
@@ -459,6 +552,28 @@ pub async fn get_system_stats_handler(
     );
 
     Ok(response)
+}
+
+/// Recompute the data-directory footprint on demand and return it.
+///
+/// POST /api/stats/data-dir/refresh
+///
+/// The walk never runs on the polling path — the About tab's manual refresh
+/// button is the only caller. A few seconds of blocking walk is acceptable
+/// here because the user explicitly asked for a fresh number.
+#[utoipa::path(
+    post,
+    path = "/api/stats/data-dir/refresh",
+    tag = "stats",
+    responses(
+        (status = 200, description = "Recomputed data-directory usage"),
+    )
+)]
+pub async fn refresh_data_dir_usage_handler() -> HandlerResult<serde_json::Value> {
+    let info = refresh_data_dir_usage()
+        .await
+        .map_err(|e| ErrorResponse::internal(format!("Failed to measure data directory: {e}")))?;
+    ok(json!({ "data_dir": info }))
 }
 
 /// Detect GPUs on the system.
@@ -725,6 +840,7 @@ mod tests {
                 disks: vec![],
                 networks: vec![],
                 process: None,
+                data_dir: None,
             },
         };
 

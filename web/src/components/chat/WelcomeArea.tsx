@@ -43,13 +43,16 @@ export function WelcomeArea({ className, onQuickAction, children }: WelcomeAreaP
   ]
 
   return (
-    <div className={cn("flex min-h-full w-full flex-col items-center p-6", className)}>
+    <div className={cn("relative flex min-h-full w-full flex-col items-center overflow-hidden p-6", className)}>
+      {/* Flowing brand aurora — two large radial blobs drifting behind the
+          centered group (see .welcome-aurora in index.css). Decorative. */}
+      <div aria-hidden="true" className="welcome-aurora" />
       {/* Top spacer */}
       <div className="min-h-0 flex-1 shrink" />
       {/* max-w-3xl — same width as the conversation view's composer, so the
           slotted input keeps its conversational width and the suggestion
-          grid spans it too */}
-      <div className="w-full max-w-3xl shrink-0 space-y-8">
+          grid spans it too. relative keeps it painting above the aurora. */}
+      <div className="relative w-full max-w-3xl shrink-0 space-y-8">
         {/* Greeting */}
         <div className="text-center">
           <div className="flex items-center justify-center gap-2.5 mb-3">

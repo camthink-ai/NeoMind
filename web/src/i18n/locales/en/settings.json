@@ -393,7 +393,8 @@
     "compatNotice": "LAN access was kept ON for compatibility (your devices connected to this machine before the update). Turn it off here if you don't need it.",
     "dismiss": "Got it"
   },
-  "processUsage": "NeoMind's own usage",
+  "processUsage": "NeoMind resource usage",
+  "dataDirUsage": "Data directory",
   "residentMemory": "Resident memory",
   "ofTotalMemory": "of total",
   "processCpu": "Process CPU",

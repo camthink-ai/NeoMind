@@ -885,6 +885,104 @@ html {
     background-size: 32px 32px;
   }
 
+  /* Flowing brand aurora behind the chat welcome greeting: two large,
+     pre-soft radial blobs (soft by construction — no filter cost) drifting
+     on transform-only keyframes so the compositor owns the animation.
+     The layer-wide mask fades the wash out BEFORE the top/bottom edges —
+     blobs crossing the overflow boundary dissolve instead of showing a
+     hard cut line (standard aurora edge treatment). Theme-aware via
+     var(--brand): a faint warm wash on light bg, a soft glow on dark.
+     Honors prefers-reduced-motion. */
+  .welcome-aurora {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      transparent 0%,
+      black 18%,
+      black 82%,
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      to bottom,
+      transparent 0%,
+      black 18%,
+      black 82%,
+      transparent 100%
+    );
+  }
+  .welcome-aurora::before,
+  .welcome-aurora::after {
+    content: "";
+    position: absolute;
+    border-radius: 9999px;
+    will-change: transform;
+  }
+  .welcome-aurora::before {
+    width: 60%;
+    height: 70%;
+    top: -10%;
+    left: -12%;
+    background: radial-gradient(
+      closest-side,
+      color-mix(in oklch, var(--brand) 9%, transparent),
+      transparent 70%
+    );
+    animation: welcome-drift-a 22s ease-in-out infinite;
+  }
+  .welcome-aurora::after {
+    width: 55%;
+    height: 65%;
+    bottom: -12%;
+    right: -12%;
+    background: radial-gradient(
+      closest-side,
+      color-mix(in oklch, var(--brand) 7%, transparent),
+      transparent 70%
+    );
+    animation: welcome-drift-b 28s ease-in-out infinite;
+  }
+  .dark .welcome-aurora::before {
+    background: radial-gradient(
+      closest-side,
+      color-mix(in oklch, var(--brand) 14%, transparent),
+      transparent 70%
+    );
+  }
+  .dark .welcome-aurora::after {
+    background: radial-gradient(
+      closest-side,
+      color-mix(in oklch, var(--brand) 11%, transparent),
+      transparent 70%
+    );
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .welcome-aurora::before,
+    .welcome-aurora::after {
+      animation: none;
+    }
+  }
+  @keyframes welcome-drift-a {
+    0%,
+    100% {
+      transform: translate3d(0, 0, 0) scale(1);
+    }
+    50% {
+      transform: translate3d(12%, 10%, 0) scale(1.18);
+    }
+  }
+  @keyframes welcome-drift-b {
+    0%,
+    100% {
+      transform: translate3d(0, 0, 0) scale(1.05);
+    }
+    50% {
+      transform: translate3d(-14%, -12%, 0) scale(0.92);
+    }
+  }
+
   /* ============================================================================
    * CARD SURFACE QUALITY
    * A 1px top highlight via box-shadow inset, giving opaque cards a subtle

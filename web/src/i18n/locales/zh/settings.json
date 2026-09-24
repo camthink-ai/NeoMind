@@ -393,7 +393,8 @@
     "compatNotice": "已保持旧版本默认的局域网访问（你的设备此前可直连本机）。若不需要，可在此关闭。",
     "dismiss": "知道了"
   },
-  "processUsage": "NeoMind 自身占用",
+  "processUsage": "NeoMind资源占用分析",
+  "dataDirUsage": "数据目录占用",
   "residentMemory": "常驻内存",
   "ofTotalMemory": "占整机",
   "processCpu": "进程 CPU",

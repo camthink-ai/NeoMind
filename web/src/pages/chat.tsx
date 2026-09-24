@@ -673,6 +673,10 @@ export function ChatPage() {
       onActivateBackend={activateBackend}
       contextUsage={contextUsage}
       maxHeight={isDesktop ? 160 : 100}
+      // Welcome hosts raise the resting height so the input reads as the
+      // page's primary action (ChatGPT/Claude empty-state pattern);
+      // conversation keeps the compact single-line default.
+      minHeight={isWelcomeMode ? (isDesktop ? 72 : 56) : 44}
     />
   )
 

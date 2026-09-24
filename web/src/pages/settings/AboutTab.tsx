@@ -53,6 +53,12 @@ interface SystemInfo {
    * renders only when there is something true to say.
    */
   process?: ProcessInfo | null
+  /**
+   * Disk footprint of NeoMind's own data directory. Null until the first
+   * server-side walk completes (it runs in the background, once); refreshed
+   * only via the manual refresh button — never by the polling loop.
+   */
+  data_dir?: { path: string; bytes: number } | null
 }
 
 interface ProcessInfo {
@@ -61,7 +67,8 @@ interface ProcessInfo {
   virtual_memory_bytes: number
   /** Percentage of **one** core, as `top` reports it — can exceed 100. */
   cpu_usage: number
-  threads: number
+  /** Absent on platforms where the OS will not report it (anything but Linux). */
+  threads?: number | null
   uptime_secs: number
 }
 
@@ -201,6 +208,35 @@ function InfoRow({
   )
 }
 
+/** Right-aligned two-line value: the metric on top, a muted caption beneath.
+    Inline value+caption made these rows run too wide to scan. */
+function TwoLineValue({
+  value,
+  caption,
+  captionTitle,
+  mono = false,
+}: {
+  value: ReactNode
+  caption?: ReactNode
+  /** Hover text for the caption (e.g. a truncated path's full form). */
+  captionTitle?: string
+  mono?: boolean
+}) {
+  return (
+    <span className="flex flex-col items-end min-w-0">
+      <span className="font-medium tabular-nums">{value}</span>
+      {caption != null && caption !== "" && (
+        <span
+          title={captionTitle}
+          className={"max-w-full text-xs text-muted-foreground truncate" + (mono ? " font-mono" : "")}
+        >
+          {caption}
+        </span>
+      )}
+    </span>
+  )
+}
+
 function ExternalLinkValue({ href, text }: { href: string; text: string }) {
   return (
     <a
@@ -267,6 +303,22 @@ export function AboutTab() {
       }
     } finally {
       setLoading(false)
+    }
+  }
+
+  const [refreshingDataDir, setRefreshingDataDir] = useState(false)
+  // Manual, on-demand only: the server walks the data directory once at
+  // startup and otherwise caches the number; this button is the only thing
+  // that recomputes it (a fresh walk can take seconds on big data dirs).
+  const refreshDataDir = async () => {
+    setRefreshingDataDir(true)
+    try {
+      const { data_dir } = await api.refreshDataDirUsage()
+      setSystemInfo((prev) => (prev ? { ...prev, data_dir } : prev))
+    } catch (error) {
+      handleError(error, { operation: "Refresh data directory usage" })
+    } finally {
+      setRefreshingDataDir(false)
     }
   }
 
@@ -478,43 +530,74 @@ export function AboutTab() {
                   box; on a small device the question an operator actually has
                   is what of it this app is holding, and the two only mean
                   something side by side. */}
-              {systemInfo.process && (
+              {(systemInfo.process || systemInfo.data_dir) && (
                 <div className="space-y-2">
                   {/* Label OUTSIDE the card, in the section-header spec (same
                       classes as the System Information h3 above) — it used to
                       be a weightless icon+span caption that read as neither
                       header nor body. */}
-                  <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    {t("settings:processUsage")}
-                  </h3>
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      {t("settings:processUsage")}
+                    </h3>
+                    {/* Manual refresh — the data-dir number is cached
+                        server-side and only recomputed on demand. */}
+                    <button
+                      type="button"
+                      onClick={refreshDataDir}
+                      disabled={refreshingDataDir}
+                      title={t("common:refresh")}
+                      aria-label={t("common:refresh")}
+                      className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted-30 hover:text-foreground disabled:opacity-50"
+                    >
+                      <RefreshCw className={`h-3.5 w-3.5 ${refreshingDataDir ? "animate-spin" : ""}`} />
+                    </button>
+                  </div>
                   <div className="rounded-lg border bg-card px-4">
                     <div className="divide-y divide-border">
+                    {systemInfo.process && (
+                      <>
                     <InfoRow label={t("settings:residentMemory")}>
-                      <span className="font-medium tabular-nums">
-                        {formatBytes(systemInfo.process.memory_bytes)}
-                      </span>
-                      {systemInfo.total_memory > 0 && (
-                        <span className="ml-2 text-xs text-muted-foreground tabular-nums">
-                          {((systemInfo.process.memory_bytes / systemInfo.total_memory) * 100).toFixed(1)}%{" "}
-                          {t("settings:ofTotalMemory")}
-                        </span>
-                      )}
+                      <TwoLineValue
+                        value={formatBytes(systemInfo.process.memory_bytes)}
+                        caption={
+                          systemInfo.total_memory > 0
+                            ? `${((systemInfo.process.memory_bytes / systemInfo.total_memory) * 100).toFixed(1)}% ${t("settings:ofTotalMemory")}`
+                            : undefined
+                        }
+                      />
                     </InfoRow>
                     <InfoRow label={t("settings:processCpu")}>
-                      <span className="font-medium tabular-nums">
-                        {systemInfo.process.cpu_usage.toFixed(1)}%
-                      </span>
-                      <span className="ml-2 text-xs text-muted-foreground">
-                        {t("settings:ofOneCore")}
-                      </span>
+                      <TwoLineValue
+                        value={`${systemInfo.process.cpu_usage.toFixed(1)}%`}
+                        caption={t("settings:ofOneCore")}
+                      />
                     </InfoRow>
-                    <InfoRow label={t("settings:threads")}>
-                      <span className="tabular-nums">{systemInfo.process.threads}</span>
-                    </InfoRow>
-                    <InfoRow label={t("settings:processUptime")}>
-                      <span className="font-medium tabular-nums">{processUptime.primary}</span>
-                      <span className="ml-1 text-xs text-muted-foreground">{processUptime.secondary}</span>
+                    {/* Only where the OS actually counts them — Linux. Everywhere
+                        else this row is absent rather than showing a made-up 1. */}
+                    {systemInfo.process.threads != null && (
+                      <InfoRow label={t("settings:threads")}>
+                        <span className="tabular-nums">{systemInfo.process.threads}</span>
                       </InfoRow>
+                    )}
+                    <InfoRow label={t("settings:processUptime")}>
+                      <TwoLineValue
+                        value={processUptime.primary}
+                        caption={processUptime.secondary}
+                      />
+                    </InfoRow>
+                      </>
+                    )}
+                    {systemInfo.data_dir && (
+                      <InfoRow label={t("settings:dataDirUsage")}>
+                        <TwoLineValue
+                          value={formatBytes(systemInfo.data_dir.bytes)}
+                          caption={systemInfo.data_dir.path}
+                          captionTitle={systemInfo.data_dir.path}
+                          mono
+                        />
+                      </InfoRow>
+                    )}
                     </div>
                   </div>
                 </div>

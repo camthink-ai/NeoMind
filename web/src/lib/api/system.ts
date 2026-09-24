@@ -5,8 +5,16 @@ import type { ServerUpgradeCheck, ServerUpgradeStatus } from "./types"
 
 export const systemApi = {
   // ========== Stats API ==========
-  getSystemStats: () => fetchAPI<{ version: string; uptime: number; platform: string; arch: string; cpu_count: number; total_memory: number; used_memory: number; free_memory: number; available_memory: number; cpu_usage: number; gpus: Array<{ name: string; vendor: string; total_memory_mb: number | null; driver_version: string | null }>; disks: Array<{ name: string; mount: string; total: number; used: number; available: number }>; networks: Array<{ name: string; ip: string; mac: string; rx_bytes: number; tx_bytes: number }> }>('/stats/system'),
+  getSystemStats: () => fetchAPI<{ version: string; uptime: number; platform: string; arch: string; cpu_count: number; total_memory: number; used_memory: number; free_memory: number; available_memory: number; cpu_usage: number; gpus: Array<{ name: string; vendor: string; total_memory_mb: number | null; driver_version: string | null }>; disks: Array<{ name: string; mount: string; total: number; used: number; available: number }>; networks: Array<{ name: string; ip: string; mac: string; rx_bytes: number; tx_bytes: number }>; data_dir: { path: string; bytes: number } | null }>('/stats/system'),
   getRuleStats: () => fetchAPI<{ stats: { total_rules: number; enabled_rules: number; disabled_rules: number; by_type: Record<string, number> } }>('/stats/rules'),
+  /**
+   * Recompute the data-directory footprint on demand. The walk is expensive
+   * on big data dirs, so this is only wired to the About tab's manual
+   * refresh — the stats poll never triggers it server-side.
+   * POST /api/stats/data-dir/refresh
+   */
+  refreshDataDirUsage: () =>
+    fetchAPI<{ data_dir: { path: string; bytes: number } }>('/stats/data-dir/refresh', { method: 'POST' }),
 
   // ========== Server self-upgrade API (admin, browser/server deployments) ==========
   /**

@@ -300,6 +300,12 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             get(data::list_all_data_sources_handler),
         )
         .route("/api/stats/system", get(stats::get_system_stats_handler))
+        // Data-directory footprint — recomputed only on explicit request
+        // (the walk is too expensive for the polling path).
+        .route(
+            "/api/stats/data-dir/refresh",
+            post(stats::refresh_data_dir_usage_handler),
+        )
         // Diagnostic log archive download (admin/auth-only) — bundles
         // data/logs/*.log.* into a zip for support flows.
         .route("/api/logs/download", get(logs::download_logs_handler))

@@ -60,6 +60,10 @@ interface ChatComposerProps {
   } | null
   /** Textarea max height in px (default 100, chat desktop uses 160). */
   maxHeight?: number
+  /** Textarea resting height in px. Welcome hosts raise it so the input
+      reads as the page's primary action; conversation keeps the compact
+      single-line default (44). */
+  minHeight?: number
 }
 
 export function ChatComposer({
@@ -81,6 +85,7 @@ export function ChatComposer({
   onActivateBackend,
   contextUsage,
   maxHeight = 100,
+  minHeight = 44,
 }: ChatComposerProps) {
   const { t } = useTranslation(["chat", "common"])
   const { toast } = useToast()
@@ -176,11 +181,11 @@ export function ChatComposer({
             "max-h-[100px] scroll-mb-32",
             "disabled:opacity-60"
           )}
-          style={{ minHeight: "44px" }}
+          style={{ minHeight: `${minHeight}px` }}
           onInput={(e) => {
             const target = e.target as HTMLTextAreaElement
             target.style.height = "auto"
-            target.style.height = Math.max(44, Math.min(target.scrollHeight, maxHeight)) + "px"
+            target.style.height = Math.max(minHeight, Math.min(target.scrollHeight, maxHeight)) + "px"
           }}
         />
 
