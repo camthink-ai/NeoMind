@@ -26,4 +26,6 @@ dirs = { workspace = true }
 
 [dev-dependencies]
 serial_test = "3"
+neomind-storage = { path = "../neomind-storage" }
+neomind-data-push = { path = "../neomind-data-push" }
 tempfile = { workspace = true }

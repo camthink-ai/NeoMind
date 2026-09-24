@@ -3631,6 +3631,8 @@ dependencies = [
  "dirs",
  "hex",
  "neomind-core",
+ "neomind-data-push",
+ "neomind-storage",
  "redb",
  "reqwest",
  "serde",

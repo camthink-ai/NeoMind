@@ -1498,10 +1498,14 @@ pub enum AgentCommand {
         /// Description (0-500 chars).
         #[arg(short, long)]
         description: Option<String>,
-        /// Schedule type: interval | cron | event. Required.
+        /// Schedule type: interval | cron | event | manual. Required.
         ///   - interval: runs every N seconds (--schedule-config "300" = every 5min)
         ///   - cron:     runs on schedule (--schedule-config "0 8 * * *" = daily 8am)
         ///   - event:    runs when device data arrives (--event-filter optional)
+        ///   - manual:   never scheduled — runs only when you call
+        ///     `agent invoke` (or chat's run_now). This is what the editor's
+        ///     "on demand" strategy creates, so an agent built in the UI and
+        ///     one built here can be the same shape.
         #[arg(long)]
         schedule_type: Option<String>,
         /// Schedule config: interval seconds or cron expression.
@@ -1601,7 +1605,7 @@ pub enum AgentCommand {
         /// System prompt.
         #[arg(short, long)]
         system_prompt: Option<String>,
-        /// New schedule type: interval | cron | event.
+        /// New schedule type: interval | cron | event | manual (see `create`).
         #[arg(long)]
         schedule_type: Option<String>,
         /// New schedule config (seconds for interval, cron expression for cron).
