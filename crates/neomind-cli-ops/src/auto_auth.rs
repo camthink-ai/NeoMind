@@ -295,8 +295,7 @@ mod tests {
         let result = read_default_api_key_from("/tmp/neomind-nonexistent-test-data");
         assert!(result.is_none());
     }
-#[serial_test::serial]
-
+    #[serial_test::serial]
     #[test]
     fn test_resolve_data_dir_env_override() {
         let _lock = DATA_DIR_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -305,8 +304,7 @@ mod tests {
         assert_eq!(resolve_data_dir(), "/tmp/neomind-resolve-test-unique");
         std::env::remove_var("NEOMIND_DATA_DIR");
     }
-#[serial_test::serial]
-
+    #[serial_test::serial]
     #[test]
     fn test_resolve_data_dir_empty_env_falls_back() {
         let _lock = DATA_DIR_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -320,8 +318,7 @@ mod tests {
         );
         std::env::remove_var("NEOMIND_DATA_DIR");
     }
-#[serial_test::serial]
-
+    #[serial_test::serial]
     #[test]
     fn test_resolve_cli_config_dir_env_override() {
         let tmp = std::env::temp_dir().join(format!(

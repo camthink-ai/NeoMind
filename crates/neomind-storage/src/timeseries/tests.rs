@@ -787,7 +787,6 @@ async fn test_retention_policy() {
     assert_eq!(retrieved_policy.get_retention_hours("", "temp"), Some(1));
 }
 
-#[test]
 /// Regression: a multibyte value used to panic the retention worker.
 ///
 /// `s.len()` counts bytes and the detection sliced `&s[..32]` on that count, so
@@ -808,6 +807,7 @@ fn a_multibyte_value_does_not_panic_image_detection() {
     }
 }
 
+#[test]
 fn test_value_looks_like_image_detection() {
     // Data URL form (most camera extensions emit this)
     let data_url = serde_json::json!(

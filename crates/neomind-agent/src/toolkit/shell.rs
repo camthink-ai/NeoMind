@@ -1959,13 +1959,12 @@ mod dispatch_edge_tests {
                 continue;
             };
             let Some(cmd) = root.get_subcommands().find(|c| c.get_name() == domain) else {
-                problems.push(format!("`{domain}` is listed but the CLI has no such domain"));
+                problems.push(format!(
+                    "`{domain}` is listed but the CLI has no such domain"
+                ));
                 continue;
             };
             domains_seen += 1;
-
-            let real: std::collections::BTreeSet<&str> =
-                cmd.get_subcommands().map(|c| c.get_name()).collect();
 
             // The line is `- <domain>: a b c — <sub>: d e`, where the part after
             // the em dash names a nested group's own subcommands. Check each
@@ -1986,7 +1985,8 @@ mod dispatch_edge_tests {
                     match cmd.get_subcommands().find(|c| c.get_name() == parent) {
                         Some(c) => c,
                         None => {
-                            problems.push(format!("`{domain} {parent}` is named but does not exist"));
+                            problems
+                                .push(format!("`{domain} {parent}` is named but does not exist"));
                             continue;
                         }
                     }
@@ -2002,7 +2002,11 @@ mod dispatch_edge_tests {
                             && t.chars().all(|c| c.is_ascii_lowercase() || c == '-')
                     })
                     .collect();
-                let where_ = if level == 0 { domain.to_string() } else { format!("{domain} {parent}") };
+                let where_ = if level == 0 {
+                    domain.to_string()
+                } else {
+                    format!("{domain} {parent}")
+                };
                 for ghost in named.difference(&real_here) {
                     problems.push(format!("`{where_} {ghost}` is listed but does not exist"));
                 }
@@ -2042,8 +2046,15 @@ mod dispatch_edge_tests {
             ));
         }
 
-        assert!(domains_seen > 8, "parsed only {domains_seen} domains — the scan is broken");
-        assert!(problems.is_empty(), "domain index drift:\n  {}", problems.join("\n  "));
+        assert!(
+            domains_seen > 8,
+            "parsed only {domains_seen} domains — the scan is broken"
+        );
+        assert!(
+            problems.is_empty(),
+            "domain index drift:\n  {}",
+            problems.join("\n  ")
+        );
     }
 
     /// Every `neomind ...` command the builtin skills show the model must parse.
@@ -2100,7 +2111,7 @@ mod dispatch_edge_tests {
                 // Drop a trailing `# comment`, but only when the `#` is outside
                 // quotes — a `#` inside a prompt is text.
                 if let Some(at) = full.find(" #") {
-                    if full[..at].matches('"').count() % 2 == 0 {
+                    if full[..at].matches('"').count().is_multiple_of(2) {
                         full.truncate(at);
                     }
                 }
@@ -2121,7 +2132,10 @@ mod dispatch_edge_tests {
             }
         }
 
-        assert!(checked > 50, "only found {checked} commands — the scan is not reading the skills");
+        assert!(
+            checked > 50,
+            "only found {checked} commands — the scan is not reading the skills"
+        );
         assert!(
             failures.is_empty(),
             "{} skill example(s) do not parse:\n{}",

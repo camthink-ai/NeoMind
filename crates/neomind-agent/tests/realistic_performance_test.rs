@@ -27,7 +27,6 @@ fn test_model() -> String {
         .unwrap_or_else(|_| "qwen3.5:4b".to_string())
 }
 
-
 struct RealPerfTestContext {
     pub store: Arc<AgentStore>,
     pub event_bus: Arc<EventBus>,
@@ -167,7 +166,7 @@ impl RealPerfTestContext {
             output_schema: None,
             operator_config: None,
             memory_mode: None,
-        notify: None,
+            notify: None,
             priority: 128,
             conversation_history: vec![],
             user_messages: vec![],

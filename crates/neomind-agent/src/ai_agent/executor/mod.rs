@@ -161,9 +161,9 @@ mod data_collector;
 mod event_trigger;
 mod intent;
 mod llm_runtime;
-mod structured;
 mod memory;
 mod response_parser;
+mod structured;
 mod tool_loop;
 mod tool_prompt;
 pub(crate) mod tool_result; // pub(crate): hallucinated_tool_hint reused by chat streaming path
@@ -175,12 +175,12 @@ pub use context::{DataSourceRef, EventTriggerData};
 // Re-export functions needed by sibling modules (via use super::*)
 pub(crate) use context::{build_history_context, format_timestamp, truncate_to, HistoryConfig};
 pub(crate) use data_collector::get_time_context;
-pub use structured::EXECUTION_ID_KEY;
 pub(crate) use intent::extract_threshold;
 pub(crate) use response_parser::{
     extract_command_from_description, extract_device_from_description, extract_json_from_codeblock,
     summarize_tool_output,
 };
+pub use structured::EXECUTION_ID_KEY;
 
 /// Resolve the role prompt for an agent.
 /// Returns the agent's custom `system_prompt` if set, otherwise the default IoT role string.
@@ -574,7 +574,9 @@ impl AgentExecutor {
             // Structured (L0) never reaches the tool loop — execute_internal
             // routes it to the single-shot path before this. Defense-in-depth:
             // treat it as the tightest possible loop config.
-            neomind_storage::agents::ExecutionMode::Structured => ToolLoopConfig::focused_plus(agent),
+            neomind_storage::agents::ExecutionMode::Structured => {
+                ToolLoopConfig::focused_plus(agent)
+            }
         };
 
         let (mut filtered_tools, mut tool_name_map) =
@@ -1623,8 +1625,10 @@ impl AgentExecutor {
                 // steps claiming one means no claim here either — the old 0.5
                 // fallback was an invented number wearing the same face as a
                 // measured one.
-                let reported: Vec<f32> =
-                    reasoning_steps.iter().filter_map(|s| s.confidence).collect();
+                let reported: Vec<f32> = reasoning_steps
+                    .iter()
+                    .filter_map(|s| s.confidence)
+                    .collect();
                 let confidence = if reported.is_empty() {
                     None
                 } else {
@@ -1636,7 +1640,9 @@ impl AgentExecutor {
 
                 // M2-2: the output contract, same best-effort step as the Free
                 // branch — recorded as a decision so it shows in the timeline.
-                let published = self.apply_output_contract(&agent, &execution_id, &conclusion).await;
+                let published = self
+                    .apply_output_contract(&agent, &execution_id, &conclusion)
+                    .await;
                 if let Some(field_count) = published {
                     decisions.push(Decision {
                         decision_type: "output_contract".to_string(),

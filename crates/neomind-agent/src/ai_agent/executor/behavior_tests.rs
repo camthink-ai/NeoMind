@@ -603,7 +603,11 @@ async fn structured_mode_is_dispatched_from_the_production_entry_point() {
     )]));
     executor.set_llm_runtime(rt).await;
     // `execute_agent` persists an execution record, so the agent must exist.
-    executor.store().save_agent(&agent).await.expect("seed store");
+    executor
+        .store()
+        .save_agent(&agent)
+        .await
+        .expect("seed store");
 
     let record = executor
         .execute_agent(agent, None, None)
@@ -644,7 +648,11 @@ async fn build_event_agent(
         timeout_secs: 60,
         consecutive_failure_threshold: 3,
     });
-    executor.store().save_agent(&agent).await.expect("seed store");
+    executor
+        .store()
+        .save_agent(&agent)
+        .await
+        .expect("seed store");
     let rt: Arc<dyn LlmRuntime> = Arc::new(MockLlmRuntime::new(vec![MockResponse::text(
         r#"{"missing_count": 1}"#,
     )]));
@@ -748,7 +756,11 @@ async fn build_event_agent_with_filter(filter: String) -> (AgentExecutor, AiAgen
         timezone: None,
         event_filter: Some(filter),
     };
-    executor.store().save_agent(&agent).await.expect("seed store");
+    executor
+        .store()
+        .save_agent(&agent)
+        .await
+        .expect("seed store");
     let rt: Arc<dyn LlmRuntime> = Arc::new(MockLlmRuntime::new(vec![MockResponse::text("ok")]));
     executor.set_llm_runtime(rt).await;
     (executor, agent)
@@ -850,9 +862,10 @@ async fn an_any_group_fires_on_its_own_alongside_an_all_group() {
 /// `sources` shape must keep firing exactly as it did before M2.
 #[tokio::test]
 async fn a_legacy_sources_filter_still_fires_on_a_single_match() {
-    let (executor, _agent) =
-        build_event_agent_with_filter(r#"{"sources":[{"type":"device","id":"dev-a","field":"temp"}]}"#.to_string())
-            .await;
+    let (executor, _agent) = build_event_agent_with_filter(
+        r#"{"sources":[{"type":"device","id":"dev-a","field":"temp"}]}"#.to_string(),
+    )
+    .await;
 
     fire_event(&executor, "device", "dev-a", "temp").await;
 
@@ -888,7 +901,11 @@ async fn execute_agent_applies_the_output_contract_for_a_reasoning_agent() {
         unit: None,
         description: None,
     }]);
-    executor.store().save_agent(&agent).await.expect("seed store");
+    executor
+        .store()
+        .save_agent(&agent)
+        .await
+        .expect("seed store");
 
     // 1) the tool loop's answer, 2) the contract extraction over it.
     let rt: Arc<dyn LlmRuntime> = Arc::new(
@@ -915,10 +932,6 @@ async fn execute_agent_applies_the_output_contract_for_a_reasoning_agent() {
         record.decision_process.decisions
     );
 }
-
-
-
-
 
 /// Freshness with an age gate, through the shared windowed-latest helper the
 /// device-level collector uses: a point written milliseconds ago (still in
@@ -960,28 +973,23 @@ async fn windowed_latest_is_fresh_but_not_stale() {
         )
         .await
         .expect("seed stale");
-    store.flush().expect("flush (stale point only reaches redb here)");
+    store
+        .flush()
+        .expect("flush (stale point only reaches redb here)");
 
-    let fresh = AgentExecutor::latest_point_in_window(
-        &store,
-        "dev-3",
-        "temperature",
-        now - 3600,
-    )
-    .await
-    .expect("fresh metric visible before flush")
-    .expect("Some");
+    let fresh = AgentExecutor::latest_point_in_window(&store, "dev-3", "temperature", now - 3600)
+        .await
+        .expect("fresh metric visible before flush")
+        .expect("Some");
     assert_eq!(fresh.value, serde_json::json!(23.5));
 
-    let stale = AgentExecutor::latest_point_in_window(
-        &store,
-        "dev-3",
-        "humidity",
-        now - 3600,
-    )
-    .await
-    .expect("no error");
-    assert!(stale.is_none(), "a point older than the window must stay excluded");
+    let stale = AgentExecutor::latest_point_in_window(&store, "dev-3", "humidity", now - 3600)
+        .await
+        .expect("no error");
+    assert!(
+        stale.is_none(),
+        "a point older than the window must stay excluded"
+    );
 }
 
 /// Telemetry writes are buffered; `query_range` reads only redb. A device
@@ -1082,9 +1090,6 @@ async fn metric_collection_reads_the_key_telemetry_is_written_under() {
     );
 }
 
-
-
-
 /// The watch-style trigger: on=always notifies on SUCCESS too, at Info
 /// severity, so a 盯-style agent reports every verdict.
 #[tokio::test]
@@ -1156,7 +1161,10 @@ async fn notify_on_always_reports_successes() {
         )])))
         .await;
 
-    executor.execute_agent(agent, None, None).await.expect("run ok");
+    executor
+        .execute_agent(agent, None, None)
+        .await
+        .expect("run ok");
 
     let messages = message_manager.list_messages().await;
     let hit = messages
@@ -1164,7 +1172,11 @@ async fn notify_on_always_reports_successes() {
         .find(|m| m.source == "agent:always-agent")
         .expect("success must notify under on=always");
     assert!(hit.title.contains("completed"), "title: {}", hit.title);
-    assert!(hit.message.contains("正常"), "body carries the verdict: {}", hit.message);
+    assert!(
+        hit.message.contains("正常"),
+        "body carries the verdict: {}",
+        hit.message
+    );
 }
 
 /// `judgment` hands the decision to the agent: the machinery sends nothing,
@@ -1245,10 +1257,16 @@ async fn notify_on_judgment_keeps_the_machinery_silent() {
         )])))
         .await;
 
-    executor.execute_agent(agent, None, None).await.expect("run ok");
+    executor
+        .execute_agent(agent, None, None)
+        .await
+        .expect("run ok");
 
     let messages = message_manager.list_messages().await;
-    let from_agent: Vec<_> = messages.iter().filter(|m| m.source == "agent:judgment-agent").collect();
+    let from_agent: Vec<_> = messages
+        .iter()
+        .filter(|m| m.source == "agent:judgment-agent")
+        .collect();
     assert!(
         from_agent.is_empty(),
         "the machinery must send nothing under on=judgment, got: {:?}",
@@ -1442,7 +1460,11 @@ async fn a_failed_run_reports_even_without_routing() {
         .dispatch_agent_notifications(
             &agent.id,
             &agent.name,
-            &record(neomind_storage::ExecutionStatus::Completed, "冷库温度正常", None),
+            &record(
+                neomind_storage::ExecutionStatus::Completed,
+                "冷库温度正常",
+                None,
+            ),
         )
         .await;
     assert_eq!(
@@ -1663,9 +1685,7 @@ async fn structured_inference_sees_the_image_as_a_part() {
         unit: None,
         description: None,
     }]);
-    let rt = MockLlmRuntime::new(vec![MockResponse::text(
-        r#"{"clutter_level": "一般"}"#,
-    )]);
+    let rt = MockLlmRuntime::new(vec![MockResponse::text(r#"{"clutter_level": "一般"}"#)]);
     let rt_handle = rt.clone();
     executor.set_llm_runtime(Arc::new(rt)).await;
 
@@ -1753,7 +1773,10 @@ async fn output_contract_failure_does_not_propagate() {
         .apply_output_contract(&agent, "exec-contract", "画面模糊")
         .await;
 
-    assert_eq!(published, None, "a botched extraction must not fail the run");
+    assert_eq!(
+        published, None,
+        "a botched extraction must not fail the run"
+    );
 }
 
 /// Structured agents already produce their schema directly — running the
@@ -1773,7 +1796,12 @@ async fn output_contract_is_skipped_for_structured_agents() {
     )]));
     executor.set_llm_runtime(rt).await;
 
-    assert_eq!(executor.apply_output_contract(&agent, "exec-contract", "any conclusion").await, None);
+    assert_eq!(
+        executor
+            .apply_output_contract(&agent, "exec-contract", "any conclusion")
+            .await,
+        None
+    );
 }
 
 /// Most agents declare no contract at all — the step must be free for them.
@@ -1785,7 +1813,12 @@ async fn output_contract_is_skipped_without_a_schema() {
     )]));
     executor.set_llm_runtime(rt).await;
 
-    assert_eq!(executor.apply_output_contract(&agent, "exec-contract", "any conclusion").await, None);
+    assert_eq!(
+        executor
+            .apply_output_contract(&agent, "exec-contract", "any conclusion")
+            .await,
+        None
+    );
 }
 
 #[tokio::test]
@@ -1830,7 +1863,11 @@ async fn daily_run_cap_applies_to_every_mode() {
         .with_function_calling(),
     );
     executor.set_llm_runtime(rt).await;
-    executor.store().save_agent(&agent).await.expect("seed store");
+    executor
+        .store()
+        .save_agent(&agent)
+        .await
+        .expect("seed store");
 
     // First run of the day: allowed.
     let first = executor.execute_agent(agent.clone(), None, None).await;
@@ -1844,7 +1881,11 @@ async fn daily_run_cap_applies_to_every_mode() {
         .expect("returns a record");
     assert_eq!(second.status, neomind_storage::ExecutionStatus::Failed);
     assert!(
-        second.error.as_deref().unwrap_or_default().contains("daily run cap"),
+        second
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("daily run cap"),
         "second run must be refused with the cap message; got {:?}",
         second.error
     );

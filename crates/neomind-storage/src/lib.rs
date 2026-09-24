@@ -93,14 +93,12 @@ pub use instances::InstanceRecord;
 pub use extensions::{ExtensionRecord, ExtensionStore};
 
 pub use agents::{
-    ActionExecuted, AgentExecutionRecord, AgentFilter, AgentMemory, AgentResource, AgentSchedule,
-    AgentStats, AgentStatus, AgentStore, AgentToolConfig, AiAgent, DataCollected, DataSummary,
-    Decision, DecisionProcess, ExecutionJournal, ExecutionMode, ExecutionRecord, ExecutionResult,
-    ExecutionStatus, GeneratedReport, IntentType, KnowledgeFileRef, NotificationSent, ParsedIntent,
-    ReasoningStep, ResourceType, ScheduleType, UserMessage,
-    OperatorConfig, OperatorField, OperatorFieldType,
-    MemoryMode, AgentNotify, NotifyOn,
-    DEFAULT_MAX_CHAIN_DEPTH,
+    ActionExecuted, AgentExecutionRecord, AgentFilter, AgentMemory, AgentNotify, AgentResource,
+    AgentSchedule, AgentStats, AgentStatus, AgentStore, AgentToolConfig, AiAgent, DataCollected,
+    DataSummary, Decision, DecisionProcess, ExecutionJournal, ExecutionMode, ExecutionRecord,
+    ExecutionResult, ExecutionStatus, GeneratedReport, IntentType, KnowledgeFileRef, MemoryMode,
+    NotificationSent, NotifyOn, OperatorConfig, OperatorField, OperatorFieldType, ParsedIntent,
+    ReasoningStep, ResourceType, ScheduleType, UserMessage, DEFAULT_MAX_CHAIN_DEPTH,
 };
 
 pub use device_registry::DeviceRegistryStore;
@@ -137,7 +135,9 @@ pub(crate) fn prune_stale_temp_entries(prefix: &str, max_age: std::time::Duratio
             continue;
         }
         let Ok(meta) = entry.metadata() else { continue };
-        let Ok(modified) = meta.modified() else { continue };
+        let Ok(modified) = meta.modified() else {
+            continue;
+        };
         if !now
             .duration_since(modified)
             .map(|age| age > max_age)

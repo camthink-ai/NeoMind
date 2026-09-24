@@ -326,8 +326,7 @@ mod tests {
         let encrypted = crypto1.encrypt_str("secret").unwrap();
         assert!(crypto2.decrypt_str(&encrypted).is_err());
     }
-#[serial_test::serial]
-
+    #[serial_test::serial]
     #[test]
     fn test_data_dir_path_pairing() {
         // Regression: from_env_or_generate_with_data_dir must place the key file

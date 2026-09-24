@@ -35,10 +35,7 @@ fn ollama_available() -> bool {
 
 /// An executor wired to a real model, with in-memory storage so a test can read
 /// back what the run produced.
-async fn live_executor(
-    store: Arc<AgentStore>,
-    time_series: Arc<TimeSeriesStore>,
-) -> AgentExecutor {
+async fn live_executor(store: Arc<AgentStore>, time_series: Arc<TimeSeriesStore>) -> AgentExecutor {
     let model = test_model();
     live_executor_with_model(store, time_series, &model).await
 }
@@ -99,7 +96,6 @@ fn agent_json(id: &str, extra: serde_json::Value) -> AiAgent {
     serde_json::from_value(base).expect("agent fixture")
 }
 
-
 /// Restart path: an interval agent that already exists in storage when the
 /// manager starts must be picked up by `reload_active_agents` and fire on its
 /// own. A live instance showed exactly this agent sitting dormant for 30+
@@ -125,7 +121,10 @@ async fn restart_reload_reschedules_existing_interval_agent() {
             ],
         }),
     );
-    store.save_agent(&agent).await.expect("seed pre-existing agent");
+    store
+        .save_agent(&agent)
+        .await
+        .expect("seed pre-existing agent");
 
     let ts = TimeSeriesStore::memory().expect("ts");
     let manager = AiAgentManager::new(AgentExecutorConfig {
@@ -134,11 +133,14 @@ async fn restart_reload_reschedules_existing_interval_agent() {
         device_service: None,
         event_bus: Some(Arc::new(EventBus::new())),
         message_manager: None,
-        llm_runtime: Some(Arc::new(OllamaRuntime::new(OllamaConfig {
-            endpoint: ollama_endpoint(),
-            model: test_model(),
-            timeout_secs: 120,
-        }).expect("runtime")) as Arc<dyn LlmRuntime>),
+        llm_runtime: Some(Arc::new(
+            OllamaRuntime::new(OllamaConfig {
+                endpoint: ollama_endpoint(),
+                model: test_model(),
+                timeout_secs: 120,
+            })
+            .expect("runtime"),
+        ) as Arc<dyn LlmRuntime>),
         llm_backend_store: None,
         extension_registry: None,
         tool_registry: None,
@@ -170,7 +172,6 @@ async fn restart_reload_reschedules_existing_interval_agent() {
         "a pre-existing interval agent MUST be rescheduled by startup reload and fire"
     );
 }
-
 
 fn init_tracing() {
     let _ = tracing_subscriber::fmt()
@@ -245,7 +246,8 @@ async fn vision_agent_reads_the_actual_pixels() {
         .expect("read back")
         .expect("field published");
     assert_eq!(
-        published.value, serde_json::json!("红色"),
+        published.value,
+        serde_json::json!("红色"),
         "the model must have seen the actual pixels"
     );
 }
@@ -274,7 +276,10 @@ async fn scheduled_agent_fires_on_its_interval() {
     })
     .await
     .expect("scheduler");
-    scheduler.schedule_agent(agent.clone()).await.expect("schedule");
+    scheduler
+        .schedule_agent(agent.clone())
+        .await
+        .expect("schedule");
     scheduler.start(executor.clone()).await.expect("start");
 
     // The interval is 10s; give the tick path generous headroom before failing.

@@ -491,8 +491,7 @@ impl LlmBackendInstanceManager {
                             _ => "",
                         };
                         if !timeout_env.is_empty() {
-                            cfg.timeout_secs =
-                                env_timeout_secs(timeout_env, 300);
+                            cfg.timeout_secs = env_timeout_secs(timeout_env, 300);
                         }
 
                         let runtime = CloudRuntime::new(cfg)

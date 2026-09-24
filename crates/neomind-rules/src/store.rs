@@ -127,8 +127,8 @@ impl RuleStore {
             // redb has an in-memory backend; the note that it did not is stale.
             // Nothing is written, so there is no temp file to clean up and no
             // `Drop` to depend on — a killed process leaves nothing behind.
-            let db = Database::builder()
-                .create_with_backend(redb::backends::InMemoryBackend::new())?;
+            let db =
+                Database::builder().create_with_backend(redb::backends::InMemoryBackend::new())?;
             (db, None)
         } else {
             let path_ref = Path::new(path_str);

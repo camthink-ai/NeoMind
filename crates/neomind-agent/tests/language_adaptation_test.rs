@@ -24,7 +24,6 @@ fn test_model() -> String {
         .unwrap_or_else(|_| "qwen3.5:4b".to_string())
 }
 
-
 /// Check if Ollama is available
 fn ollama_available() -> bool {
     use std::net::TcpStream;

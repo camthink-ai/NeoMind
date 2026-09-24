@@ -24,7 +24,6 @@ fn test_model() -> String {
         .unwrap_or_else(|_| "qwen3.5:4b".to_string())
 }
 
-
 /// Test context with real LLM backend
 struct LlmTestContext {
     pub store: Arc<AgentStore>,
@@ -122,7 +121,7 @@ impl LlmTestContext {
             output_schema: None,
             operator_config: None,
             memory_mode: None,
-        notify: None,
+            notify: None,
             enable_tool_chaining: false,
             max_chain_depth: 3,
         };

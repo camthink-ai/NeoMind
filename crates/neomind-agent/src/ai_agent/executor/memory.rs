@@ -98,7 +98,14 @@ impl AgentExecutor {
         >,
     ) -> AgentResult<()> {
         let mut updated_memory = self
-            .update_memory(agent, decisions, conclusion, execution_id, success, stop_reason)
+            .update_memory(
+                agent,
+                decisions,
+                conclusion,
+                execution_id,
+                success,
+                stop_reason,
+            )
             .await?;
 
         // Sync knowledge_files from the per-execution MemoryTool handle

@@ -38,7 +38,8 @@ fn main() {
     // a sync the two files carry the SAME mtime and an mtime test cannot tell a
     // fresh copy from a stale one. index.html names its hashed bundles, so
     // different bytes mean a different build.
-    let (Ok(embedded_bytes), Ok(built_bytes)) = (std::fs::read(&embedded), std::fs::read(&built)) else {
+    let (Ok(embedded_bytes), Ok(built_bytes)) = (std::fs::read(&embedded), std::fs::read(&built))
+    else {
         return; // no web/dist next to us; nothing to compare against
     };
 

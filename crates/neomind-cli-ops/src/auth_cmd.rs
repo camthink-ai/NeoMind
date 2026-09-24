@@ -214,8 +214,7 @@ mod tests {
     /// a module-local lock still raced against auto_auth's env tests (the
     /// CI flake in test_resolve_data_dir_env_override).
     use crate::auto_auth::DATA_DIR_ENV_LOCK;
-#[serial_test::serial]
-
+    #[serial_test::serial]
     #[test]
     fn test_resolve_login_data_dir_env() {
         let _lock = DATA_DIR_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -228,8 +227,7 @@ mod tests {
         assert_eq!(dir, "/tmp/env-data-dir-test");
         std::env::remove_var("NEOMIND_DATA_DIR");
     }
-#[serial_test::serial]
-
+    #[serial_test::serial]
     #[test]
     fn test_resolve_login_data_dir_not_found() {
         let _lock = DATA_DIR_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());

@@ -40,7 +40,7 @@ impl DataPoint {
             timestamp,
             value,
             quality: None,
-        metadata: None,
+            metadata: None,
         }
     }
 
@@ -202,11 +202,7 @@ impl TimeSeriesStorage {
         if *self.loaded_rx.borrow() {
             return;
         }
-        let _ = self
-            .loaded_rx
-            .clone()
-            .wait_for(|v| *v)
-            .await;
+        let _ = self.loaded_rx.clone().wait_for(|v| *v).await;
     }
 
     /// Create an in-memory time series storage. This is a FINAL store —
@@ -825,13 +821,32 @@ mod swap_drain_tests {
     /// carry it across, or it evaporates on restart.
     #[tokio::test]
     async fn swap_drains_placeholder_writes_into_persistent() {
-        let placeholder = std::sync::Arc::new(TimeSeriesStorage::memory_deferred().expect("memory-deferred"));
+        let placeholder =
+            std::sync::Arc::new(TimeSeriesStorage::memory_deferred().expect("memory-deferred"));
         placeholder
-            .write("ai:agent-1", "status", crate::telemetry::DataPoint { timestamp: 100, value: MetricValue::String("正常".into()), quality: None, metadata: None })
+            .write(
+                "ai:agent-1",
+                "status",
+                crate::telemetry::DataPoint {
+                    timestamp: 100,
+                    value: MetricValue::String("正常".into()),
+                    quality: None,
+                    metadata: None,
+                },
+            )
             .await
             .expect("write to placeholder");
         placeholder
-            .write("device:dev-1", "temperature", crate::telemetry::DataPoint { timestamp: 101, value: MetricValue::Float(21.5), quality: None, metadata: None })
+            .write(
+                "device:dev-1",
+                "temperature",
+                crate::telemetry::DataPoint {
+                    timestamp: 101,
+                    value: MetricValue::Float(21.5),
+                    quality: None,
+                    metadata: None,
+                },
+            )
             .await
             .expect("write to placeholder");
 
@@ -872,7 +887,8 @@ mod swap_drain_tests {
     /// no data lost.
     #[tokio::test]
     async fn finalize_memory_releases_waiters() {
-        let placeholder = std::sync::Arc::new(TimeSeriesStorage::memory_deferred().expect("memory-deferred"));
+        let placeholder =
+            std::sync::Arc::new(TimeSeriesStorage::memory_deferred().expect("memory-deferred"));
         let waiter = {
             let ph = placeholder.clone();
             tokio::spawn(async move { ph.wait_for_storage_load().await })

@@ -32,7 +32,6 @@ fn test_model() -> String {
         .unwrap_or_else(|_| "qwen3.5:4b".to_string())
 }
 
-
 // ============================================================================
 // Test Context with All Components
 // ============================================================================
@@ -75,8 +74,9 @@ impl FullTestContext {
             device_service: None,
             event_bus: Some(event_bus.clone()),
             message_manager: Some(message_manager.clone()),
-            llm_runtime: Some(llm_runtime.clone()
-                as Arc<dyn neomind_core::llm::backend::LlmRuntime>),
+            llm_runtime: Some(
+                llm_runtime.clone() as Arc<dyn neomind_core::llm::backend::LlmRuntime>
+            ),
             llm_backend_store: None,
             extension_registry: None,
             tool_registry: None,
@@ -213,7 +213,7 @@ impl FullTestContext {
             output_schema: None,
             operator_config: None,
             memory_mode: None,
-        notify: None,
+            notify: None,
             priority: 128,
             conversation_history: vec![],
             user_messages: vec![],
@@ -298,7 +298,7 @@ impl FullTestContext {
             output_schema: None,
             operator_config: None,
             memory_mode: None,
-        notify: None,
+            notify: None,
             priority: 128,
             conversation_history: vec![],
             user_messages: vec![],

@@ -309,9 +309,9 @@ pub async fn create_agent(
 /// sentence there — and for everything else it is "here is how to see it ran".
 fn create_next_step(agent_id: &str, schedule_type: Option<&str>) -> String {
     match schedule_type.unwrap_or("event") {
-        "manual" => format!(
-            "It never runs on its own — start it with `neomind agent invoke {agent_id}`."
-        ),
+        "manual" => {
+            format!("It never runs on its own — start it with `neomind agent invoke {agent_id}`.")
+        }
         "event" => format!(
             "It runs when its bound sources report; `neomind agent latest-execution {agent_id}` \
              shows the last run."
@@ -619,7 +619,13 @@ mod tests {
     /// holding a wrong picture of the state for everything it said afterwards.
     #[test]
     fn the_next_step_never_claims_the_agent_was_created_paused() {
-        for schedule in [None, Some("interval"), Some("cron"), Some("event"), Some("manual")] {
+        for schedule in [
+            None,
+            Some("interval"),
+            Some("cron"),
+            Some("event"),
+            Some("manual"),
+        ] {
             let step = super::create_next_step("agent-1", schedule);
             assert!(
                 !step.to_lowercase().contains("paused"),

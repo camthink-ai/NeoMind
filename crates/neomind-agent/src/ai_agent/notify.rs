@@ -4,6 +4,13 @@ use neomind_storage::{AgentNotify, NotifyOn};
 
 /// The routing a run falls back to when none was configured.
 ///
+/// `IM` is the channel that reaches a human — it delivers to whatever chats the
+/// operator bound under Settings → IM Bridges. With nobody bound it is a no-op,
+/// not an error, and the run is recorded in-app either way. The `on: Failure`
+/// default keeps the old bargain that silence is health, so this adds a report
+/// only when there is something to report; a watch-style agent whose every
+/// verdict is worth reading wants `on: "always"`.
+///
 /// Defined once, in the crate that can see both `AgentNotify` and the channel
 /// name it points at. There used to be two copies — one in the API's create
 /// path, one mirrored in TypeScript for the editor — with the agreement between

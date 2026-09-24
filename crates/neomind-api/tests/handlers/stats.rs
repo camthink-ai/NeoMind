@@ -116,7 +116,10 @@ mod tests {
             "networks",
             "data_dir",
         ] {
-            assert!(body.get(key).is_some(), "`{key}` went missing from the payload");
+            assert!(
+                body.get(key).is_some(),
+                "`{key}` went missing from the payload"
+            );
         }
     }
 }

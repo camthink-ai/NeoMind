@@ -681,8 +681,7 @@ mod tests {
         }
         h
     }
-#[serial_test::serial]
-
+    #[serial_test::serial]
     #[test]
     fn test_resolve_server_url_priority_chain() {
         const KEY: &str = "NEOMIND_SERVER_URL";

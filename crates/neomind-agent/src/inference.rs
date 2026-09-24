@@ -148,7 +148,10 @@ impl InferenceClient {
             }
             Message::new(MessageRole::User, Content::Parts(parts))
         };
-        let mut messages = vec![Message::system(Self::contract_message(&req.schema)), user_message];
+        let mut messages = vec![
+            Message::system(Self::contract_message(&req.schema)),
+            user_message,
+        ];
 
         for attempt in 1u8..=2 {
             let input = LlmInput {
@@ -357,7 +360,11 @@ fn coerce(v: &serde_json::Value, t: &OperatorFieldType) -> Result<serde_json::Va
                     )),
                 }
             }
-            other => Err(format!("expected one of {:?}, got {}", allowed, json_kind(other))),
+            other => Err(format!(
+                "expected one of {:?}, got {}",
+                allowed,
+                json_kind(other)
+            )),
         },
     }
 }

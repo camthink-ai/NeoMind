@@ -3647,7 +3647,8 @@ mod im_persistence_tests {
         let path = dir.path().join("sessions.redb");
 
         let session_id = {
-            let sm = Arc::new(neomind_agent::SessionManager::with_path(&path).expect("session store"));
+            let sm =
+                Arc::new(neomind_agent::SessionManager::with_path(&path).expect("session store"));
             let runner = SessionManagerAgentRunner::new(sm);
             let sid = runner.create_session().await.expect("create session");
             // No LLM backend is configured here, so the reply comes back as an

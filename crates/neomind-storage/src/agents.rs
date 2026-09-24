@@ -1762,7 +1762,7 @@ mod tests {
             output_schema: None,
             operator_config: None,
             memory_mode,
-        notify: None,
+            notify: None,
         }
     }
 
@@ -1791,13 +1791,15 @@ mod tests {
     /// both directions.
     #[test]
     fn effective_memory_mode_honours_an_explicit_override() {
-        let pinned_stateless =
-            memory_mode_fixture(ExecutionMode::Free, Some(MemoryMode::Tool));
+        let pinned_stateless = memory_mode_fixture(ExecutionMode::Free, Some(MemoryMode::Tool));
         assert_eq!(pinned_stateless.effective_memory_mode(), MemoryMode::Tool);
 
         let pinned_history =
             memory_mode_fixture(ExecutionMode::Structured, Some(MemoryMode::Assistant));
-        assert_eq!(pinned_history.effective_memory_mode(), MemoryMode::Assistant);
+        assert_eq!(
+            pinned_history.effective_memory_mode(),
+            MemoryMode::Assistant
+        );
     }
 
     #[tokio::test]
@@ -2114,7 +2116,10 @@ mod event_filter_tests {
         assert_eq!(f.any[0].field.as_deref(), Some("occupied"));
         assert_eq!(f.any[1].id, "gate");
         assert_eq!(f.any[1].field.as_deref(), Some("reserved"));
-        assert!(f.all.is_empty(), "the legacy shape carries no AND semantics");
+        assert!(
+            f.all.is_empty(),
+            "the legacy shape carries no AND semantics"
+        );
         assert_eq!(f.within_secs, None);
     }
 
@@ -2264,7 +2269,10 @@ mod event_filter_tests {
 
     // ---- the `all` window state machine (M2-1) ----
 
-    fn filter_with_all(sources: &[(&str, &str, Option<&str>)], within_secs: Option<u64>) -> EventFilter {
+    fn filter_with_all(
+        sources: &[(&str, &str, Option<&str>)],
+        within_secs: Option<u64>,
+    ) -> EventFilter {
         EventFilter {
             any: Vec::new(),
             all: sources.iter().map(|(t, i, f)| source(t, i, *f)).collect(),
@@ -2282,7 +2290,10 @@ mod event_filter_tests {
 
     fn two_source_filter() -> EventFilter {
         filter_with_all(
-            &[("device", "cam-01", Some("occupied")), ("extension", "booking", Some("reserved"))],
+            &[
+                ("device", "cam-01", Some("occupied")),
+                ("extension", "booking", Some("reserved")),
+            ],
             Some(1200),
         )
     }
@@ -2296,13 +2307,7 @@ mod event_filter_tests {
 
         let first = pending(f.observe(None, "device", "cam-01", "occupied", 1_000));
 
-        let second = f.observe(
-            first.as_ref(),
-            "extension",
-            "booking",
-            "reserved",
-            1_010,
-        );
+        let second = f.observe(first.as_ref(), "extension", "booking", "reserved", 1_010);
         assert!(
             matches!(second, WindowOutcome::Fire),
             "both sources inside the window must fire"
@@ -2320,8 +2325,15 @@ mod event_filter_tests {
         let outcome = f.observe(opened.as_ref(), "extension", "booking", "reserved", 2_300);
 
         let state = pending(outcome).expect("a late source opens a fresh window");
-        assert_eq!(state.opened_at, 2_300, "the clock restarts from the late hit");
-        assert_eq!(state.seen, vec![1], "only the late hit is in the new window");
+        assert_eq!(
+            state.opened_at, 2_300,
+            "the clock restarts from the late hit"
+        );
+        assert_eq!(
+            state.seen,
+            vec![1],
+            "only the late hit is in the new window"
+        );
     }
 
     /// An expired window is dropped rather than revived: otherwise it lingers
@@ -2344,7 +2356,10 @@ mod event_filter_tests {
     #[test]
     fn without_a_window_only_a_single_event_can_complete_the_all() {
         let two_separate = filter_with_all(
-            &[("device", "cam-01", Some("occupied")), ("extension", "booking", Some("reserved"))],
+            &[
+                ("device", "cam-01", Some("occupied")),
+                ("extension", "booking", Some("reserved")),
+            ],
             None,
         );
         let alone = two_separate.observe(None, "device", "cam-01", "occupied", 1_000);
@@ -2356,7 +2371,10 @@ mod event_filter_tests {
 
         // One event that satisfies every entry (exact + wildcard) does fire.
         let one_event = filter_with_all(
-            &[("device", "cam-01", Some("occupied")), ("device", "all", None)],
+            &[
+                ("device", "cam-01", Some("occupied")),
+                ("device", "all", None),
+            ],
             None,
         );
         assert!(

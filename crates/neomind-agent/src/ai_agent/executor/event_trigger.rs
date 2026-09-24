@@ -131,11 +131,13 @@ impl AgentExecutor {
             // matter how many sources fired. Structured-only: its guardrails
             // are all-or-nothing, defaulting to 30s (see OperatorConfig).
             let debounce_secs = match agent.execution_mode {
-                neomind_storage::agents::ExecutionMode::Structured => agent
-                    .operator_config
-                    .clone()
-                    .unwrap_or_else(super::structured::default_operator_config)
-                    .debounce_secs as i64,
+                neomind_storage::agents::ExecutionMode::Structured => {
+                    agent
+                        .operator_config
+                        .clone()
+                        .unwrap_or_else(super::structured::default_operator_config)
+                        .debounce_secs as i64
+                }
                 _ => 0,
             };
             if debounce_secs > 0 {

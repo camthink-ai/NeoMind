@@ -128,7 +128,10 @@ fn render_silence(devices: &BoundSources) -> String {
     if !never.is_empty() {
         let silent: usize = never.iter().map(|(_, count)| count).sum();
         let names = join_capped(
-            never.iter().map(|(device, _)| (*device).to_string()).collect(),
+            never
+                .iter()
+                .map(|(device, _)| (*device).to_string())
+                .collect(),
             "device",
         );
         // The count leads and the names trail, so a capped list ends on
@@ -188,14 +191,20 @@ impl AgentExecutor {
                 agent.name
             )));
         }
-        let op = agent.operator_config.clone().unwrap_or_else(default_operator_config);
+        let op = agent
+            .operator_config
+            .clone()
+            .unwrap_or_else(default_operator_config);
 
         self.send_progress(
             &agent.id,
             execution_id,
             "inferring",
             "Inferring",
-            Some(&format!("Single constrained inference over {} data source(s)...", data_collected.len())),
+            Some(&format!(
+                "Single constrained inference over {} data source(s)...",
+                data_collected.len()
+            )),
         )
         .await;
 
@@ -231,19 +240,17 @@ impl AgentExecutor {
             .await?;
 
         // Publish every validated field as `ai:{agent_id}:{field}`.
-self.publish_output_fields(
-            &agent.id,
-            execution_id,
-            outcome.confidence,
-            &outcome.fields,
-        )
-        .await;
+        self.publish_output_fields(&agent.id, execution_id, outcome.confidence, &outcome.fields)
+            .await;
 
-        let conclusion =
-            serde_json::to_string(&serde_json::Value::Object(outcome.fields.iter().map(
-                |(k, v)| (k.clone(), v.clone()),
-            ).collect::<serde_json::Map<String, serde_json::Value>>()))
-            .unwrap_or_default();
+        let conclusion = serde_json::to_string(&serde_json::Value::Object(
+            outcome
+                .fields
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect::<serde_json::Map<String, serde_json::Value>>(),
+        ))
+        .unwrap_or_default();
 
         // Journal entry on the shared path (kept for history/trend/detail).
         self.finalize_execution_memory(
@@ -300,40 +307,40 @@ self.publish_output_fields(
         Ok((decision_process, execution_result))
     }
 
-/// Dry-run a structured agent: collect + one inference, publish NOTHING
-/// (no telemetry write, no bus event, no journal entry, no budget count).
-/// Backs `POST /api/agents/:id/test` — the editor's 试跑 preview.
-pub async fn dry_run_structured(
-    &self,
-    agent: &AiAgent,
-) -> AgentResult<serde_json::Value> {
-    let schema = agent.output_schema.clone().unwrap_or_default();
-    if schema.is_empty() {
-        return Err(NeoMindError::Config(format!(
-            "structured agent '{}' has no output_schema — add fields in the editor",
-            agent.name
-        )));
+    /// Dry-run a structured agent: collect + one inference, publish NOTHING
+    /// (no telemetry write, no bus event, no journal entry, no budget count).
+    /// Backs `POST /api/agents/:id/test` — the editor's 试跑 preview.
+    pub async fn dry_run_structured(&self, agent: &AiAgent) -> AgentResult<serde_json::Value> {
+        let schema = agent.output_schema.clone().unwrap_or_default();
+        if schema.is_empty() {
+            return Err(NeoMindError::Config(format!(
+                "structured agent '{}' has no output_schema — add fields in the editor",
+                agent.name
+            )));
+        }
+        let op = agent
+            .operator_config
+            .clone()
+            .unwrap_or_else(default_operator_config);
+        let data = self.collect_data(agent).await?;
+        let context = render_context(&data);
+        let outcome = self
+            .infer_structured(agent, &schema, op.timeout_secs, &context)
+            .await?;
+        Ok(serde_json::json!({
+            "agent_id": agent.id,
+            "context": context,
+            "data_sources": data.len(),
+            "fields": serde_json::Value::Object(
+                outcome
+                    .fields
+                    .into_iter()
+                    .collect::<serde_json::Map<String, serde_json::Value>>()
+            ),
+            "raw_text": outcome.raw_text,
+            "attempts": outcome.attempts,
+        }))
     }
-    let op = agent.operator_config.clone().unwrap_or_else(default_operator_config);
-    let data = self.collect_data(agent).await?;
-    let context = render_context(&data);
-    let outcome = self
-        .infer_structured(agent, &schema, op.timeout_secs, &context)
-        .await?;
-    Ok(serde_json::json!({
-        "agent_id": agent.id,
-        "context": context,
-        "data_sources": data.len(),
-        "fields": serde_json::Value::Object(
-            outcome
-                .fields
-                .into_iter()
-                .collect::<serde_json::Map<String, serde_json::Value>>()
-        ),
-        "raw_text": outcome.raw_text,
-        "attempts": outcome.attempts,
-    }))
-}
 
     /// Which sources the agent binds, and when each last reported.
     ///
@@ -457,16 +464,19 @@ pub async fn dry_run_structured(
             .operator_config
             .clone()
             .unwrap_or_else(default_operator_config);
-        match self.infer_structured(agent, &schema, op.timeout_secs, conclusion).await {
+        match self
+            .infer_structured(agent, &schema, op.timeout_secs, conclusion)
+            .await
+        {
             Ok(outcome) => {
                 let published = outcome.fields.len();
-        self.publish_output_fields(
-            &agent.id,
-            execution_id,
-            outcome.confidence,
-            &outcome.fields,
-        )
-        .await;
+                self.publish_output_fields(
+                    &agent.id,
+                    execution_id,
+                    outcome.confidence,
+                    &outcome.fields,
+                )
+                .await;
                 Some(published)
             }
             Err(e) => {
@@ -480,71 +490,69 @@ pub async fn dry_run_structured(
         }
     }
 
-/// Shared inference step (runtime resolution + one constrained call).
-pub(super) async fn infer_structured_with_images(
-    &self,
-    agent: &AiAgent,
-    schema: &[neomind_storage::OperatorField],
-    timeout_secs: u32,
-    context: &str,
-    images: Vec<(String, String)>,
-) -> AgentResult<crate::inference::InferenceOutcome> {
-    let request = crate::inference::InferenceRequest {
-        instruction: agent.user_prompt.clone(),
-        context: context.to_string(),
-        schema: schema.to_vec(),
-        backend_id: agent.llm_backend_id.clone(),
-        timeout_secs,
-        images,
-        ..Default::default()
-    };
-    // Unified resolution (M0-2): per-agent backend id → instance manager,
-    // falling back to the executor default runtime. The seam also lets
-    // tests inject a mock runtime.
-    let runtime = self
-        .get_llm_runtime_for_agent(agent)
-        .await?
-        .ok_or_else(|| {
-            NeoMindError::Llm("no LLM backend available for structured agent".to_string())
-        })?;
-    crate::inference::InferenceClient::new()
-        .run_with_runtime(&runtime, &request)
-        .await
-        .map_err(|e| NeoMindError::Llm(e.to_string()))
-}
+    /// Shared inference step (runtime resolution + one constrained call).
+    pub(super) async fn infer_structured_with_images(
+        &self,
+        agent: &AiAgent,
+        schema: &[neomind_storage::OperatorField],
+        timeout_secs: u32,
+        context: &str,
+        images: Vec<(String, String)>,
+    ) -> AgentResult<crate::inference::InferenceOutcome> {
+        let request = crate::inference::InferenceRequest {
+            instruction: agent.user_prompt.clone(),
+            context: context.to_string(),
+            schema: schema.to_vec(),
+            backend_id: agent.llm_backend_id.clone(),
+            timeout_secs,
+            images,
+            ..Default::default()
+        };
+        // Unified resolution (M0-2): per-agent backend id → instance manager,
+        // falling back to the executor default runtime. The seam also lets
+        // tests inject a mock runtime.
+        let runtime = self
+            .get_llm_runtime_for_agent(agent)
+            .await?
+            .ok_or_else(|| {
+                NeoMindError::Llm("no LLM backend available for structured agent".to_string())
+            })?;
+        crate::inference::InferenceClient::new()
+            .run_with_runtime(&runtime, &request)
+            .await
+            .map_err(|e| NeoMindError::Llm(e.to_string()))
+    }
 
-pub(super) async fn infer_structured(
-    &self,
-    agent: &AiAgent,
-    schema: &[neomind_storage::OperatorField],
-    timeout_secs: u32,
-    context: &str,
-) -> AgentResult<crate::inference::InferenceOutcome> {
-    let request = crate::inference::InferenceRequest {
-        instruction: agent.user_prompt.clone(),
-        context: context.to_string(),
-        schema: schema.to_vec(),
-        backend_id: agent.llm_backend_id.clone(),
-        timeout_secs,
-        ..Default::default()
-    };
-    // Unified resolution (M0-2): per-agent backend id → instance manager,
-    // falling back to the executor default runtime. The seam also lets
-    // tests inject a mock runtime.
-    let runtime = self
-        .get_llm_runtime_for_agent(agent)
-        .await?
-        .ok_or_else(|| {
-            NeoMindError::Llm("no LLM backend available for structured agent".to_string())
-        })?;
-    crate::inference::InferenceClient::new()
-        .run_with_runtime(&runtime, &request)
-        .await
-        .map_err(|e| NeoMindError::Llm(e.to_string()))
+    pub(super) async fn infer_structured(
+        &self,
+        agent: &AiAgent,
+        schema: &[neomind_storage::OperatorField],
+        timeout_secs: u32,
+        context: &str,
+    ) -> AgentResult<crate::inference::InferenceOutcome> {
+        let request = crate::inference::InferenceRequest {
+            instruction: agent.user_prompt.clone(),
+            context: context.to_string(),
+            schema: schema.to_vec(),
+            backend_id: agent.llm_backend_id.clone(),
+            timeout_secs,
+            ..Default::default()
+        };
+        // Unified resolution (M0-2): per-agent backend id → instance manager,
+        // falling back to the executor default runtime. The seam also lets
+        // tests inject a mock runtime.
+        let runtime = self
+            .get_llm_runtime_for_agent(agent)
+            .await?
+            .ok_or_else(|| {
+                NeoMindError::Llm("no LLM backend available for structured agent".to_string())
+            })?;
+        crate::inference::InferenceClient::new()
+            .run_with_runtime(&runtime, &request)
+            .await
+            .map_err(|e| NeoMindError::Llm(e.to_string()))
+    }
 }
-
-}
-
 
 /// Defaults for [`neomind_storage::OperatorConfig`] when an agent omits it —
 /// mirrors the serde defaults on the struct. `pub(super)` so the event-trigger
@@ -565,7 +573,10 @@ pub(super) fn default_operator_config() -> neomind_storage::OperatorConfig {
 fn extract_images(data: &[DataCollected]) -> Vec<(String, String)> {
     data.iter()
         .filter(|d| {
-            d.values.get("_is_image").and_then(|v| v.as_bool()).unwrap_or(false)
+            d.values
+                .get("_is_image")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
         })
         .filter_map(|d| {
             let b64 = d.values.get("image_base64")?.as_str()?.to_string();
@@ -695,7 +706,10 @@ mod tests {
         }
         let text = render_silence(&entries.into_iter().collect());
 
-        assert!(text.contains("All 40 devices and 40 metrics are silent"), "{text}");
+        assert!(
+            text.contains("All 40 devices and 40 metrics are silent"),
+            "{text}"
+        );
         assert!(text.contains("none have ever reported"), "{text}");
         assert!(text.contains("and 36 more devices"), "{text}");
         assert!(!text.contains("device:39"), "{text}");

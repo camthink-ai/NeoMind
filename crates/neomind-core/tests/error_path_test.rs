@@ -152,7 +152,6 @@ fn test_config_default_values_valid() {
     assert!(agent::DEFAULT_CONCURRENT_LIMIT <= 100);
 }
 #[serial_test::serial]
-
 #[test]
 fn test_config_env_var_parsing_invalid() {
     // Test that invalid env var values fall back to defaults
@@ -175,7 +174,6 @@ fn test_config_env_var_parsing_invalid() {
     }
 }
 #[serial_test::serial]
-
 #[test]
 fn test_config_env_var_parsing_zero() {
     // Test edge case of zero value
@@ -199,7 +197,6 @@ fn test_config_env_var_parsing_zero() {
     }
 }
 #[serial_test::serial]
-
 #[test]
 fn test_config_env_var_parsing_overflow() {
     // Test very large values that might overflow

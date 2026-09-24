@@ -2,12 +2,12 @@
 //!
 //! This crate provides function calling capabilities for the NeoMind platform.
 
+pub mod agent_tools;
 pub mod error;
 pub mod extension_tools;
 pub mod file_edit;
 pub mod file_write;
 pub mod image_edit;
-pub mod agent_tools;
 pub mod memory_tool;
 pub mod path_validator;
 pub mod policy;

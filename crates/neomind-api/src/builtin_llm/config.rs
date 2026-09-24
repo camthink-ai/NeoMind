@@ -87,8 +87,7 @@ mod tests {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
     }
-#[serial_test::serial]
-
+    #[serial_test::serial]
     #[test]
     fn default_config_has_expected_values() {
         let _g = env_lock().lock().unwrap();
@@ -111,8 +110,7 @@ mod tests {
         // Effective ctx falls back to the model default.
         assert_eq!(c.effective_ctx(32_768), 32_768);
     }
-#[serial_test::serial]
-
+    #[serial_test::serial]
     #[test]
     fn env_overrides_apply() {
         let _g = env_lock().lock().unwrap();
@@ -141,8 +139,7 @@ mod tests {
             std::env::remove_var(var);
         }
     }
-#[serial_test::serial]
-
+    #[serial_test::serial]
     #[test]
     fn invalid_ctx_env_is_ignored() {
         let _g = env_lock().lock().unwrap();

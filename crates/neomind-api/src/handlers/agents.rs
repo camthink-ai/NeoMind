@@ -1009,12 +1009,6 @@ pub async fn get_agent(
 ///
 /// `IM` is the channel that reaches a human — it delivers to whatever chats
 /// the operator bound under Settings -> IM Bridges. With nobody bound it is a
-/// no-op, not an error: the run is still recorded in-app either way. The
-/// `on: Failure` default keeps the old bargain that silence is health, so this
-/// adds a report only when there is something to report; a watch-style agent
-/// whose every verdict is worth reading wants `on: "always"`.
-
-
 /// Create a new AI Agent.
 #[utoipa::path(
     post,
@@ -1271,7 +1265,11 @@ pub async fn create_agent(
         output_schema: request.output_schema,
         operator_config: request.operator_config,
         memory_mode: request.memory_mode,
-        notify: Some(request.notify.unwrap_or_else(neomind_agent::ai_agent::default_agent_notify)),
+        notify: Some(
+            request
+                .notify
+                .unwrap_or_else(neomind_agent::ai_agent::default_agent_notify),
+        ),
         conversation_history: Default::default(),
         user_messages: Default::default(),
         conversation_summary: Default::default(),

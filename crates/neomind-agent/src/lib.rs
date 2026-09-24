@@ -90,7 +90,9 @@ pub(crate) fn prune_stale_temp_entries(prefix: &str, max_age: std::time::Duratio
             continue;
         }
         let Ok(meta) = entry.metadata() else { continue };
-        let Ok(modified) = meta.modified() else { continue };
+        let Ok(modified) = meta.modified() else {
+            continue;
+        };
         if !now
             .duration_since(modified)
             .map(|age| age > max_age)
@@ -106,10 +108,6 @@ pub(crate) fn prune_stale_temp_entries(prefix: &str, max_age: std::time::Duratio
         };
     }
 }
-
-
-
-
 
 #[cfg(test)]
 mod tests {

@@ -378,7 +378,7 @@ impl MqttAdapter {
                                             timestamp: point_ts,
                                             value: value.clone(),
                                             quality: None,
-                                        metadata: None,
+                                            metadata: None,
                                         };
                                         if let Err(e) = storage
                                             .write(
@@ -473,7 +473,7 @@ impl MqttAdapter {
                                     timestamp: now.timestamp(),
                                     value: value.clone(),
                                     quality: None,
-                                metadata: None,
+                                    metadata: None,
                                 };
                                 if let Err(e) = storage
                                     .write(
@@ -639,7 +639,7 @@ impl MqttAdapter {
                                             timestamp: point_ts_fb,
                                             value: value.clone(),
                                             quality: None,
-                                        metadata: None,
+                                            metadata: None,
                                         };
                                         if let Err(e) = storage
                                             .write(
@@ -699,7 +699,7 @@ impl MqttAdapter {
                                             timestamp: now.timestamp(),
                                             value: value.clone(),
                                             quality: None,
-                                        metadata: None,
+                                            metadata: None,
                                         };
                                         if let Err(e) = storage
                                             .write(

@@ -80,7 +80,11 @@ fn every_schedule_type_the_api_accepts_is_offered_by_the_cli_help() {
 
 #[test]
 fn every_execution_mode_the_api_accepts_is_offered_by_the_cli_help() {
-    let values = wire(&[ExecutionMode::Focused, ExecutionMode::Free, ExecutionMode::Structured]);
+    let values = wire(&[
+        ExecutionMode::Focused,
+        ExecutionMode::Free,
+        ExecutionMode::Structured,
+    ]);
     assert_documented("Execution mode:", &values);
     assert_documented("New execution mode:", &values);
 }

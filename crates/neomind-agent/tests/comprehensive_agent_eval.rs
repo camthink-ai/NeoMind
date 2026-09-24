@@ -40,7 +40,6 @@ fn test_model() -> String {
         .unwrap_or_else(|_| "qwen3.5:4b".to_string())
 }
 
-
 // ── sandbox platform ─────────────────────────────────────────────────
 
 /// Self-hosted sandbox: `neomind serve` subprocess on a private port with a

@@ -28,7 +28,6 @@ fn test_model() -> String {
         .unwrap_or_else(|_| "qwen3.5:4b".to_string())
 }
 
-
 // ============================================================================
 // Test Metrics
 // ============================================================================
@@ -168,9 +167,7 @@ impl LoadTestContext {
                 timeout_secs: 120,
             };
             Some(Arc::new(OllamaRuntime::new(ollama_config)?)
-                as Arc<
-                    dyn neomind_core::llm::backend::LlmRuntime,
-                >)
+                as Arc<dyn neomind_core::llm::backend::LlmRuntime>)
         } else {
             None
         };
@@ -245,7 +242,7 @@ impl LoadTestContext {
             output_schema: None,
             operator_config: None,
             memory_mode: None,
-        notify: None,
+            notify: None,
             priority: 128,
             conversation_history: vec![],
             user_messages: vec![],
