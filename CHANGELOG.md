@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased.2] — M2: multi-source triggering, the decision chain, and the feedback loop
+## [1.1.0] - 2026-09-24 — the agent kernel: three execution shapes, one runtime, and a conclusion you can check
+
+The three milestones of the agent kernel, released together. **M0** made a run and the value it publishes travel one path. **M1** added the structured agent — a single constrained inference whose validated fields reach dashboards, rules and data-push as ordinary data sources. **M2** made an agent's inputs expressible ("all of these, inside this window") and its outputs checkable (the execution behind an alert, and what the operator said when they disagreed). Alongside them, a run of correctness fixes that had each been losing data without saying so.
+
+### Upgrade notes (1.0.0 → 1.1.0)
+- **New agents report by default.** Any create that omits `notify` gets `{channels: ["IM"], on: "failure"}` — editor, CLI and API alike. With no IM chat bound under Settings → IM Bridges the delivery is a no-op rather than an error, and the in-app record is written either way.
+- **A failed run now notifies even when the agent has no routing at all.** Agents created before this release carry no `notify` config and fell back to keyword sniffing, which reads the conclusion text — and a failure produces none. Those runs were silent, every time, and are not any more.
+- **A structured agent with nothing to read refuses to run** instead of publishing from its own memory summary. The last published value stands and the run is journaled as a failure. This replaces a live defect: an agent whose camera had been offline for three hours kept reporting "正常" every fifteen minutes.
+- **`confidence` is optional now.** `DecisionProcess::confidence` and `ReasoningStep::confidence` became `Option<f32>` and the key is omitted rather than sent as `null` when the model gives none — it used to be a hardcoded `0.9` on every run of every agent.
+- **The editor requires at least one bound resource for a structured agent.** One with none can never succeed, and the save button says so rather than letting it fail on the first tick.
+- **CLI**: `--auto-approve` and `--enable-tool-chaining` are gone (both were accepted and did nothing); `--schedule-type cron` accepts the standard five-field form the help has always shown; `--message-type` writes the key the API actually reads; `--notify` accepts `judgment`.
+- **No storage migration.** Every new field and enum variant is appended and serde-defaulted, so an existing `data/` directory upgrades by swapping the binary. `output_schema` / `operator_config` are new API surface, not a changed one.
+
+### M2 — multi-source triggering, the decision chain, and the feedback loop
 
 The milestone that makes an agent's *inputs* expressible and its *outputs* checkable. An event agent could only say "any of these sources"; it can now say "all of them, within this window". An alert could not say why it fired; it now carries the execution behind it, what that execution did, and — when the operator disagrees — the fact that they disagreed. Plus three quiet correctness fixes that this work surfaced, each of which had been losing data without saying so.
 
@@ -84,7 +97,7 @@ agent could therefore be notified twice: once by the explicit routing, once by
 the sniffing. The gate now exists, which is also what makes `judgment` mean
 silence rather than "silence plus a sniffed alert".
 
-## [Unreleased.1] — M1: the structured agent (L0 operator) — S1 end to end
+### M1 — the structured agent (L0 operator), S1 end to end
 
 The first business-layer milestone on the M0 kernel (design: docs/designs/001 §5.1, revised to live in the ai_agent domain — operators are a TYPE of agent, one list, one API). Create a "structured" agent in the editor, bind resources, define output fields, 试跑, schedule — the fields flow into dashboards/rules/data-push as live data sources.
 
@@ -102,7 +115,7 @@ The first business-layer milestone on the M0 kernel (design: docs/designs/001 §
 - Editor (web): third mode card 替我看/Structured beside Focused/Free; selecting it reveals the output-contract section — field rows (name / type / unit / description, enum allowed-values input) and operator tuning (debounce / inference timeout / breaker threshold / optional daily cap); payloads carry the new fields, edit mode loads them back. i18n en+zh.
 - Gates: workspace check + clippy clean (test-utils), agent 738 + api 371 tests green, web tsc + production build clean.
 
-## [Unreleased] — the agent kernel batch (M0): one runtime factory, one publish path, dead links gone
+### M0 — the agent kernel batch: one runtime factory, one publish path, dead links gone
 
 No API, storage or DTO changes — a binary swap. The design context lives in `docs/designs/` (001 tech design, 002 product & interaction design, 003 implementation plan + UI mockup); this batch is its first milestone.
 

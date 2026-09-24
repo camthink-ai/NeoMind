@@ -232,7 +232,11 @@ async fn vision_agent_reads_the_actual_pixels() {
         .execute_agent(agent, Some(event), None)
         .await
         .expect("vision run completes");
-    eprintln!("vision run error field: {:?}", run.error);
+    // Only on the failure path — printing it unconditionally put `None` in
+    // every CI run's output.
+    if run.error.is_some() {
+        eprintln!("vision run error field: {:?}", run.error);
+    }
 
     ts.flush().expect("flush");
     let published = ts
@@ -418,7 +422,9 @@ async fn structured_agent_infers_over_a_metric_it_reads_from_telemetry() {
         .execute_agent(agent, None, None)
         .await
         .expect("structured run completes");
-    eprintln!("bound-metric run error: {:?}", run.error);
+    if run.error.is_some() {
+        eprintln!("bound-metric run error: {:?}", run.error);
+    }
 
     ts.flush().expect("flush");
     let published = ts
