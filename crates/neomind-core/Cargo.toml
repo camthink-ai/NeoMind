@@ -70,3 +70,4 @@ features = ["chrono", "uuid"]
 
 [dev-dependencies]
 serial_test = "3"
+cron = "0.12"

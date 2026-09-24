@@ -312,6 +312,33 @@ async fn test_agent_list_carries_output_field_provenance() {
     assert!((confidence - 0.42).abs() < 1e-6, "got {confidence}");
 }
 
+/// The cron form the CLI help and the rule validator both recommend must work.
+///
+/// They say `"0 8 * * *"` — five fields, seconds implied. The `cron` crate wants
+/// six (seconds first), so following the documentation produced
+/// `Invalid cron expression` and the agent was never created. Observed live: a
+/// chat that built a daily-8am agent failed twice in a row, both times with an
+/// expression copied straight out of `--help`.
+#[tokio::test]
+async fn a_five_field_cron_expression_is_accepted() {
+    let state = create_test_server_state().await;
+
+    for expression in ["0 8 * * *", "*/5 * * * *", "30 2 * * 1-5"] {
+        let id = create_agent_with(
+            &state,
+            json!({
+                "schedule": { "schedule_type": "cron", "cron_expression": expression },
+            }),
+        )
+        .await;
+        let agent = read_back(&state, &id).await;
+        assert_eq!(
+            agent["schedule"]["cron_expression"], expression,
+            "the stored expression should be what the user wrote"
+        );
+    }
+}
+
 /// Read `export const <name> = '<value>'` out of the editor's shared constants
 /// module. `None` when the file is absent (source tarball without `web/`) or
 /// the constant is not declared.

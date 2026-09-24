@@ -897,8 +897,13 @@ impl AgentScheduler {
     }
 
     /// Parse a cron expression using the standard cron library.
+    ///
+    /// Normalised first. The crate wants seconds in front; every expression a
+    /// user or the CLI writes (the help gives `"0 8 * * *"`) is the five-field
+    /// form, so without this a stored schedule parses at creation and then
+    /// fails here on the first tick.
     fn parse_cron_expression(expression: &str) -> Result<Schedule, SchedulerError> {
-        expression
+        neomind_core::cron::normalize(expression)
             .parse::<Schedule>()
             .map_err(|e| SchedulerError::CronParseError(e.to_string()))
     }

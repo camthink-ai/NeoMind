@@ -1694,7 +1694,7 @@ fn validate_virtual_metric_policy(rule: &CompiledRule) -> Result<(), ErrorRespon
 /// Returns `Err` with a user-friendly message if the cron syntax is invalid.
 fn validate_rule_cron(rule: &CompiledRule) -> Result<(), ErrorResponse> {
     if let neomind_rules::RuleTrigger::Schedule { ref cron } = rule.trigger {
-        cron.parse::<cron::Schedule>().map_err(|e| {
+        neomind_core::cron::normalize(cron).parse::<cron::Schedule>().map_err(|e| {
             ErrorResponse::bad_request(format!(
                 "Invalid cron expression '{}': {}. \
                  Use standard 5-field cron (min hour day month weekday), e.g. '0 */5 * * *'.",

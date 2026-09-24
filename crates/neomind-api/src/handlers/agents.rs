@@ -1084,7 +1084,7 @@ pub async fn create_agent(
                 ));
             }
             Some(expr) => {
-                if let Err(e) = expr.parse::<cron::Schedule>() {
+                if let Err(e) = neomind_core::cron::normalize(expr).parse::<cron::Schedule>() {
                     return Err(ErrorResponse::bad_request(format!(
                         "Invalid cron expression '{}': {}",
                         expr, e
@@ -1601,7 +1601,7 @@ pub async fn update_agent(
                     ));
                 }
                 Some(expr) => {
-                    if let Err(e) = expr.parse::<cron::Schedule>() {
+                    if let Err(e) = neomind_core::cron::normalize(expr).parse::<cron::Schedule>() {
                         return Err(ErrorResponse::bad_request(format!(
                             "Invalid cron expression '{}': {}",
                             expr, e
