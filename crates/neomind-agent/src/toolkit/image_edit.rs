@@ -1148,6 +1148,31 @@ mod tests {
         assert!(sanitize_filename("!!!", "png").is_err());
     }
 
+    /// A throwaway directory for the writer, outside the working tree.
+    ///
+    /// `std::env::temp_dir()` is not usable here: on macOS it resolves under
+    /// `/var/folders/…`, and `image_utils::read_local_image` blocklists `/var/`
+    /// (and `/tmp/`), which breaks the read-back these tests exercise. `target/`
+    /// is the next best thing — git ignores it, so a run leaves nothing behind
+    /// for `git status` to show, and the name carries the pid so two copies of
+    /// the suite running at once cannot share a directory.
+    ///
+    /// `parent()` twice rather than `join("../../target")`: the latter leaves a
+    /// literal `..` in the string, and `resolve_image` rejects any path that
+    /// contains one.
+    fn scratch_dir(name: &str) -> std::path::PathBuf {
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let workspace = manifest
+            .parent()
+            .and_then(|p| p.parent())
+            .expect("crates/<crate> sits two levels under the workspace root");
+        let dir = workspace
+            .join("target")
+            .join(format!("{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
     #[test]
     fn sanitize_preserves_dashes_and_underscores() {
         let n = sanitize_filename("my-snapshot_01", "png").unwrap();
@@ -1156,10 +1181,7 @@ mod tests {
 
     #[test]
     fn write_output_returns_absolute_path() {
-        // Construct data_dir under current_dir() to keep the test hermetic
-        // and avoid macOS /var/folders prefix (which vision.rs blocklists).
-        let test_root = std::env::current_dir().unwrap().join("test-tmp-image-edit");
-        std::fs::create_dir_all(&test_root).unwrap();
+        let test_root = scratch_dir("test-tmp-image-edit");
         let tool = ImageEditTool::new(&test_root);
         // 8-byte PNG header is enough for the writer — we don't decode it back.
         let png = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
@@ -1172,10 +1194,7 @@ mod tests {
 
     #[test]
     fn write_output_honors_custom_filename() {
-        let test_root = std::env::current_dir()
-            .unwrap()
-            .join("test-tmp-image-edit-named");
-        std::fs::create_dir_all(&test_root).unwrap();
+        let test_root = scratch_dir("test-tmp-image-edit-named");
         let tool = ImageEditTool::new(&test_root);
         let png = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
         let path = tool
@@ -1230,13 +1249,7 @@ mod tests {
 
     #[tokio::test]
     async fn chain_image_edit_to_resolve_image_works() {
-        // Use current_dir()-rooted path (NOT tempfile::tempdir) — on macOS,
-        // tempdir() returns paths under /var/folders/... which image_utils's
-        // read_local_image blocklist rejects, breaking the chain.
-        let test_root = std::env::current_dir()
-            .unwrap()
-            .join("test-tmp-image-edit-chain");
-        std::fs::create_dir_all(&test_root).unwrap();
+        let test_root = scratch_dir("test-tmp-image-edit-chain");
         let tool = ImageEditTool::new(&test_root);
 
         // 1. Build a base64 PNG data URL input.
