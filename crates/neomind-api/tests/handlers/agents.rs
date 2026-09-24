@@ -312,6 +312,25 @@ async fn test_agent_list_carries_output_field_provenance() {
     assert!((confidence - 0.42).abs() < 1e-6, "got {confidence}");
 }
 
+/// The CLI's create receipt tells the model the agent is already running, and
+/// the skill says the same. That has to match what the API does.
+///
+/// It did not, once: the receipt said "created paused — it will NOT run until
+/// activated", which was never true, because `create_agent` sets
+/// `AgentStatus::Active`. Nothing failed, because nothing compared the two.
+#[tokio::test]
+async fn a_new_agent_is_created_active() {
+    let state = create_test_server_state().await;
+    let id = create_agent_with(&state, json!({})).await;
+
+    let agent = read_back(&state, &id).await;
+    assert_eq!(
+        agent["status"], "Active",
+        "the CLI receipt and the agent skill both tell the model this agent is \
+         already running; a paused default would make them wrong"
+    );
+}
+
 /// The cron form the CLI help and the rule validator both recommend must work.
 ///
 /// They say `"0 8 * * *"` — five fields, seconds implied. The `cron` crate wants

@@ -289,16 +289,38 @@ pub async fn create_agent(
 
     Ok(CliResponse::success(
         data,
-        // Agents are created Paused — they never run until activated. The
-        // follow-up command is the difference between a finished workflow
-        // and a "created it but nothing happened" failure mode (a top eval
-        // failure class), so the receipt teaches it explicitly.
         format!(
-            "Agent created (status: paused — it will NOT run until activated). \
-             Next: neomind agent control {} active",
-            agent_id
+            "Agent created and active (id: {agent_id}). {}",
+            create_next_step(&agent_id, schedule_type)
         ),
     ))
+}
+
+/// What to do after creating an agent, given how it is scheduled.
+///
+/// Split out from the receipt so it can be asserted. The receipt used to read
+/// "created paused — it will NOT run until activated", which was never true:
+/// `create_agent` sets `AgentStatus::Active`, and has since the field existed.
+/// A model that believed it issued a redundant `control active` and carried a
+/// wrong picture of the state into everything it told the user afterwards.
+///
+/// The line that actually closes the loop depends on the schedule. A `manual`
+/// agent never runs on its own, so "here is how to start it" is the useful
+/// sentence there — and for everything else it is "here is how to see it ran".
+fn create_next_step(agent_id: &str, schedule_type: Option<&str>) -> String {
+    match schedule_type.unwrap_or("event") {
+        "manual" => format!(
+            "It never runs on its own — start it with `neomind agent invoke {agent_id}`."
+        ),
+        "event" => format!(
+            "It runs when its bound sources report; `neomind agent latest-execution {agent_id}` \
+             shows the last run."
+        ),
+        _ => format!(
+            "It runs on its schedule; `neomind agent latest-execution {agent_id}` shows the last \
+             run, and `neomind agent invoke {agent_id}` runs it now."
+        ),
+    }
 }
 
 /// Update agent
@@ -589,5 +611,41 @@ mod tests {
     fn the_type_key_is_omitted_when_there_is_none() {
         let body = user_message_body("hello", None);
         assert_eq!(body, json!({ "content": "hello" }));
+    }
+
+    /// The receipt must match what the API actually does: `create_agent` sets
+    /// `AgentStatus::Active`. It used to tell the model the agent was created
+    /// paused — which sent it into a redundant `control active` and left it
+    /// holding a wrong picture of the state for everything it said afterwards.
+    #[test]
+    fn the_next_step_never_claims_the_agent_was_created_paused() {
+        for schedule in [None, Some("interval"), Some("cron"), Some("event"), Some("manual")] {
+            let step = super::create_next_step("agent-1", schedule);
+            assert!(
+                !step.to_lowercase().contains("paused"),
+                "the receipt for {schedule:?} still talks about paused: {step}"
+            );
+        }
+    }
+
+    /// A manual agent never runs on its own, so the useful sentence is how to
+    /// start it — not how to look at a run that will not happen.
+    #[test]
+    fn manual_agents_are_told_to_be_started_by_hand() {
+        let step = super::create_next_step("agent-7", Some("manual"));
+        assert!(step.contains("never runs on its own"), "{step}");
+        assert!(step.contains("agent invoke agent-7"), "{step}");
+    }
+
+    /// Everything else runs on its own; point at the evidence.
+    #[test]
+    fn scheduled_agents_are_pointed_at_their_last_run() {
+        for schedule in [Some("interval"), Some("cron"), Some("event"), None] {
+            let step = super::create_next_step("agent-7", schedule);
+            assert!(
+                step.contains("agent latest-execution agent-7"),
+                "{schedule:?}: {step}"
+            );
+        }
     }
 }

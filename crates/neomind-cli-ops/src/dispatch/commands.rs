@@ -1473,8 +1473,9 @@ pub enum AgentCommand {
     },
     /// Create a new agent.
     ///
-    /// Creates an agent in paused state. You MUST activate it with
-    /// `agent control <ID> active` after creation.
+    /// Creates an agent **active** — it starts running on its schedule
+    /// immediately. Check on it with `agent latest-execution <ID>`, run it
+    /// early with `agent invoke <ID>`, stop it with `agent control <ID> paused`.
     ///
     /// Schedule is required. Use --schedule-type and --schedule-config together:
     ///   - interval: `--schedule-type interval --schedule-config "300"` (every 5 min)
@@ -1658,7 +1659,8 @@ pub enum AgentCommand {
     /// Control agent status.
     ///
     /// Status values: "active" (start running) or "paused" (stop).
-    /// New agents are created in paused state — you MUST run this to start them.
+    /// Stop (`paused`) or restart (`active`) a scheduled agent. New agents are
+    /// already active, so this is only needed after pausing one.
     ///
     /// Workflow:
     ///   - Start: `agent control <ID> active`
