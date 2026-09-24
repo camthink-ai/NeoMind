@@ -4,6 +4,7 @@
 // binding your own devices, cameras included, is your part of the work.
 
 import type { OperatorField } from '@/types'
+import { deriveExecutionMode } from './derivation'
 import {
   Activity,
   AlertTriangle,
@@ -268,3 +269,39 @@ export const AGENT_PRESETS: AgentPreset[] = [
 
 /** The few that stay in the rail; the rest live in the picker dialog. */
 export const FEATURED_PRESETS = AGENT_PRESETS.filter((p) => p.featured)
+
+/**
+ * What a preset deliberately leaves for the user.
+ *
+ * A preset never binds resources — that is the user's part of the work — so
+ * for some of them the form will not save until something is bound, and for
+ * others it will save happily and the agent goes looking on its own. Naming
+ * which case this is lets the card say what to do next, instead of leaving a
+ * disabled Save button to explain itself.
+ */
+export type PresetNextStep = 'sources' | 'trigger' | 'optional'
+
+/**
+ * `sources` — a structured agent's whole input is what it is bound to, and
+ * `execute_structured` refuses to run without one, so the editor blocks the
+ * save. `trigger` — a reactive agent needs a filter or bound resources, or it
+ * silently never fires. `optional` — it will save and run either way.
+ *
+ * Binding resources satisfies the trigger case too, which is why `event`
+ * (reactive AND structured) reads as `sources`: one binding covers both.
+ */
+export function nextStepFor(preset: AgentPreset): PresetNextStep {
+  const mode = deriveExecutionMode({
+    hasDeviceCommands: false,
+    canActAutonomously: preset.fill.autonomy,
+    hasOutputContract: (preset.fill.outputSchema?.((k) => k) ?? []).length > 0,
+  })
+  if (mode === 'structured') return 'sources'
+  if (preset.fill.schedule.type === 'reactive') return 'trigger'
+  return 'optional'
+}
+
+/** The preset behind a stored `appliedPreset` key. */
+export function presetByKey(key: AgentPreset['key']): AgentPreset | undefined {
+  return AGENT_PRESETS.find((p) => p.key === key)
+}

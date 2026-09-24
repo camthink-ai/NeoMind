@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { AGENT_PRESETS, FEATURED_PRESETS } from '../presets'
+import { AGENT_PRESETS, FEATURED_PRESETS, nextStepFor, type PresetNextStep } from '../presets'
 import { deriveExecutionMode } from '../derivation'
 import en from '@/i18n/locales/en/agents.json'
 import zh from '@/i18n/locales/zh/agents.json'
@@ -126,6 +126,46 @@ describe('preset field localisation', () => {
     for (const p of AGENT_PRESETS) {
       for (const f of p.fill.outputSchema?.((k) => k) ?? []) {
         expect(f.name, `preset ${p.key} field ${f.name}`).toMatch(/^[a-z][a-z0-9_]*$/)
+      }
+    }
+  })
+})
+
+describe('the next step a preset leaves open', () => {
+  it('names what the form will not save without', () => {
+    // Two of these block the save button and one does not, so getting the
+    // mapping wrong means telling the user to do something unnecessary — or
+    // saying nothing while Save stays grey.
+    const expected: Record<string, PresetNextStep> = {
+      image: 'sources',
+      monitor: 'sources',
+      event: 'sources',
+      smart: 'trigger',
+      rootCause: 'trigger',
+      scheduled: 'optional',
+      weekly: 'optional',
+      shift: 'optional',
+      advanced: 'optional',
+    }
+    for (const p of AGENT_PRESETS) {
+      expect(nextStepFor(p), `preset ${p.key}`).toBe(expected[p.key])
+    }
+  })
+
+  it('event reads as sources, not trigger — one binding covers both rules', () => {
+    // Reactive AND structured. Bound resources satisfy the structured rule and
+    // the reactive one, so naming only the trigger would send the user to
+    // half of what they need.
+    const event = AGENT_PRESETS.find((p) => p.key === 'event')!
+    expect(event.fill.schedule.type).toBe('reactive')
+    expect(nextStepFor(event)).toBe('sources')
+  })
+
+  it('every step resolves in both locales', () => {
+    const steps: PresetNextStep[] = ['sources', 'trigger', 'optional']
+    for (const step of steps) {
+      for (const [loc, bundle] of [['en', en], ['zh', zh]] as const) {
+        expect(bundle.creator.preset.next[step], `${loc}: creator.preset.next.${step}`).toBeTruthy()
       }
     }
   })

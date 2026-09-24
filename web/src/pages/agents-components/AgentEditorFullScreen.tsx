@@ -80,6 +80,8 @@ import {
   deriveExecutionMode,
   hasOutputContract,
   FEATURED_PRESETS,
+  nextStepFor,
+  presetByKey,
   DEFAULT_LOOKBACK_MINUTES,
   DEFAULT_MAX_CHAIN_DEPTH,
   DEFAULT_NOTIFY_CHANNEL,
@@ -1342,6 +1344,20 @@ export function AgentEditorFullScreen({
   const rail: Record<string, React.ReactNode> = {}
   const canvas: Record<string, React.ReactNode> = {}
 
+  // The card naming the applied template is also the one place that can say
+  // what the template left open. The line clears itself once the binding
+  // exists — a hint that outlives its own condition is noise.
+  const appliedPresetDef = appliedPreset ? presetByKey(appliedPreset) : undefined
+  const presetNextStep = (() => {
+    if (agent || !appliedPresetDef) return null
+    const step = nextStepFor(appliedPresetDef)
+    const met =
+      step === 'trigger'
+        ? triggerSources.length > 0 || selectedResources.length > 0
+        : selectedResources.length > 0
+    return met ? null : step
+  })()
+
   rail['preset'] = (
     <>
             {/* Create-only: a starting point for the blank prompt. It fills the
@@ -1350,20 +1366,28 @@ export function AgentEditorFullScreen({
                 are bound by the user in ②. */}
             {!agent && (
               appliedPreset ? (
-                <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted-30 px-3 py-2">
-                  <span className="min-w-0 truncate text-xs text-muted-foreground">
-                    {tAgent('creator.preset.appliedFrom', {
-                      name: tAgent(`creator.preset.${appliedPreset}.name`),
-                    })}
-                  </span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="xs"
-                    onClick={() => setAppliedPreset(null)}
-                  >
-                    {tAgent('creator.preset.repick')}
-                  </Button>
+                <div className="rounded-lg border border-border bg-muted-30 px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="min-w-0 truncate text-xs text-muted-foreground">
+                      {tAgent('creator.preset.appliedFrom', {
+                        name: tAgent(`creator.preset.${appliedPreset}.name`),
+                      })}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="xs"
+                      onClick={() => setAppliedPreset(null)}
+                    >
+                      {tAgent('creator.preset.repick')}
+                    </Button>
+                  </div>
+                  {presetNextStep && (
+                    <p className="mt-1.5 flex items-start gap-1.5 text-xs text-primary">
+                      <ArrowRight className="mt-0.5 h-3 w-3 shrink-0" />
+                      <span>{tAgent(`creator.preset.next.${presetNextStep}`)}</span>
+                    </p>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-2">

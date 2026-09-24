@@ -706,7 +706,12 @@
       },
       "all": "All templates",
       "allTitle": "Start from a template",
-      "allSubtitle": "Starting points, not locks — every field a template fills stays editable."
+      "allSubtitle": "Starting points, not locks — every field a template fills stays editable.",
+      "next": {
+        "sources": "Bind the data sources it should read",
+        "trigger": "Bind a trigger source, or the data sources it should read",
+        "optional": "Bind the data it should read, or save as-is — it can look things up itself"
+      }
     },
     "notify": {
       "title": "Notify",
