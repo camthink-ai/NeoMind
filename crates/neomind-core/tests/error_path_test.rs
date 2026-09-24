@@ -151,6 +151,7 @@ fn test_config_default_values_valid() {
     assert!(agent::DEFAULT_CONCURRENT_LIMIT >= 1);
     assert!(agent::DEFAULT_CONCURRENT_LIMIT <= 100);
 }
+#[serial_test::serial]
 
 #[test]
 fn test_config_env_var_parsing_invalid() {
@@ -173,6 +174,7 @@ fn test_config_env_var_parsing_invalid() {
         },
     }
 }
+#[serial_test::serial]
 
 #[test]
 fn test_config_env_var_parsing_zero() {
@@ -196,6 +198,7 @@ fn test_config_env_var_parsing_zero() {
         },
     }
 }
+#[serial_test::serial]
 
 #[test]
 fn test_config_env_var_parsing_overflow() {

@@ -525,6 +525,7 @@ mod tests {
     /// The 401 hint must route each starting state to a command that makes
     /// progress. Regression for the incident where a stored-but-stale
     /// credential got "Run: neomind login" → "already logged in" → dead end.
+    #[serial_test::serial]
     #[test]
     fn test_unauthorized_hint_routes_by_state() {
         let _lock = HINT_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());

@@ -922,6 +922,7 @@ mod tests {
     /// never load back, and the CLI (reading {data_dir}/encryption_key) could
     /// never decrypt what the server wrote: every `neomind` call 401'd while
     /// the web UI (JWT) kept working.
+    #[serial_test::serial]
     #[tokio::test]
     async fn test_new_pairs_crypto_with_resolved_db_dir() {
         let dir = tempfile::tempdir().unwrap();

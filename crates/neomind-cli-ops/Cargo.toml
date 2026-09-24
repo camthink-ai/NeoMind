@@ -25,4 +25,5 @@ base64 = { workspace = true }
 dirs = { workspace = true }
 
 [dev-dependencies]
+serial_test = "3"
 tempfile = { workspace = true }

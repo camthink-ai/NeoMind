@@ -204,6 +204,7 @@ fn pick_free_port() -> u16 {
 /// (discovered via PATH) → health passes → is_alive passes (real spawned
 /// child) → instance registered with the REAL spawn port and the registry's
 /// default ctx, and set active (no other backend was).
+#[serial_test::serial]
 #[tokio::test]
 async fn bootstrap_full_chain_spawns_registers_activates() {
     let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -345,6 +346,7 @@ async fn port_squatted_by_foreign_server_is_rejected() {
 
 /// Stale instance record + healthy server → idempotent short-circuit, and
 /// the refresh stamps effective_ctx (override honored), not the bare default.
+#[serial_test::serial]
 #[tokio::test]
 async fn already_running_refresh_honors_ctx_override() {
     let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());

@@ -244,6 +244,7 @@ fn test_agent_config_bounds() {
     // Context selector tokens should be less than max context
     assert!(agent::DEFAULT_CONTEXT_SELECTOR_TOKENS <= agent::DEFAULT_MAX_CONTEXT_TOKENS);
 }
+#[serial_test::serial]
 
 #[test]
 fn test_agent_env_var_parsing() {
@@ -285,6 +286,7 @@ fn test_agent_env_var_parsing() {
         },
     }
 }
+#[serial_test::serial]
 
 #[test]
 fn test_agent_env_var_valid_values() {
@@ -320,6 +322,7 @@ fn test_agent_env_var_valid_values() {
         },
     }
 }
+#[serial_test::serial]
 
 #[test]
 fn test_concurrent_limit_env_var() {
@@ -340,6 +343,7 @@ fn test_concurrent_limit_env_var() {
         },
     }
 }
+#[serial_test::serial]
 
 #[test]
 fn test_context_selector_tokens_env_var() {
@@ -360,6 +364,7 @@ fn test_context_selector_tokens_env_var() {
         },
     }
 }
+#[serial_test::serial]
 
 #[test]
 fn test_llm_timeout_env_vars() {
@@ -382,6 +387,7 @@ fn test_llm_timeout_env_vars() {
         },
     }
 }
+#[serial_test::serial]
 
 #[test]
 fn test_llm_timeout_defaults() {

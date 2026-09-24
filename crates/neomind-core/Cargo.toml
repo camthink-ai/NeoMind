@@ -67,3 +67,6 @@ map_clone = "allow"
 [dependencies.utoipa]
 version = "4"
 features = ["chrono", "uuid"]
+
+[dev-dependencies]
+serial_test = "3"

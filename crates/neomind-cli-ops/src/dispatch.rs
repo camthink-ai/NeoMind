@@ -271,6 +271,7 @@ mod tests {
     /// error) — exactly what the agent's shell tool renders. With no server
     /// on the default base URL this is the "server down" path the incident
     /// agent would have hit; it must degrade to a message, never a panic.
+    #[serial_test::serial]
     #[tokio::test]
     async fn data_command_degrades_to_error_response_without_server() {
         // Pin a port nothing listens on so the test never depends on (or

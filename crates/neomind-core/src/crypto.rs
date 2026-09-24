@@ -326,6 +326,7 @@ mod tests {
         let encrypted = crypto1.encrypt_str("secret").unwrap();
         assert!(crypto2.decrypt_str(&encrypted).is_err());
     }
+#[serial_test::serial]
 
     #[test]
     fn test_data_dir_path_pairing() {

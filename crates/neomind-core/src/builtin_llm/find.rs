@@ -50,6 +50,7 @@ mod tests {
     /// one test's "/nonexistent..." PATH wipes another's just-set fake-bin
     /// dir (flaked under the full-test CI gate).
     static PATH_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+#[serial_test::serial]
 
     #[test]
     fn finds_in_path() {
@@ -80,6 +81,7 @@ mod tests {
             bin_name()
         );
     }
+#[serial_test::serial]
 
     #[test]
     fn missing_returns_error() {

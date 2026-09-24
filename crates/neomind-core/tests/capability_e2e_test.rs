@@ -439,6 +439,7 @@ fn smoke_extension_path() -> PathBuf {
     };
     runner_dir().join(lib_name)
 }
+#[serial_test::serial]
 
 #[tokio::test]
 #[ignore = "Requires compiled runner binary and native smoke extension"]
@@ -521,6 +522,7 @@ async fn test_native_isolated_capability_ipc() {
         .await
         .expect("failed to unload smoke extension");
 }
+#[serial_test::serial]
 
 #[tokio::test]
 #[ignore = "Requires compiled runner binary and native smoke extension"]
