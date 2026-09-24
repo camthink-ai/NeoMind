@@ -10,13 +10,11 @@
     "description": "Smart IoT assistant to help you manage devices and automation",
     "suggestions": {
       "checkDevices": "Check device status",
-      "createRule": "Create automation rule",
-      "viewAlerts": "View alerts"
+      "createRule": "Create automation rule"
     }
   },
   "input": {
     "placeholder": "Enter message...",
-    "sendHint": "Press <kbd>/</kbd> for suggestions",
     "selectModel": "Select model",
     "selectLLMModel": "Select LLM Model",
     "attachment": "Attachment",
@@ -24,10 +22,7 @@
     "newChat": "New chat",
     "startNewConversation": "Start typing to chat with AI assistant",
     "fallbackHelpPrompt": "What can you do?",
-    "skills": "Skills",
-    "selectSkills": "Select skills",
-    "noSkills": "No skills available",
-    "activeSkills": "Active skills"
+    "skills": "Skills"
   },
   "model": {
     "supportsVision": "Supports vision",
@@ -45,8 +40,7 @@
   },
   "progress": {
     "thinking": "Thinking",
-    "generating": "Generating",
-    "toolExecution": "Running tool"
+    "generating": "Generating"
   },
   "stage": {
     "thinking": "Thinking",
@@ -65,8 +59,6 @@
     },
     "arguments": "Arguments",
     "result": "Result",
-    "roundTitle": "Round {{round}}",
-    "multiRoundTitle": "Tool Calls",
     "rounds": "rounds",
     "toggleDetails": "Toggle details"
   },
@@ -75,32 +67,16 @@
     "reconnecting": "Reconnecting",
     "error": "Connection error",
     "disconnected": "Disconnected",
-    "retryAttempt": "Attempt {{count}}",
-    "retryProgress": "Attempt {{retry}}/{{max}}{{seconds, string}}",
-    "retrySeconds": " · {{seconds}}s",
     "reconnect": "Reconnect",
     "authFailed": "Connection lost (authentication failed)",
     "interruptedSaved": "Connection lost — this reply still completes in the background and is saved to the session history; return to this session later to see it"
   },
   "quickActions": {
     "refreshDevices": "Refresh devices",
-    "refreshPrompt": "Refresh status of all devices",
-    "viewDeviceDetails": "View device details",
-    "viewDevicePrompt": "Show device details and configuration",
     "createAutomation": "Create automation",
-    "createAutomationPrompt": "Help me create a new automation rule",
-    "viewAllAutomations": "View all automations",
-    "viewAllAutomationsPrompt": "List all configured automation rules",
-    "viewAnalytics": "View analytics",
-    "viewAnalyticsPrompt": "Show recent data analysis and trends",
     "checkAlerts": "Check alerts",
-    "checkAlertsPrompt": "Check for any unhandled alerts",
     "openSettings": "Open settings",
-    "openSettingsPrompt": "Open system settings page",
-    "continue": "Continue",
-    "continuePrompt": "Continue",
-    "elaborate": "Elaborate",
-    "elaboratePrompt": "Please elaborate"
+    "continue": "Continue"
   },
   "taskProgress": {
     "title": "Task progress",
@@ -125,7 +101,6 @@
   "loading": "Loading...",
   "errors": {
     "sendMessage": "Failed to send message",
-    "connectionLost": "Connection lost",
     "retry": "Retry",
     "llmError": "LLM Service Error",
     "dismiss": "Dismiss"
@@ -157,9 +132,6 @@
   },
   "scrollToBottom": "Scroll to bottom",
   "copyMessage": "Copy message",
-  "footer": {
-    "disclaimer": "Disclaimer"
-  },
   "toolLoopProgress": "Working · tool round {{round}}",
   "context": {
     "title": "Context usage",
@@ -170,5 +142,8 @@
     "msgCount": " · {{count}} msgs"
   },
   "loadEarlier": "Load earlier messages",
-  "loadEarlierLoading": "Loading…"
+  "loadEarlierLoading": "Loading…",
+  "suggestions": {
+    "badge": "Suggested"
+  }
 }

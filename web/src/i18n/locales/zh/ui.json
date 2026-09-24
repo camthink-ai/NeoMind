@@ -24,13 +24,7 @@
     "clear": "清除"
   },
   "colorPicker": {
-    "themeForegroundColor": "主题前景色",
-    "hexValue": "十六进制值",
-    "selectColor": "选择颜色"
-  },
-  "codeEditor": {
-    "jsonFormatError": "JSON 格式错误",
-    "yamlFormatError": "YAML 格式错误（缩进不正确）"
+    "themeForegroundColor": "主题前景色"
   },
   "toggleSwitch": {
     "minValue": "最小:",

@@ -1,7 +1,6 @@
 {
   "title": "AI 智能体",
   "description": "创建与管理 AI 智能体，配置记忆、技能与工具",
-  "createButton": "创建",
   "detailTitle": "智能体详情",
   "preview": {
     "title": "逻辑预览",
@@ -30,18 +29,13 @@
     },
     "actions": {
       "title": "可用操作",
-      "noCommands": "未选择指令",
-      "canAlert": "可发送告警/通知"
+      "noCommands": "未选择指令"
     },
     "issues": {
       "title": "配置检查",
       "none": "配置完整",
-      "noName": "请输入智能体名称",
-      "noPrompt": "请描述智能体应该做什么",
       "noResources": "未选择资源 - 请添加设备或扩展",
-      "noMetrics": "未选择指标 - 智能体将没有数据可分析",
-      "unclearIntent": "意图不明确 - 建议更具体地描述",
-      "controlNoCommands": "检测到控制意图但未选择指令"
+      "noMetrics": "未选择指标 - 智能体将没有数据可分析"
     },
     "confidence": "置信度",
     "intent": {
@@ -50,7 +44,6 @@
       "analysis": "分析",
       "unknown": "通用"
     },
-    "moreCommands": "更多指令",
     "noResources": "暂无资源 - 点击\"添加资源\"开始配置"
   },
   "card": {
@@ -102,11 +95,8 @@
     "moreResources": "还有 {{count}} 个资源...",
     "noMemory": "暂无记忆数据",
     "messages": "消息",
-    "noDataAvailable": "无数据",
     "tools": "工具",
-    "toolsCount": "可用工具 {{count}} 个",
     "toolsEmpty": "暂无已注册工具",
-    "toolsLoadError": "加载工具失败",
     "toolsSourceBuiltIn": "内置",
     "toolsSourceExtension": "扩展",
     "toolsParameters": "参数",
@@ -147,7 +137,8 @@
       "history": "每一次执行的完整记录",
       "memory": "执行日志与知识文件",
       "messages": "留给下次执行的备注"
-    }
+    },
+    "model": "模型"
   },
   "tabs": {
     "agents": "智能体",
@@ -158,7 +149,6 @@
   },
   "agentName": "智能体名称",
   "userPrompt": "用户指令",
-  "statusColumn": "状态",
   "executions": "执行次数",
   "lastExecution": "最后执行",
   "timestamp": "时间戳",
@@ -168,23 +158,15 @@
   "noAgents": "暂无 AI 智能体",
   "noAgentsDesc": "创建您的第一个 AI 智能体来自动化物联网任务",
   "noExecutions": "暂无执行记录",
-  "noExecutionsDesc": "智能体运行后，执行记录将显示在这里",
   "createAgent": "创建 AI 智能体",
-  "createAgentDesc": "使用自然语言定义新的 AI 智能体",
   "editAgent": "编辑 AI 智能体",
-  "editAgentDesc": "修改智能体配置",
   "deleteConfirm": "确定要删除此智能体吗？",
   "execute": "立即执行",
-  "viewMemory": "查看记忆",
   "viewDetails": "查看详情",
-  "viewExecutions": "执行记录",
   "agentDeleted": "智能体已删除",
   "agentCreated": "智能体已创建",
   "agentUpdated": "智能体已更新",
   "executionStarted": "执行已启动：{{id}}",
-  "agentNamePlaceholder": "例如：温度监控器",
-  "userPromptPlaceholder": "描述此智能体应该做什么...",
-  "userPromptHint": "使用自然语言描述自动化任务。例如：每 5 分钟监控一次温度传感器，如果连续 3 次读数超过 30°C 则发送警报。",
   "schedule": "调度设置",
   "scheduleTypes": {
     "interval": "定时间隔",
@@ -193,9 +175,7 @@
     "once": "单次执行"
   },
   "intervalSeconds": "间隔（秒）",
-  "intervalHint": "智能体将每 {{seconds}} 秒运行一次",
   "cronExpression": "Cron 表达式",
-  "cronHint": "格式：分钟 小时 日 月 星期。例如：0 * * * * 表示每小时执行",
   "timezone": "时区",
   "resources": "资源选择",
   "noDevices": "暂无可用设备，请先添加设备",
@@ -227,7 +207,6 @@
     "analysis": "分析",
     "inputData": "输入数据",
     "inputImage": "输入图像",
-    "dataFieldsCount": "{{count}} 个数据字段",
     "reasoningSteps": "推理步骤",
     "decisions": "决策",
     "conclusionLabel": "结论:",
@@ -246,15 +225,10 @@
   "memory": {
     "title": "智能体记忆",
     "description": "智能体的持久化记忆和学习状态",
-    "stateVariables": "状态变量",
     "baselines": "历史基线",
-    "learnedPatterns": "学习到的模式",
-    "trendData": "趋势数据",
-    "trendDataHint": "从设备指标收集的 {{count}} 个数据点",
     "updatedAt": "更新时间",
     "noMemory": "暂无记忆数据",
     "clear": "清除记忆",
-    "clearMemoryConfirm": "确定要清除此智能体的记忆吗？此操作无法撤销。",
     "executions": "执行次数",
     "knowledgeFiles": "知识文件",
     "journal": "执行日志",
@@ -289,7 +263,6 @@
     "target": "目标",
     "channel": "渠道",
     "recipient": "接收者",
-    "lastArchived": "上次归档",
     "inputData": "输入数据",
     "llmResponse": "LLM 响应",
     "showLess": "收起",
@@ -314,40 +287,25 @@
       "name": "名称",
       "namePlaceholder": "例如：仓库温度监控、设备异常分析",
       "requirement": "需求描述",
-      "requirementHint": "用自然语言描述你希望智能体完成的目标",
-      "requirementPlaceholder": "例如：\n• 当温度超过30度时发送告警\n• 每天早上9点生成设备状态报告\n• 检测异常能耗并分析原因",
-      "autoParseHint": "系统会自动解析你的描述并配置相应的执行逻辑",
       "llmBackend": "LLM 模型（可选）",
-      "llmBackendHint": "选择此智能体使用的 LLM 模型。如未指定则使用默认模型。",
       "selectLlmBackend": "选择 LLM 模型",
-      "defaultBackend": "默认模型",
       "useActiveBackend": "使用全局默认",
       "active": "已激活",
       "supportsVision": "支持视觉/图片输入",
       "supportsTools": "支持函数调用",
       "supportsThinking": "支持思考/推理",
-      "scheduleLabel": "执行计划",
       "promptPlaceholder": "用自然语言描述这个智能体应该做什么。例如：\n\n• 监控仓库温度传感器\n• 当温度连续3次超过30°C时发送告警\n• 通知所有告警渠道：邮件、短信和推送通知",
       "promptTip": "具体说明设备、条件和操作。您提供的细节越多，智能体就能更好地帮助您。",
       "runOn": "执行于",
-      "triggerWhen": "触发条件",
-      "metricUpdates": "指标更新",
-      "extensionOutput": "扩展输出",
-      "manualTrigger": "手动触发",
-      "fromDevice": "来自设备",
-      "fromExtension": "来自扩展",
-      "fromAiGroup": "AI 分组名称",
-      "manualHint": "智能体仅在通过 API 或 UI 手动触发时运行"
+      "manualTrigger": "手动触发"
     },
     "schedule": {
-      "selectStrategy": "选择执行策略",
       "strategies": {
         "timer": "定时执行",
         "reactive": "数据驱动",
         "onDemand": "按需调用"
       },
       "config": "执行配置",
-      "onceDescription": "智能体将在保存后立即执行一次，执行后不会自动再次触发。",
       "timer": {
         "description": "定时自动执行",
         "subTypes": {
@@ -361,7 +319,6 @@
         "preview": "触发源: {{names}}",
         "hint": "选择要监控的数据源，当任意选定源收到新数据时，Agent 将自动执行。",
         "deviceTrigger": "设备触发源",
-        "extensionTrigger": "扩展触发源",
         "noDevices": "暂无可用数据源",
         "noExtensions": "暂无可用扩展",
         "emptyWarning": "未选择触发源。Agent 将不会自动执行。",
@@ -399,7 +356,6 @@
         "every": "每",
         "minutes": "分钟",
         "hours": "小时",
-        "executeOnce": "执行一次",
         "preview": "每 {{value}} {{unit}}执行一次"
       },
       "daily": {
@@ -416,7 +372,6 @@
         "preview": "每{{day}} {{hour}}:{{minute}} 执行"
       },
       "monthly": {
-        "everyMonth": "每月",
         "day": "日",
         "at": "点",
         "execute": "执行",
@@ -424,8 +379,6 @@
       },
       "event": {
         "triggerEvent": "触发事件",
-        "relatedDevice": "关联设备",
-        "manualHint": "当选择的设备指标更新时触发。后端根据配置的资源进行过滤。",
         "events": {
           "device.metric": "指标更新",
           "extension.output": "扩展输出",
@@ -437,10 +390,7 @@
           "extension.output": "当扩展发布输出数据时触发。",
           "ai.metric": "当 AI 指标被写入时触发。",
           "manual": "仅通过API或UI手动触发"
-        },
-        "allDevices": "全部设备",
-        "allExtensions": "全部扩展",
-        "extensionHint": "当此扩展发布输出数据时触发智能体。"
+        }
       },
       "once": {
         "preview": "立即执行一次"
@@ -461,10 +411,7 @@
     },
     "metricConfig": {
       "timeRange": "数据时间范围",
-      "configureHint": "选中后可在主界面配置数据策略",
       "descriptions": {
-        "fullWeek": "完整周报数据",
-        "fullDay": "全天数据+趋势+基线",
         "trend": "历史数据+趋势",
         "history": "历史数据",
         "baseline": "当前值+基线对比"
@@ -475,8 +422,7 @@
         "180": "3小时",
         "360": "6小时",
         "720": "12小时",
-        "1440": "24小时",
-        "10080": "7天"
+        "1440": "24小时"
       }
     },
     "resources": {
@@ -488,22 +434,13 @@
       "searchPlaceholder": "搜索资源名称或类型...",
       "selectedCount": "已选 {{count}} 项",
       "noResourcesFound": "暂无可用资源",
-      "selectResource": "请从列表中选择资源",
       "selectDevice": "选择设备",
       "metrics": "数据指标",
       "commands": "控制指令",
       "metricCount": "{{count}} 项指标",
       "commandCount": "{{count}} 项指令",
-      "topologyPreview": "拓扑预览",
-      "selectResourceHint": "请至少选择一项数据资源",
       "noneAvailable": "该资源没有可用的指标或指令",
       "noMetrics": "无指标",
-      "noOutputs": "无输出",
-      "moreMetrics": "+{{count}} 项指标",
-      "moreCommands": "+{{count}} 项指令",
-      "dataInput": "数据输入",
-      "dataOutput": "结果输出",
-      "selectAfterShow": "选择资源后显示详情",
       "resources": "项资源",
       "selected": "项已选",
       "clearAll": "清空",
@@ -511,9 +448,7 @@
       "deselectAll": "取消全选",
       "lookback": "回看",
       "lookbackUnit": "分钟",
-      "dataStream": "数据流",
       "device": "设备",
-      "externalData": "外部数据",
       "addResources": "添加资源",
       "dialog": {
         "title": "选择资源",
@@ -528,7 +463,6 @@
       }
     },
     "structured": {
-      "sectionTitle": "输出字段（ai:{id}:* 数据源）",
       "hint": "每个字段都会发布为平台数据源，仪表盘、规则、数据推送可直接使用。定义要提取什么，再用资源绑定输入。",
       "multiRoundCost": "多轮推理的结论是文字，要变成字段会在每次执行收尾多问一次模型。",
       "colName": "字段名",
@@ -559,21 +493,8 @@
     },
     "advanced": {
       "title": "高级配置",
-      "dataCollection": "数据采集",
-      "selectMetricsFirst": "请先选择指标",
       "executionMode": "执行模式",
-      "focusedMode": "精准模式",
-      "focusedModeDescription": "绑定特定资源和操作，快速精准分析。适合监控、告警、数据分析。",
-      "freeMode": "自由模式",
-      "freeModeDescription": "LLM 自主探索和决策，支持多轮工具调用。适合复杂自动化和设备控制。",
-      "structuredMode": "替我看（结构化抽取）",
-      "structuredModeDescription": "单次受约束推理：输入数据进，结构化字段出（发布为 ai:{id}:{field}）。适合抄表读数、质检判定、周期巡检。",
-      "focusedModeRequiresResources": "精准模式需要至少绑定一个资源",
-      "saveToken": "省 Token",
       "timeRange": "时间范围",
-      "includeHistory": "包含历史数据",
-      "includeTrend": "包含趋势分析",
-      "includeBaseline": "包含基线对比",
       "recommended": "推荐",
       "agentPriority": "优先级",
       "priorityHint": "执行优先级：数字越大越先执行（128 为默认）",
@@ -581,25 +502,16 @@
       "contextHint": "载入最近的对话轮数，用于提供执行上下文",
       "historyDepth": "历史对话轮数",
       "systemPrompt": "自定义系统提示词",
-      "systemPromptPlaceholder": "例如：你是一个仪表盘数据分析助手，负责分析设备运行状况...",
-      "systemPromptHint": "覆盖默认的物联网助手身份。留空则使用内置角色。",
-      "systemPromptTooLong": "系统提示词不能超过 4000 个字符",
-      "useDefault": "使用默认",
-      "defaultSystemPrompt": "你是一个智能物联网助手。你负责监控边缘设备、分析传感器数据，帮助用户管理物联网环境。根据观测到的数据提供清晰、可操作的洞察。"
+      "systemPromptPlaceholder": "例如：你是一个仪表盘数据分析助手，负责分析设备运行状况..."
     },
     "dataCollection": {
       "title": "数据收集配置",
       "timeRange": "时间范围",
-      "includeHistory": "历史数据",
-      "includeTrend": "趋势数据",
-      "includeBaseline": "基线对比",
       "hint": "为每个指标配置数据收集方式，不同场景可能需要不同的配置"
     },
     "validation": {
       "nameRequired": "请输入智能体名称",
-      "requirementRequired": "请描述你的需求",
       "resourceRequired": "请至少选择一个设备资源",
-      "eventTypeRequired": "请选择触发事件类型",
       "outputFieldRequired": "请至少定义一个输出字段"
     },
     "actions": {
@@ -715,24 +627,16 @@
     },
     "notify": {
       "title": "通知",
-      "channelsLabel": "通知渠道",
       "noChannels": "还没有外部通道 —— 告警仍会出现在「消息」里，不会漏。",
       "onLabel": "何时通知",
       "onFailure": "失败时",
-      "onFailureDesc": "静默即健康——只有运行失败才打扰你",
-      "onAlways": "每次运行",
-      "onAlwaysDesc": "盯守模式——每个判定都值得读",
       "hint": "选择往哪发、什么时候发。「由 AI 判断」不给机制配通知，也不回落到旧的关键词推断。",
-      "configureChannels": "去配置通道",
-      "onJudgment": "由 AI 判断",
-      "onJudgmentDesc": "agent 自己决定这次值不值得打扰你——它用现成的工具说话，安静时不发"
+      "configureChannels": "去配置通道"
     },
     "workstyle": {
       "title": "工作方式",
       "bound": "只看绑定的数据",
-      "boundDesc": "每次运行收集绑定的数据和指令，一次性给出结论或读数。快、省、结果稳定。",
-      "auto": "自己查、自己动手",
-      "autoDesc": "AI 可以多轮查询、调用工具、执行指令，直到完成。适合没预先绑定的复杂任务，耗时更长。"
+      "auto": "自己查、自己动手"
     },
     "memory": {
       "title": "记住多少",
@@ -745,9 +649,6 @@
     }
   },
   "skills": {
-    "originAll": "全部",
-    "originBuiltin": "内置",
-    "originUser": "自定义",
     "createSkill": "添加技能",
     "skillCreated": "技能已创建",
     "skillUpdated": "技能已更新",
@@ -796,22 +697,15 @@
       "description": "配置记忆存储和调度",
       "general": "通用设置",
       "enabled": "启用",
-      "maxAgents": "最大智能体数",
-      "maxAgentsHint": "拥有记忆的最大智能体数量",
-      "charLimits": "字符限制",
       "userCharLimit": "用户文件限制",
       "userCharLimitHint": "用户记忆文件的最大字符数",
       "knowledgeCharLimit": "知识文件限制",
       "knowledgeCharLimitHint": "知识记忆文件的最大字符数",
       "proceduresCharLimit": "操作流程文件限制",
       "proceduresCharLimitHint": "操作流程记忆文件的最大字符数（SOP、操作手册、how-to）",
-      "agentCharLimit": "智能体记忆限制",
-      "agentCharLimitHint": "每个智能体记忆的最大字符数",
       "tempFileTtl": "临时文件保留天数",
       "tempFileTtlHint": "临时文件清理前的保留天数",
       "schedule": "调度",
-      "scheduleInterval": "提取间隔",
-      "scheduleIntervalHint": "记忆提取间隔秒数（{{minutes}} 分钟）",
       "refreshInterval": "刷新间隔",
       "refreshIntervalHint": "刷新智能体记忆上下文的频率",
       "summaryInterval": "摘要间隔",
@@ -823,8 +717,6 @@
     "viewEdit": "查看/编辑",
     "export": "导出",
     "extract": "提取",
-    "extractStarted": "提取已开始",
-    "extractStartedDesc": "正在从对话中提取记忆...",
     "saving": "保存中...",
     "save": "保存",
     "cancel": "取消",
@@ -834,7 +726,6 @@
       "title": "暂无智能体",
       "description": "暂无智能体，创建一个来自动执行任务"
     },
-    "charsUsed": "已使用 {{used}} / {{limit}} 字符",
     "noContent": "暂无内容",
     "custom": {
       "title": "自定义文件",
@@ -842,7 +733,6 @@
       "createTitle": "创建自定义文件",
       "fileName": "文件名",
       "fileNameHint": "小写字母、数字、连字符、下划线，1-32 个字符。",
-      "fileContent": "内容（Markdown）",
       "empty": "暂无自定义文件。创建一个来存储领域特定知识。",
       "deleted": "自定义文件已删除",
       "created": "自定义文件已创建",

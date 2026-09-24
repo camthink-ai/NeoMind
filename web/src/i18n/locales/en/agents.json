@@ -1,7 +1,6 @@
 {
   "title": "AI Agents",
   "description": "Create and manage AI agents — memory, skills, and tools",
-  "createButton": "Create",
   "detailTitle": "Agent Details",
   "preview": {
     "title": "Logic Preview",
@@ -30,18 +29,13 @@
     },
     "actions": {
       "title": "Available Actions",
-      "noCommands": "No commands selected",
-      "canAlert": "Can send alerts/notifications"
+      "noCommands": "No commands selected"
     },
     "issues": {
       "title": "Configuration Check",
       "none": "Configuration looks good",
-      "noName": "Please enter an agent name",
-      "noPrompt": "Please describe what the agent should do",
       "noResources": "No resources selected - add devices or extensions",
-      "noMetrics": "No metrics selected - agent won't have data to analyze",
-      "unclearIntent": "Intent unclear - consider being more specific",
-      "controlNoCommands": "Control intent detected but no commands selected"
+      "noMetrics": "No metrics selected - agent won't have data to analyze"
     },
     "confidence": "confidence",
     "intent": {
@@ -50,7 +44,6 @@
       "analysis": "Analysis",
       "unknown": "General"
     },
-    "moreCommands": "more commands",
     "noResources": "No resources - click \"Add Resources\" to get started"
   },
   "card": {
@@ -102,11 +95,8 @@
     "moreResources": "{{count}} more resources...",
     "noMemory": "No memory data",
     "messages": "Messages",
-    "noDataAvailable": "No data",
     "tools": "Tools",
-    "toolsCount": "{{count}} tools available",
     "toolsEmpty": "No tools registered",
-    "toolsLoadError": "Failed to load tools",
     "toolsSourceBuiltIn": "Built-in",
     "toolsSourceExtension": "Extension",
     "toolsParameters": "Parameters",
@@ -147,7 +137,8 @@
       "history": "Every run, step by step",
       "memory": "Journal & knowledge files",
       "messages": "Notes for the next run"
-    }
+    },
+    "model": "Model"
   },
   "tabs": {
     "agents": "Agents",
@@ -158,7 +149,6 @@
   },
   "agentName": "Agent Name",
   "userPrompt": "User Prompt",
-  "statusColumn": "Status",
   "executions": "Executions",
   "lastExecution": "Last Execution",
   "timestamp": "Timestamp",
@@ -168,23 +158,15 @@
   "noAgents": "No AI agents",
   "noAgentsDesc": "Create your first AI agent to automate your IoT tasks",
   "noExecutions": "No executions yet",
-  "noExecutionsDesc": "Execution history will appear here once the agent runs",
   "createAgent": "Create AI Agent",
-  "createAgentDesc": "Define a new AI agent with natural language",
   "editAgent": "Edit AI Agent",
-  "editAgentDesc": "Modify agent configuration",
   "deleteConfirm": "Are you sure you want to delete this agent?",
   "execute": "Execute Now",
-  "viewMemory": "View Memory",
   "viewDetails": "View Details",
-  "viewExecutions": "View Executions",
   "agentDeleted": "Agent deleted successfully",
   "agentCreated": "Agent created successfully",
   "agentUpdated": "Agent updated successfully",
   "executionStarted": "Execution started: {{id}}",
-  "agentNamePlaceholder": "e.g., Temperature Monitor",
-  "userPromptPlaceholder": "Describe what this agent should do...",
-  "userPromptHint": "Use natural language to describe the automation task. For example: 'Monitor the temperature sensor every 5 minutes and send an alert if it exceeds 30°C for 3 consecutive readings.'",
   "schedule": "Schedule",
   "scheduleTypes": {
     "interval": "Interval",
@@ -193,9 +175,7 @@
     "once": "Run Once"
   },
   "intervalSeconds": "Interval (seconds)",
-  "intervalHint": "Agent will run every {{seconds}} seconds",
   "cronExpression": "Cron Expression",
-  "cronHint": "Format: minute hour day month weekday. Example: 0 * * * * for every hour",
   "timezone": "Timezone",
   "resources": "Resources",
   "noDevices": "No devices available. Add devices first.",
@@ -227,7 +207,6 @@
     "analysis": "Analysis",
     "inputData": "Input Data",
     "inputImage": "Input Image",
-    "dataFieldsCount": "{{count}} data fields",
     "reasoningSteps": "Reasoning Steps",
     "decisions": "Decisions",
     "conclusionLabel": "Conclusion:",
@@ -246,15 +225,10 @@
   "memory": {
     "title": "Agent Memory",
     "description": "Persistent memory and learning state of the agent",
-    "stateVariables": "State Variables",
     "baselines": "Historical Baselines",
-    "learnedPatterns": "Learned Patterns",
-    "trendData": "Trend Data",
-    "trendDataHint": "{{count}} data points collected from device metrics",
     "updatedAt": "Updated",
     "noMemory": "No memory data available",
     "clear": "Clear Memory",
-    "clearMemoryConfirm": "Are you sure you want to clear this agent's memory? This action cannot be undone.",
     "executions": "Executions",
     "knowledgeFiles": "Knowledge Files",
     "journal": "Execution Journal",
@@ -289,7 +263,6 @@
     "target": "Target",
     "channel": "Channel",
     "recipient": "Recipient",
-    "lastArchived": "Last archived",
     "inputData": "Input Data",
     "llmResponse": "Llm Response",
     "showLess": "Show Less",
@@ -314,40 +287,25 @@
       "name": "Name",
       "namePlaceholder": "e.g., Warehouse Temperature Monitor, Equipment Anomaly Analysis",
       "requirement": "Requirements",
-      "requirementHint": "Describe the goals you want the agent to accomplish in natural language",
-      "requirementPlaceholder": "e.g.:\n• Send alert when temperature exceeds 30°C\n• Generate device status report at 9 AM daily\n• Detect abnormal energy consumption and analyze causes",
-      "autoParseHint": "The system will automatically parse your description and configure the execution logic",
       "llmBackend": "LLM Model (Optional)",
-      "llmBackendHint": "Select the LLM model for this agent. Uses the default model if not specified.",
       "selectLlmBackend": "Select LLM Model",
-      "defaultBackend": "Default Model",
       "useActiveBackend": "Use Global Default",
       "active": "Active",
       "supportsVision": "Supports vision/image input",
       "supportsTools": "Supports function calling",
       "supportsThinking": "Supports thinking/reasoning",
-      "scheduleLabel": "Execution Schedule",
       "promptPlaceholder": "Describe what this agent should do in natural language. For example:\n\n• Monitor temperature sensors in the warehouse\n• Send an alert when temperature exceeds 30°C for 3 consecutive readings\n• Notify all alert channels: email, SMS, and push notifications",
       "promptTip": "Be specific about devices, conditions, and actions. The more details you provide, the better the agent can help you.",
       "runOn": "Run on",
-      "triggerWhen": "Trigger when",
-      "metricUpdates": "Metric updates",
-      "extensionOutput": "Extension output",
-      "manualTrigger": "Manual trigger",
-      "fromDevice": "From device",
-      "fromExtension": "From extension",
-      "fromAiGroup": "AI group name",
-      "manualHint": "The agent will only run when manually triggered via API or UI"
+      "manualTrigger": "Manual trigger"
     },
     "schedule": {
-      "selectStrategy": "Select Execution Strategy",
       "strategies": {
         "timer": "Timer",
         "reactive": "Data-driven",
         "onDemand": "On Demand"
       },
       "config": "Execution Configuration",
-      "onceDescription": "The agent will execute once immediately after saving, and will not trigger again automatically.",
       "timer": {
         "description": "Schedule automatic execution",
         "subTypes": {
@@ -361,7 +319,6 @@
         "preview": "Triggers: {{names}}",
         "hint": "Select the data sources to monitor. The agent will execute automatically when any selected source receives new data.",
         "deviceTrigger": "Device Sources",
-        "extensionTrigger": "Extension Sources",
         "noDevices": "No data sources available",
         "noExtensions": "No extensions available",
         "emptyWarning": "No trigger sources selected. The agent will not run automatically.",
@@ -399,7 +356,6 @@
         "every": "Every",
         "minutes": "minutes",
         "hours": "hours",
-        "executeOnce": "execute once",
         "preview": "Every {{value}} {{unit}}"
       },
       "daily": {
@@ -416,7 +372,6 @@
         "preview": "Every {{day}} at {{hour}}:{{minute}}"
       },
       "monthly": {
-        "everyMonth": "Monthly on day",
         "day": "",
         "at": ":00",
         "execute": "execute",
@@ -424,8 +379,6 @@
       },
       "event": {
         "triggerEvent": "Trigger Event",
-        "relatedDevice": "Related Device",
-        "manualHint": "Triggered when selected device metrics update. Backend filters by configured resources.",
         "events": {
           "device.metric": "Metric Update",
           "extension.output": "Extension Output",
@@ -437,10 +390,7 @@
           "extension.output": "Triggered when an extension publishes output data.",
           "ai.metric": "Triggered when an AI metric is written.",
           "manual": "Only triggered manually via API or UI"
-        },
-        "allDevices": "All Devices",
-        "allExtensions": "All Extensions",
-        "extensionHint": "Agent will trigger when this extension publishes output data."
+        }
       },
       "once": {
         "preview": "Execute once immediately"
@@ -461,10 +411,7 @@
     },
     "metricConfig": {
       "timeRange": "Data Time Range",
-      "configureHint": "Configure data strategy in main interface after selection",
       "descriptions": {
-        "fullWeek": "Full weekly report data",
-        "fullDay": "Full day data + trend + baseline",
         "trend": "Historical data + trend",
         "history": "Historical data",
         "baseline": "Current value + baseline comparison"
@@ -475,8 +422,7 @@
         "180": "3 hours",
         "360": "6 hours",
         "720": "12 hours",
-        "1440": "24 hours",
-        "10080": "7 days"
+        "1440": "24 hours"
       }
     },
     "resources": {
@@ -488,22 +434,13 @@
       "searchPlaceholder": "Search resource name or type...",
       "selectedCount": "{{count}} selected",
       "noResourcesFound": "No resources found",
-      "selectResource": "Select a resource from the list",
       "selectDevice": "Select a device",
       "metrics": "Metrics",
       "commands": "Commands",
       "metricCount": "{{count}} metrics",
       "commandCount": "{{count}} commands",
-      "topologyPreview": "Topology Preview",
-      "selectResourceHint": "Please select at least one data resource",
       "noneAvailable": "This resource has no metrics or commands",
       "noMetrics": "No metrics",
-      "noOutputs": "No outputs",
-      "moreMetrics": "+{{count}} metrics",
-      "moreCommands": "+{{count}} commands",
-      "dataInput": "Data Input",
-      "dataOutput": "Data Output",
-      "selectAfterShow": "Select resources to show details",
       "resources": "resources",
       "selected": "selected",
       "clearAll": "Clear All",
@@ -511,9 +448,7 @@
       "deselectAll": "Deselect All",
       "lookback": "Look back",
       "lookbackUnit": "minutes",
-      "dataStream": "Data Stream",
       "device": "Device",
-      "externalData": "External Data",
       "addResources": "Add Resources",
       "dialog": {
         "title": "Select Resources",
@@ -528,7 +463,6 @@
       }
     },
     "structured": {
-      "sectionTitle": "Output Fields (ai:{id}:* data sources)",
       "hint": "Each field is published as a platform data source usable by dashboards, rules and data-push. Define what to extract, then bind it to inputs via resources.",
       "multiRoundCost": "A multi-round conclusion is prose; turning it into fields costs one extra model call at the end of every run.",
       "colName": "Name",
@@ -559,21 +493,8 @@
     },
     "advanced": {
       "title": "Advanced Configuration",
-      "dataCollection": "Data Collection",
-      "selectMetricsFirst": "Please select metrics first",
       "executionMode": "Execution Mode",
-      "focusedMode": "Focused Mode",
-      "focusedModeDescription": "Bind specific resources and actions for fast, precise analysis. Best for monitoring, alerts, data analysis.",
-      "freeMode": "Free Mode",
-      "freeModeDescription": "LLM freely explores and decides with multi-round tool calling. Best for complex automation and device control.",
-      "structuredMode": "Structured (Watch)",
-      "structuredModeDescription": "Single constrained inference: inputs in, schema-validated fields out as ai:{id}:{field}. Best for meter reading, QC checks, periodic inspection.",
-      "focusedModeRequiresResources": "Focused Mode requires at least one resource binding",
-      "saveToken": "Save Tokens",
       "timeRange": "Time Range",
-      "includeHistory": "Include History",
-      "includeTrend": "Include Trend",
-      "includeBaseline": "Include Baseline",
       "recommended": "Recommended",
       "agentPriority": "Agent Priority",
       "priorityHint": "Higher runs first when agents compete for a slot (128 = default)",
@@ -581,25 +502,16 @@
       "contextHint": "Number of recent conversation turns to load for execution context",
       "historyDepth": "Conversation History Depth",
       "systemPrompt": "Custom System Prompt",
-      "systemPromptPlaceholder": "e.g., You are a helpful assistant that analyzes dashboard data...",
-      "systemPromptHint": "Override the default agent identity. Leave empty to use the built-in IoT assistant role.",
-      "systemPromptTooLong": "System prompt must be 4000 characters or less",
-      "useDefault": "Use Default",
-      "defaultSystemPrompt": "You are an intelligent IoT assistant. You monitor edge devices, analyze sensor data, and help users manage their IoT environment. Provide clear, actionable insights based on the data you observe."
+      "systemPromptPlaceholder": "e.g., You are a helpful assistant that analyzes dashboard data..."
     },
     "dataCollection": {
       "title": "Data Collection Config",
       "timeRange": "Time Range",
-      "includeHistory": "Historical Data",
-      "includeTrend": "Trend Data",
-      "includeBaseline": "Baseline Comparison",
       "hint": "Configure data collection method for each metric. Different scenarios may require different configurations"
     },
     "validation": {
       "nameRequired": "Please enter agent name",
-      "requirementRequired": "Please describe your requirements",
       "resourceRequired": "Please select at least one device resource",
-      "eventTypeRequired": "Please select trigger event type",
       "outputFieldRequired": "Please define at least one output field"
     },
     "actions": {
@@ -715,24 +627,16 @@
     },
     "notify": {
       "title": "Notify",
-      "channelsLabel": "Channels",
       "noChannels": "No external channels yet — alerts still land in Messages either way.",
       "onLabel": "When to notify",
       "onFailure": "On failure",
-      "onFailureDesc": "Silence is health — only failures interrupt you",
-      "onAlways": "Every run",
-      "onAlwaysDesc": "Watch mode — every verdict is worth reading",
       "hint": "Where to send, and when. \"Let the agent decide\" configures no routed notification and does not fall back to the old keyword sniffing.",
-      "configureChannels": "Configure channels",
-      "onJudgment": "Let the agent decide",
-      "onJudgmentDesc": "The run decides whether this is worth your attention — it speaks through its own tools, and stays quiet when there is nothing to say"
+      "configureChannels": "Configure channels"
     },
     "workstyle": {
       "title": "How it works",
       "bound": "Bound data only",
-      "boundDesc": "Each run collects the bound data and commands and answers in one pass. Fast, cheap, stable.",
-      "auto": "Explore and act",
-      "autoDesc": "The AI queries, calls tools and executes commands over multiple rounds until done. For open-ended tasks; slower."
+      "auto": "Explore and act"
     },
     "memory": {
       "title": "What it remembers",
@@ -745,9 +649,6 @@
     }
   },
   "skills": {
-    "originAll": "All",
-    "originBuiltin": "Builtin",
-    "originUser": "User",
     "createSkill": "Add Skill",
     "skillCreated": "Skill created",
     "skillUpdated": "Skill updated",
@@ -796,22 +697,15 @@
       "description": "Configure memory storage and scheduling",
       "general": "General Settings",
       "enabled": "Enabled",
-      "maxAgents": "Max Agents",
-      "maxAgentsHint": "Maximum number of agents with memory",
-      "charLimits": "Character Limits",
       "userCharLimit": "User File Limit",
       "userCharLimitHint": "Max characters for user memory file",
       "knowledgeCharLimit": "Knowledge File Limit",
       "knowledgeCharLimitHint": "Max characters for knowledge memory file",
       "proceduresCharLimit": "Procedures File Limit",
       "proceduresCharLimitHint": "Max characters for procedures memory file (SOPs, playbooks, how-tos)",
-      "agentCharLimit": "Agent Memory Limit",
-      "agentCharLimitHint": "Max characters per agent memory",
       "tempFileTtl": "Temp File TTL (Days)",
       "tempFileTtlHint": "Days before temp files are cleaned up",
       "schedule": "Schedule",
-      "scheduleInterval": "Extraction Interval",
-      "scheduleIntervalHint": "Seconds between memory extractions ({{minutes}} min)",
       "refreshInterval": "Refresh Interval",
       "refreshIntervalHint": "How often to refresh agent memory context",
       "summaryInterval": "Summary Interval",
@@ -823,8 +717,6 @@
     "viewEdit": "View/Edit",
     "export": "Export",
     "extract": "Extract",
-    "extractStarted": "Extraction Started",
-    "extractStartedDesc": "Extracting memories from conversations...",
     "saving": "Saving...",
     "save": "Save",
     "cancel": "Cancel",
@@ -834,7 +726,6 @@
       "title": "No Agents",
       "description": "Description"
     },
-    "charsUsed": "{{used}} / {{limit}} chars",
     "noContent": "No content yet",
     "custom": {
       "title": "Custom Files",
@@ -842,7 +733,6 @@
       "createTitle": "Create Custom File",
       "fileName": "File Name",
       "fileNameHint": "Lowercase letters, digits, hyphens, underscores. 1-32 chars.",
-      "fileContent": "Content (Markdown)",
       "empty": "No custom files. Create one to store domain-specific knowledge.",
       "deleted": "Custom file deleted",
       "created": "Custom file created",

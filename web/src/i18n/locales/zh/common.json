@@ -661,9 +661,18 @@
       "llm": {
         "title": "配置 AI 模型",
         "features": {
-          "builtin": { "title": "内置模型", "desc": "一键下载，离线可用，无需 API key" },
-          "local": { "title": "本地后端", "desc": "Ollama、llama.cpp" },
-          "cloud": { "title": "云端服务", "desc": "OpenAI、Anthropic、GLM、DeepSeek 等" }
+          "builtin": {
+            "title": "内置模型",
+            "desc": "一键下载，离线可用，无需 API key"
+          },
+          "local": {
+            "title": "本地后端",
+            "desc": "Ollama、llama.cpp"
+          },
+          "cloud": {
+            "title": "云端服务",
+            "desc": "OpenAI、Anthropic、GLM、DeepSeek 等"
+          }
         },
         "purpose": "AI 是 NeoMind 的主要交互入口。配好后，连接设备、创建规则、搭建看板都能通过对话完成，不必逐页手动配置。",
         "action": "配置 AI 模型"
@@ -671,9 +680,18 @@
       "device": {
         "title": "连接设备",
         "features": {
-          "mqtt": { "title": "MQTT 接入", "desc": "内置代理端口 1883，自动发现、一键批准" },
-          "other": { "title": "其他方式", "desc": "Webhook、手动添加、BLE 配网" },
-          "camera": { "title": "AI 摄像头", "desc": "NE101 / NE301 开箱即用" }
+          "mqtt": {
+            "title": "MQTT 接入",
+            "desc": "内置代理端口 1883，自动发现、一键批准"
+          },
+          "other": {
+            "title": "其他方式",
+            "desc": "Webhook、手动添加、BLE 配网"
+          },
+          "camera": {
+            "title": "AI 摄像头",
+            "desc": "NE101 / NE301 开箱即用"
+          }
         },
         "purpose": "设备是所有数据的来源。没有设备，监控、告警、分析都无从谈起——这是整个系统的起点。",
         "action": "查看设备"
@@ -785,5 +803,10 @@
     "ownCta": "去配置",
     "downloadingTitle": "内置模型下载中",
     "downloading": "下载中"
-  }
+  },
+  "opacity": "不透明度",
+  "size": "尺寸",
+  "saveChanges": "保存修改",
+  "priority": "优先级",
+  "send": "发送"
 }

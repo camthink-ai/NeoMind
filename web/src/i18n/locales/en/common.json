@@ -661,9 +661,18 @@
       "llm": {
         "title": "Configure AI Model",
         "features": {
-          "builtin": { "title": "Built-in model", "desc": "One-click download, offline, no API key needed" },
-          "local": { "title": "Local backends", "desc": "Ollama, llama.cpp" },
-          "cloud": { "title": "Cloud services", "desc": "OpenAI, Anthropic, GLM, DeepSeek, and more" }
+          "builtin": {
+            "title": "Built-in model",
+            "desc": "One-click download, offline, no API key needed"
+          },
+          "local": {
+            "title": "Local backends",
+            "desc": "Ollama, llama.cpp"
+          },
+          "cloud": {
+            "title": "Cloud services",
+            "desc": "OpenAI, Anthropic, GLM, DeepSeek, and more"
+          }
         },
         "purpose": "AI is the primary way to interact with NeoMind. Once set up, connecting devices, creating rules, and building dashboards all happen through conversation — no need to configure each page manually.",
         "action": "Configure AI Model"
@@ -671,9 +680,18 @@
       "device": {
         "title": "Connect Devices",
         "features": {
-          "mqtt": { "title": "MQTT", "desc": "Built-in broker on port 1883 — auto-discovered, approve in one click" },
-          "other": { "title": "Other options", "desc": "Webhooks, manual entry, BLE provisioning" },
-          "camera": { "title": "AI cameras", "desc": "NE101 / NE301 work out of the box" }
+          "mqtt": {
+            "title": "MQTT",
+            "desc": "Built-in broker on port 1883 — auto-discovered, approve in one click"
+          },
+          "other": {
+            "title": "Other options",
+            "desc": "Webhooks, manual entry, BLE provisioning"
+          },
+          "camera": {
+            "title": "AI cameras",
+            "desc": "NE101 / NE301 work out of the box"
+          }
         },
         "purpose": "Devices are the source of all data. Without them, monitoring, alerting, and analysis aren't possible — this is where the system starts.",
         "action": "View Devices"
@@ -785,5 +803,10 @@
     "ownCta": "Configure",
     "downloadingTitle": "Built-in model downloading",
     "downloading": "DL"
-  }
+  },
+  "opacity": "Opacity",
+  "size": "Size",
+  "saveChanges": "Save Changes",
+  "priority": "Priority",
+  "send": "Send"
 }

@@ -17,8 +17,7 @@
   "apiKeyHint": "Optional. Fill in the remote instance's API key to enable passwordless access. Without it, you'll need to log in with username and password after switching.",
   "apiKeyInvalid": {
     "title": "API Key Validation Failed",
-    "description": "This API key was rejected by the remote instance. You can delete the key to use password login instead, or enter the correct key.",
-    "saveAnyway": "Save Anyway"
+    "description": "This API key was rejected by the remote instance. You can delete the key to use password login instead, or enter the correct key."
   },
   "optional": "optional",
   "status": {
@@ -47,10 +46,8 @@
   "current": "Current",
   "remoteHint": "You are connected to a remote instance. To add, edit, or delete instances, switch back to the local instance first.",
   "noInstances": "No remote instances configured",
-  "noInstancesHint": "Add a remote NeoMind backend to monitor and manage it from here",
   "selectBackend": "Backend",
   "localBackend": "Local",
-  "authMethod": "Auth",
   "authApiKey": "API Key",
   "authUserLogin": "Login required",
   "validation": {

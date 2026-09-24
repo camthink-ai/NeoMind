@@ -47,11 +47,9 @@
     "format.zip": "ZIP (.zip)",
     "format.auto": "Auto-detect",
     "format.autoDesc": "CSV or ZIP based on content",
-    "binaryWarning": "Binary data export is partially supported — actual file contents may not be available.",
     "success": "Download complete — saved to your downloads folder",
     "format": {
-      "auto": "Auto",
-      "autoDesc": "Automatically detect the best format"
+      "auto": "Auto"
     }
   },
   "field": "Field",

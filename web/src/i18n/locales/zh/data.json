@@ -47,11 +47,9 @@
     "format.zip": "ZIP (.zip)",
     "format.auto": "自动检测",
     "format.autoDesc": "根据内容自动选择 CSV 或 ZIP 格式",
-    "binaryWarning": "二进制数据导出仅部分支持 — 实际文件内容可能不可用。",
     "success": "下载完成 — 已保存到下载文件夹",
     "format": {
-      "auto": "自动",
-      "autoDesc": "自动检测最佳格式"
+      "auto": "自动"
     }
   },
   "field": "字段",

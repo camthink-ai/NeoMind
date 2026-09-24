@@ -10,13 +10,11 @@
     "description": "智能物联网助手，帮你管理设备和自动化",
     "suggestions": {
       "checkDevices": "查看设备状态",
-      "createRule": "创建自动化规则",
-      "viewAlerts": "查看告警"
+      "createRule": "创建自动化规则"
     }
   },
   "input": {
     "placeholder": "输入消息...",
-    "sendHint": "按 <kbd>/</kbd> 显示建议",
     "selectModel": "选择模型",
     "selectLLMModel": "选择 LLM 模型",
     "attachment": "附件",
@@ -24,10 +22,7 @@
     "newChat": "新对话",
     "startNewConversation": "开始输入消息，与 AI 助手对话",
     "fallbackHelpPrompt": "你能做什么",
-    "skills": "技能",
-    "selectSkills": "选择技能",
-    "noSkills": "暂无可用技能",
-    "activeSkills": "已激活技能"
+    "skills": "技能"
   },
   "model": {
     "supportsVision": "支持图像",
@@ -45,8 +40,7 @@
   },
   "progress": {
     "thinking": "思考中",
-    "generating": "生成中",
-    "toolExecution": "执行工具"
+    "generating": "生成中"
   },
   "stage": {
     "thinking": "思考中",
@@ -65,8 +59,6 @@
     },
     "arguments": "参数",
     "result": "结果",
-    "roundTitle": "第 {{round}} 轮",
-    "multiRoundTitle": "工具调用",
     "rounds": "轮",
     "toggleDetails": "展开/收起详情"
   },
@@ -75,32 +67,16 @@
     "reconnecting": "重连中",
     "error": "连接错误",
     "disconnected": "未连接",
-    "retryAttempt": "第 {{count}} 次尝试",
-    "retryProgress": "尝试 {{retry}}/{{max}}{{seconds, string}}",
-    "retrySeconds": " · {{seconds}}s",
     "reconnect": "重新连接",
     "authFailed": "连接中断（认证失败）",
     "interruptedSaved": "连接中断 — 本轮回复仍会在后台完成并保存到会话历史，稍后返回本会话即可看到"
   },
   "quickActions": {
     "refreshDevices": "刷新设备状态",
-    "refreshPrompt": "刷新所有设备的状态",
-    "viewDeviceDetails": "查看设备详情",
-    "viewDevicePrompt": "显示设备的详细信息和配置",
     "createAutomation": "创建自动化",
-    "createAutomationPrompt": "帮我创建一个新的自动化规则",
-    "viewAllAutomations": "查看所有自动化",
-    "viewAllAutomationsPrompt": "列出所有已配置的自动化规则",
-    "viewAnalytics": "查看数据分析",
-    "viewAnalyticsPrompt": "显示最近的数据分析和趋势",
     "checkAlerts": "检查告警",
-    "checkAlertsPrompt": "检查当前是否有未处理的告警",
     "openSettings": "打开设置",
-    "openSettingsPrompt": "打开系统设置页面",
-    "continue": "继续对话",
-    "continuePrompt": "继续",
-    "elaborate": "详细说明",
-    "elaboratePrompt": "请详细说明一下"
+    "continue": "继续对话"
   },
   "taskProgress": {
     "title": "任务进度",
@@ -125,7 +101,6 @@
   "loading": "加载中...",
   "errors": {
     "sendMessage": "发送消息失败",
-    "connectionLost": "连接已断开",
     "retry": "重试",
     "llmError": "LLM 服务错误",
     "dismiss": "关闭"
@@ -157,9 +132,6 @@
   },
   "scrollToBottom": "回到底部",
   "copyMessage": "复制消息",
-  "footer": {
-    "disclaimer": "免责声明"
-  },
   "toolLoopProgress": "工具调用中 · 第 {{round}} 轮",
   "context": {
     "title": "上下文占用",
@@ -170,5 +142,8 @@
     "msgCount": " · {{count}} 条"
   },
   "loadEarlier": "加载更早的消息",
-  "loadEarlierLoading": "加载中…"
+  "loadEarlierLoading": "加载中…",
+  "suggestions": {
+    "badge": "推荐"
+  }
 }

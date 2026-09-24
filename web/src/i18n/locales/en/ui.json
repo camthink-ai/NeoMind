@@ -24,13 +24,7 @@
     "clear": "Clear"
   },
   "colorPicker": {
-    "themeForegroundColor": "Theme foreground color",
-    "hexValue": "Hex value",
-    "selectColor": "Select color"
-  },
-  "codeEditor": {
-    "jsonFormatError": "Invalid JSON format",
-    "yamlFormatError": "Invalid YAML format (incorrect indentation)"
+    "themeForegroundColor": "Theme foreground color"
   },
   "toggleSwitch": {
     "minValue": "Min:",

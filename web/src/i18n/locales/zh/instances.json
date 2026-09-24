@@ -17,8 +17,7 @@
   "apiKeyHint": "选填。填写远端实例的 API 密钥可免登录直接访问；不填则切换后需要用户名密码登录。",
   "apiKeyInvalid": {
     "title": "API 密钥验证失败",
-    "description": "该密钥被远端实例拒绝。你可以删除密钥改用账户密码登录，也可以填入正确的密钥。",
-    "saveAnyway": "仍然保存"
+    "description": "该密钥被远端实例拒绝。你可以删除密钥改用账户密码登录，也可以填入正确的密钥。"
   },
   "optional": "选填",
   "status": {
@@ -47,10 +46,8 @@
   "current": "当前",
   "remoteHint": "当前连接到远程实例。如需添加、编辑或删除实例，请先切回本地实例。",
   "noInstances": "未配置远端实例",
-  "noInstancesHint": "添加远端 NeoMind 后端以在此处监控和管理",
   "selectBackend": "后端",
   "localBackend": "本地",
-  "authMethod": "认证方式",
   "authApiKey": "API 密钥免登",
   "authUserLogin": "需要登录",
   "validation": {
