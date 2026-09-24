@@ -23,6 +23,10 @@ The three milestones of the agent kernel, released together. **M0** made a run a
 ### feat(web): an IM bridge says where to get its credentials
 - Binding a Telegram or Feishu bridge asks for values — a bot token, an app id and secret — that only exist after you have been through the platform's own console, and the form gave no way to find out how. Both configure views carry a "how do I get these?" link into the wiki guide, per-locale, resolved the way the notification-channel editor already resolves its channel-type docs.
 
+### fix(im): a conversation held over Telegram survives a restart
+- The session manager keeps a running conversation in memory and writes it to `sessions.redb` only when asked. The HTTP chat path asks after its stream and the WS path on disconnect; the IM runner asked never. So an IM conversation lived until the next restart and then showed as an empty one — the session row is written at creation and survives, while its messages never reached the disk.
+- The turn is persisted whether or not the reply succeeded: the user's own message is part of the conversation either way, and persisting only on success would still lose it whenever the model was unreachable.
+
 ### feat(api, web): About says what NeoMind itself costs the machine
 - `GET /api/stats/system` gains a `process` block — pid, resident and virtual memory, CPU, thread count, and the process's own run time — sampled in the same 200ms window the machine-wide CPU reading already uses, so the response time is unchanged. The About page renders it directly under the machine gauges, where "the box is at 42%" and "NeoMind is holding 312 MB of it" mean something next to each other.
 - Every other field in that payload describes the host; this is the first one that describes the app, which on a small edge device is the number an operator is asking about. Process CPU is a percentage of **one** core, as `top` reports it, and can exceed 100 — the machine-wide figure is averaged across cores and cannot, so the UI labels which is which rather than letting the two read as the same scale.

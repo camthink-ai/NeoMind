@@ -3603,7 +3603,71 @@ impl neomind_messages::im_bridge::AgentRunner for SessionManagerAgentRunner {
                 out = format!("（处理失败：{msg}）");
             }
         }
+
+        // Persist the turn. The session manager keeps a running conversation in
+        // memory and writes it only when someone asks — the HTTP chat path does
+        // that after its stream, the WS path on disconnect, and this path did
+        // neither. So a conversation you had over Telegram lived until the next
+        // restart and then showed as an empty one: the session row is written at
+        // creation and survives, while its messages never reached sessions.redb.
+        //
+        // Persisted even when the reply failed: the user's own message is part
+        // of the conversation either way, and losing it is what makes a restart
+        // look like the chat was wiped.
+        if let Err(e) = self.sm.persist_history(session_id).await {
+            tracing::warn!(
+                category = "im",
+                session_id = %session_id,
+                error = %e,
+                "Failed to persist the IM conversation"
+            );
+        }
+
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod im_persistence_tests {
+    use super::*;
+    // create_session and run live on the trait, not on the struct.
+    use neomind_messages::im_bridge::AgentRunner as _;
+
+    /// An IM conversation has to survive a restart.
+    ///
+    /// The session manager holds a running conversation in memory and writes it
+    /// only when asked. The HTTP chat path asks after its stream, the WS path on
+    /// disconnect — this adapter asked never, so a chat held over Telegram lived
+    /// until the next restart and then showed as an empty conversation: the
+    /// session row is written at creation and survives, while the messages never
+    /// reached `sessions.redb`.
+    #[tokio::test]
+    async fn an_im_turn_survives_a_restart() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("sessions.redb");
+
+        let session_id = {
+            let sm = Arc::new(neomind_agent::SessionManager::with_path(&path).expect("session store"));
+            let runner = SessionManagerAgentRunner::new(sm);
+            let sid = runner.create_session().await.expect("create session");
+            // No LLM backend is configured here, so the reply comes back as an
+            // error message. That is deliberate: the user's own message has to
+            // reach the disk however the answer went, and a run that only
+            // persisted on success would still lose the conversation whenever
+            // the model was unreachable.
+            let _ = runner.run(&sid, "冷库现在怎么样").await;
+            sid
+        };
+
+        // "Restart": a fresh manager over the same file, with nothing in memory.
+        let reopened =
+            neomind_agent::SessionManager::with_path(&path).expect("reopen session store");
+        let history = reopened.get_history(&session_id).await.expect("history");
+        assert!(
+            history.iter().any(|m| m.content.contains("冷库现在怎么样")),
+            "the user's message must outlive a restart; got {} message(s): {history:?}",
+            history.len()
+        );
     }
 }
 
