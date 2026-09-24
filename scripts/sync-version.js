@@ -149,6 +149,13 @@ function main() {
   console.log('\n' + (dryRun ? '🚫 Dry run complete - no files modified' : changes ? '✅ Version sync complete' : '✅ All files already in sync'));
 
   if (changes && !dryRun) {
+    console.log('\n⚠️  Two more steps this script cannot do for you:');
+    console.log('   1. cargo update --workspace — the members\' own versions live in');
+    console.log('      Cargo.lock too, and --locked (CI, and the release build) fails');
+    console.log('      on the skew.');
+    console.log('   2. Fold the [Unreleased] section into a version header, or');
+    console.log('      scripts/extract_changelog.py finds nothing and the GitHub body,');
+    console.log('      the OTA notes and the Discord post all ship empty.');
     console.log('\n⚠️  Don\'t forget to commit the updated files!');
   }
 
