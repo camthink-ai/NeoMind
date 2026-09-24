@@ -392,5 +392,12 @@
     "restartNow": "Restart now",
     "compatNotice": "LAN access was kept ON for compatibility (your devices connected to this machine before the update). Turn it off here if you don't need it.",
     "dismiss": "Got it"
-  }
+  },
+  "processUsage": "NeoMind's own usage",
+  "residentMemory": "Resident memory",
+  "ofTotalMemory": "of total",
+  "processCpu": "Process CPU",
+  "ofOneCore": "of one core",
+  "threads": "Threads",
+  "processUptime": "Process uptime"
 }

@@ -47,6 +47,22 @@ interface SystemInfo {
   gpus: GpuInfo[]
   disks: DiskInfo[]
   networks: NetInfo[]
+  /**
+   * What the NeoMind process itself is using. Absent (not zeroed) when the OS
+   * will not report it — a sandbox without process visibility — so the block
+   * renders only when there is something true to say.
+   */
+  process?: ProcessInfo | null
+}
+
+interface ProcessInfo {
+  pid: number
+  memory_bytes: number
+  virtual_memory_bytes: number
+  /** Percentage of **one** core, as `top` reports it — can exceed 100. */
+  cpu_usage: number
+  threads: number
+  uptime_secs: number
 }
 
 interface DiskInfo {
@@ -378,6 +394,9 @@ export function AboutTab() {
           ) : systemInfo ? (
             (() => {
               const uptime = formatUptimeParts(systemInfo.uptime)
+              // Only read when the block renders; the fallback keeps the type
+              // non-optional rather than threading a `!` through the JSX.
+              const processUptime = formatUptimeParts(systemInfo.process?.uptime_secs ?? 0)
               return (
             <>
               {/* Telemetry tiles */}
@@ -454,6 +473,46 @@ export function AboutTab() {
                   />
                 ))}
               </div>
+
+              {/* What NeoMind itself is taking. The gauges above describe the
+                  box; on a small device the question an operator actually has
+                  is what of it this app is holding, and the two only mean
+                  something side by side. */}
+              {systemInfo.process && (
+                <div className="rounded-lg border bg-card p-4">
+                  <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    {t("settings:processUsage")}
+                  </h4>
+                  <div className="mt-1 divide-y divide-border">
+                    <InfoRow label={t("settings:residentMemory")}>
+                      <span className="font-medium tabular-nums">
+                        {formatBytes(systemInfo.process.memory_bytes)}
+                      </span>
+                      {systemInfo.total_memory > 0 && (
+                        <span className="ml-2 text-xs text-muted-foreground tabular-nums">
+                          {((systemInfo.process.memory_bytes / systemInfo.total_memory) * 100).toFixed(1)}%{" "}
+                          {t("settings:ofTotalMemory")}
+                        </span>
+                      )}
+                    </InfoRow>
+                    <InfoRow label={t("settings:processCpu")}>
+                      <span className="font-medium tabular-nums">
+                        {systemInfo.process.cpu_usage.toFixed(1)}%
+                      </span>
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        {t("settings:ofOneCore")}
+                      </span>
+                    </InfoRow>
+                    <InfoRow label={t("settings:threads")}>
+                      <span className="tabular-nums">{systemInfo.process.threads}</span>
+                    </InfoRow>
+                    <InfoRow label={t("settings:processUptime")}>
+                      <span className="font-medium tabular-nums">{processUptime.primary}</span>
+                      <span className="ml-1 text-xs text-muted-foreground">{processUptime.secondary}</span>
+                    </InfoRow>
+                  </div>
+                </div>
+              )}
 
               {/* Network interfaces */}
               {(systemInfo.networks ?? []).length > 0 && (

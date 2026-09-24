@@ -12,5 +12,6 @@ pub mod extensions;
 pub mod message_channels;
 pub mod messages_chain;
 pub mod rules;
+pub mod stats;
 pub mod sessions;
 // settings.rs deprecated - API changed significantly

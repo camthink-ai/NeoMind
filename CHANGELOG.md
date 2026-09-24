@@ -23,6 +23,10 @@ The three milestones of the agent kernel, released together. **M0** made a run a
 ### feat(web): an IM bridge says where to get its credentials
 - Binding a Telegram or Feishu bridge asks for values — a bot token, an app id and secret — that only exist after you have been through the platform's own console, and the form gave no way to find out how. Both configure views carry a "how do I get these?" link into the wiki guide, per-locale, resolved the way the notification-channel editor already resolves its channel-type docs.
 
+### feat(api, web): About says what NeoMind itself costs the machine
+- `GET /api/stats/system` gains a `process` block — pid, resident and virtual memory, CPU, thread count, and the process's own run time — sampled in the same 200ms window the machine-wide CPU reading already uses, so the response time is unchanged. The About page renders it directly under the machine gauges, where "the box is at 42%" and "NeoMind is holding 312 MB of it" mean something next to each other.
+- Every other field in that payload describes the host; this is the first one that describes the app, which on a small edge device is the number an operator is asking about. Process CPU is a percentage of **one** core, as `top` reports it, and can exceed 100 — the machine-wide figure is averaged across cores and cannot, so the UI labels which is which rather than letting the two read as the same scale.
+
 ### M2 — multi-source triggering, the decision chain, and the feedback loop
 
 The milestone that makes an agent's *inputs* expressible and its *outputs* checkable. An event agent could only say "any of these sources"; it can now say "all of them, within this window". An alert could not say why it fired; it now carries the execution behind it, what that execution did, and — when the operator disagrees — the fact that they disagreed. Plus three quiet correctness fixes that this work surfaced, each of which had been losing data without saying so.

@@ -392,5 +392,12 @@
     "restartNow": "立即重启",
     "compatNotice": "已保持旧版本默认的局域网访问（你的设备此前可直连本机）。若不需要，可在此关闭。",
     "dismiss": "知道了"
-  }
+  },
+  "processUsage": "NeoMind 自身占用",
+  "residentMemory": "常驻内存",
+  "ofTotalMemory": "占整机",
+  "processCpu": "进程 CPU",
+  "ofOneCore": "单核占比",
+  "threads": "线程",
+  "processUptime": "进程运行时长"
 }

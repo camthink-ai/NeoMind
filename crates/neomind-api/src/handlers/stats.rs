@@ -77,6 +77,32 @@ pub struct GpuInfo {
     pub driver_version: Option<String>,
 }
 
+/// What this process costs the machine.
+///
+/// Everything else in `SystemInfo` describes the box; this describes what
+/// NeoMind is taking of it. On a small edge device that is the number an
+/// operator actually needs, and nothing reported it.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProcessInfo {
+    /// OS process id.
+    pub pid: u32,
+    /// Resident set size in bytes — what the process is actually holding.
+    pub memory_bytes: u64,
+    /// Virtual memory in bytes. Large and mostly uninteresting, but it is what
+    /// makes a surprising RSS explicable.
+    pub virtual_memory_bytes: u64,
+    /// CPU usage as a percentage of **one** core, the way `top` reports it — a
+    /// process saturating two cores reads 200. `SystemInfo::cpu_usage` is the
+    /// machine-wide average across cores and is capped at 100; the two are
+    /// deliberately not the same scale, and the UI says which is which.
+    pub cpu_usage: f32,
+    /// Threads in this process.
+    pub threads: usize,
+    /// Seconds since this process started, from the OS — not the same as
+    /// `SystemInfo::uptime`, which is when the in-app server started.
+    pub uptime_secs: u64,
+}
+
 /// System information.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SystemInfo {
@@ -106,6 +132,10 @@ pub struct SystemInfo {
     pub disks: Vec<DiskInfo>,
     /// Network interfaces (traffic)
     pub networks: Vec<NetInfo>,
+    /// What this process itself is using. `None` when the OS will not report it
+    /// (a sandbox without process visibility), which is why consumers handle
+    /// absence rather than reading zeroes.
+    pub process: Option<ProcessInfo>,
 }
 
 /// One mounted filesystem.
@@ -279,18 +309,33 @@ pub async fn get_system_stats_handler(
     // in time (first refresh establishes a baseline; the value is meaningful on
     // the next refresh), so take a ~200ms sample. The 5s response cache means
     // this only runs once per cache window.
-    let (total_memory, used_memory, free_memory, available_memory, cpu_usage) = {
+    let (total_memory, used_memory, free_memory, available_memory, cpu_usage, process) = {
         let mut sys = sysinfo::System::new();
         sys.refresh_memory();
         sys.refresh_cpu_usage();
+        // Our own process rides the same two-sample window: its CPU figure is a
+        // delta between refreshes too, and a second sleep would double the
+        // response time for a reading taken 200ms later anyway.
+        let me = sysinfo::Pid::from_u32(std::process::id());
+        sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[me]), true);
         tokio::time::sleep(Duration::from_millis(200)).await;
         sys.refresh_cpu_usage();
+        sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[me]), true);
+        let process = sys.process(me).map(|p| ProcessInfo {
+            pid: me.as_u32(),
+            memory_bytes: p.memory(),
+            virtual_memory_bytes: p.virtual_memory(),
+            cpu_usage: p.cpu_usage(),
+            threads: p.tasks().map(|t| t.len()).unwrap_or(1),
+            uptime_secs: p.run_time(),
+        });
         (
             sys.total_memory(),
             sys.used_memory(),
             sys.free_memory(),
             sys.available_memory(),
             sys.global_cpu_usage(),
+            process,
         )
     };
 
@@ -375,6 +420,7 @@ pub async fn get_system_stats_handler(
         gpus,
         disks,
         networks,
+        process,
     };
 
     let stats = SystemStats {
@@ -399,6 +445,7 @@ pub async fn get_system_stats_handler(
         "gpus": system_info.gpus,
         "disks": system_info.disks,
         "networks": system_info.networks,
+        "process": system_info.process,
     }))?;
 
     // Cache the response for 5 seconds
@@ -677,6 +724,7 @@ mod tests {
                 cpu_usage: 42.0,
                 disks: vec![],
                 networks: vec![],
+                process: None,
             },
         };
 
