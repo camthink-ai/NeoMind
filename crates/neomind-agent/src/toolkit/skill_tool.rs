@@ -492,6 +492,44 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::RwLock;
 
+    /// Which ways of saying "make me an agent" the search actually finds.
+    ///
+    /// Measured, not assumed. The scorer is substring-based on flat signals
+    /// with BM25 riding on top, so a sentence matches only when one of the
+    /// skill's keywords or description phrases is a substring of it (or the
+    /// query is a substring of a phrase). Bare nouns and the shapes the
+    /// frontmatter names work — including inside a sentence — and a plainly
+    /// phrased "每天8点检查冷库" does not: the bigrams it shares with the
+    /// description are common ones, and `RARE_TERM_RESCUE_RAW` is high on
+    /// purpose, because over-triggering was a documented failure. That sentence
+    /// is covered somewhere better — the system prompt's domain boundary routes
+    /// "daily at 8am / check every hour" to `agent` without the skill.
+    ///
+    /// A miss is not a dead end either: the tool then answers with the full
+    /// skill list, so the model can still pick `agent-management` by name.
+    #[tokio::test]
+    async fn the_phrasings_that_find_agent_management_keep_finding_it() {
+        let tool = builtin_tool();
+        for query in [
+            "agent",
+            "任务",
+            "定时任务",
+            "创建一个定期任务",
+            "帮我建个任务",
+            "帮我建一个助手每天检查冷库",
+        ] {
+            let out = tool
+                .execute(serde_json::json!({"action": "search", "query": query}))
+                .await
+                .unwrap();
+            assert_eq!(
+                out.data["matches"][0]["id"].as_str().unwrap_or("<none>"),
+                "agent-management",
+                "search({query:?}) no longer finds the agent skill"
+            );
+        }
+    }
+
     /// Regression (0.9.20): production search used only flat signals — a
     /// rare-term query ("modbus" — present in exactly one builtin skill)
     /// tied with generic keywords, and garbage scored nothing. BM25 must
