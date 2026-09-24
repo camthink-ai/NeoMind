@@ -391,76 +391,77 @@ export function MarketplaceDialog({
                   </p>
                 </div>
               ) : (
-                <div className="space-y-3">
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,280px),1fr))] gap-4">
+                  {/* Same auto-fill grid as the agents page: cards adapt to the
+                      container (min 25% / 280px) instead of stretching one
+                      full-width row per extension on wide screens. */}
                   {filteredExtensions.map((ext) => {
                     const installed = isInstalled(ext.id)
                     return (
                       <Card
                         key={ext.id}
                         className={cn(
-                          "p-4 hover:bg-accent transition-colors overflow-hidden",
+                          "p-4 flex flex-col hover:bg-accent transition-colors overflow-hidden",
                           !installed && "cursor-pointer",
                           installed && "border-border"
                         )}
                         onClick={() => !installed && loadExtensionDetails(ext.id)}
                       >
-                        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-1 flex-wrap">
-                              <h3 className="font-semibold truncate">{ext.name}</h3>
-                              {installed && (
-                                <Badge variant="secondary" className="text-xs shrink-0">
-                                  <Check className="h-3 w-3 mr-1" />
-                                  {t("extensions:market.installed", "Installed")}
-                                </Badge>
-                              )}
-                              <Badge variant="outline" className="text-xs shrink-0">
-                                {ext.version}
-                              </Badge>
-                            </div>
-                            <p className="text-sm text-muted-foreground line-clamp-2 mb-2 h-10 leading-5">
-                              {ext.description}
-                            </p>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              {ext.categories.slice(0, 3).map((cat) => (
-                                <Badge key={cat} variant="secondary" className="text-xs">
-                                  {cat}
-                                </Badge>
-                              ))}
-                              {ext.author && (
-                                <span className="text-xs text-muted-foreground">
-                                  by {ext.author}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2 sm:shrink-0 w-full sm:w-auto">
-                            {installed ? (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="w-full sm:w-auto"
-                                disabled
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <Check className="h-4 w-4 mr-1" />
-                                {t("extensions:market.installed", "Installed")}
-                              </Button>
-                            ) : (
-                              <Button
-                                variant="default"
-                                size="sm"
-                                className="w-full sm:w-auto"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  loadExtensionDetails(ext.id)
-                                }}
-                              >
-                                {t("extensions:market.viewDetails", "View Details")}
-                                <ChevronRight className="h-4 w-4 ml-1" />
-                              </Button>
-                            )}
-                          </div>
+                        <div className="flex items-center gap-2 mb-1 flex-wrap min-w-0">
+                          <h3 className="font-semibold truncate min-w-0">{ext.name}</h3>
+                          {installed && (
+                            <Badge variant="secondary" className="text-xs shrink-0">
+                              <Check className="h-3 w-3 mr-1" />
+                              {t("extensions:market.installed", "Installed")}
+                            </Badge>
+                          )}
+                          <Badge variant="outline" className="text-xs shrink-0">
+                            {ext.version}
+                          </Badge>
+                        </div>
+                        <p className="text-sm text-muted-foreground line-clamp-2 leading-5">
+                          {ext.description}
+                        </p>
+                        <div className="flex items-center gap-2 flex-wrap mt-2 mb-3">
+                          {ext.categories.slice(0, 3).map((cat) => (
+                            <Badge key={cat} variant="secondary" className="text-xs">
+                              {cat}
+                            </Badge>
+                          ))}
+                          {ext.author && (
+                            <span className="text-xs text-muted-foreground truncate min-w-0">
+                              by {ext.author}
+                            </span>
+                          )}
+                        </div>
+                        {/* Pinned to the card floor so buttons align across a
+                            grid row regardless of description length. */}
+                        <div className="mt-auto flex items-center gap-2">
+                          {installed ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="w-full"
+                              disabled
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <Check className="h-4 w-4 mr-1" />
+                              {t("extensions:market.installed", "Installed")}
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="default"
+                              size="sm"
+                              className="w-full"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                loadExtensionDetails(ext.id)
+                              }}
+                            >
+                              {t("extensions:market.viewDetails", "View Details")}
+                              <ChevronRight className="h-4 w-4 ml-1" />
+                            </Button>
+                          )}
                         </div>
                       </Card>
                     )
