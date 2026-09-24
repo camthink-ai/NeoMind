@@ -479,11 +479,16 @@ export function AboutTab() {
                   is what of it this app is holding, and the two only mean
                   something side by side. */}
               {systemInfo.process && (
-                <div className="rounded-lg border bg-card p-4">
-                  <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <div className="space-y-2">
+                  {/* Label OUTSIDE the card, in the section-header spec (same
+                      classes as the System Information h3 above) — it used to
+                      be a weightless icon+span caption that read as neither
+                      header nor body. */}
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     {t("settings:processUsage")}
-                  </h4>
-                  <div className="mt-1 divide-y divide-border">
+                  </h3>
+                  <div className="rounded-lg border bg-card px-4">
+                    <div className="divide-y divide-border">
                     <InfoRow label={t("settings:residentMemory")}>
                       <span className="font-medium tabular-nums">
                         {formatBytes(systemInfo.process.memory_bytes)}
@@ -509,7 +514,8 @@ export function AboutTab() {
                     <InfoRow label={t("settings:processUptime")}>
                       <span className="font-medium tabular-nums">{processUptime.primary}</span>
                       <span className="ml-1 text-xs text-muted-foreground">{processUptime.secondary}</span>
-                    </InfoRow>
+                      </InfoRow>
+                    </div>
                   </div>
                 </div>
               )}
