@@ -154,6 +154,7 @@ impl ToolLoopConfig {
 // Sub-modules
 mod analyzer;
 mod command_executor;
+pub(crate) use command_executor::prose_from_structured_conclusion;
 mod compact;
 mod context;
 mod data_collector;

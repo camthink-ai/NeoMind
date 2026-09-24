@@ -248,12 +248,33 @@ impl Tool for QueryConclusionTool {
 
         let age_seconds = (chrono::Utc::now().timestamp() - execution.timestamp).max(0);
 
+        // A structured agent stores the model's JSON object. The notification
+        // path renders it against the agent's own schema — "运行状态: 异常" — and
+        // this path returned it verbatim, so asking chat how the cold room was
+        // answered with `{"status":"异常","anomaly_count":2}`. One renderer,
+        // both paths; anything the renderer declines falls through unchanged
+        // rather than being replaced by an empty message.
+        let conclusion = if agent.execution_mode == neomind_storage::ExecutionMode::Structured {
+            agent
+                .output_schema
+                .as_deref()
+                .and_then(|schema| {
+                    crate::ai_agent::executor::prose_from_structured_conclusion(
+                        schema,
+                        &execution.decision_process.conclusion,
+                    )
+                })
+                .unwrap_or_else(|| execution.decision_process.conclusion.clone())
+        } else {
+            execution.decision_process.conclusion.clone()
+        };
+
         Ok(ToolOutput::success(json!({
             "agent": agent.name,
             "agent_id": agent.id,
             "status": format!("{:?}", agent.status),
             "has_run": true,
-            "conclusion": execution.decision_process.conclusion,
+            "conclusion": conclusion,
             "concluded_at": chrono::DateTime::from_timestamp(execution.timestamp, 0)
                 .map(|t| t.to_rfc3339()),
             "age_seconds": age_seconds,
@@ -372,6 +393,114 @@ mod tests {
             store.save_agent(&agent(id, name)).await.expect("save");
         }
         QueryConclusionTool::new(store)
+    }
+
+    /// What a structured agent's conclusion looks like when chat reads it back.
+    ///
+    /// A structured run stores the model's JSON object. The notification path
+    /// renders it against the agent's own schema — "运行状态: 异常" — and this
+    /// path returned it verbatim, so asking chat how the cold room was answered
+    /// with `{"status":"异常","anomaly_count":2}` while the notification for the
+    /// very same run read as a sentence. Same renderer now, both paths.
+    #[tokio::test]
+    async fn a_structured_conclusion_reads_back_as_prose() {
+        let store = seed_structured_with_conclusion(r#"{"status":"异常","anomaly_count":2}"#).await;
+        let out = QueryConclusionTool::new(store)
+            .execute(serde_json::json!({"agent": "冷库"}))
+            .await
+            .expect("tool runs");
+
+        let conclusion = out.data["conclusion"].as_str().expect("a conclusion");
+        assert_eq!(
+            conclusion, "运行状态: 异常\n异常数量: 2项",
+            "the field descriptions and unit are what makes this readable"
+        );
+        assert!(
+            !conclusion.starts_with('{'),
+            "raw JSON is what this test exists to keep out of the answer"
+        );
+    }
+
+    /// The renderer declines anything it does not understand, and the stored
+    /// text is what the user gets — never an empty string.
+    #[tokio::test]
+    async fn an_unrenderable_conclusion_falls_through_unchanged() {
+        let store = seed_structured_with_conclusion("模型这次只回了一句话").await;
+        let out = QueryConclusionTool::new(store)
+            .execute(serde_json::json!({"agent": "冷库"}))
+            .await
+            .expect("tool runs");
+        assert_eq!(out.data["conclusion"], "模型这次只回了一句话");
+    }
+
+    /// Agents that are not structured store prose already; nothing to render.
+    #[tokio::test]
+    async fn a_free_agents_conclusion_is_left_alone() {
+        let store = AgentStore::memory().expect("store");
+        let a = agent("f1", "巡检");
+        store.save_agent(&a).await.expect("save");
+        store
+            .save_execution(&execution_record("f1", "冷库一切正常"))
+            .await
+            .expect("save execution");
+
+        let out = QueryConclusionTool::new(store)
+            .execute(serde_json::json!({"agent": "巡检"}))
+            .await
+            .expect("tool runs");
+        assert_eq!(out.data["conclusion"], "冷库一切正常");
+    }
+
+    fn execution_record(agent_id: &str, conclusion: &str) -> neomind_storage::AgentExecutionRecord {
+        neomind_storage::AgentExecutionRecord {
+            id: "e1".into(),
+            agent_id: agent_id.into(),
+            timestamp: chrono::Utc::now().timestamp(),
+            trigger_type: "schedule".into(),
+            status: neomind_storage::ExecutionStatus::Completed,
+            decision_process: neomind_storage::DecisionProcess {
+                situation_analysis: String::new(),
+                data_collected: vec![],
+                reasoning_steps: vec![],
+                decisions: vec![],
+                conclusion: conclusion.into(),
+                confidence: None,
+                stop_reason: String::new(),
+            },
+            result: None,
+            duration_ms: 1,
+            error: None,
+        }
+    }
+
+    /// A structured agent with a two-field schema, and one run recorded against
+    /// it carrying `conclusion`.
+    async fn seed_structured_with_conclusion(conclusion: &str) -> Arc<AgentStore> {
+        use neomind_storage::{ExecutionMode, OperatorField, OperatorFieldType};
+
+        let store = AgentStore::memory().expect("store");
+        let mut a = agent("s1", "冷库监控");
+        a.execution_mode = ExecutionMode::Structured;
+        a.output_schema = Some(vec![
+            OperatorField {
+                name: "status".into(),
+                field_type: OperatorFieldType::Enum(vec!["正常".into(), "异常".into()]),
+                unit: None,
+                description: Some("运行状态".into()),
+            },
+            OperatorField {
+                name: "anomaly_count".into(),
+                field_type: OperatorFieldType::Number,
+                unit: Some("项".into()),
+                description: Some("异常数量".into()),
+            },
+        ]);
+        store.save_agent(&a).await.expect("save agent");
+        store
+            .save_execution(&execution_record("s1", conclusion))
+            .await
+            .expect("save execution");
+        store
     }
 
     /// The user says "冷库", the agent is called "冷库温度盯守" — resolving that

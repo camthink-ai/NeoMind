@@ -1013,12 +1013,7 @@ pub async fn get_agent(
 /// `on: Failure` default keeps the old bargain that silence is health, so this
 /// adds a report only when there is something to report; a watch-style agent
 /// whose every verdict is worth reading wants `on: "always"`.
-fn default_notify() -> neomind_storage::AgentNotify {
-    neomind_storage::AgentNotify {
-        channels: vec![neomind_messages::im_bridge::channel::IM_CHANNEL_NAME.to_string()],
-        on: neomind_storage::NotifyOn::Failure,
-    }
-}
+
 
 /// Create a new AI Agent.
 #[utoipa::path(
@@ -1276,7 +1271,7 @@ pub async fn create_agent(
         output_schema: request.output_schema,
         operator_config: request.operator_config,
         memory_mode: request.memory_mode,
-        notify: Some(request.notify.unwrap_or_else(default_notify)),
+        notify: Some(request.notify.unwrap_or_else(neomind_agent::ai_agent::default_agent_notify)),
         conversation_history: Default::default(),
         user_messages: Default::default(),
         conversation_summary: Default::default(),

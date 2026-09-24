@@ -11,6 +11,7 @@
 //! - Error recovery for long-running stability
 
 pub mod executor;
+pub mod notify;
 pub mod scheduler;
 
 use neomind_storage::{AgentExecutionRecord, AgentSchedule, AgentStatus, AiAgent, ExecutionStatus};
@@ -19,6 +20,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 pub use executor::{AgentExecutor, AgentExecutorConfig};
+pub use notify::default_agent_notify;
 pub use scheduler::{AgentScheduler, BackendSemaphores, SchedulerConfig};
 
 /// AI Agent manager - the main entry point for user-defined agents.

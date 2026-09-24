@@ -668,8 +668,19 @@ impl AgentExecutor {
         let Some(agent) = self.store.get_agent(agent_id).await.ok().flatten() else {
             return;
         };
-        let Some(notify) = agent.notify.clone() else {
-            return;
+        // A run that fails is not a judgement about the content — it is a
+        // status, and the one case where silence is unambiguously wrong. An
+        // agent with no routing at all predates the create-time floor, and the
+        // keyword path it falls back to runs off `Decision`s, which a failure
+        // does not produce (`decisions: vec![]` is the record). So those agents
+        // failed silently, every run, and nothing said so. Route the failure to
+        // the same floor a new agent would have been given; success keeps the
+        // legacy behaviour exactly as it was.
+        let failed = record.status != neomind_storage::ExecutionStatus::Completed;
+        let notify = match agent.notify.clone() {
+            Some(notify) => notify,
+            None if failed => super::super::notify::default_agent_notify(),
+            None => return,
         };
         // No channel is not "no alert". The message IS the record of the run —
         // it is what the Messages page lists, what the judgment chain hangs
@@ -679,7 +690,6 @@ impl AgentExecutor {
         // rule path has always stored unconditionally and fanned out
         // best-effort. With an empty target list the message is still created
         // and simply reaches no external channel.
-        let failed = record.status != neomind_storage::ExecutionStatus::Completed;
         let should_send = match notify.on {
             neomind_storage::NotifyOn::Always => true,
             neomind_storage::NotifyOn::Failure => failed,
@@ -966,7 +976,7 @@ fn render_scalar(value: &serde_json::Value) -> String {
     }
 }
 
-fn prose_from_structured_conclusion(
+pub(crate) fn prose_from_structured_conclusion(
     schema: &[neomind_storage::OperatorField],
     conclusion: &str,
 ) -> Option<String> {

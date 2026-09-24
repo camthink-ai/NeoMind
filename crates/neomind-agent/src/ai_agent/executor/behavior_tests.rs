@@ -1343,6 +1343,115 @@ async fn an_agent_without_channels_still_records_its_alert_in_app() {
     );
 }
 
+/// A **failed** run reaches the user even from an agent with no routing.
+///
+/// `notify: null` is the shape every agent created before the create-time floor
+/// has. Its fallback is the keyword path, which is driven by `Decision`s — and a
+/// failure produces none: the record the executor writes for one carries
+/// `decisions: vec![]`. So those agents failed silently, run after run, with
+/// nothing anywhere saying so. Found in a live log: an agent bound to 31 sources
+/// failing every five minutes, no notification.
+///
+/// A failure is a status, not a judgement about the content, so it takes the
+/// floor a new agent would have been given. Success keeps the legacy behaviour.
+#[tokio::test]
+async fn a_failed_run_reports_even_without_routing() {
+    let store = AgentStore::memory().expect("store");
+    let message_manager = Arc::new(neomind_messages::MessageManager::new());
+    let config = AgentExecutorConfig {
+        store: store.clone(),
+        time_series_storage: None,
+        device_service: None,
+        event_bus: None,
+        message_manager: Some(message_manager.clone()),
+        llm_runtime: None,
+        llm_backend_store: None,
+        extension_registry: None,
+        tool_registry: None,
+        memory_store: None,
+        backend_semaphores: None,
+        skill_registry: None,
+        execution_semaphore: None,
+    };
+    let executor = AgentExecutor::new(config).await.expect("executor");
+
+    // No `notify` key at all — the pre-floor shape.
+    let agent: AiAgent = serde_json::from_value(serde_json::json!({
+        "id": "legacy-agent",
+        "name": "数据监控分析",
+        "user_prompt": "判断状态",
+        "resources": [],
+        "schedule": { "schedule_type": "interval", "interval_seconds": 300 },
+        "status": "active",
+        "created_at": 0, "updated_at": 0,
+        "stats": {
+            "total_executions": 0, "successful_executions": 0,
+            "failed_executions": 0, "avg_duration_ms": 0, "last_duration_ms": null
+        },
+        "memory": {},
+    }))
+    .expect("fixture");
+    assert!(agent.notify.is_none(), "the point of the fixture");
+    store.save_agent(&agent).await.expect("seed");
+
+    let record = |status: neomind_storage::ExecutionStatus,
+                  conclusion: &str,
+                  error: Option<&str>| neomind_storage::AgentExecutionRecord {
+        id: format!("exec-{status:?}"),
+        agent_id: agent.id.clone(),
+        timestamp: 0,
+        trigger_type: "schedule".to_string(),
+        status,
+        decision_process: neomind_storage::DecisionProcess {
+            situation_analysis: String::new(),
+            data_collected: vec![],
+            reasoning_steps: vec![],
+            decisions: vec![],
+            conclusion: conclusion.to_string(),
+            confidence: None,
+            stop_reason: String::new(),
+        },
+        result: None,
+        duration_ms: 12,
+        error: error.map(str::to_string),
+    };
+
+    // A failure: one message, and it carries the reason.
+    executor
+        .dispatch_agent_notifications(
+            &agent.id,
+            &agent.name,
+            &record(
+                neomind_storage::ExecutionStatus::Failed,
+                "Failed: nothing to work from",
+                Some("agent '数据监控分析' has nothing to work from. All 5 devices and 31 metrics are silent"),
+            ),
+        )
+        .await;
+
+    let sent = message_manager.list_messages().await;
+    assert_eq!(sent.len(), 1, "a failure must not be silent");
+    assert!(
+        sent[0].message.contains("31 metrics are silent"),
+        "the reason is the useful part of a failure notice: {:?}",
+        sent[0].message
+    );
+
+    // A success: the legacy keyword path still decides, and here it says nothing.
+    executor
+        .dispatch_agent_notifications(
+            &agent.id,
+            &agent.name,
+            &record(neomind_storage::ExecutionStatus::Completed, "冷库温度正常", None),
+        )
+        .await;
+    assert_eq!(
+        message_manager.list_messages().await.len(),
+        1,
+        "a successful run of a legacy agent stays quiet — that behaviour is not ours to change"
+    );
+}
+
 /// Explicit notification routing (2026-09-23): a failed run with
 /// notify={channels, on: failure} must land a message targeted at exactly
 /// those channels; a passing run must stay silent for on: failure.
