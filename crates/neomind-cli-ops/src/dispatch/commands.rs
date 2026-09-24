@@ -1540,7 +1540,11 @@ pub enum AgentCommand {
         /// recent history). Omit to derive from the mode.
         #[arg(long)]
         memory_mode: Option<String>,
-        /// Notification routing (JSON): {"channels":["name"],"on":"failure|always"}.
+        /// Notification routing (JSON): {"channels":["name"],"on":"failure|always|judgment"}.
+        ///   failure (default): only when the run failed — silence is health
+        ///   always: every run
+        ///   judgment: send nothing on the agent's behalf; it decides in its own
+        ///     prompt whether to speak (use for "only tell me if it matters")
         /// Example: --notify '{"channels":["telegram:main"],"on":"always"}'
         #[arg(long)]
         notify: Option<String>,
@@ -1612,7 +1616,8 @@ pub enum AgentCommand {
         /// New memory axis: "tool" | "assistant".
         #[arg(long)]
         memory_mode: Option<String>,
-        /// New notification routing (JSON): {"channels":[...],"on":"failure|always"}.
+        /// New notification routing (JSON): {"channels":[...],"on":"failure|always|judgment"}.
+        /// `judgment` routes nothing and lets the task decide whether to speak.
         #[arg(long)]
         notify: Option<String>,
         /// New device IDs (comma-separated). Replaces existing bindings.

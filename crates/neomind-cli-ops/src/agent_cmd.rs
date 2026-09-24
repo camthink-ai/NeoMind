@@ -181,7 +181,9 @@ pub async fn create_agent(
     if let Some(notify_json) = notify {
         let parsed: serde_json::Value = serde_json::from_str(notify_json).map_err(|e| {
             anyhow::anyhow!(
-                "--notify is not valid JSON: {} — expected an object with channels[] and on (failure|always)",
+                "--notify is not valid JSON: {} — expected an object like \
+                 {{\"channels\":[\"IM\"],\"on\":\"failure|always|judgment\"}}. \"judgment\" routes \
+                 nothing and lets the task decide whether to speak.",
                 e
             )
         })?;

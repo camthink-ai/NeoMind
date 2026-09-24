@@ -150,6 +150,14 @@ Bridges (the `/start` handshake). Without it, a run's outcome lands in the
 in-app Messages page and nowhere else — a scheduled agent that reports only
 in-app is indistinguishable from one that never ran.
 
+**A new agent already has somewhere to report.** The API applies
+`{"channels":["IM"],"on":"failure"}` to any create request that omits `notify` —
+CLI, editor and API alike — so leaving `--notify` off does **not** mean "no
+notification". The editor shows that floor on the form, and a user comparing the
+two will notice if you promise otherwise. An agent stays quiet only when you set
+`"on":"judgment"` (the task decides) or an explicit `{"channels":[]}` (routes
+nowhere).
+
 ### Binding Resources
 
 **Never invent these IDs.** The examples below are shapes, not values — a real
@@ -259,7 +267,7 @@ neomind agent create \
   [--execution-mode <focused|free|structured>] \
   [--output-schema '<json array of fields>'] \
   [--memory-mode <tool|assistant>] \
-  [--notify '{"channels":["name"],"on":"failure|always"}'] \
+  [--notify '{"channels":["name"],"on":"failure|always|judgment"}'] \
   [--device-ids 'id1,id2']
 ```
 
