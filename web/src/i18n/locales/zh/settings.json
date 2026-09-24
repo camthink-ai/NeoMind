@@ -338,6 +338,8 @@
     "copyToken": "复制密钥",
     "tokenCopied": "密钥已复制",
     "manualBindHint": "机器人尚未识别，暂时无法生成深度链接。可直接向机器人发送以下命令绑定当前会话：",
+    "howToGet": "这些信息怎么获取？→ 配置指南",
+    "howToPair": "如何用邀请绑定会话？→ 配对说明",
     "noInvites": "暂无邀请",
     "noInvitesDesc": "生成一个邀请以绑定会话。",
     "token": "Token",

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import { Send, Plus, Trash2, Copy, QrCode, Check, X, MessageSquare, Settings } from 'lucide-react'
+import { Send, Plus, Trash2, Copy, QrCode, Check, X, MessageSquare, Settings, ExternalLink } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { Card, CardContent, CardDescription, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -65,8 +65,13 @@ function statusBadge(status: string): { label: string; className: string } {
 }
 
 export function ImBridgesTab() {
-  const { t } = useTranslation(['settings', 'common'])
+  const { t, i18n } = useTranslation(['settings', 'common'])
   const { handleError } = useErrorHandler()
+
+  // Resolve a per-locale docs map to one URL (zh* → zh, anything else → en,
+  // falling back to en). Same convention as the notification-channel editor.
+  const docsUrl = (docs?: { en: string; zh: string }) =>
+    docs ? ((i18n.language.toLowerCase().startsWith('zh') ? docs.zh : docs.en) || docs.en) : null
 
   const [view, setView] = useState<View>('list')
   const [loading, setLoading] = useState(true)
@@ -238,6 +243,7 @@ export function ImBridgesTab() {
   // ========== CONFIGURE VIEW (add-flow step 2) ==========
   if (view === 'configure' && selectedPlatform) {
     const PlatformIcon = selectedPlatform.icon
+    const guideUrl = docsUrl(selectedPlatform.docs)
     return (
       <>
         <ListToolbar
@@ -250,6 +256,18 @@ export function ImBridgesTab() {
         />
         <Card>
           <CardContent className="pt-6">
+            {/* How to obtain the credential values this form asks for */}
+            {guideUrl && (
+              <a
+                href={guideUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 text-xs text-info hover:underline mb-4"
+              >
+                <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                {t('settings:im.howToGet')}
+              </a>
+            )}
             <PlatformConfigForm
               fields={selectedPlatform.fields}
               onSubmit={handleCreate}
@@ -341,6 +359,7 @@ export function ImBridgesTab() {
   if (view === 'detail' && selectedBridge) {
     const st = statusBadge(selectedBridge.status)
     const deepLink = lastInvite?.deep_link ?? null
+    const guideUrl = docsUrl(getPlatformDef(selectedBridge.platform)?.docs)
     return (
       <>
         <ListToolbar
@@ -362,6 +381,18 @@ export function ImBridgesTab() {
             <div className="min-w-0">
               <h3 className="text-base font-semibold">{t('settings:im.invites')}</h3>
               <p className="text-sm text-muted-foreground mt-0.5">{t('settings:im.invitesDesc')}</p>
+              {/* What to DO with an invite: the /start pairing steps live in the same wiki guide */}
+              {guideUrl && (
+                <a
+                  href={guideUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 text-xs text-info hover:underline mt-1"
+                >
+                  <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                  {t('settings:im.howToPair')}
+                </a>
+              )}
             </div>
             <Button onClick={handleGenerateInvite} disabled={generating}>
               {generating ? <QrCode className="mr-2 h-4 w-4 animate-pulse" /> : <Plus className="mr-2 h-4 w-4" />}

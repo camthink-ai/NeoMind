@@ -41,6 +41,19 @@ export interface ImPlatformDef {
   /** true = selectable in the picker now; false = hidden until wired. */
   available: boolean
   fields: ImPlatformField[]
+  /**
+   * Doc walking the user through obtaining the credential fields above
+   * (per-locale, mirrors `ChannelTypeDef.docs` in the notification-channel
+   * editor). Rendered as a "how do I get these values?" link in the
+   * configure view.
+   */
+  docs?: { en: string; zh: string }
+}
+
+/** Wiki page documenting the IM bridges (credential steps + /start pairing). */
+const IM_BRIDGE_GUIDE = {
+  en: 'https://wiki.camthink.ai/docs/neomind/user-guide/ai-chat/#chat-from-telegram--feishu-im-bridges',
+  zh: 'https://wiki.camthink.ai/zh-Hans/docs/neomind/user-guide/ai-chat/#从-telegram--飞书对话im-桥接',
 }
 
 export const IM_PLATFORMS: ImPlatformDef[] = [
@@ -51,6 +64,7 @@ export const IM_PLATFORMS: ImPlatformDef[] = [
     icon: Send,
     iconBg: 'bg-info-light text-info',
     available: true,
+    docs: IM_BRIDGE_GUIDE,
     fields: [
       {
         name: 'bot_token',
@@ -77,6 +91,7 @@ export const IM_PLATFORMS: ImPlatformDef[] = [
     icon: MessageSquare,
     iconBg: 'bg-success-light text-success',
     available: true,
+    docs: IM_BRIDGE_GUIDE,
     fields: [
       {
         name: 'app_id',
