@@ -788,6 +788,26 @@ async fn test_retention_policy() {
 }
 
 #[test]
+/// Regression: a multibyte value used to panic the retention worker.
+///
+/// `s.len()` counts bytes and the detection sliced `&s[..32]` on that count, so
+/// any value whose 32nd byte landed inside a character took the tokio worker
+/// down — and retention walks every value in the store. Found in a live log:
+/// `end byte index 32 is not a char boundary; it is inside '机'`.
+#[test]
+fn a_multibyte_value_does_not_panic_image_detection() {
+    // '机' occupies bytes 30..33, so byte 32 — where the old slice cut — is
+    // inside the character.
+    let value = serde_json::json!(format!("{}机{}", "a".repeat(30), "x".repeat(30)));
+    assert!(!value_looks_like_image(&value));
+
+    // The same shape at other offsets must not panic either.
+    for pad in 28..36 {
+        let v = serde_json::json!(format!("{}机{}", "a".repeat(pad), "x".repeat(40)));
+        assert!(!value_looks_like_image(&v), "pad {pad}");
+    }
+}
+
 fn test_value_looks_like_image_detection() {
     // Data URL form (most camera extensions emit this)
     let data_url = serde_json::json!(

@@ -313,14 +313,21 @@ fn value_looks_like_image(value: &serde_json::Value) -> bool {
     if s.starts_with("/api/images/") {
         return true;
     }
-    // Need at least 32 chars to fill a 24-byte magic-byte window.
-    // Shorter strings can't carry a meaningful image payload.
-    if s.len() < 32 {
+    // Need at least 32 bytes to fill a 24-byte magic-byte window; shorter
+    // strings can't carry a meaningful image payload.
+    //
+    // `get` rather than `&s[..32]`, and an ASCII check before the decode.
+    // `s.len()` is a byte count, and this runs over every value during
+    // retention — so a Chinese metric reading whose 32nd byte fell inside a
+    // character panicked the worker thread, exactly as `&text[..4090]` used to
+    // take down the Telegram delivery loop. base64 is ASCII, so a prefix that
+    // is not ASCII cannot be a payload either.
+    let Some(prefix) = s.get(..32) else {
+        return false;
+    };
+    if !prefix.is_ascii() {
         return false;
     }
-    // Decode only the first 32 chars (24 bytes) — enough for any image
-    // magic signature, avoids touching the full blob.
-    let prefix = &s[..32];
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(prefix)
         .or_else(|_| base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(prefix))

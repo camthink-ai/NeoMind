@@ -11,9 +11,15 @@ use anyhow::Result;
 /// Mask an API key for display: `nmk_a1b2...x9y8`.
 fn mask_key(key: &str) -> String {
     if key.len() <= 12 {
-        return format!("{}...", &key[..key.len().min(8)]);
+        // `get` throughout: a key is normally ASCII, but slicing a `&str` by
+        // byte index panics the moment one is not, and this masks whatever the
+        // store holds.
+        let head = key.get(..key.len().min(8)).unwrap_or(key);
+        return format!("{head}...");
     }
-    format!("{}...{}", &key[..8], &key[key.len() - 4..])
+    let head = key.get(..8).unwrap_or(key);
+    let tail = key.get(key.len().saturating_sub(4)..).unwrap_or_default();
+    format!("{head}...{tail}")
 }
 
 /// Resolve the server data directory for login.
