@@ -73,7 +73,18 @@ function resolve(vars, name, base) {
 }
 
 const WHITE = [1, 1, 1]
-const ROLES = ["success", "warning", "error", "info"]
+// The variable NAMES differ per role: the semantic four are `--color-<role>`,
+// but `primary` predates that convention and is plain `--primary` /
+// `--primary-bg`. Spelling both out beats deriving one and silently skipping
+// the other — `bg-primary-light text-primary` is the tinted-callout pattern
+// used across the app, and nothing was checking it.
+const ROLES = [
+  { role: "success", text: "--color-success", wash: "--color-success-bg" },
+  { role: "warning", text: "--color-warning", wash: "--color-warning-bg" },
+  { role: "error", text: "--color-error", wash: "--color-error-bg" },
+  { role: "info", text: "--color-info", wash: "--color-info-bg" },
+  { role: "primary", text: "--primary", wash: "--primary-bg" },
+]
 let failures = 0
 
 for (const [theme, block] of [["light", light], ["dark", dark]]) {
@@ -81,14 +92,14 @@ for (const [theme, block] of [["light", light], ["dark", dark]]) {
   const bg = resolve(vars, "--background", WHITE)
   const card = resolve(vars, "--card", bg)
   console.log(`\n== ${theme} ==`)
-  for (const role of ROLES) {
-    const text = resolve(vars, `--color-${role}`, WHITE)
-    if (!text) { console.log(`  !! missing --color-${role}`); failures++; continue }
+  for (const { role, text: textVar, wash: washVar } of ROLES) {
+    const text = resolve(vars, textVar, WHITE)
+    if (!text) { console.log(`  !! missing ${textVar}`); failures++; continue }
     const rows = [
       [`background`, bg],
       [`card`, card],
     ]
-    const wash = resolve(vars, `--color-${role}-bg`, card)
+    const wash = resolve(vars, washVar, card)
     if (wash) rows.push([`${role}-pill`, wash])
     for (const [name, carrier] of rows) {
       const c = contrast(text, carrier)
