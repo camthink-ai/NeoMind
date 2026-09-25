@@ -239,8 +239,10 @@ export function AgentDetailPanel({
 
   return (
     <div className="flex flex-col gap-3 h-full">
-      {/* Left-rail section nav + content — matches the app's quiet list language */}
-      <div className="flex min-h-0 flex-1">
+      {/* Left-rail section nav + content — matches the app's quiet list language.
+          Mobile stacks: the section chips must sit ABOVE the content, never
+          beside it — as a row child they were squeezing content into a sliver. */}
+      <div className={cn("flex min-h-0 flex-1", isMobile ? "flex-col" : "flex-row")}>
         <FullScreenDialogSidebar>
           <div className="p-2 space-y-1">
             {([
@@ -280,7 +282,7 @@ export function AgentDetailPanel({
 
         {/* Mobile: horizontal section chips */}
         {isMobile && (
-          <div className="flex gap-1 overflow-x-auto px-2 pt-2">
+          <div className="flex shrink-0 gap-1 overflow-x-auto px-2 pt-2">
             {([
               { value: 'overview', label: t('agents:detail.overview') },
               { value: 'history', label: t('agents:detail.history') },
