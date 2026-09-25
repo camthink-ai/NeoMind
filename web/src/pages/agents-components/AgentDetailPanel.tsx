@@ -358,7 +358,7 @@ export function AgentDetailPanel({
                                 </span>
                               </div>
 
-                              <div className="grid grid-cols-4 gap-3 rounded-lg bg-card p-3 border border-border">
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 rounded-lg bg-card p-3 border border-border">
                                 <div>
                                   <div className="text-base font-semibold tabular-nums leading-tight">{formatCount(agent.stats?.total_executions ?? agent.execution_count)}</div>
                                   <div className="text-xs text-muted-foreground">{t('agents:detail.executions')}</div>

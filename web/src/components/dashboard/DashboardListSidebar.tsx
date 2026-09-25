@@ -323,8 +323,13 @@ function DashboardSidebarContent({
                         </div>
                       </div>
 
-                      {/* Action menu */}
-                      <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 translate-x-1 transition-all duration-fast group-hover:translate-x-0 group-hover:opacity-100">
+                      {/* Action menu — hover-reveal is desktop-only; touch has no hover */}
+                      <div className={cn(
+                        "absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5 transition-all duration-fast",
+                        isDesktop
+                          ? "opacity-0 translate-x-1 group-hover:translate-x-0 group-hover:opacity-100"
+                          : "opacity-100"
+                      )}>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <button
@@ -465,7 +470,7 @@ export function DashboardListSidebar({
       {/* Sidebar Drawer */}
       <div
         className={cn(
-          'fixed top-0 left-0 h-full w-72 z-50 lg:hidden safe-top',
+          'fixed top-0 left-0 h-full w-72 z-50 lg:hidden safe-top pb-safe',
           // bg-popover matches desktop persistent sidebar and all other
           // drawers. Previously bg-background (dark-mode /97% alpha) which
           // produced a visible dark tint vs the topnav chrome above.

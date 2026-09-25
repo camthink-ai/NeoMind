@@ -9,6 +9,7 @@
 import { useState, useEffect, useRef } from "react"
 import { useTranslation } from "react-i18next"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
+import { useIsMobile } from "@/hooks/useMobile"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -189,6 +190,7 @@ interface MessageBubbleProps {
 
 function MessageBubble({ message, onDelete }: MessageBubbleProps) {
   const { t } = useTranslation(['common', 'agents'])
+  const isMobile = useIsMobile()
 
   return (
     <div className="group relative rounded-lg bg-muted px-3 py-2">
@@ -196,7 +198,9 @@ function MessageBubble({ message, onDelete }: MessageBubbleProps) {
         onClick={onDelete}
         aria-label={t('common:delete')}
         className={cn(
-          "absolute inset-y-0 right-1.5 my-auto flex h-7 w-7 items-center justify-center rounded-md opacity-0 transition-opacity group-hover:opacity-100",
+          // Hover-reveal is desktop-only; touch has no hover.
+          "absolute inset-y-0 right-1.5 my-auto flex h-7 w-7 items-center justify-center rounded-md transition-opacity",
+          isMobile ? "opacity-100" : "opacity-0 group-hover:opacity-100",
           "text-muted-foreground hover:bg-card hover:text-error"
         )}
         title={t('common:delete')}

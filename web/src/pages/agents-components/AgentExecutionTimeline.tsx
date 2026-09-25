@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
+import { useIsMobile } from "@/hooks/useMobile"
 import { LoadingState } from "@/components/shared/LoadingState"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
@@ -947,6 +948,10 @@ function ToolCallStep({ step }: { step: ReasoningStep }) {
 /// Clickable image thumbnail from data_collected
 function InputDataImage({ source, image }: { source: string; image: string }) {
   const [fullscreen, setFullscreen] = useState(false)
+  // Hover reveals the caption + expand affordance on desktop; touch has no
+  // hover, so mobile shows them pinned so the image reads as tappable.
+  const isMobile = useIsMobile()
+  const reveal = isMobile ? "opacity-100" : "opacity-0 group-hover:opacity-100"
   return (
     <>
       <div
@@ -954,11 +959,11 @@ function InputDataImage({ source, image }: { source: string; image: string }) {
         onClick={() => setFullscreen(true)}
       >
         <img src={image} alt={source} className="w-full h-full object-cover" />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-        <div className="absolute bottom-0 left-0 right-0 p-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className={cn("absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent transition-opacity", reveal)} />
+        <div className={cn("absolute bottom-0 left-0 right-0 p-1.5 transition-opacity", reveal)}>
           <span className="text-xs text-white/90 truncate block">{source}</span>
         </div>
-        <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity bg-overlay-medium rounded p-0.5">
+        <div className={cn("absolute top-1 right-1 transition-opacity bg-overlay-medium rounded p-0.5", reveal)}>
           <Maximize2 className="h-3.5 w-3.5 text-white" />
         </div>
       </div>

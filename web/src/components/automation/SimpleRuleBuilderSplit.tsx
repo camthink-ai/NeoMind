@@ -1787,6 +1787,7 @@ interface ConditionEditorProps {
 }
 
 function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions, extensionDataSources, transformDataSources, t, tBuilder }: ConditionEditorProps) {
+  const isMobile = useIsMobile()
   const updateField = <K extends keyof UICondition>(field: K, value: UICondition[K]) => {
     onChange({ ...condition, [field]: value })
   }
@@ -2204,7 +2205,10 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-6 w-6 absolute right-0 top-2 opacity-0 group-hover:opacity-100"
+                    className={cn(
+                      'h-6 w-6 absolute right-0 top-2',
+                      isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                    )}
                     onClick={() => removeNestedCondition(i)}
                     aria-label={tBuilder('removeCondition')}
                   >
@@ -2408,6 +2412,7 @@ interface ActionEditorCompactProps {
 }
 
 function ActionEditorCompact({ action, devices, deviceTypes, extensions, messageChannels: _messageChannels, agents, t, tBuilder, onUpdate, onRemove, error }: ActionEditorCompactProps) {
+  const isMobile = useIsMobile()
   // Build device/extension options for Execute action
   const deviceOptions = [
     ...devices.map(d => ({ value: d.id, label: d.name, type: 'device' as const })),
@@ -2645,7 +2650,10 @@ function ActionEditorCompact({ action, devices, deviceTypes, extensions, message
             <Button
               variant="ghost"
               size="icon"
-              className="h-6 w-6 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+              className={cn(
+                'h-6 w-6 flex-shrink-0 transition-opacity',
+                isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+              )}
               onClick={onRemove}
               aria-label={tBuilder('removeAction')}
             >

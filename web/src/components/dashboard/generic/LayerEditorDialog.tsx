@@ -11,6 +11,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { findDevice } from '@/lib/deviceUtils'
 import { useTranslation } from 'react-i18next'
+import { useIsMobile } from '@/hooks/useMobile'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -133,6 +134,7 @@ export function LayerEditorDialog({
   onSave,
 }: LayerEditorDialogProps) {
   const { t } = useTranslation('dashboardComponents')
+  const isMobile = useIsMobile()
   const typeConfig = getTypeConfig(t)
 
   const [bindings, setBindings] = useState<LayerBinding[]>(initialBindings)
@@ -345,7 +347,11 @@ export function LayerEditorDialog({
             </div>
           </div>
 
-          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className={cn(
+            'flex items-center gap-1 transition-opacity',
+            // Hover-reveal is desktop-only; touch has no hover.
+            isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+          )}>
             {(binding.type === 'text' || binding.type === 'icon') && !isEditingText && !isEditingIcon && (
               <Button
                 variant="ghost"

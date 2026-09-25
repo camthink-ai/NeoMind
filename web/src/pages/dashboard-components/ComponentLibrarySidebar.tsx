@@ -468,7 +468,12 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
                 >
                   {update && (
                     <span
-                      className="absolute top-2 right-2 z-10 h-2 w-2 rounded-full bg-info ring-2 ring-background transition-opacity duration-normal group-hover:opacity-0"
+                      className={cn(
+                        "absolute top-2 right-2 z-10 h-2 w-2 rounded-full bg-info ring-2 ring-background transition-opacity duration-normal",
+                        // Desktop: dot yields to the hover-revealed actions.
+                        // Mobile: actions are always visible, so the dot hides.
+                        isMobile ? "opacity-0" : "group-hover:opacity-0"
+                      )}
                       title={t('componentLibrary.updateAvailable', { version: update.latest })}
                     />
                   )}
@@ -488,7 +493,11 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
                       <span className="block text-xs text-muted-foreground mt-0.5 line-clamp-1 leading-snug">{desc}</span>
                     </span>
                   </button>
-                  <div className="absolute top-1 right-1 flex gap-0.5 rounded-md bg-background/90 backdrop-blur-sm p-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className={cn(
+                    "absolute top-1 right-1 flex gap-0.5 rounded-md bg-background/90 backdrop-blur-sm p-0.5 transition-opacity",
+                    // Hover-reveal is desktop-only; touch has no hover.
+                    isMobile ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                  )}>
                     {update && (
                       <Button
                         variant="ghost"

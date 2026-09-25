@@ -681,7 +681,7 @@ export default function MessagesPage() {
           )}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-[340px] p-0 overflow-hidden">
+      <PopoverContent align="end" className="w-[min(340px,calc(100vw-2rem))] p-0 overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b bg-muted-30">
           <span className="text-sm font-semibold">{t('messages.filter.title')}</span>

@@ -275,7 +275,7 @@ export function ExportDataDialog({ open, onOpenChange, source }: ExportDataDialo
       {source && (
         <div className="space-y-4">
           {/* Source Info */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <p className="text-xs text-muted-foreground">{t('columns.source')}</p>
               <p className="text-sm font-medium">{source.source_display_name}</p>
@@ -294,8 +294,8 @@ export function ExportDataDialog({ open, onOpenChange, source }: ExportDataDialo
             </div>
           </div>
 
-          {/* Time Range - two columns: start | end */}
-          <div className="grid grid-cols-2 gap-4">
+          {/* Time Range - two columns: start | end (stacks on phones) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {/* Start */}
             <div className="space-y-2">
               <label className="text-xs text-muted-foreground block">{t('export.startTime')}</label>

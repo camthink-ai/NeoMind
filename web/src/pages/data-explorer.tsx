@@ -507,7 +507,9 @@ export function DataExplorerPage() {
                       value={search}
                       onChange={e => setSearch(e.target.value)}
                       className="pl-9 w-[180px] md:w-[240px] h-9"
-                      autoFocus
+                      // No autofocus on mobile: the input lifts into the sticky
+                      // page header, so it would pop the keyboard over the list.
+                      autoFocus={!isMobile}
                     />
                   </div>
                 </div>

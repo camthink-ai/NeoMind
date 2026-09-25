@@ -1002,7 +1002,8 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
               variant="outline"
               size="icon"
               onClick={toggleFullscreen}
-              className="absolute top-4 right-4 z-50 shadow-lg bg-bg-90 backdrop-blur"
+              className="absolute right-4 z-50 shadow-lg bg-bg-90 backdrop-blur"
+              style={{ top: 'max(1rem, env(safe-area-inset-top, 0px))' }}
               title={t('visualDashboard.exitFullscreen')}
             >
               <Minimize className="h-4 w-4" />

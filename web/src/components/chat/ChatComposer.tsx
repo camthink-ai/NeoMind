@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useToast } from "@/hooks/use-toast"
+import { useIsMobile } from "@/hooks/useMobile"
 import type { ChatImage, LlmBackendInstance } from "@/types"
 import { cn } from "@/lib/utils"
 import { textNano, textMicro } from "@/design-system/tokens/typography"
@@ -89,6 +90,7 @@ export function ChatComposer({
 }: ChatComposerProps) {
   const { t } = useTranslation(["chat", "common"])
   const { toast } = useToast()
+  const isMobile = useIsMobile()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isUploadingImage, setIsUploadingImage] = useState(false)
 
@@ -153,10 +155,16 @@ export function ChatComposer({
               />
               <button
                 type="button"
-                className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity p-0"
+                aria-label={`Remove attachment ${index + 1}`}
+                className={cn(
+                  // 10px hover-only was untouchable; mobile gets a always-on,
+                  // thumb-sized target, desktop keeps the hover-reveal dot.
+                  "absolute -top-1 -right-1 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center transition-opacity p-0 ring-1 ring-background",
+                  isMobile ? "h-4 w-4 opacity-100" : "h-3 w-3 opacity-0 group-hover:opacity-100"
+                )}
                 onClick={() => removeAttachment(index)}
               >
-                <X className="h-2 w-2" />
+                <X className={isMobile ? "h-2.5 w-2.5" : "h-2 w-2"} />
               </button>
             </div>
           ))}

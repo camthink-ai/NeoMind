@@ -949,7 +949,7 @@ export function ExtensionDetailsDialog({
                             <Sparkline data={numeric} height={48} fill colorMode="primary" />
                           </div>
                           {/* Summary stats */}
-                          <div className="grid grid-cols-4 gap-2">
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                             {[
                               [t("extensions:metrics.latest", { defaultValue: "Latest" }), fmt(latest)],
                               [t("extensions:metrics.min", { defaultValue: "Min" }), fmt(min)],

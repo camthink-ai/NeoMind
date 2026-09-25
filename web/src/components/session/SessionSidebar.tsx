@@ -432,8 +432,13 @@ export function SessionSidebar({
                               </div>
                             </div>
 
-                            {/* Action buttons */}
-                            <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 translate-x-1 transition-all duration-fast group-hover:translate-x-0 group-hover:opacity-100">
+                            {/* Action buttons — hover-reveal is desktop-only; touch has no hover */}
+                            <div className={cn(
+                              "absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5 transition-all duration-fast",
+                              isDesktop
+                                ? "opacity-0 translate-x-1 group-hover:translate-x-0 group-hover:opacity-100"
+                                : "opacity-100"
+                            )}>
                               <button
                                 onClick={(e) => handleEditClick(e, session)}
                                 aria-label={t('common:edit')}
@@ -544,7 +549,7 @@ export function SessionSidebar({
       {/* Sidebar */}
       <div
         className={cn(
-          "fixed top-0 left-0 h-full w-72 z-50 lg:hidden safe-top",
+          "fixed top-0 left-0 h-full w-72 z-50 lg:hidden safe-top pb-safe",
           // bg-popover matches the desktop persistent sidebar and every
           // other drawer / popup in the app. Previously bg-background,
           // which is /97% alpha in dark mode and let the page + backdrop
