@@ -74,6 +74,27 @@ export function DeviceTypeList({
 
       {isMobile ? (
         <div className="space-y-2">
+          {/* Mobile has no ResponsiveTable — carry its own empty state. */}
+          {!loading && paginatedDeviceTypes.length === 0 && (
+            <EmptyState
+              icon={<Database className="h-12 w-12" />}
+              title={t('devices:emptyType.title', 'No device types')}
+              description={t('devices:emptyType.description', 'Create a device type to define device categories')}
+            />
+          )}
+          {loading && paginatedDeviceTypes.length === 0 && (
+            [0, 1, 2].map((i) => (
+              <Card key={i} className="overflow-hidden border-border shadow-sm">
+                <div className="px-3 py-2.5 animate-pulse">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-lg bg-muted" />
+                    <div className="h-4 w-32 rounded bg-muted" />
+                  </div>
+                  <div className="mt-2 ml-[40px] h-3 w-44 rounded bg-muted" />
+                </div>
+              </Card>
+            ))
+          )}
           {paginatedDeviceTypes.map((dt) => (
             <Card
               key={dt.device_type}

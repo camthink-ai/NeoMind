@@ -88,6 +88,28 @@ export function DeviceList({
 
       {isMobile ? (
         <div className="space-y-3">
+          {/* Mobile has no ResponsiveTable, so it must carry its own loading
+              and empty states — a bare map() renders as a blank void. */}
+          {loading && paginatedDevices.length === 0 && (
+            [0, 1, 2].map((i) => (
+              <Card key={i} className="overflow-hidden border-border shadow-sm">
+                <div className="px-3 py-2.5 animate-pulse">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-muted" />
+                    <div className="h-4 w-32 rounded bg-muted" />
+                  </div>
+                  <div className="mt-2.5 ml-[42px] h-3.5 w-48 rounded bg-muted" />
+                </div>
+              </Card>
+            ))
+          )}
+          {!loading && paginatedDevices.length === 0 && (
+            <EmptyState
+              icon={<Cpu className="h-12 w-12" />}
+              title={t('devices:empty.title', 'No devices')}
+              description={t('devices:empty.description', 'Add your first device to get started')}
+            />
+          )}
           {paginatedDevices.map((device) => {
             const AdapterIcon = getAdapterIcon(device.adapter_type)
             return (

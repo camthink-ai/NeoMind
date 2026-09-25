@@ -958,8 +958,8 @@
     "description": "浏览并安装扩展，为 NeoMind 边缘平台添加 AI 视觉、工业协议、IoT 集成等丰富能力。"
   },
   "emptyType": {
-    "title": "暂无设备",
-    "description": "描述"
+    "title": "暂无设备类型",
+    "description": "创建设备类型以定义设备分类"
   },
   "range": {
     "min": "最小",

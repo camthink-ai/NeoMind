@@ -958,8 +958,8 @@
     "description": "Browse and install extensions to add AI vision, industrial protocols, IoT integrations, and more to your NeoMind edge platform."
   },
   "emptyType": {
-    "title": "No Devices",
-    "description": "Description"
+    "title": "No device types",
+    "description": "Create a device type to define device categories"
   },
   "range": {
     "min": "min",
