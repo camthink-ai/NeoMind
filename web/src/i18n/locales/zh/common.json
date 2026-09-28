@@ -27,7 +27,8 @@
     "description": "查看通知消息，管理通知通道与 IM 会话",
     "tabs": {
       "messages": "消息",
-      "channels": "通知通道"
+      "channels": "通知通道",
+      "im": "IM 会话"
     },
     "create": "创建消息",
     "createTitle": "创建新消息",
@@ -260,7 +261,20 @@
     "messageDetails": "消息详情",
     "basicInfo": "基本信息",
     "basicInfoDesc": "基本信息",
-    "metadataDesc": "附加元数据"
+    "metadataDesc": "附加元数据",
+    "im": {
+      "chatId": "会话 ID",
+      "boundAgent": "绑定智能体",
+      "lastActive": "最近活跃",
+      "reset": "重置",
+      "resetSuccess": "会话已重置",
+      "confirmReset": "确定要重置该会话的绑定吗？",
+      "goToSettings": "配置 IM 网桥",
+      "noBridge": "尚未配置 IM 网桥",
+      "noBridgeDesc": "在设置中配置 IM 网桥后，即可在这里管理会话。",
+      "noSessions": "暂无会话",
+      "noSessionsDesc": "还没有活跃会话。与机器人开始聊天后会自动创建。"
+    }
   },
   "connection": {
     "connected": "已连接",

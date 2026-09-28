@@ -27,7 +27,8 @@
     "description": "Notifications, channels, and IM sessions",
     "tabs": {
       "messages": "Messages",
-      "channels": "Channels"
+      "channels": "Channels",
+      "im": "IM Sessions"
     },
     "create": "Create Message",
     "createTitle": "Create New Message",
@@ -260,7 +261,20 @@
     "messageDetails": "Message Details",
     "basicInfo": "Basic Info",
     "basicInfoDesc": "Basic channel information",
-    "metadataDesc": "Additional channel metadata"
+    "metadataDesc": "Additional channel metadata",
+    "im": {
+      "chatId": "Chat ID",
+      "boundAgent": "Agent",
+      "lastActive": "Last Active",
+      "reset": "Reset",
+      "resetSuccess": "Session reset",
+      "confirmReset": "Reset the binding for this session?",
+      "goToSettings": "Configure IM bridge",
+      "noBridge": "No IM Bridge Configured",
+      "noBridgeDesc": "Configure an IM bridge in Settings to start managing chat sessions.",
+      "noSessions": "No Sessions",
+      "noSessionsDesc": "No active chat sessions yet. Start a chat with the bot to create one."
+    }
   },
   "connection": {
     "connected": "Connected",
