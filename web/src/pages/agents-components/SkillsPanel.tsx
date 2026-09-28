@@ -369,9 +369,9 @@ anti_triggers:
                   <Icon className="h-3 w-3" />
                   {catConf.label}
                 </Badge>
-                <Badge variant="secondary" className="font-mono">
-                  {row.priority}
-                </Badge>
+                <span className="text-xs text-muted-foreground">
+                  {t("skills.columnPriority")} {row.priority}
+                </span>
                 <span className="text-xs text-muted-foreground font-mono ml-auto">
                   {row.body_length > 1024
                     ? `${(row.body_length / 1024).toFixed(1)} KB`
@@ -407,9 +407,9 @@ anti_triggers:
               // header stays a single-line anchor point, not a multi-row info dump.
               return (
                 <div className="flex items-center gap-2.5">
-                  <div
+                    <div
                     className={cn(
-                      "w-8 h-8 rounded-lg flex items-center justify-center border shrink-0",
+                      "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
                       catConf.color
                     )}
                   >

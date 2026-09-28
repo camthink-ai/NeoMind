@@ -308,9 +308,9 @@ export function ToolsPanel({ onPaginationChange, searchQuery = "", sourceFilter 
             case "name":
               return (
                 <div className="flex items-center gap-2.5 min-w-0 w-full overflow-hidden">
-                  <div
+                    <div
                     className={cn(
-                      "w-8 h-8 rounded-lg flex items-center justify-center border shrink-0",
+                      "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
                       src.color
                     )}
                   >

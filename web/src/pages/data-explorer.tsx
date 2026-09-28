@@ -437,11 +437,15 @@ export function DataExplorerPage() {
                   </Button>
                 </div>
               </div>
-              {/* Row 2: ID + data type + time */}
+              {/* Row 2: ID + data type + time (empty values stay hidden) */}
               <div className="flex items-center gap-1.5 mt-1.5">
                 <code className={cn(textMini, "text-muted-foreground font-mono truncate flex-1")}>{source.id}</code>
-                <Badge variant="secondary" className={cn(textNano, "h-5 px-1.5")}>{source.data_type}</Badge>
-                <span className={cn(textMini, "text-muted-foreground")}>{formatTime(source.last_update)}</span>
+                {source.data_type && (
+                  <span className={cn(textMini, "text-muted-foreground shrink-0")}>{source.data_type}</span>
+                )}
+                {formatTime(source.last_update) !== '-' && (
+                  <span className={cn(textMini, "text-muted-foreground shrink-0")}>{formatTime(source.last_update)}</span>
+                )}
               </div>
             </div>
           </Card>

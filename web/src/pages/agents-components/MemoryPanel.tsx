@@ -414,7 +414,7 @@ export const MemoryPanel = forwardRef<MemoryPanelRef, MemoryPanelProps>(function
               >
                 <div className="px-3 py-2.5">
                   <div className="flex items-center gap-2.5">
-                    <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center border shrink-0", row.color)}>
+                    <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center shrink-0", row.color)}>
                       <Icon className="h-4 w-4" />
                     </div>
                     <div className="flex-1 min-w-0">
@@ -445,12 +445,12 @@ export const MemoryPanel = forwardRef<MemoryPanelRef, MemoryPanelProps>(function
                     </DropdownMenu>
                   </div>
                   <div className="flex items-center gap-1.5 mt-1.5 ml-[42px]">
-                    <Badge variant="secondary" className={cn(textMini, "font-mono h-5 px-1.5")}>
+                    <span className={cn(textMini, "font-mono text-muted-foreground")}>
                       {formatCharsUsage(row.chars, row.charLimit)} {t("systemMemory.headers.chars", "chars")}
-                    </Badge>
-                    {!row.isCustom && (
+                    </span>
+                    {!row.isCustom && row.modified_at > 0 && (
                       <span className={cn(textMini, "text-muted-foreground ml-auto")}>
-                        {row.modified_at > 0 ? formatTimestamp(row.modified_at, false) : "-"}
+                        {formatTimestamp(row.modified_at, false)}
                       </span>
                     )}
                   </div>
