@@ -270,7 +270,9 @@ export function MobileNav() {
                   <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="min-w-40">
+              {/* Anchor to the row's right edge — the value + chevron is the
+                  affordance the menu belongs to, Select-style. */}
+              <DropdownMenuContent align="end" className="min-w-40">
                 <DropdownMenuRadioGroup
                   value={theme}
                   onValueChange={(v) => setTheme(v as "light" | "dark" | "system")}
