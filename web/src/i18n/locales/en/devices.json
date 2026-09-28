@@ -955,7 +955,9 @@
     "selectBroker": "Select Broker",
     "tlsWithCa": "TLS enabled — download CA cert for device",
     "tlsNoCa": "TLS enabled",
-    "passwordHidden": "Password is not shown"
+    "passwordHidden": "Password is not shown",
+    "methodMqtt": "MQTT",
+    "methodWebhook": "Webhook"
   },
   "empty": {
     "title": "Discover the Extension Ecosystem",

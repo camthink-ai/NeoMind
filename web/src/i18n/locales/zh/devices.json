@@ -955,7 +955,9 @@
     "selectBroker": "选择 Broker",
     "tlsWithCa": "已启用 TLS — 下载 CA 证书用于设备端",
     "tlsNoCa": "已启用 TLS",
-    "passwordHidden": "密码不予展示"
+    "passwordHidden": "密码不予展示",
+    "methodMqtt": "MQTT",
+    "methodWebhook": "Webhook"
   },
   "empty": {
     "title": "探索扩展生态",

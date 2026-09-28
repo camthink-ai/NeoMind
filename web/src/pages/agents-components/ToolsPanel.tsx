@@ -242,6 +242,63 @@ export function ToolsPanel({ onPaginationChange, searchQuery = "", sourceFilter 
           // source badge) keep their accent so the state stays readable.
           return row.disabled ? "bg-muted-30 text-muted-foreground" : ""
         }}
+        renderMobileBody={(rowData) => {
+          // Tailored mobile body: the default key-value dump reads like a
+          // spec sheet on a 375px card. Meta collapses to one badge row +
+          // the parameter chips.
+          const row = rowData as ToolRow
+          const src = resolveSource(row.source)
+          const SrcIcon = src.icon
+          const namespace = row.namespace || (row.category && row.category !== "Unknown" ? row.category.toLowerCase() : "")
+          const requiredSet = new Set(row.required_params)
+          return (
+            <div className="space-y-2">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {row.version && (
+                  <code className="text-mini font-mono bg-muted-30 text-muted-foreground rounded px-1.5 py-0.5">
+                    v{row.version}
+                  </code>
+                )}
+                <Badge variant="outline" className={cn("h-6 gap-1", src.color)}>
+                  <SrcIcon className="h-3 w-3" />
+                  {t(src.labelKey)}
+                </Badge>
+                {namespace && (
+                  <code className="text-mini font-mono text-muted-foreground truncate max-w-[140px]" title={namespace}>
+                    {namespace}
+                  </code>
+                )}
+              </div>
+              {row.param_names.length > 0 ? (
+                <div className="flex flex-wrap gap-1">
+                  {row.param_names.slice(0, 6).map((name) => (
+                    <span
+                      key={name}
+                      className={cn(
+                        "text-mini font-mono px-1.5 py-0.5 rounded border",
+                        requiredSet.has(name)
+                          ? "bg-accent-orange-light text-accent-orange border-accent-orange-light"
+                          : "bg-muted text-muted-foreground border-border"
+                      )}
+                      title={requiredSet.has(name) ? t("agents:detail.toolsParamRequired", "required") : undefined}
+                    >
+                      {name}
+                    </span>
+                  ))}
+                  {row.param_names.length > 6 && (
+                    <span className="text-mini text-muted-foreground self-center">
+                      +{row.param_names.length - 6}
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <span className="text-xs text-muted-foreground italic">
+                  {t("agents:detail.toolsNoParameters")}
+                </span>
+              )}
+            </div>
+          )
+        }}
         renderCell={(columnKey, rowData) => {
           const row = rowData
           const src = resolveSource(row.source)
