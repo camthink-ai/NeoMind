@@ -197,7 +197,11 @@
     "tlsWithCa": "Enabled — download CA cert for device",
     "tlsNoCa": "Enabled",
     "tlsEnabled": "TLS Enabled",
-    "passwordHidden": "Password hidden (security reason)"
+    "passwordHidden": "Password hidden (security reason)",
+    "adapterLabel_mqtt": "MQTT",
+    "adapterDesc_mqtt": "Connect via the built-in MQTT broker",
+    "adapterLabel_webhook": "Webhook",
+    "adapterDesc_webhook": "Report data over an HTTP webhook"
   },
   "edit": {
     "title": "Edit Device",

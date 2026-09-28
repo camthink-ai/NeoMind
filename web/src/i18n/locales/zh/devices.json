@@ -197,7 +197,11 @@
     "tlsWithCa": "已启用 — 下载 CA 证书用于设备端",
     "tlsNoCa": "已启用",
     "tlsEnabled": "已启用 TLS",
-    "passwordHidden": "密码已隐藏（安全原因）"
+    "passwordHidden": "密码已隐藏（安全原因）",
+    "adapterLabel_mqtt": "MQTT 接入",
+    "adapterDesc_mqtt": "通过内置 MQTT 服务器接入设备",
+    "adapterLabel_webhook": "Webhook 接入",
+    "adapterDesc_webhook": "通过 HTTP Webhook 上报数据"
   },
   "edit": {
     "title": "编辑设备",
