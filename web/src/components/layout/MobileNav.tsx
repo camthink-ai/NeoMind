@@ -14,7 +14,7 @@
  * Desktop layout is unchanged.
  */
 
-import { useEffect, useMemo, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useNavigate, useLocation } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import {
@@ -34,6 +34,7 @@ import {
   Moon,
   Monitor,
   Globe,
+  ChevronDown,
   type LucideIcon,
 } from "lucide-react"
 import { useStore } from "@/store"
@@ -44,6 +45,13 @@ import { useTheme } from "@/components/ui/theme"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   Sheet,
   SheetContent,
@@ -183,30 +191,6 @@ export function MobileNav() {
     )
   }
 
-  // Compact icon-button row used for the Account section's quick toggles.
-  const renderIconButton = (
-    label: string,
-    icon: ReactNode,
-    onClick: () => void,
-    opts: { active?: boolean; badge?: boolean } = {},
-  ) => (
-    <Button
-      key={label}
-      variant="ghost"
-      size="icon"
-      onClick={onClick}
-      className={cn(
-        "h-9 w-9 shrink-0 rounded-lg",
-        opts.active ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-muted-50",
-      )}
-      aria-label={label}
-      title={label}
-    >
-      {icon}
-      {opts.badge && <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-primary" />}
-    </Button>
-  )
-
   return (
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetContent
@@ -254,35 +238,49 @@ export function MobileNav() {
               from the nav destinations; rows reuse the nav-row geometry
               (p-3, icon column) so the three zones read as one list. */}
           <div className="border-t border-border px-2 pb-2 pt-2">
-            {/* Theme quick toggle row — label on left, three icon buttons on right */}
-            <div className="flex items-center gap-3 rounded-lg p-3">
-              <span className="flex h-5 w-5 shrink-0 items-center justify-center">
-                <Sun className="h-4 w-4 text-muted-foreground" />
-              </span>
-              <span className="flex-1 truncate text-sm text-muted-foreground">
-                {t("theme.label", "Theme")}
-              </span>
-              <div className="flex shrink-0 items-center gap-0.5">
-                {renderIconButton(
-                  t("theme.light", "Light"),
-                  <Sun className="h-4 w-4" />,
-                  () => setTheme("light"),
-                  { active: theme === "light" },
-                )}
-                {renderIconButton(
-                  t("theme.dark", "Dark"),
-                  <Moon className="h-4 w-4" />,
-                  () => setTheme("dark"),
-                  { active: theme === "dark" },
-                )}
-                {renderIconButton(
-                  t("theme.system", "System"),
-                  <Monitor className="h-4 w-4" />,
-                  () => setTheme("system"),
-                  { active: theme === "system" },
-                )}
-              </div>
-            </div>
+            {/* Theme row — one tap target opening a labelled menu. The old
+                three-icon strip made you decode glyphs and hunt the active
+                state; a value row reads like the Language row below it. */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="group relative flex w-full items-center gap-3 rounded-lg p-3 text-left transition-all hover:bg-muted-50"
+                  aria-label={t("theme.label", "Theme")}
+                >
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+                    {theme === "light" ? (
+                      <Sun className="h-4 w-4 text-muted-foreground" />
+                    ) : theme === "dark" ? (
+                      <Moon className="h-4 w-4 text-muted-foreground" />
+                    ) : (
+                      <Monitor className="h-4 w-4 text-muted-foreground" />
+                    )}
+                  </span>
+                  <span className="flex-1 truncate text-sm text-muted-foreground">
+                    {t("theme.label", "Theme")}
+                  </span>
+                  <span className="shrink-0 text-xs font-medium text-muted-foreground">
+                    {theme === "light"
+                      ? t("theme.light", "Light")
+                      : theme === "dark"
+                        ? t("theme.dark", "Dark")
+                        : t("theme.system", "System")}
+                  </span>
+                  <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="min-w-40">
+                <DropdownMenuRadioGroup
+                  value={theme}
+                  onValueChange={(v) => setTheme(v as "light" | "dark" | "system")}
+                >
+                  <DropdownMenuRadioItem value="light">{t("theme.light", "Light")}</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="dark">{t("theme.dark", "Dark")}</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="system">{t("theme.system", "System")}</DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
 
             {/* Language toggle row — same shape as other nav rows */}
             <button
