@@ -15,7 +15,7 @@ import {
   Pencil,
   Download,
   Loader2,
-  User,
+  SquareUser,
   BookOpen,
   ListChecks,
   Clock,
@@ -75,9 +75,9 @@ const fileConfig = [
     id: "user",
     labelKey: "systemMemory.files.user",
     defaultLabel: "User Profile",
-    icon: User,
+    icon: SquareUser,
     description: "User preferences, habits and personal settings",
-    color: "bg-info-light text-info border-info",
+    color: "bg-info-light text-info",
     charLimitKey: "user_char_limit" as const,
   },
   {
@@ -86,7 +86,7 @@ const fileConfig = [
     defaultLabel: "System Knowledge",
     icon: BookOpen,
     description: "System resources, domain knowledge, and agent experiences",
-    color: "bg-success-light text-success border-success-light",
+    color: "bg-success-light text-success",
     charLimitKey: "knowledge_char_limit" as const,
   },
   {
@@ -95,7 +95,7 @@ const fileConfig = [
     defaultLabel: "Procedures",
     icon: ListChecks,
     description: "SOPs, playbooks, and how-tos learned across sessions",
-    color: "bg-accent-purple-light text-accent-purple border-accent-purple",
+    color: "bg-accent-purple-light text-accent-purple",
     charLimitKey: "procedures_char_limit" as const,
   },
 ]
@@ -103,7 +103,7 @@ const fileConfig = [
 // Custom file display config
 const customFileConfig = {
   icon: FileText,
-  color: "bg-warning-light text-warning border-warning-light",
+  color: "bg-warning-light text-warning",
 }
 
 // File stats from API
@@ -517,7 +517,7 @@ export const MemoryPanel = forwardRef<MemoryPanelRef, MemoryPanelProps>(function
                 <div className="flex items-center gap-3">
                   <div
                     className={cn(
-                      "w-9 h-9 rounded-lg flex items-center justify-center border",
+                      "w-9 h-9 rounded-lg flex items-center justify-center",
                       row.color
                     )}
                   >
