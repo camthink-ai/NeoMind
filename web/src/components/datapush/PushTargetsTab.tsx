@@ -244,6 +244,43 @@ export function PushTargetsTab() {
         actions={actions}
         loading={pushTargetsLoading}
         flexHeight
+        renderMobileBody={(rowData) => {
+          // Tailored mobile body: type + status + updated as one meta row,
+          // schedule + source patterns below — not a key-value dump.
+          const target = rowData as PushTarget
+          return (
+            <div className="space-y-2">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <Badge variant="outline" className={cn(textMini, "h-6 uppercase")}>
+                  {target.target_type}
+                </Badge>
+                <span className={cn("flex items-center gap-1.5", textMini, target.enabled ? "text-success" : "text-muted-foreground")}>
+                  <span className={cn(
+                    "h-2 w-2 rounded-full",
+                    target.enabled ? "bg-success" : "bg-muted-foreground"
+                  )} />
+                  {target.enabled ? t('common:dataPush.running', 'Running') : t('common:dataPush.stopped', 'Stopped')}
+                </span>
+                <span className={cn(textMini, "text-muted-foreground ml-auto")}>
+                  {new Date(target.updated_at * 1000).toLocaleDateString()}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className={cn(textMini, "text-muted-foreground shrink-0")}>
+                  {target.schedule.type === 'event_driven'
+                    ? t('common:dataPush.eventDriven', 'Event-driven')
+                    : t('common:dataPush.interval', { defaultValue: 'Every {{secs}}s', secs: target.schedule.interval_secs })}
+                </span>
+                <span className="text-muted-foreground shrink-0">·</span>
+                <span className={cn(textMini, "text-muted-foreground truncate min-w-0")}>
+                  {target.data_filter.source_patterns.length > 0
+                    ? target.data_filter.source_patterns.join(', ')
+                    : t('common:dataPush.allSources', 'All sources')}
+                </span>
+              </div>
+            </div>
+          )
+        }}
         emptyState={
           <EmptyState
             icon={<Send className="h-12 w-12" />}

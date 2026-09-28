@@ -124,6 +124,24 @@ export function ImSessionsTab() {
             />
           }
           rowKey={(row) => (row as unknown as ImSession).chat_id}
+          renderMobileBody={(rowData) => {
+            // Tailored mobile body: bound agent + last active as one meta
+            // line under the header (chat id), not a kv dump.
+            const s = rowData as unknown as ImSession
+            return (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span className="truncate">
+                  {s.bound_agent_id ? (
+                    <span className="text-foreground">{s.bound_agent_id}</span>
+                  ) : (
+                    "-"
+                  )}
+                </span>
+                <span>·</span>
+                <span className="shrink-0">{formatTimestamp(s.last_active, false)}</span>
+              </div>
+            )
+          }}
           renderCell={(columnKey, rowData) => {
             const s = rowData as unknown as ImSession
             switch (columnKey) {

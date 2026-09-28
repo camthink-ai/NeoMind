@@ -578,7 +578,9 @@
     "toggle": "启停",
     "nameRequired": "名称为必填项",
     "urlRequired": "URL 为必填项",
-    "topicRequired": "Topic 不能为空"
+    "topicRequired": "Topic 不能为空",
+    "source": "数据源",
+    "payload": "负载"
   },
   "active": "活跃",
   "test": "测试连接",

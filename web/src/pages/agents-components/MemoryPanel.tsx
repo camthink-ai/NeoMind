@@ -495,6 +495,18 @@ export const MemoryPanel = forwardRef<MemoryPanelRef, MemoryPanelProps>(function
           handleViewEdit(r.isCustom ? r.name : r.id, r.isCustom)
         }}
         loading={loading}
+        renderMobileBody={(rowData) => {
+          // Tailored mobile body: usage + modified time as one quiet meta
+          // line under the header (name + description), not a kv dump.
+          const row = rowData as MemoryFileRow
+          return (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="font-mono">{formatCharsUsage(row.chars, row.charLimit)}</span>
+              <span>·</span>
+              <span>{row.modified_at > 0 ? formatTimestamp(row.modified_at, false) : "-"}</span>
+            </div>
+          )
+        }}
         renderCell={(columnKey, rowData) => {
           const row = rowData
           const Icon = row.icon

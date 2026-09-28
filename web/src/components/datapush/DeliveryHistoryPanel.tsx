@@ -71,11 +71,34 @@ export function DeliveryHistoryPanel({ targetId, open, onOpenChange }: DeliveryH
 
   const columns: TableColumn[] = [
     { key: 'status', label: t('common:dataPush.status', 'Status'), width: '12%' },
-    { key: 'source', label: 'Source', width: '30%' },
-    { key: 'payload', label: 'Payload', width: '35%' },
+    { key: 'source', label: t('common:dataPush.source', 'Source'), width: '30%' },
+    { key: 'payload', label: t('common:dataPush.payload', 'Payload'), width: '35%' },
     { key: 'attempts', label: t('common:dataPush.attemptsLabel', 'Attempts'), width: '10%' },
     { key: 'time', label: t('common:dataPush.updated', 'Time'), width: '13%' },
   ]
+
+  // Payload copy/preview actions — shared by the desktop cell and the mobile
+  // card body so both render paths keep the same affordances.
+  const renderPayloadActions = (raw: string) => (
+    <>
+      <button
+        type="button"
+        onClick={() => copyPayload(raw)}
+        title={t('common:copy', 'Copy')}
+        className="text-muted-foreground hover:text-foreground shrink-0 p-1 rounded"
+      >
+        <Copy className="h-3.5 w-3.5" />
+      </button>
+      <button
+        type="button"
+        onClick={() => setPreviewPayload(raw)}
+        title={t('common:dataPush.preview', 'Preview')}
+        className="text-muted-foreground hover:text-foreground shrink-0 p-1 rounded"
+      >
+        <Eye className="h-3.5 w-3.5" />
+      </button>
+    </>
+  )
 
   const renderCell = (columnKey: string, rowData: Record<string, unknown>) => {
     const log = rowData as unknown as DeliveryLog
@@ -106,22 +129,7 @@ export function DeliveryHistoryPanel({ targetId, open, onOpenChange }: DeliveryH
             <code className={cn(textNano, "text-muted-foreground font-mono truncate block flex-1 min-w-0 max-w-[200px]")}>
               {preview.length > 120 ? preview.slice(0, 117) + '...' : preview}
             </code>
-            <button
-              type="button"
-              onClick={() => copyPayload(raw)}
-              title={t('common:copy', 'Copy')}
-              className="text-muted-foreground hover:text-foreground shrink-0 p-1 rounded"
-            >
-              <Copy className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setPreviewPayload(raw)}
-              title={t('common:dataPush.preview', 'Preview')}
-              className="text-muted-foreground hover:text-foreground shrink-0 p-1 rounded"
-            >
-              <Eye className="h-3.5 w-3.5" />
-            </button>
+            {renderPayloadActions(raw)}
           </div>
         )
       }
@@ -158,6 +166,42 @@ export function DeliveryHistoryPanel({ targetId, open, onOpenChange }: DeliveryH
                 rowKey={(row) => (row as unknown as DeliveryLog).id}
                 loading={deliveryLogsLoading}
                 flexHeight={false}
+                renderMobileBody={(rowData) => {
+                  // Tailored mobile body: header = status badge; body = source
+                  // + attempts + time meta line, then the truncated payload
+                  // with copy/preview. The kv dump wrapped 120-char payloads.
+                  const log = rowData as unknown as DeliveryLog
+                  const raw = log.payload_sent ?? ''
+                  let preview = raw
+                  if (preview) {
+                    try { preview = JSON.stringify(JSON.parse(preview)) } catch { /* use raw */ }
+                  }
+                  return (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className={cn(textMini, "text-muted-foreground font-mono truncate min-w-0 flex-1")}>
+                          {log.data_source_id}
+                        </span>
+                        <span className={cn(textMini, "text-muted-foreground shrink-0")}>
+                          {t('common:dataPush.attemptsLabel', 'Attempts')} {log.attempts}
+                        </span>
+                        <span className={cn(textMini, "text-muted-foreground shrink-0")}>
+                          {log.created_at ? new Date(log.created_at * 1000).toLocaleString() : '-'}
+                        </span>
+                      </div>
+                      {preview ? (
+                        <div className="flex items-center gap-1 min-w-0">
+                          <code className={cn(textNano, "text-muted-foreground font-mono truncate min-w-0 flex-1")}>
+                            {preview.length > 80 ? preview.slice(0, 77) + '...' : preview}
+                          </code>
+                          {renderPayloadActions(raw)}
+                        </div>
+                      ) : (
+                        <span className={cn(textMini, "text-muted-foreground")}>-</span>
+                      )}
+                    </div>
+                  )
+                }}
                 emptyState={
                   <EmptyState
                     icon={<FileText className="h-12 w-12" />}

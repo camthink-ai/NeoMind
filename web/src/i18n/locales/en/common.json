@@ -582,7 +582,9 @@
     "toggle": "Start / Stop",
     "nameRequired": "Name Required",
     "urlRequired": "Url Required",
-    "topicRequired": "Topic is required"
+    "topicRequired": "Topic is required",
+    "source": "Source",
+    "payload": "Payload"
   },
   "active": "Active",
   "test": "Test Connection",
