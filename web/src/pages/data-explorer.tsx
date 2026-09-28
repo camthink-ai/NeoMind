@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { PageLayout } from '@/components/layout/PageLayout'
 import { useStore } from '@/store'
 import { Card } from '@/components/ui/card'
+import { interactiveCardHover } from '@/design-system/tokens/size'
 import { ResponsiveTable, type TableColumn, Pagination, EmptyState, EmptyStateCard } from '@/components/shared'
 import { PageTabsBar, PageTabsContent, PageTabsBottomNav } from '@/components/shared/PageTabs'
 import { Input } from '@/components/ui/input'
@@ -380,6 +381,19 @@ export function DataExplorerPage() {
   const dataTable = (
     isMobile ? (
       <div className="space-y-2">
+        {pageData.length === 0 && loading && (
+          [0, 1, 2].map((i) => (
+            <Card key={i} className="overflow-hidden border-border">
+              <div className="px-3 py-2.5 animate-pulse space-y-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="h-5 w-14 rounded-full bg-muted" />
+                  <div className="h-4 w-40 rounded bg-muted" />
+                </div>
+                <div className="h-3 w-52 rounded bg-muted" />
+              </div>
+            </Card>
+          ))
+        )}
         {pageData.length === 0 && !loading ? (
           <EmptyStateCard>
             <EmptyState
@@ -391,7 +405,10 @@ export function DataExplorerPage() {
         ) : pageData.map((source) => (
           <Card
             key={source.id}
-            className="overflow-hidden border-border shadow-sm cursor-pointer active:scale-[0.99] transition-all"
+            className={cn(
+              "overflow-hidden border-border shadow-sm cursor-pointer active:scale-[0.99]",
+              interactiveCardHover,
+            )}
             onClick={() => setSelectedSource(source)}
           >
             <div className="px-3 py-2.5">

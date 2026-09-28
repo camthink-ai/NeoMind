@@ -9,6 +9,7 @@ import { Card } from "@/components/ui/card"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu"
 import { IconButton } from "@/components/ui/button"
 import { ResponsiveTable, EmptyState } from "@/components/shared"
+import { interactiveCardHover } from "@/design-system/tokens/size"
 import { Edit, Trash2, Code, Globe, Cpu, HardDrive, Download, MoreVertical } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
@@ -155,6 +156,20 @@ export function TransformsList({
   return (
     isMobile ? (
       <div className="space-y-2">
+        {/* Mobile has no ResponsiveTable — carry its own loading skeleton. */}
+        {loading && paginatedTransforms.length === 0 && (
+          [0, 1, 2].map((i) => (
+            <Card key={i} className="overflow-hidden border-border">
+              <div className="px-3 py-2.5 animate-pulse space-y-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-muted" />
+                  <div className="h-4 w-36 rounded bg-muted" />
+                </div>
+                <div className="ml-[42px] h-3 w-48 rounded bg-muted" />
+              </div>
+            </Card>
+          ))
+        )}
         {paginatedTransforms.map((transform) => {
           const scopeInfo = getScopeInfo(transform.scope)
           const ScopeIcon = scopeInfo.icon
@@ -163,7 +178,8 @@ export function TransformsList({
             <Card
               key={transform.id}
               className={cn(
-                "overflow-hidden border-border shadow-sm cursor-pointer active:scale-[0.99] transition-all",
+                "overflow-hidden border-border shadow-sm cursor-pointer active:scale-[0.99]",
+                interactiveCardHover,
                 !transform.enabled && "opacity-50"
               )}
               onClick={() => onEdit(transform)}
@@ -183,7 +199,6 @@ export function TransformsList({
                   <Switch
                     checked={transform.enabled}
                     onCheckedChange={() => onToggleStatus(transform)}
-                    className="scale-75"
                     onClick={(e) => e.stopPropagation()}
                   />
                   <DropdownMenu>

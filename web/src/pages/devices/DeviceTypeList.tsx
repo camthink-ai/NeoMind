@@ -13,6 +13,7 @@ import { TransformsBadge } from "@/components/automation"
 import { useIsMobile } from "@/hooks/useMobile"
 import { useTransformCounts } from "@/hooks/useTransformCounts"
 import { textNano, textMini } from "@/design-system/tokens/typography"
+import { interactiveCardHover } from "@/design-system/tokens/size"
 
 interface DeviceTypeListProps {
   deviceTypes: DeviceType[]
@@ -100,7 +101,10 @@ export function DeviceTypeList({
           {paginatedDeviceTypes.map((dt) => (
             <Card
               key={dt.device_type}
-              className="overflow-hidden border-border shadow-sm cursor-pointer active:scale-[0.99] transition-all"
+              className={cn(
+                "overflow-hidden border-border shadow-sm cursor-pointer active:scale-[0.99]",
+                interactiveCardHover,
+              )}
               onClick={() => onViewDetails(dt)}
             >
               <div className="px-3 py-2.5">

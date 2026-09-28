@@ -6,6 +6,7 @@ import { useState, useEffect } from "react"
 import { Switch } from "@/components/ui/switch"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
+import { interactiveCardHover } from "@/design-system/tokens/size"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu"
 import { IconButton } from "@/components/ui/button"
 import {
@@ -353,7 +354,21 @@ export function RulesList({
   const content = (
     isMobile ? (
       <div className="space-y-2">
-        {paginatedRules.length === 0 ? (
+        {/* Mobile has no ResponsiveTable — carry its own loading skeleton. */}
+        {loading && paginatedRules.length === 0 && (
+          [0, 1, 2].map((i) => (
+            <Card key={i} className="overflow-hidden border-border">
+              <div className="px-3 py-2.5 animate-pulse space-y-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-muted" />
+                  <div className="h-4 w-36 rounded bg-muted" />
+                </div>
+                <div className="ml-[42px] h-3 w-48 rounded bg-muted" />
+              </div>
+            </Card>
+          ))
+        )}
+        {paginatedRules.length === 0 && !loading ? (
           <EmptyStateCard>
             <EmptyState
               icon={<Sparkles className="h-12 w-12" />}
@@ -374,7 +389,8 @@ export function RulesList({
             <Card
               key={rule.id}
               className={cn(
-                "overflow-hidden border-border shadow-sm cursor-pointer active:scale-[0.99] transition-all",
+                "overflow-hidden border-border shadow-sm cursor-pointer active:scale-[0.99]",
+                interactiveCardHover,
                 !rule.enabled && "opacity-50"
               )}
               onClick={() => onView(rule)}
@@ -394,7 +410,6 @@ export function RulesList({
                   <Switch
                     checked={rule.enabled}
                     onCheckedChange={() => onToggleStatus(rule)}
-                    className="scale-75"
                     onClick={(e) => e.stopPropagation()}
                   />
                   <DropdownMenu>
