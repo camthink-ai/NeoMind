@@ -684,7 +684,6 @@ export function PendingDevicesList({
               return null
           }
         }}
-        mobileFlatHeader
         renderMobileHeaderExtra={(rowData) =>
           getStatusBadge((rowData).status)
         }

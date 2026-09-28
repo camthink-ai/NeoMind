@@ -356,6 +356,45 @@ anti_triggers:
         rowKey={(row: SkillRow) => row.id}
         loading={loading}
         onRowClick={(row: SkillRow) => handleView(row.id)}
+        renderMobileBody={(rowData) => {
+          // Tailored mobile body: category + priority + size as one meta row,
+          // keyword chips below — not a key-value dump.
+          const row = rowData as SkillRow
+          const catConf = categoryConfig[row.category] || categoryConfig.general
+          const Icon = catConf.icon
+          return (
+            <div className="space-y-2">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <Badge variant="outline" className={cn("h-6 gap-1", catConf.color)}>
+                  <Icon className="h-3 w-3" />
+                  {catConf.label}
+                </Badge>
+                <Badge variant="secondary" className="font-mono">
+                  {row.priority}
+                </Badge>
+                <span className="text-xs text-muted-foreground font-mono ml-auto">
+                  {row.body_length > 1024
+                    ? `${(row.body_length / 1024).toFixed(1)} KB`
+                    : `${row.body_length} B`}
+                </span>
+              </div>
+              {row.keywords.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {row.keywords.slice(0, 3).map((kw, i) => (
+                    <span key={i} className="text-xs bg-muted px-1.5 py-0.5 rounded">
+                      {kw}
+                    </span>
+                  ))}
+                  {row.keywords.length > 3 && (
+                    <span className="text-xs text-muted-foreground self-center">
+                      +{row.keywords.length - 3}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        }}
         renderCell={(columnKey, rowData) => {
           const row = rowData
           const catConf = categoryConfig[row.category] || categoryConfig.general

@@ -64,11 +64,6 @@ export interface ResponsiveTableProps<T = Record<string, unknown>> {
    *  the table has no row actions but the right side of the header would
    *  otherwise be empty. */
   renderMobileHeaderExtra?: (rowData: T) => ReactNode
-  /** Flatten the mobile card header — drop the `bg-muted` band and the
-   *  border under it so the header and body read as one continuous
-   *  surface. Use when the body already provides enough visual structure
-   *  (e.g., via renderMobileBody) and the gray header band feels heavy. */
-  mobileFlatHeader?: boolean
 }
 
 /**
@@ -99,7 +94,6 @@ export function ResponsiveTable<T extends object>({
   flexHeight: _flexHeight = false,
   renderMobileBody,
   renderMobileHeaderExtra,
-  mobileFlatHeader = false,
 }: ResponsiveTableProps<T>) {
   const { t } = useTranslation('common')
   // Show empty state only on mobile when no data
@@ -328,13 +322,11 @@ export function ResponsiveTable<T extends object>({
                 style={{ animationDelay: `calc(${index} * var(--stagger-step))`, animationFillMode: 'both' }}
                 onClick={() => onRowClick?.(rowData)}
               >
-                {/* Card Header - First column as title */}
-                <div className={cn(
-                  "px-3 py-2.5",
-                  mobileFlatHeader
-                    ? "pb-1"
-                    : "bg-muted border-b border-border rounded-t-lg",
-                )}>
+                {/* Card Header - First column as title. Flat single-surface
+                    card: no banded header strip — the grey band read as
+                    admin-table chrome and isn't part of the app's card
+                    language (AgentCard & co. are single-surface). */}
+                <div className="px-3 pt-2.5 pb-1">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
                       <div className="min-w-0 flex-1 truncate">
