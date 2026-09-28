@@ -14,7 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { EmptyState } from '@/components/shared/EmptyState'
+import { EmptyState, EmptyStateCard } from '@/components/shared/EmptyState'
 import { LoadingState } from '@/components/shared/LoadingState'
 import {
   Check,
@@ -146,12 +146,14 @@ export function MessagesTab({
   if (error) {
     return (
       <div className="p-6">
-        <EmptyState
-          icon={<AlertCircle className="h-12 w-12" />}
-          title={t('messages.error')}
-          description={error.message}
-          action={{ label: t('retry'), onClick: onRefresh }}
-        />
+        <EmptyStateCard>
+          <EmptyState
+            icon={<AlertCircle className="h-12 w-12" />}
+            title={t('messages.error')}
+            description={error.message}
+            action={{ label: t('retry'), onClick: onRefresh }}
+          />
+        </EmptyStateCard>
       </div>
     )
   }
@@ -246,11 +248,13 @@ export function MessagesTab({
       {isLoading ? (
         <LoadingState variant="page" />
       ) : messages.length === 0 ? (
-        <EmptyState
-          icon={<Check className="h-12 w-12" />}
-          title={t('messages.empty.title')}
-          description={t('messages.empty.description')}
-        />
+        <EmptyStateCard>
+          <EmptyState
+            icon={<Check className="h-12 w-12" />}
+            title={t('messages.empty.title')}
+            description={t('messages.empty.description')}
+          />
+        </EmptyStateCard>
       ) : (
         <div className="space-y-2">
           {/* Header with select all */}

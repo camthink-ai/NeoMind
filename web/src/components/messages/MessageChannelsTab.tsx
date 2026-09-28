@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { EmptyState } from '@/components/shared/EmptyState'
+import { EmptyState, EmptyStateCard } from '@/components/shared/EmptyState'
 import { LoadingState } from '@/components/shared/LoadingState'
 import { UnifiedFormDialog } from '@/components/dialog/UnifiedFormDialog'
 import { Input } from '@/components/ui/input'
@@ -313,22 +313,26 @@ export function MessageChannelsTab({
       {isLoading ? (
         <LoadingState variant="page" />
       ) : error ? (
-        <EmptyState
-          icon={<RefreshCw className="h-12 w-12" />}
-          title={t('messages.channels.error')}
-          description={error.message}
-          action={{ label: t('retry'), onClick: onRefresh }}
-        />
+        <EmptyStateCard>
+          <EmptyState
+            icon={<RefreshCw className="h-12 w-12" />}
+            title={t('messages.channels.error')}
+            description={error.message}
+            action={{ label: t('retry'), onClick: onRefresh }}
+          />
+        </EmptyStateCard>
       ) : channels.length === 0 ? (
-        <EmptyState
-          icon={<Plus className="h-12 w-12" />}
-          title={t('messages.channels.empty.title')}
-          description={t('messages.channels.empty.description')}
+        <EmptyStateCard>
+          <EmptyState
+            icon={<Plus className="h-12 w-12" />}
+            title={t('messages.channels.empty.title')}
+            description={t('messages.channels.empty.description')}
           action={{
             label: t('messages.channels.create'),
             onClick: () => setCreateDialogOpen(true)
           }}
-        />
+          />
+        </EmptyStateCard>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {channels.map((channel) => {

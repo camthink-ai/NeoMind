@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu"
 import { IconButton } from "@/components/ui/button"
-import { ResponsiveTable, EmptyState } from "@/components/shared"
+import { ResponsiveTable, EmptyState, EmptyStateCard } from "@/components/shared"
 import { DeviceStatusBadge } from "@/components/shared/DeviceStatusBadge"
 import { Eye, MoreVertical, Trash2, Cpu, Database, Waves, Pencil } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -104,11 +104,13 @@ export function DeviceList({
             ))
           )}
           {!loading && paginatedDevices.length === 0 && (
-            <EmptyState
-              icon={<Cpu className="h-12 w-12" />}
-              title={t('devices:empty.title', 'No devices')}
-              description={t('devices:empty.description', 'Add your first device to get started')}
-            />
+            <EmptyStateCard>
+              <EmptyState
+                icon={<Cpu className="h-12 w-12" />}
+                title={t('devices:empty.title', 'No devices')}
+                description={t('devices:empty.description', 'Add your first device to get started')}
+              />
+            </EmptyStateCard>
           )}
           {paginatedDevices.map((device) => {
             const AdapterIcon = getAdapterIcon(device.adapter_type)

@@ -14,7 +14,7 @@ import {
   FullScreenDialogContent,
   FullScreenDialogMain,
 } from "@/components/automation/dialog"
-import { ResponsiveTable, EmptyState, Pagination } from "@/components/shared"
+import { ResponsiveTable, EmptyState, EmptyStateCard, Pagination } from "@/components/shared"
 import { Edit, Play, Trash2, Bell, Bot, Sparkles, Zap, MoreVertical, Timer, History, CheckCircle2, XCircle, Clock, Download } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import type { Rule, RuleAction, RuleExecutionResult } from "@/types"
@@ -354,11 +354,13 @@ export function RulesList({
     isMobile ? (
       <div className="space-y-2">
         {paginatedRules.length === 0 ? (
-          <EmptyState
-            icon={<Sparkles className="h-12 w-12" />}
-            title={t('automation:emptyRules.title', 'No rules')}
-            description={t('automation:emptyRules.description', 'Create your first rule to automate actions based on conditions')}
-          />
+          <EmptyStateCard>
+            <EmptyState
+              icon={<Sparkles className="h-12 w-12" />}
+              title={t('automation:emptyRules.title', 'No rules')}
+              description={t('automation:emptyRules.description', 'Create your first rule to automate actions based on conditions')}
+            />
+          </EmptyStateCard>
         ) : null}
         {paginatedRules.map((rule) => {
           const actions = rule.actions && rule.actions.length > 0

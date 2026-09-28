@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu"
 import { IconButton } from "@/components/ui/button"
-import { ResponsiveTable, EmptyState } from "@/components/shared"
+import { ResponsiveTable, EmptyState, EmptyStateCard } from "@/components/shared"
 import { Eye, Pencil, Trash2, Download, MoreVertical, Cpu, Database, Activity } from "lucide-react"
 import type { DeviceType } from "@/types"
 import { api } from "@/lib/api"
@@ -76,11 +76,13 @@ export function DeviceTypeList({
         <div className="space-y-2">
           {/* Mobile has no ResponsiveTable — carry its own empty state. */}
           {!loading && paginatedDeviceTypes.length === 0 && (
-            <EmptyState
-              icon={<Database className="h-12 w-12" />}
-              title={t('devices:emptyType.title', 'No device types')}
-              description={t('devices:emptyType.description', 'Create a device type to define device categories')}
-            />
+            <EmptyStateCard>
+              <EmptyState
+                icon={<Database className="h-12 w-12" />}
+                title={t('devices:emptyType.title', 'No device types')}
+                description={t('devices:emptyType.description', 'Create a device type to define device categories')}
+              />
+            </EmptyStateCard>
           )}
           {loading && paginatedDeviceTypes.length === 0 && (
             [0, 1, 2].map((i) => (

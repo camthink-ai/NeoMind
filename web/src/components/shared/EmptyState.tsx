@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import {
   Server,
@@ -94,6 +95,22 @@ export function EmptyState({ icon, title, description, action, className }: Empt
         </Button>
       )}
     </div>
+  )
+}
+
+/**
+ * Card-framed empty state — the page-level convention. An <EmptyState> left
+ * floating in whitespace breaks the page rhythm next to the carded table /
+ * list chrome (ResponsiveTable wraps its mobile empty in exactly this Card,
+ * and agents.tsx made the same call), so custom mobile list branches should
+ * render their empties through this wrapper. ResponsiveTable passes its
+ * emptyState prop ALREADY framed on mobile — do not double-wrap there.
+ */
+export function EmptyStateCard({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <Card className={cn('overflow-hidden border-border', className)}>
+      <div className="p-8">{children}</div>
+    </Card>
   )
 }
 

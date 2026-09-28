@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { PageLayout } from '@/components/layout/PageLayout'
 import { useStore } from '@/store'
 import { Card } from '@/components/ui/card'
-import { ResponsiveTable, type TableColumn, Pagination, EmptyState } from '@/components/shared'
+import { ResponsiveTable, type TableColumn, Pagination, EmptyState, EmptyStateCard } from '@/components/shared'
 import { PageTabsBar, PageTabsContent, PageTabsBottomNav } from '@/components/shared/PageTabs'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -381,11 +381,13 @@ export function DataExplorerPage() {
     isMobile ? (
       <div className="space-y-2">
         {pageData.length === 0 && !loading ? (
-          <EmptyState
-            icon={<Database className="h-12 w-12" />}
-            title={search ? t('data:noResults', 'No data sources match your search') : t('data:noSources', 'No data sources available')}
-            description={search ? undefined : t('data:noSourcesDesc', 'Data sources will appear here once devices are connected or extensions are registered')}
-          />
+          <EmptyStateCard>
+            <EmptyState
+              icon={<Database className="h-12 w-12" />}
+              title={search ? t('data:noResults', 'No data sources match your search') : t('data:noSources', 'No data sources available')}
+              description={search ? undefined : t('data:noSourcesDesc', 'Data sources will appear here once devices are connected or extensions are registered')}
+            />
+          </EmptyStateCard>
         ) : pageData.map((source) => (
           <Card
             key={source.id}

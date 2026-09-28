@@ -5,7 +5,7 @@ import { useState, useCallback, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { PageLayout } from '@/components/layout/PageLayout'
-import { PageTabsBar, PageTabsContent, PageTabsBottomNav, Pagination, ResponsiveTable, EmptyState } from '@/components/shared'
+import { PageTabsBar, PageTabsContent, PageTabsBottomNav, Pagination, ResponsiveTable, EmptyState, EmptyStateCard } from '@/components/shared'
 import { MessageSquare, Network, Settings, Filter as FilterIcon, Loader2 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useStore } from '@/store'
@@ -929,11 +929,13 @@ export default function MessagesPage() {
                   </Card>
                 ))
               ) : messages.length === 0 ? (
-                <EmptyState
-                  icon={<Mail className="h-12 w-12" />}
-                  title={t('messages.empty.title')}
-                  description={t('messages.empty.description')}
-                />
+                <EmptyStateCard>
+                  <EmptyState
+                    icon={<Mail className="h-12 w-12" />}
+                    title={t('messages.empty.title')}
+                    description={t('messages.empty.description')}
+                  />
+                </EmptyStateCard>
               ) : (
                 messages.map((message) => {
                   const severityConfig = SEVERITY_CONFIG[message.severity] || SEVERITY_CONFIG.info
