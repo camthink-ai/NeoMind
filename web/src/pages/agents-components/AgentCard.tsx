@@ -103,7 +103,7 @@ export function AgentCard({
       onClick={onClick}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() } }}
       className={cn(
-        "group relative flex h-full flex-col cursor-pointer",
+        "group relative flex h-full flex-col cursor-pointer active:scale-[0.99]",
         interactiveCardHover,
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
       )}

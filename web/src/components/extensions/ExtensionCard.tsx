@@ -118,7 +118,7 @@ export function ExtensionCard({
       onClick={() => onDetails?.()}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onDetails?.() } }}
       className={cn(
-        "group h-full overflow-hidden flex flex-col cursor-pointer",
+        "group h-full overflow-hidden flex flex-col cursor-pointer active:scale-[0.99]",
         interactiveCardHover,
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
       )}
