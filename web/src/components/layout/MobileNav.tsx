@@ -7,11 +7,9 @@
  * is shared via the `useMobileNav` store.
  *
  * Sections (top → bottom):
- *   1. User card — avatar + name + role (tap → preferences)
- *   2. Primary nav
- *   3. System nav
- *   4. Account & System entries — instance, onboarding, theme, language
- *   5. Logout
+ *   1. Nav destinations — one flat list
+ *   2. Utility zone (divided) — theme, language, onboarding guide
+ *   3. User card + Logout anchored at the bottom
  *
  * Desktop layout is unchanged.
  */
@@ -244,18 +242,23 @@ export function MobileNav() {
             Radix ScrollArea's pointer-event handling on iOS swallows tap
             events that land during momentum-scroll settle, which made menu
             items feel unresponsive ("tap doesn't navigate"). Native scroll
-            has no such interception. */}
+            has no such interception. One flat destination list — the nav
+            split reads as noise; only the utility zone below is separated. */}
         <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
           <div className="space-y-1 px-2 pb-2 pt-1">
             {PRIMARY.map(renderItem)}
-
             {SYSTEM_ENTRIES.map(renderItem)}
+          </div>
 
-            {/* Quick toggles + guides */}
-
+          {/* Utility zone — theme / language / guide. Divider separates it
+              from the nav destinations; rows reuse the nav-row geometry
+              (p-3, icon column) so the three zones read as one list. */}
+          <div className="border-t border-border px-2 pb-2 pt-2">
             {/* Theme quick toggle row — label on left, three icon buttons on right */}
-            <div className="flex items-center gap-1 rounded-lg p-2">
-              <Sun className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <div className="flex items-center gap-3 rounded-lg p-3">
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+                <Sun className="h-4 w-4 text-muted-foreground" />
+              </span>
               <span className="flex-1 truncate text-sm text-muted-foreground">
                 {t("theme.label", "Theme")}
               </span>
@@ -288,9 +291,11 @@ export function MobileNav() {
                 const next = i18n.language === "zh" ? "en" : "zh"
                 i18n.changeLanguage(next)
               }}
-              className="group relative flex w-full items-center gap-2 rounded-lg p-2 text-left transition-all hover:bg-muted-50"
+              className="group relative flex w-full items-center gap-3 rounded-lg p-3 text-left transition-all hover:bg-muted-50"
             >
-              <Globe className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+                <Globe className="h-4 w-4 text-muted-foreground" />
+              </span>
               <span className="flex-1 truncate text-sm text-muted-foreground">
                 {t("system.language")}
               </span>
@@ -307,10 +312,12 @@ export function MobileNav() {
                 setOnboardingOpen(true)
               }}
               className={cn(
-                "group relative flex w-full items-center gap-2 rounded-lg p-2 text-left transition-all hover:bg-muted-50",
+                "group relative flex w-full items-center gap-3 rounded-lg p-3 text-left transition-all hover:bg-muted-50",
               )}
             >
-              <Rocket className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+                <Rocket className="h-4 w-4 text-muted-foreground" />
+              </span>
               <span className="flex-1 truncate text-sm text-muted-foreground">
                 {t("onboarding.title")}
               </span>
