@@ -242,6 +242,7 @@ async fn process_stream_to_channel(
                                         &sum_session_id,
                                         &sum_state,
                                         pt_val,
+                                        false,
                                     )
                                     .await
                                 {
@@ -257,10 +258,29 @@ async fn process_stream_to_channel(
                             "sessionId": session_id,
                         });
                         if let Some(pt) = prompt_tokens {
+                            // Context meter denominator: the session model's
+                            // real window, so the UI can show usage as a
+                            // ratio instead of a raw token count.
+                            let max_ctx = match state
+                                .agents
+                                .session_manager
+                                .get_agent_llm(&session_id)
+                                .await
+                            {
+                                Some(llm) => llm.max_context_length().await,
+                                None => 0,
+                            };
+                            let ratio = if max_ctx > 0 {
+                                (*pt as f64 / max_ctx as f64 * 1000.0).round() / 1000.0
+                            } else {
+                                0.0
+                            };
                             end_json["tokenUsage"] = json!({
                                 "promptTokens": pt,
                                 "systemPromptTokens": system_prompt_tokens,
                                 "toolTokens": tool_tokens,
+                                "maxContextTokens": max_ctx,
+                                "usageRatio": ratio,
                             });
                         }
                         end_json
@@ -704,6 +724,64 @@ pub async fn delete_session_handler(
     Ok(Json(ApiResponse::success(json!({
         "deleted": true,
         "sessionId": id,
+    }))))
+}
+
+/// Manually compact a session's context: force a conversation summary now,
+/// regardless of the 60% auto threshold. The user-facing counterpart of
+/// Claude Code's `/compact` — when the model starts forgetting, the user can
+/// do something about it instead of recreating the session.
+#[utoipa::path(
+    post,
+    path = "/api/sessions/{id}/compact",
+    responses(
+        (status = 200, description = "Compaction result"),
+        (status = 500, description = "Compaction failed"),
+    )
+)]
+pub async fn compact_session_handler(
+    State(state): State<ServerState>,
+    Path(id): Path<String>,
+) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
+    // Force mode: threshold and min-message gates bypassed.
+    let outcome =
+        crate::handlers::summarization::trigger_summarization(&id, &state, u32::MAX, true)
+            .await
+            .map_err(ErrorResponse::with_message)?;
+
+    Ok(Json(ApiResponse::success(json!({
+        "sessionId": id,
+        "summarizedMessages": outcome.summarized_messages,
+        "newUpToIndex": outcome.new_up_to_index,
+        "fallbackUsed": outcome.fallback_used,
+    }))))
+}
+
+/// Clear a session's conversation history and reset any stored summary —
+/// fresh context, same session id (Claude Code's `/clear`). Distinct from
+/// DELETE /api/sessions/:id, which removes the session entirely.
+#[utoipa::path(
+    post,
+    path = "/api/sessions/{id}/clear",
+    responses(
+        (status = 200, description = "History cleared"),
+        (status = 500, description = "Clear failed"),
+    )
+)]
+pub async fn clear_session_history_handler(
+    State(state): State<ServerState>,
+    Path(id): Path<String>,
+) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
+    state
+        .agents
+        .session_manager
+        .clear_history(&id)
+        .await
+        .map_err(|e| ErrorResponse::with_message(e.to_string()))?;
+
+    Ok(Json(ApiResponse::success(json!({
+        "sessionId": id,
+        "cleared": true,
     }))))
 }
 
@@ -1561,6 +1639,13 @@ async fn handle_ws_socket(
                                             let task_skills = selected_skills.clone();
                                             let task_final_message = final_message;
                                             let task_req_backend = chat_req.backend_id.clone();
+                                            // Decision-layer cascade (shadow → short-circuit →
+                                            // guidance → prefill) now lives INSIDE
+                                            // SessionManager's message chokepoint
+                                            // (ChatDecisionPipeline), so every entry point —
+                                            // this WS branch, the multimodal branch, REST chat,
+                                            // IM bridges, extension chat capability — gets
+                                            // identical coverage. Nothing to do here.
                                             tokio::spawn(async move {
                                                 match task_state
                                                     .agents
@@ -1905,5 +1990,133 @@ mod history_pagination_tests {
         let (full, has_more) = slice_history(&h, Some(0), None); // 0 = no paging
         assert_eq!(full.len(), 8);
         assert!(!has_more);
+    }
+}
+
+#[cfg(test)]
+mod compact_clear_tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use axum::routing::post;
+    use axum::Router;
+    use tower::ServiceExt;
+
+    /// Six alternating user/assistant turns. Users sit at even indices;
+    /// with the last-3 protection the 3rd-from-last user is at index 6.
+    async fn seeded_state() -> (crate::server::ServerState, String) {
+        let state = crate::server::ServerState::new_for_testing().await;
+        let manager = state.agents.session_manager.clone();
+        let sid = manager.create_session().await.expect("session");
+        let agent = manager.get_session(&sid).await.expect("agent");
+        let mut history = Vec::new();
+        for i in 0..6 {
+            history.push(AgentMessage::user(format!("user turn {i} wording")));
+            history.push(AgentMessage::assistant(format!("assistant reply {i}")));
+        }
+        agent.restore_history(history).await;
+        (state, sid)
+    }
+
+    async fn post_json(
+        state: crate::server::ServerState,
+        uri: String,
+    ) -> (StatusCode, serde_json::Value) {
+        let app = Router::new()
+            .route("/api/sessions/:id/compact", post(compact_session_handler))
+            .route(
+                "/api/sessions/:id/clear",
+                post(clear_session_history_handler),
+            )
+            .with_state(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .method("POST")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice(&body).unwrap())
+    }
+
+    /// Force-compact on a session with no LLM backend must still write a
+    /// (deterministic-fallback) summary, never cover the last 3 user
+    /// messages, and report the fallback.
+    #[tokio::test]
+    async fn compact_writes_fallback_and_respects_protection_floor() {
+        let (state, sid) = seeded_state().await;
+        let manager = state.agents.session_manager.clone();
+        let (status, body) = post_json(state, format!("/api/sessions/{}/compact", sid)).await;
+        assert_eq!(status, StatusCode::OK);
+        let data = &body["data"];
+        assert!(
+            data["summarizedMessages"].as_u64().unwrap_or(0) > 0,
+            "force mode must summarize something: {data}"
+        );
+        assert_eq!(
+            data["fallbackUsed"],
+            serde_json::json!(true),
+            "no LLM backend in the test state → deterministic fallback"
+        );
+
+        // Boundary math: 12 messages, users at 0,2,4,6,8,10. keep=3 →
+        // protected_first=6. target = min(12/2, 6-0) = 6 → covers 0..=5.
+        let store = manager.session_store();
+        let meta = store.get_session_metadata(&sid).expect("metadata");
+        assert_eq!(
+            meta.summary_up_to_index,
+            Some(5),
+            "coverage must stop one below the protected boundary (index 6)"
+        );
+        let summary = meta.conversation_summary.expect("summary written");
+        assert!(
+            summary.contains("user turn 0 wording"),
+            "fallback digest carries user wording verbatim: {summary}"
+        );
+        assert!(
+            !summary.contains("user turn 3 wording"),
+            "the protected user turns (3..5) must NOT be summarized"
+        );
+
+        manager.remove_session(&sid).await.unwrap();
+    }
+
+    /// `/clear` keeps the session but empties history and resets any stored
+    /// summary — the ghost-summary invariant.
+    #[tokio::test]
+    async fn clear_resets_history_and_summary() {
+        let (state, sid) = seeded_state().await;
+        let manager = state.agents.session_manager.clone();
+
+        // Compact first so a summary exists to reset.
+        let (status, _) = post_json(state.clone(), format!("/api/sessions/{}/compact", sid)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(manager
+            .session_store()
+            .get_session_metadata(&sid)
+            .unwrap()
+            .conversation_summary
+            .is_some());
+
+        let (status, body) = post_json(state, format!("/api/sessions/{}/clear", sid)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["data"]["cleared"], serde_json::json!(true));
+
+        let history = manager.get_history(&sid).await.expect("history");
+        assert!(history.is_empty(), "history must be empty after clear");
+        let meta = manager.session_store().get_session_metadata(&sid).unwrap();
+        assert!(
+            meta.conversation_summary.is_none() && meta.summary_up_to_index.is_none(),
+            "stored summary must be reset with the history"
+        );
+
+        manager.remove_session(&sid).await.unwrap();
     }
 }

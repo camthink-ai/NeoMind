@@ -241,6 +241,30 @@ impl Drop for CancelSenderGuard {
 }
 
 /// Session manager for managing multiple agent sessions with persistence.
+/// Outcome of the decision-layer chat hook for one inbound message.
+#[derive(Debug, Clone)]
+pub enum ChatHookOutcome {
+    /// The decision layer answered the turn outright — stream this text and
+    /// skip the LLM (short-circuit).
+    Answered(String),
+    /// Hooks rewrote the message (guidance/prefill appended) for the LLM turn.
+    Rewritten(String),
+    /// No hook fired — proceed unchanged.
+    Passthrough,
+}
+
+/// Fast-decision hook (the laya/System-1 cascade), implemented by the API
+/// layer (handlers/decisions.rs) and injected into SessionManager so that
+/// EVERY user-NL entry point — WS text, WS multimodal, REST chat, IM bridge,
+/// extension chat capability — gets identical decision coverage at the
+/// chokepoint instead of per-handler wiring that drifts.
+#[async_trait::async_trait]
+pub trait ChatDecisionHook: Send + Sync {
+    /// `allow_shortcircuit` is false for multimodal turns: attached media
+    /// usually implies vision intent that pure-text routing cannot judge.
+    async fn on_message(&self, message: &str, allow_shortcircuit: bool) -> ChatHookOutcome;
+}
+
 pub struct SessionManager {
     /// Active sessions (in-memory cache)
     sessions: Arc<RwLock<HashMap<String, Arc<Agent>>>>,
@@ -276,6 +300,8 @@ pub struct SessionManager {
     /// path. Memory-tool writes intentionally do NOT invalidate this — the
     /// snapshot stays frozen for the session and is re-read on the next one.
     memory_snapshots: Arc<RwLock<HashMap<String, crate::memory::MemorySnapshot>>>,
+    /// Injected fast-decision hook (see ChatDecisionHook). None = passthrough.
+    decision_hook: Arc<RwLock<Option<Arc<dyn ChatDecisionHook>>>>,
 }
 
 impl SessionManager {
@@ -308,6 +334,7 @@ impl SessionManager {
             cancel_senders: Arc::new(RwLock::new(HashMap::new())),
             event_subscribers: Arc::new(RwLock::new(HashMap::new())),
             memory_snapshots: Arc::new(RwLock::new(HashMap::new())),
+            decision_hook: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -329,6 +356,7 @@ impl SessionManager {
             cancel_senders: Arc::new(RwLock::new(HashMap::new())),
             event_subscribers: Arc::new(RwLock::new(HashMap::new())),
             memory_snapshots: Arc::new(RwLock::new(HashMap::new())),
+            decision_hook: Arc::new(RwLock::new(None)),
         };
 
         // Restore sessions from database on startup
@@ -365,8 +393,52 @@ impl SessionManager {
         result.map_err(|e| NeoMindError::Storage(format!("Failed to delete session: {}", e)))
     }
 
+    /// Write a `data:image/...;base64,...` payload to `<images_dir>/<uuid>.<ext>`
+    /// and return the served reference (`/api/images/<file>`).
+    ///
+    /// `None` on any failure (decode / write) — the caller then keeps the
+    /// original data URL, degrading to the legacy inline form.
+    pub(crate) fn persist_image_to_file(
+        data_url: &str,
+        images_dir: &std::path::Path,
+    ) -> Option<String> {
+        let parsed = crate::image_utils::parse_data_image_url(data_url)?;
+        use base64::Engine as _;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(parsed.base64)
+            .ok()?;
+        if bytes.is_empty() {
+            return None;
+        }
+        std::fs::create_dir_all(images_dir).ok()?;
+        let ext = mime_to_ext(parsed.mime_type);
+        // Content-hash filename — idempotent across re-saves. `save_history`
+        // runs EVERY turn over the full history while in-memory images stay
+        // data URLs, so a fresh uuid per save would orphan one file per image
+        // per turn. SipHash-1-3 via DefaultHasher (std, fixed keys —
+        // deterministic) is ample: a collision needs ~4 billion images, and
+        // the worst case is one orphaned duplicate, never data loss.
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        bytes.hash(&mut hasher);
+        let name = format!("chat-{:016x}.{}", hasher.finish(), ext);
+        std::fs::write(images_dir.join(&name), &bytes).ok()?;
+        tracing::debug!(file = %name, bytes = bytes.len(), "Persisted chat image to file");
+        Some(format!("/api/images/{}", name))
+    }
+
     /// Save message history for a session to persistent storage.
     fn save_history(&self, session_id: &str, messages: &[AgentMessage]) -> Result<()> {
+        // [storage economy] Image payloads live on disk, not in redb: the
+        // persisted form is the served reference `/api/images/<file>`, not
+        // the full base64 data URL (a 5MB photo ≈ 6.7MB of base64 PER
+        // MESSAGE otherwise — bloating the DB, the history API payload, and
+        // session-restore RAM). In-memory AgentMessages keep data URLs; the
+        // streaming window-build hydrates references back to bytes for the
+        // few images still eligible to reach the LLM (strip_stale_images).
+        // Legacy base64 rows from older sessions pass through unchanged and
+        // convert naturally on their session's next save.
+        let images_dir = neomind_core::paths::data_dir().join("images");
         // Convert AgentMessage to SessionMessage
         let session_messages: Vec<neomind_storage::SessionMessage> = messages
             .iter()
@@ -401,9 +473,17 @@ impl SessionManager {
                 // Convert images from AgentMessageImage to SessionMessageImage
                 let images = msg.images.as_ref().map(|imgs| {
                     imgs.iter()
-                        .map(|img| neomind_storage::SessionMessageImage {
-                            data: img.data.clone(),
-                            mime_type: img.mime_type.clone(),
+                        .map(|img| {
+                            let data = if img.data.starts_with("data:image/") {
+                                Self::persist_image_to_file(&img.data, &images_dir)
+                                    .unwrap_or_else(|| img.data.clone())
+                            } else {
+                                img.data.clone()
+                            };
+                            neomind_storage::SessionMessageImage {
+                                data,
+                                mime_type: img.mime_type.clone(),
+                            }
                         })
                         .collect()
                 });
@@ -1581,11 +1661,54 @@ Assistant: {ar}\n"
     }
 
     /// Process a message in a session with event streaming (rich response).
+    /// Inject (or clear) the fast-decision hook. Applied uniformly at the
+    /// message chokepoints below; a slow or dead hook must never block a
+    /// turn, so implementors bound themselves internally.
+    pub async fn set_decision_hook(&self, hook: Option<Arc<dyn ChatDecisionHook>>) {
+        *self.decision_hook.write().await = hook;
+    }
+
+    /// Run the injected decision hook. Returns (answered-stream, message):
+    /// an answered stream short-circuits the LLM turn entirely; otherwise
+    /// the (possibly rewritten) message continues.
+    async fn apply_decision_hook(
+        &self,
+        message: &str,
+        allow_shortcircuit: bool,
+    ) -> (
+        Option<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>>,
+        String,
+    ) {
+        let hook = self.decision_hook.read().await.clone();
+        let Some(hook) = hook else {
+            return (None, message.to_string());
+        };
+        match hook.on_message(message, allow_shortcircuit).await {
+            ChatHookOutcome::Answered(text) => {
+                let stream = futures::stream::iter(vec![
+                    AgentEvent::Content { content: text },
+                    AgentEvent::End {
+                        prompt_tokens: None,
+                        system_prompt_tokens: None,
+                        tool_tokens: None,
+                    },
+                ]);
+                (Some(Box::pin(stream)), message.to_string())
+            }
+            ChatHookOutcome::Rewritten(m) => (None, m),
+            ChatHookOutcome::Passthrough => (None, message.to_string()),
+        }
+    }
+
     pub async fn process_message_events(
         &self,
         session_id: &str,
         message: &str,
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
+        let (answered, message) = self.apply_decision_hook(message, true).await;
+        if let Some(stream) = answered {
+            return Ok(stream);
+        }
         let agent = self.get_session(session_id).await?;
 
         // Load memory snapshot if enabled and not yet loaded
@@ -1613,7 +1736,7 @@ Assistant: {ar}\n"
 
         let stream = agent
             .process_stream_events_with_safeguards(
-                message,
+                &message,
                 conversation_summary,
                 summary_up_to_index,
                 safeguards,
@@ -1697,6 +1820,10 @@ Assistant: {ar}\n"
             image_count = images.len(),
             "SessionManager::process_message_multimodal"
         );
+        // Multimodal: guidance/prefill still apply, short-circuit does not
+        // (attached media implies vision intent text routing can't judge).
+        let (_, message) = self.apply_decision_hook(message, false).await;
+        let message = message.as_str();
         let agent = self.get_session(session_id).await?;
         let response = agent.process_multimodal(message, images).await?;
 
@@ -1788,6 +1915,10 @@ Assistant: {ar}\n"
         message: &str,
         images: Vec<String>,
     ) -> Result<Pin<Box<dyn Stream<Item = super::agent::AgentEvent> + Send>>> {
+        let (answered, message) = self.apply_decision_hook(message, false).await;
+        if let Some(stream) = answered {
+            return Ok(stream);
+        }
         // Check if images are provided and model supports vision
         if !images.is_empty() {
             let agent = self.get_session(session_id).await?;
@@ -1814,7 +1945,7 @@ Assistant: {ar}\n"
         let cancel_senders = self.cancel_senders.clone();
 
         let stream = agent
-            .process_multimodal_stream_events_with_safeguards(message, images, safeguards)
+            .process_multimodal_stream_events_with_safeguards(&message, images, safeguards)
             .await?;
 
         // Wrap with scopeguard so cancel sender is removed on both natural
@@ -2050,8 +2181,22 @@ impl Default for SessionManager {
                 cancel_senders: Arc::new(RwLock::new(HashMap::new())),
                 event_subscribers: Arc::new(RwLock::new(HashMap::new())),
                 memory_snapshots: Arc::new(RwLock::new(HashMap::new())),
+                decision_hook: Arc::new(RwLock::new(None)),
             }
         })
+    }
+}
+
+/// MIME subtype → file extension for persisted chat images. Mirrors the
+/// images handler's allowed-extension list.
+fn mime_to_ext(mime: &str) -> &'static str {
+    match mime {
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        "image/bmp" => "bmp",
+        "image/tiff" => "tiff",
+        _ => "png",
     }
 }
 

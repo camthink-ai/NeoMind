@@ -139,8 +139,20 @@ pub fn compact_tool_results(messages: &[AgentMessage], keep_recent: usize) -> Ve
 /// SSE/WS, multimodal, non-streaming) so the advertised setting behaves
 /// identically everywhere. Scheduled agents are unaffected — they carry
 /// their own per-agent context_window_size.
-pub(crate) fn apply_chat_history_depth(history: &mut Vec<AgentMessage>) {
+pub(crate) fn apply_chat_history_depth(history: &mut Vec<AgentMessage>) -> usize {
     let depth = neomind_storage::AgentDefaults::get().chat_history_depth;
+    apply_chat_history_depth_with(history, depth)
+}
+
+/// Cap history to the last `depth` user turns (the boundary turn is kept).
+/// Returns how many messages were drained from the front — callers holding
+/// full-history index metadata (e.g. `summary_up_to_index`) MUST shift those
+/// indices by this amount, or their filters misalign against the summary's
+/// coverage and silently drop uncovered messages.
+pub(crate) fn apply_chat_history_depth_with(
+    history: &mut Vec<AgentMessage>,
+    depth: usize,
+) -> usize {
     let mut user_turns_seen = 0usize;
     let mut cut_idx = None;
     for (i, m) in history.iter().enumerate().rev() {
@@ -161,6 +173,142 @@ pub(crate) fn apply_chat_history_depth(history: &mut Vec<AgentMessage>) {
                 "Applied chat history depth"
             );
             history.drain(..idx);
+            return idx;
+        }
+    }
+    0
+}
+
+/// Shift a stored `summary_up_to_index` (full-history index space) into the
+/// index space of a front-drained history.
+///
+/// `checked_sub`: when the drain removed everything the summary covers, there
+/// is nothing left to filter — `None` keeps the whole remaining window (the
+/// summary text itself is injected separately and stays valid).
+pub(crate) fn adjust_summary_index_after_drain(
+    summary_up_to: Option<u64>,
+    drained: usize,
+) -> Option<u64> {
+    summary_up_to.and_then(|i| i.checked_sub(drained as u64))
+}
+
+/// How many of the most recent image-bearing user messages keep their images.
+const KEEP_IMAGES_ON_RECENT_USER_MSGS: usize = 2;
+
+/// Phrases where the model PROMISES a tool action in words. Matched against
+/// a text-only (no tool call) LLM round to detect the "narration collapse":
+/// the model writes "我现在使用 image_edit 工具…" and the loop would
+/// otherwise end the turn with that promise as the final answer (observed:
+/// 0.3s turn end while the user waits for a watermarked image that never
+/// comes). English patterns are lowercase — the text is lowercased before
+/// matching, which leaves the Chinese patterns untouched.
+const ACTION_PROMISE_PATTERNS: &[&str] = &[
+    // Chinese
+    "我将使用",
+    "我会使用",
+    "我将调用",
+    "我会调用",
+    "我将执行",
+    "我会执行",
+    "让我使用",
+    "让我调用",
+    "让我执行",
+    "接下来我将",
+    "现在我将",
+    "现在我会",
+    "我将通过",
+    "我会通过",
+    "接着我将",
+    "我将先",
+    "我会先",
+    "我来使用",
+    "我来调用",
+    // "现在 + action verb" — covers the observed "我现在使用 X 工具…" form
+    "现在使用",
+    "现在调用",
+    "现在执行",
+    "现在运行",
+    // English
+    "i will use",
+    "i'll use",
+    "i will call",
+    "i'll call",
+    "i will run",
+    "i'll run",
+    "i will invoke",
+    "i'll invoke",
+    "let me use",
+    "let me call",
+    "let me run",
+    "let me check",
+    "i'm going to use",
+    "i'm going to call",
+    "i'm going to run",
+];
+
+/// Max narration length eligible for the nudge — a long, complete analysis
+/// that merely contains "let me use" somewhere is a legitimate final answer.
+const NARRATION_MAX_CHARS: usize = 500;
+
+/// True when `text` is a short reply that promises a tool action — the
+/// narration-without-action failure the tool loops nudge once before
+/// accepting the turn as complete.
+pub fn is_narration_without_action(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.chars().count() > NARRATION_MAX_CHARS {
+        return false;
+    }
+    let lower = trimmed.to_lowercase();
+    ACTION_PROMISE_PATTERNS.iter().any(|p| lower.contains(p))
+}
+
+/// The one-shot nudge injected when narration collapse is detected.
+/// Bilingual: the failure is observed mostly on small bilingual edge models.
+pub const NARRATION_NUDGE_PROMPT: &str = "你上一条回复承诺了要调用工具，但没有发出任何工具调用——这不是最终答复。现在立即以 JSON 数组格式输出所需的工具调用：[{\"name\":\"工具名\",\"arguments\":{...}}]，不要再描述将要做什么。\n\
+Your previous reply promised a tool call but emitted none — that is not a final answer. Output the tool call(s) NOW as a JSON array [{\"name\":\"...\",\"arguments\":{...}}] instead of describing what you will do. If no tool is genuinely needed, give the complete final answer to the user directly.";
+
+/// Strip images from every user message older than the most recent
+/// [`KEEP_IMAGES_ON_RECENT_USER_MSGS`] image-bearing ones, leaving a short
+/// note in the text so the model knows an image was there.
+///
+/// History images are re-sent to the LLM on EVERY turn, and each costs
+/// hundreds to thousands of REAL tokens on vision backends. Old ones are
+/// already described in the assistant's own replies, so dropping the payloads
+/// (while keeping an explicit marker) keeps the prompt within what the token
+/// budget math promised. The current turn's images are not in history yet —
+/// both streaming paths push them after the window is built.
+pub(crate) fn strip_stale_images(history: &mut [AgentMessage]) {
+    let mut kept_with_images = 0usize;
+    for msg in history.iter_mut().rev() {
+        if msg.role != "user" {
+            continue;
+        }
+        let image_count = match msg.images.as_ref() {
+            Some(imgs) if !imgs.is_empty() => imgs.len(),
+            _ => continue,
+        };
+        kept_with_images += 1;
+        if kept_with_images <= KEEP_IMAGES_ON_RECENT_USER_MSGS {
+            // Hydrate persisted file references to data URLs — the LLM needs
+            // actual image bytes, not an /api/images/ path. Restored sessions
+            // hold references; active ones already hold data URLs (no-op).
+            if let Some(imgs) = msg.images.as_mut() {
+                for image in imgs.iter_mut() {
+                    if image.data.starts_with("/api/images/") {
+                        if let Some(data_url) = super::types::load_image_reference(&image.data) {
+                            image.data = data_url;
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+        msg.images = None;
+        let note = format!("[{image_count} image(s) omitted from history to save context]");
+        if msg.content.is_empty() {
+            msg.content = note.into();
+        } else {
+            msg.content = format!("{} {}", msg.content, note).into();
         }
     }
 }
@@ -563,4 +711,165 @@ pub(crate) fn calculate_adaptive_context_adjustment(messages: &[AgentMessage]) -
     );
 
     adjustment
+}
+
+#[cfg(test)]
+mod depth_and_image_tests {
+    use super::*;
+
+    fn img() -> AgentMessageImage {
+        AgentMessageImage {
+            data: "data:image/png;base64,x".to_string(),
+            mime_type: Some("image/png".to_string()),
+        }
+    }
+
+    /// user at indices 0,3,6,9; assistants between. depth=2 keeps the last
+    /// two user turns (from idx 6 on) → drains 6 messages.
+    #[test]
+    fn depth_drain_returns_count_and_keeps_boundary_turn() {
+        let mut history = Vec::new();
+        for turn in 0..4u32 {
+            history.push(AgentMessage::user(format!("u{turn}")));
+            history.push(AgentMessage::assistant("a"));
+            history.push(AgentMessage::assistant("a"));
+        }
+        let drained = apply_chat_history_depth_with(&mut history, 2);
+        assert_eq!(drained, 6);
+        // Remaining window starts at the boundary user turn u2.
+        assert_eq!(history.len(), 6);
+        assert_eq!(history[0].content.as_ref(), "u2");
+    }
+
+    #[test]
+    fn summary_index_shifts_by_drain() {
+        assert_eq!(adjust_summary_index_after_drain(Some(10), 4), Some(6));
+        // Drain consumed everything the summary covers → nothing to filter.
+        assert_eq!(adjust_summary_index_after_drain(Some(3), 4), None);
+        assert_eq!(adjust_summary_index_after_drain(None, 4), None);
+        assert_eq!(adjust_summary_index_after_drain(Some(5), 0), Some(5));
+    }
+
+    /// End-to-end alignment: after drain + adjust, "keep local > adjusted"
+    /// keeps exactly the messages whose FULL index exceeds the summary
+    /// boundary — no gap, no double-coverage.
+    #[test]
+    fn drain_plus_adjust_has_no_coverage_gap() {
+        let mut history = Vec::new();
+        for turn in 0..4u32 {
+            history.push(AgentMessage::user(format!("u{turn}")));
+            history.push(AgentMessage::assistant("a"));
+            history.push(AgentMessage::assistant("a"));
+        }
+        let up_to = 5u64; // summary covers full indices 0..=5
+        let drained = apply_chat_history_depth_with(&mut history, 2);
+        let adjusted = adjust_summary_index_after_drain(Some(up_to), drained);
+
+        // depth=2 drains 6 → adjusted = 5-6 underflows → summary fully
+        // drained: keep the whole window.
+        assert_eq!(adjusted, None);
+        // Every remaining message (full indices 6..11) is NOT covered by the
+        // summary — correct, since the summary stopped at 5.
+
+        // Now a shallower drain: depth=3 cuts at u1 (idx 3) → drained 3.
+        let mut history = Vec::new();
+        for turn in 0..4u32 {
+            history.push(AgentMessage::user(format!("u{turn}")));
+            history.push(AgentMessage::assistant("a"));
+            history.push(AgentMessage::assistant("a"));
+        }
+        let drained = apply_chat_history_depth_with(&mut history, 3);
+        assert_eq!(drained, 3);
+        let adjusted = adjust_summary_index_after_drain(Some(up_to), drained);
+        assert_eq!(adjusted, Some(2));
+        // Filter "local > 2" keeps full indices 6..=11 — exactly the ones the
+        // summary (0..=5) does not cover. Full idx 6 sits at local idx 3.
+        assert_eq!(history[3].content.as_ref(), "u2");
+    }
+
+    #[test]
+    fn strip_stale_images_keeps_two_most_recent() {
+        let mut history = vec![
+            AgentMessage::assistant("a0"),
+            {
+                let mut m = AgentMessage::user("oldest");
+                m.images = Some(vec![img()]);
+                m
+            },
+            AgentMessage::assistant("a1"),
+            {
+                let mut m = AgentMessage::user("middle");
+                m.images = Some(vec![img()]);
+                m
+            },
+            {
+                let mut m = AgentMessage::user("recent");
+                m.images = Some(vec![img(), img()]);
+                m
+            },
+        ];
+        strip_stale_images(&mut history);
+        // Most recent two image-bearing user messages (idx 3, 4) keep images.
+        assert_eq!(history[3].images.as_ref().unwrap().len(), 1);
+        assert_eq!(history[4].images.as_ref().unwrap().len(), 2);
+        // Oldest is stripped and carries an explicit marker.
+        assert!(history[1].images.is_none());
+        let c = history[1].content.as_ref();
+        assert!(c.contains("oldest"), "original text preserved: {c}");
+        assert!(c.contains("1 image(s) omitted"), "marker appended: {c}");
+        // Non-user messages untouched.
+        assert!(history[0].images.is_none());
+    }
+}
+
+#[cfg(test)]
+mod narration_tests {
+    use super::*;
+
+    /// The exact failure text from the field conversation.
+    #[test]
+    fn detects_chinese_promise() {
+        assert!(is_narration_without_action(
+            "好的，我现在使用 image_edit 工具在图像上绘制时间文字水印。"
+        ));
+        assert!(is_narration_without_action("我将调用工具来获取设备列表。"));
+        assert!(is_narration_without_action(
+            "让我使用 vision 分析这张图片。"
+        ));
+    }
+
+    #[test]
+    fn detects_english_promise_case_insensitive() {
+        assert!(is_narration_without_action(
+            "OK, I will use the image_edit tool to draw the watermark."
+        ));
+        assert!(is_narration_without_action(
+            "Let me call the device list tool."
+        ));
+        assert!(is_narration_without_action(
+            "I'm going to run the command now."
+        ));
+    }
+
+    /// Long analyses that merely contain a promise phrase are legitimate
+    /// final answers — the length gate keeps the nudge off them.
+    #[test]
+    fn long_text_is_not_narration() {
+        let long = format!("分析结果：{}", "设备读数正常。".repeat(200));
+        assert!(!is_narration_without_action(&long));
+    }
+
+    #[test]
+    fn normal_answers_are_not_narration() {
+        assert!(!is_narration_without_action("设备在线，温度 23.5°C。"));
+        assert!(!is_narration_without_action(
+            "The image shows an electricity meter reading 8270.8 kWh."
+        ));
+        assert!(!is_narration_without_action(""));
+        // A final answer that legitimately mentions a tool in the past tense
+        // without a promise phrase.
+        assert!(!is_narration_without_action(
+            "已完成：水印已绘制并通过 vision 验证。"
+        ));
+    }
 }

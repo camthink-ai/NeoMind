@@ -139,7 +139,15 @@
     "toolDefs": "Tool definitions",
     "history": "Conversation history",
     "estimatedHint": "Character-based estimate — updates after the next reply",
-    "msgCount": " · {{count}} msgs"
+    "msgCount": " · {{count}} msgs",
+    "compact": "Compact",
+    "compacting": "Compacting…",
+    "compactDone": "Compacted {{count}} messages",
+    "compactNothing": "Nothing to compact yet",
+    "compactFailed": "Compact failed",
+    "clear": "Clear",
+    "clearDone": "Conversation history cleared",
+    "clearFailed": "Clear failed"
   },
   "loadEarlier": "Load earlier messages",
   "loadEarlierLoading": "Loading…",

@@ -59,6 +59,11 @@ interface ChatComposerProps {
     estimated?: boolean
     messageCount?: number
   } | null
+  // Manual context actions, shown in the usage card when provided (main
+  // chat page wires them; hosts without a session id omit them).
+  onCompact?: () => void
+  onClearContext?: () => void
+  compacting?: boolean
   /** Textarea max height in px (default 100, chat desktop uses 160). */
   maxHeight?: number
   /** Textarea resting height in px. Welcome hosts raise it so the input
@@ -85,6 +90,9 @@ export function ChatComposer({
   activeBackendId,
   onActivateBackend,
   contextUsage,
+  onCompact,
+  onClearContext,
+  compacting = false,
   maxHeight = 100,
   minHeight = 44,
 }: ChatComposerProps) {
@@ -372,6 +380,31 @@ export function ChatComposer({
                       <p className="mt-2 text-nano text-muted-foreground">
                         {t('chat.context.estimatedHint', 'Character-based estimate — updates after the next reply')}
                       </p>
+                    )}
+                    {(onCompact || onClearContext) && (
+                      <div className="mt-2 pt-2 border-t border-border flex items-center gap-2">
+                        {onCompact && (
+                          <button
+                            type="button"
+                            onClick={onCompact}
+                            disabled={compacting}
+                            className="flex-1 h-6 rounded text-nano bg-muted hover:bg-muted-50 disabled:opacity-50 transition-colors"
+                          >
+                            {compacting
+                              ? t('chat.context.compacting', 'Compacting…')
+                              : t('chat.context.compact', 'Compact')}
+                          </button>
+                        )}
+                        {onClearContext && (
+                          <button
+                            type="button"
+                            onClick={onClearContext}
+                            className="flex-1 h-6 rounded text-nano bg-muted hover:bg-muted-50 transition-colors"
+                          >
+                            {t('chat.context.clear', 'Clear')}
+                          </button>
+                        )}
+                      </div>
                     )}
                   </TooltipContent>
                 </Tooltip>

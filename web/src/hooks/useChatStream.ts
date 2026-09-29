@@ -39,6 +39,8 @@ export interface StreamTokenUsage {
   promptTokens: number
   systemPromptTokens?: number
   toolTokens?: number
+  /** Session model's real context window (meter denominator). */
+  maxContextTokens?: number
 }
 
 /** What the view needs to persist the finished assistant turn. */
@@ -264,6 +266,7 @@ export function useChatStream(options: UseChatStreamOptions) {
               promptTokens: data.tokenUsage.promptTokens,
               systemPromptTokens: data.tokenUsage.systemPromptTokens,
               toolTokens: data.tokenUsage.toolTokens,
+              maxContextTokens: data.tokenUsage.maxContextTokens,
             },
             data.sessionId,
           )

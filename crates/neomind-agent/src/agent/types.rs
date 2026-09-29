@@ -378,11 +378,54 @@ pub struct AgentMessage {
 /// An image attached to a message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentMessageImage {
-    /// Base64 data URL (e.g., "data:image/png;base64,...")
+    /// Either a base64 data URL (`data:image/...;base64,...`, the in-memory
+    /// form) or a served file reference (`/api/images/<file>`, the persisted
+    /// form — see session's `save_history`). Consumers that need actual
+    /// bytes must resolve references via [`load_image_reference`].
     pub data: String,
     /// MIME type (e.g., "image/png")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
+}
+
+/// Resolve a persisted `/api/images/<file>` reference back to a data URL
+/// (the form the LLM and tool arguments need).
+///
+/// Returns `None` for non-references, unsafe paths, or read failures —
+/// callers fall back to their existing behavior instead of passing a URL
+/// string where base64 is expected.
+pub(crate) fn load_image_reference(url: &str) -> Option<String> {
+    load_image_reference_from(url, &neomind_core::paths::data_dir().join("images"))
+}
+
+/// Testable core: resolve against an explicit images dir.
+pub(crate) fn load_image_reference_from(url: &str, images_dir: &std::path::Path) -> Option<String> {
+    let rel = url.strip_prefix("/api/images/")?;
+    // Flat layout only: a single safe filename segment (matches the images
+    // handler's contract). Structured device paths and traversal are refused.
+    if rel.is_empty()
+        || rel.contains('/')
+        || rel.contains('\\')
+        || rel.contains("..")
+        || rel.starts_with('.')
+    {
+        return None;
+    }
+    let path = images_dir.join(rel);
+    let bytes = std::fs::read(&path).ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+    let mime = match path.extension().and_then(|e| e.to_str()) {
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        Some("gif") => "image/gif",
+        Some("bmp") => "image/bmp",
+        Some("tiff") => "image/tiff",
+        _ => "image/png",
+    };
+    let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes);
+    Some(format!("data:{};base64,{}", mime, b64))
 }
 
 impl AgentMessage {
@@ -601,15 +644,25 @@ impl AgentMessage {
         let mut parts = vec![ContentPart::text(self.content.to_string())];
 
         for image in images {
+            // Persisted references must resolve to real bytes — a URL string
+            // passed as base64 is garbage the backend may silently accept.
+            let data = if image.data.starts_with("/api/images/") {
+                match load_image_reference(&image.data) {
+                    Some(data_url) => data_url,
+                    None => continue, // unreadable file — drop the part, don't send garbage
+                }
+            } else {
+                image.data.clone()
+            };
             // Prefer the mime type stored with the message (set at upload time).
             // If missing, parse from the data URL header or infer from magic bytes.
-            let parsed = crate::image_utils::parse_image_data(&image.data);
+            let parsed = crate::image_utils::parse_image_data(&data);
             let mime_type = image
                 .mime_type
                 .clone()
                 .or_else(|| parsed.map(|p| p.mime_type.to_string()))
                 .unwrap_or_else(|| "image/png".to_string());
-            let base64_data = parsed.map(|p| p.base64).unwrap_or(image.data.as_str());
+            let base64_data = parsed.map(|p| p.base64).unwrap_or(data.as_str());
 
             parts.push(ContentPart::image_base64(base64_data, mime_type));
         }
@@ -2314,5 +2367,134 @@ mod tests {
         assert!(cache
             .resolve_reference(&format!("$cached:{}", ref2))
             .is_some());
+    }
+}
+
+#[cfg(test)]
+mod image_reference_tests {
+    use super::*;
+
+    fn tiny_png_data_url() -> String {
+        let img = image::RgbaImage::from_pixel(4, 4, image::Rgba([1, 2, 3, 255]));
+        let mut buf = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut buf, image::ImageFormat::Png).unwrap();
+        let b64 =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, buf.into_inner());
+        format!("data:image/png;base64,{}", b64)
+    }
+
+    /// Full round trip: persist a data URL to a file, resolve the reference
+    /// back — byte-identical payload and mime.
+    #[test]
+    fn persist_then_resolve_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let images_dir = dir.path().join("images");
+        let data_url = tiny_png_data_url();
+
+        let reference =
+            crate::session::SessionManager::persist_image_to_file(&data_url, &images_dir)
+                .expect("persist should succeed");
+        assert!(reference.starts_with("/api/images/"), "got: {reference}");
+        assert!(reference.ends_with(".png"));
+
+        let resolved =
+            load_image_reference_from(&reference, &images_dir).expect("reference should resolve");
+        assert_eq!(resolved, data_url, "round trip must be byte-identical");
+    }
+
+    /// Re-persisting the same image must produce the SAME file — save_history
+    /// runs every turn over the full history (review finding: uuid names
+    /// orphaned one file per image per turn).
+    #[test]
+    fn persist_is_idempotent_per_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let images_dir = dir.path().join("images");
+        let data_url = tiny_png_data_url();
+
+        let first = crate::session::SessionManager::persist_image_to_file(&data_url, &images_dir)
+            .expect("first persist");
+        let second = crate::session::SessionManager::persist_image_to_file(&data_url, &images_dir)
+            .expect("second persist");
+        assert_eq!(first, second, "same content must map to the same file");
+
+        // Different content → different file.
+        let img2 = image::RgbaImage::from_pixel(4, 4, image::Rgba([9, 9, 9, 255]));
+        let mut buf = std::io::Cursor::new(Vec::new());
+        img2.write_to(&mut buf, image::ImageFormat::Png).unwrap();
+        let b64 =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, buf.into_inner());
+        let other = format!("data:image/png;base64,{}", b64);
+        let third = crate::session::SessionManager::persist_image_to_file(&other, &images_dir)
+            .expect("other persist");
+        assert_ne!(
+            first, third,
+            "different content must map to different files"
+        );
+
+        // And exactly two files exist on disk.
+        let count = std::fs::read_dir(&images_dir).unwrap().count();
+        assert_eq!(count, 2, "no orphan duplicates expected, got {count}");
+    }
+
+    #[test]
+    fn resolve_rejects_unsafe_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let images_dir = dir.path().join("images");
+        std::fs::create_dir_all(&images_dir).unwrap();
+        for bad in [
+            "/api/images/../../etc/passwd",
+            "/api/images/a/b.png",
+            "/api/images/",
+            "/api/images/.hidden.png",
+            "/api/images/x..png",
+            "http://evil/x.png",
+        ] {
+            assert!(
+                load_image_reference_from(bad, &images_dir).is_none(),
+                "must reject: {bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_missing_file_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(load_image_reference_from("/api/images/nope.png", dir.path()).is_none());
+    }
+
+    /// to_core_multimodal must drop (not mangle) image parts whose reference
+    /// cannot be resolved — sending a URL as base64 produces garbage the
+    /// backend may accept silently.
+    #[test]
+    fn to_core_multimodal_drops_unresolvable_reference() {
+        let mut msg = AgentMessage::user("看这张图");
+        msg.images = Some(vec![AgentMessageImage {
+            data: "/api/images/definitely-missing.png".to_string(),
+            mime_type: Some("image/png".to_string()),
+        }]);
+        let core = msg.to_core();
+        let parts = match core.content {
+            neomind_core::Content::Parts(parts) => parts,
+            other => panic!("expected parts, got {:?}", other),
+        };
+        // Text part only — the broken image must not appear.
+        assert_eq!(parts.len(), 1, "unresolvable image must be dropped");
+    }
+
+    /// A well-formed data URL message keeps its image part (regression guard
+    /// for the reference-handling change).
+    #[test]
+    fn to_core_multimodal_keeps_data_url_image() {
+        let mut msg = AgentMessage::user("看这张图");
+        msg.images = Some(vec![AgentMessageImage {
+            data: tiny_png_data_url(),
+            mime_type: None,
+        }]);
+        let core = msg.to_core();
+        let parts = match core.content {
+            neomind_core::Content::Parts(parts) => parts,
+            other => panic!("expected parts, got {:?}", other),
+        };
+        assert_eq!(parts.len(), 2, "text + one image part");
     }
 }

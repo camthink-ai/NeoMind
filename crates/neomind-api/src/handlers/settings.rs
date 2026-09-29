@@ -401,6 +401,22 @@ pub struct AgentDefaultsRequest {
     pub chat_history_depth: Option<usize>,
     /// Wall-clock budget for one interactive chat turn, seconds (60-7200)
     pub chat_turn_timeout_secs: Option<u64>,
+    /// LLM instance id used for background conversation summarization.
+    /// Outer None = field not sent, keep current value; Some(None) = clear
+    /// (use each session's own model); Some(Some(id)) = dedicated instance.
+    #[serde(default, deserialize_with = "double_option")]
+    pub summary_instance_id: Option<Option<String>>,
+}
+
+/// Deserializer that distinguishes "field absent" from "field is null" for
+/// `Option<Option<T>>` — lets callers clear the setting by sending null.
+fn double_option<'de, D, T>(de: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    use serde::Deserialize as _;
+    Ok(Some(Option::<T>::deserialize(de)?))
 }
 
 /// Get agent execution defaults (max_rounds, timeout, concurrency, sampling).
@@ -469,6 +485,9 @@ pub async fn update_agent_defaults(
             .chat_turn_timeout_secs
             .map(|s| s.clamp(60, 7200))
             .unwrap_or(existing.chat_turn_timeout_secs),
+        summary_instance_id: req
+            .summary_instance_id
+            .unwrap_or(existing.summary_instance_id),
     };
 
     let settings_store = SettingsStore::open_default()

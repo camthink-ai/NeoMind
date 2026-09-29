@@ -207,7 +207,18 @@ pub async fn process_stream_events_with_safeguards(
     // Same cap the non-streaming path applies — the server chat entry
     // points (SSE/WS) all stream, so without this the advertised setting
     // would never run for real conversations.
-    crate::agent::apply_chat_history_depth(&mut history_messages);
+    let drained = crate::agent::apply_chat_history_depth(&mut history_messages);
+
+    // [summary alignment] summary_up_to_index is stored against the FULL
+    // history; after the front drain the indices shift. Without recentring,
+    // the summary filter dropped `drained` extra messages the summary does
+    // NOT cover — a silent content gap between summary and window.
+    let summary_up_to_index =
+        crate::agent::adjust_summary_index_after_drain(summary_up_to_index, drained);
+
+    // [image budget] history images are re-sent (and really charged) every
+    // turn; keep only the most recent ones.
+    crate::agent::strip_stale_images(&mut history_messages);
 
     // === DYNAMIC CONTEXT WINDOW: Get model's actual capacity ===
     let max_context = llm_interface.max_context_length().await;
@@ -333,6 +344,15 @@ pub async fn process_stream_events_with_safeguards(
         // (observed: 11 rounds, no final text).
         let mut list_only_dead_end_injected = false;
 
+        // === NARRATION-COLLAPSE GUARD (at most once per turn) ===
+        // Small models sometimes narrate a promised action ("我现在使用
+        // image_edit 工具…") WITHOUT emitting any tool call. Ending the turn
+        // there hands the user a promise instead of a result (observed:
+        // 0.3s turn end, then "你没有使用工具"). One pointed retry, then the
+        // second narration is accepted as the final answer.
+        let mut narration_nudged = false;
+        let mut narration_nudge_pending: Option<String> = None;
+
         // === INTENT & PLAN VISUALIZATION ===
         // Send intent and plan events first to show user what's happening
         yield intent_event;
@@ -367,7 +387,12 @@ pub async fn process_stream_events_with_safeguards(
                 let recently_executed: Vec<&str> = recently_executed_tools.iter().map(|s| s.as_str()).collect();
                 drop(state_guard);
 
-                let context_msg = if recently_executed.is_empty() {
+                let context_msg = if let Some(nudge) = narration_nudge_pending.take() {
+                    // Narration-collapse retry: a pointed nudge replaces the
+                    // generic round prompt so the model can't pattern-match
+                    // its way around it.
+                    nudge
+                } else if recently_executed.is_empty() {
                     format!(
                         "Round {} of processing. Call ALL needed tools in ONE batch using JSON array format. Give the final response if no more tools needed.",
                         tool_iteration_count + 1
@@ -1370,7 +1395,43 @@ pub async fn process_stream_events_with_safeguards(
                 tracing::debug!("ReAct loop completed after {} tool iterations", tool_iteration_count + 1);
             } else {
                 // No tool calls - save response directly.
-                //
+                let mut raw_response = buffer.clone();
+
+                // === NARRATION-COLLAPSE GUARD ===
+                // The model promised an action in words but emitted no tool
+                // call. Intercept BEFORE the final-save path: record what it
+                // said, nudge once, and run another round. Fires only with
+                // round + wall-clock budget left; a second narration falls
+                // through and is accepted as the final answer.
+                if !narration_nudged
+                    && tool_iteration_count < MAX_TOOL_ITERATIONS - 1
+                    && turn_started_at.elapsed() < turn_wall_clock_budget
+                    && crate::agent::is_narration_without_action(&raw_response)
+                {
+                    narration_nudged = true;
+                    tracing::info!(
+                        round = tool_iteration_count + 1,
+                        chars = raw_response.len(),
+                        "Narration without tool call — nudging once"
+                    );
+                    yield AgentEvent::progress(
+                        "Retrying — promised action was not executed...".to_string(),
+                        "executing",
+                        0,
+                    );
+                    // The narration was already streamed to the user; record
+                    // it so the retry round sees what was said.
+                    let said = remove_tool_calls_from_response(&raw_response);
+                    internal_state
+                        .write()
+                        .await
+                        .push_message(AgentMessage::assistant(&said));
+                    tool_iteration_count += 1;
+                    narration_nudge_pending = Some(crate::agent::NARRATION_NUDGE_PROMPT.to_string());
+                    yield AgentEvent::IntermediateEnd;
+                    continue 'multi_round_loop;
+                }
+
                 // `buffer` holds *every* streamed chunk for this round and is the
                 // complete response. `content_before_tools` is only ever assigned
                 // the slice of content sitting in front of a suspected tool-call
@@ -1383,7 +1444,6 @@ pub async fn process_stream_events_with_safeguards(
                 // call was detected this round, nothing needs excluding — use the
                 // full buffer. Any residual tool-call JSON is stripped below by
                 // remove_tool_calls_from_response.
-                let mut raw_response = buffer.clone();
 
                 // === RECOVERY: Incomplete tool call JSON ===
                 // LLM stopped mid-tool-call (e.g. backend token limit).

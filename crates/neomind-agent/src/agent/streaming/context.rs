@@ -124,28 +124,19 @@ pub fn build_context_window_with_config(
     // [hard budget] System/user messages bypass the per-message budget check
     // by design (priority keep) — but on very long sessions the kept set
     // alone could exceed max_tokens, and the oversized prompt then hard-fails
-    // at the LLM. Enforce the budget by evicting the OLDEST non-system
-    // messages until it fits. System messages are never evicted (platform
-    // prompt); the most recent user intent is preserved by evicting oldest-
-    // first. Degrades gracefully instead of failing the request.
+    // at the LLM. Enforce the budget by evicting until it fits. System
+    // messages are never evicted (platform prompt). User messages carry the
+    // conversation's exact wording (instructions to reproduce verbatim), so
+    // they are evicted LAST: pass 1 drops older assistant/tool messages,
+    // pass 2 touches user messages only when nothing else remains.
     let mut total: usize = selected_messages.iter().map(estimate_message_tokens).sum();
     if total > max_tokens {
-        let mut evict_from = 0;
-        while total > max_tokens {
-            // Find the next evictable (non-system) message from the front.
-            let candidate = selected_messages[evict_from..]
-                .iter()
-                .position(|m| m.role != "system");
-            match candidate {
-                Some(offset) => {
-                    let idx = evict_from + offset;
-                    total -= estimate_message_tokens(&selected_messages[idx]);
-                    selected_messages.remove(idx);
-                    evict_from = idx;
-                }
-                None => break, // only system messages left — nothing more to evict
-            }
-        }
+        evict_until_fits(&mut selected_messages, &mut total, max_tokens, |m| {
+            m.role != "system" && m.role != "user"
+        });
+        evict_until_fits(&mut selected_messages, &mut total, max_tokens, |m| {
+            m.role != "system"
+        });
     }
 
     selected_messages
@@ -158,6 +149,29 @@ fn message_priority(role: &str) -> MessagePriority {
         "user" => MessagePriority::User,
         "assistant" => MessagePriority::Assistant,
         _ => MessagePriority::Tool,
+    }
+}
+
+/// Evict oldest-first the messages matching `evictable` until `total` fits
+/// `max_tokens`, or nothing matching remains. Updates `total` in place.
+fn evict_until_fits(
+    messages: &mut Vec<AgentMessage>,
+    total: &mut usize,
+    max_tokens: usize,
+    evictable: impl Fn(&AgentMessage) -> bool,
+) {
+    let mut evict_from = 0;
+    while *total > max_tokens {
+        let candidate = messages[evict_from..].iter().position(&evictable);
+        match candidate {
+            Some(offset) => {
+                let idx = evict_from + offset;
+                *total -= estimate_message_tokens(&messages[idx]);
+                messages.remove(idx);
+                evict_from = idx;
+            }
+            None => break,
+        }
     }
 }
 
@@ -291,4 +305,60 @@ fn compact_tool_results_stream_with_config(
 
     result.reverse();
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Hard-budget eviction must drop assistant/tool filler BEFORE user
+    /// messages — the user's exact wording is the thing follow-up turns need
+    /// most (field failure: the model lost "厦门市集美区" and had to grep the
+    /// session DB for its own conversation).
+    #[test]
+    fn hard_budget_evicts_user_messages_last() {
+        let filler = AgentMessage::assistant("x".repeat(2000));
+        let user1 = AgentMessage::user("给图片加上文字 厦门市集美区");
+        let user2 = AgentMessage::user("按照我说的加上文字就好");
+        let sys = AgentMessage::system("platform prompt");
+
+        let filler_tokens = estimate_message_tokens(&filler);
+        // Budget sized so the kept set (system + 2 users + recent fillers)
+        // overflows and at least ~2 fillers must be evicted — but users are
+        // small enough to always fit once fillers are gone.
+        let budget = estimate_message_tokens(&sys)
+            + estimate_message_tokens(&user1)
+            + estimate_message_tokens(&user2)
+            + filler_tokens
+            + filler_tokens / 2;
+
+        let mut messages = vec![sys, user1];
+        for _ in 0..6 {
+            messages.push(filler.clone());
+        }
+        messages.push(user2);
+
+        let config = CompactionConfig::for_context_size(8_000);
+        let out = build_context_window_with_config(&messages, budget, &config);
+
+        let surviving_users: Vec<&str> = out
+            .iter()
+            .filter(|m| m.role == "user")
+            .map(|m| &m.content[..])
+            .collect();
+        assert!(
+            surviving_users.iter().any(|c| c.contains("厦门市集美区")),
+            "user wording must survive hard-budget eviction, got: {:?}",
+            surviving_users
+        );
+        assert!(
+            surviving_users
+                .iter()
+                .any(|c| c.contains("按照我说的加上文字就好")),
+            "the most recent user message must survive, got: {:?}",
+            surviving_users
+        );
+        // System prompt is never evicted.
+        assert!(out.first().is_some_and(|m| m.role == "system"));
+    }
 }

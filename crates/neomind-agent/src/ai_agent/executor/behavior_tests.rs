@@ -1890,3 +1890,75 @@ async fn daily_run_cap_applies_to_every_mode() {
         second.error
     );
 }
+
+/// Narration collapse: round 1 PROMISES a tool action in words ("我现在使用
+/// echo 工具…") without emitting a call. Without the guard the run would end
+/// with that promise as the conclusion (the original field failure); with the
+/// guard, one nudge round recovers the call and the task completes.
+#[tokio::test]
+async fn narration_collapse_nudges_once_and_recovers() {
+    let rt = MockLlmRuntime::new(vec![
+        MockResponse::text("好的，我现在使用 echo 工具来处理。"),
+        MockResponse::tool_call("echo", serde_json::json!({ "msg": "recovered" })),
+        MockResponse::text("done after recovery"),
+    ]);
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt.clone());
+    let (executor, agent, registry) = build_harness().await;
+    let (filtered_tools, tool_name_map) =
+        AgentExecutor::filter_tools(&registry, &agent.tool_config);
+    let mut messages = base_messages();
+    let out = executor
+        .run_tool_loop(
+            &agent,
+            &registry,
+            &rt_dyn,
+            &filtered_tools,
+            &mut messages,
+            "exec-narration",
+            30,
+            &tool_name_map,
+            None,
+        )
+        .await;
+
+    assert_eq!(
+        out.final_text, "done after recovery",
+        "the narration promise must NOT be the run's conclusion"
+    );
+    assert_eq!(rt.call_count(), 3, "nudge round + tool round + final round");
+    assert_eq!(out.stop_reason, StopReason::NaturalCompletion);
+}
+
+/// The guard fires AT MOST ONCE: if the model narrates again after the
+/// nudge, the second narration is accepted as the final answer — no loop.
+#[tokio::test]
+async fn repeated_narration_is_accepted_as_final() {
+    let rt = MockLlmRuntime::new(vec![
+        MockResponse::text("好的，我现在使用 echo 工具来处理。"),
+        MockResponse::text("我将使用 echo 工具处理这件事。"),
+    ]);
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt.clone());
+    let (executor, agent, registry) = build_harness().await;
+    let (filtered_tools, tool_name_map) =
+        AgentExecutor::filter_tools(&registry, &agent.tool_config);
+    let mut messages = base_messages();
+    let out = executor
+        .run_tool_loop(
+            &agent,
+            &registry,
+            &rt_dyn,
+            &filtered_tools,
+            &mut messages,
+            "exec-narration-2",
+            30,
+            &tool_name_map,
+            None,
+        )
+        .await;
+
+    assert_eq!(
+        out.final_text, "我将使用 echo 工具处理这件事。",
+        "second narration is the accepted final answer"
+    );
+    assert_eq!(rt.call_count(), 2, "exactly one nudge — no loop");
+}

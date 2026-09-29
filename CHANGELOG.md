@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+Everything below traces back to one support transcript: a user asked for a watermarked copy of a meter photo, and the session failed six different ways — an uncallable tool, an unservable image, a model that narrated actions instead of taking them, a compactor that paraphrased the user's exact words away, a token budget that didn't count images, and no way for the user to see or steer any of it. Each layer now has a fix and a test that fails without it.
+
+### fix(agent): a small model could not call image_edit correctly
+- The published `operations` schema declared only a `type` enum — nothing anywhere said that `draw_text` needs `text`, `crop` needs `x,y,width,height`. Weak models guessed, serde rejected the whole call with a bare `missing field \`x\``, and the model had no way to self-correct. The schema is now a per-type `oneOf` with explicit `required`, and a pre-parse `validate_operations` returns errors that name the failing operation index and carry a per-type cheat sheet.
+- `draw_text` coordinates are optional: the watermark ask ("put the current time on it") routinely arrives without any, and a hard failure aborted the whole pipeline. Omitted x/y now default to centered, surfaced as a `warnings` entry so the model can adjust.
+- Every operation reports `pixels_changed`, and a zero-pixel edit warns: the "watermark was never visible" failure used to return plain success, which the model relayed as *done and verified*.
+
+### fix(api): the flat image route regressed to a 400
+- The img-T1 storage rework made `GET /api/images/<file>` require the three-segment device layout, breaking every URL `image_edit` returns — chat markdown images rendered as broken. Both layouts are served again; the handler's parsing/anti-traversal logic is shared between them and unit-tested for each.
+
+### feat(chat): the narration-collapse guard — when the model says it will and doesn't
+- A text-only round that promises an action ("我现在使用 image_edit 工具…") used to end the turn with that promise as the answer. All three tool loops (text chat, multimodal chat, scheduled agents) now detect the promise, record what was said, and run one pointed retry; a second narration is accepted. The behavior tests this shipped with caught the guard being dead code on the scheduled path's legacy text branch before it ever ran in production.
+
+### feat(chat): context compression you can see and steer
+- The usage ring's card gains **Compact** and **Clear** actions (`POST /api/sessions/:id/compact` with force semantics, `POST /api/sessions/:id/clear`), backed by `end` events now carrying the model's measured window (`maxContextTokens`), so the meter's denominator is the real one.
+- Summaries are generated from a structured template (tasks / verbatim user instructions / entities / open items) instead of free-form paraphrase; a new optional `summary_instance_id` setting routes compaction to a smaller dedicated instance; and a failed summary LLM now writes a deterministic no-LLM digest — the summarized messages are about to be filtered out of the window, so compaction must complete with *something*.
+
+### fix(agent): the user's exact words survive compression
+- The last three user messages are never covered by a summary — a paraphrase loses the draw-text string, the threshold, the name. Hard-budget eviction now drops assistant/tool filler before user messages.
+- Store-side and context-side summary boundaries used opposite conventions (`>=` index vs `> index`): one message per cycle was dropped without being summarized, and the clamp could cover the boundary user message outright (worst case: the first user message of a young session). Both sides now share one exclusive-boundary form; an exhaustive test enumerates every covered×protected pair.
+- `chat_history_depth`'s front-drain shifted indices under `summary_up_to_index`, silently double-dropping messages between summary and window; the drain count is now subtracted back.
+
+### fix(agent): image chats stopped fitting their own budget
+- Per-image token cost was estimated at 85; real vision backends charge 700–2000+. Now 1024, and history images are stripped beyond the two most recent image-bearing turns (older ones are already described in the assistant's own replies).
+- Chat images are persisted as content-hash files under `data/images/` with only the served `/api/images/<file>` reference stored — redb size, session-restore RAM, and the history API payload all stop carrying megabytes of base64 per message. References hydrate back to bytes for the LLM where needed; an unresolvable one is dropped from the prompt rather than sent as garbage base64.
+
+### feat(chat): three prompt rules, locked by tests
+- Tool-produced images must be embedded (`![desc](url)`), never answered with a file path or `ls` output; image edits apply exactly what was asked — no unrequested annotations, no re-asking when the request already names image and content; the language policy explicitly covers reports, tables, and tool-result summaries, not just conversational replies.
+
+### test
+- `MockLlmRuntime`-driven behavior tests cover the narration guard on all three loops; compact/clear are exercised through the HTTP router (force mode, fallback summary, protection floor, ghost-summary reset); image persistence is asserted idempotent per content; the summarization boundary invariant is enumerated exhaustively.
+
+---
+
 ## [1.1.0] - 2026-09-24 — the agent kernel: three execution shapes, one runtime, and a conclusion you can check
 
 The three milestones of the agent kernel, released together. **M0** made a run and the value it publishes travel one path. **M1** added the structured agent — a single constrained inference whose validated fields reach dashboards, rules and data-push as ordinary data sources. **M2** made an agent's inputs expressible ("all of these, inside this window") and its outputs checkable (the execution behind an alert, and what the operator said when they disagreed). Alongside them, a run of correctness fixes that had each been losing data without saying so.

@@ -109,6 +109,8 @@ export type ServerMessage =
       promptTokens: number
       systemPromptTokens?: number
       toolTokens?: number
+      maxContextTokens?: number
+      usageRatio?: number
     } }
   // Cancel acknowledged (server-side reply to __CANCEL__); no trailing
   // 'end' is guaranteed on this path, so stream state must reset HERE.

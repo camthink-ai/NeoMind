@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils"
 import { textMini, textNano } from "@/design-system/tokens/typography"
 import { formatTimestamp } from "@/lib/utils/format"
 import { cleanToolCallJson, mergeMessagesForDisplay } from "@/lib/messageUtils"
+import { getServerOrigin } from "@/lib/api"
 import { isThinkingDuplicate } from "./toolCallUtils"
 import { MarkdownMessage } from "./MarkdownMessage"
 import { ThinkingBlock } from "./ThinkingBlock"
@@ -59,7 +60,11 @@ function MessageImages({ images }: { images: ChatImage[] }) {
       {images.map((img, idx) => (
         <img
           key={idx}
-          src={img.data}
+          src={img.data.startsWith('/api/images/')
+            // Persisted reference form — prepend the server origin (the
+            // webview origin differs from the API in Tauri / Vite dev).
+            ? getServerOrigin() + img.data
+            : img.data}
           alt={`Image ${idx + 1}`}
           className="rounded-lg max-w-full max-h-64 object-cover"
           loading="lazy"

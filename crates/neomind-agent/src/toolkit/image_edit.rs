@@ -135,8 +135,14 @@ pub enum Operation {
     },
     #[serde(rename = "draw_text")]
     DrawText {
-        x: i32,
-        y: i32,
+        // Position is optional: the watermark case ("draw the current time")
+        // routinely arrives without coordinates, and a hard failure on a
+        // missing `x` aborts the whole pipeline. Missing x/y default to
+        // centering — see `default_text_position`.
+        #[serde(default)]
+        x: Option<i32>,
+        #[serde(default)]
+        y: Option<i32>,
         text: String,
         #[serde(default = "default_rect_color")]
         color: Color,
@@ -319,7 +325,7 @@ impl Tool for ImageEditTool {
  IMPORTANT — ONE CALL = WHOLE PIPELINE: pass all operations for an image as a single `operations` array (applied in order). Do NOT chain multiple image_edit calls for one task. Example: crop + draw label in one call, not three.\n\n\
  IMAGE ARGUMENT: use `\"image\": \"$cached:user_image\"` for an image the user uploaded to chat ($cached:user_image_1, _2, ... for additional); otherwise data URL, http(s) URL, base64, or a local path from a prior call.\n\n\
  Use `vision` (not image_edit) to ANALYZE image content. If you need to verify the edit, call `vision` with the returned path once.\n\n\
- Operation types and per-op fields are defined in the `operations` schema below (crop, draw_rect/circle/line/arrow/polygon/text, blur_rect)."
+ Required fields per operation type: crop/draw_rect/blur_rect: x,y,width,height; draw_circle: cx,cy,radius; draw_line/draw_arrow: x1,y1,x2,y2; draw_polygon: points:[{x,y},...]; draw_text: text (x,y optional — defaults to centered, good for watermarks). Pixel coords origin top-left, Y down. Colors are #RRGGBB or #RRGGBBAA hex strings."
     }
 
     fn parameters(&self) -> Value {
@@ -334,16 +340,127 @@ impl Tool for ImageEditTool {
                 "operations": {
                     "type": "array",
                     "maxItems": 50,
+                    "description": "Each operation needs a `type` plus that type's required fields (declared per-type in the items oneOf schema). Pixel coords origin top-left, Y down. Colors are #RRGGBB or #RRGGBBAA hex strings.",
                     "items": {
                         "type": "object",
-                        "properties": {
-                            "type": {
-                                "type": "string",
-                                "enum": ["crop", "draw_rect", "draw_circle", "draw_line", "draw_arrow", "draw_polygon", "draw_text", "blur_rect"]
+                        "description": "One edit operation. Required fields per type: crop/draw_rect/blur_rect: x,y,width,height; draw_circle: cx,cy,radius; draw_line/draw_arrow: x1,y1,x2,y2; draw_polygon: points:[{x,y},...]; draw_text: text (x,y optional, defaults to centered).",
+                        "oneOf": [
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "type": { "type": "string", "enum": ["crop"] },
+                                    "x": { "type": "integer" },
+                                    "y": { "type": "integer" },
+                                    "width": { "type": "integer" },
+                                    "height": { "type": "integer" }
+                                },
+                                "required": ["type", "x", "y", "width", "height"]
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "type": { "type": "string", "enum": ["draw_rect"] },
+                                    "x": { "type": "integer" },
+                                    "y": { "type": "integer" },
+                                    "width": { "type": "integer" },
+                                    "height": { "type": "integer" },
+                                    "color": { "type": "string" },
+                                    "stroke_width": { "type": "integer" },
+                                    "fill": { "type": "string" }
+                                },
+                                "required": ["type", "x", "y", "width", "height"]
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "type": { "type": "string", "enum": ["draw_circle"] },
+                                    "cx": { "type": "integer" },
+                                    "cy": { "type": "integer" },
+                                    "radius": { "type": "integer" },
+                                    "color": { "type": "string" },
+                                    "stroke_width": { "type": "integer" },
+                                    "fill": { "type": "string" }
+                                },
+                                "required": ["type", "cx", "cy", "radius"]
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "type": { "type": "string", "enum": ["draw_line"] },
+                                    "x1": { "type": "integer" },
+                                    "y1": { "type": "integer" },
+                                    "x2": { "type": "integer" },
+                                    "y2": { "type": "integer" },
+                                    "color": { "type": "string" },
+                                    "stroke_width": { "type": "integer" }
+                                },
+                                "required": ["type", "x1", "y1", "x2", "y2"]
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "type": { "type": "string", "enum": ["draw_arrow"] },
+                                    "x1": { "type": "integer" },
+                                    "y1": { "type": "integer" },
+                                    "x2": { "type": "integer" },
+                                    "y2": { "type": "integer" },
+                                    "color": { "type": "string" },
+                                    "stroke_width": { "type": "integer" },
+                                    "head_length": { "type": "integer" }
+                                },
+                                "required": ["type", "x1", "y1", "x2", "y2"]
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "type": { "type": "string", "enum": ["draw_polygon"] },
+                                    "points": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "x": { "type": "integer" },
+                                                "y": { "type": "integer" }
+                                            },
+                                            "required": ["x", "y"]
+                                        }
+                                    },
+                                    "color": { "type": "string" },
+                                    "stroke_width": { "type": "integer" },
+                                    "fill": { "type": "string" },
+                                    "closed": { "type": "boolean" }
+                                },
+                                "required": ["type", "points"]
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "type": { "type": "string", "enum": ["draw_text"] },
+                                    "text": { "type": "string" },
+                                    "x": { "type": "integer", "description": "optional — defaults to horizontally centered" },
+                                    "y": { "type": "integer", "description": "optional — defaults to vertically centered" },
+                                    "color": { "type": "string" },
+                                    "font_size": { "type": "integer" },
+                                    "background": { "type": "string" },
+                                    "padding": { "type": "integer" }
+                                },
+                                "required": ["type", "text"]
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "type": { "type": "string", "enum": ["blur_rect"] },
+                                    "x": { "type": "integer" },
+                                    "y": { "type": "integer" },
+                                    "width": { "type": "integer" },
+                                    "height": { "type": "integer" },
+                                    "mode": { "type": "string", "enum": ["pixelate", "gaussian"] },
+                                    "intensity": { "type": "integer" }
+                                },
+                                "required": ["type", "x", "y", "width", "height"]
                             }
-                        }
-                    },
-                    "description": "Each operation must have a `type` field. Common fields: x/y/width/height (pixel coords, origin top-left, Y-axis down). Colors are #RRGGBB or #RRGGBBAA hex strings. See tool description for per-operation fields."
+                        ]
+                    }
                 },
                 "output_format": { "type": "string", "enum": ["png", "jpeg", "webp"], "default": "png" },
                 "output_filename": { "type": "string", "description": "Optional filename (no path). If omitted, a UUID-based name is generated." },
@@ -357,6 +474,7 @@ impl Tool for ImageEditTool {
     }
 
     async fn execute(&self, args: Value) -> Result<ToolOutput> {
+        validate_operations(&args)?;
         let params: ImageEditParams = serde_json::from_value(args)
             .map_err(|e| ToolError::InvalidArguments(format!("invalid image_edit args: {}", e)))?;
 
@@ -391,9 +509,38 @@ impl Tool for ImageEditTool {
         }
 
         // 3. Apply operations atomically (fail -> no file written).
-        for op in &params.operations {
-            apply_operation(&mut img, op)
+        // Each op reports `pixels_changed` — the "watermark was never visible"
+        // failure mode (text drawn off-canvas / behind other ops) otherwise
+        // surfaces only when the user complains.
+        let mut warnings: Vec<String> = Vec::new();
+        let mut operations_detail: Vec<Value> = Vec::new();
+        for (idx, op) in params.operations.iter().enumerate() {
+            let before: Option<(Vec<u8>, usize)> = {
+                let bytes = img.as_bytes();
+                (bytes.len() <= PIXEL_DIFF_MAX_BUFFER)
+                    .then(|| (bytes.to_vec(), img.color().channel_count() as usize))
+            };
+            apply_operation(&mut img, op, &mut warnings, idx)
                 .map_err(|e| ToolError::Execution(format!("operation failed: {:?}", e)))?;
+            let pixels_changed =
+                before.and_then(|(buf, ch)| count_changed_pixels(&buf, img.as_bytes(), ch));
+            if let Some(0) = pixels_changed {
+                // Not an error — blur on a uniform region legitimately changes
+                // nothing — but for draw ops it almost always means the edit
+                // landed outside the canvas or was fully occluded.
+                warnings.push(format!(
+                    "operations[{}] ({}): changed 0 pixels — verify coordinates land inside the {}x{} canvas",
+                    idx,
+                    operation_type_name(op),
+                    img.width(),
+                    img.height()
+                ));
+            }
+            operations_detail.push(serde_json::json!({
+                "index": idx,
+                "type": operation_type_name(op),
+                "pixels_changed": pixels_changed,
+            }));
         }
 
         // 4. Encode result.
@@ -412,8 +559,12 @@ impl Tool for ImageEditTool {
             "size_bytes": out_bytes.len(),
             "image_type": mime,
             "operations_applied": params.operations.len(),
+            "operations_detail": Value::Array(operations_detail),
             "status": "success",
         });
+        if !warnings.is_empty() {
+            resp["warnings"] = Value::Array(warnings.into_iter().map(Value::String).collect());
+        }
         if params.include_base64 {
             let b64 =
                 base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &out_bytes);
@@ -506,10 +657,125 @@ fn sanitize_filename(name: &str, expected_ext: &str) -> Result<String> {
     Ok(format!("{}.{}", stem, expected_ext))
 }
 
+/// Required fields per operation type, beyond the `type` tag itself.
+/// `draw_text` position (x/y) is intentionally absent — it defaults to centered.
+fn required_fields_for(op_type: &str) -> &'static [&'static str] {
+    match op_type {
+        "crop" | "draw_rect" | "blur_rect" => &["x", "y", "width", "height"],
+        "draw_circle" => &["cx", "cy", "radius"],
+        "draw_line" | "draw_arrow" => &["x1", "y1", "x2", "y2"],
+        "draw_polygon" => &["points"],
+        "draw_text" => &["text"],
+        _ => &[],
+    }
+}
+
+/// Compact per-type required-fields table, embedded in actionable errors (and
+/// mirrored in the tool schema description) so the LLM can self-correct on the
+/// next round instead of staring at a bare serde "missing field `x`".
+const OPERATIONS_CHEAT_SHEET: &str = "crop/draw_rect/blur_rect: x,y,width,height | draw_circle: cx,cy,radius | draw_line/draw_arrow: x1,y1,x2,y2 | draw_polygon: points:[{x,y},...] | draw_text: text (x,y optional, defaults to centered)";
+
+/// Operation type tag for `operations_detail` reporting.
+fn operation_type_name(op: &Operation) -> &'static str {
+    match op {
+        Operation::Crop { .. } => "crop",
+        Operation::DrawRect { .. } => "draw_rect",
+        Operation::DrawCircle { .. } => "draw_circle",
+        Operation::DrawLine { .. } => "draw_line",
+        Operation::DrawArrow { .. } => "draw_arrow",
+        Operation::DrawPolygon { .. } => "draw_polygon",
+        Operation::DrawText { .. } => "draw_text",
+        Operation::BlurRect { .. } => "blur_rect",
+    }
+}
+
+/// Skip per-op pixel diffing above this buffer size — a full-frame clone per
+/// operation would double memory for huge images for a purely informational stat.
+const PIXEL_DIFF_MAX_BUFFER: usize = 64 * 1024 * 1024;
+
+/// Count pixels whose bytes differ between two same-layout frame buffers.
+/// `None` when lengths differ (layout/dimension change, e.g. crop) or the
+/// channel count is invalid.
+fn count_changed_pixels(before: &[u8], after: &[u8], channels: usize) -> Option<u64> {
+    if channels == 0 || before.len() != after.len() {
+        return None;
+    }
+    Some(
+        before
+            .chunks_exact(channels)
+            .zip(after.chunks_exact(channels))
+            .filter(|(b, a)| b != a)
+            .count() as u64,
+    )
+}
+
+/// Pre-scan raw `operations` JSON for missing required fields before serde
+/// rejects the whole call with an opaque "missing field `x`". Emits an error
+/// that names the failing operation index and exactly what to add.
+fn validate_operations(args: &Value) -> Result<()> {
+    let Some(ops) = args.get("operations").and_then(|v| v.as_array()) else {
+        return Ok(()); // absent / wrong shape — let serde report it
+    };
+    for (i, op) in ops.iter().enumerate() {
+        let Some(obj) = op.as_object() else {
+            continue;
+        };
+        let Some(op_type) = obj.get("type").and_then(|t| t.as_str()) else {
+            return Err(ToolError::InvalidArguments(format!(
+                "operations[{}] has no `type` field. Valid types: crop, draw_rect, draw_circle, draw_line, draw_arrow, draw_polygon, draw_text, blur_rect. Required fields per type: {}",
+                i, OPERATIONS_CHEAT_SHEET
+            )));
+        };
+        let missing: Vec<&str> = required_fields_for(op_type)
+            .iter()
+            .filter(|f| !obj.contains_key(**f))
+            .copied()
+            .collect();
+        if !missing.is_empty() {
+            return Err(ToolError::InvalidArguments(format!(
+                "operations[{}] (type \"{}\") is missing required field(s): {}. Required fields per type: {}",
+                i,
+                op_type,
+                missing.join(", "),
+                OPERATIONS_CHEAT_SHEET
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Resolve draw_text position. When the LLM omits x/y, center the text block
+/// (using the same width estimate as `apply_draw_text`) instead of failing.
+/// Returns `(x, y, defaulted)`.
+fn default_text_position(
+    img: &image::DynamicImage,
+    x: Option<i32>,
+    y: Option<i32>,
+    text: &str,
+    font_size: u32,
+    padding: u32,
+) -> (i32, i32, bool) {
+    let text_w = (text.len() as u32 * font_size * 3 / 5).max(1) + 2 * padding;
+    let text_h = font_size + 2 * padding;
+    let default_x = ((img.width() as i32 - text_w as i32) / 2).max(0);
+    let default_y = ((img.height() as i32 - text_h as i32) / 2).max(0);
+    match (x, y) {
+        (Some(x), Some(y)) => (x, y, false),
+        (None, Some(y)) => (default_x, y, true),
+        (Some(x), None) => (x, default_y, true),
+        (None, None) => (default_x, default_y, true),
+    }
+}
+
 /// Dispatch a single operation against `img`.
+///
+/// `warnings` collects non-fatal fallback notices (e.g. defaulted draw_text
+/// position) surfaced in the tool response so the LLM can adjust next round.
 fn apply_operation(
     img: &mut image::DynamicImage,
     op: &Operation,
+    warnings: &mut Vec<String>,
+    op_index: usize,
 ) -> std::result::Result<(), OpError> {
     match op {
         Operation::Crop {
@@ -614,10 +880,18 @@ fn apply_operation(
             padding,
         } => {
             let font_bytes = probe_font().ok_or(OpError::NoFont)?;
+            let (rx, ry, defaulted) =
+                default_text_position(img, *x, *y, text, *font_size, *padding);
+            if defaulted {
+                warnings.push(format!(
+                    "operations[{}]: draw_text x/y omitted — defaulted to centered ({}, {})",
+                    op_index, rx, ry
+                ));
+            }
             apply_draw_text(
                 img,
-                *x,
-                *y,
+                rx,
+                ry,
                 text,
                 color.0,
                 *font_size,
@@ -1292,6 +1566,205 @@ mod tests {
 
         // Cleanup.
         let _ = std::fs::remove_dir_all(&test_root);
+    }
+
+    /// Regression for the "missing field `x`" failure: a draw_text without
+    /// coordinates must succeed (centered) instead of aborting the whole call.
+    #[tokio::test]
+    async fn draw_text_without_position_defaults_centered() {
+        if probe_font().is_none() {
+            eprintln!("skipping: no system font available");
+            return;
+        }
+        let test_root = scratch_dir("test-tmp-image-edit-center");
+        let tool = ImageEditTool::new(&test_root);
+        let args = serde_json::json!({
+            "image": make_test_png_data_url(200, 100),
+            "operations": [{ "type": "draw_text", "text": "2026-09-29 11:37" }]
+        });
+        let out = tool
+            .execute(args)
+            .await
+            .expect("draw_text without x/y must succeed");
+        assert_eq!(out.data["status"].as_str(), Some("success"));
+        let warnings = out.data["warnings"].as_array().expect("warnings surfaced");
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.as_str().unwrap_or("").contains("centered")),
+            "expected a centered-default warning, got: {:?}",
+            warnings
+        );
+        let _ = std::fs::remove_dir_all(&test_root);
+    }
+
+    /// Missing required fields must yield an actionable error naming the
+    /// operation index and the per-type cheat sheet — not a bare serde
+    /// "missing field `x`" the model cannot recover from.
+    #[tokio::test]
+    async fn missing_required_field_gives_actionable_error() {
+        let tool = ImageEditTool::new("/tmp");
+        let args = serde_json::json!({
+            "image": make_test_png_data_url(20, 20),
+            "operations": [{ "type": "draw_text" }]
+        });
+        let err = tool.execute(args).await.expect_err("must fail");
+        let msg = match err {
+            ToolError::InvalidArguments(m) => m,
+            _ => panic!("expected InvalidArguments"),
+        };
+        assert!(
+            msg.contains("operations[0]"),
+            "error must name the failing index: {}",
+            msg
+        );
+        assert!(
+            msg.contains("text"),
+            "error must name the missing field: {}",
+            msg
+        );
+        assert!(
+            msg.contains("crop/draw_rect/blur_rect"),
+            "error must carry the cheat sheet: {}",
+            msg
+        );
+    }
+
+    #[tokio::test]
+    async fn operation_without_type_gives_actionable_error() {
+        let tool = ImageEditTool::new("/tmp");
+        let args = serde_json::json!({
+            "image": make_test_png_data_url(20, 20),
+            "operations": [{}]
+        });
+        let err = tool.execute(args).await.expect_err("must fail");
+        match err {
+            ToolError::InvalidArguments(m) => {
+                assert!(
+                    m.contains("operations[0]") && m.contains("no `type`"),
+                    "got: {}",
+                    m
+                );
+            }
+            _ => panic!("expected InvalidArguments"),
+        }
+    }
+
+    /// The "watermark was never visible" failure mode: text drawn far
+    /// off-canvas must report `pixels_changed: 0` + a warning instead of a
+    /// bare success the model relays as "done".
+    #[tokio::test]
+    async fn pixels_changed_flags_off_canvas_text() {
+        if probe_font().is_none() {
+            eprintln!("skipping: no system font available");
+            return;
+        }
+        let test_root = scratch_dir("test-tmp-image-edit-offcanvas");
+        let tool = ImageEditTool::new(&test_root);
+        let args = serde_json::json!({
+            "image": make_test_png_data_url(100, 100),
+            "operations": [
+                { "type": "draw_text", "text": "invisible", "x": -5000, "y": -5000 }
+            ]
+        });
+        let out = tool.execute(args).await.expect("execute succeeds");
+        let detail = out.data["operations_detail"][0].clone();
+        assert_eq!(detail["pixels_changed"].as_u64(), Some(0));
+        let warnings = out.data["warnings"].as_array().expect("warnings surfaced");
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.as_str().unwrap_or("").contains("changed 0 pixels")),
+            "expected a 0-pixel warning, got: {:?}",
+            warnings
+        );
+        let _ = std::fs::remove_dir_all(&test_root);
+    }
+
+    /// A visible edit must report a positive pixel count and no 0-pixel warning.
+    #[tokio::test]
+    async fn pixels_changed_positive_for_visible_edit() {
+        let test_root = scratch_dir("test-tmp-image-edit-visible");
+        let tool = ImageEditTool::new(&test_root);
+        let args = serde_json::json!({
+            "image": make_test_png_data_url(100, 100),
+            "operations": [
+                { "type": "draw_rect", "x": 10, "y": 10, "width": 20, "height": 20 }
+            ]
+        });
+        let out = tool.execute(args).await.expect("execute succeeds");
+        let detail = out.data["operations_detail"][0].clone();
+        assert!(
+            detail["pixels_changed"].as_u64().unwrap_or(0) > 0,
+            "visible rect must change pixels, got: {}",
+            detail["pixels_changed"]
+        );
+        assert!(
+            out.data["warnings"]
+                .as_array()
+                .map(|w| w.is_empty())
+                .unwrap_or(true),
+            "no 0-pixel warning expected"
+        );
+        let _ = std::fs::remove_dir_all(&test_root);
+    }
+
+    #[test]
+    fn count_changed_pixels_handles_layout_change() {
+        assert_eq!(
+            count_changed_pixels(&[1, 2, 3, 4], &[1, 2, 3, 4], 4),
+            Some(0)
+        );
+        assert_eq!(
+            count_changed_pixels(&[1, 2, 3, 4], &[1, 2, 9, 4], 4),
+            Some(1)
+        );
+        // Dimension/layout change (e.g. crop) → lengths differ → None.
+        assert_eq!(count_changed_pixels(&[1, 2, 3, 4], &[1, 2], 4), None);
+        assert_eq!(count_changed_pixels(&[1], &[1], 0), None);
+    }
+
+    /// The published JSON schema must declare per-type required fields — the
+    /// old schema only declared the `type` enum, so the LLM had no way to know
+    /// e.g. draw_text needs `text` (and optionally x/y).
+    #[test]
+    fn schema_declares_per_type_required_fields() {
+        let t = ImageEditTool::new("/tmp");
+        let schema = t.parameters();
+        let one_of = schema["properties"]["operations"]["items"]["oneOf"]
+            .as_array()
+            .expect("per-type oneOf in operations items schema");
+        assert_eq!(one_of.len(), 8, "one branch per operation type");
+        let branch = |name: &str| {
+            one_of
+                .iter()
+                .find(|b| b["properties"]["type"]["enum"][0] == name)
+                .unwrap_or_else(|| panic!("missing {} branch", name))
+        };
+        let crop = branch("crop");
+        for f in ["type", "x", "y", "width", "height"] {
+            assert!(
+                crop["required"]
+                    .as_array()
+                    .expect("crop required list")
+                    .iter()
+                    .any(|r| r == f),
+                "crop required must contain {}",
+                f
+            );
+        }
+        let text = branch("draw_text");
+        let req: Vec<&str> = text["required"]
+            .as_array()
+            .expect("draw_text required list")
+            .iter()
+            .map(|r| r.as_str().expect("string entries"))
+            .collect();
+        assert!(req.contains(&"text"), "draw_text must require text");
+        assert!(
+            !req.contains(&"x") && !req.contains(&"y"),
+            "draw_text position must stay optional"
+        );
     }
 }
 

@@ -33,6 +33,26 @@ export const sessionsApi = {
       method: 'DELETE',
     }),
 
+  // Manual context compaction — force a conversation summary now, bypassing
+  // the auto 60% threshold (the "/compact" analog for when the model starts
+  // forgetting).
+  compactSession: (id: string) =>
+    fetchAPI<{
+      sessionId: string
+      summarizedMessages: number
+      newUpToIndex: number
+      fallbackUsed: boolean
+    }>(`/sessions/${id}/compact`, {
+      method: 'POST',
+    }),
+
+  // Clear conversation history but keep the session (the "/clear" analog).
+  // Also resets any stored summary server-side.
+  clearSessionHistory: (id: string) =>
+    fetchAPI<{ sessionId: string; cleared: boolean }>(`/sessions/${id}/clear`, {
+      method: 'POST',
+    }),
+
   // Pending stream recovery (for WebSocket reconnection)
   getPendingStream: (id: string) =>
     fetchAPI<{ hasPending: boolean; sessionId: string; userMessage?: string; content?: string; thinking?: string; stage?: string; elapsed?: number; startedAt?: number }>(`/sessions/${id}/pending`),

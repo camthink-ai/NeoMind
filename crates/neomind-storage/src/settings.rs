@@ -442,6 +442,14 @@ pub struct AgentDefaults {
     /// per-stream duration cap. Default 1800s.
     #[serde(default = "default_agent_chat_turn_timeout")]
     pub chat_turn_timeout_secs: u64,
+    /// LLM instance id used for background conversation summarization
+    /// (compaction). None (default) = use each session's own model. Point this
+    /// at a smaller/faster instance (e.g. a 0.5-2B model) so compaction stops
+    /// competing with the main model for capacity; if the instance cannot be
+    /// resolved the session model is used, and if that fails too a
+    /// deterministic no-LLM digest is written instead.
+    #[serde(default)]
+    pub summary_instance_id: Option<String>,
 }
 
 fn default_agent_max_rounds() -> u32 {
@@ -477,6 +485,7 @@ impl Default for AgentDefaults {
             default_thinking_enabled: None,
             chat_history_depth: default_agent_chat_history_depth(),
             chat_turn_timeout_secs: default_agent_chat_turn_timeout(),
+            summary_instance_id: None,
         }
     }
 }

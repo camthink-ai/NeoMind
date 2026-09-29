@@ -255,4 +255,32 @@ mod tests {
         assert!(prompt.contains("## Environment"));
         assert!(prompt.contains("Device Onboarding Guidance")); // guided onboarding
     }
+
+    #[test]
+    fn test_image_delivery_and_exact_edit_rules_in_prompt() {
+        // Regression guards for the watermark-session failure modes:
+        // the model replied with `ls` output instead of showing the image,
+        // and added unrequested annotations instead of the named text.
+        let prompt = PromptBuilder::new().build_system_prompt();
+        assert!(
+            prompt.contains("Show images you produce"),
+            "must instruct embedding tool-produced images via ![...](url)"
+        );
+        assert!(
+            prompt.contains("![short description](url)"),
+            "must show the exact markdown image syntax"
+        );
+        assert!(
+            prompt.contains("Edits are exact"),
+            "must instruct applying exactly the requested edit"
+        );
+    }
+
+    #[test]
+    fn test_language_policy_covers_reports() {
+        // The model answered a Chinese question with an English technical
+        // report — the policy must explicitly cover non-conversational replies.
+        let prompt = PromptBuilder::new().build_system_prompt();
+        assert!(prompt.contains("tool-result summaries included"));
+    }
 }

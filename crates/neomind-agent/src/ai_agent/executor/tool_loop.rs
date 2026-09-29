@@ -86,6 +86,8 @@ impl AgentExecutor {
         let mut failed_blacklist: HashSet<String> = HashSet::new();
         const FAILED_RETRY_BUDGET: u32 = 3;
         // Duplicate round detection: track tool signatures per round to detect loops.
+        // Narration-collapse guard state: fires at most once (see below).
+        let mut narration_nudged = false;
 
         // Get context window for token-aware compaction
         let context_window = llm_runtime.max_context_length();
@@ -355,9 +357,14 @@ impl AgentExecutor {
                         if !found.is_empty() {
                             found
                         } else {
-                            // No tool calls found anywhere — LLM produced final text
-                            final_text = output.text;
-                            break;
+                            // No tool calls found anywhere — LLM produced
+                            // final text. Fall through with EMPTY tool calls
+                            // so the shared empty-guard below (narration
+                            // nudge → final-text break) handles it — the old
+                            // direct `break` here bypassed that guard, making
+                            // it dead code on the legacy text path (caught by
+                            // the narration behavior test).
+                            Vec::new()
                         }
                     }
                 }
@@ -388,6 +395,44 @@ impl AgentExecutor {
             };
 
             if tool_calls.is_empty() {
+                // === NARRATION-COLLAPSE GUARD (at most once) ===
+                // The model promised an action in words ("我现在使用 X 工具…")
+                // but emitted no tool call. Breaking here ends the run with a
+                // promise as the conclusion. Nudge once with a pointed retry
+                // — same ephemeral-User-message pattern the AllDuplicate
+                // branch uses — and only when round budget remains.
+                if !narration_nudged
+                    && round + 1 < max_rounds
+                    && crate::agent::is_narration_without_action(&remaining_text)
+                {
+                    narration_nudged = true;
+                    tracing::info!(
+                        agent_id = %agent.id,
+                        round = round + 1,
+                        "Narration without tool call — nudging once"
+                    );
+                    self.send_thinking(
+                        &agent.id,
+                        execution_id,
+                        step_num,
+                        "Promised action was not executed — retrying with a nudge",
+                    )
+                    .await;
+                    step_num += 1;
+                    // Record the narration, then the pointed nudge. `messages`
+                    // is this execution's working copy — nothing is persisted
+                    // to session history on this path.
+                    messages.push(Message::new(
+                        MessageRole::Assistant,
+                        Content::text(&remaining_text),
+                    ));
+                    messages.push(Message::new(
+                        MessageRole::User,
+                        Content::text(crate::agent::NARRATION_NUDGE_PROMPT),
+                    ));
+                    round += 1;
+                    continue;
+                }
                 final_text = remaining_text;
                 break;
             }

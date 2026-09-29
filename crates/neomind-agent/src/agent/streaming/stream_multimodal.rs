@@ -60,7 +60,16 @@ pub async fn process_multimodal_stream_events_with_safeguards(
     drop(state_guard);
 
     // === CHAT HISTORY DEPTH — same cap as the text-streaming path ===
-    crate::agent::apply_chat_history_depth(&mut history_messages);
+    let drained = crate::agent::apply_chat_history_depth(&mut history_messages);
+
+    // [summary alignment] shift the full-history summary index into the
+    // drained window's index space — see stream_core's identical block.
+    let summary_up_to_index =
+        crate::agent::adjust_summary_index_after_drain(summary_up_to_index, drained);
+
+    // [image budget] keep images only on the most recent image-bearing user
+    // turns; the current turn's images are pushed to memory after this.
+    crate::agent::strip_stale_images(&mut history_messages);
 
     // Build context window — measure actual prompt overhead instead of guessing.
     // Same budget helper as the text path: the old inline version re-inflated
@@ -655,6 +664,191 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                 buffer.clone()
             };
 
+            // === NARRATION-COLLAPSE GUARD (multimodal path) ===
+            // The original field failure was an IMAGE chat: the model
+            // narrated "我现在使用 image_edit 工具…" without emitting any
+            // tool call and the turn ended with that promise. stream_core
+            // (text path) already nudges once; this mirrors it here. Single
+            // site, no loop-back — the guard fires at most once by
+            // construction.
+            let mut handled_by_nudge = false;
+            if crate::agent::is_narration_without_action(&raw_response) {
+                tracing::info!(chars = raw_response.len(), "Multimodal narration without tool call — nudging once");
+                yield AgentEvent::progress(
+                    "Retrying — promised action was not executed...".to_string(),
+                    "executing",
+                    0,
+                );
+                // The narration was already streamed to the user — record it.
+                let said = remove_tool_calls_from_response(&raw_response);
+                internal_state
+                    .write()
+                    .await
+                    .push_message(AgentMessage::assistant(&said));
+
+                // Nudge round — same collect pattern as the list-only
+                // dead-end continuation above.
+                let nudge_history: Vec<neomind_core::Message> = {
+                    let state_guard = internal_state.read().await;
+                    let config = neomind_core::llm::compaction::CompactionConfig::for_context_size(max_context);
+                    let compacted = super::context::build_context_window_with_config(
+                        &state_guard.memory,
+                        effective_max,
+                        &config,
+                    );
+                    compacted.iter().map(|m| m.to_core()).collect()
+                };
+                let nudge_result = llm_interface
+                    .chat_stream_with_history_thinking(
+                        crate::agent::NARRATION_NUDGE_PROMPT,
+                        &nudge_history,
+                        None,
+                    )
+                    .await;
+                let mut nudge_buffer = String::new();
+                if let Ok(nudge_stream) = nudge_result {
+                    let mut pin = Box::pin(nudge_stream);
+                    while let Some(chunk) =
+                        next_chunk_or_timeout(&mut pin, safeguards.max_stream_duration).await
+                    {
+                        match chunk {
+                            Ok((text, _)) => nudge_buffer.push_str(&text),
+                            Err(_) => break,
+                        }
+                    }
+                }
+                let nudge_tool_calls = parse_tool_calls(&nudge_buffer)
+                    .map(|(_, calls)| calls)
+                    .unwrap_or_default();
+
+                if nudge_tool_calls.is_empty() {
+                    // Escape hatch: the model gave a real answer without
+                    // tools — that IS the final response now.
+                    yield AgentEvent::content(nudge_buffer.clone());
+                    let final_text = remove_tool_calls_from_response(&nudge_buffer);
+                    let final_msg = AgentMessage::assistant(&final_text);
+                    internal_state.write().await.push_message(final_msg);
+                    handled_by_nudge = true;
+                } else {
+                    // Recovered tool calls — execute them (inline pattern
+                    // from the dead-end continuation), then summarize.
+                    yield AgentEvent::IntermediateEnd;
+                    let (large_cache_n, cache_n) = {
+                        let state = internal_state.read().await;
+                        (state.large_data_cache.clone(), state.tool_result_cache.clone())
+                    };
+                    let nudge_inputs: Vec<(String, serde_json::Value)> = nudge_tool_calls
+                        .iter()
+                        .map(|tc| {
+                            (
+                                tc.name.clone(),
+                                resolve_cached_arguments(&tc.arguments, &large_cache_n, &tc.name),
+                            )
+                        })
+                        .collect();
+                    let nudge_futures = futures::stream::iter(nudge_inputs.into_iter().map(
+                        |(name, arguments)| {
+                            let tools_clone = tools.clone();
+                            let cache_clone = cache_n.clone();
+                            async move {
+                                (name.clone(), ToolExecutionResult {
+                                    _name: name.clone(),
+                                    arguments: arguments.clone(),
+                                    result: execute_tool_with_retry(&tools_clone, &cache_clone, &name, arguments.clone()).await,
+                                })
+                            }
+                        },
+                    )).buffer_unordered(6);
+                    let nudge_results: Vec<_> = nudge_futures.collect().await;
+
+                    // Record the assistant-with-tools message + results.
+                    let nudge_msg = AgentMessage::assistant_with_tools(
+                        "",
+                        nudge_tool_calls.iter().map(|tc| ToolCall {
+                            name: tc.name.clone(),
+                            id: String::new(),
+                            arguments: tc.arguments.clone(),
+                            result: None,
+                            round: Some(2),
+                        }).collect(),
+                    );
+                    internal_state.write().await.push_message(nudge_msg);
+
+                    let mut nudge_tool_results: Vec<(String, String)> = Vec::new();
+                    for (name, execution) in nudge_results {
+                        yield AgentEvent::tool_call_start(&name, execution.arguments.clone());
+                        match execution.result {
+                            Ok(output) => {
+                                let result_str = if output.success {
+                                    serde_json::to_string(&output.data).unwrap_or_else(|_| "Success".to_string())
+                                } else {
+                                    output.error.clone().unwrap_or_else(|| "Error".to_string())
+                                };
+                                // Slim + sanitize, same as the main path.
+                                let slimmed_str = {
+                                    let mut state = internal_state.write().await;
+                                    match serde_json::from_str::<serde_json::Value>(&result_str) {
+                                        Ok(mut v) => {
+                                            state.large_data_cache.slim_large_strings_in_json(&mut v, &name);
+                                            serde_json::to_string(&v).unwrap_or_else(|_| result_str.clone())
+                                        }
+                                        Err(_) => result_str.clone(),
+                                    }
+                                };
+                                let sanitized_str = sanitize_tool_result_for_prompt(&slimmed_str);
+                                let display_str = sanitized_str.clone();
+                                yield AgentEvent::tool_call_end(&name, &display_str, output.success);
+                                let mut state = internal_state.write().await;
+                                state.push_message(AgentMessage::tool_result(&name, &sanitized_str));
+                                nudge_tool_results.push((name.clone(), sanitized_str));
+                            }
+                            Err(e) => {
+                                let err_msg = format!("Tool execution failed: {}", e);
+                                yield AgentEvent::tool_call_end(&name, &err_msg, false);
+                                nudge_tool_results.push((name.clone(), err_msg));
+                            }
+                        }
+                    }
+
+                    // Summarize for the user (same fallback chain as the
+                    // main tool path).
+                    let summary_history: Vec<neomind_core::Message> = {
+                        let state_guard = internal_state.read().await;
+                        let compacted = super::super::compact_tool_results(&state_guard.memory, 2);
+                        compacted.iter().map(|msg| msg.to_core()).collect()
+                    };
+                    let summary_prompt = "Based on the tool execution results in the conversation above,                         provide a concise analysis and summary. Do NOT output any tool calls —                         give a direct text response to the user's question.";
+                    let mut final_content = String::new();
+                    if let Ok(summary_stream) = llm_interface
+                        .chat_stream_summary(summary_prompt, &summary_history)
+                        .await
+                    {
+                        let mut pin = Box::pin(summary_stream);
+                        while let Some(chunk) =
+                            next_chunk_or_timeout(&mut pin, safeguards.max_stream_duration).await
+                        {
+                            match chunk {
+                                Ok((text, _)) => {
+                                    final_content.push_str(&text);
+                                    yield AgentEvent::content(text);
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                    }
+                    if is_degenerate_fence_only_output(&final_content) {
+                        let deduped = deduplicate_tool_results(&nudge_tool_results);
+                        final_content = format_tool_results(&deduped);
+                        yield AgentEvent::content(final_content.clone());
+                    }
+                    let final_msg = AgentMessage::assistant(&final_content);
+                    internal_state.write().await.push_message(final_msg);
+                    handled_by_nudge = true;
+                }
+            }
+            // Turn completed by the nudge recovery skips this plain save
+            // path — its content is already recorded and yielded above.
+            if !handled_by_nudge {
             // Detect degenerate fence-only output (e.g. DeepSeek "```") and
             // substitute a safe non-empty fallback so the user/judge never sees
             // a content-less reply. The streamed "```" is already out, but the
@@ -680,6 +874,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
             // Yield any remaining content (skip when degenerate — already yielded fallback)
             if !degenerate && !buffer.is_empty() {
                 yield AgentEvent::content(buffer.clone());
+            }
             }
         }
 

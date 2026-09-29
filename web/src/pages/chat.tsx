@@ -98,7 +98,8 @@ export function ChatPage() {
 
   // Local state
   const [input, setInput] = useState("")
-  const [lastTokenUsage, setLastTokenUsage] = useState<{ promptTokens: number; systemPromptTokens?: number; toolTokens?: number } | null>(null)
+  const [lastTokenUsage, setLastTokenUsage] = useState<{ promptTokens: number; systemPromptTokens?: number; toolTokens?: number; maxContextTokens?: number } | null>(null)
+  const [isCompacting, setIsCompacting] = useState(false)
 
   // Token usage survives reloads/session switches — the context it measured
   // is unchanged until the next reply, so a restored session shows real
@@ -111,7 +112,7 @@ export function ChatPage() {
       setLastTokenUsage(raw ? JSON.parse(raw) : null)
     } catch { setLastTokenUsage(null) }
   }
-  const persistTokenUsage = (sid: string | undefined, usage: { promptTokens: number; systemPromptTokens?: number; toolTokens?: number } | null) => {
+  const persistTokenUsage = (sid: string | undefined, usage: { promptTokens: number; systemPromptTokens?: number; toolTokens?: number; maxContextTokens?: number } | null) => {
     if (!sid) return
     try {
       if (usage) localStorage.setItem(tokenUsageKey(sid), JSON.stringify(usage))
@@ -613,7 +614,11 @@ export function ChatPage() {
   const contextUsage = useMemo(() => {
     if (messages.length === 0 || isWelcomeMode) return null
     const activeBackend = llmBackends.find(b => b.id === activeBackendId)
-    const maxContext = activeBackend?.capabilities?.max_context ?? 8192
+    // Backend-measured window (end event) is authoritative — capability
+    // metadata can lag the live instance config.
+    const maxContext = lastTokenUsage?.maxContextTokens
+      ?? activeBackend?.capabilities?.max_context
+      ?? 8192
     const promptTokens = lastTokenUsage?.promptTokens
     let used: number
     if (promptTokens != null && !isStreaming) {
@@ -660,6 +665,39 @@ export function ChatPage() {
     return <LlmSetupGuide />
   }
 
+  // Manual context compaction — force a summary now (backend bypasses the
+  // auto threshold). Usage normalizes on the next turn.
+  const handleCompact = async () => {
+    if (!sessionId || isCompacting) return
+    setIsCompacting(true)
+    try {
+      const r = await api.compactSession(sessionId)
+      toast({
+        description: r.summarizedMessages > 0
+          ? t('chat:context.compactDone', { count: r.summarizedMessages })
+          : t('chat:context.compactNothing'),
+      })
+    } catch (e) {
+      toast({ title: t('chat:context.compactFailed'), variant: 'destructive' })
+    } finally {
+      setIsCompacting(false)
+    }
+  }
+
+  // Clear this session's history (server + local view), keep the session.
+  const handleClearContext = async () => {
+    if (!sessionId) return
+    try {
+      await api.clearSessionHistory(sessionId)
+      clearMessages()
+      setLastTokenUsage(null)
+      persistTokenUsage(sessionId, null)
+      toast({ description: t('chat:context.clearDone') })
+    } catch (e) {
+      toast({ title: t('chat:context.clearFailed'), variant: 'destructive' })
+    }
+  }
+
   // One composer element shared by its two hosts: centered in the welcome
   // screen (mainstream empty-state pattern — greeting, input, suggestions as
   // one centered group) and docked at the bottom during a conversation. A
@@ -681,6 +719,9 @@ export function ChatPage() {
       activeBackendId={activeBackendId}
       onActivateBackend={activateBackend}
       contextUsage={contextUsage}
+      onCompact={sessionId ? handleCompact : undefined}
+      onClearContext={sessionId ? handleClearContext : undefined}
+      compacting={isCompacting}
       maxHeight={isDesktop ? 160 : 100}
       // Welcome hosts raise the resting height so the input reads as the
       // page's primary action (ChatGPT/Claude empty-state pattern);

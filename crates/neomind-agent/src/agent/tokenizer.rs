@@ -84,7 +84,15 @@ pub fn estimate_message_tokens(message: &crate::agent::AgentMessage) -> usize {
 
 /// Per-image token cost used by every prompt-size estimate, so the chat
 /// thinking-guard and the per-message tally always agree.
-const IMAGE_TOKEN_ESTIMATE: usize = 85;
+///
+/// Real vision backends charge roughly 700–2000+ tokens per image
+/// (GPT-4o ~765 low-res, Qwen-VL ~1–2K, llama.cpp vision 1K+). The old value
+/// of 85 under-counted ~10–20×, so the budget math "fit" prompts that
+/// actually overflowed — precisely on image chats, the platform's flagship
+/// scenario. 1024 is a conservative midpoint; history images are additionally
+/// stripped after a couple of turns (see `strip_stale_images`), so sustained
+/// conversations don't accrue this cost forever.
+const IMAGE_TOKEN_ESTIMATE: usize = 1024;
 
 /// Estimate total prompt tokens for an outbound chat request.
 ///
@@ -396,11 +404,19 @@ mod tests {
 
         let tokens = estimate_prompt_tokens(&[msg], "", "");
 
-        // 100 KB of base64 treated as text would be thousands of tokens; a fixed
-        // image cost plus a few tokens of text must stay small.
+        // 100 KB of base64 treated as text would be thousands of tokens; a
+        // fixed image cost plus a few tokens of text must stay bounded —
+        // and the fixed cost must be a REALISTIC one (≥500): vision backends
+        // charge hundreds to thousands of tokens per image, and under-counting
+        // made the budget math "fit" prompts that actually overflowed.
         assert!(
-            tokens < 500,
+            tokens < 2_000,
             "image base64 bytes leaked into the estimate: got {tokens}",
+        );
+        assert!(
+            tokens >= 500 + 3,
+            "per-image cost unrealistically low (got {tokens}); \
+             IMAGE_TOKEN_ESTIMATE must stay ≥ 500",
         );
     }
 

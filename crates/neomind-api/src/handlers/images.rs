@@ -1,82 +1,90 @@
 //! Static image file server for data/images/.
 //!
-//! Serves files produced by image storage and similar tools via
-//! GET /api/images/<device_id>/<metric>/<timestamp>.<ext>. Used by
-//! chat markdown rendering: the LLM writes `![alt](/api/images/device-001/image/1234567890.jpg)`
+//! Used by chat markdown rendering: the LLM writes `![alt](/api/images/...)`
 //! and the browser fetches the image from this route.
 //!
-//! ## Path Format
+//! ## Path Formats
 //!
-//! Images are stored and served with the following path structure:
-//! ```text
-//! /api/images/<device_id>/<metric>/<timestamp>.<ext>
-//! ```
+//! Two layouts are stored and served under `<data_dir>/images/`:
 //!
-//! For example: `/api/images/camera-001/image/1634567890000.jpg`
+//! - Structured (device snapshot binary storage):
+//!   ```text
+//!   /api/images/<device_id>/<metric>/<timestamp>.<ext>
+//!   ```
+//!   e.g. `/api/images/camera-001/image/1634567890000.jpg`
+//!
+//! - Flat (tool outputs such as `image_edit` / image analyzers):
+//!   ```text
+//!   /api/images/<filename>
+//!   ```
+//!   e.g. `/api/images/550e8400-e29b-41d4-a716-446655440000.png`
+//!
+//!   The img-T1 rework regressed this layout (handler began requiring exactly
+//!   three components); it is the original 201701d0 serving contract.
 
 use axum::{
     extract::{Path, State},
     http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
 };
-use std::path::PathBuf;
 
 use crate::handlers::ServerState;
 
 /// Allowed extensions (lowercase, no leading dot).
 const ALLOWED_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp", "gif", "bmp", "tiff", "bin"];
 
-/// Handler for serving image files from the structured path.
+/// Handler for serving image files from the structured or flat path.
 ///
-/// # Path Format
+/// # Path Formats
 ///
 /// ```text
+/// /api/images/<filename>
 /// /api/images/<device_id>/<metric>/<timestamp>.<ext>
 /// ```
-///
-/// # Arguments
-///
-/// * `path` - The path components: `["<device_id>", "<metric>", "<timestamp>.<ext>"]`
-/// * `state` - Server state containing data_dir
-///
-/// # Security
-///
-/// - Validates all path components to prevent directory traversal
-/// - Resolves canonical paths to prevent symlink escape
-/// - Enforces allowed file extensions
 pub async fn get_image_handler(
     State(state): State<ServerState>,
     Path(path): Path<String>,
 ) -> Response {
-    // 1. Split path into components and validate structure
+    serve_image_request(&state.data_dir, &path).await
+}
+
+/// Parse + validate an `/api/images/` sub-path, then serve the file.
+///
+/// Split from the HTTP handler so tests can exercise both path layouts
+/// without constructing a full `ServerState`.
+async fn serve_image_request(data_dir: &std::path::Path, path: &str) -> Response {
+    // 1. Split path into components and validate structure. Both the flat
+    //    tool-output layout (`<filename>`) and the structured snapshot layout
+    //    (`<device_id>/<metric>/<filename>`) are accepted.
     let components: Vec<&str> = path.split('/').collect();
 
-    if components.len() != 3 {
-        return (
-            StatusCode::BAD_REQUEST,
-            "invalid path format, expected: /api/images/device_id/metric/timestamp.ext",
-        )
-            .into_response();
-    }
-
-    let device_id = components[0];
-    let metric = components[1];
-    let filename = components[2];
+    let rel: &[&str] = match components.len() {
+        1 | 3 => &components,
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                "invalid path format, expected: /api/images/<filename> or /api/images/device_id/metric/timestamp.ext",
+            )
+                .into_response()
+        }
+    };
 
     // 2. Validate path components to prevent traversal
-    if !is_safe_component(device_id) || !is_safe_component(metric) {
+    if rel.len() == 3 && (!is_safe_component(rel[0]) || !is_safe_component(rel[1])) {
         return (StatusCode::BAD_REQUEST, "invalid device_id or metric").into_response();
     }
 
+    let filename = rel[rel.len() - 1];
     if !is_safe_filename(filename) {
         return (StatusCode::BAD_REQUEST, "invalid filename").into_response();
     }
 
-    // 3. Build file path: <data_dir>/images/<device_id>/<metric>/<filename>
-    let images_dir = state.data_dir.join("images");
-    let device_dir = images_dir.join(device_id);
-    let metric_dir = device_dir.join(metric);
-    let file_path: PathBuf = metric_dir.join(filename);
+    // 3. Build file path: <data_dir>/images/[<device_id>/<metric>/]<filename>
+    let images_dir = data_dir.join("images");
+    let mut file_path = images_dir.clone();
+    for component in rel {
+        file_path = file_path.join(component);
+    }
 
     // 4. Resolve canonical paths and verify the file is actually inside
     //    images_dir. This defeats symlinks: if `images_dir/...` is a
@@ -263,5 +271,65 @@ mod tests {
         assert!(!is_safe_component("device 001")); // space
         assert!(!is_safe_component("device+001")); // plus
         assert!(!is_safe_component("caméra")); // non-ascii
+    }
+
+    /// Regression: `image_edit` returns `/api/images/<uuid>.<ext>` (flat,
+    /// single segment) and embeds it in chat markdown — the img-T1 rework
+    /// made the handler reject it with 400, breaking chat image rendering.
+    #[tokio::test]
+    async fn serves_flat_tool_output_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("images")).unwrap();
+        std::fs::write(dir.path().join("images").join("abc.png"), b"\x89PNG-fake").unwrap();
+
+        let resp = serve_image_request(dir.path(), "abc.png").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get(header::CONTENT_TYPE).unwrap(),
+            "image/png"
+        );
+        let body = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"\x89PNG-fake");
+    }
+
+    #[tokio::test]
+    async fn serves_structured_snapshot_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("images").join("cam-001").join("image");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(sub.join("123.jpg"), b"jpegdata").unwrap();
+
+        let resp = serve_image_request(dir.path(), "cam-001/image/123.jpg").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get(header::CONTENT_TYPE).unwrap(),
+            "image/jpeg"
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_two_segment_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let resp = serve_image_request(dir.path(), "a/b.png").await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn rejects_traversal_component_in_structured_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let resp = serve_image_request(dir.path(), "../secret/image/x.png").await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let resp = serve_image_request(dir.path(), "cam-001/../x.png").await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn missing_flat_file_is_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("images")).unwrap();
+        let resp = serve_image_request(dir.path(), "nope.png").await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 }

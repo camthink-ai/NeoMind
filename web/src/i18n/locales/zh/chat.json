@@ -139,7 +139,15 @@
     "toolDefs": "工具定义",
     "history": "对话历史",
     "estimatedHint": "基于字符估算——下次回复后更新为精确值",
-    "msgCount": " · {{count}} 条"
+    "msgCount": " · {{count}} 条",
+    "compact": "立即压缩",
+    "compacting": "压缩中…",
+    "compactDone": "已压缩 {{count}} 条历史消息",
+    "compactNothing": "暂无可压缩的对话内容",
+    "compactFailed": "压缩失败",
+    "clear": "清空对话",
+    "clearDone": "已清空对话历史",
+    "clearFailed": "清空失败"
   },
   "loadEarlier": "加载更早的消息",
   "loadEarlierLoading": "加载中…",
