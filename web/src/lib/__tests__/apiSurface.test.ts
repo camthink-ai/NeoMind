@@ -60,9 +60,11 @@ describe('api surface (post-split composition)', () => {
   // `getMessageChain` (M2-5); 268 -> 269 when the feedback loop added
   // `markMessageFalsePositive`; 269 -> 270 when the About tab added
   // `refreshDataDirUsage`, the manual recompute behind the data-directory
-  // footprint — real, called members, not surface bloat.
-  it('member count grows only by deliberate additions (270)', () => {
+  // footprint — real, called members, not surface bloat. 270 -> 272 when
+  // the context-card actions added `compactSession` and `clearSessionHistory`
+  // (manual compaction endpoints backing the usage ring).
+  it('member count grows only by deliberate additions (272)', () => {
     const keys = Object.keys(api)
-    expect(keys.length).toBe(270)
+    expect(keys.length).toBe(272)
   })
 })

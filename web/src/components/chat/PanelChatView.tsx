@@ -432,11 +432,11 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
       const r = await api.compactSession(sid)
       toast({
         description: r.summarizedMessages > 0
-          ? t("context.compactDone", { count: r.summarizedMessages })
-          : t("context.compactNothing"),
+          ? t("chat:context.compactDone", { count: r.summarizedMessages })
+          : t("chat:context.compactNothing"),
       })
     } catch {
-      toast({ title: t("context.compactFailed"), variant: "destructive" })
+      toast({ title: t("chat:context.compactFailed"), variant: "destructive" })
     } finally {
       setIsCompacting(false)
     }
@@ -448,9 +448,9 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     try {
       await api.clearSessionHistory(sid)
       setPanelMessages([])
-      toast({ description: t("context.clearDone") })
+      toast({ description: t("chat:context.clearDone") })
     } catch {
-      toast({ title: t("context.clearFailed"), variant: "destructive" })
+      toast({ title: t("chat:context.clearFailed"), variant: "destructive" })
     }
   }, [t])
 
