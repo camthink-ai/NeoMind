@@ -644,6 +644,15 @@ export function ChatPage() {
   // through to the real chat UI for a frame on every refetch, flashing the
   // conversation beneath the guide.
   if (!llmBackends || llmBackends.length === 0) {
+    // An install that HAS configured backends never shows the guide while a
+    // load is in flight — including first paint, where llmBackendLoading is
+    // still false (the mount effect flips it a tick later). The marker is
+    // set/cleared by loadBackends on every completed fetch.
+    const knownConfigured = localStorage.getItem('neomind_has_llm_backends') === '1'
+    if (knownConfigured && (llmBackendLoading || !everLoadedBackendsRef.current)) {
+      everLoadedBackendsRef.current = true
+      return <LoadingState variant="page" />
+    }
     if (llmBackendLoading && !everLoadedBackendsRef.current) {
       return <LoadingState variant="page" />
     }

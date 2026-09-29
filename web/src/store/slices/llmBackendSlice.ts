@@ -71,8 +71,14 @@ export const createLlmBackendSlice: StateCreator<
     set({ llmBackendLoading: true, error: null })
     try {
       const data = await api.listLlmBackends()
+      const backends = data.backends || []
+      // Persist whether this install has backends at all. Chat's setup-guide
+      // gate reads the marker synchronously on first paint — without it, a
+      // configured install flashes the setup guide until this fetch lands.
+      if (backends.length > 0) localStorage.setItem('neomind_has_llm_backends', '1')
+      else localStorage.removeItem('neomind_has_llm_backends')
       set({
-        llmBackends: data.backends || [],
+        llmBackends: backends,
         activeBackendId: data.active_id,
         llmBackendLoading: false,
       })
