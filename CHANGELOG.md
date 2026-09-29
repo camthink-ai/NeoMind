@@ -24,6 +24,7 @@ Everything below traces back to one support transcript: a user asked for a water
 
 ### feat(chat): context compression you can see and steer
 - The usage ring's card gains **Compact** and **Clear** actions (`POST /api/sessions/:id/compact` with force semantics, `POST /api/sessions/:id/clear`), on both chat surfaces (page and side panel), backed by `end` events now carrying the model's measured window (`maxContextTokens`), so the meter's denominator is the real one. Both routes are registered in `/api/docs` (swagger + the human-readable routes table).
+- The compaction model is configurable from Settings → Preferences (a selector over the configured LLM instances; "session model" is the default). An instance that no longer resolves falls back to the session model silently.
 - Summaries are generated from a structured template (tasks / verbatim user instructions / entities / open items) instead of free-form paraphrase; a new optional `summary_instance_id` setting routes compaction to a smaller dedicated instance; and a failed summary LLM now writes a deterministic no-LLM digest — the summarized messages are about to be filtered out of the window, so compaction must complete with *something*.
 
 ### fix(agent): the user's exact words survive compression

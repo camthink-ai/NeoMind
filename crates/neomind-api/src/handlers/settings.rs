@@ -446,6 +446,7 @@ pub async fn get_agent_defaults(
         "default_thinking_enabled": config.default_thinking_enabled,
         "chat_history_depth": config.chat_history_depth,
         "chat_turn_timeout_secs": config.chat_turn_timeout_secs,
+        "summary_instance_id": config.summary_instance_id,
     }))
 }
 

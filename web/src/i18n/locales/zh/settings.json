@@ -385,6 +385,9 @@
   "chatHistoryDepthDesc": "聊天发送给模型的最近对话轮数（定时智能体不受影响，用各自设置）",
   "chatTurnTimeout": "单轮对话时间预算",
   "chatTurnTimeoutDesc": "一轮对话中多步工具调用的总时限，超时后强制总结收尾（默认 30 分钟；长任务可调大）",
+  "summaryInstance": "压缩模型",
+  "summaryInstanceDesc": "上下文接近上限时用于总结会话历史的模型实例。选\"会话模型\"则沿用各会话当前模型；指向更小更快的实例可避免压缩与主模型争抢资源。",
+  "summaryInstanceSessionDefault": "会话模型（默认）",
   "lan": {
     "title": "允许局域网设备连接",
     "description": "开启后，同一网络内的设备可通过本机 IP 接入（含 MQTT 设备接入与 Web 访问）。默认开启；若在不可信网络下使用，可关闭并仅监听本机。",

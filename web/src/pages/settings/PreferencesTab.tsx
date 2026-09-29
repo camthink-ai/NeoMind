@@ -27,6 +27,7 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { useToast } from "@/hooks/use-toast"
 import { api } from "@/lib/api"
+import type { LlmBackendInstance } from "@/types/llm-backend"
 import { useStore } from "@/store"
 import { useGlobalTimezone } from "@/hooks/useTimeFormat"
 import { getLocalizedTimezones } from "@/lib/time"
@@ -351,14 +352,22 @@ function AgentDefaultsSection() {
     default_thinking_enabled: boolean | null
     chat_history_depth: number
     chat_turn_timeout_secs: number
+    summary_instance_id: string | null
   } | null>(null)
   const [loading, setLoading] = useState(true)
+  const [instances, setInstances] = useState<LlmBackendInstance[]>([])
 
   useEffect(() => {
     api.get("/settings/agent")
       .then((data: any) => setConfig(data))
       .catch(() => {})
       .finally(() => setLoading(false))
+    // Instance list for the summary-model selector. Failure is non-fatal —
+    // the row still offers the "session default" option.
+    api
+      .get("/llm-backends")
+      .then((data: any) => setInstances(Array.isArray(data) ? data : (data?.backends ?? [])))
+      .catch(() => {})
   }, [])
 
   const saveConfig = async (updates: Partial<typeof config>) => {
@@ -426,6 +435,30 @@ function AgentDefaultsSection() {
             <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
             <SelectContent>
               {chatTurnOpts.map((o) => <SelectItem key={o.v} value={String(o.v)}>{o.l}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </SettingsRow>
+        <SettingsRow label={t("settings:summaryInstance")} description={t("settings:summaryInstanceDesc")}>
+          <Select
+            value={config.summary_instance_id ?? "session"}
+            onValueChange={(v) => saveConfig({ summary_instance_id: v === "session" ? null : v })}
+          >
+            <SelectTrigger className="w-full sm:w-[220px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="session">{t("settings:summaryInstanceSessionDefault")}</SelectItem>
+              {instances.map((b) => (
+                <SelectItem key={b.id} value={b.id}>
+                  {b.name} · {b.model}
+                </SelectItem>
+              ))}
+              {/* A configured id that no longer resolves still shows instead
+                  of rendering a blank trigger — deletable in one click. */}
+              {config.summary_instance_id &&
+                !instances.some((b) => b.id === config.summary_instance_id) && (
+                  <SelectItem value={config.summary_instance_id}>
+                    {config.summary_instance_id}
+                  </SelectItem>
+                )}
             </SelectContent>
           </Select>
         </SettingsRow>

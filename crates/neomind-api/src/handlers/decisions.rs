@@ -209,9 +209,16 @@ pub async fn prefill_hint(
         .answer_confidence
         .map(|c| format!("{c:.2}"))
         .unwrap_or_else(|| "?".into());
-    let dom = domain.picked().unwrap_or("?");
+    // Post-mortem on the first A/B round (5 regressed cases): a low-confidence
+    // domain guess actively misled the model (agent-conversation picked
+    // run_now off a 0.48 domain; device-types-list zh wandered into `system
+    // --help` off a 0.61). Only include the domain when it clears a real gate.
+    let dom_part = match (domain.picked(), domain.answer_confidence) {
+        (Some(d), Some(c)) if d != "converse" && c >= 0.7 => format!(", domain={d} (conf {c:.2})"),
+        _ => String::new(),
+    };
     Some(format!(
-        "Router hint (a fast assistant's guess — verify, use only if right): tool={picked} (conf {conf}), domain={dom}"
+        "Router hint (a fast assistant's guess — verify, use only if right): tool={picked} (conf {conf}){dom_part}\n         If the first command doesn't fit or returns empty, keep going: check the subcommand surface (`<domain> --help`, `<domain> <sub> --help`) and retry — do not stop at the first attempt."
     ))
 }
 
@@ -411,9 +418,17 @@ pub async fn guidance_hint(
 
     let mut lines: Vec<String> = vec![];
     // Highest-value directive first: missing information blocks everything.
-    if clarify && cl_conf >= 0.7 {
+    // Post-mortem gate: a false clarify on a well-targeted request
+    // ("clear demo-agent's memory") made the model only ask and never act
+    // (zero tool calls). Require BOTH high clarify confidence AND a weak
+    // tool signal — a confident tool pick means the target is clear.
+    let tool_conf = out
+        .get("tool")
+        .and_then(|a| a.answer_confidence)
+        .unwrap_or(0.0);
+    if clarify && cl_conf >= 0.85 && tool_conf < 0.85 {
         lines.push(format!(
-            "[Router guidance] clarify: this request is missing specifics (conf {cl_conf:.2}) — ask the user for the missing details BEFORE acting; do not guess targets, thresholds or devices."
+            "[Router guidance] clarify: this request is missing a critical identifier or parameter (conf {cl_conf:.2}) — ask the user for exactly that missing piece. If the target is already named and specific, act instead of asking."
         ));
     }
     if workflow != "converse" && wf_conf >= 0.7 {
