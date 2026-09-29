@@ -39,7 +39,8 @@
       "shell"
     ],
     "commands": [
-      "neomind device get"
+      "neomind device get",
+      "neomind device control"
     ]
   }
 }

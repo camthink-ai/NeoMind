@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { useIsMobile } from "@/hooks/useMobile"
+import { resolveImageSrc } from "@/lib/imageUtils"
 import { LoadingState } from "@/components/shared/LoadingState"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
@@ -100,7 +101,8 @@ function extractImagesFromData(data: DataCollected[]): Array<{ source: string; i
         for (const key of ['image_url', 'url', 'src']) {
           const val = obj[key]
           if (typeof val === 'string' && (val.startsWith('http://') || val.startsWith('https://') || val.startsWith('/'))) {
-            images.push({ source: `${item.source}.${key}`, image: val })
+            // /api/images/ paths need the server origin outside same-origin builds
+            images.push({ source: `${item.source}.${key}`, image: resolveImageSrc(val) ?? val })
             break
           }
         }

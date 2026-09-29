@@ -9,6 +9,7 @@ import { ErrorBoundary } from "@/components/shared/ErrorBoundary"
 import { textCode } from "@/design-system/tokens/typography"
 import { Copy, Check } from "@/design-system/icons"
 import { copyToClipboard } from '@/lib/clipboard'
+import { resolveImageSrc } from '@/lib/imageUtils'
 
 interface MarkdownMessageProps {
   content: string
@@ -126,6 +127,14 @@ const MARKDOWN_COMPONENTS: Components = {
       {children}
     </a>
   ),
+  // Backend image URLs arrive as relative /api/images/... paths. On the web
+  // build (same origin) they resolve as-is; in Tauri the page origin is not
+  // the API origin, so rewrite them through resolveImageSrc (which prepends
+  // the server origin). Everything else passes through untouched.
+  img: ({ node: _node, src, alt, ...props }) => {
+    const resolved = typeof src === 'string' ? resolveImageSrc(src) : null
+    return <img src={resolved ?? (src as string)} alt={alt ?? ''} {...(props as any)} />
+  },
   // Tables scroll horizontally WITHIN the message instead of pushing the
   // whole chat panel into horizontal scroll (float chat is only 380-400px).
   table: ({ node: _node, children, ...props }) => (

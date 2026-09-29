@@ -34,9 +34,15 @@ dingtalk = []
 slack = []
 feishu = []
 static = ["rust-embed", "mime_guess"]
+# In-process ONNX decision backend (env LAYA_NATIVE_DIR): the small-package
+# deployment path — pruned int8 model + onnxruntime, no Python sidecar.
+# Off by default until the trained model ships; release builds opt in.
+decision-native = ["neomind-core/decision-native"]
 testing = []  # Enable test-only APIs for parallel test execution
 
 [dependencies]
+# In-process CLI dispatch for the decision layer's short-circuit executor
+neomind-cli-ops = { path = "../neomind-cli-ops" }
 socket2 = "0.5"
 neomind-core = { path = "../neomind-core" }
 neomind-extension-sdk = { path = "../neomind-extension-sdk" }

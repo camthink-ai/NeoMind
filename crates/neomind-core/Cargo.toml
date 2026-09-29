@@ -7,6 +7,10 @@ edition.workspace = true
 default = []
 tiktoken = ["dep:tiktoken-rs"]
 redb = ["dep:redb"]
+# Native in-process decision inference (ONNX + HF tokenizer). Off by default:
+# pulls onnxruntime + tokenizers, which only deployments that want the
+# zero-sidecar path need.
+decision-native = ["dep:ort", "dep:tokenizers"]
 
 [dependencies]
 # Extension SDK (unified - replaces api and host-api)
@@ -25,6 +29,13 @@ once_cell = "1.19"
 parking_lot = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+# Decision layer sidecar client (/v1/systemone)
+reqwest = { workspace = true }
+
+# Native decision inference (feature `decision-native`)
+ort = { version = "=2.0.0-rc.10", optional = true }
+tokenizers = { version = "0.21", default-features = false, features = ["onig"], optional = true }
 
 # Storage error conversions (optional)
 redb = { workspace = true, optional = true }

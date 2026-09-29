@@ -12,6 +12,7 @@ pub mod config;
 pub mod dashboards;
 pub mod data;
 pub mod data_push;
+pub mod decisions;
 pub mod devices;
 pub mod events;
 pub mod extension_stream;

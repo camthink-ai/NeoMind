@@ -206,6 +206,11 @@ pub struct ServerState {
     /// Rate limiter for API request throttling.
     pub rate_limiter: Arc<RateLimiter>,
 
+    /// Typed decision layer (System-1, laya sidecar). None unless
+    /// LAYA_SIDECAR_URL is set — every consumer must treat None as
+    /// "behave exactly as before this module existed".
+    pub decision: Option<Arc<neomind_core::DecisionService>>,
+
     /// Data directory for persistent storage (e.g. skills, extensions).
     pub data_dir: std::path::PathBuf,
 
@@ -680,6 +685,73 @@ impl ServerState {
     pub fn agent_manager(&self) -> Arc<tokio::sync::RwLock<Option<AgentManager>>> {
         self.agents.agent_manager.clone()
     }
+}
+
+/// Build the decision layer from the environment. No `LAYA_SIDECAR_URL` =
+/// None: the decision layer stays completely inert.
+fn build_decision_service() -> Option<Arc<neomind_core::DecisionService>> {
+    use neomind_core::decision::JsonlAudit;
+
+    // Shadow is the default posture: record decisions on real traffic before
+    // anything acts on them. Set NEOMIND_DECISION_SHADOW=0 to disable.
+    let shadow = std::env::var("NEOMIND_DECISION_SHADOW")
+        .map(|v| v != "0")
+        .unwrap_or(true);
+    let finish = |primary: std::sync::Arc<dyn neomind_core::decision::DecisionRuntime>,
+                  label: &str|
+     -> Option<Arc<neomind_core::DecisionService>> {
+        let service = neomind_core::DecisionService::new(primary)
+            .with_audit(Arc::new(JsonlAudit::default_path()));
+        service.set_shadow(shadow);
+        tracing::info!(target: "neomind::decision", shadow, backend = %label,
+            "decision layer enabled");
+        Some(Arc::new(service))
+    };
+
+    // Backend selection (first match wins):
+    //   1. native ONNX (feature `decision-native`): LAYA_NATIVE_DIR, or the
+    //      zero-config convention <data_dir>/models/decision/ holding
+    //      model.onnx | model_int8.onnx | tokenizer/ | remap.json |
+    //      rl_agent_config.json — no Python sidecar process.
+    //   2. HTTP sidecar via LAYA_SIDECAR_URL.
+    #[cfg(feature = "decision-native")]
+    {
+        let default_dir = neomind_core::paths::data_dir()
+            .join("models")
+            .join("decision");
+        let native_dir: Option<std::path::PathBuf> = std::env::var("LAYA_NATIVE_DIR")
+            .ok()
+            .filter(|d| !d.is_empty())
+            .map(std::path::PathBuf::from)
+            .or_else(|| default_dir.exists().then_some(default_dir));
+        if let Some(dir) = native_dir {
+            match neomind_core::decision::native_runtime(&dir) {
+                Ok(rt) => return finish(rt, &format!("native-onnx:{}", dir.display())),
+                Err(e) => tracing::error!(
+                    target: "neomind::decision", error = %e, dir = %dir.display(),
+                    "native backend failed to load — falling back to sidecar"
+                ),
+            }
+        }
+    }
+    #[cfg(not(feature = "decision-native"))]
+    if std::env::var("LAYA_NATIVE_DIR").is_ok() {
+        tracing::warn!(target: "neomind::decision",
+            "LAYA_NATIVE_DIR set but this build lacks the `decision-native` feature — ignoring it");
+    }
+
+    let url = std::env::var("LAYA_SIDECAR_URL").ok()?;
+    let mut sidecar = neomind_core::LayaSidecar::new(url);
+    if let Ok(model) = std::env::var("LAYA_MODEL") {
+        sidecar = sidecar.with_model(model);
+    }
+    if let Some(ms) = std::env::var("LAYA_TIMEOUT_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+    {
+        sidecar = sidecar.with_timeout(std::time::Duration::from_millis(ms));
+    }
+    finish(Arc::new(sidecar), "laya-sidecar")
 }
 
 impl ServerState {
@@ -1292,6 +1364,23 @@ impl ServerState {
             });
         }
 
+        // Decision-layer cascade: build the service, then inject the chat
+        // pipeline into SessionManager's chokepoint so EVERY user-NL entry
+        // point (WS text/multimodal, REST chat, IM bridge, extension chat
+        // capability) gets identical shadow/short-circuit/guidance/prefill
+        // coverage (audit D1 — was: only the WS text branch was wired).
+        let decision = build_decision_service();
+        {
+            let pipeline = crate::handlers::decisions::ChatDecisionPipeline::new(
+                decision.clone(),
+                agents.session_manager.skill_registry(),
+            );
+            agents
+                .session_manager
+                .set_decision_hook(Some(std::sync::Arc::new(pipeline)))
+                .await;
+        }
+
         Self {
             core,
             devices,
@@ -1299,6 +1388,7 @@ impl ServerState {
             automation,
             agents,
             auth,
+            decision,
             response_cache,
             rate_limiter,
             auto_onboard_manager,
@@ -1535,6 +1625,7 @@ impl ServerState {
             automation,
             agents,
             auth,
+            decision: None, // tests: decision layer off unless explicitly built
             response_cache,
             rate_limiter,
             auto_onboard_manager,

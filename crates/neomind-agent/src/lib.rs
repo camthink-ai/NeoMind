@@ -61,7 +61,7 @@ pub use agent::{Agent, AgentConfig, AgentEvent, AgentMessage, LlmBackend};
 // Re-export commonly used types
 pub use ai_agent::AgentInput;
 pub use error::{NeoMindError, Result};
-pub use session::{CreateSessionOptions, SessionManager};
+pub use session::{ChatDecisionHook, ChatHookOutcome, CreateSessionOptions, SessionManager};
 
 // Re-export llm_backends types for backward compatibility (merged from neomind-llm crate)
 pub use llm_backends::get_instance_manager;

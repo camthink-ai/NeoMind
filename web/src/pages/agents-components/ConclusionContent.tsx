@@ -10,7 +10,9 @@
 
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import type { Components } from 'react-markdown'
 import { cn } from '@/lib/utils'
+import { resolveImageSrc } from '@/lib/imageUtils'
 
 interface ConclusionContentProps {
   content: string
@@ -36,6 +38,16 @@ function asFieldEntries(content: string): Array<[string, string]> | null {
   }
 }
 
+// Same img rewrite as MarkdownMessage: agent conclusions embed backend image
+// URLs as relative /api/images/... paths, which need the server origin
+// prepended outside the same-origin web build (Tauri, split-origin deploys).
+const MARKDOWN_COMPONENTS: Components = {
+  img: ({ node: _node, src, alt, ...props }) => {
+    const resolved = typeof src === 'string' ? resolveImageSrc(src) : null
+    return <img src={resolved ?? (src as string)} alt={alt ?? ''} {...(props as any)} />
+  },
+}
+
 export function ConclusionContent({ content, className }: ConclusionContentProps) {
   const fields = asFieldEntries(content)
 
@@ -54,7 +66,7 @@ export function ConclusionContent({ content, className }: ConclusionContentProps
 
   return (
     <div className={cn('prose prose-sm dark:prose-invert max-w-none break-words prose-code:break-all prose-p:my-1', className)}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>{content}</ReactMarkdown>
     </div>
   )
 }
