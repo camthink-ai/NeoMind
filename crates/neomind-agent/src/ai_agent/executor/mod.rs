@@ -1780,6 +1780,86 @@ mod behavior_tests;
 mod tests {
     use super::{classify_tool_call_text, is_transient_failure};
 
+    /// Tool-gating semantics the editor now exposes (per-agent
+    /// AgentToolConfig): enabled=false is the text-only agent (empty set
+    /// even for a populated registry); a non-empty allowed_tools is a
+    /// strict name whitelist; None/empty keeps everything.
+    struct GatedShellTool;
+    #[async_trait::async_trait]
+    impl crate::toolkit::tool::Tool for GatedShellTool {
+        fn name(&self) -> &str {
+            "shell"
+        }
+        fn description(&self) -> &str {
+            "mock shell"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object", "properties": {}})
+        }
+        async fn execute(
+            &self,
+            _args: serde_json::Value,
+        ) -> Result<crate::toolkit::tool::ToolOutput, crate::toolkit::error::ToolError> {
+            Ok(crate::toolkit::tool::ToolOutput::success("ok"))
+        }
+    }
+    struct GatedListRulesTool;
+    #[async_trait::async_trait]
+    impl crate::toolkit::tool::Tool for GatedListRulesTool {
+        fn name(&self) -> &str {
+            "list_rules"
+        }
+        fn description(&self) -> &str {
+            "mock rules list"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object", "properties": {}})
+        }
+        async fn execute(
+            &self,
+            _args: serde_json::Value,
+        ) -> Result<crate::toolkit::tool::ToolOutput, crate::toolkit::error::ToolError> {
+            Ok(crate::toolkit::tool::ToolOutput::success("ok"))
+        }
+    }
+
+    #[test]
+    fn filter_tools_honors_enabled_and_whitelist() {
+        use crate::toolkit::ToolRegistryBuilder;
+        let mut registry = ToolRegistryBuilder::new().build();
+        registry.register(std::sync::Arc::new(GatedShellTool));
+        registry.register(std::sync::Arc::new(GatedListRulesTool));
+
+        // Baseline: no config → everything passes.
+        let (defs, _) = super::AgentExecutor::filter_tools(&registry, &None);
+        assert_eq!(defs.len(), 2, "no config = all tools");
+
+        // Whitelist: only the named tool survives.
+        let cfg = Some(neomind_storage::AgentToolConfig {
+            enabled: true,
+            allowed_tools: vec!["shell".to_string()],
+        });
+        let (defs, _) = super::AgentExecutor::filter_tools(&registry, &cfg);
+        let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(names, vec!["shell"], "strict whitelist");
+
+        // enabled=false is the text-only agent — empty set regardless.
+        let cfg = Some(neomind_storage::AgentToolConfig {
+            enabled: false,
+            allowed_tools: vec!["shell".to_string()],
+        });
+        let (defs, _) = super::AgentExecutor::filter_tools(&registry, &cfg);
+        assert!(defs.is_empty(), "enabled=false must yield no tools");
+
+        // enabled=true with EMPTY allowed_tools = all (not none).
+        let cfg = Some(neomind_storage::AgentToolConfig {
+            enabled: true,
+            allowed_tools: vec![],
+        });
+        let (defs, _) = super::AgentExecutor::filter_tools(&registry, &cfg);
+        assert_eq!(defs.len(), 2, "empty whitelist = all tools");
+    }
+
     #[test]
     fn transient_network_error_is_detected() {
         assert!(is_transient_failure(Some("LLM error: Network error: error sending request for url (https://dashscope.aliyuncs.com/...)")));

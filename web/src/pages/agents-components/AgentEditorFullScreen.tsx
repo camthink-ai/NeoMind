@@ -1151,6 +1151,16 @@ export function AgentEditorFullScreen({
         output_schema: outputSchema.filter((f) => f.name.trim() !== ''),
         operator_config: operatorConfig,
         llm_backend_id: llmBackendId ?? undefined,
+        // Preview fidelity: a restricted agent must preview against the SAME
+        // tool set it will run with, not the full registry.
+        ...(!isStructuredMode
+          ? {
+              tool_config: {
+                enabled: toolsEnabled,
+                allowed_tools: restrictTools ? [...allowedTools] : [],
+              },
+            }
+          : {}),
       })
       setDryRunResult(result)
     } catch (error) {

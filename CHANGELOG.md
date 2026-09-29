@@ -39,6 +39,7 @@ Everything below traces back to one support transcript: a user asked for a water
 ### feat(web,api): per-agent tool gating in the editor
 - Focused and Free agents can now be fenced: an "allow tool use" switch (off = a text-only agent) and an optional tool whitelist over the server's live tool catalog (`/agents/tools`). The backend `AgentToolConfig { enabled, allowed_tools }` existed all along — storage, executor filtering, and the create/update/GET payloads were wired; only the editor never exposed it. Fewer tools is also a correctness lever: small models pick better among few.
 - The Structured (L0) canvas deliberately shows none of this — its no-tool-loop contract is the product.
+- Review follow-up: `/api/agents/test-preview` accepts `tool_config` too — a restricted agent previews against the same tool set it will run with, not the full registry (the dry-run button is open to every mode, and for focused/free the preview used to silently ignore the gating).
 
 ### feat(chat): three prompt rules, locked by tests
 - Tool-produced images must be embedded (`![desc](url)`), never answered with a file path or `ls` output; image edits apply exactly what was asked — no unrequested annotations, no re-asking when the request already names image and content; the language policy explicitly covers reports, tables, and tool-result summaries, not just conversational replies.

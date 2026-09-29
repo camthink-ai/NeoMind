@@ -328,6 +328,8 @@ export interface TestPreviewRequest {
   memory_mode?: AgentMemoryMode
   notify?: AgentNotify
   llm_backend_id?: string
+  /** Preview fidelity: run the preview with the same tool gating the saved agent will have. */
+  tool_config?: AgentToolConfig
 }
 
 export interface CreateAgentRequest {

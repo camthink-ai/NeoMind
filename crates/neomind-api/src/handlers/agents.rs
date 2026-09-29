@@ -2017,6 +2017,10 @@ pub struct TestPreviewRequest {
     pub operator_config: Option<neomind_storage::OperatorConfig>,
     #[serde(default)]
     pub llm_backend_id: Option<String>,
+    /// Tool gating for the preview run. Without it a restricted agent
+    /// previews against the FULL tool set — preview and reality disagree.
+    #[serde(default)]
+    pub tool_config: Option<neomind_storage::AgentToolConfig>,
 }
 
 #[utoipa::path(
@@ -2088,7 +2092,7 @@ pub async fn test_agent_preview(
         context_window_size: 10,
         enable_tool_chaining: false,
         max_chain_depth: 5,
-        tool_config: None,
+        tool_config: request.tool_config,
         system_prompt: None,
         max_retries: 0,
         consecutive_failures: 0,
