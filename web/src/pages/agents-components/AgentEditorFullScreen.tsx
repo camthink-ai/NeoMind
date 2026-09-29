@@ -1798,6 +1798,14 @@ export function AgentEditorFullScreen({
                   onCheckedChange={setToolsEnabled}
                 />
               </div>
+              {canActAutonomously && !toolsEnabled && (
+                <p className="text-xs text-warning -mt-1.5">
+                  {tAgent(
+                    'creator.advanced.toolsDisabledAutonomyHint',
+                    'Autonomous work style with tools off degenerates to a single text reply — the multi-round promise cannot be kept without tools.',
+                  )}
+                </p>
+              )}
               {toolsEnabled && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-3">

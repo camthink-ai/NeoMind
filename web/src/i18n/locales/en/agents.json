@@ -507,7 +507,8 @@
       "toolsHint": "Off = a text-only agent. On, the AI may call the platform tools its run needs.",
       "toolsRestrict": "Restrict tools",
       "toolsRestrictHint": "Limit which tools this agent may call. Fewer tools is safer — and small models choose better among few.",
-      "toolsSelected": "{{selected}} / {{total}} selected — none selected means all"
+      "toolsSelected": "{{selected}} / {{total}} selected — none selected means all",
+      "toolsDisabledAutonomyHint": "Autonomous work style with tools off degenerates to a single text reply — the multi-round promise cannot be kept without tools."
     },
     "dataCollection": {
       "title": "Data Collection Config",

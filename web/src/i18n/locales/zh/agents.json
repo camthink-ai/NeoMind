@@ -507,7 +507,8 @@
       "toolsHint": "关闭＝纯文本回复的 agent；开启后 AI 可按需调用平台工具。",
       "toolsRestrict": "限制可用工具",
       "toolsRestrictHint": "限定此 agent 可调用的工具。工具更少更安全——小模型在少量选项中也选得更准。",
-      "toolsSelected": "已选 {{selected}} / {{total}}——不选即允许全部"
+      "toolsSelected": "已选 {{selected}} / {{total}}——不选即允许全部",
+      "toolsDisabledAutonomyHint": "自主工作方式下关闭工具会退化为单轮文本回复——没有工具就兑现不了多轮行动。"
     },
     "dataCollection": {
       "title": "数据收集配置",
