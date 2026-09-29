@@ -421,6 +421,39 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     return { used: msgTokens + estimateTokens(streamCorpus), max: maxContext }
   }, [filteredMessages.length, panelMessages, activeBackend, streamingContent, streamingThinking, streamingToolCalls])
 
+  // Manual context compaction / clear — same contract as the chat page's
+  // usage-card actions (the panel shares ChatComposer).
+  const [isCompacting, setIsCompacting] = useState(false)
+  const handleCompact = useCallback(async () => {
+    const sid = panelSessionIdRef.current
+    if (!sid || isCompacting) return
+    setIsCompacting(true)
+    try {
+      const r = await api.compactSession(sid)
+      toast({
+        description: r.summarizedMessages > 0
+          ? t("context.compactDone", { count: r.summarizedMessages })
+          : t("context.compactNothing"),
+      })
+    } catch {
+      toast({ title: t("context.compactFailed"), variant: "destructive" })
+    } finally {
+      setIsCompacting(false)
+    }
+  }, [isCompacting, t])
+
+  const handleClearContext = useCallback(async () => {
+    const sid = panelSessionIdRef.current
+    if (!sid) return
+    try {
+      await api.clearSessionHistory(sid)
+      setPanelMessages([])
+      toast({ description: t("context.clearDone") })
+    } catch {
+      toast({ title: t("context.clearFailed"), variant: "destructive" })
+    }
+  }, [t])
+
   // Cancel the in-flight request (same channel the chat page uses)
   const handleCancelRequest = useCallback(() => {
     if (!isStreaming) return
@@ -628,6 +661,9 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
           activeBackendId={activeBackendId}
           onActivateBackend={activateBackend}
           contextUsage={contextUsage}
+          onCompact={handleCompact}
+          onClearContext={handleClearContext}
+          compacting={isCompacting}
           maxHeight={128}
         />
       </div>

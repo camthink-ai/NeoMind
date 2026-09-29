@@ -47,3 +47,98 @@ describe('ChatComposer', () => {
     expect(onSend).not.toHaveBeenCalled()
   })
 })
+
+/// Context usage card actions — the manual compact/clear affordances added
+/// with the context-compression control. The card lives inside a Radix
+/// tooltip; open it via focus and drive the two buttons.
+describe('ChatComposer context actions', () => {
+  const usage = { used: 4000, max: 8000 }
+
+  function setupCard(overrides: Partial<React.ComponentProps<typeof ChatComposer>> = {}) {
+    const onCompact = vi.fn()
+    const onClearContext = vi.fn()
+    render(
+      <ChatComposer
+        value=""
+        onChange={vi.fn()}
+        onSend={vi.fn()}
+        contextUsage={usage}
+        onCompact={onCompact}
+        onClearContext={onClearContext}
+        {...overrides}
+      />,
+    )
+    return { onCompact, onClearContext }
+  }
+
+  // Locale-agnostic: the t() defaultValues are English, an initialized i18n
+  // instance would return the real translations — match either.
+  // Match the aria-label by its stable shape — an i18n-backed run yields the
+  // translated title, an uninitialized t() yields the key itself.
+  const findUsageTrigger = () =>
+    screen
+      .getAllByRole('button')
+      .find((b) => /context\.title|上下文占用/i.test(b.getAttribute('aria-label') || ''))!
+
+  // Radix renders a hidden measurement clone of the tooltip content next
+  // to the real one — collect every match and let callers use them as a set.
+  async function compactButtons() {
+    await screen.findAllByText(/compact|立即压缩/i, {}, { timeout: 2000 })
+    return screen
+      .getAllByText(/compact|立即压缩/i)
+      .map((el) => el.closest('button'))
+      .filter((b): b is HTMLButtonElement => !!b)
+  }
+
+  async function openCard() {
+    const trigger = findUsageTrigger()
+    expect(trigger).toBeTruthy()
+    fireEvent.focus(trigger)
+    const buttons = await compactButtons()
+    expect(buttons.length).toBeGreaterThan(0)
+    return buttons
+  }
+
+  it('fires onCompact from the usage card', async () => {
+    const { onCompact } = setupCard()
+    const buttons = await openCard()
+    buttons[0].click()
+    expect(onCompact).toHaveBeenCalledTimes(1)
+  })
+
+  it('fires onClearContext from the usage card', async () => {
+    const { onClearContext } = setupCard()
+    await openCard() // waits for the card to be open
+    const clear = await screen.findAllByText(/clear|清空对话/i)
+    clear[0].closest('button')!.click()
+    expect(onClearContext).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables the compact button while compacting', async () => {
+    const { onCompact } = setupCard({ compacting: true })
+    const buttons = await openCard()
+    // Every rendered copy (real + measurement clone) reflects the state.
+    for (const b of buttons) {
+      expect(b).toBeDisabled()
+    }
+    buttons[0].click()
+    expect(onCompact).not.toHaveBeenCalled()
+  })
+
+  it('hides the actions row when no handlers are provided', async () => {
+    render(
+      <ChatComposer
+        value=""
+        onChange={vi.fn()}
+        onSend={vi.fn()}
+        contextUsage={usage}
+      />,
+    )
+    const trigger = findUsageTrigger()
+    fireEvent.focus(trigger)
+    // Give Radix a beat; the row must never appear.
+    await new Promise((r) => setTimeout(r, 250))
+    expect(screen.queryByText(/compact|立即压缩/i)).toBeNull()
+    expect(screen.queryByText(/clear|清空对话/i)).toBeNull()
+  })
+})
