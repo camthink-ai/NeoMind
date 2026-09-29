@@ -84,7 +84,10 @@ impl NativeOnnx {
         // samples for 4x size — opt in explicitly via LAYA_NATIVE_INT8=1
         // for tight-memory deployments.
         let model_path = {
-            if std::env::var("LAYA_NATIVE_INT8").map(|v| v == "1").unwrap_or(false) {
+            if std::env::var("LAYA_NATIVE_INT8")
+                .map(|v| v == "1")
+                .unwrap_or(false)
+            {
                 let p = dir.join("model_int8.onnx");
                 if p.exists() {
                     p

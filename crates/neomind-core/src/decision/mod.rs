@@ -24,7 +24,7 @@ pub mod sidecar;
 pub mod types;
 
 #[cfg(feature = "decision-native")]
-pub use native::{NativeOnnx, native_runtime};
+pub use native::{native_runtime, NativeOnnx};
 pub use runtime::DecisionRuntime;
 pub use service::{AuditEntry, DecisionService, GatePolicy, JsonlAudit, MemoryAudit};
 pub use sidecar::LayaSidecar;

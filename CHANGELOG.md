@@ -23,7 +23,7 @@ Everything below traces back to one support transcript: a user asked for a water
 - A text-only round that promises an action ("我现在使用 image_edit 工具…") used to end the turn with that promise as the answer. All three tool loops (text chat, multimodal chat, scheduled agents) now detect the promise, record what was said, and run one pointed retry; a second narration is accepted. The behavior tests this shipped with caught the guard being dead code on the scheduled path's legacy text branch before it ever ran in production.
 
 ### feat(chat): context compression you can see and steer
-- The usage ring's card gains **Compact** and **Clear** actions (`POST /api/sessions/:id/compact` with force semantics, `POST /api/sessions/:id/clear`), backed by `end` events now carrying the model's measured window (`maxContextTokens`), so the meter's denominator is the real one.
+- The usage ring's card gains **Compact** and **Clear** actions (`POST /api/sessions/:id/compact` with force semantics, `POST /api/sessions/:id/clear`), on both chat surfaces (page and side panel), backed by `end` events now carrying the model's measured window (`maxContextTokens`), so the meter's denominator is the real one. Both routes are registered in `/api/docs` (swagger + the human-readable routes table).
 - Summaries are generated from a structured template (tasks / verbatim user instructions / entities / open items) instead of free-form paraphrase; a new optional `summary_instance_id` setting routes compaction to a smaller dedicated instance; and a failed summary LLM now writes a deterministic no-LLM digest — the summarized messages are about to be filtered out of the window, so compaction must complete with *something*.
 
 ### fix(agent): the user's exact words survive compression

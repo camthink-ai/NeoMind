@@ -551,6 +551,16 @@ pub static ROUTES: &[RouteDoc] = &[
     },
     RouteDoc {
         method: "POST",
+        path: "/api/sessions/:id/compact",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
+        method: "POST",
+        path: "/api/sessions/:id/clear",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
+        method: "POST",
         path: "/api/sessions/:id/chat",
         auth: "jwt-or-api-key",
     },

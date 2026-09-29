@@ -304,10 +304,12 @@ impl DecisionService {
     }
 
     pub fn count_decides(&self) -> u64 {
-        self.decides_total.load(std::sync::atomic::Ordering::Relaxed)
+        self.decides_total
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
     pub fn count_cache_hits(&self) -> u64 {
-        self.cache_hits_total.load(std::sync::atomic::Ordering::Relaxed)
+        self.cache_hits_total
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
     pub fn count_errors(&self) -> u64 {
         self.errors_total.load(std::sync::atomic::Ordering::Relaxed)
@@ -383,14 +385,7 @@ impl DecisionService {
                     .map(|(id, a)| (id.clone(), a.passes_gate(self.gate.min_confidence)))
                     .collect();
                 audit.record(audit_entry(
-                    "cache",
-                    0,
-                    true,
-                    shadow,
-                    gated,
-                    &req.state,
-                    key,
-                    &answers,
+                    "cache", 0, true, shadow, gated, &req.state, key, &answers,
                 ));
             }
             let outcome = DecisionOutcome {

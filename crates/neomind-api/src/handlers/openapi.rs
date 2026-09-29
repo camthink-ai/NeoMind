@@ -223,6 +223,8 @@ route index (including not-yet-schematized endpoints): /api/docs/routes.json."
         crate::handlers::sessions::update_session_handler,
         crate::handlers::sessions::toggle_memory_handler,
         crate::handlers::sessions::delete_session_handler,
+        crate::handlers::sessions::compact_session_handler,
+        crate::handlers::sessions::clear_session_history_handler,
         crate::handlers::sessions::chat_handler,
         crate::handlers::sessions::get_pending_stream_handler,
         crate::handlers::sessions::clear_pending_stream_handler,
