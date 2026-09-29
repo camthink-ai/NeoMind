@@ -191,6 +191,11 @@ export function PageLayout({
         >
           <div className={cn('mx-auto w-full flex flex-col min-h-full animate-fade-in', maxWidthClass[maxWidth])}>
             {children}
+            {/* Mount node for infinite-scroll sentinels — Pagination portals its
+                loading / "no more items" hint into this div. It must sit BEFORE
+                the bottom spacer: appended after the spacer, the hint lands
+                underneath the fixed bottom nav. */}
+            <div data-infinite-scroll-mount className="shrink-0" />
             {/* Bottom spacer: ensures content isn't hidden behind fixed footer/nav */}
             {!noPadding && (
               <div className="shrink-0" style={{ height: bottomSpacerHeight }} />
