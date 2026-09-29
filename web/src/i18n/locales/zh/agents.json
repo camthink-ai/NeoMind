@@ -502,7 +502,12 @@
       "contextHint": "载入最近的对话轮数，用于提供执行上下文",
       "historyDepth": "历史对话轮数",
       "systemPrompt": "自定义系统提示词",
-      "systemPromptPlaceholder": "例如：你是一个仪表盘数据分析助手，负责分析设备运行状况..."
+      "systemPromptPlaceholder": "例如：你是一个仪表盘数据分析助手，负责分析设备运行状况...",
+      "tools": "允许使用工具",
+      "toolsHint": "关闭＝纯文本回复的 agent；开启后 AI 可按需调用平台工具。",
+      "toolsRestrict": "限制可用工具",
+      "toolsRestrictHint": "限定此 agent 可调用的工具。工具更少更安全——小模型在少量选项中也选得更准。",
+      "toolsSelected": "已选 {{selected}} / {{total}}——不选即允许全部"
     },
     "dataCollection": {
       "title": "数据收集配置",

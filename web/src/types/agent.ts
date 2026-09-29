@@ -52,6 +52,8 @@ export interface AiAgent {
   /** Memory axis — absent means the mode-derived default */
   memory_mode?: AgentMemoryMode
   notify?: AgentNotify
+  /** Tool gating for this agent (None = default: tools enabled, all allowed). */
+  tool_config?: AgentToolConfig
 }
 
 /**
@@ -81,6 +83,8 @@ export interface AiAgentDetail extends AiAgent {
   operator_config?: OperatorConfig
   memory_mode?: AgentMemoryMode
   notify?: AgentNotify
+  /** Tool gating: enabled=false → text-only agent; allowed_tools empty → all. */
+  tool_config?: AgentToolConfig
 }
 
 /**
@@ -353,6 +357,8 @@ export interface CreateAgentRequest {
   operator_config?: OperatorConfig
   memory_mode?: AgentMemoryMode
   notify?: AgentNotify
+  /** Tool gating: enabled=false → text-only agent; allowed_tools empty → all. */
+  tool_config?: AgentToolConfig
 }
 
 /**
@@ -441,6 +447,8 @@ export interface UpdateAgentRequest {
   operator_config?: OperatorConfig
   memory_mode?: AgentMemoryMode
   notify?: AgentNotify
+  /** Tool gating: enabled=false → text-only agent; allowed_tools empty → all. */
+  tool_config?: AgentToolConfig
 }
 
 /**
@@ -591,6 +599,15 @@ export interface NotificationSent {
  * Read-only catalog item describing a tool in the server's ToolRegistry.
  * Returned by GET /api/agents/tools.
  */
+/**
+ * Per-agent tool gating. `enabled: false` → the agent gets NO tools
+ * (text-only responses); `allowed_tools` empty → all available tools.
+ */
+export interface AgentToolConfig {
+  enabled: boolean
+  allowed_tools: string[]
+}
+
 export interface AgentToolCatalogItem {
   name: string
   description: string

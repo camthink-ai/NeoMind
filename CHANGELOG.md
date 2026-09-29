@@ -36,6 +36,10 @@ Everything below traces back to one support transcript: a user asked for a water
 - Per-image token cost was estimated at 85; real vision backends charge 700–2000+. Now 1024, and history images are stripped beyond the two most recent image-bearing turns (older ones are already described in the assistant's own replies).
 - Chat images are persisted as content-hash files under `data/images/` with only the served `/api/images/<file>` reference stored — redb size, session-restore RAM, and the history API payload all stop carrying megabytes of base64 per message. References hydrate back to bytes for the LLM where needed; an unresolvable one is dropped from the prompt rather than sent as garbage base64.
 
+### feat(web,api): per-agent tool gating in the editor
+- Focused and Free agents can now be fenced: an "allow tool use" switch (off = a text-only agent) and an optional tool whitelist over the server's live tool catalog (`/agents/tools`). The backend `AgentToolConfig { enabled, allowed_tools }` existed all along — storage, executor filtering, and the create/update/GET payloads were wired; only the editor never exposed it. Fewer tools is also a correctness lever: small models pick better among few.
+- The Structured (L0) canvas deliberately shows none of this — its no-tool-loop contract is the product.
+
 ### feat(chat): three prompt rules, locked by tests
 - Tool-produced images must be embedded (`![desc](url)`), never answered with a file path or `ls` output; image edits apply exactly what was asked — no unrequested annotations, no re-asking when the request already names image and content; the language policy explicitly covers reports, tables, and tool-result summaries, not just conversational replies.
 

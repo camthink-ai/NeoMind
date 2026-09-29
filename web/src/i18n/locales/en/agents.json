@@ -502,7 +502,12 @@
       "contextHint": "Number of recent conversation turns to load for execution context",
       "historyDepth": "Conversation History Depth",
       "systemPrompt": "Custom System Prompt",
-      "systemPromptPlaceholder": "e.g., You are a helpful assistant that analyzes dashboard data..."
+      "systemPromptPlaceholder": "e.g., You are a helpful assistant that analyzes dashboard data...",
+      "tools": "Allow tool use",
+      "toolsHint": "Off = a text-only agent. On, the AI may call the platform tools its run needs.",
+      "toolsRestrict": "Restrict tools",
+      "toolsRestrictHint": "Limit which tools this agent may call. Fewer tools is safer — and small models choose better among few.",
+      "toolsSelected": "{{selected}} / {{total}} selected — none selected means all"
     },
     "dataCollection": {
       "title": "Data Collection Config",

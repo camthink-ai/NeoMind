@@ -15,6 +15,8 @@
  */
 
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible'
+import { Switch } from '@/components/ui/switch'
+import { Checkbox } from '@/components/ui/checkbox'
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api } from '@/lib/api'
@@ -52,7 +54,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { Link } from 'react-router-dom'
 import { channelsApi } from '@/lib/api/channels'
 import type { AlertChannel } from '@/types/message'
-import type {
+import type { AgentToolCatalogItem,
   AiAgentDetail,
   AgentSchedule,
   CreateAgentRequest,
@@ -262,6 +264,13 @@ export function AgentEditorFullScreen({
   const [priority, setPriority] = useState(128)
   const [contextWindowSize, setContextWindowSize] = useState(10)
   const [maxChainDepth, setMaxChainDepth] = useState(DEFAULT_MAX_CHAIN_DEPTH)
+  // Tool gating (focused/free; structured never shows it — its contract has
+  // no tool loop). toolsEnabled=false is the text-only agent; restrictTools +
+  // the checked set becomes allowed_tools (empty = all, backend semantics).
+  const [toolsEnabled, setToolsEnabled] = useState(true)
+  const [restrictTools, setRestrictTools] = useState(false)
+  const [allowedTools, setAllowedTools] = useState<Set<string>>(new Set())
+  const [toolCatalog, setToolCatalog] = useState<AgentToolCatalogItem[]>([])
   // Advanced knobs collapsed by default — defaults suit most agents
 
   // LLM validation state
@@ -412,6 +421,9 @@ export function AgentEditorFullScreen({
     if (open) {
       loadBackends()
       channelsApi.listMessageChannels().then((r) => setChannels(r.channels)).catch(() => {})
+      // Tool catalog for the gating section — failure keeps the section
+      // functional (the "all tools" default needs no catalog).
+      api.getAgentTools().then((r) => setToolCatalog(r.tools ?? [])).catch(() => {})
     }
   }, [open, loadBackends])
 
@@ -439,6 +451,10 @@ export function AgentEditorFullScreen({
         setPriority(agent.priority ?? 128)
         setContextWindowSize(agent.context_window_size ?? 10)
         setMaxChainDepth(agent.max_chain_depth ?? DEFAULT_MAX_CHAIN_DEPTH)
+        const storedTools = agent.tool_config?.allowed_tools ?? []
+        setToolsEnabled(agent.tool_config?.enabled ?? true)
+        setRestrictTools(storedTools.length > 0)
+        setAllowedTools(new Set(storedTools))
         parseSchedule(agent.schedule)
         loadAgentResources(agent)
       } else {
@@ -448,6 +464,9 @@ export function AgentEditorFullScreen({
         setLlmBackendId(null)
         // Reset to defaults
         setCanActAutonomously(false)
+        setToolsEnabled(true)
+        setRestrictTools(false)
+        setAllowedTools(new Set())
         setMemoryMode(null)
         setNotify({ channels: [DEFAULT_NOTIFY_CHANNEL], on: DEFAULT_NOTIFY_ON })
         setAppliedPreset(null)
@@ -1239,6 +1258,17 @@ export function AgentEditorFullScreen({
               operator_config: operatorConfig,
             }
           : {}),
+        // Tool gating — only the tool-carrying modes. Structured omits it
+        // entirely: its contract has no tool loop and a stored config must
+        // not silently change that.
+        ...(!isStructuredMode
+          ? {
+              tool_config: {
+                enabled: toolsEnabled,
+                allowed_tools: restrictTools ? [...allowedTools] : [],
+              },
+            }
+          : {}),
       }
 
       await onSave(data)
@@ -1732,6 +1762,86 @@ export function AgentEditorFullScreen({
                     }}
                     className="h-9 w-24 text-right tabular-nums"
                   />
+                </div>
+              )}
+
+              {/* Tool gating. A narrower tool surface is both a capability
+                  fence (this agent can never touch devices) and a
+                  correctness lever — small models pick better among few.
+                  This canvas is focused/free only; structured's own canvas
+                  keeps its no-tool contract untouched. */}
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="agent-tools-enabled" className="text-sm font-medium">
+                    {tAgent('creator.advanced.tools', 'Allow tool use')}
+                  </Label>
+                  <InfoHint
+                    text={tAgent(
+                      'creator.advanced.toolsHint',
+                      'Off = a text-only agent. On, the AI may call the platform tools its run needs.',
+                    )}
+                  />
+                </div>
+                <Switch
+                  id="agent-tools-enabled"
+                  checked={toolsEnabled}
+                  onCheckedChange={setToolsEnabled}
+                />
+              </div>
+              {toolsEnabled && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <Label htmlFor="agent-tools-restrict" className="text-sm font-medium">
+                        {tAgent('creator.advanced.toolsRestrict', 'Restrict tools')}
+                      </Label>
+                      <InfoHint
+                        text={tAgent(
+                          'creator.advanced.toolsRestrictHint',
+                          'Limit which tools this agent may call. Fewer tools is safer — and small models choose better among few.',
+                        )}
+                      />
+                    </div>
+                    <Switch
+                      id="agent-tools-restrict"
+                      checked={restrictTools}
+                      onCheckedChange={setRestrictTools}
+                    />
+                  </div>
+                  {restrictTools && (
+                    <div className="max-h-44 overflow-y-auto rounded-md border border-border p-2 space-y-1">
+                      <p className="text-xs text-muted-foreground px-1 pb-1">
+                        {tAgent('creator.advanced.toolsSelected', {
+                          defaultValue:
+                            '{{selected}} / {{total}} selected — none selected means all',
+                          selected: allowedTools.size,
+                          total: toolCatalog.length,
+                        })}
+                      </p>
+                      {toolCatalog.map((tool) => (
+                        <label
+                          key={tool.name}
+                          className="flex items-center gap-2 rounded px-1 py-0.5 hover:bg-muted-50 cursor-pointer"
+                        >
+                          <Checkbox
+                            checked={allowedTools.has(tool.name)}
+                            onCheckedChange={(checked) =>
+                              setAllowedTools((prev) => {
+                                const next = new Set(prev)
+                                if (checked) next.add(tool.name)
+                                else next.delete(tool.name)
+                                return next
+                              })
+                            }
+                          />
+                          <span className="text-xs font-mono shrink-0">{tool.name}</span>
+                          <span className="text-xs text-muted-foreground truncate flex-1">
+                            {tool.description}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
