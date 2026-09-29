@@ -13,8 +13,15 @@
 //! that adds the production safety net — TTL cache, confidence gating,
 //! fallback backend, shadow mode and a JSONL audit trail.
 //!
-//! Nothing here is wired into request handling yet (M3 step 2); importing it
-//! changes no behavior.
+//! Wiring (as of the SessionManager hook + /api/decisions landing): the
+//! chat entry chokepoint runs every inbound user message through a
+//! `ChatDecisionHook` (short-circuit / router-guidance rewrite /
+//! passthrough), `GET|POST /api/decisions` expose the layer directly, and
+//! Prometheus metrics ship from the service. Two inertness gates remain by
+//! design: no configured backend (`LAYA_SIDECAR_URL` / native model dir)
+//! means the service is never constructed, and shadow mode (the default)
+//! records decisions without influencing turns until
+//! `NEOMIND_DECISION_SHADOW=0`.
 
 #[cfg(feature = "decision-native")]
 pub mod native;
