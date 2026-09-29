@@ -636,7 +636,9 @@
     "workstyle": {
       "title": "How it works",
       "bound": "Bound data only",
-      "auto": "Explore and act"
+      "auto": "Explore and act",
+      "boundDesc": "Answers strictly from bound devices and data sources — no extra lookups",
+      "autoDesc": "May run tools over multiple rounds before answering"
     },
     "memory": {
       "title": "What it remembers",
