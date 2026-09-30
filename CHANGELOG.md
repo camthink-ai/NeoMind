@@ -41,6 +41,10 @@ Everything below traces back to one support transcript: a user asked for a water
 - The Structured (L0) canvas deliberately shows none of this — its no-tool-loop contract is the product.
 - Review follow-up: `/api/agents/test-preview` accepts `tool_config` too — a restricted agent previews against the same tool set it will run with, not the full registry (the dry-run button is open to every mode, and for focused/free the preview used to silently ignore the gating).
 
+### fix(agent): image_edit colors accept CSS forms and identical re-calls are reused
+- A small model asking for `rgba(0,0,0,0.7)` as a text background got serde's raw "invalid digit found in string" — nothing naming the field or the accepted formats — and flailed through four more tool calls on a 2.6B model (~2 minutes of a 4-minute turn). Colors now parse `rgb(r,g,b)` / `rgba(r,g,b,a)` alongside hex (bare and `#`-prefixed, alpha 0-1 or 0-255), and the pre-parse validator names the offending field, value, and forms.
+- Byte-identical re-calls of deterministic tools (`image_edit`, `vision`) within one turn now return the earlier result with a `_reused` marker instead of executing again — the advisory "never call the same tool with the same arguments" in the continuation prompt was ignored by exactly the models that need it. Side-effecting tools (shell, device control, extensions) are deliberately exempt: re-running those may be the point.
+
 ### fix(chat): an unparseable WS frame now gets an error frame back
 - Same failure shape as the path-prefix drop, one layer down: a text frame that failed `ChatRequest` parsing fell through the dispatch silently — nothing in the logs above info, nothing to the client, chat stuck on loading…. The dispatch now replies `{"type":"Error","message":"Unparseable chat frame…"}` and logs at warn, so a version-skewed or corrupted frame is visible on both ends instead of eating the turn.
 

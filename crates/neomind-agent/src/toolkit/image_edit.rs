@@ -19,27 +19,87 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::OnceLock;
 
-/// Color newtype with hex deserialization support.
+/// Color newtype with hex/CSS deserialization support.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct Color(#[serde(deserialize_with = "deserialize_color")] pub image::Rgba<u8>);
 
-/// Deserialize hex color `#RRGGBB` or `#RRGGBBAA` (prefix `#` optional).
+/// Parse a color: `#RRGGBB` / `#RRGGBBAA` hex (prefix `#` optional) or CSS
+/// `rgb(r,g,b)` / `rgba(r,g,b,a)` (alpha 0-1 or 0-255; components 0-255).
+///
+/// Small models routinely send the CSS form (observed: `rgba(0,0,0,0.7)`
+/// for a text background); rejecting it with serde's raw
+/// "invalid digit found in string" left the model nothing to act on and it
+/// flailed through four more calls. Returns `None` for anything else so the
+/// pre-parse validator can name the offending value and the accepted forms.
+fn parse_color(s: &str) -> Option<image::Rgba<u8>> {
+    let s = s.trim();
+    let as_hex = |hex: &str| -> Option<image::Rgba<u8>> {
+        if hex.len() != 6 && hex.len() != 8 {
+            return None;
+        }
+        if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+            return None;
+        }
+        let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+        let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+        let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+        let a = if hex.len() == 8 {
+            u8::from_str_radix(&hex[6..8], 16).ok()?
+        } else {
+            255
+        };
+        Some(image::Rgba([r, g, b, a]))
+    };
+    // Bare hex (no '#') stays valid — the original parser accepted it.
+    if let Some(hex) = s.strip_prefix('#') {
+        return as_hex(hex);
+    }
+    if !(s.starts_with("rgb(") || s.starts_with("rgba(")) {
+        return as_hex(s);
+    }
+    let inner = s
+        .strip_prefix("rgba(")
+        .and_then(|x| x.strip_suffix(')'))
+        .or_else(|| s.strip_prefix("rgb(").and_then(|x| x.strip_suffix(')')))?;
+    let parts: Vec<&str> = inner.split(',').map(str::trim).collect();
+    if parts.len() != 3 && parts.len() != 4 {
+        return None;
+    }
+    let num = |v: &str| v.parse::<u32>().ok().filter(|n| *n <= 255);
+    let r = num(parts[0])? as u8;
+    let g = num(parts[1])? as u8;
+    let b = num(parts[2])? as u8;
+    let a = if parts.len() == 4 {
+        // Accept both CSS alpha (0.0-1.0) and raw 0-255.
+        if let Ok(f) = parts[3].parse::<f32>() {
+            if (0.0..=1.0).contains(&f) {
+                (f * 255.0).round() as u8
+            } else if (0.0..=255.0).contains(&f) {
+                f.round() as u8
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        }
+    } else {
+        255
+    };
+    Some(image::Rgba([r, g, b, a]))
+}
+
+/// Deserialize via [`parse_color`]; the error names the value and the forms.
 fn deserialize_color<'de, D>(deserializer: D) -> std::result::Result<image::Rgba<u8>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     use serde::de::Error;
     let s = String::deserialize(deserializer)?;
-    let hex = s.strip_prefix('#').unwrap_or(&s);
-    let r = u8::from_str_radix(&hex[0..2], 16).map_err(D::Error::custom)?;
-    let g = u8::from_str_radix(&hex[2..4], 16).map_err(D::Error::custom)?;
-    let b = u8::from_str_radix(&hex[4..6], 16).map_err(D::Error::custom)?;
-    let a = if hex.len() == 8 {
-        u8::from_str_radix(&hex[6..8], 16).map_err(D::Error::custom)?
-    } else {
-        255
-    };
-    Ok(image::Rgba([r, g, b, a]))
+    parse_color(&s).ok_or_else(|| {
+        D::Error::custom(format!(
+            "invalid color '{s}': use #RRGGBB, #RRGGBBAA, rgb(r,g,b) or rgba(r,g,b,a)"
+        ))
+    })
 }
 
 /// Individual image editing operation (crop, draw, blur, etc.).
@@ -739,6 +799,20 @@ fn validate_operations(args: &Value) -> Result<()> {
                 missing.join(", "),
                 OPERATIONS_CHEAT_SHEET
             )));
+        }
+        // Color-format pre-check: serde's raw failure ("invalid digit found
+        // in string") names neither the field nor the accepted forms — the
+        // model gets nothing to act on (observed: an `rgba(...)` background
+        // produced four flailing retries after it).
+        for field in ["color", "fill", "background"] {
+            if let Some(Value::String(raw)) = obj.get(field) {
+                if parse_color(raw).is_none() {
+                    return Err(ToolError::InvalidArguments(format!(
+                        "operations[{}] (type \"{}\") field \"{}\": invalid color '{}'. Use #RRGGBB, #RRGGBBAA, rgb(r,g,b) or rgba(r,g,b,a).",
+                        i, op_type, field, raw
+                    )));
+                }
+            }
         }
     }
     Ok(())
@@ -2030,5 +2104,105 @@ mod op_tests {
         );
         // CRITICAL regression guard: gaussian mode MUST NOT shrink the image.
         assert_eq!(img.dimensions(), (100, 100));
+    }
+}
+
+#[cfg(test)]
+mod color_tests {
+    use super::*;
+
+    fn make_test_png_data_url(w: u32, h: u32) -> String {
+        let img = image::RgbaImage::from_pixel(w, h, image::Rgba([0, 0, 0, 255]));
+        let mut buf = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut buf, image::ImageFormat::Png).unwrap();
+        let b64 =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, buf.into_inner());
+        format!("data:image/png;base64,{}", b64)
+    }
+
+    fn scratch_dir(name: &str) -> std::path::PathBuf {
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let workspace = manifest
+            .parent()
+            .and_then(|p| p.parent())
+            .expect("workspace root");
+        let dir = workspace
+            .join("target")
+            .join(format!("{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn parse_color_accepts_all_documented_forms() {
+        assert_eq!(parse_color("#FF0000"), Some(image::Rgba([255, 0, 0, 255])));
+        assert_eq!(parse_color("00ff00"), Some(image::Rgba([0, 255, 0, 255])));
+        assert_eq!(parse_color("#00000080"), Some(image::Rgba([0, 0, 0, 128])));
+        // The exact field failure: CSS rgba with fractional alpha.
+        assert_eq!(
+            parse_color("rgba(0, 0, 0, 0.7)"),
+            Some(image::Rgba([0, 0, 0, 179]))
+        );
+        // rgb() = opaque; alpha 0-255 also accepted.
+        assert_eq!(
+            parse_color("rgb(10, 20, 30)"),
+            Some(image::Rgba([10, 20, 30, 255]))
+        );
+        assert_eq!(
+            parse_color("rgba(1, 2, 3, 128)"),
+            Some(image::Rgba([1, 2, 3, 128]))
+        );
+        assert!(parse_color("red").is_none());
+        assert!(parse_color("rgba(300, 0, 0, 1)").is_none());
+        assert!(parse_color("#GGGGGG").is_none());
+        assert!(parse_color("").is_none());
+    }
+
+    /// The flail-prevention contract: a bad color names the field, the value,
+    /// and the accepted forms — not serde's "invalid digit found in string".
+    #[tokio::test]
+    async fn bad_color_error_names_field_and_forms() {
+        let tool = ImageEditTool::new("/tmp");
+        let args = serde_json::json!({
+            "image": make_test_png_data_url(20, 20),
+            "operations": [
+                { "type": "draw_text", "text": "x", "background": "notacolor" }
+            ]
+        });
+        let err = tool.execute(args).await.expect_err("must fail");
+        let msg = err.to_string();
+        assert!(msg.contains("background"), "{msg}");
+        assert!(msg.contains("notacolor"), "{msg}");
+        assert!(msg.contains("#RRGGBB"), "{msg}");
+    }
+
+    /// End-to-end: the CSS rgba form that used to hard-fail now renders.
+    #[tokio::test]
+    async fn rgba_background_text_renders() {
+        if probe_font().is_none() {
+            eprintln!("skipping: no system font available");
+            return;
+        }
+        let test_root = scratch_dir("test-tmp-image-edit-rgba");
+        let tool = ImageEditTool::new(&test_root);
+        let args = serde_json::json!({
+            "image": make_test_png_data_url(100, 100),
+            "operations": [
+                { "type": "draw_text", "text": "CamThink", "background": "rgba(0,0,0,0.7)", "font_size": 24 }
+            ]
+        });
+        let out = tool
+            .execute(args)
+            .await
+            .expect("rgba background must succeed");
+        assert_eq!(out.data["status"].as_str(), Some("success"));
+        assert!(
+            out.data["operations_detail"][0]["pixels_changed"]
+                .as_u64()
+                .unwrap_or(0)
+                > 0,
+            "text+background must change pixels"
+        );
+        let _ = std::fs::remove_dir_all(&test_root);
     }
 }

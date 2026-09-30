@@ -178,3 +178,88 @@ async fn multimodal_path_narration_nudge_recovers_tool_call() {
         "post-tool summary must reach the user, got content: {content}"
     );
 }
+
+/// A deterministic tool NAMED image_edit (so the reuse guard applies) that
+/// counts real executions.
+struct CountingImageEdit {
+    calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[async_trait]
+impl Tool for CountingImageEdit {
+    fn name(&self) -> &str {
+        "image_edit"
+    }
+    fn description(&self) -> &str {
+        "counting fake image_edit"
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object", "properties": {}})
+    }
+    async fn execute(&self, _args: serde_json::Value) -> Result<ToolOutput, ToolError> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(ToolOutput::success(serde_json::json!({"status": "ok"})))
+    }
+}
+
+/// Identical re-calls of a deterministic tool within one turn are reused,
+/// not re-executed: round 1 executes, round 2's byte-identical call returns
+/// the cached result with a `_reused` marker instead of burning a real
+/// execution (field pattern: two identical image_edit calls in a row).
+#[tokio::test]
+async fn identical_reusable_tool_call_is_served_from_turn_cache() {
+    use crate::agent::tool_parser::parse_tool_calls;
+
+    let rt = MockLlmRuntime::new(vec![
+        MockResponse::tool_call(
+            "image_edit",
+            serde_json::json!({ "image": "a.png", "operations": [{"type": "draw_text", "text": "CamThink"}] }),
+        ),
+        MockResponse::tool_call(
+            "image_edit",
+            serde_json::json!({ "image": "a.png", "operations": [{"type": "draw_text", "text": "CamThink"}] }),
+        ),
+        MockResponse::text("done after reuse"),
+    ]);
+    let iface = crate::llm::LlmInterface::default();
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt.clone());
+    futures::executor::block_on(iface.set_llm(rt_dyn));
+
+    let mut registry = ToolRegistry::new();
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    registry.register(Arc::new(CountingImageEdit {
+        calls: calls.clone(),
+    }));
+    let registry = Arc::new(registry);
+    let state = Arc::new(tokio::sync::RwLock::new(AgentInternalState::new(
+        "reuse-test".to_string(),
+    )));
+
+    let stream = crate::agent::streaming::process_stream_events_with_safeguards(
+        Arc::new(iface),
+        state.clone(),
+        registry,
+        "给图片加水印",
+        super::StreamSafeguards::default(),
+        None,
+        None,
+    )
+    .await
+    .expect("stream");
+    let events = collect(stream).await;
+
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "the identical second call must be REUSED, not executed"
+    );
+    let content = joined_content(&events);
+    assert!(
+        content.contains("done after reuse"),
+        "turn must complete: {content}"
+    );
+    // The reused result carries the marker so the model can stop re-calling.
+    let _ = parse_tool_calls(""); // link check
+    let reused_marker_seen = format!("{:?}", events).contains("_reused");
+    assert!(reused_marker_seen, "the reuse marker must reach the model");
+}

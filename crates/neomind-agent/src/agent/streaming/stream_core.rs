@@ -328,6 +328,17 @@ pub async fn process_stream_events_with_safeguards(
         let turn_started_at = Instant::now();
         // Accumulate ALL tool results across rounds for final summary
         let mut all_round_tool_results: Vec<(String, String)> = Vec::new();
+        // [identical-call reuse] Small models re-issue byte-identical calls
+        // after a SUCCESS (observed: two identical image_edit calls back to
+        // back — each a real execution on a 2.6B model, ~30s of pure waste).
+        // For deterministic, side-effect-free tools the turn reuses the
+        // prior result and tells the model so. Deliberately NOT shell /
+        // device control / extension commands: re-running those may be the
+        // point (retry after an external state change).
+        const REUSABLE_TOOLS: &[&str] = &["image_edit", "vision"];
+        let executed_tool_signatures: std::sync::Arc<
+            std::sync::Mutex<std::collections::HashMap<String, String>>,
+        > = std::sync::Arc::new(std::collections::HashMap::new().into());
         // Track per-round thinking and content for persistence (round number → text)
         let mut round_thinking_map: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
         let mut round_contents_map: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
@@ -959,9 +970,11 @@ pub async fn process_stream_events_with_safeguards(
                     })
                     .collect();
 
+                let reuse_map = executed_tool_signatures.clone();
                 let tool_futures = futures::stream::iter(tool_inputs.into_iter().map(|(i, name, arguments)| {
                     let tools_clone = tools.clone();
                     let cache_clone = cache.clone();
+                    let reuse_map = reuse_map.clone();
 
                     async move {
                         // Shell policy check — same deny-list as Loop A (tool_loop.rs).
@@ -980,10 +993,48 @@ pub async fn process_stream_events_with_safeguards(
                                 }
                             }
                         }
+                        // Identical-call reuse for deterministic tools.
+                        let reusable = REUSABLE_TOOLS.contains(&name.as_str());
+                        let sig = format!(
+                            "{}|{}",
+                            name,
+                            serde_json::to_string(&arguments).unwrap_or_default()
+                        );
+                        if reusable {
+                            if let Some(prev) = reuse_map.lock().unwrap().get(&sig).cloned() {
+                                if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&prev) {
+                                    if let Some(obj) = v.as_object_mut() {
+                                        obj.insert(
+                                            "_reused".into(),
+                                            serde_json::json!(
+                                                "identical call already executed this turn — result reused, do NOT call again with the same arguments"
+                                            ),
+                                        );
+                                    }
+                                    tracing::info!(tool = %name, "Reusing identical tool call from earlier this turn");
+                                    return (i, name.clone(), ToolExecutionResult {
+                                        _name: name.clone(),
+                                        arguments: arguments.clone(),
+                                        result: Ok(crate::toolkit::tool::ToolOutput::success(v)),
+                                    });
+                                }
+                            }
+                        }
+                        let result =
+                            execute_tool_with_retry(&tools_clone, &cache_clone, &name, arguments.clone()).await;
+                        if reusable {
+                            if let Ok(out) = &result {
+                                if out.success {
+                                    if let Ok(data_str) = serde_json::to_string(&out.data) {
+                                        reuse_map.lock().unwrap().insert(sig, data_str);
+                                    }
+                                }
+                            }
+                        }
                         (i, name.clone(), ToolExecutionResult {
                             _name: name.clone(),
                             arguments: arguments.clone(),
-                            result: execute_tool_with_retry(&tools_clone, &cache_clone, &name, arguments.clone()).await,
+                            result,
                         })
                     }
                 })).buffer_unordered(MAX_TOOL_CONCURRENCY);
