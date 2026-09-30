@@ -450,7 +450,10 @@ Control."#;
             // AI tasks / 盯着) — these are user-facing copy; if routing
             // drifts, users hit it first.
             ("帮我创建一个虚拟设备（模拟数据源）", "device-onboarding"),
-            ("Create a virtual device with simulated data", "device-onboarding"),
+            (
+                "Create a virtual device with simulated data",
+                "device-onboarding",
+            ),
             ("帮我添加一个大模型后端", "llm-management"),
             ("Help me add an LLM backend", "llm-management"),
             ("看看我的 AI 代理都在做什么", "agent-management"),

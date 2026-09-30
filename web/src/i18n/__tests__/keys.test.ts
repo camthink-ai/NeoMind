@@ -141,7 +141,6 @@ const DYNAMIC_KEY_FAMILIES: Array<{ ns: string; keys: string[] }> = [
  * (the exact gap class this registry exists for).
  */
 function presetKeys(): { ns: string; keys: string[] } {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
   const presets: string[] =
     (globalThis as typeof globalThis & { __NEOMIND_PRESETS__?: string[] })
       .__NEOMIND_PRESETS__ ??
