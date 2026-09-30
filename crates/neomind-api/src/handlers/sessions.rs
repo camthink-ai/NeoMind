@@ -1505,17 +1505,17 @@ async fn handle_ws_socket(
                                         }
                                     };
 
-                                    // Filter out control messages (commands starting with '/')
-                                    // These are not user messages and should not be sent to the LLM
+                                    // [slash-filter removed] A legacy filter here dropped ANY
+                                    // message starting with '/' as a "control command" — but control
+                                    // traffic is structured (the sessionId field above), the frontend
+                                    // never sends slash commands over this socket, and a user message
+                                    // that begins with a file path ("/Users/…/x.png, 加上水印") is
+                                    // ordinary input in this product. It silently swallowed such turns
+                                    // (observed: chat stuck on loading…, log: "Ignoring control
+                                    // message"). Route everything to the LLM.
                                     let message = chat_req.message.trim();
-                                    if message.starts_with('/') {
-                                        tracing::info!(
-                                            "Ignoring control message: '{}', length={}",
-                                            message,
-                                            message.chars().count()
-                                        );
-                                        // Control messages are handled by the sessionId field above,
-                                        // no need to process them through the LLM
+                                    if message.is_empty() && chat_req.images.as_ref().is_none_or(|i| i.is_empty()) {
+                                        // Nothing to send at all (no text, no images) — skip.
                                         continue;
                                     }
 
