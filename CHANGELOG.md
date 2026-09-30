@@ -41,6 +41,9 @@ Everything below traces back to one support transcript: a user asked for a water
 - The Structured (L0) canvas deliberately shows none of this — its no-tool-loop contract is the product.
 - Review follow-up: `/api/agents/test-preview` accepts `tool_config` too — a restricted agent previews against the same tool set it will run with, not the full registry (the dry-run button is open to every mode, and for focused/free the preview used to silently ignore the gating).
 
+### fix(chat): an unparseable WS frame now gets an error frame back
+- Same failure shape as the path-prefix drop, one layer down: a text frame that failed `ChatRequest` parsing fell through the dispatch silently — nothing in the logs above info, nothing to the client, chat stuck on loading…. The dispatch now replies `{"type":"Error","message":"Unparseable chat frame…"}` and logs at warn, so a version-skewed or corrupted frame is visible on both ends instead of eating the turn.
+
 ### fix(chat): messages starting with a path were silently dropped
 - The WS chat handler carried a legacy filter that discarded ANY message beginning with `/` as a "control command" — while control traffic has been structured (`sessionId` field) for a long time and the frontend never sends slash commands. A turn opening with a file path ("/Users/…/x.png，帮我加水印") is ordinary input in this product; it was swallowed with only an info-level log, and the client sat on loading… forever. The filter is gone; only truly empty frames (no text AND no images) are skipped.
 

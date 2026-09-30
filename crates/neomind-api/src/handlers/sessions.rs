@@ -1725,6 +1725,23 @@ async fn handle_ws_socket(
                                             });
                                         }
                                     }
+                                } else {
+                                    // [visible-failure fix] An unparseable frame used to fall through
+                                    // here SILENTLY — the client sat on loading… with no feedback, the
+                                    // same failure shape as the removed slash-command filter. Reply with
+                                    // an error frame and log at warn so both ends see it.
+                                    tracing::warn!(
+                                        length = text.chars().count(),
+                                        "Unparseable chat frame — replying with an error frame"
+                                    );
+                                    let err = json!({
+                                        "type": "Error",
+                                        "message": "Unparseable chat frame (expected a ChatRequest JSON object)",
+                                    })
+                                    .to_string();
+                                    if socket.send(AxumMessage::Text(err)).await.is_err() {
+                                        return;
+                                    }
                                 }
                             }
                             AxumMessage::Close(_) => {
