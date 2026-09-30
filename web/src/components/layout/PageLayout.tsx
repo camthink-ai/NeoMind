@@ -1,4 +1,4 @@
-import { ReactNode, Fragment } from 'react'
+import { ReactNode, Fragment, useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { MobilePageHeader } from '@/components/layout/MobilePageHeader'
@@ -63,6 +63,17 @@ const maxWidthClass = {
 }
 
 /**
+ * Scrolled-header elevation: a two-layer contact+ambient shadow that fades
+ * downward from the header's bottom edge. Deliberately shadow-ONLY — a
+ * hairline border sits flush against the tab underline and the toolbar
+ * buttons/inputs that bottom-align at this edge (they'd read as touching
+ * the line), while a shadow starts at ~4% opacity and immediately falls
+ * off, reading as depth instead of a divider.
+ */
+const ELEVATED_SHADOW =
+  'shadow-[0_1px_2px_rgba(0,0,0,0.04),0_4px_12px_-2px_rgba(0,0,0,0.07)]'
+
+/**
  * Standard page layout container
  *
  * Provides consistent padding, max-width, and optional header across all pages.
@@ -96,6 +107,37 @@ export function PageLayout({
   mobileHeader,
 }: PageLayoutProps) {
   const isMobile = useIsMobile()
+  // Scroll-aware header elevation. The scroll container sits BELOW the
+  // title/tabs stack and shares its white bg, so rows scrolling up get
+  // hard-clipped at an invisible boundary (reads as tearing). Once the
+  // container is scrolled, the header stack's bottom edge gains a soft
+  // downward shadow — the Linear/Notion affordance that says "content
+  // continues beneath this line". At rest nothing shows, preserving the
+  // tabs' underline-only design.
+  //
+  // Detection is a 1px sentinel + IntersectionObserver, NOT onScroll:
+  // IO is computed by the rendering engine on every scroll cause
+  // (wheel, programmatic, keyboard, anchor) with no dependency on
+  // scroll-event dispatch, and it clears itself when content swaps
+  // shrink the container back to unscrolled.
+  const [contentScrolled, setContentScrolled] = useState(false)
+  const sentinelRef = useRef<HTMLDivElement>(null)
+  const scrollerRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const sentinel = sentinelRef.current
+    const root = scrollerRef.current
+    if (!sentinel || !root) return
+    const io = new IntersectionObserver(
+      ([entry]) => setContentScrolled(!entry.isIntersecting),
+      { root },
+    )
+    io.observe(sentinel)
+    return () => io.disconnect()
+  }, [])
+  // Only meaningful on desktop: the mobile header is the fixed
+  // MobilePageHeader with its own chrome, and headerContent's wrapper can
+  // be empty there (PageTabsBar lifts its actions away on mobile).
+  const headerElevated = !isMobile && contentScrolled
   // Registry that lets children (e.g. PageTabsBar on mobile) "lift" their
   // action buttons into the MobilePageHeader above the content, and push
   // wide controls (search/filter) into a sticky toolbar inside the content.
@@ -142,9 +184,16 @@ export function PageLayout({
       )}
       {/* Desktop: PageHeader with title + description + actions.
           mx-auto + maxWidth mirror the scroll container so the title and
-          content share the same left edge. */}
+          content share the same left edge. Pages without headerContent have
+          the scroll edge directly under this strip — it takes the elevation
+          instead. */}
       {title && !isMobile && (
-        <div className="shrink-0 bg-background">
+        <div
+          className={cn(
+            'shrink-0 bg-background transition-shadow duration-normal',
+            !headerContent && headerElevated && ELEVATED_SHADOW,
+          )}
+        >
           <div className={cn('mx-auto w-full px-4 pt-4 pb-2 sm:px-6 sm:pt-5 sm:pb-3 md:px-8 md:pt-6 md:pb-3', maxWidthClass[maxWidth], className)}>
             <PageHeader
               title={title}
@@ -157,9 +206,17 @@ export function PageLayout({
       )}
       {/* Fixed header content (e.g., tabs) - outside scroll container.
           bg-background matches the title strip above and the scroll
-          container below for visual continuity. */}
+          container below for visual continuity. When content scrolls
+          beneath, a SOFT downward shadow fades in (no hairline border — a
+          crisp line hugs the tab/button bottoms sitting flush at this
+          edge; a shadow reads as the header floating above the content). */}
       {headerContent && (
-        <div className="shrink-0 bg-background">
+        <div
+          className={cn(
+            'shrink-0 bg-background transition-shadow duration-normal',
+            headerElevated && ELEVATED_SHADOW,
+          )}
+        >
           {headerContent}
         </div>
       )}
@@ -180,8 +237,11 @@ export function PageLayout({
         )}
         {/* Scrollable content. bg-background + overscroll-none so the
             rubber-band / pull-to-refresh bounce on mobile never exposes a
-            transparent strip above the first (often sticky) child. */}
+            transparent strip above the first (often sticky) child. The
+            1px sentinel at the very top drives the header elevation —
+            scrolled ⇔ it has left the viewport. */}
         <div
+          ref={scrollerRef}
           className={cn(
             '@container flex-1 flex flex-col overflow-auto bg-background overscroll-none',
             !noPadding && 'px-4 sm:px-6 md:px-8',
@@ -189,6 +249,7 @@ export function PageLayout({
           )}
           data-page-scroll-container
         >
+          <div ref={sentinelRef} aria-hidden="true" className="h-px shrink-0" />
           <div className={cn('mx-auto w-full flex flex-col min-h-full animate-fade-in', maxWidthClass[maxWidth])}>
             {children}
             {/* Mount node for infinite-scroll sentinels — Pagination portals its

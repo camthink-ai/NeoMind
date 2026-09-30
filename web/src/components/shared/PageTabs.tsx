@@ -125,9 +125,12 @@ export function PageTabsBar({
   return (
     // No top padding — the title row above already carries pb-3 (12px), which
     // is the whole title→tabs gap; an extra pt-2 here pushed it to 20px and
-    // read as detached. px matches the title row (md:px-8) so tabs left-align
-    // with the title above them.
-    <div className="flex shrink-0 items-end gap-3 bg-background px-4 sm:px-6 md:px-8">
+    // read as detached. pb-2 gives the row's bottom edge (the scroll-shadow
+    // anchor in PageLayout) clearance below the tab underline and the
+    // bottom-aligned action buttons/inputs, so the shadow reads as the
+    // header's edge instead of painted onto the controls. px matches the
+    // title row (md:px-8) so tabs left-align with the title above them.
+    <div className="flex shrink-0 items-end gap-3 bg-background px-4 pb-2 sm:px-6 md:px-8">
       <div
         role="tablist"
         onKeyDown={(e) => {

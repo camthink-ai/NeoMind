@@ -299,9 +299,9 @@ html {
        above the gray content canvas. In dark mode this token falls back to
        --card so the same class works in both. */
     --chrome: oklch(1 0 0);
-    /* Sidebar rail — the one gray chrome layer (~#F8F9FA), separating from
+    /* Sidebar rail — the one gray chrome layer (~#F6F7F9), separating from
        the white canvas by color contrast; no border (reference palette). */
-    --sidebar-bg: oklch(0.97 0 0);
+    --sidebar-bg: oklch(0.97 0.003 270);
     /* Active nav chip on the rail — half-white over the rail gray ≈ L0.985:
        a soft highlight, between the rail (0.97) and a full white chip. */
     --sidebar-active: oklch(1 0 0 / 50%);
@@ -314,11 +314,15 @@ html {
        harmonizes with the brand orange instead of feeling disconnected. */
     --primary: oklch(0.22 0.03 265);
     --primary-foreground: oklch(1 0 0);
-    --secondary: oklch(0.962 0 0);
+    /* Gray surfaces carry the theme's micro cool tint (0.003 @ 270) — the
+       same tint as text/borders/hover washes. Pure achromatic grays here
+       (old oklch(0.962 0 0) = #F5F5F5) read warm/dirty next to the tinted
+       neighbors; dark mode tints its whole ladder, light mode must too. */
+    --secondary: oklch(0.962 0.003 270);
     --secondary-foreground: oklch(0.21 0.01 264);
-    --muted: oklch(0.962 0 0);
+    --muted: oklch(0.962 0.003 270);
     --muted-foreground: oklch(0.48 0.012 264);
-    --accent: oklch(0.962 0 0);
+    --accent: oklch(0.962 0.003 270);
     --accent-foreground: oklch(0.21 0.01 264);
     --destructive: oklch(0.577 0.245 27);
     --destructive-foreground: oklch(1 0 0);
@@ -487,7 +491,7 @@ html {
     --input-focus-bg: oklch(1 0 0);
 
     --session-drawer-bg: oklch(0.99 0.002 270);
-    --session-drawer-border: oklch(0 0 0 / 8%);
+    --session-drawer-border: oklch(0.21 0.01 264 / 9%);
     --session-item-hover: oklch(0.95 0.003 270);
     --session-item-active: oklch(0.93 0.003 270);
 
