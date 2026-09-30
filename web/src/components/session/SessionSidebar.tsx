@@ -326,7 +326,7 @@ export function SessionSidebar({
             placeholder={t('session.search')}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-8 h-8 text-sm rounded-lg bg-muted-50 border-0"
+                className="pl-8 h-8 text-sm rounded-lg bg-muted-50"
               />
             </div>
           </div>

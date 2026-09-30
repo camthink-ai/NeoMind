@@ -953,34 +953,9 @@ html {
     }
   }
 
-  /* The assistant "node": the brand mark seated in a halo — a slow
-     expanding ring (a sonar ping from the logo's i-node, the agent) with
-     a faint static brand tint holding its seat between pulses.
-     Transform/opacity only. Honors reduced-motion (ring freezes faint). */
-  .welcome-node-ring {
-    border: 1px solid color-mix(in oklch, var(--brand) 35%, transparent);
-    animation: welcome-node-breathe 3.6s ease-out infinite;
-  }
   @media (prefers-reduced-motion: reduce) {
     .welcome-dots {
       animation: none;
-    }
-    .welcome-node-ring {
-      animation: none;
-      opacity: 0.4;
-    }
-  }
-  @keyframes welcome-node-breathe {
-    0% {
-      transform: scale(0.82);
-      opacity: 0;
-    }
-    35% {
-      opacity: 1;
-    }
-    100% {
-      transform: scale(1.25);
-      opacity: 0;
     }
   }
 

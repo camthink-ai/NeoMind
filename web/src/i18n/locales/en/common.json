@@ -391,7 +391,7 @@
       "evening": "Good evening",
       "night": "Good evening"
     },
-    "tagline": "{{appName}} Smart IoT Assistant, at your service",
+    "askLine": "{{greeting}}. Just ask me if you need anything.",
     "aiSuggestion": "AI Suggestions",
     "suggestions": {
       "pendingAlerts": "{{count}} alert(s) pending",
@@ -402,7 +402,11 @@
       "checkDevices": "Check current online device status",
       "createRule": "Help me create a temperature monitoring rule",
       "checkAlerts": "What alerts need attention?",
-      "showLogs": "Show today's device activity log"
+      "showLogs": "Show today's device activity log",
+      "createAgent": "Create a scheduled monitoring agent for me",
+      "checkAgents": "What are my AI agents doing?",
+      "addLlmBackend": "Help me add an LLM backend",
+      "createVirtualDevice": "Create a virtual device with simulated data"
     },
     "quickActions": {
       "devices": "Devices",

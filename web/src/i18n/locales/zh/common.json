@@ -387,7 +387,7 @@
       "evening": "晚上好",
       "night": "夜深了"
     },
-    "tagline": "{{appName}} 智能物联网助手，随时为你服务",
+    "askLine": "{{greeting}}！有什么需要问我就行",
     "aiSuggestion": "AI 建议",
     "suggestions": {
       "pendingAlerts": "有 {{count}} 条告警待处理",
@@ -398,7 +398,11 @@
       "checkDevices": "查看当前在线的设备状态",
       "createRule": "帮我创建一个温度监控规则",
       "checkAlerts": "有哪些告警需要处理?",
-      "showLogs": "显示今天的设备活动日志"
+      "showLogs": "显示今天的设备活动日志",
+      "createAgent": "帮我创建一个定时监控任务（AI 代理）",
+      "checkAgents": "看看我的 AI 代理都在做什么",
+      "addLlmBackend": "帮我添加一个大模型后端",
+      "createVirtualDevice": "帮我创建一个虚拟设备（模拟数据源）"
     },
     "quickActions": {
       "devices": "查看设备",

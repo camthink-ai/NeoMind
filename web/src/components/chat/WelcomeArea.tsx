@@ -8,7 +8,7 @@ import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
 import { ArrowRight } from "lucide-react"
 import { useBrandMessages } from "@/hooks/useBrand"
-import { BrandLogo } from "@/components/shared/BrandName"
+import { BrandLogoHorizontal } from "@/components/shared/BrandName"
 
 interface WelcomeAreaProps {
   className?: string
@@ -41,6 +41,10 @@ export function WelcomeArea({ className, onQuickAction, children }: WelcomeAreaP
     t("welcome.suggestionPrompts.createRule"),
     t("welcome.suggestionPrompts.checkAlerts"),
     t("welcome.suggestionPrompts.showLogs"),
+    t("welcome.suggestionPrompts.createAgent"),
+    t("welcome.suggestionPrompts.checkAgents"),
+    t("welcome.suggestionPrompts.addLlmBackend"),
+    t("welcome.suggestionPrompts.createVirtualDevice"),
   ]
 
   return (
@@ -56,18 +60,14 @@ export function WelcomeArea({ className, onQuickAction, children }: WelcomeAreaP
       <div className="relative w-full max-w-3xl shrink-0 space-y-8">
         {/* Greeting */}
         <div className="text-center">
-          {/* Assistant node — the brand mark breathing in a sonar halo
-              (.welcome-node-ring): the i-node of the logo = the agent. */}
-          <div className="relative mb-4 flex h-14 w-14 items-center justify-center mx-auto">
-            <span aria-hidden="true" className="welcome-node-ring absolute inset-0 rounded-full" />
-            <BrandLogo className="relative h-8 w-8" />
+          {/* Horizontal brand wordmark — same image as the expanded sidebar,
+              theme-adaptive (logo-light / logo-dark) */}
+          <div className="mb-4 flex justify-center">
+            <BrandLogoHorizontal className="h-9" />
           </div>
-          <h1 className="text-2xl font-semibold text-foreground mb-2">
-            {t(getGreetingKey())}
+          <h1 className="text-xl font-semibold text-foreground">
+            {t('common:welcome.askLine', { greeting: t(getGreetingKey()) })}
           </h1>
-          <p className="text-muted-foreground">
-            {getWelcomeMessage("tagline")}
-          </p>
         </div>
 
         {/* Slotted composer — the input lives inside the centered group */}
