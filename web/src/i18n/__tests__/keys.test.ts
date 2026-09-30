@@ -135,6 +135,39 @@ const DYNAMIC_KEY_FAMILIES: Array<{ ns: string; keys: string[] }> = [
 ]
 
 /**
+ * Preset families: the picker and apply path build keys from
+ * `creator.preset.${key}.{name,prompt,desc}` — enumerated live from the
+ * preset registry so a new template without locale entries fails here
+ * (the exact gap class this registry exists for).
+ */
+function presetKeys(): { ns: string; keys: string[] } {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const presets =
+    globalThis.__NEOMIND_PRESETS__ ??
+    (() => {
+      try {
+        // Direct import would couple the test to the editor module graph;
+        // read the source and extract the key union instead.
+        const src = Object.entries(SOURCES).find(([f]) =>
+          f.endsWith('agent-editor/presets.ts'),
+        )?.[1] ?? ''
+        const m = src.match(/key:\s*\n([\s|'a-zA-Z-]+)/)
+        return (m?.[1].match(/'([a-zA-Z]+)'/g) ?? []).map((k) => k.slice(1, -1))
+      } catch {
+        return [] as string[]
+      }
+    })()
+  return {
+    ns: 'agents',
+    keys: presets.flatMap((k) => [
+      `creator.preset.${k}.name`,
+      `creator.preset.${k}.prompt`,
+      `creator.preset.${k}.desc`,
+    ]),
+  }
+}
+
+/**
  * tBuilder wrapper families: `const tBuilder = (key) =>
  * t(\`automation:ruleBuilder.${key}\`)` hides the literal from the scanner.
  * The call sites inside are literal — extract them from source.
@@ -160,7 +193,7 @@ describe('translation keys referenced from source', () => {
     // (dashboardComponents ↔ dashboard-components.json).
     const NS_FILE: Record<string, string> = { dashboardComponents: 'dashboard-components' }
     const missing: string[] = []
-    for (const { ns, keys } of [...DYNAMIC_KEY_FAMILIES, ...wrapperKeys()]) {
+    for (const { ns, keys } of [...DYNAMIC_KEY_FAMILIES, presetKeys(), ...wrapperKeys()]) {
       const file = NS_FILE[ns] ?? ns
       for (const key of keys) {
         for (const locale of ['zh', 'en']) {

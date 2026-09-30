@@ -16,6 +16,7 @@ import {
   Settings2,
   Zap,
 } from '@/design-system/icons'
+import { ShieldCheck, Search } from 'lucide-react'
 
 /** Localiser — the editor hands its `tAgent` in at apply time. */
 type T = (key: string) => string
@@ -61,6 +62,8 @@ export interface AgentPreset {
     | 'rootCause'
     | 'weekly'
     | 'shift'
+    | 'patrol'
+    | 'qa'
     | 'advanced'
   icon: Icon
   /**
@@ -253,6 +256,36 @@ export const AGENT_PRESETS: AgentPreset[] = [
       autonomy: false,
       memoryMode: 'tool',
       schedule: { type: 'timer', subType: 'interval', intervalMinutes: 30 },
+    },
+  },
+  {
+    // free × timer — the one derivation×schedule cell the original nine did
+    // not cover: an autonomous agent on a clock. Unattended periodic
+    // inspection that may also REMEDIATE (restart a device, resend a
+    // command) and verify the fix — the IoT "night shift" nobody staffs.
+    // `judgment` for the same reason as `smart`: an agent that acts must
+    // neither spam every round nor stay silent through a failed fix.
+    key: 'patrol',
+    icon: ShieldCheck,
+    fill: {
+      autonomy: true,
+      memoryMode: 'assistant',
+      schedule: { type: 'timer', subType: 'interval', intervalMinutes: 30 },
+      notify: SPEAKS_FOR_ITSELF,
+    },
+  },
+  {
+    // focused × on-demand — the bound-data Q&A clerk. Distinct from
+    // `advanced` (free, goes looking anywhere): scope is what you bound,
+    // answers are cheap single-pass reads, and there is no tool loop to
+    // pay for. Numbers carry their timestamp and source; absence is said
+    // out loud instead of guessed around.
+    key: 'qa',
+    icon: Search,
+    fill: {
+      autonomy: false,
+      memoryMode: 'tool',
+      schedule: { type: 'on-demand' },
     },
   },
   {

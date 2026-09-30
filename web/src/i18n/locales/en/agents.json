@@ -629,6 +629,16 @@
         "sources": "Bind the data sources it should read",
         "trigger": "Bind a trigger source, or the data sources it should read",
         "optional": "Bind the data it should read, or save as-is — it can look things up itself"
+      },
+      "patrol": {
+        "name": "Scheduled patrol",
+        "desc": "Rounds on a clock, remediates what it can",
+        "prompt": "You are the on-duty engineer. Inspect the bound sources on schedule: when something is off, judge its nature and blast radius first; remediate directly what you can (restart a device, resend a command) and verify the fix took; for the rest, write down the symptom, your read of the cause, and a suggested next step. Each round's conclusion must be comparable with the previous one, and every remediation leaves a receipt."
+      },
+      "qa": {
+        "name": "Data Q&A",
+        "desc": "Ask anytime, answers from bound data only",
+        "prompt": "You are a data lookup assistant. Answer only from the bound data sources: look first, then answer; every number carries its timestamp and source; when the data does not have it, say so plainly instead of guessing. Keep answers short and direct."
       }
     },
     "notify": {

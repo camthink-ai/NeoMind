@@ -723,10 +723,11 @@ export function ChatPage() {
       onClearContext={sessionId ? handleClearContext : undefined}
       compacting={isCompacting}
       maxHeight={isDesktop ? 160 : 100}
-      // Welcome hosts raise the resting height so the input reads as the
-      // page's primary action (ChatGPT/Claude empty-state pattern);
-      // conversation keeps the compact single-line default.
-      minHeight={isWelcomeMode ? (isDesktop ? 72 : 56) : 44}
+      // One resting height everywhere — welcome vs conversation used to
+      // differ (72/56 vs 44), and the box visibly jumped the moment the
+      // first reply landed (the context ring appearing at the same time
+      // made it look icon-caused).
+      minHeight={44}
     />
   )
 

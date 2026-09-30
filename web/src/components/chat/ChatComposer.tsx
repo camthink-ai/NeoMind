@@ -114,9 +114,9 @@ export function ChatComposer({
   const confirmCompact = async () => {
     if (!onCompact) return
     const yes = await confirm({
-      title: t("chat.context.compactConfirmTitle", "Compact context?"),
-      description: t("chat.context.compactConfirmDesc", "Earlier messages are replaced by a summary to free context space. History stays visible in the UI; only later requests are affected."),
-      confirmText: t("chat.context.compact", "Compact"),
+      title: t("chat:context.compactConfirmTitle", "Compact context?"),
+      description: t("chat:context.compactConfirmDesc", "Earlier messages are replaced by a summary to free context space. History stays visible in the UI; only later requests are affected."),
+      confirmText: t("chat:context.compact", "Compact"),
     })
     if (yes) onCompact()
   }
@@ -124,9 +124,9 @@ export function ChatComposer({
   const confirmClear = async () => {
     if (!onClearContext) return
     const yes = await confirm({
-      title: t("chat.context.clearConfirmTitle", "Clear conversation history?"),
-      description: t("chat.context.clearConfirmDesc", "All messages in this session will be deleted. This cannot be undone."),
-      confirmText: t("chat.context.clear", "Clear"),
+      title: t("chat:context.clearConfirmTitle", "Clear conversation history?"),
+      description: t("chat:context.clearConfirmDesc", "All messages in this session will be deleted. This cannot be undone."),
+      confirmText: t("chat:context.clear", "Clear"),
       variant: "destructive",
     })
     if (yes) onClearContext()
@@ -360,9 +360,9 @@ export function ChatComposer({
             }
             const pct = Math.round(ratio * 100)
             const rows: Array<{ label: string; value?: number; color: string; suffix?: string }> = [
-              { label: t('chat.context.systemPrompt', 'System prompt'), value: contextUsage.system, color: 'var(--primary)' },
-              { label: t('chat.context.toolDefs', 'Tool definitions'), value: contextUsage.tools, color: 'var(--accent-cyan)' },
-              { label: t('chat.context.history', 'Conversation history'), value: contextUsage.history, color: 'var(--muted-foreground)', suffix: contextUsage.messageCount != null ? t('chat.context.msgCount', { defaultValue: ' · {{count}} msgs', count: contextUsage.messageCount }) : undefined },
+              { label: t('chat:context.systemPrompt', 'System prompt'), value: contextUsage.system, color: 'var(--primary)' },
+              { label: t('chat:context.toolDefs', 'Tool definitions'), value: contextUsage.tools, color: 'var(--accent-cyan)' },
+              { label: t('chat:context.history', 'Conversation history'), value: contextUsage.history, color: 'var(--muted-foreground)', suffix: contextUsage.messageCount != null ? t('chat:context.msgCount', { defaultValue: ' · {{count}} msgs', count: contextUsage.messageCount }) : undefined },
             ]
             return (
               <TooltipProvider delayDuration={150}>
@@ -370,8 +370,8 @@ export function ChatComposer({
                   <TooltipTrigger asChild>
                     <button
                       type="button"
-                      className="shrink-0 flex items-center gap-1.5 text-muted-foreground hover:text-foreground transition-colors"
-                      aria-label={`${t('chat.context.title', 'Context usage')}: ${pct}%`}
+                      className="shrink-0 h-8 flex items-center gap-1.5 text-muted-foreground hover:text-foreground transition-colors"
+                      aria-label={`${t('chat:context.title', 'Context usage')}: ${pct}%`}
                     >
                       <svg width="20" height="20" viewBox="0 0 20 20" className="-rotate-90">
                         <circle cx="10" cy="10" r={R} fill="none" stroke="var(--border)" strokeWidth="2.5" />
@@ -389,7 +389,7 @@ export function ChatComposer({
                   </TooltipTrigger>
                   <TooltipContent side="top" align="end" className="w-60 p-3">
                     <p className="text-xs font-medium mb-2">
-                      {t('chat.context.title', 'Context usage')}
+                      {t('chat:context.title', 'Context usage')}
                       <span className="ml-1.5 text-muted-foreground tabular-nums">
                         {fmt(contextUsage.used)} / {fmt(contextUsage.max)} · {pct}%
                       </span>
@@ -405,7 +405,7 @@ export function ChatComposer({
                     </div>
                     {contextUsage.estimated && (
                       <p className="mt-2 text-nano text-muted-foreground">
-                        {t('chat.context.estimatedHint', 'Character-based estimate — updates after the next reply')}
+                        {t('chat:context.estimatedHint', 'Character-based estimate — updates after the next reply')}
                       </p>
                     )}
                     {(onCompact || onClearContext) && (
@@ -423,8 +423,8 @@ export function ChatComposer({
                               ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
                               : <Archive className="h-3.5 w-3.5" />}
                             {compacting
-                              ? t('chat.context.compacting', 'Compacting…')
-                              : t('chat.context.compact', 'Compact')}
+                              ? t('chat:context.compacting', 'Compacting…')
+                              : t('chat:context.compact', 'Compact')}
                           </Button>
                         )}
                         {onClearContext && (
@@ -436,7 +436,7 @@ export function ChatComposer({
                             className="flex-1 gap-1.5 border-destructive text-destructive hover:bg-destructive-light hover:text-destructive"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
-                            {t('chat.context.clear', 'Clear')}
+                            {t('chat:context.clear', 'Clear')}
                           </Button>
                         )}
                       </div>
