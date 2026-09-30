@@ -16,6 +16,8 @@ describe('AGENT_PRESETS × deriveExecutionMode', () => {
       weekly: { hasDeviceCommands: false, canActAutonomously: false, hasOutputContract: false, mode: 'focused' },
       shift: { hasDeviceCommands: false, canActAutonomously: false, hasOutputContract: false, mode: 'focused' },
       advanced: { hasDeviceCommands: false, canActAutonomously: true, hasOutputContract: false, mode: 'free' },
+      patrol: { hasDeviceCommands: false, canActAutonomously: true, hasOutputContract: false, mode: 'free' },
+      qa: { hasDeviceCommands: false, canActAutonomously: false, hasOutputContract: false, mode: 'focused' },
     }
     for (const preset of AGENT_PRESETS) {
       const spec = expectMode[preset.key]
@@ -58,6 +60,8 @@ describe('AGENT_PRESETS × deriveExecutionMode', () => {
       scheduled: 'assistant',
       weekly: 'assistant',
       advanced: 'assistant',
+      patrol: 'assistant',
+      qa: 'tool',
     }
     for (const preset of AGENT_PRESETS) {
       expect(preset.fill.memoryMode, `preset ${preset.key}`).toBe(memory[preset.key])
@@ -94,11 +98,12 @@ describe('the rail carries a few, the dialog carries all', () => {
 })
 
 describe('notification routing the presets do set', () => {
-  it('only the two whose conclusion is the point speak for themselves', () => {
+  it('only the ones whose conclusion is the point speak for themselves', () => {
     // `judgment` asserts the task will use its own tools. Everywhere else the
-    // preset stays out of it and the API's floor applies.
+    // preset stays out of it and the API's floor applies. The club is the
+    // acting agents: smart, rootCause, and the patrol that remediates.
     for (const p of AGENT_PRESETS) {
-      if (p.key === 'smart' || p.key === 'rootCause') {
+      if (p.key === 'smart' || p.key === 'rootCause' || p.key === 'patrol') {
         expect(p.fill.notify, `preset ${p.key}`).toEqual({ channels: [], on: 'judgment' })
       } else {
         expect(p.fill.notify, `preset ${p.key} must leave routing alone`).toBeUndefined()
@@ -146,6 +151,8 @@ describe('the next step a preset leaves open', () => {
       weekly: 'optional',
       shift: 'optional',
       advanced: 'optional',
+      patrol: 'optional',
+      qa: 'optional',
     }
     for (const p of AGENT_PRESETS) {
       expect(nextStepFor(p), `preset ${p.key}`).toBe(expected[p.key])

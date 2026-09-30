@@ -123,11 +123,11 @@ export function PageTabsBar({
   // a SINGLE scrollable row (no wrapping): overflowing tabs scroll
   // horizontally at natural size instead of squeezing labels together.
   return (
-    // pt-2 — same title→toolbar gap as the dashboard page (title row
-    // pb-3 + this pt-2 = 20px), so all pages share one header rhythm;
-    // px matches the title row (md:px-8) so tabs left-align with the
-    // title above them.
-    <div className="flex shrink-0 items-end gap-3 bg-background px-4 pt-2 sm:px-6 md:px-8">
+    // No top padding — the title row above already carries pb-3 (12px), which
+    // is the whole title→tabs gap; an extra pt-2 here pushed it to 20px and
+    // read as detached. px matches the title row (md:px-8) so tabs left-align
+    // with the title above them.
+    <div className="flex shrink-0 items-end gap-3 bg-background px-4 sm:px-6 md:px-8">
       <div
         role="tablist"
         onKeyDown={(e) => {
