@@ -420,7 +420,9 @@
       "monthlyFirstDesc": "每月1号00:00",
       "workdaysMorningLabel": "工作日早上",
       "workdaysMorningDesc": "周一至周五08:00"
-    }
+    },
+    "name": "（未命名）",
+    "noPreview": "暂无预览 — 完成规则后此处显示 DSL"
   },
   "transformBuilder": {
     "title": "创建数据转换",

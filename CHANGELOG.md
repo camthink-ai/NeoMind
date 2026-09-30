@@ -41,6 +41,10 @@ Everything below traces back to one support transcript: a user asked for a water
 - The Structured (L0) canvas deliberately shows none of this — its no-tool-loop contract is the product.
 - Review follow-up: `/api/agents/test-preview` accepts `tool_config` too — a restricted agent previews against the same tool set it will run with, not the full registry (the dry-run button is open to every mode, and for focused/free the preview used to silently ignore the gating).
 
+### fix(i18n): dynamic key families can no longer leak raw keys
+- The notify card built its keys at runtime (`creator.notify.on${k}`), invisible to the literal-key scanner — `onAlways` / `onJudgment` and their descriptions rendered as raw keys in BOTH locales. Same class found and fixed in the rule builder's `tBuilder` wrapper (`name`, `noPreview`). Seven keys added across zh/en.
+- The keys test now carries a registry of every dynamic family's concrete keys (notify states, role/memory vocabulary, field types, onboarding features and prompt cards, message severities/statuses, the component-library tables, config-renderer color labels) plus live extraction of the `tBuilder` wrapper's literal arguments — the "missing key renders raw on some screen" guard now covers the dynamic half of the surface, in every locale.
+
 ### feat(chat): three prompt rules, locked by tests
 - Tool-produced images must be embedded (`![desc](url)`), never answered with a file path or `ls` output; image edits apply exactly what was asked — no unrequested annotations, no re-asking when the request already names image and content; the language policy explicitly covers reports, tables, and tool-result summaries, not just conversational replies.
 

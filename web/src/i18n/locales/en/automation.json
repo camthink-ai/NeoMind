@@ -421,7 +421,9 @@
       "monthlyFirstDesc": "1st of every month at 00:00",
       "workdaysMorningLabel": "Weekdays at 8am",
       "workdaysMorningDesc": "Mon-Fri at 08:00"
-    }
+    },
+    "name": "(unnamed)",
+    "noPreview": "No preview yet — the DSL appears here once the rule is complete"
   },
   "transformBuilder": {
     "title": "Create Data Transform",

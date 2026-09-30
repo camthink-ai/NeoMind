@@ -636,6 +636,11 @@
       "noChannels": "还没有外部通道 —— 告警仍会出现在「消息」里，不会漏。",
       "onLabel": "何时通知",
       "onFailure": "失败时",
+      "onFailureDesc": "只在执行失败时提醒，成功保持安静。",
+      "onAlways": "每次执行",
+      "onAlwaysDesc": "无论成败，每次执行都提醒。",
+      "onJudgment": "由任务判断",
+      "onJudgmentDesc": "只在有值得说的结论时提醒；例行轮次保持安静，也不回落到旧的关键词推断。",
       "hint": "选择往哪发、什么时候发。「由 AI 判断」不给机制配通知，也不回落到旧的关键词推断。",
       "configureChannels": "去配置通道"
     },

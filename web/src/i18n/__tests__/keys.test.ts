@@ -74,7 +74,105 @@ function resolve(obj: Record<string, unknown>, dotted: string): unknown {
 
 const LOCALES = ['en', 'zh']
 
+
+/**
+ * Dynamic key families — keys the source builds at runtime
+ * (`t(\`creator.notify.on${k}\`)`, `t(\`componentLibrary.${labelKey}\`)`),
+ * which the literal scanner above cannot see. Each family enumerates its
+ * CONCRETE keys here; the value domains come from the enumerating constants
+ * in the components (notify's `['failure','always','judgment']`,
+ * onboarding's feature lists, the componentLibrary key tables, ...). A key
+ * that renders raw on screen because nobody added it to a bundle is exactly
+ * the failure the scanner above catches for literals — this extends that
+ * cover to the dynamic half.
+ *
+ * Deliberately absent: `agents:detail.fieldType.enum` — the enum branch
+ * renders `enum(a/b)` inline and never reaches t().
+ */
+const DYNAMIC_KEY_FAMILIES: Array<{ ns: string; keys: string[] }> = [
+  {
+    ns: 'agents',
+    keys: [
+      'creator.notify.onFailure', 'creator.notify.onFailureDesc',
+      'creator.notify.onAlways', 'creator.notify.onAlwaysDesc',
+      'creator.notify.onJudgment', 'creator.notify.onJudgmentDesc',
+      'card.role.recordData', 'card.role.actOrInvestigate', 'card.role.answer',
+      'card.memory.tool', 'card.memory.assistant',
+      'detail.memoryModeNote.tool', 'detail.memoryModeNote.assistant',
+      'detail.fieldType.text', 'detail.fieldType.number', 'detail.fieldType.boolean',
+    ],
+  },
+  {
+    ns: 'common',
+    keys: [
+      'onboarding.setup.llm.features.builtin.title', 'onboarding.setup.llm.features.builtin.desc',
+      'onboarding.setup.llm.features.local.title', 'onboarding.setup.llm.features.local.desc',
+      'onboarding.setup.llm.features.cloud.title', 'onboarding.setup.llm.features.cloud.desc',
+      'onboarding.setup.device.features.mqtt.title', 'onboarding.setup.device.features.mqtt.desc',
+      'onboarding.setup.device.features.other.title', 'onboarding.setup.device.features.other.desc',
+      'onboarding.setup.device.features.camera.title', 'onboarding.setup.device.features.camera.desc',
+      'onboarding.ready.prompts.monitoring.title', 'onboarding.ready.prompts.monitoring.desc', 'onboarding.ready.prompts.monitoring.prompt',
+      'onboarding.ready.prompts.automation.title', 'onboarding.ready.prompts.automation.desc', 'onboarding.ready.prompts.automation.prompt',
+      'onboarding.ready.prompts.extensions.title', 'onboarding.ready.prompts.extensions.desc', 'onboarding.ready.prompts.extensions.prompt',
+      'messages.severity.info', 'messages.severity.warning', 'messages.severity.critical', 'messages.severity.emergency',
+      'messages.status.active', 'messages.status.acknowledged', 'messages.status.resolved', 'messages.status.archived', 'messages.status.false_positive',
+    ],
+  },
+  {
+    ns: 'dashboardComponents',
+    keys: [
+      'componentLibrary.indicators', 'componentLibrary.charts', 'componentLibrary.display',
+      'componentLibrary.spatial', 'componentLibrary.controls', 'componentLibrary.business',
+      'componentLibrary.custom', 'componentLibrary.localComponents', 'componentLibrary.marketplace',
+      ...[
+        'valueCard', 'ledIndicator', 'sparkline', 'progressBar', 'lineChart', 'areaChart',
+        'barChart', 'pieChart', 'imageDisplay', 'imageHistory', 'webDisplay', 'markdownDisplay',
+        'mapDisplay', 'videoDisplay', 'customLayer', 'toggleSwitch', 'agentMonitor', 'aiAnalyst',
+      ].flatMap((k) => [`componentLibrary.${k}`, `componentLibrary.${k}Desc`]),
+      'configRenderer.backgroundColor', 'configRenderer.textColor', 'configRenderer.borderColor', 'configRenderer.color',
+    ],
+  },
+]
+
+/**
+ * tBuilder wrapper families: `const tBuilder = (key) =>
+ * t(\`automation:ruleBuilder.${key}\`)` hides the literal from the scanner.
+ * The call sites inside are literal — extract them from source.
+ */
+function wrapperKeys(): { ns: string; keys: string[] }[] {
+  const families: Record<string, string> = {
+    'SimpleRuleBuilderSplit.tsx': 'automation:ruleBuilder.',
+    'TransformBuilderSplit.tsx': 'automation:transformBuilder.',
+  }
+  return Object.entries(families).map(([file, prefix]) => {
+    const text = Object.entries(SOURCES).find(([f]) => f.endsWith(file))?.[1] ?? ''
+    const i = prefix.indexOf(':')
+    const ns = prefix.slice(0, i)
+    const rest = prefix.slice(i + 1)
+    const keys = [...text.matchAll(/tBuilder\(\s*'([^']+)'/g)].map((m) => rest + m[1])
+    return { ns, keys }
+  })
+}
+
 describe('translation keys referenced from source', () => {
+  it('dynamic key families exist in every locale', () => {
+    // Some registered ns names differ from their file names
+    // (dashboardComponents ↔ dashboard-components.json).
+    const NS_FILE: Record<string, string> = { dashboardComponents: 'dashboard-components' }
+    const missing: string[] = []
+    for (const { ns, keys } of [...DYNAMIC_KEY_FAMILIES, ...wrapperKeys()]) {
+      const file = NS_FILE[ns] ?? ns
+      for (const key of keys) {
+        for (const locale of ['zh', 'en']) {
+          if (resolve(bundleOf(locale, file) ?? {}, key) === undefined) {
+            missing.push(`[${locale}] ${ns}:${key}`)
+          }
+        }
+      }
+    }
+    expect(missing, `dynamic families missing from bundles:\n${missing.join('\n')}`).toEqual([])
+  })
+
   const referenced = referencedKeys()
 
   it('found keys to check — a scanner that reads nothing passes vacuously', () => {

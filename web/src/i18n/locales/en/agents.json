@@ -636,6 +636,11 @@
       "noChannels": "No external channels yet — alerts still land in Messages either way.",
       "onLabel": "When to notify",
       "onFailure": "On failure",
+      "onFailureDesc": "Notify only when a run fails; success stays quiet.",
+      "onAlways": "Every run",
+      "onAlwaysDesc": "Notify on every run, success or failure.",
+      "onJudgment": "Let the task decide",
+      "onJudgmentDesc": "Speak only when there is a conclusion worth acting on; routine rounds stay quiet — and nothing falls back to keyword sniffing.",
       "hint": "Where to send, and when. \"Let the agent decide\" configures no routed notification and does not fall back to the old keyword sniffing.",
       "configureChannels": "Configure channels"
     },
