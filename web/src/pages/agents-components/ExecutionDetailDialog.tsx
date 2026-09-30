@@ -250,7 +250,7 @@ export function ExecutionDetailDialog({
                       return (
                         <div key={idx} className="border rounded-lg overflow-hidden">
                           <div
-                            className="flex items-center justify-between p-2 bg-bg-50 cursor-pointer hover:bg-bg-80 transition-colors"
+                            className="flex items-center justify-between p-2 bg-glass cursor-pointer hover:bg-glass-heavy transition-colors"
                             onClick={() => toggleDataExpanded(idx)}
                           >
                             <div className="flex items-center gap-2 min-w-0 flex-1">

@@ -758,7 +758,7 @@ export function ChatPage() {
     }}>
       {/* Pending stream recovery dialog */}
       {pendingStream?.hasPending && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg-80 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-glass-heavy backdrop-blur-sm">
           <div className="max-w-md w-full mx-4 bg-card border border-border rounded-lg shadow-lg p-6">
             <div className="flex items-center gap-3 mb-4">
               <div className="h-10 w-10 rounded-full bg-info-light flex items-center justify-center">

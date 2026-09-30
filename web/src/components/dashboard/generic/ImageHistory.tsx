@@ -421,14 +421,14 @@ export const ImageHistory = memo(function ImageHistory({
 
         {/* Loading overlay */}
         {imageLoadState === 'loading' && (
-          <div className="absolute inset-0 flex items-center justify-center bg-bg-50 z-20">
+          <div className="absolute inset-0 flex items-center justify-center bg-glass z-20">
             <RefreshCw className="h-6 w-6 text-muted-foreground animate-spin" />
           </div>
         )}
 
         {/* Error overlay */}
         {imageLoadState === 'error' && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-bg-80 z-20">
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-glass-heavy z-20">
             <AlertTriangle className="h-8 w-8 text-error mb-2" />
             <span className="text-sm text-muted-foreground">{t('imageHistory.failedToLoad')}</span>
           </div>

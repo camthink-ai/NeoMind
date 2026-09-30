@@ -12,6 +12,19 @@ All colors are defined as OKLCH CSS variables in `src/index.css` (`:root` for li
 
 **NEVER use hardcoded Tailwind palette colors** (`bg-blue-500`, `text-green-600`, `bg-orange-100`, etc.).
 
+### Elevation & Shadow Standard
+
+Shadows signal **hover and float**, never resting state. Four tiers:
+
+| Tier | Treatment | Applies to |
+|---|---|---|
+| Resting static card | `cardBase` — border only, **no shadow** | Setting cards, info cards, list panels |
+| Interactive card | `interactiveCard` — rest = border only; hover = `shadow-md` + `--border-hover` | Agent/extension/device cards, clickable rows |
+| Dashboard card | `dashboardCardBase` — `shadow-sm` + sheen (dense grid needs a hair of lift) | Dashboard widgets |
+| Floating layer | `shadow-lg`/`shadow-xl` (tokenized) | Popover, dialog, dropdown, toast, sheet, FAB, overlay cards |
+
+Never put `shadow-sm`+ on a resting static card — on the white canvas an always-on shadow reads as a dirty halo and flattens the border's job. If a card looks "unanchored" without shadow, the problem is usually missing border contrast, not missing shadow.
+
 ### Semantic Color Tokens
 
 | Purpose | Text Class | Background Class | CSS Variable |
@@ -63,7 +76,7 @@ CSS variables defined as plain `oklch()` values do NOT support Tailwind's `/` op
 ```
 
 **Workarounds:**
-- Use pre-defined alpha variables: `bg-muted-20`, `bg-muted-30`, `bg-muted-50`, `bg-bg-50`, `bg-bg-70`, etc.
+- Use pre-defined alpha variables: `bg-muted-20`, `bg-muted-30`, `bg-muted-50`; the surface-alpha ladder is `bg-glass` (55%) / `bg-bg-70` / `bg-glass-heavy` (82%) / `bg-bg-90` / `bg-bg-95` (the old 50/80 steps were folded into the glass family).
 - Use inline styles: `style={{ backgroundColor: 'oklch(0.18 0.02 270 / 10%)' }}`
 - Use `bg-success-light` / `bg-error-light` etc. (pre-defined at 8-10% opacity)
 
@@ -297,7 +310,7 @@ Every page must use `PageLayout` from `@/components/layout/PageLayout`.
 
 **Tab-less pages** (e.g. Extensions) mirror the tabbed toolbar: **page actions left (the tab slot — an action group: primary dark + secondary outline), search right** anchored to the content's right edge (`ml-auto`, `max-w-md`, `h-9` input). Same `px-4 pt-2 sm:px-6 md:px-8` row rhythm as `PageTabsBar`. A status-filter row may sit between the toolbar and the content — pills left, a filtered count (`x / y`) right only while filters are active — and it hides entirely when every item shares one state (pills would just echo the total; they return when a second category exists). Content below gets the same `mt-3` gap as `PageTabsContent`.
 
-**Tab style (desktop): underline, not capsules.** The strip has no card surface (`border`/`bg-card` are gone) and the row has no full-width divider — tabs are plain text (`text-muted-foreground`, hover `text-foreground`). The active tab is `text-foreground` + a 2px `foreground` underline spanning the full tab width, with rounded (`rounded-full`) ends — drawn as an `after:` pseudo-element bar (`border-radius` can't round a one-sided border), so layout never shifts and no border exception is needed (the mainstream pattern: Tailwind Plus, GitHub Primer UnderlineNav, Ant Design). Mono accent — the indicator is `foreground`, not brand color. Mobile keeps bottom nav / segmented controls (touch patterns).
+**Tab style (desktop): underline, not capsules.** The strip has no card surface (`border`/`bg-card` are gone) and the row has no full-width divider — tabs are plain text (`text-muted-foreground`, hover `text-foreground` + a quiet `bg-muted-50` wash over the whole item so the icon joins the hover cue). The active tab is `text-foreground` + a 2px `foreground` underline spanning the full tab width, with rounded (`rounded-full`) ends — drawn as an `after:` pseudo-element bar (`border-radius` can't round a one-sided border), so layout never shifts and no border exception is needed (the mainstream pattern: Tailwind Plus, GitHub Primer UnderlineNav, Ant Design). Mono accent — the indicator is `foreground`, not brand color. Mobile keeps bottom nav / segmented controls (touch patterns).
 
 **Page actions share the tab row's baseline.** `PageTabsBar`'s `actions` / `secondaryActions` render right of the tabs, bottom edge flush with the tabs' underline baseline, right edge aligned with the content below; `actionsExtra` (search/filter wide controls) joins the same baseline. Do not render a separate toolbar or button row inside `PageTabsContent` for a primary add/configure action, and do not place page actions in the PageHeader title row — that corner is reserved for `GlobalControlsFloating` (theme/language/alerts).
 
@@ -1599,7 +1612,7 @@ Three drag surfaces, all via `lib/windowDrag.ts` (mousedown → `startDragging`,
 
 Title row (`PageHeader`, single compact line, no descriptions, mx-auto maxWidth aligned with content; its right side is reserved for `GlobalControlsFloating`) → optional toolbar row (PageTabsBar / DashboardToolbar: tabs left, page actions + `actionsExtra` right on the tabs' baseline, `px-4 sm:px-6 md:px-8`, no full-width divider) → content. Chat has no title row; its floating controls carry a faint `bg-background/60` pill.
 
-Style: mono accent — no brand color in UI chrome (orange lives in the logo, semantic/data colors, login/setup washes). Rail = `--sidebar-bg` (light ~#F8F9FA, dark 0.10), drawers = content tone, separated by color contrast + the drawer's border-r.
+Style: mono accent — no brand color in UI chrome (orange lives in the logo, semantic/data colors, login/setup washes). Rail = `--sidebar-bg` (light ~#F9FAFB, near-white Mono direction, dark 0.10), drawers = content tone, separated by color contrast + the drawer's border-r.
 
 ---
 

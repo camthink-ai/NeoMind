@@ -299,20 +299,25 @@ html {
        above the gray content canvas. In dark mode this token falls back to
        --card so the same class works in both. */
     --chrome: oklch(1 0 0);
-    /* Sidebar rail — the one gray chrome layer (~#F6F7F9), separating from
-       the white canvas by color contrast; no border (reference palette). */
-    --sidebar-bg: oklch(0.97 0.003 270);
-    /* Active nav chip on the rail — half-white over the rail gray ≈ L0.985:
-       a soft highlight, between the rail (0.97) and a full white chip. */
-    --sidebar-active: oklch(1 0 0 / 50%);
+    /* Sidebar rail — near-white (~#F9FAFB, Mono direction): the rail sits
+       one breath below the white canvas instead of reading as a separate
+       gray layer, so the whole shell feels like one clean surface
+       (Vercel-style) while still separating by color contrast. */
+    --sidebar-bg: oklch(0.984 0.002 270);
+    /* Active nav chip on the rail — DARKER than the rail (#E9E9EB), the
+       same direction dark mode uses. The previous half-white wash composited
+       to ≈#FAFAFB, visually indistinguishable from the rail itself. */
+    --sidebar-active: oklch(0.935 0.003 270);
     --foreground: oklch(0.21 0.01 264);
     --card: oklch(1 0 0);
     --card-foreground: oklch(0.21 0.01 264);
     --popover: oklch(1 0 0);
     --popover-foreground: oklch(0.21 0.01 264);
-    /* Primary keeps a deep, grounded tone but nudged slightly warmer so it
-       harmonizes with the brand orange instead of feeling disconnected. */
-    --primary: oklch(0.22 0.03 265);
+    /* Primary — near-black ink (#0C0E13, Mono direction): the CTA reads as
+       pure black against the white canvas for a crisp high-contrast anchor,
+       keeping the theme's faint cool tint so it stays in-family with
+       --foreground. */
+    --primary: oklch(0.165 0.01 264);
     --primary-foreground: oklch(1 0 0);
     /* Gray surfaces carry the theme's micro cool tint (0.003 @ 270) — the
        same tint as text/borders/hover washes. Pure achromatic grays here
@@ -326,8 +331,10 @@ html {
     --accent-foreground: oklch(0.21 0.01 264);
     --destructive: oklch(0.577 0.245 27);
     --destructive-foreground: oklch(1 0 0);
-    --border: oklch(0.21 0.01 264 / 9%);
-    --input: oklch(0.21 0.01 264 / 10%);
+    --border: oklch(0.21 0.01 264 / 11.5%);
+    --input: oklch(0.21 0.01 264 / 12.5%);
+    /* Hover-deepened border for interactive cards (see interactiveCard). */
+    --border-hover: oklch(0.21 0.01 264 / 18%);
     /* Focus ring — neutral foreground tint, NOT brand orange. The previous
      * `--ring: var(--brand)` made every focused input/tab/button flash a
      * bright orange halo, which users read as "random orange edges". A
@@ -421,8 +428,8 @@ html {
     /* Shadow system — layered (contact + ambient) for soft, realistic
        elevation. Each step up adds a wider, fainter ambient layer rather than
        just scaling one shadow. */
-    --shadow-sm: 0 1px 2px 0 oklch(0 0 0 / 6%);
-    --shadow-md: 0 1px 2px 0 oklch(0 0 0 / 5%), 0 2px 6px -1px oklch(0 0 0 / 7%);
+    --shadow-sm: 0 1px 2px 0 oklch(0 0 0 / 8%);
+    --shadow-md: 0 1px 2px 0 oklch(0 0 0 / 7%), 0 2px 6px -1px oklch(0 0 0 / 9%);
     --shadow-lg: 0 1px 2px 0 oklch(0 0 0 / 5%), 0 4px 12px -2px oklch(0 0 0 / 9%), 0 12px 24px -8px oklch(0 0 0 / 6%);
     --shadow-xl: 0 2px 4px 0 oklch(0 0 0 / 5%), 0 8px 20px -4px oklch(0 0 0 / 10%), 0 20px 40px -12px oklch(0 0 0 / 8%);
 
@@ -436,6 +443,10 @@ html {
     --shadow-glass-lg: 0 2px 8px 0 oklch(0 0 0 / 8%);
     --shadow-brand: 0 2px 12px 0 oklch(0.647 0.289 71 / 15%);
 
+    /* Scrollbar — theme-aware thumb (light: ink alpha). */
+    --scrollbar-thumb: oklch(0.5 0.01 264 / 30%);
+    --scrollbar-thumb-hover: oklch(0.5 0.01 264 / 50%);
+
     /* Brand color - NeoMind orange (#E05727), full scale. hover = press-deep,
        active = pressed, bg = soft tint for selected/active states (nav pills). */
     --brand: oklch(0.63 0.21 37);
@@ -447,16 +458,18 @@ html {
        does not resolve CSS vars reliably across renderers) */
     --brand-shadow: #eb4c27;
 
-    /* Semi-transparent background tokens (Tailwind v3 workaround) */
-    --bg-50: oklch(1 0 0 / 50%);
+    /* Semi-transparent background tokens (Tailwind v3 workaround).
+       Ladder: --bg-70 / --bg-90 / --bg-95 for near-opaque frosted layers
+       (login inputs, onboarding canvas, media toolbars). The 50/80 steps
+       were folded into the glass family (--glass 55% / --glass-heavy 82%)
+       — they were exact duplicates. */
     --bg-70: oklch(1 0 0 / 70%);
-    --bg-80: oklch(1 0 0 / 80%);
     --bg-90: oklch(1 0 0 / 90%);
     --bg-95: oklch(1 0 0 / 95%);
     --muted-20: oklch(0.96 0.003 270 / 20%);
     --muted-30: oklch(0.96 0.003 270 / 30%);
     --muted-50: oklch(0.96 0.003 270 / 50%);
-    --primary-hover: oklch(0.18 0.02 270 / 90%);
+    --primary-hover: oklch(0.14 0.01 270 / 90%);
     --secondary-hover: oklch(0.96 0.003 270 / 80%);
     --destructive-hover: oklch(0.577 0.245 27 / 90%);
 
@@ -538,7 +551,7 @@ html {
     --chrome: oklch(0.20 0.008 270);
     /* Sidebar rail — clearly BELOW the page/drawer background (0.135) so
        the rail vs content step reads in dark mode just like light mode
-       (#F8F9FA rail vs white content). */
+       (#F9FAFB rail vs white content). */
     --sidebar-bg: oklch(0.10 0.01 270);
     /* Active nav chip on the rail — same gray the expanded list uses; a
        clear lightness step above the very dark rail. */
@@ -559,6 +572,8 @@ html {
     --destructive-foreground: oklch(0.95 0.006 270);
     --border: oklch(1 0 0 / 10%);
     --input: oklch(1 0 0 / 12%);
+    /* Hover-deepened border for interactive cards (see interactiveCard). */
+    --border-hover: oklch(1 0 0 / 16%);
     /* Neutral focus ring (see light-mode --ring rationale). */
     --ring: color-mix(in oklch, var(--foreground) 35%, transparent);
 
@@ -610,6 +625,10 @@ html {
     --shadow-glass-lg: 0 4px 16px 0 oklch(0 0 0 / 25%);
     --shadow-brand: 0 2px 12px 0 oklch(0.647 0.289 71 / 15%);
 
+    /* Scrollbar — dark: lighter thumb so it reads against the dark canvas. */
+    --scrollbar-thumb: oklch(0.65 0.01 264 / 30%);
+    --scrollbar-thumb-hover: oklch(0.72 0.01 264 / 45%);
+
     /* Brand color - NeoMind orange (brighter for dark bg), full scale.
        Dark hover/active go BRIGHTER (light-mode goes darker) — the surface
        direction that reads as "engaged" against a dark canvas. */
@@ -620,10 +639,9 @@ html {
     --brand-foreground: oklch(0.13 0.008 270);
     --brand-shadow: #eb4c27;
 
-    /* Semi-transparent background tokens (dark) */
-    --bg-50: oklch(0.13 0.008 270 / 50%);
+    /* Semi-transparent background tokens (dark) — see light block for the
+       ladder note; 50/80 steps live in the glass family now. */
     --bg-70: oklch(0.13 0.008 270 / 70%);
-    --bg-80: oklch(0.13 0.008 270 / 80%);
     --bg-90: oklch(0.13 0.008 270 / 90%);
     --bg-95: oklch(0.13 0.008 270 / 95%);
     --muted-20: oklch(0.20 0.008 270 / 20%);
@@ -812,10 +830,11 @@ html {
     transform: scale(0.985);
   }
 
-  /* Scrollbar styles */
+  /* Scrollbar styles — colors come from --scrollbar-thumb(-hover), set
+     per theme in the :root/.dark blocks above. */
   * {
     scrollbar-width: thin;
-    scrollbar-color: oklch(0.5 0.01 264 / 30%) transparent;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
   }
 
   *::-webkit-scrollbar {
@@ -828,12 +847,12 @@ html {
   }
 
   *::-webkit-scrollbar-thumb {
-    background-color: oklch(0.5 0.01 270 / 30%);
+    background-color: var(--scrollbar-thumb);
     border-radius: 4px;
   }
 
   *::-webkit-scrollbar-thumb:hover {
-    background-color: oklch(0.5 0.01 270 / 50%);
+    background-color: var(--scrollbar-thumb-hover);
   }
 }
 

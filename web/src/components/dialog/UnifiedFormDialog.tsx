@@ -315,7 +315,7 @@ export function UnifiedFormDialog({
 
             {/* Loading overlay */}
             {loading && (
-              <div className="absolute inset-0 flex items-center justify-center bg-bg-80">
+              <div className="absolute inset-0 flex items-center justify-center bg-glass-heavy">
                 <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
               </div>
             )}

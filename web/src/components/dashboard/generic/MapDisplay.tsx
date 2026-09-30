@@ -721,7 +721,7 @@ function SimpleSvgMap({
           <Button
             variant="secondary"
             size="icon"
-            className="h-6 w-6 bg-bg-80 backdrop-blur"
+            className="h-6 w-6 bg-glass-heavy backdrop-blur"
             onClick={onZoomIn}
           >
             <ZoomIn className="h-4 w-4" />
@@ -729,7 +729,7 @@ function SimpleSvgMap({
           <Button
             variant="secondary"
             size="icon"
-            className="h-6 w-6 bg-bg-80 backdrop-blur"
+            className="h-6 w-6 bg-glass-heavy backdrop-blur"
             onClick={onZoomOut}
           >
             <ZoomOut className="h-4 w-4" />

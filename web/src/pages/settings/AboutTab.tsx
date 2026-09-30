@@ -696,7 +696,7 @@ export function AboutTab() {
         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           {t("settings:projectInfo")}
         </h3>
-        <div className="mt-4 rounded-lg border border-border shadow-sm bg-card p-5">
+        <div className="mt-4 rounded-lg border border-border bg-card p-5">
           <div>
             <InfoRow label={t("settings:version")}>
               <div className="flex items-center gap-2">

@@ -449,7 +449,7 @@ export function LoginPage() {
                   placeholder={t('auth:username')}
                   autoComplete="username"
                   required
-                  className="pl-9 h-11 bg-bg-70 border-border focus:bg-background dark:focus:bg-bg-50 focus:border-primary transition-colors text-base scroll-mb-32"
+                  className="pl-9 h-11 bg-bg-70 border-border focus:bg-background dark:focus:bg-glass focus:border-primary transition-colors text-base scroll-mb-32"
                 />
               </div>
               <div className="relative">
@@ -462,7 +462,7 @@ export function LoginPage() {
                   placeholder={t('auth:password')}
                   autoComplete="current-password"
                   required
-                  className="pl-9 pr-10 h-11 bg-bg-70 border-border focus:bg-background dark:focus:bg-bg-50 focus:border-primary transition-colors text-base scroll-mb-32"
+                  className="pl-9 pr-10 h-11 bg-bg-70 border-border focus:bg-background dark:focus:bg-glass focus:border-primary transition-colors text-base scroll-mb-32"
                 />
                 <button
                   type="button"

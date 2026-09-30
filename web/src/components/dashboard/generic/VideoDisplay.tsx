@@ -766,7 +766,7 @@ export function VideoDisplay({
           <Button
             variant="secondary"
             size="icon"
-            className="absolute top-2 right-2 h-6 w-6 bg-bg-80"
+            className="absolute top-2 right-2 h-6 w-6 bg-glass-heavy"
             onClick={() => setIsFullscreen(true)}
           >
             <Maximize2 className="h-4 w-4" />
@@ -775,7 +775,7 @@ export function VideoDisplay({
 
         {/* Type indicator */}
         {rawSrc && (
-          <div className="absolute top-2 left-2 px-2 py-0.5 bg-bg-80 rounded text-xs text-muted-foreground">
+          <div className="absolute top-2 left-2 px-2 py-0.5 bg-glass-heavy rounded text-xs text-muted-foreground">
             {detectedType === 'hls' && 'HLS'}
             {detectedType === 'device-camera' && 'Camera'}
             {detectedType === 'file' && 'Video'}

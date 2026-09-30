@@ -241,9 +241,10 @@ export const dashboardCardBase = [
   'flex flex-col h-full w-full overflow-hidden',
   // Opaque tonal surface — readable content layer
   'bg-card',
-  // Border, subtle shadow, and a 1px top highlight that conveys material
-  // thickness (a quiet nod to physical surfacing, not flat-glass).
-  'border border-glass-border shadow-sm',
+  // Semantic border (var(--border): 11.5% ink light / 10% white dark). Not
+  // --glass-border (6% black) — on the opaque white card it composited to a
+  // near-invisible edge. Glass tokens are for backdrop-blur chrome only.
+  'border border-border shadow-sm',
   // Top edge highlight + hover lift, applied via the pseudo classes below.
   // Using ring on hover keeps it crisp without extra DOM.
   'rounded-lg',
@@ -260,8 +261,8 @@ export const dashboardCardHorizontal = [
   'flex flex-row h-full w-full overflow-hidden',
   // Opaque tonal surface
   'bg-card',
-  // Border & subtle shadow
-  'border border-glass-border shadow-sm',
+  // Border & subtle shadow — semantic border, see dashboardCardBase note.
+  'border border-border shadow-sm',
   // Radius
   'rounded-lg',
 ].join(' ')
@@ -312,27 +313,29 @@ export const cardBase = [
 /**
  * Interactive card — a clickable card surface (device/agent/extension cards,
  * list rows, etc.). Unifies the previously scattered hover treatments
- * (translate-y / shadow-md / border changes) into one consistent interaction.
+ * into one consistent interaction: shadow + border deepen. NO translate —
+ * a positional hover jump reads as jitter on dense card grids; the
+ * static shadow/border cue keeps the grid calm (Linear/GitHub style).
  * Opaque surface: no backdrop-blur, keeping content legible and GPU-light.
  */
 export const interactiveCard = [
   'bg-card rounded-md border',
-  'cursor-pointer transition-all duration-fast ease-spring-soft',
-  'hover:shadow-md hover:-translate-y-0.5',
+  'cursor-pointer transition-all duration-fast ease-out',
+  'hover:shadow-md hover:border-[var(--border-hover)]',
 ].join(' ')
 
 /**
- * Interactive card hover effect — the lift/shadow transition only.
+ * Interactive card hover effect — the shadow/border transition only.
  *
  * Use this on cards that already carry their own surface styles (e.g. the
  * `<Card>` component which includes `cardBase`, or cards with a non-default
  * radius like `rounded-xl`) but should share the same hover interaction.
- * This avoids re-declaring `hover:shadow-md hover:-translate-y-0.5
- * transition-all duration-fast ease-spring-soft` at every call site.
+ * This avoids re-declaring `hover:shadow-md hover:border-[var(--border-hover)]
+ * transition-all duration-fast ease-out` at every call site.
  */
 export const interactiveCardHover = [
-  'transition-all duration-fast ease-spring-soft',
-  'hover:shadow-md hover:-translate-y-0.5',
+  'transition-all duration-fast ease-out',
+  'hover:shadow-md hover:border-[var(--border-hover)]',
 ].join(' ')
 
 /**

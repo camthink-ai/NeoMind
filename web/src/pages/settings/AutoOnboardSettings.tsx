@@ -66,7 +66,7 @@ export function AutoOnboardSettings() {
       <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
         {t("devices:pending.configTitle")}
       </h3>
-      <div className="rounded-lg bg-card border border-border shadow-sm p-5 space-y-4">
+      <div className="rounded-lg bg-card border border-border p-5 space-y-4">
         <SettingsRow
           label={t("devices:pending.configSettings.enabled")}
           description={t("devices:pending.configSettings.enabledDesc")}

@@ -100,7 +100,7 @@ export function MemorySettingsSection() {
       <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
         {t("agents:systemMemory.config.title", "Memory Configuration")}
       </h3>
-      <div className="rounded-lg bg-card border border-border shadow-sm p-5 space-y-4">
+      <div className="rounded-lg bg-card border border-border p-5 space-y-4">
         <SettingsRow
           label={t("agents:systemMemory.config.enabled", "Enabled")}
           description={t("agents:systemMemory.config.description", "Configure memory storage and scheduling")}

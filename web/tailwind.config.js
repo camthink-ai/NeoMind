@@ -125,10 +125,8 @@ export default {
           medium: "var(--overlay-medium)",
           heavy: "var(--overlay-heavy)",
         },
-        // Semi-transparent background
-        "bg-50": "var(--bg-50)",
+        // Semi-transparent background ladder (70/90/95; 50/80 folded into glass)
         "bg-70": "var(--bg-70)",
-        "bg-80": "var(--bg-80)",
         "bg-90": "var(--bg-90)",
         "bg-95": "var(--bg-95)",
       },
