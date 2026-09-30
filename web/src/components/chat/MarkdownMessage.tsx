@@ -133,7 +133,7 @@ const MARKDOWN_COMPONENTS: Components = {
   // the server origin). Everything else passes through untouched.
   img: ({ node: _node, src, alt, ...props }) => {
     const resolved = typeof src === 'string' ? resolveImageSrc(src) : null
-    return <img src={resolved ?? (src as string)} alt={alt ?? ''} {...(props as any)} />
+    return <img src={resolved ?? (src as string)} alt={alt ?? ''} {...(props as React.ComponentProps<'img'>)} />
   },
   // Tables scroll horizontally WITHIN the message instead of pushing the
   // whole chat panel into horizontal scroll (float chat is only 380-400px).

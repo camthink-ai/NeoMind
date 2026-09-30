@@ -7,7 +7,6 @@ import { ReactNode } from "react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
 import { ArrowRight } from "lucide-react"
-import { useBrandMessages } from "@/hooks/useBrand"
 import { BrandLogoHorizontal } from "@/components/shared/BrandName"
 
 interface WelcomeAreaProps {
@@ -24,7 +23,6 @@ interface WelcomeAreaProps {
 
 export function WelcomeArea({ className, onQuickAction, children }: WelcomeAreaProps) {
   const { t } = useTranslation("common")
-  const { getWelcomeMessage } = useBrandMessages()
 
   // Get greeting based on time
   const getGreetingKey = () => {

@@ -44,7 +44,7 @@ function asFieldEntries(content: string): Array<[string, string]> | null {
 const MARKDOWN_COMPONENTS: Components = {
   img: ({ node: _node, src, alt, ...props }) => {
     const resolved = typeof src === 'string' ? resolveImageSrc(src) : null
-    return <img src={resolved ?? (src as string)} alt={alt ?? ''} {...(props as any)} />
+    return <img src={resolved ?? (src as string)} alt={alt ?? ''} {...(props as React.ComponentProps<'img'>)} />
   },
 }
 

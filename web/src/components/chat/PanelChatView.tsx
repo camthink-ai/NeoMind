@@ -440,7 +440,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     } finally {
       setIsCompacting(false)
     }
-  }, [isCompacting, t])
+  }, [isCompacting, t, toast])
 
   const handleClearContext = useCallback(async () => {
     const sid = panelSessionIdRef.current
@@ -452,7 +452,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     } catch {
       toast({ title: t("chat:context.clearFailed"), variant: "destructive" })
     }
-  }, [t])
+  }, [t, toast])
 
   // Cancel the in-flight request (same channel the chat page uses)
   const handleCancelRequest = useCallback(() => {

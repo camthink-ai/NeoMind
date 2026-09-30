@@ -366,7 +366,13 @@ function AgentDefaultsSection() {
     // the row still offers the "session default" option.
     api
       .get("/llm-backends")
-      .then((data: any) => setInstances(Array.isArray(data) ? data : (data?.backends ?? [])))
+      .then((data: unknown) =>
+        setInstances(
+          Array.isArray(data)
+            ? (data as LlmBackendInstance[])
+            : ((data as { backends?: LlmBackendInstance[] })?.backends ?? []),
+        ),
+      )
       .catch(() => {})
   }, [])
 
