@@ -6,8 +6,9 @@
 import { ReactNode } from "react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
-import { MessageSquare, ArrowRight } from "lucide-react"
+import { ArrowRight } from "lucide-react"
 import { useBrandMessages } from "@/hooks/useBrand"
+import { BrandLogo } from "@/components/shared/BrandName"
 
 interface WelcomeAreaProps {
   className?: string
@@ -44,9 +45,9 @@ export function WelcomeArea({ className, onQuickAction, children }: WelcomeAreaP
 
   return (
     <div className={cn("relative flex min-h-full w-full flex-col items-center overflow-hidden p-6", className)}>
-      {/* Flowing brand aurora — two large radial blobs drifting behind the
-          centered group (see .welcome-aurora in index.css). Decorative. */}
-      <div aria-hidden="true" className="welcome-aurora" />
+      {/* Dot field backdrop — each dot an edge device, masked to fade toward
+          the edges (see .welcome-dots in index.css). Decorative. */}
+      <div aria-hidden="true" className="welcome-dots" />
       {/* Top spacer */}
       <div className="min-h-0 flex-1 shrink" />
       {/* max-w-3xl — same width as the conversation view's composer, so the
@@ -55,10 +56,11 @@ export function WelcomeArea({ className, onQuickAction, children }: WelcomeAreaP
       <div className="relative w-full max-w-3xl shrink-0 space-y-8">
         {/* Greeting */}
         <div className="text-center">
-          <div className="flex items-center justify-center gap-2.5 mb-3">
-            <div className="w-10 h-10 rounded-xl bg-primary-light flex items-center justify-center">
-              <MessageSquare className="h-5 w-5 text-primary" />
-            </div>
+          {/* Assistant node — the brand mark breathing in a sonar halo
+              (.welcome-node-ring): the i-node of the logo = the agent. */}
+          <div className="relative mb-4 flex h-14 w-14 items-center justify-center mx-auto">
+            <span aria-hidden="true" className="welcome-node-ring absolute inset-0 rounded-full" />
+            <BrandLogo className="relative h-8 w-8" />
           </div>
           <h1 className="text-2xl font-semibold text-foreground mb-2">
             {t(getGreetingKey())}

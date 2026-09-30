@@ -908,101 +908,79 @@ html {
     background-size: 32px 32px;
   }
 
-  /* Flowing brand aurora behind the chat welcome greeting: two large,
-     pre-soft radial blobs (soft by construction — no filter cost) drifting
-     on transform-only keyframes so the compositor owns the animation.
-     The layer-wide mask fades the wash out BEFORE the top/bottom edges —
-     blobs crossing the overflow boundary dissolve instead of showing a
-     hard cut line (standard aurora edge treatment). Theme-aware via
-     var(--brand): a faint warm wash on light bg, a soft glow on dark.
-     Honors prefers-reduced-motion. */
-  .welcome-aurora {
+  /* Welcome-area backdrop: a quiet dot field — each dot an edge device,
+     one grid unit — behind the greeting group. Dots use var(--foreground)
+     so light theme reads as ink specks and dark as faint stars; a radial
+     mask concentrates the field behind the greeting and dissolves it
+     toward every edge. A very slow background-position pan keeps the
+     field barely alive (compositor paint, no per-frame JS). Honors
+     prefers-reduced-motion. */
+  .welcome-dots {
     position: absolute;
     inset: 0;
-    overflow: hidden;
     pointer-events: none;
-    -webkit-mask-image: linear-gradient(
-      to bottom,
-      transparent 0%,
-      black 18%,
-      black 82%,
-      transparent 100%
+    background-image: radial-gradient(
+      circle,
+      color-mix(in oklch, var(--foreground) 10%, transparent) 1px,
+      transparent 1.5px
     );
-    mask-image: linear-gradient(
-      to bottom,
-      transparent 0%,
-      black 18%,
-      black 82%,
-      transparent 100%
+    background-size: 22px 22px;
+    -webkit-mask-image: radial-gradient(
+      ellipse 62% 58% at 50% 44%,
+      black 25%,
+      transparent 78%
+    );
+    mask-image: radial-gradient(
+      ellipse 62% 58% at 50% 44%,
+      black 25%,
+      transparent 78%
+    );
+    animation: welcome-dots-pan 90s linear infinite;
+  }
+  .dark .welcome-dots {
+    background-image: radial-gradient(
+      circle,
+      color-mix(in oklch, var(--foreground) 14%, transparent) 1px,
+      transparent 1.5px
     );
   }
-  .welcome-aurora::before,
-  .welcome-aurora::after {
-    content: "";
-    position: absolute;
-    border-radius: 9999px;
-    will-change: transform;
+  @keyframes welcome-dots-pan {
+    from {
+      background-position: 0 0;
+    }
+    to {
+      background-position: 22px 44px;
+    }
   }
-  .welcome-aurora::before {
-    width: 60%;
-    height: 70%;
-    top: -10%;
-    left: -12%;
-    background: radial-gradient(
-      closest-side,
-      color-mix(in oklch, var(--brand) 9%, transparent),
-      transparent 70%
-    );
-    animation: welcome-drift-a 22s ease-in-out infinite;
-  }
-  .welcome-aurora::after {
-    width: 55%;
-    height: 65%;
-    bottom: -12%;
-    right: -12%;
-    background: radial-gradient(
-      closest-side,
-      color-mix(in oklch, var(--brand) 7%, transparent),
-      transparent 70%
-    );
-    animation: welcome-drift-b 28s ease-in-out infinite;
-  }
-  .dark .welcome-aurora::before {
-    background: radial-gradient(
-      closest-side,
-      color-mix(in oklch, var(--brand) 14%, transparent),
-      transparent 70%
-    );
-  }
-  .dark .welcome-aurora::after {
-    background: radial-gradient(
-      closest-side,
-      color-mix(in oklch, var(--brand) 11%, transparent),
-      transparent 70%
-    );
+
+  /* The assistant "node": the brand mark seated in a halo — a slow
+     expanding ring (a sonar ping from the logo's i-node, the agent) with
+     a faint static brand tint holding its seat between pulses.
+     Transform/opacity only. Honors reduced-motion (ring freezes faint). */
+  .welcome-node-ring {
+    border: 1px solid color-mix(in oklch, var(--brand) 35%, transparent);
+    animation: welcome-node-breathe 3.6s ease-out infinite;
   }
   @media (prefers-reduced-motion: reduce) {
-    .welcome-aurora::before,
-    .welcome-aurora::after {
+    .welcome-dots {
       animation: none;
     }
-  }
-  @keyframes welcome-drift-a {
-    0%,
-    100% {
-      transform: translate3d(0, 0, 0) scale(1);
-    }
-    50% {
-      transform: translate3d(12%, 10%, 0) scale(1.18);
+    .welcome-node-ring {
+      animation: none;
+      opacity: 0.4;
     }
   }
-  @keyframes welcome-drift-b {
-    0%,
-    100% {
-      transform: translate3d(0, 0, 0) scale(1.05);
+  @keyframes welcome-node-breathe {
+    0% {
+      transform: scale(0.82);
+      opacity: 0;
     }
-    50% {
-      transform: translate3d(-14%, -12%, 0) scale(0.92);
+    35% {
+      opacity: 1;
+    }
+    100% {
+      transform: scale(1.25);
+      opacity: 0;
     }
   }
 
