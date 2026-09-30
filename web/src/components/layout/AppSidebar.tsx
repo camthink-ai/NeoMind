@@ -323,12 +323,12 @@ export function AppSidebar() {
             onClick={() => setExpanded((e) => !e)}
             aria-label={t("nav.toggleSidebar", { defaultValue: "Toggle navigation" })}
             aria-expanded={expanded}
-            className={cn("flex items-center justify-center rounded-lg hover:bg-muted-50 transition-colors no-press-scale", expanded ? "h-8 px-1" : "px-2")}
+            className={cn("flex items-center justify-center rounded-lg hover:bg-muted-50 transition-colors no-press-scale", expanded ? "h-8 px-1" : "h-9 w-9")}
           >
             {expanded ? (
               <BrandLogoHorizontal className="h-8" />
             ) : (
-              <BrandLogo className="h-9 w-9 rounded-lg" />
+              <BrandLogo className="h-6 w-6" />
             )}
           </button>
           {/* Explicit collapse affordance — the logo also toggles, but a

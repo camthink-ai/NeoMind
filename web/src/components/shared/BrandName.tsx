@@ -5,7 +5,8 @@
  * Uses centralized i18n configuration for easy rebranding.
  *
  * Logo images:
- * - Square logo: for favicons, app icons
+ * - Square logo: for favicons, app icons (logo-square.png, dark tile)
+ * - Transparent mark: for in-app surfaces (logo-mark.png, no background)
  * - Dark theme logo: for dark backgrounds (logo-dark.png)
  * - Light theme logo: for light backgrounds (logo-light.png)
  */
@@ -42,7 +43,7 @@ export function ShortBrandName({ className }: { className?: string }) {
 }
 
 /**
- * Brand logo with short name (square logo image)
+ * Brand logo with short name (transparent-background square logo image)
  *
  * @example
  * ```tsx
@@ -52,11 +53,11 @@ export function ShortBrandName({ className }: { className?: string }) {
 export function BrandLogo({ className }: { className?: string }) {
   return (
     <img
-      src="/logo-square.png"
+      src="/logo-mark.png"
       alt="NeoMind Logo"
-      width={36}
-      height={36}
-      className={cn('w-9 h-9 rounded-xl shadow-sm', className)}
+      width={24}
+      height={24}
+      className={cn('w-6 h-6', className)}
     />
   )
 }
