@@ -67,6 +67,10 @@ Everything below traces back to one support transcript: a user asked for a water
 
 ---
 
+### feat(skills,web): shipped alongside the hardening
+- Skill triggers learned the vocabulary users actually use: agents are also "jobs", "AI tasks", 盯盘/巡检任务 ("create a job", "建个AI job", "帮我盯着" now route to agent-management); device onboarding catches control-command phrasings. A full audit of every concrete CLI command in the builtin skills against the clap surface fixed seven doc/CLI signature mismatches (connector subscribe, extension logs `--limit`→`--lines`, message channel-update, settings set-retention — all with anti-guess notes), plus a skill/CLI verification toolchain so the class stays caught.
+- Chat welcome screen: the drifting aurora is replaced by a brand-tied backdrop (the Ni mark breathing in a sonar ring over a quiet edge-device dot field, CSS-only, reduced-motion safe), greeting-interpolated ask-line copy in both locales, four more suggestion prompts, and the horizontal brand mark.
+
 ## [1.1.0] - 2026-09-24 — the agent kernel: three execution shapes, one runtime, and a conclusion you can check
 
 The three milestones of the agent kernel, released together. **M0** made a run and the value it publishes travel one path. **M1** added the structured agent — a single constrained inference whose validated fields reach dashboards, rules and data-push as ordinary data sources. **M2** made an agent's inputs expressible ("all of these, inside this window") and its outputs checkable (the execution behind an alert, and what the operator said when they disagreed). Alongside them, a run of correctness fixes that had each been losing data without saying so.
