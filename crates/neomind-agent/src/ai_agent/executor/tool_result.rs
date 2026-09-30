@@ -16,6 +16,40 @@ use super::{
 
 use super::super::AgentExecutor;
 
+/// Matches a backend image URL as tool results embed it — flat
+/// `/api/images/<uuid>.png` and structured `/api/images/<dev>/<metric>/<ts>.jpg`.
+static BARE_IMAGE_URL_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+
+/// Upgrade bare `/api/images/...` URLs in an agent conclusion to markdown
+/// image syntax so the UI renders the produced image instead of showing the
+/// path as plain text (models routinely write the URL bare despite the
+/// system-prompt instruction to use `![desc](url)`). URLs already inside a
+/// markdown link/image target (preceded by `](`) are left untouched, and text
+/// without image URLs is returned unchanged.
+pub(crate) fn embed_bare_image_urls(text: &str) -> String {
+    if !text.contains("/api/images/") {
+        return text.to_string();
+    }
+    let re = BARE_IMAGE_URL_RE.get_or_init(|| {
+        regex::Regex::new(r"/api/images/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*").unwrap()
+    });
+    let mut out = String::with_capacity(text.len() + 32);
+    let mut last = 0usize;
+    for m in re.find_iter(text) {
+        // Already a markdown/image link target — keep as-is.
+        if text[..m.start()].ends_with("](") {
+            continue;
+        }
+        out.push_str(&text[last..m.start()]);
+        out.push_str("![image](");
+        out.push_str(m.as_str());
+        out.push(')');
+        last = m.end();
+    }
+    out.push_str(&text[last..]);
+    out
+}
+
 /// Targeted guidance when the LLM hallucinates a tool name that doesn't exist.
 ///
 /// LLMs trained on many agent frameworks often invent a `message`/`notify`/`alert`
@@ -413,6 +447,12 @@ pub(crate) fn build_tool_result(
         "No tools were executed during this agent run.".to_string()
     };
 
+    // Deterministic belt-and-suspenders for the "path as plain text" failure:
+    // the system prompt asks the model to embed produced images as
+    // `![desc](url)`, but agent conclusions routinely write the bare URL.
+    // The UI renders conclusions as markdown, so upgrade bare URLs here.
+    let conclusion = embed_bare_image_urls(&conclusion);
+
     // --- reasoning steps ---
     let mut reasoning_steps: Vec<ReasoningStep> = Vec::new();
     let mut step_counter = 0u32;
@@ -581,6 +621,50 @@ mod tests {
                 "hint must show the correct shell command"
             );
         }
+    }
+
+    #[test]
+    fn embed_bare_image_urls_wraps_plain_url() {
+        // The exact failure shape from the field: watermark applied, path
+        // written into the conclusion as plain prose.
+        let src = "水印已添加，结果保存在 /api/images/ea53e561-9e33-4f87-94a2-28f6f084f640.png。";
+        let out = embed_bare_image_urls(src);
+        assert_eq!(
+            out,
+            "水印已添加，结果保存在 ![image](/api/images/ea53e561-9e33-4f87-94a2-28f6f084f640.png)。"
+        );
+    }
+
+    #[test]
+    fn embed_bare_image_urls_wraps_structured_layout() {
+        let src = "最新帧: /api/images/1A06A9/image_data/1790762534_ab12.png (see above)";
+        let out = embed_bare_image_urls(src);
+        assert_eq!(
+            out,
+            "最新帧: ![image](/api/images/1A06A9/image_data/1790762534_ab12.png) (see above)"
+        );
+    }
+
+    #[test]
+    fn embed_bare_image_urls_leaves_markdown_targets_alone() {
+        let src = "![水印图](/api/images/abc.png) and [detail](/api/images/dev/m/1.jpg)";
+        assert_eq!(embed_bare_image_urls(src), src);
+    }
+
+    #[test]
+    fn embed_bare_image_urls_noop_without_urls() {
+        let src = "设备 NE302 TEST 检测到 person，置信度 63.78%。";
+        assert_eq!(embed_bare_image_urls(src), src);
+    }
+
+    #[test]
+    fn embed_bare_image_urls_wraps_every_bare_occurrence() {
+        let src = "a /api/images/one.png b /api/images/two.png c ![ok](/api/images/three.png)";
+        let out = embed_bare_image_urls(src);
+        assert_eq!(
+            out,
+            "a ![image](/api/images/one.png) b ![image](/api/images/two.png) c ![ok](/api/images/three.png)"
+        );
     }
 
     #[test]
