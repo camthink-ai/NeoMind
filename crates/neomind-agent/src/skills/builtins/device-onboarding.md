@@ -1,13 +1,13 @@
 ---
 id: device-onboarding
 name: Device Onboarding & Connection Guide
-description: Use when the user wants to onboard, connect, or configure an IoT device, OR send a control command to a device (stop, start, set speed, alarm, reboot). Covers device provisioning, MQTT/Webhook/BLE connection, getting broker addresses, and controlling devices — even if they don't explicitly say "device" or "control" (e.g. "shut down the pump", "把泵停掉", "set the fan speed", "停下来"). Includes 设备接入/连接/配置/控制/停机/调速/命令下发.
+description: Use when the user wants to onboard, connect, or configure an IoT device, OR send a control command to a device (stop, start, set speed, alarm, reboot). Covers device provisioning, MQTT/Webhook/BLE connection, getting broker addresses, and controlling devices — even if they don't explicitly say "device" or "control" (e.g. "shut down the pump", "把泵停掉", "set the fan speed", "停下来"). Also covers virtual/simulated devices — create a device and feed it data via its webhook URL with curl ('建个虚拟设备', 'create a virtual device', '模拟数据'). Includes 设备接入/连接/配置/控制/停机/调速/命令下发.
 category: device
 origin: builtin
 priority: 90
 token_budget: 12000
 triggers:
-  keywords: [设备接入, 接入, onboarding, 连接设备, connect device, MQTT, mqtt, broker, webhook, 传感器, sensor, 设备配置, device setup, device connect, provision, 配置设备, device provisioning, 网关, gateway, 接入方式, 订阅, subscribe, auto-discovery, 自动发现, 控制, 命令, 停机, 停止, control, command, stop, shutdown, reboot, set speed, device control]
+  keywords: [设备接入, 接入, onboarding, 连接设备, connect device, MQTT, mqtt, broker, webhook, 传感器, sensor, 设备配置, device setup, device connect, provision, 配置设备, device provisioning, 网关, gateway, 接入方式, 订阅, subscribe, auto-discovery, 自动发现, 控制, 命令, 停机, 停止, control, command, stop, shutdown, reboot, set speed, device control, 虚拟设备, virtual device, 模拟设备, simulated device, 模拟数据, simulated data, mock device, 测试设备, test device, simulate]
   tool_target:
     - tool: system
       actions: [info]
@@ -35,7 +35,7 @@ Always RUN the command yourself and report the real output — don't narrate.
 | `neomind device history <id>` | Telemetry history |
 | `neomind device control <id> <COMMAND>` | Send a control command to a device |
 | `neomind device types list` | List device-type templates |
-| `neomind device write-metric <id> <METRIC> <VALUE>` | Write a metric data point |
+| `neomind device write-metric <ID> --metric <METRIC> --value <VALUE> [--timestamp <ms_epoch>]` | Write a metric data point. ⚠️ `--metric`/`--value` are FLAGS (only `<ID>` is positional); value may be a number or "true"/"false" |
 | `neomind device webhook-url <id>` | Get the webhook URL for a device |
 | `neomind device drafts` | Manage auto-discovery drafts |
 

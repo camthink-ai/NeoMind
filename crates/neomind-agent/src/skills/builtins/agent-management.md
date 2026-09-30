@@ -1,13 +1,13 @@
 ---
 id: agent-management
 name: AI Agent Management
-description: Use when the user wants to create, configure, or manage AI agents — schedules (cron/interval/event/manual), triggers, invoking/executing agents, agent memory, execution history, or monitoring agents. Covers agent create/list/update/delete/control/invoke/memory/executions even if they don't say 'agent' (e.g. '让助手每天定时跑', '安排一个监控任务'). Includes 创建/配置/调用代理、定时任务、代理记忆.
+description: Use when the user wants to create, configure, or manage AI agents — schedules (cron/interval/event/manual), triggers, invoking/executing agents, agent memory, execution history, or monitoring agents. Covers agent create/list/update/delete/control/invoke/memory/executions even if they don't say 'agent' (e.g. '让助手每天定时跑', '安排一个监控任务', 'create a job', '建个AI job', 'make an AI task', '帮我盯着' — agents are also called jobs, AI jobs, AI tasks, or 盯盘/巡检任务). Includes 创建/配置/调用代理、定时任务、代理记忆.
 category: agent
 origin: builtin
 priority: 85
 token_budget: 10000
 triggers:
-  keywords: [agent, 代理, AI代理, agent create, 创建代理, agent control, schedule, cron, interval, manual, 监控, agent invoke, 调用代理, agent memory, 代理记忆, agent execution, 代理执行, 定时任务, scheduled task, agent schedule, agent update, 按需, 手动执行]
+  keywords: [agent, 代理, AI代理, agent create, 创建代理, agent control, schedule, cron, interval, manual, 监控, agent invoke, 调用代理, agent memory, 代理记忆, agent execution, 代理执行, 定时任务, scheduled task, agent schedule, agent update, 按需, 手动执行, job, jobs, ai job, AI job, AI任务, AI 任务, ai task, AI task, AI 任务, task, 巡检, 巡检任务, 盯盘, 盯着, 帮我盯, 帮我盯着, 定时检查, 定期检查, 例行检查, 自动检查, 每天检查, 定时跑, 跑个任务, 建个任务, 每天自动, 定期执行, keep an eye, check regularly, watch for, run daily, recurring task, set up a job, make a task, create a task]
   tool_target:
     - tool: agent
       actions: [list, get, create, update, delete, control, invoke, memory, executions, latest-execution, conversation, send-message]
