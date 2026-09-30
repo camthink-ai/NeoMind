@@ -142,8 +142,9 @@ const DYNAMIC_KEY_FAMILIES: Array<{ ns: string; keys: string[] }> = [
  */
 function presetKeys(): { ns: string; keys: string[] } {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const presets =
-    globalThis.__NEOMIND_PRESETS__ ??
+  const presets: string[] =
+    (globalThis as typeof globalThis & { __NEOMIND_PRESETS__?: string[] })
+      .__NEOMIND_PRESETS__ ??
     (() => {
       try {
         // Direct import would couple the test to the editor module graph;
