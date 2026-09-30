@@ -145,9 +145,13 @@
     "compactDone": "Compacted {{count}} messages",
     "compactNothing": "Nothing to compact yet",
     "compactFailed": "Compact failed",
+    "compactConfirmTitle": "Compact context?",
+    "compactConfirmDesc": "Earlier messages are replaced by a summary to free context space. History stays visible in the UI; only later requests are affected.",
     "clear": "Clear",
     "clearDone": "Conversation history cleared",
-    "clearFailed": "Clear failed"
+    "clearFailed": "Clear failed",
+    "clearConfirmTitle": "Clear conversation history?",
+    "clearConfirmDesc": "All messages in this session will be deleted. This cannot be undone."
   },
   "loadEarlier": "Load earlier messages",
   "loadEarlierLoading": "Loading…",

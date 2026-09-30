@@ -145,9 +145,13 @@
     "compactDone": "已压缩 {{count}} 条历史消息",
     "compactNothing": "暂无可压缩的对话内容",
     "compactFailed": "压缩失败",
+    "compactConfirmTitle": "压缩上下文？",
+    "compactConfirmDesc": "较早的对话将被压缩为摘要以释放上下文空间。界面中的历史消息保留不变，仅影响之后的请求。",
     "clear": "清空对话",
     "clearDone": "已清空对话历史",
-    "clearFailed": "清空失败"
+    "clearFailed": "清空失败",
+    "clearConfirmTitle": "清空对话历史？",
+    "clearConfirmDesc": "该会话的全部对话历史将被删除，此操作无法恢复。"
   },
   "loadEarlier": "加载更早的消息",
   "loadEarlierLoading": "加载中…",

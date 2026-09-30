@@ -1,8 +1,9 @@
 /// Interaction tests for ChatComposer — controlled input, send gating, and
 /// the streaming cancel button.
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { ChatComposer } from '../ChatComposer'
+import { Confirmer } from '@/components/ui/confirmer'
 
 function setup(overrides: Partial<React.ComponentProps<typeof ChatComposer>> = {}) {
   const onSend = vi.fn()
@@ -58,15 +59,20 @@ describe('ChatComposer context actions', () => {
     const onCompact = vi.fn()
     const onClearContext = vi.fn()
     render(
-      <ChatComposer
-        value=""
-        onChange={vi.fn()}
-        onSend={vi.fn()}
-        contextUsage={usage}
-        onCompact={onCompact}
-        onClearContext={onClearContext}
-        {...overrides}
-      />,
+      <>
+        <ChatComposer
+          value=""
+          onChange={vi.fn()}
+          onSend={vi.fn()}
+          contextUsage={usage}
+          onCompact={onCompact}
+          onClearContext={onClearContext}
+          {...overrides}
+        />
+        {/* The card actions go through the global Confirmer before firing —
+            mount it so the confirmation dialog is reachable in these tests. */}
+        <Confirmer />
+      </>,
     )
     return { onCompact, onClearContext }
   }
@@ -99,19 +105,47 @@ describe('ChatComposer context actions', () => {
     return buttons
   }
 
-  it('fires onCompact from the usage card', async () => {
+  /// The confirmation dialog's footer: [cancel, confirm]. Radix AlertDialog
+  /// content carries role="alertdialog", which distinguishes it from the
+  /// card buttons underneath.
+  async function dialogButtons(): Promise<HTMLButtonElement[]> {
+    const dlg = await screen.findByRole('alertdialog')
+    return within(dlg)
+      .getAllByRole('button')
+      .map((b) => b as HTMLButtonElement)
+  }
+
+  it('fires onCompact only after the confirmation dialog is accepted', async () => {
     const { onCompact } = setupCard()
     const buttons = await openCard()
     buttons[0].click()
-    expect(onCompact).toHaveBeenCalledTimes(1)
+    // Dialog is up, action not fired yet.
+    const [cancel, confirm] = await dialogButtons()
+    expect(confirm).toBeTruthy()
+    expect(onCompact).not.toHaveBeenCalled()
+    confirm.click()
+    await waitFor(() => expect(onCompact).toHaveBeenCalledTimes(1))
+    expect(cancel).toBeTruthy()
   })
 
-  it('fires onClearContext from the usage card', async () => {
+  it('does not fire onCompact when the confirmation dialog is dismissed', async () => {
+    const { onCompact } = setupCard()
+    const buttons = await openCard()
+    buttons[0].click()
+    const [cancel] = await dialogButtons()
+    cancel.click()
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    expect(onCompact).not.toHaveBeenCalled()
+  })
+
+  it('fires onClearContext only after the confirmation dialog is accepted', async () => {
     const { onClearContext } = setupCard()
     await openCard() // waits for the card to be open
     const clear = await screen.findAllByText(/clear|清空对话/i)
     clear[0].closest('button')!.click()
-    expect(onClearContext).toHaveBeenCalledTimes(1)
+    const [, confirm] = await dialogButtons()
+    confirm.click()
+    await waitFor(() => expect(onClearContext).toHaveBeenCalledTimes(1))
   })
 
   it('disables the compact button while compacting', async () => {

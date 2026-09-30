@@ -1778,8 +1778,12 @@ export function AgentEditorFullScreen({
               {/* Tool gating. A narrower tool surface is both a capability
                   fence (this agent can never touch devices) and a
                   correctness lever — small models pick better among few.
-                  This canvas is focused/free only; structured's own canvas
-                  keeps its no-tool contract untouched. */}
+                  Hidden for structured: the sections below all render in one
+                  form (canvases are not exclusive), and structured's save
+                  path never sends tool_config — showing switches that do
+                  nothing would be misleading UI. */}
+              {!isStructuredMode && (
+                <>
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
                   <Label htmlFor="agent-tools-enabled" className="text-sm font-medium">
@@ -1861,6 +1865,8 @@ export function AgentEditorFullScreen({
                     </div>
                   )}
                 </div>
+              )}
+                </>
               )}
             </div>
     </>

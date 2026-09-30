@@ -10,8 +10,9 @@
 
 import { useRef, useState, type RefObject } from "react"
 import { useTranslation } from "react-i18next"
-import { ArrowUp, Check, ChevronDown, Image as ImageIcon, Loader2, X } from "lucide-react"
+import { Archive, ArrowUp, Check, ChevronDown, Image as ImageIcon, Loader2, Trash2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { useConfirm } from "@/components/ui/use-confirm"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -98,12 +99,38 @@ export function ChatComposer({
 }: ChatComposerProps) {
   const { t } = useTranslation(["chat", "common"])
   const { toast } = useToast()
+  const { confirm } = useConfirm()
   const isMobile = useIsMobile()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isUploadingImage, setIsUploadingImage] = useState(false)
 
   const canAttach = !!onAttachmentsChange
   const inputDisabled = disabled || isStreaming
+
+  // Both actions rewrite what the session remembers (compact swaps older
+  // history for a summary, clear deletes it outright) — guard them with the
+  // Confirmer so a misclick can't silently alter the conversation. Wrapped
+  // here so every host (chat page, panel) gets the guard for free.
+  const confirmCompact = async () => {
+    if (!onCompact) return
+    const yes = await confirm({
+      title: t("chat.context.compactConfirmTitle", "Compact context?"),
+      description: t("chat.context.compactConfirmDesc", "Earlier messages are replaced by a summary to free context space. History stays visible in the UI; only later requests are affected."),
+      confirmText: t("chat.context.compact", "Compact"),
+    })
+    if (yes) onCompact()
+  }
+
+  const confirmClear = async () => {
+    if (!onClearContext) return
+    const yes = await confirm({
+      title: t("chat.context.clearConfirmTitle", "Clear conversation history?"),
+      description: t("chat.context.clearConfirmDesc", "All messages in this session will be deleted. This cannot be undone."),
+      confirmText: t("chat.context.clear", "Clear"),
+      variant: "destructive",
+    })
+    if (yes) onClearContext()
+  }
 
   // Compress and append selected image files (mirrors the chat page pipeline).
   const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -382,27 +409,35 @@ export function ChatComposer({
                       </p>
                     )}
                     {(onCompact || onClearContext) && (
-                      <div className="mt-2 pt-2 border-t border-border flex items-center gap-2">
+                      <div className="mt-3 flex items-center gap-2">
                         {onCompact && (
-                          <button
+                          <Button
                             type="button"
-                            onClick={onCompact}
+                            variant="outline"
+                            size="xs"
+                            onClick={confirmCompact}
                             disabled={compacting}
-                            className="flex-1 h-6 rounded text-nano bg-muted hover:bg-muted-50 disabled:opacity-50 transition-colors"
+                            className="flex-1 gap-1.5"
                           >
+                            {compacting
+                              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              : <Archive className="h-3.5 w-3.5" />}
                             {compacting
                               ? t('chat.context.compacting', 'Compacting…')
                               : t('chat.context.compact', 'Compact')}
-                          </button>
+                          </Button>
                         )}
                         {onClearContext && (
-                          <button
+                          <Button
                             type="button"
-                            onClick={onClearContext}
-                            className="flex-1 h-6 rounded text-nano bg-muted hover:bg-muted-50 transition-colors"
+                            variant="outline"
+                            size="xs"
+                            onClick={confirmClear}
+                            className="flex-1 gap-1.5 border-destructive text-destructive hover:bg-destructive-light hover:text-destructive"
                           >
+                            <Trash2 className="h-3.5 w-3.5" />
                             {t('chat.context.clear', 'Clear')}
-                          </button>
+                          </Button>
                         )}
                       </div>
                     )}
