@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [1.1.1] - 2026-09-30 — the watermark transcript: chat hardened end to end
 
 Everything below traces back to one support transcript: a user asked for a watermarked copy of a meter photo, and the session failed six different ways — an uncallable tool, an unservable image, a model that narrated actions instead of taking them, a compactor that paraphrased the user's exact words away, a token budget that didn't count images, and no way for the user to see or steer any of it. Each layer now has a fix and a test that fails without it.
 
