@@ -446,6 +446,18 @@ Control."#;
             ("开发一个自定义扩展", "extension-development"),
             ("帮我管理通知渠道", "message-management"),
             ("修改系统时区", "settings-management"),
+            // Welcome-chip phrasings + colloquial agent synonyms (jobs /
+            // AI tasks / 盯着) — these are user-facing copy; if routing
+            // drifts, users hit it first.
+            ("帮我创建一个虚拟设备（模拟数据源）", "device-onboarding"),
+            ("Create a virtual device with simulated data", "device-onboarding"),
+            ("帮我添加一个大模型后端", "llm-management"),
+            ("Help me add an LLM backend", "llm-management"),
+            ("看看我的 AI 代理都在做什么", "agent-management"),
+            ("What are my AI agents doing?", "agent-management"),
+            ("建个AI job每天检查电池", "agent-management"),
+            ("make an AI task", "agent-management"),
+            ("帮我盯着冷库的温度", "agent-management"),
         ];
         println!("=== BM25 A/B (query -> expected) ===");
         for (q, expect) in cases {

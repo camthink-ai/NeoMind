@@ -412,7 +412,7 @@ fn fetch_weather(&self, city: &str) -> Result<serde_json::Value> {
 | `neomind extension list` | List all installed extensions |
 | `neomind extension get <ID>` | Get extension details (alias: `info`) |
 | `neomind extension status <ID>` | Get runtime status |
-| `neomind extension logs <ID> [--limit <N>]` | View extension logs |
+| `neomind extension logs <ID> [--lines <N>]` | View extension logs (⚠️ `--lines`, not `--limit`) |
 | `neomind extension reload <ID>` | Reload (pick up code changes) |
 | `neomind extension config <ID>` | View current config |
 | `neomind extension config <ID> --set '<JSON>'` | Update config |

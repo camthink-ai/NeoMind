@@ -34,7 +34,7 @@ Always RUN the command yourself and report the real output.
 | `neomind message channel-types` | List available channel types |
 | `neomind message channel-type-schema <TYPE>` | Config schema + examples for a channel type |
 | `neomind message channel-create` | Create a message channel |
-| `neomind message channel-update <id>` | Update channel configuration |
+| `neomind message channel-update --name <NAME> --config '<JSON>'` | Update channel configuration (⚠️ flags, no positional id) |
 | `neomind message channel-delete <id>` | Delete a channel |
 | `neomind message channel-test <id>` | Test a message channel |
 
@@ -79,7 +79,7 @@ neomind message channel-list                      # List all channels
 neomind message channel-get <NAME>                # Get channel details
 neomind message channel-create --name <N> --type <T> --param <k>=<v>...  # Create channel (flags, preferred)
 neomind message channel-create --name <N> --type <T> --config '<JSON>'  # Create channel (full JSON form)
-neomind message channel-update <NAME> --config '<JSON>'                 # Update channel config
+neomind message channel-update --name <NAME> --config '<JSON>'          # Update channel config
 neomind message channel-delete <NAME>             # Delete channel
 neomind message channel-test <NAME>               # Test channel delivery
 ```

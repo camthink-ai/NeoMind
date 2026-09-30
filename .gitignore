@@ -159,3 +159,4 @@ design-mockups/v7-console.html
 log/
 .smoke/
 .ui-audit
+__pycache__/

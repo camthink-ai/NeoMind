@@ -31,9 +31,9 @@ Always RUN the command yourself and report the real output.
 | `neomind connector enable <id>` | Enable a connector |
 | `neomind connector disable <id>` | Disable a connector |
 | `neomind connector test <id>` | Test connectivity (real MQTT handshake) |
-| `neomind connector subscriptions <id>` | List MQTT topic subscriptions |
-| `neomind connector subscribe <id>` | Subscribe to a custom MQTT topic |
-| `neomind connector unsubscribe <id>` | Unsubscribe from a topic |
+| `neomind connector subscriptions` | List MQTT topic subscriptions |
+| `neomind connector subscribe --topic <TOPIC> [--qos 0-2]` | Subscribe to a custom MQTT topic (⚠️ `--topic` is a flag, not positional) |
+| `neomind connector unsubscribe --topic <TOPIC>` | Unsubscribe from a topic |
 
 Connectors link NeoMind to external MQTT brokers and data sources. They allow subscribing to topics and bridging data from remote systems.
 
