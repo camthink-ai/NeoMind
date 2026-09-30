@@ -250,11 +250,15 @@ def emit_web_icons(pub):
         save(img, pub / fname)
         save(img, api_static_dir / fname)
     # transparent-background mark for in-app surfaces (sidebar rail, etc.);
-    # display size is capped by the consuming components (w-9 h-9 etc.)
+    # display size is capped by the consuming components (w-6 h-6 etc.)
     for fname, size in (("logo-mark.png", 512),):
         img = render_mark(size)
         save(img, pub / fname)
         save(img, api_static_dir / fname)
+    # black mono mark (current-color SVG) for light-theme in-app surfaces
+    mono_svg = (Path(__file__).resolve().parent / "neomind-mark-mono.svg").read_text()
+    (pub / "logo-mark-mono.svg").write_text(mono_svg)
+    print(f"  {pub / 'logo-mark-mono.svg'}")
 
 
 def emit_tauri_icons(icons):

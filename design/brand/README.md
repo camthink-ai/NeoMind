@@ -55,8 +55,9 @@ Mark height = 54% of the tile side, centered. Tiles use 22.5% corner radius.
 
 - `web/public/` — `logo-square.png` (128), favicons 16/32, `apple-touch-icon`
   (180), PWA `icon-192/512.png` (dark tile, color mark), `logo-mark.png`
-  (512, transparent-background mark used by the app UI, e.g. the collapsed
-  sidebar rail)
+  (512, transparent gradient mark — dark-theme in-app surfaces, e.g. the
+  sidebar rail) and `logo-mark-mono.svg` (black `currentColor` mark —
+  light-theme in-app surfaces; `<img>` embeds resolve currentColor to black)
 - `crates/neomind-api/static/` — same set, served by the API binary
 - `web/src-tauri/icons/` — Tauri bundle PNGs, `icon.ico`, `icon.icns`,
   `Square*Logo.png`/`StoreLogo.png` (Windows), `ios/AppIcon-*.png` (white

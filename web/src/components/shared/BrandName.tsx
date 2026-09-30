@@ -43,7 +43,8 @@ export function ShortBrandName({ className }: { className?: string }) {
 }
 
 /**
- * Brand logo with short name (transparent-background square logo image)
+ * Brand logo with short name — theme-adaptive transparent mark:
+ * light theme renders the black mono mark, dark theme the orange gradient.
  *
  * @example
  * ```tsx
@@ -52,13 +53,24 @@ export function ShortBrandName({ className }: { className?: string }) {
  */
 export function BrandLogo({ className }: { className?: string }) {
   return (
-    <img
-      src="/logo-mark.png"
-      alt="NeoMind Logo"
-      width={24}
-      height={24}
-      className={cn('w-6 h-6', className)}
-    />
+    <>
+      {/* Light theme: black mono mark (currentColor SVG resolves to black) */}
+      <img
+        src="/logo-mark-mono.svg"
+        alt="NeoMind Logo"
+        width={24}
+        height={24}
+        className={cn('w-6 h-6 dark:hidden', className)}
+      />
+      {/* Dark theme: brand gradient mark */}
+      <img
+        src="/logo-mark.png"
+        alt="NeoMind Logo"
+        width={24}
+        height={24}
+        className={cn('w-6 h-6 hidden dark:block', className)}
+      />
+    </>
   )
 }
 
