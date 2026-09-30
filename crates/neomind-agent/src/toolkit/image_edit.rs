@@ -14,6 +14,7 @@
 use crate::toolkit::error::{Result, ToolError};
 use crate::toolkit::timeouts;
 use crate::toolkit::tool::{Tool, ToolOutput};
+use ab_glyph::Font as _;
 use neomind_core::tools::ToolCategory;
 use serde::Deserialize;
 use serde_json::Value;
@@ -347,8 +348,6 @@ pub enum OpError {
     NoFont,
     #[error("invalid text (empty or too long)")]
     InvalidText,
-    #[error("font parse failed")]
-    FontParse,
 }
 
 /// Image editing tool entry point. Owns the data directory (where outputs land)
@@ -953,7 +952,21 @@ fn apply_operation(
             background,
             padding,
         } => {
-            let font_bytes = probe_font().ok_or(OpError::NoFont)?;
+            let Some((font, covered, total)) = select_font_for(text) else {
+                return Err(OpError::NoFont);
+            };
+            if covered < total {
+                // Missing glyphs rasterize as tofu boxes — surface it instead
+                // of letting the model relay a bare "success" for a garbled
+                // watermark.
+                warnings.push(format!(
+                    "operations[{}]: draw_text — best probed font ({}) still lacks glyphs for {}/{} char(s) (e.g. CJK); they will render as boxes. Install a CJK font (Linux: `sudo apt install fonts-noto-cjk`)",
+                    op_index,
+                    font.source,
+                    total - covered,
+                    total
+                ));
+            }
             let (rx, ry, defaulted) =
                 default_text_position(img, *x, *y, text, *font_size, *padding);
             if defaulted {
@@ -971,7 +984,7 @@ fn apply_operation(
                 *font_size,
                 background.clone().map(|c| c.0),
                 *padding,
-                font_bytes,
+                &font.font,
             )
         }
         Operation::BlurRect {
@@ -1069,46 +1082,139 @@ fn apply_crop(
     Ok(())
 }
 
-/// Font loader with OnceLock caching.
-static FONT_BYTES: OnceLock<Option<Vec<u8>>> = OnceLock::new();
+/// A parsed system font candidate kept alive for the process lifetime.
+struct FontCandidate {
+    font: ab_glyph::FontArc,
+    source: &'static str,
+}
 
-/// Probe system fonts and return bytes (cached).
-fn probe_font() -> Option<&'static [u8]> {
-    FONT_BYTES
-        .get_or_init(|| {
-            let candidates: &[&str] = if cfg!(target_os = "macos") {
-                &[
-                    "/System/Library/Fonts/PingFang.ttc",
-                    "/System/Library/Fonts/Helvetica.ttc",
-                    "/Library/Fonts/Arial.ttf",
-                ]
-            } else if cfg!(target_os = "windows") {
-                &[
-                    "C:\\Windows\\Fonts\\msyh.ttc",
-                    "C:\\Windows\\Fonts\\msyh.ttf",
-                    "C:\\Windows\\Fonts\\arial.ttf",
-                ]
-            } else {
-                &[
-                    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-                    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                ]
-            };
-            for path in candidates {
-                if let Ok(bytes) = std::fs::read(path) {
-                    tracing::debug!(
-                        font_path = %path,
-                        "image_edit: font loaded ({} bytes)",
-                        bytes.len()
-                    );
-                    return Some(bytes);
-                }
+/// Parsed font candidates (cached after first use). CJK-capable paths are
+/// listed FIRST in [`system_font_paths`] so they win coverage ties.
+static FONT_CANDIDATES: OnceLock<Vec<FontCandidate>> = OnceLock::new();
+
+/// Candidate system font files, CJK-capable first. Order matters: for text
+/// every font covers equally (pure Latin), the earliest candidate is chosen.
+fn system_font_paths() -> &'static [&'static str] {
+    if cfg!(target_os = "macos") {
+        &[
+            "/System/Library/Fonts/PingFang.ttc",
+            "/System/Library/Fonts/Hiragino Sans GB.ttc",
+            "/System/Library/Fonts/STHeiti Light.ttc",
+            "/System/Library/Fonts/Helvetica.ttc",
+        ]
+    } else if cfg!(target_os = "windows") {
+        &[
+            "C:\\Windows\\Fonts\\msyh.ttc",
+            "C:\\Windows\\Fonts\\msyh.ttf",
+            "C:\\Windows\\Fonts\\simhei.ttf",
+            "C:\\Windows\\Fonts\\arial.ttf",
+        ]
+    } else {
+        &[
+            // Noto CJK — the standard answer on Ubuntu/Debian (fonts-noto-cjk)
+            // and Arch-style layouts.
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+            // WenQuanYi and Droid fallbacks — common on minimal/headless boxes.
+            "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+            "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+            // Latin-only last resort (no CJK glyphs — coverage check will
+            // surface a warning instead of silently drawing tofu).
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ]
+    }
+}
+
+/// Parse one font file into `out`. TTC collections contribute one candidate
+/// per face: `try_from_vec` alone would only ever get face 0 (for
+/// NotoSansCJK-*.ttc that is the JP variant — legible for Chinese, but the
+/// other faces are kept as candidates too). ab_glyph exposes no name table,
+/// so faces are distinguished only by glyph coverage downstream.
+fn parse_font_file(bytes: Vec<u8>, path: &'static str, out: &mut Vec<FontCandidate>) {
+    const MAX_CACHED_FACES: usize = 8;
+    if out.len() >= MAX_CACHED_FACES {
+        return;
+    }
+    if bytes.len() >= 12 && &bytes[0..4] == b"ttcf" {
+        // TTC header: tag(4) version(4) numFonts(4 BE) offsets[...]
+        let num_faces = u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
+        for index in 0..num_faces.min(8) {
+            match ab_glyph::FontVec::try_from_vec_and_index(bytes.clone(), index)
+                .map(ab_glyph::FontArc::new)
+            {
+                Ok(font) => out.push(FontCandidate { font, source: path }),
+                Err(_) => break, // later faces rarely parse if this one didn't
             }
+            if out.len() >= MAX_CACHED_FACES {
+                break;
+            }
+        }
+    } else if let Ok(font) = ab_glyph::FontArc::try_from_vec(bytes) {
+        out.push(FontCandidate { font, source: path });
+    }
+}
+
+/// Scan system font paths and parse every readable font (cached).
+fn probe_fonts() -> &'static [FontCandidate] {
+    FONT_CANDIDATES.get_or_init(|| {
+        let mut out = Vec::new();
+        for path in system_font_paths() {
+            match std::fs::read(path) {
+                Ok(bytes) => {
+                    let before = out.len();
+                    parse_font_file(bytes, path, &mut out);
+                    if out.len() > before {
+                        tracing::debug!(
+                            font_path = %path,
+                            faces = out.len() - before,
+                            "image_edit: font loaded"
+                        );
+                    }
+                }
+                Err(_) => continue,
+            }
+        }
+        if out.is_empty() {
             tracing::debug!("image_edit: no system font found");
-            None
-        })
-        .as_deref()
+        }
+        out
+    })
+}
+
+/// Glyph coverage of `text` in `font`: (covered, total) over non-whitespace
+/// chars. `glyph_id == 0` is .notdef — the tofu box the rasterizer draws for
+/// unsupported scripts.
+fn coverage(font: &ab_glyph::FontArc, text: &str) -> (usize, usize) {
+    let mut covered = 0usize;
+    let mut total = 0usize;
+    for ch in text.chars().filter(|c| !c.is_whitespace()) {
+        total += 1;
+        if font.glyph_id(ch).0 != 0 {
+            covered += 1;
+        }
+    }
+    (covered, total.max(1))
+}
+
+/// Pick the font that covers the most of `text`; ties go to the earlier
+/// candidate (CJK-capable paths are ordered first in [`system_font_paths`]).
+/// Returns the candidate with its (covered, total) so the caller can warn on
+/// partial coverage.
+fn select_font_for(text: &str) -> Option<(&'static FontCandidate, usize, usize)> {
+    let mut best: Option<(&'static FontCandidate, usize, usize)> = None;
+    for cand in probe_fonts() {
+        let (covered, total) = coverage(&cand.font, text);
+        let take = match best {
+            None => true,
+            Some((_, best_covered, _)) => covered > best_covered,
+        };
+        if take {
+            best = Some((cand, covered, total));
+        }
+    }
+    best
 }
 
 /// Note: `stroke_width` is accepted for API uniformity with other draw operations
@@ -1333,19 +1439,11 @@ fn apply_draw_text(
     font_size: u32,
     background: Option<image::Rgba<u8>>,
     padding: u32,
-    font_bytes: &[u8],
+    font: &ab_glyph::FontArc,
 ) -> std::result::Result<(), OpError> {
-    if font_bytes.is_empty() {
-        return Err(OpError::NoFont);
-    }
     if text.is_empty() || text.len() > 200 {
         return Err(OpError::InvalidText);
     }
-
-    let font = ab_glyph::FontRef::try_from_slice(font_bytes).map_err(|_| OpError::FontParse)?;
-
-    // Layout text to get bounding box
-    let scale = ab_glyph::PxScale::from(font_size as f32);
 
     // Calculate text bounds using font metrics - simplified approach
     // Just estimate width based on character count and font size
@@ -1368,9 +1466,10 @@ fn apply_draw_text(
 
     // Draw text at (x + padding, y + padding)
     use imageproc::drawing::draw_text_mut;
+    let scale = ab_glyph::PxScale::from(font_size as f32);
     let draw_x = x + padding as i32;
     let draw_y = y + padding as i32;
-    draw_text_mut(img, color, draw_x, draw_y, scale, &font, text);
+    draw_text_mut(img, color, draw_x, draw_y, scale, font, text);
 
     Ok(())
 }
@@ -1646,7 +1745,7 @@ mod tests {
     /// coordinates must succeed (centered) instead of aborting the whole call.
     #[tokio::test]
     async fn draw_text_without_position_defaults_centered() {
-        if probe_font().is_none() {
+        if probe_fonts().is_empty() {
             eprintln!("skipping: no system font available");
             return;
         }
@@ -1729,7 +1828,7 @@ mod tests {
     /// bare success the model relays as "done".
     #[tokio::test]
     async fn pixels_changed_flags_off_canvas_text() {
-        if probe_font().is_none() {
+        if probe_fonts().is_empty() {
             eprintln!("skipping: no system font available");
             return;
         }
@@ -2031,13 +2130,11 @@ mod op_tests {
     #[test]
     fn draw_text_renders_glyphs_with_background() {
         // System-font dependent: skip cleanly on systems without any of the probed fonts
-        let font_bytes = match probe_font() {
-            Some(b) => b.to_vec(),
-            None => {
-                eprintln!("skipping: no system font available");
-                return;
-            }
-        };
+        let fonts = probe_fonts();
+        if fonts.is_empty() {
+            eprintln!("skipping: no system font available");
+            return;
+        }
         let mut img = solid(200, 100, [0, 0, 0, 255]);
         apply_draw_text(
             &mut img,
@@ -2048,7 +2145,7 @@ mod op_tests {
             24,
             Some(image::Rgba([0, 0, 0, 255])),
             4,
-            &font_bytes,
+            &fonts[0].font,
         )
         .unwrap();
         // (x,y) is the top-left of the background rect — still pure black bg
@@ -2056,21 +2153,88 @@ mod op_tests {
     }
 
     #[test]
-    fn draw_text_empty_font_bytes_returns_error() {
-        let mut img = solid(100, 50, [0, 0, 0, 255]);
-        let res = apply_draw_text(
+    fn select_font_covers_drawn_text_when_cjk_font_present() {
+        // The field bug: watermark "有人 … 厦门" rendered as tofu because the
+        // probe fell back to a Latin-only font. If ANY probed font covers the
+        // drawn CJK text, selection must report full coverage.
+        let text = "有人 NE302 2026-09-30 厦门市公安局";
+        if probe_fonts().is_empty() {
+            eprintln!("skipping: no system font available");
+            return;
+        }
+        let Some((_, covered, total)) = select_font_for(text) else {
+            panic!("fonts probed but select_font_for returned None");
+        };
+        if !probe_fonts()
+            .iter()
+            .any(|c| coverage(&c.font, "厦门") == (2, 2))
+        {
+            eprintln!("skipping: no CJK-capable font probed (expected on bare CI)");
+            return;
+        }
+        assert_eq!(
+            covered, total,
+            "CJK-capable font present but selection lacks glyphs"
+        );
+    }
+
+    #[test]
+    fn cjk_draw_text_changes_pixels() {
+        if probe_fonts().is_empty() {
+            eprintln!("skipping: no system font available");
+            return;
+        }
+        if !probe_fonts()
+            .iter()
+            .any(|c| coverage(&c.font, "厦门") == (2, 2))
+        {
+            eprintln!("skipping: no CJK-capable font probed");
+            return;
+        }
+        let mut img = solid(200, 60, [0, 0, 0, 255]);
+        let before = img.as_bytes().to_vec();
+        apply_draw_text(
             &mut img,
             10,
             10,
-            "x",
+            "厦门市公安局",
             image::Rgba([255, 255, 255, 255]),
-            16,
+            24,
             None,
             0,
-            &[], // empty font bytes
+            &select_font_for("厦门市公安局").unwrap().0.font,
+        )
+        .unwrap();
+        assert_ne!(img.as_bytes(), before.as_slice(), "CJK text drew no pixels");
+    }
+
+    /// Parses the exact font the server deployment uses. Opt-in via
+    /// NEOMIND_TEST_CJK_TTC=/path/to/NotoSansCJK-Regular.ttc (CI has no CJK
+    /// fonts); run locally after `apt install fonts-noto-cjk`.
+    #[test]
+    fn noto_cjk_ttc_exposes_all_faces_with_full_hanzi_coverage() {
+        let Ok(path) = std::env::var("NEOMIND_TEST_CJK_TTC") else {
+            eprintln!("skipping: NEOMIND_TEST_CJK_TTC not set");
+            return;
+        };
+        let bytes = std::fs::read(&path).expect("read NEOMIND_TEST_CJK_TTC");
+        let mut faces = Vec::new();
+        parse_font_file(bytes, "env", &mut faces);
+        assert!(
+            faces.len() >= 2,
+            "ttc must expose multiple faces, got {}",
+            faces.len()
         );
-        assert!(res.is_err());
-        assert!(matches!(res.unwrap_err(), OpError::NoFont));
+        // Every face of NotoSansCJK covers the full pan-CJK charset — the
+        // field bug (tofu) must be impossible once this font is probed.
+        for face in &faces {
+            assert_eq!(
+                coverage(&face.font, "厦门有人公安"),
+                (6, 6),
+                "face from {} lacks hanzi coverage",
+                face.source
+            );
+        }
     }
 
     #[test]
@@ -2179,7 +2343,7 @@ mod color_tests {
     /// End-to-end: the CSS rgba form that used to hard-fail now renders.
     #[tokio::test]
     async fn rgba_background_text_renders() {
-        if probe_font().is_none() {
+        if probe_fonts().is_empty() {
             eprintln!("skipping: no system font available");
             return;
         }
