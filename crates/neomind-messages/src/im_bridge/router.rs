@@ -253,6 +253,13 @@ impl ImRouter {
                     }
                 }
                 _ = &mut deadline => {
+                    // The run future is abandoned here; its own per-round
+                    // persist never executes. Snapshot once from outside so
+                    // the user's message (already in agent memory) survives a
+                    // restart instead of vanishing with the dropped future.
+                    if let Err(e) = self.runner.persist(&rec.neo_session_id).await {
+                        tracing::warn!(error=%e, session_id=%rec.neo_session_id, "post-timeout persist failed");
+                    }
                     break "Request timed out after 10 minutes. Please try again or simplify your request."
                         .to_string();
                 }

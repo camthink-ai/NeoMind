@@ -1431,6 +1431,12 @@ async fn handle_ws_socket(
                             AxumMessage::Text(text) => {
                                 // Track message received
                                 conn_meta.increment_received();
+                                // ANY inbound frame proves the client is
+                                // alive — liveness used to be pong-only, so
+                                // a third-party client that chats steadily
+                                // but never implements the pong frame was
+                                // cut off ~60-90s into the connection.
+                                conn_meta.record_pong().await;
 
                                 // Check for pong response to our heartbeat ping
                                 if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {

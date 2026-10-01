@@ -119,6 +119,14 @@ pub trait AgentRunner: Send + Sync {
     async fn create_session(&self) -> anyhow::Result<String>;
     /// 处理一条消息，返回最终聚合回复文本（session 必须已由 create_session 建好）。
     async fn run(&self, session_id: &str, text: &str) -> anyhow::Result<String>;
+    /// Best-effort snapshot of a session's in-memory history to storage.
+    /// The router calls this when it ABANDONS a run on the hard timeout:
+    /// the dropped run future's own per-round persist never executes, which
+    /// left the user's message as an in-memory orphan (lost on restart, and
+    /// a dangling unanswered turn in the next prompt).
+    async fn persist(&self, _session_id: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]

@@ -3679,6 +3679,15 @@ impl neomind_messages::im_bridge::AgentRunner for SessionManagerAgentRunner {
         Ok(self.sm.create_session_with_options(opts).await?)
     }
 
+    async fn persist(&self, session_id: &str) -> anyhow::Result<()> {
+        // Called by the IM router when it abandons a run on the hard
+        // timeout — the dropped run future's per-round persist never
+        // executes, so the in-memory turn (user message included) is
+        // snapshotted here instead.
+        self.sm.persist_history(session_id).await?;
+        Ok(())
+    }
+
     async fn run(&self, session_id: &str, text: &str) -> anyhow::Result<String> {
         use futures::StreamExt as _;
         // backend_id=None → use the session's currently-active backend.

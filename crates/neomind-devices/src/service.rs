@@ -539,49 +539,88 @@ impl DeviceService {
                             registry.update_last_seen(&device_id, now_ts).await;
                         }
 
-                        // Write to telemetry storage if available.
+                        // Write to telemetry storage if available — but only
+                        // for REAL device metrics:
+                        //
+                        // 1. Virtual metrics (ai:*, transform aliases) are
+                        //    already dual-written by the publisher
+                        //    (metric_publish), each under its own namespace.
+                        //    Re-writing here under `device:<primary>` stored
+                        //    a THIRD copy under a third key — 3x storage
+                        //    growth at transform output rate, and
+                        //    inconsistent results across namespace queries.
+                        // 2. Bus values of Json(null) mean "binary payload,
+                        //    not representable on the bus" (e.g. a webhook
+                        //    image whose disk persistence failed). The
+                        //    adapter's direct write is authoritative;
+                        //    re-writing here replaced the real base64 value
+                        //    with the literal string "null" — data loss.
+                        //
                         // Use the event's timestamp (not Utc::now()) so we don't create duplicate
                         // data points. Adapters (MQTT, HTTP, Webhook) already write with their
                         // receive time; using the same timestamp here causes the second write to
                         // overwrite the first (same key), avoiding duplicate entries with ~2s gap.
+                        let bus_null =
+                            matches!(&value, neomind_core::MetricValue::Json(j) if j.is_null());
+                        let virtual_metric = neomind_core::NeoMindEvent::is_virtual_device_metric(
+                            is_virtual, &metric,
+                        );
                         let ts_storage = telemetry_storage.read().await;
                         if let Some(storage) = ts_storage.as_ref() {
-                            // Convert core MetricValue to devices MetricValue
-                            let metric_value: MetricValue = match &value {
-                                neomind_core::MetricValue::Integer(i) => MetricValue::Integer(*i),
-                                neomind_core::MetricValue::Float(f) => MetricValue::Float(*f),
-                                neomind_core::MetricValue::String(s) => {
-                                    MetricValue::String(s.clone())
-                                }
-                                neomind_core::MetricValue::Boolean(b) => MetricValue::Boolean(*b),
-                                neomind_core::MetricValue::Json(j) => {
-                                    // Try to convert JSON to appropriate type
-                                    if let Some(n) = j.as_i64() {
-                                        MetricValue::Integer(n)
-                                    } else if let Some(f) = j.as_f64() {
-                                        MetricValue::Float(f)
-                                    } else if let Some(s) = j.as_str() {
-                                        MetricValue::String(s.to_string())
-                                    } else if let Some(b) = j.as_bool() {
-                                        MetricValue::Boolean(b)
-                                    } else {
-                                        MetricValue::String(j.to_string())
+                            if virtual_metric {
+                                tracing::trace!(
+                                    device_id = %device_id,
+                                    metric = %metric,
+                                    "virtual metric already stored by its publisher — skipping bus-consumer write"
+                                );
+                            } else if bus_null {
+                                tracing::debug!(
+                                    device_id = %device_id,
+                                    metric = %metric,
+                                    "bus value is null (binary payload) — adapter's direct write is authoritative, skipping re-write"
+                                );
+                            } else {
+                                // Convert core MetricValue to devices MetricValue
+                                let metric_value: MetricValue = match &value {
+                                    neomind_core::MetricValue::Integer(i) => {
+                                        MetricValue::Integer(*i)
                                     }
+                                    neomind_core::MetricValue::Float(f) => MetricValue::Float(*f),
+                                    neomind_core::MetricValue::String(s) => {
+                                        MetricValue::String(s.clone())
+                                    }
+                                    neomind_core::MetricValue::Boolean(b) => {
+                                        MetricValue::Boolean(*b)
+                                    }
+                                    neomind_core::MetricValue::Json(j) => {
+                                        // Try to convert JSON to appropriate type
+                                        if let Some(n) = j.as_i64() {
+                                            MetricValue::Integer(n)
+                                        } else if let Some(f) = j.as_f64() {
+                                            MetricValue::Float(f)
+                                        } else if let Some(s) = j.as_str() {
+                                            MetricValue::String(s.to_string())
+                                        } else if let Some(b) = j.as_bool() {
+                                            MetricValue::Boolean(b)
+                                        } else {
+                                            MetricValue::String(j.to_string())
+                                        }
+                                    }
+                                };
+
+                                let data_point = super::telemetry::DataPoint {
+                                    timestamp,
+                                    value: metric_value,
+                                    quality: None,
+                                    metadata: None,
+                                };
+
+                                if let Err(e) = storage
+                                    .write(&format!("device:{}", device_id), &metric, data_point)
+                                    .await
+                                {
+                                    tracing::warn!("Failed to write telemetry to storage: {}", e);
                                 }
-                            };
-
-                            let data_point = super::telemetry::DataPoint {
-                                timestamp,
-                                value: metric_value,
-                                quality: None,
-                                metadata: None,
-                            };
-
-                            if let Err(e) = storage
-                                .write(&format!("device:{}", device_id), &metric, data_point)
-                                .await
-                            {
-                                tracing::warn!("Failed to write telemetry to storage: {}", e);
                             }
                         } else {
                             tracing::warn!(

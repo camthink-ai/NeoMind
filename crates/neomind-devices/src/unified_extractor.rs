@@ -226,6 +226,18 @@ impl UnifiedExtractor {
                         device_id
                     );
                     match self.extract_by_path(raw_data, &metric_def.name, 0) {
+                        Ok(Some(value)) if value.is_null() => {
+                            // A missing template key extracts as JSON null.
+                            // Emitting it wrote a Null data point per uplink
+                            // AND put Json(null) on the bus (which the
+                            // DeviceService consumer would then re-write as
+                            // the literal string "null"). Treat absent the
+                            // same as the not-found branch below.
+                            debug!(
+                                "Metric '{}' is null in payload for device '{}', skipping",
+                                metric_def.name, device_id
+                            );
+                        }
                         Ok(Some(value)) => {
                             let metric_value = self.value_to_metric_value(&value);
                             info!(

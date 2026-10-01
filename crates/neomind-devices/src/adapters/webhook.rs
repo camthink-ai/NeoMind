@@ -498,10 +498,17 @@ impl WebhookAdapter {
             .extract(&device_id, &device_type, &payload.data)
             .await;
 
-        // Emit all extracted metrics
+        // Emit all extracted metrics. The payload-level quality indicator
+        // applies to every metric in this uplink.
         for metric in result.metrics {
-            self.emit_metric_event(device_id.clone(), metric.name, metric.value, timestamp)
-                .await;
+            self.emit_metric_event(
+                device_id.clone(),
+                metric.name,
+                metric.value,
+                timestamp,
+                payload.quality,
+            )
+            .await;
             metrics_count += 1;
         }
 
@@ -589,6 +596,7 @@ impl WebhookAdapter {
         metric_name: String,
         value: MetricValue,
         timestamp: i64,
+        quality: Option<f32>,
     ) {
         use neomind_core::NeoMindEvent;
 
@@ -617,7 +625,10 @@ impl WebhookAdapter {
                 let data_point = crate::telemetry::DataPoint {
                     timestamp,
                     value: value.clone(),
-                    quality: None,
+                    // The payload's quality indicator (0-1) used to be
+                    // parsed and then dropped on the floor here — the API
+                    // docs promise it and devices send it.
+                    quality,
                     metadata: None,
                 };
                 if let Err(e) = storage
@@ -662,7 +673,7 @@ impl WebhookAdapter {
                 metric: metric_name,
                 value: core_value,
                 timestamp,
-                quality: None,
+                quality,
                 is_virtual: None,
             })
             .await;

@@ -2197,10 +2197,32 @@ Assistant: {ar}\n"
                     // Session has messages, keep it
                 }
                 Err(e) => {
-                    // Failed to load history - corrupted data
-                    tracing::warn!(session_id = %session_id, error = %e, "Found corrupted session, removing");
-                    let _ = self.delete_session_id(&session_id);
-                    invalid_count += 1;
+                    // Failed to load history. Only CORRUPTION-shaped errors
+                    // delete: this handler is reachable over HTTP, and a
+                    // transient IO / lock / disk-full failure used to
+                    // PHYSICALLY DELETE the session and its entire history —
+                    // irreversible loss from a blip. Anything not clearly a
+                    // deserialization failure is kept and re-checked next
+                    // cycle.
+                    let msg = e.to_string().to_lowercase();
+                    let corrupt = [
+                        "deserialize",
+                        "serde",
+                        "json",
+                        "corrupt",
+                        "bincode",
+                        "utf-8",
+                        "invalid data",
+                    ]
+                    .iter()
+                    .any(|k| msg.contains(k));
+                    if corrupt {
+                        tracing::warn!(session_id = %session_id, error = %e, "Found corrupted session, removing");
+                        let _ = self.delete_session_id(&session_id);
+                        invalid_count += 1;
+                    } else {
+                        tracing::warn!(session_id = %session_id, error = %e, "Session temporarily unreadable — keeping, will re-check next cycle");
+                    }
                 }
             }
         }
