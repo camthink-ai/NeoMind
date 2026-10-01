@@ -34,6 +34,84 @@ pub async fn cleanup_expired_images(
     images_dir: &Path,
     retention_hours: u64,
 ) -> anyhow::Result<(usize, usize)> {
+    cleanup_expired_images_with_protection(images_dir, retention_hours, &Default::default()).await
+}
+
+/// Collect the image filenames still referenced by any session message or
+/// agent journal outcome (`/api/images/<file>` occurrences).
+///
+/// The hourly cleanup deletes timestamp-expired device frames AND — via the
+/// mtime fallback — flat top-level files (chat uploads `chat-<hash>.<ext>`,
+/// image_edit outputs `<uuid>.<ext>`). Those flat files are referenced from
+/// conversation history that outlives any image-retention window (session
+/// retention is a separate, default-OFF policy), so deleting them on the
+/// image schedule turned `![...](/api/images/<file>)` into 404s across old
+/// conversations. Files named in this set are skipped by
+/// [`cleanup_expired_images_with_protection`]; they become collectible once
+/// the sessions referencing them are themselves cleaned.
+pub async fn collect_referenced_image_files(
+    session_store: &neomind_storage::SessionStore,
+    agent_store: &neomind_storage::AgentStore,
+) -> std::collections::HashSet<String> {
+    use neomind_storage::AgentFilter;
+    const MARKER: &str = "/api/images/";
+    let mut referenced = std::collections::HashSet::new();
+
+    if let Ok(ids) = session_store.list_sessions() {
+        for id in ids {
+            if let Ok(messages) = session_store.load_history(&id) {
+                for msg in &messages {
+                    if msg.content.contains(MARKER) {
+                        extract_image_refs(&msg.content, &mut referenced);
+                    }
+                }
+            }
+        }
+    }
+
+    if let Ok(agents) = agent_store
+        .query_agents(AgentFilter {
+            status: None,
+            ..Default::default()
+        })
+        .await
+    {
+        for agent in &agents {
+            for record in &agent.memory.journal.records {
+                if record.outcome.contains(MARKER) {
+                    extract_image_refs(&record.outcome, &mut referenced);
+                }
+            }
+        }
+    }
+
+    referenced
+}
+
+/// Pull every `/api/images/<name>` occurrence out of `text` into `out`.
+fn extract_image_refs(text: &str, out: &mut std::collections::HashSet<String>) {
+    const MARKER: &str = "/api/images/";
+    let mut from = 0usize;
+    while let Some(i) = text[from..].find(MARKER) {
+        let start = from + i + MARKER.len();
+        let name: String = text[start..]
+            .chars()
+            .take_while(|c| !matches!(c, ')' | ' ' | ']' | '"' | '\'' | '\n' | '\r' | '<' | '>'))
+            .collect();
+        if !name.is_empty() {
+            out.insert(name);
+        }
+        from = start;
+    }
+}
+
+/// Retention cleanup that refuses to delete files still referenced by
+/// conversations or agent journals (see [`collect_referenced_image_files`]).
+pub async fn cleanup_expired_images_with_protection(
+    images_dir: &Path,
+    retention_hours: u64,
+    protected_files: &std::collections::HashSet<String>,
+) -> anyhow::Result<(usize, usize)> {
     let retention_duration = Duration::from_secs(retention_hours * 3600);
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -59,7 +137,21 @@ pub async fn cleanup_expired_images(
 
     // Collect all files first to avoid borrowing issues
     let files_to_delete: Vec<(PathBuf, i64)> =
-        collect_expired_files(images_dir, cutoff_timestamp_secs)?;
+        collect_expired_files(images_dir, cutoff_timestamp_secs)?
+            .into_iter()
+            .filter(|(path, _)| {
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if protected_files.contains(name) {
+                    tracing::debug!(
+                        file = %path.display(),
+                        "skipping cleanup — still referenced by a session or agent journal"
+                    );
+                    false
+                } else {
+                    true
+                }
+            })
+            .collect();
 
     // Delete files
     for (file_path, timestamp_secs) in &files_to_delete {
@@ -524,6 +616,73 @@ mod tests {
         );
         assert!(fresh_hash.exists(), "fresh hash-named file must be kept");
         assert_eq!(result.0, 1);
+    }
+
+    /// Flat top-level files (chat uploads, image_edit outputs) whose names
+    /// still appear in a conversation must survive cleanup even when their
+    /// mtime is far past retention — the old behavior turned those
+    /// conversations' markdown images into 404s after the 72h default.
+    #[tokio::test]
+    async fn test_cleanup_keeps_referenced_flat_files() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let images_dir = temp_dir.path().join("images");
+        std::fs::create_dir_all(&images_dir).unwrap();
+
+        // An "old" chat upload + an "old" image_edit output (mtime pushed back).
+        let chat_img = create_test_image_file(&images_dir, "chat-abc123def.png");
+        let edit_img =
+            create_test_image_file(&images_dir, "9c8b7a6e-1111-2222-3333-444455556666.png");
+        let old = SystemTime::now() - Duration::from_secs(100 * 3600);
+        for f in [&chat_img, &edit_img] {
+            let fh = std::fs::File::open(f).unwrap();
+            fh.set_times(std::fs::FileTimes::new().set_modified(old))
+                .unwrap();
+        }
+
+        // Unreferenced old flat file — still collectible.
+        let orphan = create_test_image_file(&images_dir, "orphan-hash-no-ref.jpg");
+        let fh = std::fs::File::open(&orphan).unwrap();
+        fh.set_times(std::fs::FileTimes::new().set_modified(old))
+            .unwrap();
+        drop(fh);
+
+        let mut protected = std::collections::HashSet::new();
+        protected.insert("chat-abc123def.png".to_string());
+        protected.insert("9c8b7a6e-1111-2222-3333-444455556666.png".to_string());
+
+        let (deleted, _) = cleanup_expired_images_with_protection(&images_dir, 2, &protected)
+            .await
+            .unwrap();
+
+        assert!(
+            chat_img.exists(),
+            "session-referenced chat upload must survive"
+        );
+        assert!(
+            edit_img.exists(),
+            "referenced image_edit output must survive"
+        );
+        assert!(
+            !orphan.exists(),
+            "unreferenced old flat file is still collected"
+        );
+        assert_eq!(deleted, 1);
+    }
+
+    #[test]
+    fn test_extract_image_refs() {
+        let mut out = std::collections::HashSet::new();
+        extract_image_refs(
+            "水印已添加 ![image](/api/images/chat-abc.png)。详情见 /api/images/dev/m/1.jpg 和 [link](/api/images/9c8b-uuid.png) 尾随",
+            &mut out,
+        );
+        assert!(out.contains("chat-abc.png"));
+        assert!(
+            out.contains("dev/m/1.jpg"),
+            "three-segment refs extract whole path"
+        );
+        assert!(out.contains("9c8b-uuid.png"));
+        assert_eq!(out.len(), 3);
     }
 
     #[tokio::test]

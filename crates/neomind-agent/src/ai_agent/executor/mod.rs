@@ -337,7 +337,6 @@ pub struct AgentExecutor {
     /// Structured (L0) daily inference budget: agent_id -> (YYYY-MM-DD, calls).
     /// In-memory v1 — resets on restart, which only ever grants extra calls
     /// for one day; the scheduler gate reads it, execute_structured increments.
-    pub(crate) daily_call_counts: parking_lot::RwLock<HashMap<String, (String, u32)>>,
     /// Phase 3.3: Extension registry for dynamic tool loading
     pub(crate) extension_registry:
         Option<Arc<neomind_core::extension::registry::ExtensionRegistry>>,
@@ -357,10 +356,6 @@ pub struct AgentExecutor {
     pub(crate) event_task_handles: parking_lot::Mutex<Vec<tokio::task::JoinHandle<()>>>,
 }
 
-/// Parse the LLM's final text response to extract situation_analysis, conclusion, and confidence.
-///
-/// Expects a JSON block like: ```json\n{"situation_analysis":"...","conclusion":"...","confidence":0.8}\n```
-/// Falls back to sensible defaults if parsing fails.
 impl AgentExecutor {
     /// Publish an event to the event bus (no-op if no bus is configured).
     async fn publish_event(&self, event: NeoMindEvent) {
@@ -388,7 +383,6 @@ impl AgentExecutor {
             recent_executions: Arc::new(RwLock::new(HashMap::new())),
             last_event_inference: parking_lot::RwLock::new(HashMap::new()),
             event_windows: parking_lot::RwLock::new(HashMap::new()),
-            daily_call_counts: parking_lot::RwLock::new(HashMap::new()),
             extension_registry,
             tool_registry: parking_lot::RwLock::new(config.tool_registry.clone()),
             memory_store: config.memory_store.clone(),
@@ -441,7 +435,7 @@ impl AgentExecutor {
             return Ok(());
         };
         let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-        let mut counts = self.daily_call_counts.write();
+        let mut counts = global_daily_call_counts().write();
         let entry = counts
             .entry(agent.id.clone())
             .or_insert_with(|| (today.clone(), 0));
@@ -861,6 +855,23 @@ impl AgentExecutor {
         let execution_id = uuid::Uuid::new_v4().to_string();
         let start_time = std::time::Instant::now();
         let timestamp = chrono::Utc::now().timestamp();
+
+        // Re-entrancy guard: ONE execution of a given agent at a time, across
+        // every trigger path (scheduler / event / manual). Concurrent runs of
+        // the same agent race their journal read-modify-write and stats
+        // updates — the loser's write silently erases the winner's. Manual
+        // invoke used to be the unguarded path.
+        {
+            let mut in_flight = in_flight_agents().lock().unwrap();
+            if in_flight.contains(&agent_id) {
+                return Err(NeoMindError::Validation(format!(
+                    "agent '{}' is already executing — wait for it to finish or cancel it first",
+                    agent_name
+                )));
+            }
+            in_flight.insert(agent_id.clone());
+        }
+        let _in_flight_guard = InFlightGuard(agent_id.clone());
 
         // Update agent status to executing
         self.store
@@ -1682,6 +1693,42 @@ impl AgentExecutor {
                 Ok((decision_process, execution_result))
             }
         }
+    }
+}
+
+/// Agents with an execution currently in flight, PROCESS-WIDE. The event
+/// path constructs a fresh `AgentExecutor` per trigger, so a per-instance
+/// set would not see the scheduler's or the manual path's runs — the guard
+/// must be global to close the same-agent race.
+static IN_FLIGHT_AGENTS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+    std::sync::OnceLock::new();
+
+fn in_flight_agents() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
+    IN_FLIGHT_AGENTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
+/// RAII in-flight marker. Drop removes the agent from the global set on
+/// every exit path — early error, timeout, panic, or caller cancellation.
+struct InFlightGuard(String);
+
+/// Per-agent daily run counters, PROCESS-WIDE. The event path builds a new
+/// `AgentExecutor` per trigger; with a per-instance map the day's count
+/// restarted on every event execution, so `max_calls_per_day` never held on
+/// the most frequent trigger path. Entries are `(day, count)` and roll over
+/// on the first reserve of a new UTC day.
+static DAILY_CALL_COUNTS: std::sync::OnceLock<parking_lot::RwLock<HashMap<String, (String, u32)>>> =
+    std::sync::OnceLock::new();
+
+/// Access the process-wide daily run counters (shared by every executor
+/// instance and the scheduler's skip check).
+pub(crate) fn global_daily_call_counts(
+) -> &'static parking_lot::RwLock<HashMap<String, (String, u32)>> {
+    DAILY_CALL_COUNTS.get_or_init(|| parking_lot::RwLock::new(HashMap::new()))
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        in_flight_agents().lock().unwrap().remove(&self.0);
     }
 }
 

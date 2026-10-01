@@ -45,7 +45,16 @@ mod tests {
         let execution = state.automation.rule_engine.execute_rule(&rule_id).await;
         assert!(execution.success, "the notify action must run");
 
-        let sent = state.core.message_manager.list_messages().await;
+        // Notify delivery is spawned by the rule engine — poll briefly for
+        // the alert to land instead of assuming synchronous delivery.
+        let mut sent = state.core.message_manager.list_messages().await;
+        for _ in 0..100 {
+            if !sent.is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            sent = state.core.message_manager.list_messages().await;
+        }
         assert_eq!(sent.len(), 1, "one notify action, one alert");
 
         let response =
@@ -142,7 +151,15 @@ mod tests {
                     .success
             );
         }
-        let sent = state.core.message_manager.list_messages().await;
+        // Notify delivery is spawned — poll briefly for all three alerts.
+        let mut sent = state.core.message_manager.list_messages().await;
+        for _ in 0..100 {
+            if sent.len() >= 3 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            sent = state.core.message_manager.list_messages().await;
+        }
         assert_eq!(sent.len(), 3, "three runs, three alerts");
 
         let chain_for = |state: neomind_api::handlers::ServerState, id: String| async move {

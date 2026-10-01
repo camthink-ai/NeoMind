@@ -429,15 +429,28 @@ impl SessionManager {
 
     /// Save message history for a session to persistent storage.
     fn save_history(&self, session_id: &str, messages: &[AgentMessage]) -> Result<()> {
-        // [storage economy] Image payloads live on disk, not in redb: the
-        // persisted form is the served reference `/api/images/<file>`, not
-        // the full base64 data URL (a 5MB photo ≈ 6.7MB of base64 PER
-        // MESSAGE otherwise — bloating the DB, the history API payload, and
-        // session-restore RAM). In-memory AgentMessages keep data URLs; the
-        // streaming window-build hydrates references back to bytes for the
-        // few images still eligible to reach the LLM (strip_stale_images).
-        // Legacy base64 rows from older sessions pass through unchanged and
-        // convert naturally on their session's next save.
+        let session_messages = Self::agent_messages_to_session_messages(messages);
+        self.store.save_history(session_id, &session_messages)?;
+        Ok(())
+    }
+
+    /// Convert in-memory [`AgentMessage`]s to the persisted
+    /// [`SessionMessage`] form. Associated (no `&self`) so the turn-start
+    /// snapshot writer inside a 'static stream can reuse the exact same
+    /// conversion — including image persistence — as `save_history`.
+    ///
+    /// [storage economy] Image payloads live on disk, not in redb: the
+    /// persisted form is the served reference `/api/images/<file>`, not
+    /// the full base64 data URL (a 5MB photo ≈ 6.7MB of base64 PER
+    /// MESSAGE otherwise — bloating the DB, the history API payload, and
+    /// session-restore RAM). In-memory AgentMessages keep data URLs; the
+    /// streaming window-build hydrates references back to bytes for the
+    /// few images still eligible to reach the LLM (strip_stale_images).
+    /// Legacy base64 rows from older sessions pass through unchanged and
+    /// convert naturally on their session's next save.
+    fn agent_messages_to_session_messages(
+        messages: &[AgentMessage],
+    ) -> Vec<neomind_storage::SessionMessage> {
         let images_dir = neomind_core::paths::data_dir().join("images");
         // Convert AgentMessage to SessionMessage
         let session_messages: Vec<neomind_storage::SessionMessage> = messages
@@ -503,9 +516,7 @@ impl SessionManager {
             })
             .collect();
 
-        self.store
-            .save_history(session_id, &session_messages)
-            .map_err(|e| NeoMindError::Storage(format!("Failed to save history: {}", e)))
+        session_messages
     }
 
     /// Load message history for a session from persistent storage.
@@ -878,6 +889,27 @@ impl SessionManager {
     /// the default. Use this when you need per-session overrides (e.g. a
     /// voice-assistant extension baking in a system prompt) without changing
     /// global defaults.
+    /// Stamp the owning principal on a session (first attachment wins).
+    /// Best-effort: a failure to stamp never blocks the conversation.
+    pub fn set_session_owner(&self, session_id: &str, owner: &str) {
+        if let Ok(mut meta) = self.store.get_session_metadata(session_id) {
+            if meta.owner.as_deref() != Some(owner) && meta.owner.is_none() {
+                meta.owner = Some(owner.to_string());
+                let _ = self.store.save_session_metadata(session_id, &meta);
+            }
+        }
+    }
+
+    /// The session's owning principal, if stamped. `None` = unclaimed
+    /// (created before ownership tracking, or created outside WS) — callers
+    /// treat unclaimed as attachable-once and stamp it.
+    pub fn session_owner(&self, session_id: &str) -> Option<String> {
+        self.store
+            .get_session_metadata(session_id)
+            .ok()
+            .and_then(|m| m.owner)
+    }
+
     pub async fn create_session_with_options(&self, opts: CreateSessionOptions) -> Result<String> {
         let config = self.merge_options(opts);
         self.create_session_with_config(config).await
@@ -1743,6 +1775,24 @@ Assistant: {ar}\n"
             )
             .await?;
 
+        // [crash window] Persist the turn's start NOW. The user message is
+        // already in agent memory at this point, and until persist_history
+        // ran at stream end / disconnect the whole exchange lived only in
+        // RAM — a kill -9 mid-turn (window up to the 1200s stream timeout)
+        // silently dropped the user's words. Best-effort: the end-of-turn
+        // persist remains the authoritative write.
+        {
+            let messages = agent.history().await;
+            let converted = Self::agent_messages_to_session_messages(&messages);
+            if let Err(e) = self.store.save_history(session_id, &converted) {
+                tracing::debug!(
+                    session_id = %session_id,
+                    error = %e,
+                    "turn-start history snapshot failed (end-of-turn persist still authoritative)"
+                );
+            }
+        }
+
         // Wrap the stream with a scopeguard so the cancel sender is removed
         // even if the consumer drops the stream early (client disconnect,
         // downstream error). The guard lives inside the async block, so it
@@ -1948,12 +1998,32 @@ Assistant: {ar}\n"
             .process_multimodal_stream_events_with_safeguards(&message, images, safeguards)
             .await?;
 
+        // [crash window] The multimodal path pushes the user message into
+        // memory on the stream's FIRST poll, so the snapshot is taken on the
+        // first yielded event (same rationale as the text path above).
+        let snapshot_store = self.store.clone();
+        let snapshot_agent = agent.clone();
+        let snapshot_session_id = session_id.to_string();
+
         // Wrap with scopeguard so cancel sender is removed on both natural
         // stream end and early drop (matches the text streaming path above).
         let cleanup_stream = Box::pin(async_stream::stream! {
             let mut guard = CancelSenderGuard::new(cancel_senders.clone(), session_id_owned.clone());
             let mut stream = stream;
+            let mut turn_start_persisted = false;
             while let Some(event) = stream.next().await {
+                if !turn_start_persisted {
+                    turn_start_persisted = true;
+                    let messages = snapshot_agent.history().await;
+                    let converted = Self::agent_messages_to_session_messages(&messages);
+                    if let Err(e) = snapshot_store.save_history(&snapshot_session_id, &converted) {
+                        tracing::debug!(
+                            session_id = %snapshot_session_id,
+                            error = %e,
+                            "turn-start history snapshot failed (multimodal)"
+                        );
+                    }
+                }
                 yield event;
             }
             cancel_senders.write().await.remove(&session_id_owned);
@@ -2203,6 +2273,35 @@ fn mime_to_ext(mime: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// [crash window] The user's message must be on disk at TURN START —
+    /// before any stream events are consumed. Pre-fix, everything lived in
+    /// RAM until the end-of-turn persist: a kill -9 mid-turn (a window up to
+    /// the 1200s stream timeout) silently dropped the exchange.
+    #[tokio::test]
+    async fn user_message_persists_at_turn_start_not_stream_end() {
+        let manager = SessionManager::memory();
+        let session_id = manager.create_session().await.unwrap();
+
+        // No LLM configured: the stream falls back, but the user message is
+        // pushed into memory BEFORE the stream is created — the snapshot must
+        // have captured it by the time process_message_events returns.
+        let stream = manager
+            .process_message_events(&session_id, "冷库最近怎么样")
+            .await
+            .expect("stream must start");
+        drop(stream); // do NOT consume the stream — crash right here
+
+        let persisted = manager.store.load_history(&session_id).unwrap();
+        assert!(
+            persisted
+                .iter()
+                .any(|m| m.role == "user" && m.content.contains("冷库最近怎么样")),
+            "user message must be durable at turn start, got {} messages: {:?}",
+            persisted.len(),
+            persisted.iter().map(|m| m.role.clone()).collect::<Vec<_>>()
+        );
+    }
 
     /// Helper to create a temporary SessionManager for tests
     fn create_temp_manager() -> SessionManager {

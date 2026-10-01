@@ -52,6 +52,12 @@ pub struct SessionMetadata {
     /// Preview text derived from the first user message (truncated)
     #[serde(default)]
     pub preview: Option<String>,
+    /// Owning principal ("user:<name>" or "apikey"), stamped at the
+    /// session's first WS attachment. A connection authenticated as a
+    /// different principal may not attach — the pre-owner WS path let any
+    /// valid token take over any sessionId and replay its full history.
+    #[serde(default)]
+    pub owner: Option<String>,
 }
 
 impl Default for SessionMetadata {
@@ -62,6 +68,8 @@ impl Default for SessionMetadata {
             conversation_summary: None,
             summary_up_to_index: None,
             preview: None,
+
+            owner: None,
         }
     }
 }
@@ -1499,6 +1507,7 @@ mod tests {
             conversation_summary: Some("This is a summary".to_string()),
             summary_up_to_index: Some(5),
             preview: None,
+            owner: None,
         };
         store
             .save_session_metadata("test-session", &metadata)

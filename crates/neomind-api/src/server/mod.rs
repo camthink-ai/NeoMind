@@ -292,6 +292,8 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
 
     // Start telemetry retention cleanup background task
     {
+        let session_store = state.agents.session_manager.session_store();
+        let agent_store = state.agents.agent_store.clone();
         tokio::spawn(async move {
             use neomind_storage::{SettingsStore, TimeSeriesStore};
 
@@ -352,15 +354,25 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                         }
                     }
 
-                    // Clean up expired image files
+                    // Clean up expired image files. Files still referenced by a
+                    // conversation or agent journal survive — deleting them on the
+                    // image schedule turned history markdown into 404s.
                     if let Some(image_retention_hours) = config.image_retention {
                         let data_dir = std::env::var("NEOMIND_DATA_DIR")
                             .unwrap_or_else(|_| "data".to_string());
                         let images_dir = PathBuf::from(&data_dir).join("images");
 
-                        match crate::server::image_cleanup::cleanup_expired_images(
+                        let protected =
+                            crate::server::image_cleanup::collect_referenced_image_files(
+                                &session_store,
+                                &agent_store,
+                            )
+                            .await;
+
+                        match crate::server::image_cleanup::cleanup_expired_images_with_protection(
                             &images_dir,
                             image_retention_hours,
+                            &protected,
                         )
                         .await
                         {

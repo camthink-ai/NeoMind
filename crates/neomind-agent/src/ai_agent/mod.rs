@@ -237,6 +237,27 @@ impl AiAgentManager {
                 None
             };
 
+        // Concurrency accounting, same as the scheduler and event paths:
+        // manual invoke used to bypass BOTH the global execution semaphore
+        // and the per-backend permits, adding unaccounted load alongside
+        // scheduled/event runs (the executor's re-entrancy guard now rejects
+        // the same-agent race outright).
+        let _global_permit = self
+            .scheduler
+            .execution_semaphore()
+            .clone()
+            .acquire_owned()
+            .await
+            .ok();
+        let backend_id = agent
+            .llm_backend_id
+            .clone()
+            .unwrap_or_else(|| "default".to_string());
+        let backend_sems = Some(self.scheduler.backend_semaphores().clone());
+        let _backend_permit =
+            AgentExecutor::acquire_backend_permit_public(&backend_sems, &agent.id, &backend_id)
+                .await;
+
         // Execute the agent with optional invocation input
         let result = self
             .executor

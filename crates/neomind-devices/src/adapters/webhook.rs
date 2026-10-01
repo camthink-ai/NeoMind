@@ -712,8 +712,24 @@ impl DeviceAdapter for WebhookAdapter {
         let rx = self.event_tx.subscribe();
         Box::pin(async_stream::stream! {
             let mut rx = rx;
-            while let Ok(event) = rx.recv().await {
-                yield event;
+            loop {
+                // Lagged is RECOVERABLE: the receiver has skipped the missed
+                // backlog and continues from the oldest live message. Ending
+                // the stream here (the old `while let Ok`) permanently cut
+                // this adapter's telemetry off from the event bus after one
+                // burst — storage kept writing while rules, last_seen,
+                // data-push and the frontend went blind, with no recovery
+                // until restart. Closed is the only terminal error.
+                match rx.recv().await {
+                    Ok(event) => yield event,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(
+                            skipped = n,
+                            "device event subscriber lagged — continuing from oldest live event"
+                        );
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
             }
         })
     }

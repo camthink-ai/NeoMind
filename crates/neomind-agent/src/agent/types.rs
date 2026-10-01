@@ -642,6 +642,7 @@ impl AgentMessage {
 
         // Build content parts: text + images
         let mut parts = vec![ContentPart::text(self.content.to_string())];
+        let mut unresolvable = 0usize;
 
         for image in images {
             // Persisted references must resolve to real bytes — a URL string
@@ -649,7 +650,15 @@ impl AgentMessage {
             let data = if image.data.starts_with("/api/images/") {
                 match load_image_reference(&image.data) {
                     Some(data_url) => data_url,
-                    None => continue, // unreadable file — drop the part, don't send garbage
+                    None => {
+                        // Drop the part, but leave a VISIBLE note in the
+                        // text: silently vanishing images make the model
+                        // answer follow-ups about a picture it never saw as
+                        // if it had seen it — hallucinations with
+                        // confidence. Same style as the stale-image notes.
+                        unresolvable += 1;
+                        continue;
+                    }
                 }
             } else {
                 image.data.clone()
@@ -665,6 +674,22 @@ impl AgentMessage {
             let base64_data = parsed.map(|p| p.base64).unwrap_or(data.as_str());
 
             parts.push(ContentPart::image_base64(base64_data, mime_type));
+        }
+
+        if unresolvable > 0 {
+            let note = format!(
+                "\n[image could not be loaded — {} attached {} no longer available; \
+                 ask the user to re-send if the image matters]",
+                unresolvable,
+                if unresolvable == 1 {
+                    "image is"
+                } else {
+                    "images are"
+                }
+            );
+            if let Some(ContentPart::Text { text }) = parts.first_mut() {
+                text.push_str(&note);
+            }
         }
 
         Message::new(MessageRole::User, Content::Parts(parts))
@@ -2477,8 +2502,18 @@ mod image_reference_tests {
             neomind_core::Content::Parts(parts) => parts,
             other => panic!("expected parts, got {:?}", other),
         };
-        // Text part only — the broken image must not appear.
+        // Text part only — the broken image must not appear as an image part.
         assert_eq!(parts.len(), 1, "unresolvable image must be dropped");
+        // But the drop must be VISIBLE to the model — a silently vanished
+        // image makes follow-up questions ("who is third person in the
+        // picture?") get confident hallucinated answers.
+        match &parts[0] {
+            neomind_core::ContentPart::Text { text } => assert!(
+                text.contains("image could not be loaded"),
+                "dropped image must leave a note in the text, got: {text}"
+            ),
+            other => panic!("expected text part, got {:?}", other),
+        }
     }
 
     /// A well-formed data URL message keeps its image part (regression guard

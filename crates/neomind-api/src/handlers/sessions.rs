@@ -1253,8 +1253,17 @@ pub async fn ws_chat_handler(
         }
     }
 
+    // Principal for session ownership: which authenticated identity does
+    // this connection speak for? JWT → the user; API key → the shared
+    // "apikey" bucket (single-tenant admin credential). Without a principal
+    // we never get here — unauthenticated upgrades are closed above.
+    let principal = session_info
+        .as_ref()
+        .map(|info| format!("user:{}", info.username))
+        .unwrap_or_else(|| "apikey".to_string());
+
     let session_id = params.get("sessionId").cloned();
-    ws.on_upgrade(|socket| handle_ws_socket(socket, state, session_id, session_info))
+    ws.on_upgrade(|socket| handle_ws_socket(socket, state, session_id, principal))
 }
 
 /// Send session history to the client.
@@ -1333,8 +1342,24 @@ async fn handle_ws_socket(
     mut socket: WebSocket,
     state: ServerState,
     session_id: Option<String>,
-    _session_info: Option<crate::auth_users::SessionInfo>,
+    principal: String,
 ) {
+    // Session ownership: a session stamped to a DIFFERENT principal must not
+    // be attachable — pre-fix, any valid token could pass ?sessionId=<other
+    // user's session> and the socket would replay its entire history. An
+    // unstamped session is claimable exactly once (first attachment stamps).
+    let session_allowed = |sid: &str, principal: &str| -> bool {
+        match state.agents.session_manager.session_owner(sid) {
+            Some(owner) if owner != principal => false,
+            _ => {
+                state
+                    .agents
+                    .session_manager
+                    .set_session_owner(sid, principal);
+                true
+            }
+        }
+    };
     // Create connection metadata for tracking state and heartbeat
     let conn_meta = create_connection_metadata();
     conn_meta
@@ -1371,9 +1396,26 @@ async fn handle_ws_socket(
         return;
     }
 
-    // Send session history if reconnecting with an existing session
+    // Send session history if reconnecting with an existing session —
+    // but only if this connection's principal owns (or may claim) it.
     if let Some(ref sid) = session_id {
         if !sid.is_empty() {
+            if !session_allowed(sid, &principal) {
+                tracing::warn!(
+                    session_id = %sid,
+                    principal = %principal,
+                    "WS attach rejected — session belongs to another principal"
+                );
+                let _ = socket
+                    .send(AxumMessage::Text(
+                        json!({"type": "Error", "message": "Session belongs to another user."})
+                            .to_string(),
+                    ))
+                    .await;
+                let _ = socket.close().await;
+                conn_meta.mark_closed().await;
+                return;
+            }
             let _ = send_session_history(&mut socket, sid, &state).await;
         }
     }
@@ -1450,6 +1492,22 @@ async fn handle_ws_socket(
                                         if needs_switch {
                                             // Switch to requested session
                                             let req_id = requested_session_id.as_ref().expect("requested_session_id validated in needs_switch check");
+                                            if !session_allowed(req_id, &principal) {
+                                                tracing::warn!(
+                                                    session_id = %req_id,
+                                                    principal = %principal,
+                                                    "WS switch rejected — session belongs to another principal"
+                                                );
+                                                let msg = json!({
+                                                    "type": "Error",
+                                                    "message": "Session belongs to another user.",
+                                                    "sessionId": req_id,
+                                                }).to_string();
+                                                if socket.send(AxumMessage::Text(msg)).await.is_err() {
+                                                    return;
+                                                }
+                                                continue;
+                                            }
                                             {
                                                 let mut write_guard = current_session_id.write().await;
                                                 *write_guard = Some(req_id.clone());
@@ -1486,6 +1544,7 @@ async fn handle_ws_socket(
                                             };
 
                                             {
+                                                state.agents.session_manager.set_session_owner(&new_id, &principal);
                                                 let mut write_guard = current_session_id.write().await;
                                                 *write_guard = Some(new_id.clone());
                                             }

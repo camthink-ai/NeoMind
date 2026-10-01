@@ -79,7 +79,10 @@ async fn build_harness() -> (AgentExecutor, AiAgent, Arc<ToolRegistry>) {
 
     let now: i64 = 0;
     let agent = AiAgent {
-        id: "test-agent".into(),
+        // Unique per harness: the in-flight re-entrancy guard and the daily
+        // run counters are PROCESS-global, so parallel tests sharing a
+        // literal "test-agent" id would reject each other's runs.
+        id: format!("test-agent-{}", uuid::Uuid::new_v4().simple()),
         name: "Test".into(),
         description: None,
         user_prompt: "test".into(),
@@ -321,7 +324,7 @@ async fn structured_mode_publishes_schema_fields_on_first_pass() {
     assert!(dp.conclusion.contains("待检"));
     assert_eq!(dp.stop_reason, "structured");
     assert_eq!(dp.decisions.len(), 1);
-    assert!(dp.decisions[0].action.contains("ai:test-agent"));
+    assert!(dp.decisions[0].action.contains(&format!("ai:{}", agent.id)));
 }
 
 /// A structured agent is inference over its bound sources. When none of them
@@ -415,7 +418,7 @@ async fn published_fields_point_back_at_the_execution_that_produced_them() {
 
     ts.flush().expect("flush buffer");
     let point = ts
-        .query_latest("ai:test-agent", "anomaly_count")
+        .query_latest(&format!("ai:{}", agent.id), "anomaly_count")
         .await
         .expect("query succeeds")
         .expect("the field was published");
@@ -481,7 +484,7 @@ async fn the_reported_confidence_reaches_the_record_and_the_published_value() {
 
     ts.flush().expect("flush buffer");
     let point = ts
-        .query_latest("ai:test-agent", "anomaly_count")
+        .query_latest(&format!("ai:{}", agent.id), "anomaly_count")
         .await
         .expect("query succeeds")
         .expect("the field was published");
@@ -671,12 +674,14 @@ async fn build_event_agent(
 /// a map the first run never touched.
 ///
 /// Draining between fires makes the trigger actually reach the code under test.
-async fn drain_event_tasks(executor: &AgentExecutor) {
+async fn drain_event_tasks(executor: &AgentExecutor) -> usize {
+    let mut total = 0usize;
     loop {
         let handles: Vec<_> = executor.event_task_handles.lock().drain(..).collect();
         if handles.is_empty() {
-            return;
+            return total;
         }
+        total += handles.len();
         for handle in handles {
             let _ = handle.await;
         }
@@ -688,8 +693,9 @@ async fn drain_event_tasks(executor: &AgentExecutor) {
 /// one per match — that is what the editor's "防抖" field promises.
 #[tokio::test]
 async fn structured_event_agent_debounces_across_sources() {
-    let (executor, _agent) = build_event_agent(ExecutionMode::Structured, Some(300)).await;
+    let (executor, agent) = build_event_agent(ExecutionMode::Structured, Some(300)).await;
 
+    let mut runs = 0usize;
     for source in ["dev-a", "dev-b"] {
         executor
             .check_and_trigger_data_event(
@@ -702,28 +708,33 @@ async fn structured_event_agent_debounces_across_sources() {
             .expect("trigger must not error");
         // Let the run this just spawned finish, so the next source meets an
         // agent that is Active again instead of an empty cache.
-        drain_event_tasks(&executor).await;
+        runs += drain_event_tasks(&executor).await;
     }
 
-    let recent = executor.recent_executions.read().await;
-    assert!(
-        recent.contains_key("test-agent:device:dev-a"),
-        "the first source must run"
-    );
-    assert!(
-        !recent.contains_key("test-agent:device:dev-b"),
+    assert_eq!(
+        runs, 1,
         "a second source inside the debounce window must be merged away, \
          not run as its own inference"
     );
+    let recent = executor.recent_executions.read().await;
+    assert!(
+        recent.contains_key(&agent.id),
+        "the cooldown is AGENT-scoped (bare agent id key: {:?})",
+        recent.keys().collect::<Vec<_>>()
+    );
 }
 
-/// The guardrail is L0-only: an agent with no operator config keeps today's
-/// per-source cooldown and nothing else.
+/// Free/Focused event agents merge bursts too (30s fixed window): the old
+/// design keyed cooldown per (agent, source) and skipped debounce entirely
+/// for non-structured modes, so N sources reporting in the same instant
+/// fired N concurrent runs of one agent — racing each other's journal
+/// read-modify-write and burning the concurrency budget.
 #[tokio::test]
-async fn event_agent_without_operator_config_keeps_per_source_cooldown_only() {
+async fn free_event_agent_merges_same_instant_sources() {
     let (executor, _agent) = build_event_agent(ExecutionMode::Free, None).await;
 
-    for source in ["dev-a", "dev-b"] {
+    let mut runs = 0usize;
+    for source in ["dev-a", "dev-b", "dev-c"] {
         executor
             .check_and_trigger_data_event(
                 "device",
@@ -733,15 +744,96 @@ async fn event_agent_without_operator_config_keeps_per_source_cooldown_only() {
             )
             .await
             .expect("trigger must not error");
-        // Let the run this just spawned finish, so the next source meets an
-        // agent that is Active again instead of an empty cache.
-        drain_event_tasks(&executor).await;
+        runs += drain_event_tasks(&executor).await;
     }
 
-    let recent = executor.recent_executions.read().await;
+    assert_eq!(
+        runs, 1,
+        "three sources in the same instant must produce ONE run, not three \
+         concurrent executions of the same agent"
+    );
+}
+
+/// The daily run cap must survive across executor INSTANCES: the event
+/// path constructs a fresh `AgentExecutor` per trigger, and a per-instance
+/// counter map meant the cap reset on every event execution — the budget
+/// guardrail was a no-op on the most frequent trigger path.
+#[tokio::test]
+async fn daily_cap_survives_across_executor_instances() {
+    let (executor, mut agent, _registry) = build_harness().await;
+    agent.id = "daily-cap-agent".into(); // unique id: the counters are process-global
+    let mut op_cfg = crate::ai_agent::executor::structured::default_operator_config();
+    op_cfg.max_calls_per_day = Some(1);
+    agent.operator_config = Some(op_cfg);
+    executor.store().save_agent(&agent).await.unwrap();
+
+    let first = executor.execute_agent(agent.clone(), None, None).await;
     assert!(
-        recent.contains_key("test-agent:device:dev-b"),
-        "without L0 guardrails each source keeps its own cooldown window"
+        first.is_ok(),
+        "first run of the day must proceed: {first:?}"
+    );
+
+    // A SECOND executor instance, as the event path builds per trigger.
+    let config = AgentExecutorConfig {
+        store: executor.store().clone(),
+        time_series_storage: None,
+        device_service: None,
+        event_bus: None,
+        message_manager: None,
+        llm_runtime: None,
+        llm_backend_store: None,
+        extension_registry: None,
+        tool_registry: None,
+        memory_store: None,
+        backend_semaphores: None,
+        skill_registry: None,
+        execution_semaphore: None,
+    };
+    let executor2 = AgentExecutor::new(config).await.expect("executor2");
+
+    let second = executor2.execute_agent(agent.clone(), None, None).await;
+    let record = second.expect("a capped run records as a Failed execution, not an Err");
+    let err = record.error.as_deref().unwrap_or_default();
+    assert!(
+        err.contains("daily run cap reached"),
+        "the second instance's run must be refused by the shared cap, got: {err:?}"
+    );
+}
+
+/// Two concurrent executions of the SAME agent must not both run: their
+/// finalize paths read-modify-write the same journal and would silently
+/// erase each other's entries. The process-wide in-flight guard in
+/// `execute_agent` rejects the second with a clear error. (Manual invoke
+/// used to be the unguarded entry point.)
+#[tokio::test]
+async fn concurrent_same_agent_execution_is_rejected() {
+    let (executor, agent, _registry) = build_harness().await;
+    // execute_agent records against the store; the bare harness agent must
+    // be persisted first.
+    executor.store().save_agent(&agent).await.unwrap();
+
+    let a = executor.execute_agent(agent.clone(), None, None);
+    let b = executor.execute_agent(agent.clone(), None, None);
+    let (ra, rb) = tokio::join!(a, b);
+
+    let ok_count = [&ra, &rb].iter().filter(|r| r.is_ok()).count();
+    assert_eq!(
+        ok_count, 1,
+        "exactly one concurrent run of an agent may proceed (got {ra:?} / {rb:?})"
+    );
+    let rejected = if ra.is_err() { &ra } else { &rb };
+    let msg = format!("{}", rejected.as_ref().unwrap_err());
+    assert!(
+        msg.contains("already executing"),
+        "rejection must say why, got: {msg}"
+    );
+
+    // And once the run finished, the agent is runnable again.
+    drain_event_tasks(&executor).await;
+    let again = executor.execute_agent(agent.clone(), None, None).await;
+    assert!(
+        again.is_ok(),
+        "guard must release after completion: {again:?}"
     );
 }
 
@@ -794,7 +886,7 @@ async fn fire_event(executor: &AgentExecutor, source_type: &str, source_id: &str
 /// exactly what today's OR-only filter does.
 #[tokio::test]
 async fn all_filter_waits_for_every_source_before_firing() {
-    let (executor, _agent) = build_all_filter_event_agent(Some(1200)).await;
+    let (executor, agent) = build_all_filter_event_agent(Some(1200)).await;
 
     executor
         .check_and_trigger_data_event(
@@ -811,7 +903,7 @@ async fn all_filter_waits_for_every_source_before_firing() {
             .recent_executions
             .read()
             .await
-            .contains_key("test-agent:device:cam-01"),
+            .contains_key(&agent.id),
         "one of the two sources must NOT fire the agent"
     );
 
@@ -830,7 +922,7 @@ async fn all_filter_waits_for_every_source_before_firing() {
             .recent_executions
             .read()
             .await
-            .contains_key("test-agent:extension:booking"),
+            .contains_key(&agent.id),
         "the source that completes the window must fire the agent"
     );
 }
@@ -840,7 +932,7 @@ async fn all_filter_waits_for_every_source_before_firing() {
 /// window (design 001 §5.2.2 — the filter is `any` OR `all`, nothing more).
 #[tokio::test]
 async fn an_any_group_fires_on_its_own_alongside_an_all_group() {
-    let (executor, _agent) = build_event_agent_with_filter(
+    let (executor, agent) = build_event_agent_with_filter(
         r#"{"any":[{"type":"device","id":"door-01","field":"open"}],"all":[{"type":"device","id":"cam-01","field":"occupied"},{"type":"extension","id":"booking","field":"reserved"}],"within_secs":1200}"#
             .to_string(),
     )
@@ -853,7 +945,7 @@ async fn an_any_group_fires_on_its_own_alongside_an_all_group() {
             .recent_executions
             .read()
             .await
-            .contains_key("test-agent:device:door-01"),
+            .contains_key(&agent.id),
         "an `any` match must fire straight away, without waiting for the `all` window"
     );
 }
@@ -862,7 +954,7 @@ async fn an_any_group_fires_on_its_own_alongside_an_all_group() {
 /// `sources` shape must keep firing exactly as it did before M2.
 #[tokio::test]
 async fn a_legacy_sources_filter_still_fires_on_a_single_match() {
-    let (executor, _agent) = build_event_agent_with_filter(
+    let (executor, agent) = build_event_agent_with_filter(
         r#"{"sources":[{"type":"device","id":"dev-a","field":"temp"}]}"#.to_string(),
     )
     .await;
@@ -874,7 +966,7 @@ async fn a_legacy_sources_filter_still_fires_on_a_single_match() {
             .recent_executions
             .read()
             .await
-            .contains_key("test-agent:device:dev-a"),
+            .contains_key(&agent.id),
         "the legacy sources shape must keep firing on one match"
     );
 }

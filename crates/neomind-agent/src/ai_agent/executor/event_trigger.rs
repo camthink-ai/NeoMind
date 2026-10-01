@@ -5,6 +5,11 @@
 
 use super::*;
 
+/// Burst-merge window for Free/Focused event agents — see the debounce
+/// comment in `check_and_trigger_data_event`. Structured agents use their
+/// OperatorConfig value instead.
+const DEFAULT_FREE_EVENT_DEBOUNCE_SECS: i64 = 30;
+
 impl AgentExecutor {
     /// Prune stale entries from the event dedup map.
     /// Entries older than 360 s (6× the 60 s cooldown) are removed.
@@ -37,41 +42,18 @@ impl AgentExecutor {
             return;
         }
 
-        // Cool every bound source so any incoming event for one of them
-        // is deduped. The event-trigger path keys on
-        // `{agent_id}:{source_type}:{source_id}` (line 265), so we
-        // pre-insert entries for each candidate the agent would match.
-        // This is symmetric with how the event path itself behaves after
-        // a successful firing.
-        let candidates = Self::extract_trigger_candidates(&agent);
+        // The event-trigger path keys its cooldown on the bare agent id,
+        // so a manual run simply occupies that same key — symmetric with
+        // how the event path records a successful firing.
         let now = chrono::Utc::now().timestamp();
         let mut recent = self.recent_executions.write().await;
-
-        // If the agent has no concrete candidates (e.g. only `"all"` wildcards
-        // in its event_filter), fall back to a synthetic agent-scoped key.
-        // This doesn't prevent a real event from firing (no matching key to
-        // consult), but at least records that a manual run happened — useful
-        // for debugging and gives the cleanup pass something to prune.
-        if candidates.is_empty() {
-            let key = format!("{}:manual:wildcard", agent_id);
-            recent.insert(key, now);
-        } else {
-            for (s_type, s_id, _field) in &candidates {
-                // Field is intentionally NOT in the dedup key — matches
-                // the event-trigger path's keying convention, so a real
-                // event firing on the same `(agent, source)` is properly
-                // deduped regardless of which specific field triggered it.
-                let key = format!("{}:{}:{}", agent_id, s_type, s_id);
-                recent.insert(key, now);
-            }
-        }
+        recent.insert(agent_id.to_string(), now);
 
         // Opportunistic cleanup — mirrors the event-trigger entry path.
         recent.retain(|_, &mut ts| now - ts < 360);
 
         tracing::debug!(
             agent_id = %agent_id,
-            candidate_count = candidates.len(),
             "Marked manual execution in event dedup map"
         );
     }
@@ -124,12 +106,13 @@ impl AgentExecutor {
                 continue;
             }
 
-            // L0 guardrail: merge input bursts. One physical event can match
-            // several of this agent's sources, and the per-source cooldown
-            // below would happily run once per match. The debounce window is
-            // per AGENT, so the agent pays for one inference per window no
-            // matter how many sources fired. Structured-only: its guardrails
-            // are all-or-nothing, defaulting to 30s (see OperatorConfig).
+            // Burst-merge guardrail for EVERY mode. One physical event can
+            // match several of this agent's sources, and N sources reporting
+            // in the same instant used to fire N CONCURRENT runs for
+            // Free/Focused agents (debounce was Structured-only) — concurrent
+            // runs of one agent race its journal read-modify-write and burn
+            // the concurrency budget. Structured keeps its OperatorConfig
+            // window; Free/Focused get a fixed 30s merge.
             let debounce_secs = match agent.execution_mode {
                 neomind_storage::agents::ExecutionMode::Structured => {
                     agent
@@ -138,7 +121,7 @@ impl AgentExecutor {
                         .unwrap_or_else(super::structured::default_operator_config)
                         .debounce_secs as i64
                 }
-                _ => 0,
+                _ => DEFAULT_FREE_EVENT_DEBOUNCE_SECS,
             };
             if debounce_secs > 0 {
                 let last = self
@@ -159,9 +142,12 @@ impl AgentExecutor {
                 }
             }
 
-            // Cooldown: one execution per (agent, source) per 60s window
+            // Cooldown: one execution per AGENT per 60s window. The old
+            // per-(agent, source) key let the same agent run once per bound
+            // source in the same instant — N concurrent runs of one agent,
+            // racing each other's journal updates and stats writes.
             const COOLDOWN_SECS: i64 = 60;
-            let dedup_key = format!("{}:{}:{}", agent.id, source_type, source_id);
+            let dedup_key = agent.id.clone();
             let recent = self.recent_executions.read().await;
             let is_duplicate = recent
                 .get(&dedup_key)
@@ -224,8 +210,11 @@ impl AgentExecutor {
                     Some(sem) => sem.acquire_owned().await.ok(),
                     None => None,
                 };
-                // Acquire per-backend semaphore (WAIT, not fail)
-                Self::acquire_backend_permit(
+                // Acquire per-backend semaphore (WAIT, not fail). BIND the
+                // permit — the return used to be discarded, so the guard
+                // released the instant acquire returned and the per-backend
+                // limit never actually held on this path.
+                let _backend_permit = Self::acquire_backend_permit(
                     &executor_config.backend_semaphores,
                     &agent_id_for_log,
                     &agent_clone
@@ -321,6 +310,17 @@ impl AgentExecutor {
             skill_registry: self._config.skill_registry.clone(),
             execution_semaphore: self._config.execution_semaphore.clone(),
         }
+    }
+
+    /// Acquire a per-backend semaphore permit (WAIT, not fail). Shared by
+    /// the event path and the manual-invoke path so both are accounted
+    /// against the same per-backend limits as the scheduler.
+    pub(crate) async fn acquire_backend_permit_public(
+        semaphores: &Option<crate::ai_agent::scheduler::BackendSemaphores>,
+        agent_id: &str,
+        backend_id: &str,
+    ) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        Self::acquire_backend_permit(semaphores, agent_id, backend_id).await
     }
 
     /// Acquire a per-backend semaphore permit for event-triggered execution.

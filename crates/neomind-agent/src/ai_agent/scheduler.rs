@@ -584,8 +584,7 @@ impl AgentScheduler {
                                 {
                                     let today =
                                         chrono::Utc::now().format("%Y-%m-%d").to_string();
-                                    let over = executor
-                                        .daily_call_counts
+                                    let over = crate::ai_agent::executor::global_daily_call_counts()
                                         .read()
                                         .get(&agent_id)
                                         .map(|(d, n)| *d == today && *n >= cap)

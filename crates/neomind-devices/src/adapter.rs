@@ -580,8 +580,24 @@ impl DeviceAdapter for MockAdapter {
         let rx = self.event_tx.subscribe();
         Box::pin(async_stream::stream! {
             let mut rx = rx;
-            while let Ok(event) = rx.recv().await {
-                yield event;
+            loop {
+                // Lagged is RECOVERABLE: the receiver has skipped the missed
+                // backlog and continues from the oldest live message. Ending
+                // the stream here (the old `while let Ok`) permanently cut
+                // this adapter's telemetry off from the event bus after one
+                // burst — storage kept writing while rules, last_seen,
+                // data-push and the frontend went blind, with no recovery
+                // until restart. Closed is the only terminal error.
+                match rx.recv().await {
+                    Ok(event) => yield event,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(
+                            skipped = n,
+                            "device event subscriber lagged — continuing from oldest live event"
+                        );
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
             }
         })
     }
@@ -727,5 +743,56 @@ mod tests {
 
         let event = rx.next().await;
         assert!(event.is_some());
+    }
+
+    /// A subscriber that falls behind (broadcast Lagged) must KEEP
+    /// receiving — the old `while let Ok(recv())` stream ended on Lagged,
+    /// permanently cutting the adapter's telemetry off from the event bus
+    /// after one burst: storage kept writing while rules / last_seen /
+    /// data-push / the frontend went blind until restart.
+    #[tokio::test]
+    async fn test_subscribe_survives_lagged() {
+        let adapter = MockAdapter::new("lag-test");
+        adapter.start().await.unwrap();
+
+        let mut rx = adapter.subscribe();
+
+        // Burst far past the channel capacity to force a Lagged on the
+        // subscribed (but not yet polled) receiver.
+        for i in 0..1200 {
+            adapter
+                .publish_event(DeviceEvent::Metric {
+                    device_id: "test".to_string(),
+                    metric: "temp".to_string(),
+                    value: MetricValue::Float(i as f64),
+                    timestamp: i,
+                })
+                .unwrap();
+        }
+
+        // The stream must still deliver events after the forced lag.
+        let mut saw_event = false;
+        for _ in 0..50 {
+            match tokio::time::timeout(std::time::Duration::from_secs(2), rx.next()).await {
+                Ok(Some(_)) => saw_event = true,
+                Ok(None) => panic!("stream ENDED after lag — subscriber permanently cut off"),
+                Err(_) => break, // drained for now
+            }
+        }
+        assert!(saw_event, "no events delivered after lag");
+
+        // And still alive for NEW events published after the burst.
+        adapter
+            .publish_event(DeviceEvent::Metric {
+                device_id: "test".to_string(),
+                metric: "temp".to_string(),
+                value: MetricValue::Float(9999.0),
+                timestamp: 9999,
+            })
+            .unwrap();
+        let fresh = tokio::time::timeout(std::time::Duration::from_secs(2), rx.next())
+            .await
+            .expect("timed out waiting for post-lag event");
+        assert!(fresh.is_some(), "stream dead after lag burst");
     }
 }

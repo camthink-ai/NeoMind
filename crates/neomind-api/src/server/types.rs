@@ -3535,8 +3535,25 @@ impl ServerState {
                         device_id,
                         metric,
                         value,
+                        is_virtual,
                         ..
                     } => {
+                        // Virtual metrics (ai:<agent>:<field>, transform aliases)
+                        // must NOT re-trigger event agents: an agent listening
+                        // on a wildcard or on another agent's output would be
+                        // re-fired by its own publish, forming an unbounded
+                        // self/mutual-trigger loop that burns an LLM call
+                        // every cooldown expiry. Real-device feedback loops
+                        // (a command changing a physical reading) still work —
+                        // those arrive with is_virtual unset/false.
+                        if is_virtual.unwrap_or(false) {
+                            tracing::debug!(
+                                device_id = %device_id,
+                                metric = %metric,
+                                "skipping event-agent trigger for virtual metric (feedback-loop guard)"
+                            );
+                            continue;
+                        }
                         if let Err(e) = executor
                             .check_and_trigger_data_event("device", device_id, metric, &value)
                             .await

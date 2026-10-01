@@ -778,8 +778,8 @@ impl RuleEngine {
                     NotifySeverity::Emergency => neomind_messages::MessageSeverity::Emergency,
                 };
 
-                let mgr = self.message_manager.read().await;
-                if let Some(manager) = mgr.as_ref() {
+                let manager = self.message_manager.read().await.clone();
+                if let Some(manager) = manager {
                     let mut msg = neomind_messages::Message::alert(
                         msg_sev,
                         "Rule Triggered".to_string(),
@@ -797,10 +797,20 @@ impl RuleEngine {
                         (crate::chain::TRIGGER_SOURCE_KEY): trigger_source,
                         (crate::chain::TRIGGER_VALUE_KEY): trigger_value_display,
                     }));
-                    match manager.create_message(msg).await {
-                        Ok(_) => Ok(format!("NOTIFY: {}", formatted)),
-                        Err(e) => Err(format!("Failed to create message: {}", e)),
-                    }
+                    // [decoupled] Delivery runs through channel senders that
+                    // can block for their own timeout (SMTP, webhooks, IM
+                    // APIs). This arm used to await inline in the single
+                    // rule-consumer loop, so one slow channel delivery
+                    // stalled every other rule's evaluation and the EventBus
+                    // lagged past its buffer — silently DROPPING threshold
+                    // crossings (missed alerts). Rule history records the
+                    // action as spawned; delivery failures log here.
+                    tokio::spawn(async move {
+                        if let Err(e) = manager.create_message(msg).await {
+                            tracing::warn!(error = %e, "NOTIFY action failed (spawned)");
+                        }
+                    });
+                    Ok(format!("NOTIFY: {} (spawned)", formatted))
                 } else {
                     tracing::info!("NOTIFY: {} (no MessageManager)", formatted);
                     Ok(format!("NOTIFY: {} (logged only)", formatted))
@@ -814,39 +824,57 @@ impl RuleEngine {
                 params,
             } => match target_type {
                 ExecuteTarget::Device => {
-                    let executor = self.device_action_executor.read().await;
-                    if let Some(ex) = executor.as_ref() {
+                    let executor = self.device_action_executor.read().await.clone();
+                    if let Some(ex) = executor {
                         let params_map: HashMap<String, serde_json::Value> = params
                             .as_object()
                             .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
                             .unwrap_or_default();
-                        match ex
-                            .execute_command_with_retry(target, command, &params_map)
-                            .await
-                        {
-                            Ok(_) => Ok(format!("EXECUTE: {}.{}", target, command)),
-                            Err(e) => Err(format!("EXECUTE failed: {}", e)),
-                        }
+                        // [decoupled] execute_command_with_retry sleeps
+                        // 1s/2s/4s between attempts on an offline device —
+                        // awaited inline that was ~10s per rule firing during
+                        // which the single consumer loop could not drain the
+                        // EventBus (dropped threshold crossings). Spawned, per
+                        // the same reasoning as TriggerAgent below.
+                        let label = format!("EXECUTE: {}.{} (spawned)", target, command);
+                        let (target, command) = (target.clone(), command.clone());
+                        tokio::spawn(async move {
+                            if let Err(e) = ex
+                                .execute_command_with_retry(&target, &command, &params_map)
+                                .await
+                            {
+                                tracing::warn!(error = %e, "EXECUTE device action failed (spawned)");
+                            }
+                        });
+                        Ok(label)
                     } else {
                         tracing::info!("EXECUTE device {}.{} (no executor)", target, command);
                         Ok(format!("EXECUTE: {}.{} (logged only)", target, command))
                     }
                 }
                 ExecuteTarget::Extension => {
-                    let executor = self.extension_action_executor.read().await;
-                    if let Some(ex) = executor.as_ref() {
+                    let executor = self.extension_action_executor.read().await.clone();
+                    if let Some(ex) = executor {
                         let ext_action = crate::extension_integration::ExtensionCommandAction::new(
                             target, command,
                         )
                         .with_args(params.clone());
-                        match ex.execute(&ext_action).await {
-                            Ok(result) if result.success => Ok(format!(
-                                "EXTENSION: {}.{}",
-                                result.extension_id, result.command
-                            )),
-                            Ok(result) => Err(result.error.unwrap_or_else(|| "Failed".to_string())),
-                            Err(e) => Err(e),
-                        }
+                        // [decoupled] extension processes run out-of-process
+                        // with their own timeouts; same consumer-loop stall
+                        // risk as the device arm above.
+                        tokio::spawn(async move {
+                            match ex.execute(&ext_action).await {
+                                Ok(result) if result.success => {}
+                                Ok(result) => tracing::warn!(
+                                    error = result.error.unwrap_or_else(|| "Failed".to_string()),
+                                    "EXTENSION action failed (spawned)"
+                                ),
+                                Err(e) => {
+                                    tracing::warn!(error = %e, "EXTENSION action failed (spawned)")
+                                }
+                            }
+                        });
+                        Ok(format!("EXTENSION: {}.{} (spawned)", target, command))
                     } else {
                         tracing::info!("EXECUTE extension {}.{} (no executor)", target, command);
                         Ok(format!("EXTENSION: {}.{} (logged only)", target, command))
@@ -1087,6 +1115,23 @@ mod tests {
     /// The message carries that execution's identity — the same
     /// `(rule_id, triggered_at)` pair its history row is keyed by — so the
     /// chain needs no new id and no storage format change.
+    /// Notify delivery is spawned (see the [decoupled] note on the Notify
+    /// arm) — poll briefly for the message to land instead of assuming
+    /// synchronous delivery.
+    async fn await_message_count(
+        messages: &Arc<neomind_messages::MessageManager>,
+        expected: usize,
+    ) -> usize {
+        for _ in 0..100 {
+            let n = messages.list_messages().await.len();
+            if n >= expected {
+                return n;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        messages.list_messages().await.len()
+    }
+
     #[tokio::test]
     async fn a_notification_identifies_the_rule_execution_that_sent_it() {
         let provider = Arc::new(InMemoryValueProvider::new());
@@ -1107,7 +1152,9 @@ mod tests {
         let result = engine.execute_rule(&rule_id).await;
         assert!(result.success, "the notify action must run");
 
+        let n = await_message_count(&messages, 1).await;
         let sent = messages.list_messages().await;
+        assert_eq!(sent.len(), n.max(1), "one notify action, one message");
         assert_eq!(sent.len(), 1, "one notify action, one message");
 
         let metadata = sent[0]
@@ -1159,11 +1206,22 @@ mod tests {
             let result = engine.execute_rule(&rule_id).await;
             assert!(result.success, "the notify action must run");
 
-            let sent = messages.list_messages().await;
-            let msg = sent
-                .iter()
-                .find(|m| m.message == format!("{configured:?} alarm"))
-                .expect("each notify action must produce its own message");
+            let expected_label = format!("{configured:?} alarm");
+            let mut msg = None;
+            for _ in 0..100 {
+                if let Some(m) = messages
+                    .list_messages()
+                    .await
+                    .iter()
+                    .find(|m| m.message == expected_label)
+                    .cloned()
+                {
+                    msg = Some(m);
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            let msg = msg.expect("each notify action must produce its own message");
             assert_eq!(
                 msg.severity, expected,
                 "{configured:?} must arrive as {expected:?}, not be silently downgraded"
