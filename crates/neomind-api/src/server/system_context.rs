@@ -12,6 +12,39 @@ use super::types::ServerState;
 
 /// Hard char limit for system resource inventory (KNOWLEDGE.md marker section).
 const SYSTEM_CONTEXT_CHAR_LIMIT: usize = 800;
+
+/// Input fingerprints for the two LLM summary jobs. Assembly is cheap; the
+/// LLM call is the expensive part — on an idle box the same sessions and
+/// journals produce byte-identical input every cycle, and re-summarizing it
+/// burns edge compute to write the same marker section back.
+static LAST_CHAT_SUMMARY_INPUT: std::sync::OnceLock<std::sync::Mutex<u64>> =
+    std::sync::OnceLock::new();
+static LAST_AGENT_SUMMARY_INPUT: std::sync::OnceLock<std::sync::Mutex<u64>> =
+    std::sync::OnceLock::new();
+
+fn fingerprint(text: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut h);
+    h.finish()
+}
+
+/// True when `input` differs from the last accepted input for this slot
+/// (and the slot is updated). Call ONLY when about to run the LLM, so a
+/// failed run retries on the next cycle instead of being marked done.
+fn summary_input_changed(
+    slot: &'static std::sync::OnceLock<std::sync::Mutex<u64>>,
+    input: &str,
+) -> bool {
+    let guard = slot.get_or_init(|| std::sync::Mutex::new(0));
+    let mut last = guard.lock().unwrap();
+    let fp = fingerprint(input);
+    if *last == fp {
+        return false;
+    }
+    *last = fp;
+    true
+}
 /// Max chars for LLM chat summary (USER.md marker section).
 const CHAT_SUMMARY_CHAR_LIMIT: usize = 200;
 /// Max chars for LLM agent summary (KNOWLEDGE.md marker section).
@@ -200,6 +233,11 @@ pub async fn summarize_chat_context(
         return Ok(());
     }
 
+    if !summary_input_changed(&LAST_CHAT_SUMMARY_INPUT, &all_messages) {
+        tracing::debug!("chat summary input unchanged since last cycle — skipping LLM run");
+        return Ok(());
+    }
+
     // English prompt with an explicit language-follow instruction: the
     // summary lands in USER.md/KNOWLEDGE.md regardless of deployment
     // locale, and a hard-coded Chinese prompt forced Chinese output on
@@ -293,6 +331,11 @@ pub async fn summarize_agent_context(
         return Ok(());
     }
 
+    if !summary_input_changed(&LAST_AGENT_SUMMARY_INPUT, &agent_data) {
+        tracing::debug!("agent summary input unchanged since last cycle — skipping LLM run");
+        return Ok(());
+    }
+
     let prompt = format!(
         "Analyze the AI agent execution records below. Summarize in 2-3 bullet points (each starting \
          with \"- \") the key findings and anomaly patterns across the agents. Total length must stay \
@@ -327,4 +370,31 @@ pub async fn summarize_agent_context(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The dirty-check fingerprint: identical input skips, changed input
+    /// re-runs. This is what stops the 2-hourly LLM summary from firing on
+    /// an idle box.
+    #[test]
+    fn summary_input_changed_detects_changes() {
+        let slot: &'static std::sync::OnceLock<std::sync::Mutex<u64>> =
+            Box::leak(Box::new(std::sync::OnceLock::new()));
+        assert!(
+            summary_input_changed(slot, "sessions: a b c"),
+            "first run always runs"
+        );
+        assert!(
+            !summary_input_changed(slot, "sessions: a b c"),
+            "identical input must skip"
+        );
+        assert!(
+            summary_input_changed(slot, "sessions: a b d"),
+            "changed input re-runs"
+        );
+        assert!(!summary_input_changed(slot, "sessions: a b d"));
+    }
 }

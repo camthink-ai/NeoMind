@@ -171,10 +171,14 @@ impl AgentExecutor {
             // the spawned task needs a copy to clear the cooldown on failure.
             let dedup_key_clone = dedup_key.clone();
 
-            // Mark this execution as recent
+            // Mark this execution as recent. The AND window (if any) is
+            // consumed HERE — past the debounce merge and the cooldown, the
+            // run is admitted and a retained complete window must not
+            // re-fire duplicates after the run finishes.
             {
                 let mut recent = self.recent_executions.write().await;
                 recent.insert(dedup_key, now);
+                self.clear_event_window(&agent.id);
             }
             if debounce_secs > 0 {
                 self.last_event_inference
@@ -598,8 +602,12 @@ impl AgentExecutor {
         let state = self.event_windows.read().get(&agent.id).cloned();
         match filter.observe(state.as_ref(), source_type, source_id, field, now) {
             neomind_storage::agents::WindowOutcome::Fire => {
-                // The window is consumed by the firing.
-                self.clear_event_window(&agent.id);
+                // The window is NOT consumed here: the caller may still skip
+                // this firing (debounce merge, cooldown, spawn failure), and
+                // clearing up front silently discarded a genuinely-completed
+                // AND — the aggregation held, but no run ever happened and no
+                // later event could re-complete the window. The caller clears
+                // once the run is actually admitted.
                 true
             }
             neomind_storage::agents::WindowOutcome::Pending(next) => {

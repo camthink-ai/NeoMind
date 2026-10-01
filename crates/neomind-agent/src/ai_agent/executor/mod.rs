@@ -1796,14 +1796,23 @@ pub(super) fn classify_tool_call_text(text: &str) -> ToolCallTextClassification 
 ///
 /// Permanent failures (malformed output, auth/model errors, panics) return
 /// false so the agent is demoted to Error and needs manual re-enable.
+/// Transient-failure classification shared with the manual-invoke path's
+/// status handling in `ai_agent::mod`.
+pub(crate) fn is_transient_failure_shared(error: Option<&str>) -> bool {
+    is_transient_failure(error)
+}
+
 fn is_transient_failure(error: Option<&str>) -> bool {
     let msg = match error {
         Some(m) => m,
         None => return false, // unknown error → treat as permanent (safe)
     };
     let lower = msg.to_lowercase();
-    // Network errors (reqwest::Error display)
-    lower.contains("network")
+    // Busy, not broken: the re-entrancy guard's rejection means another run
+    // holds the agent — demoting to Error would badge a healthy agent red.
+    lower.contains("already executing")
+        // Network errors (reqwest::Error display)
+        || lower.contains("network")
         || lower.contains("error sending request")
         || lower.contains("dns")
         || lower.contains("connection reset")

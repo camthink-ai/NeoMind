@@ -239,10 +239,6 @@ impl AgentExecutor {
             .infer_structured_with_images(agent, &schema, op.timeout_secs, &context, images)
             .await?;
 
-        // Publish every validated field as `ai:{agent_id}:{field}`.
-        self.publish_output_fields(&agent.id, execution_id, outcome.confidence, &outcome.fields)
-            .await;
-
         let conclusion = serde_json::to_string(&serde_json::Value::Object(
             outcome
                 .fields
@@ -252,7 +248,12 @@ impl AgentExecutor {
         ))
         .unwrap_or_default();
 
-        // Journal entry on the shared path (kept for history/trend/detail).
+        // Journal FIRST, publish SECOND. The published value is what
+        // dashboards/rules/data-push read as fresh; publishing before the
+        // finalize meant a run whose journaling then failed was recorded as
+        // FAILED while its "fresh" fields kept serving — the exact
+        // "failure keeps the old value" promise this executor makes,
+        // broken. Nothing can un-publish, so ordering is the only guard.
         self.finalize_execution_memory(
             agent,
             &[],
@@ -263,6 +264,10 @@ impl AgentExecutor {
             &None,
         )
         .await?;
+
+        // Publish every validated field as `ai:{agent_id}:{field}`.
+        self.publish_output_fields(&agent.id, execution_id, outcome.confidence, &outcome.fields)
+            .await;
 
         let field_count = outcome.fields.len();
         let decision_process = DecisionProcess {

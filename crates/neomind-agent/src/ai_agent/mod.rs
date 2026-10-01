@@ -299,24 +299,48 @@ impl AiAgentManager {
             },
         };
 
-        // Update agent status based on result
-        let new_status = if result.is_ok() {
-            // A manual task idles as Completed (not Active): it has no
-            // standing duty and the scheduler must not pick it up. Manual
-            // invoke always works — Completed is a ready-state, not terminal.
-            if agent.schedule.schedule_type == ScheduleType::Manual {
-                AgentStatus::Completed
-            } else {
-                AgentStatus::Active
-            }
-        } else {
-            AgentStatus::Error
-        };
+        // Status semantics, aligned with the scheduler path. The executor
+        // has ALREADY classified a failed run before returning (transient →
+        // Active, permanent → Error); overwriting that back to Active here
+        // made a persistently-failing agent look healthy after every manual
+        // probe. And pre-flight errors used to unconditionally demote to
+        // Error — including "already executing" (busy, not broken) and
+        // transient network failures, contradicting the scheduler path.
         let error_msg = result.as_ref().err().map(|e| e.to_string());
-        self.executor
-            .store()
-            .update_agent_status(agent_id, new_status, error_msg)
-            .await?;
+        match &result {
+            Ok(record) if record.error.is_none() => {
+                // A manual task idles as Completed (not Active): it has no
+                // standing duty and the scheduler must not pick it up.
+                // Manual invoke always works — Completed is a ready-state,
+                // not terminal.
+                let new_status = if agent.schedule.schedule_type == ScheduleType::Manual {
+                    AgentStatus::Completed
+                } else {
+                    AgentStatus::Active
+                };
+                self.executor
+                    .store()
+                    .update_agent_status(agent_id, new_status, None)
+                    .await?;
+            }
+            Ok(_) => {
+                // Failed run — the executor's own status verdict stands.
+                tracing::debug!(
+                    agent_id = %agent_id,
+                    "manual run failed — keeping the executor's status verdict"
+                );
+            }
+            Err(e) => {
+                let transient = e.to_string().contains("already executing")
+                    || crate::ai_agent::executor::is_transient_failure_shared(Some(&e.to_string()));
+                if !transient {
+                    self.executor
+                        .store()
+                        .update_agent_status(agent_id, AgentStatus::Error, error_msg)
+                        .await?;
+                }
+            }
+        }
 
         Ok(summary)
     }

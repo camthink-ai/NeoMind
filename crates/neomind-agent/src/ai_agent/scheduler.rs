@@ -550,12 +550,15 @@ impl AgentScheduler {
                                     "Acquired backend permit"
                                 );
 
-                                // Structured (L0) self-healing gate.
-                                if matches!(
-                                    agent.execution_mode,
-                                    neomind_storage::agents::ExecutionMode::Structured
-                                ) && agent.status == neomind_storage::AgentStatus::Error
-                                {
+                                // Circuit-breaker self-healing gate, every mode.
+                                // Error means "permanent failure, needs a look" —
+                                // hammering it every tick only burns calls and
+                                // log lines. One probe per cooldown window;
+                                // success restores Active (the executor resets
+                                // status on a good run). Previously Free/Focused
+                                // Error agents kept executing on schedule
+                                // forever while showing a red badge.
+                                if agent.status == neomind_storage::AgentStatus::Error {
                                     let last = agent.last_execution_at.unwrap_or_default();
                                     let elapsed =
                                         chrono::Utc::now().timestamp().saturating_sub(last);
@@ -563,14 +566,14 @@ impl AgentScheduler {
                                         tracing::trace!(
                                             agent_id = %agent_id,
                                             elapsed_secs = elapsed,
-                                            "Structured agent in Error — circuit cooldown, skipping tick"
+                                            "Agent in Error — circuit cooldown, skipping tick"
                                         );
                                         return;
                                     }
                                     tracing::info!(
                                         agent_id = %agent_id,
                                         elapsed_secs = elapsed,
-                                        "Structured agent cooldown elapsed — probing once"
+                                        "Agent Error cooldown elapsed — probing once"
                                     );
                                 }
 

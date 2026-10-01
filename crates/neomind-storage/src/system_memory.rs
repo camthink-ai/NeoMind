@@ -2226,13 +2226,21 @@ fn evict_to_limit_preserving_markers(content: &str, max_chars: usize) -> String 
             .saturating_sub(1)
     };
 
-    // Drop the last evictable (non-marker) line repeatedly until within
-    // budget or nothing evictable remains.
+    // Eviction priority: timestamped log-style lines ("- [MM-DD HH:MM] …",
+    // what the memory tool's timestamped writes produce) go FIRST — they
+    // are auto-generated observations, not curated content; among them,
+    // bottom-first preserves append order (older entries sit lower in each
+    // batch). Only when no timestamped line remains do curated non-marker
+    // lines start going, still bottom-first so the hand-maintained top of
+    // the file survives longest.
+    let is_log_line = |l: &str| l.trim_start().starts_with("- [");
     let mut alive: Vec<bool> = vec![true; lines.len()];
     while char_count(&alive) > max_chars {
-        let Some(pos) = (0..lines.len()).rev().find(|&k| alive[k] && !protected[k]) else {
-            break;
-        };
+        let next = (0..lines.len())
+            .rev()
+            .find(|&k| alive[k] && !protected[k] && is_log_line(lines[k]))
+            .or_else(|| (0..lines.len()).rev().find(|&k| alive[k] && !protected[k]));
+        let Some(pos) = next else { break };
         alive[pos] = false;
     }
 
@@ -2498,6 +2506,32 @@ mod tests_new_layout {
             final_content.chars().count() < base.chars().count() + marker_body.chars().count(),
             "some ordinary content must have been evicted"
         );
+    }
+
+    /// Log-style timestamped lines are evicted before curated prose at the
+    /// same position class — auto-observations are cheaper to lose than
+    /// hand-maintained content.
+    #[test]
+    fn test_evict_prefers_timestamped_lines_over_curated() {
+        // 3 curated lines + 6 log lines + a marker block; budget forces
+        // dropping several entries.
+        let mut content = String::from("curated-top\ncurated-mid\ncurated-bottom\n");
+        for i in 0..6 {
+            content.push_str(&format!("- [09-30 0{}:00] observation number {}\n", i, i));
+        }
+        content.push_str("\n<!-- keep -->\nblock body\n<!-- /keep -->\n");
+        // Budget fits the marker block + all curated lines + ~3 log lines.
+        let out = evict_to_limit_preserving_markers(&content, 120);
+        assert!(out.chars().count() <= 120);
+        assert!(
+            out.contains("curated-top") && out.contains("curated-bottom"),
+            "curated lines must outlive log lines: {out}"
+        );
+        assert!(
+            out.matches("- [09-30").count() < 6,
+            "log lines must be evicted first: {out}"
+        );
+        assert!(out.contains("<!-- keep -->"), "markers stay atomic");
     }
 
     /// Unit level: pure eviction semantics with and without markers.

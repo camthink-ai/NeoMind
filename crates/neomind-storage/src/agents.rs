@@ -288,6 +288,11 @@ pub enum WindowOutcome {
     Fire,
 }
 
+/// Default window for an `all` filter that omits `within_secs` — see
+/// [`EventFilter::observe`]. Five minutes: long enough for multi-sensor
+/// bursts to align, short enough not to bridge unrelated events.
+const DEFAULT_ALL_WINDOW_SECS: u32 = 300;
+
 impl EventFilter {
     /// Fold one event into the `all` window and decide whether it completes.
     pub fn observe(
@@ -298,9 +303,19 @@ impl EventFilter {
         field: &str,
         now: i64,
     ) -> WindowOutcome {
-        // With no window configured, "the same instant, the same event" is
-        // the only reading: nothing may carry over between events.
-        let live = match self.within_secs {
+        // An `all` filter without an explicit window used to be a SILENT DEAD
+        // TRIGGER: the None window carried no partial hits between events, so
+        // the AND could only complete if a single event matched every spec —
+        // in practice never. Default it to a short window so AND filters
+        // compose without an explicit within_secs; `any`-only filters keep
+        // the "same instant, same event" reading of None.
+        let effective_window = if self.all.is_empty() {
+            self.within_secs
+        } else {
+            Some(self.within_secs.unwrap_or(DEFAULT_ALL_WINDOW_SECS as u64))
+        };
+
+        let live = match effective_window {
             None => None,
             Some(window) => match state {
                 // An expired window is dead. Reviving it would let a late
@@ -327,7 +342,7 @@ impl EventFilter {
         // event matched none of the sources (a window only exists once
         // something has hit it — an empty one would be pruned state that
         // looks like an open window).
-        if self.within_secs.is_none() || seen.is_empty() {
+        if effective_window.is_none() || seen.is_empty() {
             return WindowOutcome::Pending(None);
         }
 
@@ -2095,6 +2110,77 @@ mod tests {
 mod event_filter_tests {
     use super::*;
 
+    /// An `all` filter WITHOUT an explicit `within_secs` used to be a silent
+    /// dead trigger: the None window discarded partial hits on every event,
+    /// so the AND could only complete if one single event matched every
+    /// spec. The default window makes it compose across events.
+    #[test]
+    fn all_filter_without_window_completes_across_events() {
+        let src = |id: &str| EventSource {
+            source_type: "device".to_string(),
+            id: id.to_string(),
+            field: Some("temp".to_string()),
+        };
+        let filter = EventFilter {
+            any: vec![],
+            all: vec![src("dev-a"), src("dev-b")],
+            within_secs: None,
+        };
+
+        let t0: i64 = 1_700_000_000;
+        let first = filter.observe(None, "device", "dev-a", "temp", t0);
+        assert!(
+            matches!(first, WindowOutcome::Pending(Some(_))),
+            "partial hit must carry over under the default window: {first:?}"
+        );
+
+        let state = match first {
+            WindowOutcome::Pending(Some(s)) => Some(s),
+            _ => None,
+        };
+        let second = filter.observe(state.as_ref(), "device", "dev-b", "temp", t0 + 10);
+        assert!(
+            matches!(second, WindowOutcome::Fire),
+            "the completing event must fire the AND: {second:?}"
+        );
+    }
+
+    /// The default window still expires: sources arriving past it must not
+    /// complete an AND whose hits never actually overlapped.
+    #[test]
+    fn all_filter_default_window_expires() {
+        let src = |id: &str| EventSource {
+            source_type: "device".to_string(),
+            id: id.to_string(),
+            field: Some("temp".to_string()),
+        };
+        let filter = EventFilter {
+            any: vec![],
+            all: vec![src("dev-a"), src("dev-b")],
+            within_secs: None,
+        };
+
+        let t0: i64 = 1_700_000_000;
+        let first = filter.observe(None, "device", "dev-a", "temp", t0);
+        let state = match first {
+            WindowOutcome::Pending(Some(s)) => Some(s),
+            other => panic!("expected pending window, got {other:?}"),
+        };
+        // Arrives past the 300s default — the window is dead, a fresh one
+        // opens carrying only this hit.
+        let late = filter.observe(
+            state.as_ref(),
+            "device",
+            "dev-b",
+            "temp",
+            t0 + DEFAULT_ALL_WINDOW_SECS as i64 + 60,
+        );
+        assert!(
+            matches!(late, WindowOutcome::Pending(Some(_))),
+            "an expired default window must not complete: {late:?}"
+        );
+    }
+
     fn schedule_with(filter: &str) -> AgentSchedule {
         AgentSchedule {
             schedule_type: ScheduleType::Event,
@@ -2363,7 +2449,14 @@ mod event_filter_tests {
     /// (design 001 §5.2.2): nothing carries between events, so the AND must
     /// be satisfiable by one event alone or not at all.
     #[test]
-    fn without_a_window_only_a_single_event_can_complete_the_all() {
+    fn without_a_window_the_all_gets_the_default_window() {
+        // Contract change (chain review M-C2-1): an `all` filter without an
+        // explicit window used to carry NOTHING between events — a documented
+        // but practically unreachable semantics (the AND could only complete
+        // if one single event matched every spec), i.e. a silent dead
+        // trigger for any real multi-source setup. It now defaults to
+        // DEFAULT_ALL_WINDOW_SECS; explicit windows are unchanged, and the
+        // single-event-satisfies-everything case still fires immediately.
         let two_separate = filter_with_all(
             &[
                 ("device", "cam-01", Some("occupied")),
@@ -2372,13 +2465,14 @@ mod event_filter_tests {
             None,
         );
         let alone = two_separate.observe(None, "device", "cam-01", "occupied", 1_000);
-        assert_eq!(
-            pending(alone),
-            None,
-            "with no window, nothing carries over to the next event"
+        assert!(
+            pending(alone).is_some(),
+            "partial hits carry over under the default window"
         );
 
-        // One event that satisfies every entry (exact + wildcard) does fire.
+        // One event that satisfies every entry (exact + wildcard) still
+        // fires immediately — the default window only ADDS a way to
+        // complete, never delays an already-complete match.
         let one_event = filter_with_all(
             &[
                 ("device", "cam-01", Some("occupied")),
