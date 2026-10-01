@@ -687,13 +687,19 @@ impl SessionStore {
             Err(_) => return Ok(Vec::new()),
         };
 
-        let mut sessions = Vec::new();
+        // The table value is the session's recency stamp (creation, touched
+        // by every save_history). redb iterates in KEY order — with UUID
+        // session IDs that is a random-but-fixed order, so a `take(n)` caller
+        // summarizing "recent sessions" would keep picking the same arbitrary
+        // subset forever. Sort by the stamp, newest first.
+        let mut sessions: Vec<(String, i64)> = Vec::new();
         for result in table.iter()? {
-            let key = result?.0;
-            sessions.push(key.value().to_string());
+            let (key, value) = result?;
+            sessions.push((key.value().to_string(), value.value()));
         }
+        sessions.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| b.0.cmp(&a.0)));
 
-        Ok(sessions)
+        Ok(sessions.into_iter().map(|(id, _)| id).collect())
     }
 
     /// Check if a session exists.
@@ -1993,6 +1999,33 @@ mod retention_tests {
         // list_sessions comes from the sessions table — undated is now
         // invisible to listing, so cleanup cannot touch it (safe by design).
         assert_eq!(store.cleanup_old_sessions(1).unwrap(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `list_sessions` orders by the session stamp, newest first. The old
+    /// implementation returned redb's key order — with UUID session IDs that
+    /// is a random-but-fixed permutation, so the chat-summary background job's
+    /// "take 5 recent sessions" kept summarizing the same arbitrary subset
+    /// forever (UUIDs that happen to sort first), never picking up new ones.
+    #[test]
+    fn list_sessions_orders_by_recency_not_key_order() {
+        let dir = scratch("recency");
+        let store = SessionStore::open_isolated(dir.join("sessions.redb")).unwrap();
+
+        seed(&store, "aaa-created-first", 500);
+        seed(&store, "zzz-created-last", 50);
+        seed(&store, "mmm-created-middle", 250);
+
+        let listed = store.list_sessions().unwrap();
+        assert_eq!(
+            listed,
+            vec![
+                "zzz-created-last".to_string(),
+                "mmm-created-middle".to_string(),
+                "aaa-created-first".to_string()
+            ],
+            "newest stamp must come first regardless of key order"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

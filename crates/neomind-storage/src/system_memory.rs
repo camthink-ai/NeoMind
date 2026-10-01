@@ -420,7 +420,7 @@ pub struct CustomFileStats {
 ///
 /// **Agent files (managed by bridge):**
 /// - `agents/{agent_id}.md` - Agent summaries (max `agent_char_limit` chars, default 500)
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct MarkdownMemoryStore {
     /// Base path for memory files
     base_path: PathBuf,
@@ -445,6 +445,28 @@ pub struct MarkdownMemoryStore {
     /// file from multiple chat sessions would lose updates — `atomic_write`
     /// prevents corruption but not lost-write races.
     custom_write_lock: Arc<Mutex<()>>,
+}
+
+/// Manual clone: the two lock Arcs are SHARED, not duplicated.
+///
+/// The server keeps one canonical store for the background jobs and the
+/// API, while the chat toolchain and the agent toolchain each wrap their
+/// own handle built by CLONING the canonical store. With a derived Clone
+/// every clone got fresh locks, so a tool's read-modify-write could
+/// clobber a concurrent background `replace_marker_section` (and vice
+/// versa) even though each side held "its" lock: several instances,
+/// several locks, same three files. Sharing the lock Arcs restores the
+/// single-writer discipline the field docs promise, across every clone.
+impl Clone for MarkdownMemoryStore {
+    fn clone(&self) -> Self {
+        Self {
+            base_path: self.base_path.clone(),
+            config: self.config.clone(),
+            cache: self.cache.clone(),
+            write_lock: self.write_lock.clone(),
+            custom_write_lock: self.custom_write_lock.clone(),
+        }
+    }
 }
 
 impl MarkdownMemoryStore {
@@ -597,6 +619,73 @@ impl MarkdownMemoryStore {
 
         info!(target = %target, chars = content.chars().count(), "Wrote persistent file");
         Ok(())
+    }
+
+    /// Atomic read-modify-write of a persistent file under `write_lock`.
+    ///
+    /// The `memory` tool's add/replace/remove actions used to compose
+    /// `read_file` + `write_file` themselves; only the write half took the
+    /// lock, so a background `replace_marker_section` (or another clone's
+    /// RMW) landing between the read and the write was silently reverted.
+    /// Routing those callers through this method makes the whole
+    /// read→transform→write sequence one serialized step.
+    ///
+    /// The closure receives the current content and returns the new
+    /// content. An unchanged result skips the write entirely (callers
+    /// detect "no change" from the returned `false`, same semantics as
+    /// `replace_marker_section`). The char limit is enforced on the
+    /// closure's result — a caller that grows the file past the limit
+    /// gets the same actionable error `write_file` produces.
+    pub async fn modify_file<F>(&self, target: &str, mut transform: F) -> Result<bool>
+    where
+        F: FnMut(&str) -> String,
+    {
+        let (limit, path) = match target {
+            "user" => (self.config.user_char_limit, self.base_path.join("USER.md")),
+            "knowledge" => (
+                self.config.knowledge_char_limit,
+                self.base_path.join("KNOWLEDGE.md"),
+            ),
+            "procedures" => (
+                self.config.procedures_char_limit,
+                self.base_path.join("PROCEDURES.md"),
+            ),
+            _ => {
+                return Err(Error::InvalidInput(format!(
+                    "Invalid target: {}. Must be 'user', 'knowledge', or 'procedures'",
+                    target
+                )))
+            }
+        };
+
+        let _lock = self.write_lock.lock().await;
+
+        let current = if path.exists() {
+            fs::read_to_string(&path)
+                .map_err(|e| Error::Storage(format!("Failed to read {}.md: {}", target, e)))?
+        } else {
+            String::new()
+        };
+
+        let new_content = transform(&current);
+        if new_content == current {
+            return Ok(false);
+        }
+
+        if new_content.chars().count() > limit {
+            return Err(Error::InvalidInput(format!(
+                "Content exceeds {} char limit: {} > {}",
+                target,
+                new_content.chars().count(),
+                limit
+            )));
+        }
+
+        atomic_write::write(&path, &new_content)
+            .map_err(|e| Error::Storage(format!("Failed to write {}.md: {}", target, e)))?;
+
+        info!(target = %target, chars = new_content.chars().count(), "Modified persistent file");
+        Ok(true)
     }
 
     /// Read a persistent file. Returns empty string if not found.
@@ -778,6 +867,22 @@ impl MarkdownMemoryStore {
         if new_text == original {
             return Ok(false);
         }
+
+        // Self-heal past the char limit. write_file REJECTS oversized
+        // writes — the right contract for tool edits, which get an
+        // actionable error and can retry smaller. This path has no
+        // feedback loop: telling the background writer "no" leaves the
+        // file over limit forever while every later tool write_file also
+        // fails. Evict ordinary lines from the bottom instead, keeping
+        // marker blocks intact so a regenerating job never destroys its
+        // own or another job's section.
+        let limit = match target {
+            "user" => self.config.user_char_limit,
+            "knowledge" => self.config.knowledge_char_limit,
+            "procedures" => self.config.procedures_char_limit,
+            _ => unreachable!(), // checked above
+        };
+        let new_text = evict_to_limit_preserving_markers(&new_text, limit);
 
         atomic_write::write(&path, &new_text)
             .map_err(|e| Error::Storage(format!("Failed to write {}.md: {}", target, e)))?;
@@ -1042,6 +1147,29 @@ impl MarkdownMemoryStore {
         Ok(())
     }
 
+    /// Validate an agent ID used as a path segment. Agent IDs are generated
+    /// server-side (UUIDs), but `clean_agent_dir` and the agent-scoped
+    /// custom-file methods also receive IDs that have traveled through API
+    /// path parameters — hold every path join to the same traversal-safe
+    /// standard as session IDs and custom names.
+    fn validate_agent_id(agent_id: &str) -> Result<()> {
+        if agent_id.is_empty() || agent_id.len() > 128 {
+            return Err(Error::InvalidInput(
+                "agent_id must be 1-128 characters".to_string(),
+            ));
+        }
+        if agent_id.contains('\0')
+            || agent_id.contains("..")
+            || agent_id.contains('/')
+            || agent_id.contains('\\')
+        {
+            return Err(Error::InvalidInput(
+                "agent_id contains invalid path characters".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Read a custom memory file. Returns empty string if not found.
     pub fn read_custom_file(&self, name: &str) -> Result<String> {
         Self::validate_custom_name(name)?;
@@ -1076,6 +1204,75 @@ impl MarkdownMemoryStore {
             .map_err(|e| Error::Storage(format!("Failed to write custom file {}: {}", name, e)))?;
         info!(name = %name, chars = char_count, "Wrote custom memory file");
         Ok(())
+    }
+
+    /// Atomic read-modify-write of a custom file (agent-scoped or global)
+    /// under `custom_write_lock`. Same rationale as [`modify_file`]: the
+    /// tool's read→merge→write on custom files becomes one serialized step
+    /// across every clone of the store, so a concurrent writer's update
+    /// cannot be silently reverted.
+    ///
+    /// Returns `false` when the closure left the content unchanged (no
+    /// write happened). Enforces the per-file char limit on the result.
+    pub fn modify_custom_file<F>(
+        &self,
+        agent_id: Option<&str>,
+        name: &str,
+        mut transform: F,
+    ) -> Result<bool>
+    where
+        F: FnMut(&str) -> String,
+    {
+        Self::validate_custom_name(name)?;
+        if let Some(aid) = agent_id {
+            Self::validate_agent_id(aid)?;
+        }
+
+        let path = match agent_id {
+            Some(aid) => self
+                .base_path
+                .join("agents")
+                .join(aid)
+                .join("custom")
+                .join(format!("{}.md", name)),
+            None => self.base_path.join("custom").join(format!("{}.md", name)),
+        };
+
+        let _lock = self
+            .custom_write_lock
+            .lock()
+            .map_err(|e| Error::Storage(format!("Custom write lock poisoned: {}", e)))?;
+
+        let current = if path.exists() {
+            fs::read_to_string(&path).map_err(|e| {
+                Error::Storage(format!("Failed to read custom file {}: {}", name, e))
+            })?
+        } else {
+            String::new()
+        };
+
+        let new_content = transform(&current);
+        if new_content == current {
+            return Ok(false);
+        }
+
+        let limit = self.config.agent_char_limit;
+        if new_content.chars().count() > limit {
+            return Err(Error::InvalidInput(format!(
+                "Custom file content exceeds {} char limit: {} > {}",
+                name,
+                new_content.chars().count(),
+                limit
+            )));
+        }
+
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        atomic_write::write(&path, &new_content)
+            .map_err(|e| Error::Storage(format!("Failed to write custom file {}: {}", name, e)))?;
+        info!(name = %name, chars = new_content.chars().count(), "Modified custom memory file");
+        Ok(true)
     }
 
     /// List all custom memory files. Returns (name, char_count) pairs.
@@ -1122,6 +1319,7 @@ impl MarkdownMemoryStore {
     /// Read an agent-scoped custom file.
     /// Path: `agents/{agent_id}/custom/{name}.md`
     pub fn read_agent_custom_file(&self, agent_id: &str, name: &str) -> Result<String> {
+        Self::validate_agent_id(agent_id)?;
         Self::validate_custom_name(name)?;
         let path = self
             .base_path
@@ -1143,6 +1341,7 @@ impl MarkdownMemoryStore {
     /// Write an agent-scoped custom file. Enforces per-file char limit.
     /// Path: `agents/{agent_id}/custom/{name}.md`
     pub fn write_agent_custom_file(&self, agent_id: &str, name: &str, content: &str) -> Result<()> {
+        Self::validate_agent_id(agent_id)?;
         Self::validate_custom_name(name)?;
         let limit = self.config.agent_char_limit;
         let char_count = content.chars().count();
@@ -1172,6 +1371,7 @@ impl MarkdownMemoryStore {
 
     /// List agent-scoped custom files. Returns (name, char_count) pairs.
     pub fn list_agent_custom_files(&self, agent_id: &str) -> Result<Vec<(String, usize)>> {
+        Self::validate_agent_id(agent_id)?;
         let custom_dir = self.base_path.join("agents").join(agent_id).join("custom");
         if !custom_dir.exists() {
             return Ok(Vec::new());
@@ -1194,6 +1394,7 @@ impl MarkdownMemoryStore {
     /// Delete all memory files for an agent (the entire `agents/{agent_id}/` directory).
     /// Called when an agent is deleted to clean up associated knowledge files.
     pub fn clean_agent_dir(&self, agent_id: &str) -> Result<()> {
+        Self::validate_agent_id(agent_id)?;
         let agent_dir = self.base_path.join("agents").join(agent_id);
         if agent_dir.exists() {
             fs::remove_dir_all(&agent_dir).map_err(|e| {
@@ -1961,6 +2162,100 @@ fn replace_section_in_content(content: &str, heading: &str, new_body: &str) -> S
     }
 }
 
+/// Evict content to `max_chars`, treating `<!-- ... -->` marker blocks as
+/// atomic, untouchable units (see `replace_marker_section` for why those
+/// blocks must survive: they are the background jobs' self-replacing
+/// sections, and dropping half of one corrupts the next regeneration).
+///
+/// Ordinary lines are evicted from the BOTTOM — the same end-of-file
+/// policy the compressor's `evict_to_limit` uses — so the oldest tail
+/// content goes first. If the file is over budget with markers alone,
+/// hard-truncate on a char boundary and warn: the snapshot layer caps
+/// the prompt independently, but the file must not grow without bound.
+fn evict_to_limit_preserving_markers(content: &str, max_chars: usize) -> String {
+    if content.chars().count() <= max_chars {
+        // Same trailing-newline normalization the eviction path applies.
+        if content.is_empty() {
+            return String::new();
+        }
+        if content.ends_with('\n') {
+            return content.to_string();
+        }
+        return format!("{}\n", content);
+    }
+
+    let lines: Vec<&str> = content.lines().collect();
+
+    // Mark protected line ranges. A marker block runs from `<!-- name -->`
+    // to the matching `<!-- /name -->` — both tags are SINGLE-LINE comments
+    // (they contain `-->`), so the body between them is only recognizable
+    // via the pair, not by comment-state scanning.
+    let mut protected = vec![false; lines.len()];
+    let mut i = 0;
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
+        if let Some(name) = trimmed
+            .strip_prefix("<!-- ")
+            .and_then(|r| r.strip_suffix(" -->"))
+        {
+            if !name.is_empty() && !name.starts_with('/') {
+                let close_tag = format!("<!-- /{} -->", name);
+                if let Some(j) = lines[i + 1..]
+                    .iter()
+                    .position(|l| l.trim() == close_tag)
+                    .map(|k| i + 1 + k)
+                {
+                    for p in &mut protected[i..=j] {
+                        *p = true;
+                    }
+                    i = j + 1;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+
+    let char_count = |alive: &[bool]| -> usize {
+        lines
+            .iter()
+            .zip(alive)
+            .filter(|(_, a)| **a)
+            .map(|(l, _)| l.chars().count() + 1)
+            .sum::<usize>()
+            .saturating_sub(1)
+    };
+
+    // Drop the last evictable (non-marker) line repeatedly until within
+    // budget or nothing evictable remains.
+    let mut alive: Vec<bool> = vec![true; lines.len()];
+    while char_count(&alive) > max_chars {
+        let Some(pos) = (0..lines.len()).rev().find(|&k| alive[k] && !protected[k]) else {
+            break;
+        };
+        alive[pos] = false;
+    }
+
+    let mut out = lines
+        .iter()
+        .zip(&alive)
+        .filter(|(_, a)| **a)
+        .map(|(l, _)| *l)
+        .collect::<Vec<_>>()
+        .join("\n");
+    out.push('\n');
+
+    if out.chars().count() > max_chars {
+        tracing::warn!(
+            chars = out.chars().count(),
+            max_chars,
+            "Memory file over limit even after eviction (marker blocks alone exceed the budget) — hard-truncating"
+        );
+        out = out.chars().take(max_chars).collect();
+    }
+    out
+}
+
 // ============================================================================
 // New API tests
 // ============================================================================
@@ -2014,6 +2309,219 @@ mod tests_new_layout {
         // Write within limit should succeed
         let ok_content = "x".repeat(2000);
         store.write_file("user", &ok_content).await.unwrap();
+    }
+
+    /// `modify_file` is the atomic read-modify-write the memory tool's
+    /// add/replace/remove actions need: the transform sees the CURRENT
+    /// content under the write lock, an unchanged result writes nothing,
+    /// and the char limit rejects growth the same way `write_file` does.
+    #[tokio::test]
+    async fn test_modify_file_semantics() {
+        let (_temp, store) = create_test_store().await;
+
+        store.write_file("user", "# User\n\nline-a").await.unwrap();
+
+        // Transform sees current content and appends atomically.
+        let changed = store
+            .modify_file("user", |cur| {
+                assert!(cur.contains("line-a"), "transform must see current content");
+                format!("{}\nline-b", cur)
+            })
+            .await
+            .unwrap();
+        assert!(changed);
+        let after = store.read_file("user").await.unwrap();
+        assert!(after.contains("line-b") && after.contains("line-a"));
+
+        // Unchanged result → no write, Ok(false).
+        let unchanged = store
+            .modify_file("user", |cur| cur.to_string())
+            .await
+            .unwrap();
+        assert!(!unchanged);
+
+        // Limit enforced on the transformed result.
+        let err = store
+            .modify_file("user", |cur| format!("{}\n{}", cur, "y".repeat(2100)))
+            .await;
+        assert!(err.is_err(), "over-limit transform must be rejected");
+        // and the file is untouched by the failed attempt
+        assert_eq!(store.read_file("user").await.unwrap(), after);
+    }
+
+    /// Clones share the write lock: an RMW on a clone is serialized against
+    /// an RMW on the canonical store (the chat toolchain and the agent
+    /// toolchain each hold a clone). The observable contract here is that
+    /// both clones always see each other's committed state — with derived
+    /// Clone (fresh locks per instance) the interleaving below could lose
+    /// an update.
+    #[tokio::test]
+    async fn test_clones_share_write_lock_state() {
+        let (_temp, store) = create_test_store().await;
+        let clone = store.clone();
+
+        store.write_file("user", "base").await.unwrap();
+
+        // Interleaved appends through both handles; with per-instance locks
+        // the read in one modify could miss the other's in-flight write.
+        for i in 0..10 {
+            let via_clone = i % 2 == 0;
+            let handle = if via_clone { &clone } else { &store };
+            handle
+                .modify_file("user", |cur| format!("{}\n{}", cur, i))
+                .await
+                .unwrap();
+        }
+
+        let final_content = store.read_file("user").await.unwrap();
+        for i in 0..10 {
+            assert!(
+                final_content.contains(&format!("\n{}", i))
+                    || final_content.ends_with(&i.to_string()),
+                "line {} lost — clones are not serialized: {}",
+                i,
+                final_content
+            );
+        }
+        // clone sees the same file
+        assert_eq!(clone.read_file("user").await.unwrap(), final_content);
+    }
+
+    /// `modify_custom_file`: atomic RMW semantics + agent-scope + limit.
+    #[tokio::test]
+    async fn test_modify_custom_file() {
+        let (_temp, store) = create_test_store().await;
+
+        // Global scope: creates on demand.
+        let changed = store
+            .modify_custom_file(None, "patterns", |cur| {
+                assert!(cur.is_empty());
+                "## Patterns\n- temp normal".to_string()
+            })
+            .unwrap();
+        assert!(changed);
+        assert_eq!(
+            store.read_custom_file("patterns").unwrap(),
+            "## Patterns\n- temp normal"
+        );
+
+        // Agent scope lands in agents/{id}/custom/.
+        store
+            .modify_custom_file(Some("agent-1"), "notes", |_| "first".to_string())
+            .unwrap();
+        let merged = store
+            .modify_custom_file(Some("agent-1"), "notes", |cur| format!("{}\nsecond", cur))
+            .unwrap();
+        assert!(merged);
+        assert_eq!(
+            store.read_agent_custom_file("agent-1", "notes").unwrap(),
+            "first\nsecond"
+        );
+
+        // Unchanged → Ok(false). Over-limit → error, file untouched.
+        assert!(!store
+            .modify_custom_file(Some("agent-1"), "notes", |cur| cur.to_string())
+            .unwrap());
+        let before = store.read_agent_custom_file("agent-1", "notes").unwrap();
+        assert!(store
+            .modify_custom_file(Some("agent-1"), "notes", |cur| format!(
+                "{}{}",
+                cur,
+                "z".repeat(21_000)
+            ))
+            .is_err());
+        assert_eq!(
+            store.read_agent_custom_file("agent-1", "notes").unwrap(),
+            before
+        );
+    }
+
+    /// Agent IDs are path segments in `agents/{id}/...` joins — same
+    /// traversal standard as session IDs and custom names.
+    #[tokio::test]
+    async fn test_agent_id_validation_rejects_traversal() {
+        let (_temp, store) = create_test_store().await;
+        let long = "x".repeat(129);
+        for bad in ["../escape", "a/b", "a\\b", "", long.as_str()] {
+            assert!(
+                store.read_agent_custom_file(bad, "name").is_err(),
+                "accepted {bad:?}"
+            );
+            assert!(
+                store.clean_agent_dir(bad).is_err(),
+                "clean accepted {bad:?}"
+            );
+        }
+        assert!(store.read_agent_custom_file("normal-id", "name").is_ok());
+    }
+
+    /// Background marker writes self-heal past the char limit by evicting
+    /// ordinary bottom lines — never marker blocks, which the jobs
+    /// regenerate and which would corrupt if half-dropped.
+    #[tokio::test]
+    async fn test_marker_replace_self_heals_over_limit() {
+        let temp_dir = TempDir::new().unwrap();
+        // Small knowledge budget so the test content overflows it easily.
+        let config = MemoryConfig {
+            knowledge_char_limit: 220,
+            ..Default::default()
+        };
+        let store = MarkdownMemoryStore::with_config(temp_dir.path().to_path_buf(), config);
+        store.init().unwrap();
+
+        // Fill KNOWLEDGE.md near the limit with ordinary content.
+        let base = "# System Knowledge\n\n".to_string() + &"k".repeat(180);
+        store.write_file("knowledge", &base).await.unwrap();
+
+        // A marker section pushing the total past the limit.
+        let marker_body = "m".repeat(80);
+        store
+            .replace_marker_section("knowledge", "agent-summary", &marker_body)
+            .await
+            .unwrap();
+
+        let final_content = store.read_file("knowledge").await.unwrap();
+        assert!(
+            final_content.chars().count() <= 220,
+            "self-heal must land within the limit, got {}",
+            final_content.chars().count()
+        );
+        assert!(
+            final_content.contains("<!-- agent-summary -->"),
+            "marker block must survive eviction"
+        );
+        assert!(
+            final_content.contains(&marker_body),
+            "the fresh marker content must survive"
+        );
+        assert!(
+            final_content.chars().count() < base.chars().count() + marker_body.chars().count(),
+            "some ordinary content must have been evicted"
+        );
+    }
+
+    /// Unit level: pure eviction semantics with and without markers.
+    #[test]
+    fn test_evict_preserving_markers_unit() {
+        let content = "head\n- old1\n- old2\n\n<!-- keep -->\nblock body\n<!-- /keep -->\n";
+        // Budget must fit the marker block alone (~40 chars incl. tags and
+        // body) plus the surviving head — otherwise the fallback hard-truncates.
+        let out = evict_to_limit_preserving_markers(content, 45);
+        assert!(out.chars().count() <= 45);
+        assert!(out.contains("head"), "top content survives");
+        assert!(out.contains("<!-- keep -->") && out.contains("<!-- /keep -->"));
+        assert!(out.contains("block body"), "marker body is atomic");
+        assert!(!out.contains("old2"), "bottom ordinary lines evicted first");
+
+        // Markers alone over budget → hard truncate on a char boundary, no panic.
+        let huge = format!("<!-- m -->\n{}\n<!-- /m -->", "q".repeat(500));
+        let out = evict_to_limit_preserving_markers(&huge, 50);
+        assert!(out.chars().count() <= 50);
+
+        // Under limit → unchanged (single trailing newline normalized).
+        let small = "a\nb";
+        let out = evict_to_limit_preserving_markers(small, 100);
+        assert_eq!(out, "a\nb\n");
     }
 
     #[tokio::test]

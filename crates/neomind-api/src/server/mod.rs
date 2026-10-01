@@ -728,24 +728,30 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                     // Wait for system to stabilize
                     tokio::time::sleep(Duration::from_secs(30)).await;
 
-                    let config = MemoryConfig::load();
-                    let context_interval = config.system_context_interval_secs.max(60);
-                    let summary_interval = config.summary_interval_secs.max(600);
-
-                    let mut context_timer =
-                        tokio::time::interval(Duration::from_secs(context_interval));
-                    let mut summary_timer =
-                        tokio::time::interval(Duration::from_secs(summary_interval));
+                    // Both deadlines start "now", so the first gather and the
+                    // first summary run right after stabilization.
+                    let mut next_context_at = tokio::time::Instant::now();
+                    let mut next_summary_at = tokio::time::Instant::now();
 
                     tracing::info!(
-                        context_interval_secs = context_interval,
-                        summary_interval_secs = summary_interval,
-                        "System context background task started"
+                        "System context background task started (intervals hot-reload from memory config)"
                     );
 
                     loop {
+                        // Reload the config EVERY iteration so runtime changes
+                        // to the intervals take effect on the next tick. The
+                        // previous interval()-based timers captured both
+                        // intervals once at startup — while a comment inside
+                        // the tick claimed reloads worked.
+                        let config = MemoryConfig::load();
+                        let context_interval =
+                            Duration::from_secs(config.system_context_interval_secs.max(60));
+                        let summary_interval =
+                            Duration::from_secs(config.summary_interval_secs.max(600));
+
                         tokio::select! {
-                            _ = context_timer.tick() => {
+                            _ = tokio::time::sleep_until(next_context_at) => {
+                                next_context_at = tokio::time::Instant::now() + context_interval;
                                 let context = crate::server::system_context::gather_system_context(&ctx_state).await;
 
                                 if let Err(e) = ctx_state.agents.system_memory_store
@@ -755,12 +761,12 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                                     tracing::warn!(error = %e, "Failed to update system context");
                                 }
                             }
-                            _ = summary_timer.tick() => {
-                                // Reload config each tick to pick up runtime changes
-                                let current_config = MemoryConfig::load();
+                            _ = tokio::time::sleep_until(next_summary_at) => {
+                                next_summary_at = tokio::time::Instant::now() + summary_interval;
+
                                 let llm_result = async {
                                     let manager = neomind_agent::get_instance_manager().ok()?;
-                                    match &current_config.summary_backend_id {
+                                    match &config.summary_backend_id {
                                         Some(id) => manager.get_runtime(id).await.ok(),
                                         None => manager.get_active_runtime().await.ok(),
                                     }

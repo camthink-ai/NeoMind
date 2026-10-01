@@ -552,6 +552,15 @@ pub struct AgentNotify {
 
 /// How much history an agent carries into each run (2026-09-22 review —
 /// the memory axis made explicit, docs/designs/002 §3.5).
+///
+/// Scope of "stateless" (Tool): the JOURNAL NARRATIVE and knowledge-file
+/// AUTO-INIT are skipped — nothing that describes *past runs* enters the
+/// prompt. What still applies to a Tool agent: the user's standing
+/// instructions (`user_messages`) and knowledge files it has explicitly
+/// created via the memory tool (both are standards, not history — see
+/// `build_history_context`). If the product ever wants Tool to mean
+/// "fully blank slate", that is a change to `build_history_context`, not
+/// to this enum.
 #[derive(utoipa::ToSchema, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryMode {

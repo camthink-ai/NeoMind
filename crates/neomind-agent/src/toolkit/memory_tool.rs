@@ -379,6 +379,69 @@ impl MemoryTool {
             });
         }
     }
+
+    /// Atomic read-modify-write bridge for replace/remove on
+    /// user/knowledge/procedures: runs `op` over the file's current content
+    /// under the store's shared write lock, surfacing the operation's own
+    /// error (text not found) unchanged. Returns the new content's char
+    /// count. The previous read_file→write_file composition held the lock
+    /// only for the write half, so a background marker write landing
+    /// between the two halves was silently reverted.
+    async fn modify_persisted<F>(store: &MarkdownMemoryStore, target: &str, op: F) -> Result<usize>
+    where
+        F: Fn(&str) -> std::result::Result<String, ToolError>,
+    {
+        let mut op_err: Option<ToolError> = None;
+        let mut chars = 0usize;
+        store
+            .modify_file(target, |existing| match op(existing) {
+                Ok(new_content) => {
+                    chars = new_content.chars().count();
+                    new_content
+                }
+                Err(e) => {
+                    op_err = Some(e);
+                    existing.to_string()
+                }
+            })
+            .await
+            .map_err(|e| ToolError::Execution(e.to_string()))?;
+        match op_err {
+            Some(e) => Err(e),
+            None => Ok(chars),
+        }
+    }
+
+    /// Sync twin of [`modify_persisted`] for custom files (the custom-file
+    /// path is sync and uses the store's custom-write lock).
+    fn modify_custom_persisted<F>(
+        store: &MarkdownMemoryStore,
+        agent_id: Option<&str>,
+        name: &str,
+        op: F,
+    ) -> Result<usize>
+    where
+        F: Fn(&str) -> std::result::Result<String, ToolError>,
+    {
+        let mut op_err: Option<ToolError> = None;
+        let mut chars = 0usize;
+        store
+            .modify_custom_file(agent_id, name, |existing| match op(existing) {
+                Ok(new_content) => {
+                    chars = new_content.chars().count();
+                    new_content
+                }
+                Err(e) => {
+                    op_err = Some(e);
+                    existing.to_string()
+                }
+            })
+            .map_err(|e| ToolError::Execution(e.to_string()))?;
+        match op_err {
+            Some(e) => Err(e),
+            None => Ok(chars),
+        }
+    }
 }
 
 fn truncate_to(text: &str, max_chars: usize) -> String {
@@ -529,13 +592,25 @@ If a write exceeds the per-file limit, the error reports the exact limit — tru
                 let dedup = DedupProcessor::with_defaults();
 
                 let result = if let Some(custom_name) = Self::parse_custom_target(target) {
-                    let existing = self.read_custom(&store, agent_id.as_deref(), custom_name)?;
-                    // Merge new content into existing, deduplicating at the section level.
-                    // Without this, custom files grow quadratically (agent re-sends the
-                    // full pattern history every analysis) — user/knowledge targets are
-                    // protected by line-level dedup below, but custom files weren't.
-                    let merged = Self::merge_custom_content(&existing, content, &dedup);
-                    if merged.trim() == existing.trim() {
+                    // Atomic read-merge-write under the store's shared custom-write
+                    // lock, so a concurrent writer (another toolchain instance, the
+                    // background summarizer) cannot be silently reverted. The merge
+                    // deduplicates at the section level — without it custom files
+                    // grow quadratically (an agent re-sends its full pattern
+                    // history every analysis).
+                    let mut skipped = false;
+                    let mut merged_chars = 0usize;
+                    store.modify_custom_file(agent_id.as_deref(), custom_name, |existing| {
+                        let merged = Self::merge_custom_content(existing, content, &dedup);
+                        if merged.trim() == existing.trim() {
+                            skipped = true;
+                            existing.to_string()
+                        } else {
+                            merged_chars = merged.chars().count();
+                            merged
+                        }
+                    })?;
+                    if skipped {
                         return Ok(ToolOutput::success(serde_json::json!({
                             "message": format!(
                                 "Skipped: content duplicates existing sections in custom:{}",
@@ -543,40 +618,53 @@ If a write exceeds the per-file limit, the error reports the exact limit — tru
                             )
                         })));
                     }
-                    self.write_custom(&store, agent_id.as_deref(), custom_name, &merged)?;
-                    format!(
-                        "Added to custom:{} ({} chars)",
-                        custom_name,
-                        merged.chars().count()
-                    )
+                    format!("Added to custom:{} ({} chars)", custom_name, merged_chars)
                 } else {
                     match target {
                         "user" | "knowledge" | "procedures" => {
-                            let existing = store.read_file(target).await?;
-                            let existing_lines: Vec<String> = existing
-                                .lines()
-                                .filter(|l| l.trim().starts_with("- ["))
-                                .filter_map(|l| {
-                                    let trimmed = l.trim();
-                                    let after_date = trimmed.strip_prefix("- [")?;
-                                    let close_bracket = after_date.find(']')?;
-                                    let content_part = &after_date[close_bracket + 1..];
-                                    let cleaned = if let Some(idx) = content_part.rfind(" [importance:") {
-                                        &content_part[..idx]
-                                    } else {
-                                        content_part
-                                    };
-                                    Some(cleaned.trim().to_string())
+                            // Atomic read-dedup-append-write under the shared write
+                            // lock — the previous read_file→write_file pair could
+                            // revert a concurrent background marker write landing
+                            // between its two halves.
+                            let mut skip_sim: Option<f32> = None;
+                            let mut appended_chars = 0usize;
+                            store
+                                .modify_file(target, |existing| {
+                                    let existing_lines: Vec<String> = existing
+                                        .lines()
+                                        .filter(|l| l.trim().starts_with("- ["))
+                                        .filter_map(|l| {
+                                            let trimmed = l.trim();
+                                            let after_date = trimmed.strip_prefix("- [")?;
+                                            let close_bracket = after_date.find(']')?;
+                                            let content_part = &after_date[close_bracket + 1..];
+                                            let cleaned = if let Some(idx) =
+                                                content_part.rfind(" [importance:")
+                                            {
+                                                &content_part[..idx]
+                                            } else {
+                                                content_part
+                                            };
+                                            Some(cleaned.trim().to_string())
+                                        })
+                                        .collect();
+                                    if let Some((_, sim)) =
+                                        dedup.find_similar(content, &existing_lines)
+                                    {
+                                        skip_sim = Some(sim);
+                                        return existing.to_string();
+                                    }
+                                    let new_content = Self::append_content(existing, content);
+                                    appended_chars = new_content.chars().count();
+                                    new_content
                                 })
-                                .collect();
-                            if let Some((_, sim)) = dedup.find_similar(content, &existing_lines) {
+                                .await?;
+                            if let Some(sim) = skip_sim {
                                 return Ok(ToolOutput::success(serde_json::json!({
                                     "message": format!("Skipped: similar content already exists (similarity: {:.0}%)", sim * 100.0)
                                 })));
                             }
-                            let new_content = Self::append_content(&existing, content);
-                            store.write_file(target, &new_content).await?;
-                            format!("Added to {} ({} chars)", target, new_content.chars().count())
+                            format!("Added to {} ({} chars)", target, appended_chars)
                         }
                         "session" => {
                             let session_id = self.require_session_id().await?;
@@ -614,21 +702,21 @@ If a write exceeds the per-file limit, the error reports the exact limit — tru
                 let store = self.store.write().await;
 
                 let result = if let Some(custom_name) = Self::parse_custom_target(target) {
-                    let existing = self.read_custom(&store, agent_id.as_deref(), custom_name)?;
-                    let new_content = Self::replace_in_content(&existing, old_text, content)?;
-                    self.write_custom(&store, agent_id.as_deref(), custom_name, &new_content)?;
-                    format!(
-                        "Replaced in custom:{} ({} chars)",
+                    let new_chars = Self::modify_custom_persisted(
+                        &store,
+                        agent_id.as_deref(),
                         custom_name,
-                        new_content.chars().count()
-                    )
+                        |existing| Self::replace_in_content(existing, old_text, content),
+                    )?;
+                    format!("Replaced in custom:{} ({} chars)", custom_name, new_chars)
                 } else {
                     match target {
                         "user" | "knowledge" | "procedures" => {
-                            let existing = store.read_file(target).await?;
-                            let new_content = Self::replace_in_content(&existing, old_text, content)?;
-                            store.write_file(target, &new_content).await?;
-                            format!("Replaced in {} ({} chars)", target, new_content.chars().count())
+                            let new_chars = Self::modify_persisted(&store, target, |existing| {
+                                Self::replace_in_content(existing, old_text, content)
+                            })
+                            .await?;
+                            format!("Replaced in {} ({} chars)", target, new_chars)
                         }
                         "session" => {
                             let session_id = self.require_session_id().await?;
@@ -663,21 +751,21 @@ If a write exceeds the per-file limit, the error reports the exact limit — tru
                 let store = self.store.write().await;
 
                 let result = if let Some(custom_name) = Self::parse_custom_target(target) {
-                    let existing = self.read_custom(&store, agent_id.as_deref(), custom_name)?;
-                    let new_content = Self::remove_from_content(&existing, old_text)?;
-                    self.write_custom(&store, agent_id.as_deref(), custom_name, &new_content)?;
-                    format!(
-                        "Removed from custom:{} ({} chars)",
+                    let new_chars = Self::modify_custom_persisted(
+                        &store,
+                        agent_id.as_deref(),
                         custom_name,
-                        new_content.chars().count()
-                    )
+                        |existing| Self::remove_from_content(existing, old_text),
+                    )?;
+                    format!("Removed from custom:{} ({} chars)", custom_name, new_chars)
                 } else {
                     match target {
                         "user" | "knowledge" | "procedures" => {
-                            let existing = store.read_file(target).await?;
-                            let new_content = Self::remove_from_content(&existing, old_text)?;
-                            store.write_file(target, &new_content).await?;
-                            format!("Removed from {} ({} chars)", target, new_content.chars().count())
+                            let new_chars = Self::modify_persisted(&store, target, |existing| {
+                                Self::remove_from_content(existing, old_text)
+                            })
+                            .await?;
+                            format!("Removed from {} ({} chars)", target, new_chars)
                         }
                         "session" => {
                             let session_id = self.require_session_id().await?;

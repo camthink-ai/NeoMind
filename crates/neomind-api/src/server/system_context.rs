@@ -165,7 +165,10 @@ pub async fn summarize_chat_context(
     llm: &Arc<dyn LlmRuntime>,
     memory_store: &MarkdownMemoryStore,
 ) -> Result<(), String> {
-    // Get last 5 session IDs
+    // Get last 5 session IDs. list_sessions sorts by the session stamp,
+    // newest first — with UUID session IDs the old redb key order was a
+    // random-but-fixed permutation, so this take(5) kept summarizing the
+    // same arbitrary subset forever and never picked up new conversations.
     let session_ids = session_store
         .list_sessions()
         .map_err(|e| format!("Failed to list sessions: {}", e))?;
@@ -197,9 +200,14 @@ pub async fn summarize_chat_context(
         return Ok(());
     }
 
+    // English prompt with an explicit language-follow instruction: the
+    // summary lands in USER.md/KNOWLEDGE.md regardless of deployment
+    // locale, and a hard-coded Chinese prompt forced Chinese output on
+    // English-only deployments.
     let prompt = format!(
-        "分析以下对话记录，用2-3条要点总结用户关注的主题和使用偏好。\
-         每条以\"- \"开头。总长度不超过200字符。不要有额外解释。\n\n{}",
+        "Analyze the conversation logs below. Summarize in 2-3 bullet points (each starting with \"- \") \
+         the topics the user focuses on and their usage preferences. Total length must stay under 200 \
+         characters. Write in the same language as the user's messages. No extra explanations.\n\n{}",
         all_messages
     );
 
@@ -286,8 +294,9 @@ pub async fn summarize_agent_context(
     }
 
     let prompt = format!(
-        "分析以下AI Agent执行记录，总结关键发现和异常模式。\
-         每条以\"- \"开头。总长度不超过300字符。不要有额外解释。\n\n{}",
+        "Analyze the AI agent execution records below. Summarize in 2-3 bullet points (each starting \
+         with \"- \") the key findings and anomaly patterns across the agents. Total length must stay \
+         under 300 characters. Write in the same language as the outcome texts. No extra explanations.\n\n{}",
         agent_data
     );
 

@@ -391,45 +391,34 @@ pub async fn trigger_compress(State(state): State<ServerState>) -> Response {
     tracing::info!("Starting memory eviction request");
 
     let config = neomind_storage::MemoryConfig::load();
-    let store = (*state.agents.system_memory_store).clone();
+    // Clone the Arc handle, keeping identity with the canonical store the
+    // background jobs write through (store clones share the locks since the
+    // manual Clone, but the Arc leaves no room for future drift).
+    let store = state.agents.system_memory_store.clone();
 
-    // Evict user file to limit
-    let user_content = store.read_file("user").await.unwrap_or_default();
-    let user_result = evict_to_limit(&user_content, config.user_char_limit);
-    let mut total_evicted = 0;
-    if user_result.evicted {
-        if let Err(e) = store.write_file("user", &user_result.content).await {
-            tracing::warn!(error = %e, "Failed to write evicted user content");
-        } else {
-            total_evicted += user_result.lines_removed;
-        }
-    }
-
-    // Evict knowledge file to limit
-    let knowledge_content = store.read_file("knowledge").await.unwrap_or_default();
-    let knowledge_result = evict_to_limit(&knowledge_content, config.knowledge_char_limit);
-    if knowledge_result.evicted {
-        if let Err(e) = store
-            .write_file("knowledge", &knowledge_result.content)
-            .await
-        {
-            tracing::warn!(error = %e, "Failed to write evicted knowledge content");
-        } else {
-            total_evicted += knowledge_result.lines_removed;
-        }
-    }
-
-    // Evict procedures file to limit
-    let procedures_content = store.read_file("procedures").await.unwrap_or_default();
-    let procedures_result = evict_to_limit(&procedures_content, config.procedures_char_limit);
-    if procedures_result.evicted {
-        if let Err(e) = store
-            .write_file("procedures", &procedures_result.content)
-            .await
-        {
-            tracing::warn!(error = %e, "Failed to write evicted procedures content");
-        } else {
-            total_evicted += procedures_result.lines_removed;
+    let mut total_evicted = 0usize;
+    for (target, limit) in [
+        ("user", config.user_char_limit),
+        ("knowledge", config.knowledge_char_limit),
+        ("procedures", config.procedures_char_limit),
+    ] {
+        // Atomic read-evict-write under the shared write lock — a plain
+        // read_file→write_file pair could revert a concurrent background
+        // marker write landing between its two halves.
+        let mut lines_removed = 0usize;
+        let result = store
+            .modify_file(target, |current| {
+                let r = evict_to_limit(current, limit);
+                lines_removed = r.lines_removed;
+                r.content
+            })
+            .await;
+        match result {
+            Ok(true) => total_evicted += lines_removed,
+            Ok(false) => {} // within limit, nothing evicted
+            Err(e) => {
+                tracing::warn!(target, error = %e, "Failed to evict memory file");
+            }
         }
     }
 

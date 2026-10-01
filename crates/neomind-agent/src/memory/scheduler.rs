@@ -39,13 +39,14 @@ impl MemoryScheduler {
         let config = self.config.clone();
 
         self.job_handle = Some(tokio::spawn(async move {
-            // Run cleanup every 24 hours
+            // Run cleanup every 24 hours. interval()'s FIRST tick completes
+            // immediately, so the loop body runs once right away. (An earlier
+            // version consumed that immediate tick with an extra tick().await
+            // before the loop, silently delaying the first cleanup by a full
+            // day — the opposite of what its comment claimed.)
             let mut cleanup_timer = interval(Duration::from_secs(86400));
 
-            info!("Memory scheduler started (temp file cleanup every 24h)");
-
-            // Trigger first cleanup immediately
-            cleanup_timer.tick().await;
+            info!("Memory scheduler started (first cleanup now, then every 24h)");
 
             loop {
                 cleanup_timer.tick().await;
