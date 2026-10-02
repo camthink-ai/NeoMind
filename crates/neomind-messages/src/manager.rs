@@ -1265,6 +1265,125 @@ mod tests {
         assert_eq!(manager.list_messages().await.len(), 4);
     }
 
+    use crate::channels::MessageChannel;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A channel that ALWAYS fails — the retry loop must make exactly
+    /// 3 attempts (one transient 429 no longer drops the alert
+    /// permanently, and the retries themselves stay bounded).
+    struct AlwaysFailingChannel {
+        sends: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl MessageChannel for AlwaysFailingChannel {
+        fn name(&self) -> &str {
+            "always-fail"
+        }
+        fn channel_type(&self) -> &str {
+            "fail"
+        }
+        fn is_enabled(&self) -> bool {
+            true
+        }
+        async fn send(&self, _message: &Message) -> Result<()> {
+            self.sends.fetch_add(1, Ordering::SeqCst);
+            Err(Error::Other(anyhow::anyhow!("simulated 429")))
+        }
+    }
+
+    /// A channel that fails TWICE then succeeds — the retry loop must
+    /// recover the delivery on the third attempt.
+    struct FlakyChannel {
+        sends: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl MessageChannel for FlakyChannel {
+        fn name(&self) -> &str {
+            "flaky"
+        }
+        fn channel_type(&self) -> &str {
+            "flaky"
+        }
+        fn is_enabled(&self) -> bool {
+            true
+        }
+        async fn send(&self, _message: &Message) -> Result<()> {
+            let n = self.sends.fetch_add(1, Ordering::SeqCst);
+            if n < 2 {
+                Err(Error::Other(anyhow::anyhow!("transient blip")))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn channel_send_retries_three_times_then_gives_up() {
+        let manager = MessageManager::new();
+        let sends = Arc::new(AtomicUsize::new(0));
+        {
+            let registry = manager.channels.read().await;
+            registry
+                .register(Arc::new(AlwaysFailingChannel {
+                    sends: sends.clone(),
+                }))
+                .await;
+        }
+
+        let created = manager
+            .create_message(Message::alert(
+                MessageSeverity::Warning,
+                "Retry test".to_string(),
+                "body".to_string(),
+                "test".to_string(),
+            ))
+            .await;
+
+        // The message is stored and returned even when delivery fails.
+        assert!(
+            created.is_ok(),
+            "storage success must not fail with delivery"
+        );
+        // Backoff sleeps: 1s + 2s = 3s of waits between 3 attempts.
+        assert_eq!(
+            sends.load(Ordering::SeqCst),
+            3,
+            "exactly 3 attempts — bounded, not forever, not 1"
+        );
+    }
+
+    #[tokio::test]
+    async fn channel_send_recovers_after_transient_failures() {
+        let manager = MessageManager::new();
+        let sends = Arc::new(AtomicUsize::new(0));
+        {
+            let registry = manager.channels.read().await;
+            registry
+                .register(Arc::new(FlakyChannel {
+                    sends: sends.clone(),
+                }))
+                .await;
+        }
+
+        manager
+            .create_message(Message::alert(
+                MessageSeverity::Warning,
+                "Flaky test".to_string(),
+                "body".to_string(),
+                "test".to_string(),
+            ))
+            .await
+            .expect("create succeeds");
+
+        assert_eq!(
+            sends.load(Ordering::SeqCst),
+            3,
+            "two failures then success on attempt 3 — recovered, not dropped"
+        );
+    }
+
     /// Delivery must fan out concurrently. Both channels here block until the
     /// other one has entered `send()`, so a sequential loop deadlocks and the
     /// timeout fires — which is exactly what one slow channel used to do to

@@ -426,3 +426,84 @@ async fn an_explicit_notify_target_is_not_overwritten() {
     assert_eq!(agent["notify"]["channels"], json!(["webhook:ops"]));
     assert_eq!(agent["notify"]["on"], json!("always"));
 }
+
+/// The event listener must IGNORE virtual metrics (`ai:<agent>:<field>` /
+/// transform aliases): an agent listening on a wildcard — or on another
+/// agent's output — used to be re-triggered by its own publish, forming an
+/// unbounded self/mutual-trigger loop that burned an LLM call every
+/// cooldown expiry. Real-device metrics still trigger.
+///
+/// Drives the REAL spawned listener (`init_agent_events`) against the REAL
+/// event bus of the test server state.
+#[tokio::test]
+async fn virtual_metrics_do_not_retrigger_event_agents() {
+    let state = create_test_server_state().await;
+    state.init_agent_events().await;
+    // The listener subscribes from a spawned task — give it a beat before
+    // publishing, or the broadcast delivers to nobody.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    // An event agent listening on ANY temp reading from the device.
+    let id = create_agent_with(
+        &state,
+        json!({
+            "schedule": {
+                "schedule_type": "event",
+                // The API DTO carries the filter as a JSON STRING (the
+                // polymorphic parse layer lives in storage).
+                "event_filter": "{\"any\":[{\"type\":\"device\",\"id\":\"dev-virt\",\"field\":\"temp\"}]}"
+            },
+            "execution_mode": "free"
+        }),
+    )
+    .await;
+
+    let bus = state.event_bus().expect("test state has an event bus");
+
+    // 1) A VIRTUAL metric for the watched source must NOT run the agent.
+    bus.publish(neomind_core::NeoMindEvent::DeviceMetric {
+        device_id: "dev-virt".to_string(),
+        metric: "temp".to_string(),
+        value: neomind_core::MetricValue::Float(42.0),
+        timestamp: chrono::Utc::now().timestamp(),
+        quality: None,
+        is_virtual: Some(true),
+    })
+    .await;
+
+    // 2) A REAL metric must (the agent has no LLM configured, so the run
+    // FAILS fast — but stats still count the execution attempt).
+    bus.publish(neomind_core::NeoMindEvent::DeviceMetric {
+        device_id: "dev-virt".to_string(),
+        metric: "temp".to_string(),
+        value: neomind_core::MetricValue::Float(41.0),
+        timestamp: chrono::Utc::now().timestamp(),
+        quality: None,
+        is_virtual: None,
+    })
+    .await;
+
+    // Poll for the real event to land (the listener is async); assert both
+    // directions with one wait.
+    let mut ran = 0u32;
+    for _ in 0..100 {
+        ran = read_back(&state, &id).await["stats"]["total_executions"]
+            .as_u64()
+            .unwrap_or(0) as u32;
+        if ran >= 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(ran >= 1, "a real metric must trigger the event agent");
+    // Give any would-be virtual trigger plenty of time to (wrongly) land,
+    // then require exactly the real one.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let final_count = read_back(&state, &id).await["stats"]["total_executions"]
+        .as_u64()
+        .unwrap_or(0);
+    assert_eq!(
+        final_count, 1,
+        "exactly ONE execution: the virtual metric must not re-trigger (got {final_count})"
+    );
+}

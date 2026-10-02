@@ -1067,3 +1067,102 @@ async fn test_migration_repairs_source_keys_it_mangled() {
         "and no longer stranded under the mangled key"
     );
 }
+
+/// The latest-cache budget is BYTE-weighted: a tiny entry-count budget
+/// must hold proportionally few LARGE (image-sized) values. Pre-weigher,
+/// the cap counted entries — a camera metric could park gigabytes.
+#[tokio::test]
+async fn latest_cache_budget_is_byte_weighted() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = TimeSeriesConfig {
+        // 100 KiB budget — enough for ~5 of our 18-KiB payloads, but only
+        // if bytes are what's counted.
+        max_cache_size: 100 * 1024,
+        ..Default::default()
+    };
+    let store = TimeSeriesStore::with_config(dir.path().join("ts.redb"), config).unwrap();
+
+    let big = "x".repeat(18 * 1024);
+    for i in 0..20 {
+        store
+            .write(
+                "dev",
+                &format!("metric-{i}"),
+                DataPoint {
+                    timestamp: 1_000 + i as i64,
+                    value: serde_json::Value::String(big.clone()),
+                    quality: None,
+                    metadata: None,
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    // 20 × 18 KiB = 360 KiB of cached values against a 100 KiB budget.
+    // Entry-count accounting would keep all 20; byte accounting keeps ~5.
+    // moka evicts lazily — run pending maintenance before counting.
+    store.latest_cache.run_pending_tasks();
+    let cached = store.cache_size();
+    assert!(
+        cached <= 6,
+        "byte-weighted budget (100 KiB) must not hold {cached} entries of 18 KiB each"
+    );
+}
+
+/// A failed persist must retire the optimistically-cached "latest": after
+/// invalidation, query_latest falls through to the DISK value instead of
+/// serving a phantom that never landed.
+#[tokio::test]
+async fn invalidate_latest_restores_disk_truth() {
+    let dir = tempfile::tempdir().unwrap();
+    let store =
+        TimeSeriesStore::with_config(dir.path().join("ts.redb"), TimeSeriesConfig::default())
+            .unwrap();
+
+    // v1 lands on disk (and cache).
+    store
+        .write(
+            "dev",
+            "temp",
+            DataPoint {
+                timestamp: 1_000,
+                value: serde_json::Value::String("v1".into()),
+                quality: None,
+                metadata: None,
+            },
+        )
+        .await
+        .unwrap();
+    store.flush().unwrap();
+
+    // Simulate the optimistic update for v2 whose flush then failed:
+    // cache says v2, disk still says v1.
+    store
+        .update_cache(
+            "dev",
+            "temp",
+            DataPoint {
+                timestamp: 2_000,
+                value: serde_json::Value::String("v2-phantom".into()),
+                quality: None,
+                metadata: None,
+            },
+        )
+        .await;
+    let phantom = store.query_latest("dev", "temp").await.unwrap().unwrap();
+    assert_eq!(
+        phantom.value,
+        serde_json::json!("v2-phantom"),
+        "precondition: the optimistic cache entry is live"
+    );
+
+    // The flush-failure path's remedy: invalidate, and latest reads disk.
+    store.invalidate_latest("dev", "temp");
+    let after = store.query_latest("dev", "temp").await.unwrap().unwrap();
+    assert_eq!(
+        after.value,
+        serde_json::json!("v1"),
+        "after invalidation, latest must report the persisted truth, not the phantom"
+    );
+}

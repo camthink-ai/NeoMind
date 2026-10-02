@@ -837,6 +837,81 @@ async fn concurrent_same_agent_execution_is_rejected() {
     );
 }
 
+/// A FAILED run must never publish: the structured executor's promise is
+/// "failure keeps the old value" (design: a scanner whose camera went
+/// offline keeps its last good reading rather than publishing from
+/// memory). Publish used to run BEFORE the journaling step, so a run that
+/// failed after inference still served "fresh" values to dashboards/rules.
+/// The observable contract, whatever stage fails: inference error → no
+/// publish, the previously-published value stands, journal records the
+/// failure.
+#[tokio::test]
+async fn failed_run_publishes_nothing_and_keeps_the_old_value() {
+    let (mut executor, mut agent, _registry) = build_harness().await;
+    let ts = neomind_storage::TimeSeriesStore::memory().expect("memory timeseries");
+    executor.set_time_series_storage(ts.clone());
+    agent.execution_mode = neomind_storage::agents::ExecutionMode::Structured;
+    agent.output_schema = Some(vec![neomind_storage::OperatorField {
+        name: "anomaly_count".into(),
+        field_type: neomind_storage::OperatorFieldType::Number,
+        unit: None,
+        description: None,
+    }]);
+    let data = vec![neomind_storage::DataCollected {
+        source: "cam-01".into(),
+        data_type: "values.parts".into(),
+        values: serde_json::json!({"parts": 3}),
+        timestamp: 0,
+    }];
+
+    // 1) A good run publishes the first value.
+    let rt: Arc<dyn LlmRuntime> = Arc::new(MockLlmRuntime::new(vec![MockResponse::text(
+        r#"{"anomaly_count": 2}"#,
+    )]));
+    executor.set_llm_runtime(rt).await;
+    executor
+        .execute_structured("exec-ok", &agent, data.clone())
+        .await
+        .expect("first run succeeds");
+    ts.flush().unwrap();
+
+    // 2) A failing run (inference error) must NOT touch the published value.
+    let rt_err: Arc<dyn LlmRuntime> = Arc::new(MockLlmRuntime::new(vec![MockResponse::error(
+        "backend down",
+    )]));
+    executor.set_llm_runtime(rt_err).await;
+    let failed = executor.execute_structured("exec-fail", &agent, data).await;
+    assert!(failed.is_err(), "an inference error must fail the run");
+    ts.flush().unwrap();
+
+    let latest = ts
+        .query_latest(&format!("ai:{}", agent.id), "anomaly_count")
+        .await
+        .expect("query succeeds")
+        .expect("the old value must still stand");
+    assert_eq!(
+        point_value_as_i64(&latest),
+        Some(2),
+        "the failed run must not publish over the last good value"
+    );
+    assert_eq!(
+        latest
+            .metadata
+            .as_ref()
+            .and_then(|m| m.get("execution_id"))
+            .and_then(|v| v.as_str()),
+        Some("exec-ok"),
+        "the standing value must still point at the run that produced it"
+    );
+}
+
+/// Pull a small integer out of a published point value, for assertions.
+fn point_value_as_i64(p: &neomind_storage::DataPoint) -> Option<i64> {
+    p.value
+        .as_i64()
+        .or_else(|| p.value.as_f64().map(|f| f as i64))
+}
+
 /// Seed an event agent whose filter uses the M2 `all` form: the agent runs
 /// only once BOTH sources have reported inside the window.
 async fn build_event_agent_with_filter(filter: String) -> (AgentExecutor, AiAgent) {

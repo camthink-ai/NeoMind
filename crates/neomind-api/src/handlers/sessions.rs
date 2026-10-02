@@ -1364,6 +1364,25 @@ async fn send_session_history(
     }
 }
 
+/// May `principal` attach to `session_id`? The FIRST attachment claims the
+/// session (stamps the owner); a different principal is refused. Unclaimed
+/// sessions (created before ownership tracking, or outside WS) are
+/// claimable exactly once. Extracted so the ownership decision itself is
+/// unit-testable without a live WebSocket.
+fn session_attach_allowed(
+    manager: &neomind_agent::SessionManager,
+    sid: &str,
+    principal: &str,
+) -> bool {
+    match manager.session_owner(sid) {
+        Some(owner) if owner != principal => false,
+        _ => {
+            manager.set_session_owner(sid, principal);
+            true
+        }
+    }
+}
+
 /// Handle WebSocket connection.
 async fn handle_ws_socket(
     mut socket: WebSocket,
@@ -1376,16 +1395,7 @@ async fn handle_ws_socket(
     // user's session> and the socket would replay its entire history. An
     // unstamped session is claimable exactly once (first attachment stamps).
     let session_allowed = |sid: &str, principal: &str| -> bool {
-        match state.agents.session_manager.session_owner(sid) {
-            Some(owner) if owner != principal => false,
-            _ => {
-                state
-                    .agents
-                    .session_manager
-                    .set_session_owner(sid, principal);
-                true
-            }
-        }
+        session_attach_allowed(&state.agents.session_manager, sid, principal)
     };
     // Create connection metadata for tracking state and heartbeat
     let conn_meta = create_connection_metadata();
@@ -2027,6 +2037,40 @@ mod detached_delivery_tests {
 #[cfg(test)]
 mod history_pagination_tests {
     use super::*;
+
+    /// The WS ownership decision: first attachment claims, same principal
+    /// re-attaches, a different principal is refused. Pre-ownership, any
+    /// valid token could attach any sessionId and replay its history.
+    #[tokio::test]
+    async fn session_ownership_claims_once_and_refuses_others() {
+        let manager = neomind_agent::SessionManager::memory();
+        let sid = manager.create_session().await.unwrap();
+
+        // Unclaimed → first principal claims and attaches.
+        assert!(
+            session_attach_allowed(&manager, &sid, "user:alice"),
+            "first attachment must claim the session"
+        );
+        // Same principal keeps attaching.
+        assert!(
+            session_attach_allowed(&manager, &sid, "user:alice"),
+            "the owner re-attaches freely"
+        );
+        // Different principal is refused — no history replay.
+        assert!(
+            !session_attach_allowed(&manager, &sid, "user:bob"),
+            "another principal must not attach"
+        );
+        // Refusal must not RE-STAMP the owner to the attacker.
+        assert_eq!(
+            manager.session_owner(&sid).as_deref(),
+            Some("user:alice"),
+            "a refused attach must not steal ownership"
+        );
+        // API-key connections share the "apikey" bucket (single-tenant
+        // admin credential): they attach as one principal.
+        assert!(!session_attach_allowed(&manager, &sid, "apikey"));
+    }
 
     fn msg(role: &str, content: &str) -> AgentMessage {
         match role {
