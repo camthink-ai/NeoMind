@@ -42,9 +42,12 @@ impl TimeSeriesStore {
         }
         let _guard = RetentionGuard(&self.retention_in_progress);
 
-        // DashMap and RwLock access - no async needed for DashMap
-        let policy = self.retention_policy.read().await;
-        // metrics_info is now DashMap, iterate directly when needed
+        // CLONE the policy so the read lock releases at the end of this
+        // statement: holding it across the whole cleanup (full-table scan +
+        // per-metric deletes — minutes on a ~1GB store) blocked
+        // PUT /settings/retention for the entire run. The clone is tiny;
+        // one cycle running on a just-superseded policy is harmless.
+        let policy = self.retention_policy.read().await.clone();
 
         let mut total_removed: u64 = 0;
         let mut metrics_cleaned: std::collections::HashSet<String> =
@@ -67,17 +70,35 @@ impl TimeSeriesStore {
             Err(e) => return Err(Error::Storage(format!("Failed to open table: {}", e))),
         };
 
-        // Collect all (source_id, metric) pairs
-        let mut metric_pairs: std::collections::HashSet<(String, String)> =
-            std::collections::HashSet::new();
-        let start_key = ("", "", i64::MIN);
-        let end_key = ("\u{FF}", "\u{FF}", i64::MAX);
-
-        for result in table.range(start_key..=end_key)? {
-            let (key, _) = result?;
-            let (source_id, metric, _) = key.value();
-            metric_pairs.insert((source_id.to_string(), metric.to_string()));
-        }
+        // Collect all (source_id, metric) pairs. [fake-async fix] the
+        // full-table key scan is blocking redb work — on a ~1GB store it
+        // stalled a tokio worker for seconds every retention cycle. The
+        // whole open-scan-collect runs on the blocking pool; only the
+        // result set crosses back.
+        let db = self.db.clone();
+        let metric_pairs: std::collections::HashSet<(String, String)> =
+            tokio::task::spawn_blocking(move || -> crate::Result<_> {
+                let read_txn = db.begin_read()?;
+                let table = match read_txn.open_table(TIMESERIES_TABLE) {
+                    Ok(t) => t,
+                    Err(redb::TableError::TableDoesNotExist(_)) => {
+                        return Ok(Default::default());
+                    }
+                    Err(e) => return Err(Error::Storage(format!("Failed to open table: {}", e))),
+                };
+                let mut pairs: std::collections::HashSet<(String, String)> =
+                    std::collections::HashSet::new();
+                let start_key = ("", "", i64::MIN);
+                let end_key = ("\u{FF}", "\u{FF}", i64::MAX);
+                for result in table.range(start_key..=end_key)? {
+                    let (key, _) = result?;
+                    let (source_id, metric, _) = key.value();
+                    pairs.insert((source_id.to_string(), metric.to_string()));
+                }
+                Ok(pairs)
+            })
+            .await
+            .map_err(|e| Error::Storage(format!("retention scan join error: {}", e)))??;
         drop(read_txn);
         drop(table);
 
@@ -244,6 +265,9 @@ pub struct TimeSeriesConfig {
     /// Cache TTL for latest values
     pub cache_ttl: Duration,
     /// Maximum cache size
+    /// Latest-value cache budget. BYTE-weighted since the camera-era fix
+    /// (each entry is charged its serialized value size) — tune with image
+    /// payload sizes in mind, not entry counts.
     pub max_cache_size: usize,
     /// Maximum concurrent writes
     pub max_concurrent_writes: usize,
@@ -259,7 +283,10 @@ impl Default for TimeSeriesConfig {
         Self {
             retention_policy: RetentionPolicy::default(),
             cache_ttl: Duration::from_secs(60), // 1 minute
-            max_cache_size: 1000,
+            // 32 MiB of byte-weighted latest cache: roughly 4-8 camera
+            // frames' worth of base64, or hundreds of thousands of scalar
+            // readings — sized for memory, not entry count.
+            max_cache_size: 32 * 1024 * 1024,
             max_concurrent_writes: 10,
             write_buffer_size: 200,
             write_buffer_flush_interval: Duration::from_millis(500),

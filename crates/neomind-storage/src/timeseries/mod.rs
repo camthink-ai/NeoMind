@@ -702,14 +702,26 @@ impl TimeSeriesStore {
         let store = Arc::new(TimeSeriesStore {
             db: Arc::new(db),
             metrics_info: DashMap::with_capacity(64), // Pre-allocate for typical metrics
+            // BYTE-weighted, not entry-counted: a count cap of N entries
+            // held up to N IMAGE values (multi-MB base64 each) — potential
+            // GB-scale RSS on camera deployments. The weigher charges each
+            // entry its serialized size, so the cap bounds memory whatever
+            // the payload mix.
             latest_cache: Cache::builder()
                 .max_capacity(config.max_cache_size as u64)
+                .weigher(|_key, entry: &CacheEntry| {
+                    const KEY_OVERHEAD: u32 = 64;
+                    let value_bytes = serde_json::to_vec(&entry.point.value)
+                        .map(|v| v.len() as u32)
+                        .unwrap_or(u32::MAX);
+                    KEY_OVERHEAD.saturating_add(value_bytes)
+                })
                 .build(),
             retention_policy: RwLock::new(config.retention_policy),
             stats: Arc::new(RwLock::new(PerformanceStats::default())),
             write_semaphore: Arc::new(Semaphore::new(config.max_concurrent_writes)),
             cache_ttl: config.cache_ttl,
-            path: path_str,
+            path: path_str.clone(),
             write_buffer: WriteBuffer::new(config.write_buffer_size),
             metrics_initialized: AtomicBool::new(false),
             retention_in_progress: AtomicBool::new(false),
@@ -720,7 +732,17 @@ impl TimeSeriesStore {
             .write_buffer
             .start_flush_task(store.clone(), config.write_buffer_flush_interval);
 
-        *TIMESERIES_STORE_SINGLETON.lock() = Some(store.clone());
+        // The singleton slot is ONLY for the FILE-BACKED default store.
+        // from_db is also the constructor for `memory()` and test stores,
+        // which used to evict the live telemetry store from the slot — the
+        // next file-backed open with a non-matching path string would then
+        // construct a SECOND Database handle on the same redb file and die
+        // on the file lock, with an opaque error. Correctness no longer
+        // depends on call ORDER: in-memory stores simply never claim the
+        // slot.
+        if path_str != ":memory:" && !path_str.is_empty() {
+            *TIMESERIES_STORE_SINGLETON.lock() = Some(store.clone());
+        }
         Ok(store)
     }
 }

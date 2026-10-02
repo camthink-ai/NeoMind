@@ -65,7 +65,9 @@ impl TimeSeriesStore {
 
         // Fast path: write ALL groups in a single redb transaction (one fsync)
         // on the common no-poison path. If it fails for any reason — e.g. a
-        // poison payload (value exceeding redb's max_value_size) in any group —
+        // poison payload in any group (redb 2.x accepts values up to 3 GiB,
+        // so "exceeds max_value_size" is no longer the trigger; think
+        // serialization/IO failures and genuinely malformed entries) —
         // the whole transaction rolls back and we fall through to the per-group
         // isolation loop below, so a single bad point still only affects its
         // own group. Worst case (fast path always fails) behaves exactly like
@@ -81,7 +83,7 @@ impl TimeSeriesStore {
         // Write each group in a single transaction. On failure, isolate the
         // offending point by retrying per-point in its own transaction —
         // otherwise a single poison payload (e.g. a value exceeding redb's
-        // max_value_size) aborts the whole (source, metric) batch every flush
+        // unwritable payload) aborts the whole (source, metric) batch every flush
         // and blocks fresh writes for that metric forever. Only the genuinely
         // unwritable points are re-queued.
         let mut requeue: Vec<BufferedWrite> = Vec::new();
@@ -377,36 +379,51 @@ impl TimeSeriesStore {
                     .await
                     .map_err(|_| Error::Storage("Semaphore closed".to_string()))?;
                 let start = Instant::now();
-                let mut written = 0;
 
-                let write_txn = db.begin_write()?;
-                {
-                    let mut table = write_txn.open_table(TIMESERIES_TABLE)?;
-
-                    for (metric, points) in &metrics {
-                        for point in points {
-                            let key = (&*source_id, &**metric, point.timestamp);
-                            let value = serde_json::to_vec(point)?;
-                            table.insert(key, &*value)?;
-                            written += 1;
+                // [fake-async fix] begin_write/commit take the database
+                // write lock and fsync — blocking work that used to run
+                // directly on the tokio worker (up to write_semaphore
+                // tasks queueing on one single-writer lock, stalling the
+                // runtime). Same treatment write_batch already got: run on
+                // the blocking pool; cache inserts are sync (moka) and ride
+                // along, stats stay async.
+                let written: usize = {
+                    let cache = cache.clone();
+                    tokio::task::spawn_blocking(move || -> crate::Result<usize> {
+                        let mut written = 0usize;
+                        let write_txn = db.begin_write()?;
+                        {
+                            let mut table = write_txn.open_table(TIMESERIES_TABLE)?;
+                            for (metric, points) in &metrics {
+                                for point in points {
+                                    let key = (&*source_id, &**metric, point.timestamp);
+                                    let value = serde_json::to_vec(point)?;
+                                    table.insert(key, &*value)?;
+                                    written += 1;
+                                }
+                            }
                         }
-                    }
-                }
-                write_txn.commit()?;
+                        write_txn.commit()?;
 
-                // Update cache for latest values - moka handles LRU eviction automatically
-                for (metric, points) in &metrics {
-                    if let Some(last) = points.last() {
-                        let key = (source_id.clone(), metric.clone());
-                        cache.insert(
-                            key,
-                            CacheEntry {
-                                point: last.clone(),
-                                cached_at: Instant::now(),
-                            },
-                        );
-                    }
-                }
+                        // Update cache for latest values — moka handles LRU
+                        // eviction automatically.
+                        for (metric, points) in &metrics {
+                            if let Some(last) = points.last() {
+                                let key = (source_id.clone(), metric.clone());
+                                cache.insert(
+                                    key,
+                                    CacheEntry {
+                                        point: last.clone(),
+                                        cached_at: Instant::now(),
+                                    },
+                                );
+                            }
+                        }
+                        Ok(written)
+                    })
+                    .await
+                    .map_err(|e| Error::Storage(format!("write join error: {}", e)))??
+                };
 
                 // Record stats - RwLock requires async
                 let mut s = stats.write().await;
