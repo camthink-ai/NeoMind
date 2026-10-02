@@ -30,7 +30,6 @@ pub use state::DeviceStatusUpdate;
 pub use types::{ServerState, MAX_REQUEST_BODY_SIZE};
 
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -358,9 +357,11 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                     // conversation or agent journal survive — deleting them on the
                     // image schedule turned history markdown into 404s.
                     if let Some(image_retention_hours) = config.image_retention {
-                        let data_dir = std::env::var("NEOMIND_DATA_DIR")
-                            .unwrap_or_else(|_| "data".to_string());
-                        let images_dir = PathBuf::from(&data_dir).join("images");
+                        // Canonical data dir (paths::data_dir treats an
+                        // EMPTY env var as unset; a raw env read here treated
+                        // it as "" and joined "./images").
+                        let images_dir =
+                            neomind_core::paths::data_dir().join("images");
 
                         let protected =
                             crate::server::image_cleanup::collect_referenced_image_files(

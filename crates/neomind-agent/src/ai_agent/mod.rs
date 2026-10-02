@@ -526,14 +526,11 @@ impl AiAgentManager {
     /// (process died), not a flaw in the agent itself — the user expects the
     /// agent to keep running on its schedule after a restart.
     ///
-    /// Also reactivates agents in `Error` status. Without this, any agent
-    /// that landed in `Error` before the restart (transient failure, config
-    /// bug, OOM, etc.) is permanently dropped from the scheduler — the user
-    /// has to manually reactivate each one from the UI, with no log clue
-    /// about why it stopped. After restart, all `Active` + `Error` agents
-    /// are re-scheduled; if the failure condition still exists the agent
-    /// will fail again and land back in `Error`, surfacing the problem in
-    /// logs/UI rather than silently disappearing.
+    /// Also REPORTS agents in `Error` status at startup (kept in Error — the
+    /// circuit breaker probes them once per cooldown window; the older
+    /// behavior mass-reactivated every failing agent on restart, defeating
+    /// that gate and burning a full run per tick on persistently-broken
+    /// agents).
     async fn reset_stale_executing_agents(&self) {
         use neomind_storage::{AgentFilter, AgentStatus};
 
@@ -590,8 +587,37 @@ impl AiAgentManager {
             );
         }
 
-        // Reactivate agents in Error status so they get rescheduled.
-        // See function docstring for rationale.
+        // [changed] Error agents are NOT mass-reactivated anymore. The
+        // rationale was "after restart everything reschedules and a
+        // persistent failure lands back in Error, visibly" — but that
+        // defeated the circuit-breaker gate (one probe per cooldown
+        // window): every restart revived every failing agent to Active,
+        // and a persistently-broken one burned a full run per tick until
+        // it failed its way back to Error. Leaving them in Error preserves
+        // the verdict AND keeps the probe cadence; the operator re-enables
+        // from the UI when the underlying condition is fixed. We still
+        // LOG them so a restart surfaces what is degraded.
+        let errored = match self
+            .list_agents(AgentFilter {
+                status: Some(AgentStatus::Error),
+                ..Default::default()
+            })
+            .await
+        {
+            Ok(agents) => agents,
+            Err(e) => {
+                tracing::warn!(
+                    category = "agent",
+                    error = %e,
+                    "Failed to scan for Error agents; skipping report"
+                );
+                return;
+            }
+        };
+
+        if errored.is_empty() {
+            return;
+        }
         let errored = match self
             .list_agents(AgentFilter {
                 status: Some(AgentStatus::Error),
@@ -615,31 +641,18 @@ impl AiAgentManager {
         }
 
         let count = errored.len();
-        tracing::info!(
+        tracing::warn!(
             error_count = count,
-            "Reactivating agents in Error status at startup (will re-fail if condition persists)"
+            "Agents starting in Error status (kept — the circuit breaker probes once per cooldown; re-enable from the UI once fixed)"
         );
 
         for agent in &errored {
-            let id = agent.id.clone();
-            if let Err(e) = self
-                .executor
-                .store()
-                .update_agent_status(&id, AgentStatus::Active, None)
-                .await
-            {
-                tracing::warn!(
-                    agent_id = %id,
-                    error = %e,
-                    "Failed to reactivate Error agent"
-                );
-            } else {
-                tracing::info!(
-                    agent_id = %id,
-                    name = %agent.name,
-                    "Reactivated Error agent to Active"
-                );
-            }
+            tracing::info!(
+                agent_id = %agent.id,
+                name = %agent.name,
+                error = ?agent.error_message,
+                "Agent in Error at startup"
+            );
         }
 
         tracing::info!(

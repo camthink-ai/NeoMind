@@ -912,6 +912,14 @@ impl AgentScheduler {
                     return Ok((i64::MAX, None));
                 }
                 let interval = schedule.interval_seconds.unwrap_or(300);
+                // [no-catch-up, visibly] Rescheduling after downtime starts
+                // from NOW on purpose (a catch-up burst would be wrong);
+                // this trace makes the policy observable instead of silent.
+                tracing::trace!(
+                    interval_secs = interval,
+                    next_at = now.timestamp() + interval as i64,
+                    "Interval schedule anchored to now (downtime ticks are skipped, not caught up)"
+                );
                 Ok((now.timestamp() + interval as i64, None))
             }
             ScheduleType::Cron => {

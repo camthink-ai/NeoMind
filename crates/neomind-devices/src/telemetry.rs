@@ -64,7 +64,13 @@ impl DataPoint {
                 let json_arr: Vec<Value> = arr.iter().map(Self::metric_value_to_json).collect();
                 Value::Array(json_arr)
             }
-            MetricValue::Binary(data) => Value::String(BASE64.encode(data)),
+            // Tagged on write so read-back is EXACT: the old plain base64
+            // string relied on a decode heuristic that also swallowed any
+            // ordinary string which happened to be valid base64 with
+            // non-printable bytes (hashes, serials → typed Binary on read).
+            MetricValue::Binary(data) => serde_json::json!({
+                "$binary": BASE64.encode(data),
+            }),
             MetricValue::Null => Value::Null,
         }
     }
@@ -79,6 +85,17 @@ impl DataPoint {
                     n.as_f64().map(MetricValue::Float)
                 }
             }
+            // New form: explicit $binary tag (exact round-trip).
+            Value::Object(map) if map.len() == 1 && map.contains_key("$binary") => map
+                .get("$binary")
+                .and_then(|v| v.as_str())
+                .and_then(|s| BASE64.decode(s).ok())
+                .map(MetricValue::Binary),
+            // Legacy form: plain string. Image URLs stay strings by guard;
+            // everything else keeps the decode heuristic ONLY if it looks
+            // like actual binary — a hash/serial that decodes cleanly to
+            // non-printables used to come back typed Binary (rule/frontend
+            // saw a different type than the writer sent).
             Value::String(s) => {
                 // Image URLs are stored as plain strings — don't base64 decode.
                 // Explicit guard (don't rely on base64-decode failure for URLs).
@@ -86,11 +103,21 @@ impl DataPoint {
                 if s.starts_with("/api/images/") {
                     return Some(MetricValue::String(s.clone()));
                 }
-                // Try to decode as base64 first (for binary data)
-                if let Ok(decoded) = BASE64.decode(s) {
-                    // Check if it looks like valid binary (not just a regular string that happens to be valid base64)
-                    if decoded.iter().any(|&b: &u8| !(32..=126).contains(&b)) {
-                        return Some(MetricValue::Binary(decoded));
+                // LEGACY plain-base64 blobs only (new Binary writes carry
+                // the $binary tag). The heuristic now requires a real blob
+                // shape: long enough to be a payload and MOSTLY non-printable
+                // when decoded — "any non-printable byte" let a 4-char
+                // hash/serial fragment flip the type on read-back.
+                if s.len() >= 16
+                    && s.chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '=' || c == '/')
+                {
+                    if let Ok(decoded) = BASE64.decode(s) {
+                        let non_printable =
+                            decoded.iter().filter(|&b| !(32..=126).contains(b)).count();
+                        if decoded.len() >= 8 && non_printable * 2 > decoded.len() {
+                            return Some(MetricValue::Binary(decoded));
+                        }
                     }
                 }
                 Some(MetricValue::String(s.clone()))
@@ -776,6 +803,40 @@ impl MetricCache {
 
 #[cfg(test)]
 mod tests {
+
+    /// Binary round-trips EXACTLY via the $binary tag — and an ordinary
+    /// string that happens to be valid base64 with non-printable bytes
+    /// (hash/serial) stays a String instead of coming back typed Binary.
+    #[test]
+    fn binary_round_trips_and_base64_lookalike_strings_stay_strings() {
+        use super::*;
+        let bin = DataPoint {
+            timestamp: 1,
+            value: MetricValue::Binary(vec![0u8, 1, 2, 0xFF]),
+            quality: None,
+            metadata: None,
+        };
+        let stored = bin.to_storage();
+        let back = DataPoint::from_storage(stored).unwrap();
+        assert!(matches!(back.value, MetricValue::Binary(ref b) if b == &vec![0u8, 1, 2, 0xFF]));
+
+        // A pure-ASCII string that base64-decodes to non-printables used to
+        // be re-typed Binary on read; the write-side tag keeps plain
+        // strings plain.
+        let text = DataPoint {
+            timestamp: 1,
+            value: MetricValue::String("/wA=".to_string()), // decodes to {0xFF, 0x00}
+            quality: None,
+            metadata: None,
+        };
+        let stored = text.to_storage();
+        let back = DataPoint::from_storage(stored).unwrap();
+        assert!(
+            matches!(back.value, MetricValue::String(_)),
+            "plain strings must never be re-typed Binary on read-back"
+        );
+    }
+
     use super::*;
 
     #[test]

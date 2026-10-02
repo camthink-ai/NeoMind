@@ -94,6 +94,20 @@ pub fn estimate_message_tokens(message: &crate::agent::AgentMessage) -> usize {
 /// conversations don't accrue this cost forever.
 const IMAGE_TOKEN_ESTIMATE: usize = 1024;
 
+/// Context-scaled per-image estimate. A single flat 1024 under-counts
+/// 2K-token vision payloads by 2× exactly where it hurts most — an 8–16K
+/// window, where two mispriced images eat a quarter of the budget the
+/// compactor thinks it still has. Larger windows keep the 1024 midpoint:
+/// the absolute error matters less and over-pricing images there would
+/// evict history unnecessarily.
+pub fn image_token_estimate(max_context: usize) -> usize {
+    if max_context <= 16_000 {
+        1600
+    } else {
+        IMAGE_TOKEN_ESTIMATE
+    }
+}
+
 /// Estimate total prompt tokens for an outbound chat request.
 ///
 /// Uses [`estimate_tokens`] — the same per-language heuristic the rest of the
@@ -111,6 +125,24 @@ pub fn estimate_prompt_tokens(
     history: &[neomind_core::message::Message],
     system_prompt: &str,
     user_message: &str,
+) -> usize {
+    estimate_prompt_tokens_with_image_cost(
+        history,
+        system_prompt,
+        user_message,
+        IMAGE_TOKEN_ESTIMATE,
+    )
+}
+
+/// [`estimate_prompt_tokens`] with a caller-supplied per-image cost — pass
+/// [`image_token_estimate(max_context)`] where the backend's real window is
+/// known, so small windows price images at their true 2K-token weight
+/// instead of the 1024 midpoint.
+pub fn estimate_prompt_tokens_with_image_cost(
+    history: &[neomind_core::message::Message],
+    system_prompt: &str,
+    user_message: &str,
+    image_cost: usize,
 ) -> usize {
     let mut tokens = estimate_tokens(system_prompt) + estimate_tokens(user_message);
     let mut images = 0usize;
@@ -130,7 +162,7 @@ pub fn estimate_prompt_tokens(
         }
     }
 
-    tokens + images * IMAGE_TOKEN_ESTIMATE
+    tokens + images * image_cost
 }
 
 /// Truncate to the longest prefix whose `estimate_tokens` is ≤ `max_tokens`.

@@ -31,20 +31,14 @@ pub struct HeartbeatState {
     pub last_ping_at: Instant,
     /// 上次收到 pong 的时间
     pub last_pong_at: Instant,
-    /// 错过的 pong 计数
-    pub missed_pongs: u32,
-    /// 最大允许错过的 pong 数
-    pub max_missed: u32,
 }
 
 impl HeartbeatState {
-    pub fn new(max_missed: u32) -> Self {
+    pub fn new(_max_missed: u32) -> Self {
         let now = Instant::now();
         Self {
             last_ping_at: now,
             last_pong_at: now,
-            missed_pongs: 0,
-            max_missed,
         }
     }
 
@@ -56,7 +50,6 @@ impl HeartbeatState {
     /// 记录收到 pong
     pub fn record_pong(&mut self) {
         self.last_pong_at = Instant::now();
-        self.missed_pongs = 0;
     }
 
     /// 检查是否应该发送 ping
@@ -78,16 +71,6 @@ impl HeartbeatState {
             // 上次 pong 时间超过超时阈值
             self.last_pong_at.elapsed() > timeout
         }
-    }
-
-    /// 检查是否错过了太多 pong
-    pub fn too_many_missed(&self) -> bool {
-        self.missed_pongs >= self.max_missed
-    }
-
-    /// 增加错过计数
-    pub fn increment_missed(&mut self) {
-        self.missed_pongs = self.missed_pongs.saturating_add(1);
     }
 
     /// 获取距离上次 pong 的时间
@@ -215,8 +198,9 @@ mod tests {
     #[test]
     fn test_heartbeat_state_init() {
         let state = HeartbeatState::new(3);
-        assert_eq!(state.missed_pongs, 0);
-        assert_eq!(state.max_missed, 3);
+        // (missed-pongs counters were removed with the any-frame liveness
+        // rework; construction and timestamps are what remain.)
+        assert!(state.time_since_last_pong().as_secs() < 5);
     }
 
     #[test]
@@ -225,15 +209,6 @@ mod tests {
         std::thread::sleep(Duration::from_millis(10));
         state.record_ping();
         assert!(state.time_since_last_ping().as_millis() < 20);
-    }
-
-    #[test]
-    fn test_heartbeat_record_pong() {
-        let mut state = HeartbeatState::new(3);
-        state.missed_pongs = 2;
-        state.record_pong();
-        assert_eq!(state.missed_pongs, 0);
-        assert!(state.time_since_last_pong().as_millis() < 20);
     }
 
     #[test]
@@ -263,19 +238,6 @@ mod tests {
         // 等待50ms，对于50ms超时应该超时
         std::thread::sleep(Duration::from_millis(55));
         assert!(state.is_timeout(Duration::from_millis(50)));
-    }
-
-    #[test]
-    fn test_heartbeat_too_many_missed() {
-        let mut state = HeartbeatState::new(3);
-        assert!(!state.too_many_missed());
-
-        state.increment_missed();
-        state.increment_missed();
-        assert!(!state.too_many_missed());
-
-        state.increment_missed();
-        assert!(state.too_many_missed());
     }
 
     #[tokio::test]

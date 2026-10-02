@@ -1974,10 +1974,15 @@ impl LlmInterface {
             // guard reflects real token density — not a bytes*0.8 approximation
             // that over-counted English (~3×) and tripped the guard far too
             // eagerly on text-heavy prompts.
-            let estimated_tokens = crate::agent::tokenizer::estimate_prompt_tokens(
+            let estimated_tokens = crate::agent::tokenizer::estimate_prompt_tokens_with_image_cost(
                 history.unwrap_or(&[]),
                 &system_prompt,
                 &user_message,
+                // Price images by the backend's REAL window: on an 8–16K
+                // model a 1024/image estimate under-counts 2K-token vision
+                // payloads 2×, exactly where two images eat a quarter of a
+                // budget the guard believes is still roomy.
+                crate::agent::tokenizer::image_token_estimate(self.max_context_length().await),
             );
 
             if estimated_tokens > 18000 {

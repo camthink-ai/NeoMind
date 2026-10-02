@@ -615,11 +615,16 @@ impl MqttAdapter {
                                 }
 
                                 for metric in result.metrics {
-                                    // Convert Binary to URL before storage + event bus (fork point)
+                                    // Convert Binary to URL before storage + event bus (fork point).
+                                    // Filename timestamp = the DATA POINT's client timestamp
+                                    // (point_ts_fb) — this branch used to stamp the filename with
+                                    // server receive time while storing the point under the
+                                    // client time, so backfilled frames produced image URLs and
+                                    // data points whose timestamps disagreed (dedup/debug pain).
                                     let value = Self::convert_binary_to_url(
                                         device_id,
                                         &metric.name,
-                                        now.timestamp(),
+                                        point_ts_fb,
                                         metric.value.clone(),
                                         data_dir,
                                     );

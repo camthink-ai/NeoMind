@@ -329,7 +329,14 @@ impl MessageManager {
             ),
         };
         {
-            let cache = self.dedup_cache.read().await;
+            // Check-and-MARK in ONE lock scope: the old read-check here and
+            // the write-back AFTER the fan-out left a window in which two
+            // concurrent same-key alerts both passed dedup and both pushed
+            // (a window the concurrent fan-out rework lengthened to the sum
+            // of channel timeouts). Marking up front closes it; the mark
+            // also covers the send duration, which is exactly the interval
+            // a duplicate would arrive over.
+            let cache = self.dedup_cache.write().await;
             if let Some(last_sent) = cache.get(&dedup_key) {
                 let elapsed = (chrono::Utc::now() - *last_sent).num_seconds();
                 if elapsed < DEDUP_INTERVAL_SECS {
@@ -350,6 +357,13 @@ impl MessageManager {
                     return Ok(message);
                 }
             }
+        }
+
+        // Reserve the key NOW (covers the in-flight send window): concurrent
+        // same-key alerts see the mark and take the dedup path above.
+        {
+            let mut cache = self.dedup_cache.write().await;
+            cache.insert(dedup_key.clone(), chrono::Utc::now());
         }
 
         // Store in memory for all message types (Notification and DataPush)
