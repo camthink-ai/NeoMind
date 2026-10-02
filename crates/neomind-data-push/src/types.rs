@@ -207,6 +207,9 @@ pub struct PushStats {
     pub total_deliveries: u64,
     pub successful_deliveries: u64,
     pub failed_deliveries: u64,
+    /// Events dropped because the in-flight delivery cap was exhausted
+    /// (slow endpoint) — visible loss, previously only in logs.
+    pub dropped_backpressure: u64,
 }
 
 fn default_true() -> bool {

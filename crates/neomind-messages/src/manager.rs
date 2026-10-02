@@ -252,6 +252,10 @@ impl MessageManager {
             timestamp: chrono::DateTime::from_timestamp(stored.timestamp, 0)
                 .unwrap_or_else(chrono::Utc::now),
             status: MessageStatus::from_string(&stored.status).unwrap_or(MessageStatus::Active),
+            // Hydrate the audit trail back from storage.
+            acknowledged_at: stored.acknowledged_at,
+            acknowledged_by: stored.acknowledged_by,
+            resolved_at: stored.resolved_at,
             metadata: stored.metadata,
             tags: stored.tags.unwrap_or_default(),
             target_channels: None,
@@ -276,9 +280,11 @@ impl MessageManager {
             },
             metadata: msg.metadata.clone(),
             timestamp: msg.timestamp.timestamp(),
-            acknowledged_at: None,
-            resolved_at: None,
-            acknowledged_by: None,
+            // Audit trail: these used to be nulled on EVERY store round-trip,
+            // so "who acknowledged this and when" never survived persistence.
+            acknowledged_at: msg.acknowledged_at,
+            resolved_at: msg.resolved_at,
+            acknowledged_by: msg.acknowledged_by.clone(),
         }
     }
 
@@ -620,7 +626,12 @@ impl MessageManager {
             let message = messages
                 .get_mut(id)
                 .ok_or_else(|| Error::NotFound(format!("Message not found: {}", id)))?;
-            message.mark_false_positive();
+            if !message.mark_false_positive() {
+                return Err(Error::Validation(format!(
+                    "cannot mark message {} as false positive in status {:?}",
+                    id, message.status
+                )));
+            }
             Self::message_to_stored(message)
         };
 
@@ -641,7 +652,15 @@ impl MessageManager {
             let message = messages
                 .get_mut(id)
                 .ok_or_else(|| Error::NotFound(format!("Message not found: {}", id)))?;
-            message.acknowledge();
+            if !message.acknowledge() {
+                // Illegal transition (e.g. already Resolved/FalsePositive) —
+                // refuse instead of silently overwriting the status.
+                return Err(Error::Validation(format!(
+                    "cannot acknowledge message {} in status {:?}",
+                    id, message.status
+                )));
+            }
+            message.acknowledged_by = Some("api".to_string());
             Self::message_to_stored(message)
         };
 
@@ -675,7 +694,12 @@ impl MessageManager {
             let message = messages
                 .get_mut(id)
                 .ok_or_else(|| Error::NotFound(format!("Message not found: {}", id)))?;
-            message.resolve();
+            if !message.resolve() {
+                return Err(Error::Validation(format!(
+                    "cannot resolve message {} in status {:?}",
+                    id, message.status
+                )));
+            }
             Self::message_to_stored(message)
         };
 
@@ -706,7 +730,12 @@ impl MessageManager {
             let message = messages
                 .get_mut(id)
                 .ok_or_else(|| Error::NotFound(format!("Message not found: {}", id)))?;
-            message.archive();
+            if !message.archive() {
+                return Err(Error::Validation(format!(
+                    "cannot archive message {} in status {:?}",
+                    id, message.status
+                )));
+            }
             Self::message_to_stored(message)
         };
 
@@ -804,9 +833,12 @@ impl MessageManager {
 
             for id in ids {
                 if let Some(message) = messages.get_mut(id) {
-                    message.resolve();
-                    count += 1;
-                    to_persist.push(Self::message_to_stored(message));
+                    // Guarded transition: an already-Resolved/FalsePositive
+                    // entry is skipped, not counted as resolved.
+                    if message.resolve() {
+                        count += 1;
+                        to_persist.push(Self::message_to_stored(message));
+                    }
                 }
             }
             (count, to_persist)

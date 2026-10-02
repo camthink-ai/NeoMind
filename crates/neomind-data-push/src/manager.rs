@@ -297,14 +297,22 @@ impl PushManager {
         self.store.list_delivery_logs(target_id, limit, offset)
     }
 
-    /// Get aggregated push statistics.
+    /// Get aggregated push statistics. Delivery numbers come from the
+    /// process-wide counters the scheduler maintains — they used to be
+    /// ..Default::default(), permanently zero, making the stats endpoint
+    /// decorative.
     pub fn get_stats(&self) -> Result<PushStats> {
+        use std::sync::atomic::Ordering::Relaxed;
         let targets = self.store.list_targets()?;
         let active = targets.iter().filter(|t| t.enabled).count();
+        let c = crate::scheduler::delivery_counters();
         Ok(PushStats {
             total_targets: targets.len(),
             active_targets: active,
-            ..Default::default()
+            total_deliveries: c.total.load(Relaxed),
+            successful_deliveries: c.success.load(Relaxed),
+            failed_deliveries: c.failed.load(Relaxed),
+            dropped_backpressure: c.dropped_backpressure.load(Relaxed),
         })
     }
 

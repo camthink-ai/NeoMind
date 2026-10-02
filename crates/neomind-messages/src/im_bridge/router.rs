@@ -33,6 +33,11 @@ pub struct InboundMessage {
     pub timestamp: i64,
 }
 
+/// Upper bound for the msg_id dedup set (see `seen`).
+const SEEN_CAP: usize = 10_000;
+/// Upper bound for the per-chat lock table before pruning idle entries.
+const CHAT_LOCKS_CAP: usize = 1_000;
+
 pub struct ImRouter {
     pub registry: ImBridgeRegistry,
     store: Arc<ImSessionStore>,
@@ -40,7 +45,9 @@ pub struct ImRouter {
     default_agent: DefaultAgentResolver,
     /// `None` = 允许所有（生产环境必须配置为 `Some`）。
     allowlist: Mutex<Option<HashSet<String>>>,
-    /// msg_id 去重。
+    /// msg_id 去重。带容量上限：每条入站消息的 id 曾永久驻留（进程生命
+    /// 周期内无界内存）；到上限时整表重建只保留现有条目并记一条 warn
+    /// （去重窗口本来就该短——Telegram 重投发生在秒级，不是天级）。
     seen: Mutex<HashSet<String>>,
     /// per-chat 串行锁。
     chat_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
@@ -140,6 +147,16 @@ impl ImRouter {
         // 2) msg_id 去重（同一 msg_id 只处理一次）。锁在 await 前显式释放。
         {
             let mut seen = self.seen.lock().await;
+            // Bounded: at the cap, drop the whole set (redelivery windows
+            // are seconds, not days — a full reset risks one duplicate at
+            // worst, while unbounded growth risks the box).
+            if seen.len() >= SEEN_CAP {
+                tracing::warn!(
+                    cap = SEEN_CAP,
+                    "im_router seen-set at capacity — resetting (oldest ids forgotten)"
+                );
+                seen.clear();
+            }
             if !seen.insert(m.msg_id.clone()) {
                 return;
             }
@@ -200,6 +217,9 @@ impl ImRouter {
                                 )
                                 .await;
                         }
+                        // Redelivery must be able to reach us once an agent
+                        // exists — forget this msg_id.
+                        self.unsee(&m.msg_id).await;
                         return;
                     }
                 };
@@ -207,6 +227,7 @@ impl ImRouter {
                     Ok(s) => s,
                     Err(e) => {
                         tracing::error!(error=%e, "create_session failed");
+                        self.unsee(&m.msg_id).await;
                         return;
                     }
                 };
@@ -214,12 +235,14 @@ impl ImRouter {
                     Ok(r) => r,
                     Err(e) => {
                         tracing::error!(error=%e, "im_session create failed");
+                        self.unsee(&m.msg_id).await;
                         return;
                     }
                 }
             }
             Err(e) => {
                 tracing::error!(error=%e, "im_session lookup failed");
+                self.unsee(&m.msg_id).await;
                 return;
             }
         };
@@ -275,10 +298,22 @@ impl ImRouter {
         }
     }
 
-    /// 获取（或创建）per-chat 串行锁。
+    /// 撤销一条 msg_id 的"已见"标记。处理失败（无默认 agent、会话创建失败、
+    /// 映射写失败）时调用：msg_id 在任何处理发生前就进了 seen，若不撤销，
+    /// Telegram 的重投会被去重表拦下——用户的消息永远得不到响应也无人重试。
+    async fn unsee(&self, msg_id: &str) {
+        self.seen.lock().await.remove(msg_id);
+    }
+
+    /// 获取（或创建）per-chat 串行锁。顺手修剪无持有者的条目——锁表曾经
+    /// 只增不减（每个聊天过的 chat 一条，进程生命周期内常驻）；只有本表
+    /// 持有 Arc（strong_count == 1）说明没有在途对话在用它，可安全移除。
     async fn chat_lock_for(&self, platform: &ImPlatform, chat_id: &str) -> Arc<Mutex<()>> {
         let k = format!("{}:{}", platform.as_str(), chat_id);
         let mut g = self.chat_locks.lock().await;
+        if g.len() >= CHAT_LOCKS_CAP {
+            g.retain(|_, lock| Arc::strong_count(lock) > 1);
+        }
         g.entry(k)
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone()

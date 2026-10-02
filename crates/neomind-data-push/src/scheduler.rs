@@ -131,6 +131,36 @@ enum ScheduleInfo {
 }
 
 /// Manages running scheduled tasks for push targets.
+/// Process-wide delivery counters backing `/api/data-push/stats`. The old
+/// get_stats() left these ..Default::default() — the endpoint reported
+/// targets but every delivery number was permanently zero, so a slow
+/// endpoint silently dropping frames was invisible.
+#[derive(Default)]
+pub(crate) struct DeliveryCounters {
+    pub total: std::sync::atomic::AtomicU64,
+    pub success: std::sync::atomic::AtomicU64,
+    pub failed: std::sync::atomic::AtomicU64,
+    pub dropped_backpressure: std::sync::atomic::AtomicU64,
+}
+
+static DELIVERY_COUNTERS: std::sync::OnceLock<DeliveryCounters> = std::sync::OnceLock::new();
+
+/// Access the process-wide delivery counters.
+pub(crate) fn delivery_counters() -> &'static DeliveryCounters {
+    DELIVERY_COUNTERS.get_or_init(DeliveryCounters::default)
+}
+
+fn record_delivery_outcome(success: bool) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let c = delivery_counters();
+    c.total.fetch_add(1, Relaxed);
+    if success {
+        c.success.fetch_add(1, Relaxed);
+    } else {
+        c.failed.fetch_add(1, Relaxed);
+    }
+}
+
 pub struct PushScheduler {
     store: Arc<DataPushStore>,
     event_bus: Option<Arc<EventBus>>,
@@ -369,6 +399,9 @@ impl PushScheduler {
                                                         dropped_under_backpressure
                                                             .record_drop()
                                                     {
+                                                        delivery_counters()
+                                                            .dropped_backpressure
+                                                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                                         tracing::warn!(
                                                             target_id = %target.id,
                                                             dropped_in_window = total,
@@ -772,6 +805,7 @@ async fn deliver_with_retry(
             Ok(()) => {
                 log.status = DeliveryStatus::Success;
                 log.completed_at = Some(chrono::Utc::now().timestamp());
+                record_delivery_outcome(matches!(log.status, DeliveryStatus::Success));
                 if let Err(e) = store.save_delivery_log(&log) {
                     tracing::warn!(target: "neomind::data_push", error = %e, "Delivery-log persist failed — audit trail diverges from actual delivery state");
                 }
@@ -797,6 +831,7 @@ async fn deliver_with_retry(
                 log.error = Some(scrub_credentials(&e.to_string()));
                 if attempt < max_retries {
                     log.status = DeliveryStatus::Retrying;
+                    record_delivery_outcome(matches!(log.status, DeliveryStatus::Success));
                     if let Err(e) = store.save_delivery_log(&log) {
                         tracing::warn!(target: "neomind::data_push", error = %e, "Delivery-log persist failed — audit trail diverges from actual delivery state");
                     }
@@ -817,6 +852,7 @@ async fn deliver_with_retry(
                             e
                         )));
                         log.completed_at = Some(chrono::Utc::now().timestamp());
+                        record_delivery_outcome(matches!(log.status, DeliveryStatus::Success));
                         if let Err(e) = store.save_delivery_log(&log) {
                             tracing::warn!(target: "neomind::data_push", error = %e, "Delivery-log persist failed — audit trail diverges from actual delivery state");
                         }
@@ -833,6 +869,7 @@ async fn deliver_with_retry(
                 } else {
                     log.status = DeliveryStatus::Failed;
                     log.completed_at = Some(chrono::Utc::now().timestamp());
+                    record_delivery_outcome(matches!(log.status, DeliveryStatus::Success));
                     if let Err(e) = store.save_delivery_log(&log) {
                         tracing::warn!(target: "neomind::data_push", error = %e, "Delivery-log persist failed — audit trail diverges from actual delivery state");
                     }
@@ -1055,6 +1092,7 @@ async fn flush_batch(
             Ok(()) => {
                 log.status = DeliveryStatus::Success;
                 log.completed_at = Some(chrono::Utc::now().timestamp());
+                record_delivery_outcome(matches!(log.status, DeliveryStatus::Success));
                 if let Err(e) = store.save_delivery_log(&log) {
                     tracing::warn!(target: "neomind::data_push", error = %e, "Delivery-log persist failed — audit trail diverges from actual delivery state");
                 }
@@ -1085,6 +1123,7 @@ async fn flush_batch(
                 log.error = Some(scrub_credentials(&e.to_string()));
                 if attempt < max_retries {
                     log.status = DeliveryStatus::Retrying;
+                    record_delivery_outcome(matches!(log.status, DeliveryStatus::Success));
                     if let Err(e) = store.save_delivery_log(&log) {
                         tracing::warn!(target: "neomind::data_push", error = %e, "Delivery-log persist failed — audit trail diverges from actual delivery state");
                     }
@@ -1106,6 +1145,7 @@ async fn flush_batch(
                             e
                         )));
                         log.completed_at = Some(chrono::Utc::now().timestamp());
+                        record_delivery_outcome(matches!(log.status, DeliveryStatus::Success));
                         if let Err(e) = store.save_delivery_log(&log) {
                             tracing::warn!(target: "neomind::data_push", error = %e, "Delivery-log persist failed — audit trail diverges from actual delivery state");
                         }
@@ -1124,6 +1164,7 @@ async fn flush_batch(
                 } else {
                     log.status = DeliveryStatus::Failed;
                     log.completed_at = Some(chrono::Utc::now().timestamp());
+                    record_delivery_outcome(matches!(log.status, DeliveryStatus::Success));
                     if let Err(e) = store.save_delivery_log(&log) {
                         tracing::warn!(target: "neomind::data_push", error = %e, "Delivery-log persist failed — audit trail diverges from actual delivery state");
                     }

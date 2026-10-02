@@ -249,6 +249,12 @@ pub struct Message {
         deserialize_with = "MessageStatus::deserialize"
     )]
     pub status: MessageStatus,
+    /// When/by whom this alert was acknowledged — persisted since the
+    /// state-machine guard rework (these used to exist only in the stored
+    /// row and were nulled on every store round-trip).
+    pub acknowledged_at: Option<i64>,
+    pub acknowledged_by: Option<String>,
+    pub resolved_at: Option<i64>,
     /// Additional metadata
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
@@ -284,6 +290,9 @@ impl Message {
             source_type: "system".to_string(),
             timestamp: now,
             status: MessageStatus::Active,
+            acknowledged_at: None,
+            acknowledged_by: None,
+            resolved_at: None,
             metadata: None,
             target_channels: None,
             tags: Vec::new(),
@@ -366,27 +375,60 @@ impl Message {
     }
 
     /// Acknowledge the message.
-    pub fn acknowledge(&mut self) {
+    /// Acknowledge the message — only from Active. Illegal transitions are
+    /// REJECTED (return false, status untouched): a Resolved alert could be
+    /// demoted back to Acknowledged, and an ack/resolve on a FalsePositive
+    /// SILENTLY DESTROYED the feedback-loop sample (the false-alarm
+    /// statistics key on that status).
+    pub fn acknowledge(&mut self) -> bool {
+        if self.status != MessageStatus::Active {
+            return false;
+        }
         self.status = MessageStatus::Acknowledged;
+        self.acknowledged_at = Some(chrono::Utc::now().timestamp());
+        true
     }
 
-    /// Resolve the message.
-    pub fn resolve(&mut self) {
+    /// Resolve the message — from Active or Acknowledged.
+    pub fn resolve(&mut self) -> bool {
+        if !matches!(
+            self.status,
+            MessageStatus::Active | MessageStatus::Acknowledged
+        ) {
+            return false;
+        }
         self.status = MessageStatus::Resolved;
+        self.resolved_at = Some(chrono::Utc::now().timestamp());
+        true
     }
 
-    /// Mark this alert as a false positive.
-    ///
-    /// The verdict the feedback loop counts: 002 §3.4 turns "this should not
-    /// have fired" into a correction sample, and enough of them into a
-    /// suggested threshold change.
-    pub fn mark_false_positive(&mut self) {
+    /// Mark this alert as a false positive — from Active or Acknowledged.
+    /// Terminal: the verdict the feedback loop counts (002 §3.4 turns "this
+    /// should not have fired" into a correction sample, and enough of them
+    /// into a suggested threshold change), so it must not be reversible by
+    /// a late ack.
+    pub fn mark_false_positive(&mut self) -> bool {
+        if !matches!(
+            self.status,
+            MessageStatus::Active | MessageStatus::Acknowledged
+        ) {
+            return false;
+        }
         self.status = MessageStatus::FalsePositive;
+        true
     }
 
-    /// Archive the message.
-    pub fn archive(&mut self) {
+    /// Archive the message — allowed from any non-archived status, but
+    /// never out of FalsePositive (same sample-protection reason).
+    pub fn archive(&mut self) -> bool {
+        if matches!(
+            self.status,
+            MessageStatus::Archived | MessageStatus::FalsePositive
+        ) {
+            return false;
+        }
         self.status = MessageStatus::Archived;
+        true
     }
 
     /// Check if the message is active.

@@ -206,6 +206,14 @@ impl ImBridge for TelegramBridge {
                             if let Some((chat_id, sender_id, text, msg_id)) = parse_message(u) {
                                 // ack 时机：publish 成功（≥1 订阅者）才推进 offset，
                                 // 确保事件入 bus；失败则下轮重收，避免静默丢消息。
+                                // 真实时间戳：update.message.date 是 Telegram 侧的
+                                // 发送时间（Unix 秒）；拿不到再用本地时钟——恒 0 会让
+                                // 下游按时间排序/展示的路径拿到 1970。
+                                let ts = u
+                                    .get("message")
+                                    .and_then(|m| m.get("date"))
+                                    .and_then(|d| d.as_i64())
+                                    .unwrap_or_else(|| chrono::Utc::now().timestamp());
                                 let published = bus
                                     .publish(neomind_core::event::NeoMindEvent::ImMessageReceived {
                                         platform: "telegram".into(),
@@ -213,7 +221,7 @@ impl ImBridge for TelegramBridge {
                                         sender_id,
                                         text,
                                         msg_id,
-                                        timestamp: 0,
+                                        timestamp: ts,
                                     })
                                     .await;
                                 if published {
