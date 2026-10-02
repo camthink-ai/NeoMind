@@ -722,17 +722,25 @@ impl AgentScheduler {
                                             drop(_backend_permit);
                                             drop(_permit);
                                             tokio::time::sleep(backoff).await;
-                                            // Re-acquire before the retry (best
-                                            // effort; closed semaphore ends the
-                                            // attempt — the next tick retries).
-                                            let _permit = match semaphore_clone.acquire().await {
-                                                Ok(p) => p,
-                                                Err(_) => return,
-                                            };
-                                            let _backend_permit = match backend_sem.acquire().await {
-                                                Ok(p) => p,
-                                                Err(_) => return,
-                                            };
+                                            // Re-acquire before the retry, with the
+                                            // SAME bounded wait as the initial
+                                            // acquisition — an unbounded wait here
+                                            // would re-introduce the slot-squatting
+                                            // the budget exists to prevent.
+                                            let _permit =
+                                                match tokio::time::timeout(PERMIT_WAIT_BUDGET, semaphore_clone.acquire())
+                                                    .await
+                                                {
+                                                    Ok(Ok(p)) => p,
+                                                    _ => return,
+                                                };
+                                            let _backend_permit =
+                                                match tokio::time::timeout(PERMIT_WAIT_BUDGET, backend_sem.acquire())
+                                                    .await
+                                                {
+                                                    Ok(Ok(p)) => p,
+                                                    _ => return,
+                                                };
 
                                             match executor.execute_agent(agent, None, None).await {
                                                 Ok(retry_record) => {
