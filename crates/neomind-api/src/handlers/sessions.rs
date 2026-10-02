@@ -1474,7 +1474,7 @@ async fn handle_ws_socket(
                                     }
                                 }
 
-                                if let Ok(chat_req) = serde_json::from_str::<ChatRequest>(&text) {
+                                if let Ok(mut chat_req) = serde_json::from_str::<ChatRequest>(&text) {
                                     // Check for cancel request
                                     if chat_req.message == "__CANCEL__" {
                                         tracing::info!("Received cancel request from client");
@@ -1620,11 +1620,17 @@ async fn handle_ws_socket(
 
                                     if has_images {
                                         // Process multimodal message with images - now with streaming support!
-                                        let images: Vec<String> = chat_req.images
-                                            .as_ref()
-                                            .unwrap_or(&vec![])
-                                            .iter()
-                                            .map(|img| img.data.clone())
+                                        // [copy-avoidance] take() the images out of
+                                        // the request instead of cloning every base64
+                                        // payload — a single 5MB photo used to be
+                                        // duplicated here before the pipeline's own
+                                        // copies even started.
+                                        let images: Vec<String> = chat_req
+                                            .images
+                                            .take()
+                                            .unwrap_or_default()
+                                            .into_iter()
+                                            .map(|img| img.data)
                                             .collect();
 
                                         let backend_id_str = backend_id.map(|s| s.to_string());
@@ -1653,7 +1659,11 @@ async fn handle_ws_socket(
                                             chat_req.message.clone()
                                         };
 
-                                        // Use streaming for multimodal messages
+                                        // Use streaming for multimodal messages.
+                                        // The clone here is the ONE deliberate copy:
+                                        // `images` must stay alive for the
+                                        // non-streaming fallback below if stream
+                                        // setup fails.
                                         match task_state.agents.session_manager.process_message_multimodal_with_backend_stream(
                                             &task_session_id,
                                             &final_message,

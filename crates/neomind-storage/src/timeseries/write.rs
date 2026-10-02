@@ -396,6 +396,12 @@ impl TimeSeriesStore {
                             let mut table = write_txn.open_table(TIMESERIES_TABLE)?;
                             for (metric, points) in &metrics {
                                 for point in points {
+                                    // Same-(source, metric, ts) inserts OVERWRITE:
+                                    // second-granularity devices reporting twice in
+                                    // one second lose the first point. Known,
+                                    // accepted (upsert semantics keep replays
+                                    // idempotent); detect-before-write would cost a
+                                    // read per point.
                                     let key = (&*source_id, &**metric, point.timestamp);
                                     let value = serde_json::to_vec(point)?;
                                     table.insert(key, &*value)?;

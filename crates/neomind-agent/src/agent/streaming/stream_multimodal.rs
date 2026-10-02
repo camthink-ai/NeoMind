@@ -113,12 +113,31 @@ pub async fn process_multimodal_stream_events_with_safeguards(
     // Check if images are present (before moving images)
     let has_images = !images.is_empty();
 
-    // Extract base64 data for caching before images are consumed.
-    // Use the shared parse_image_data helper instead of fragile split(',')
-    // so non-standard data URL formats are handled consistently.
-    // Store user message in history with images
-    // Convert the image strings to AgentMessageImage
-    let image_data_urls: Vec<String> = images.clone();
+    // [copy-avoidance] Cache the images from a BORROW first, then move
+    // them into the history message. The old order (clone the whole Vec to
+    // keep a copy alive across the move, push, then cache from the clone)
+    // duplicated every image's full base64 payload once per turn.
+    //
+    // Cache user-uploaded images so tools can reference them via
+    // $cached:user_image (or the auto-inject on image-shaped args). MUST use
+    // store_user_image — the regular store() passes anything under 32KB
+    // through uncached, which silently killed tool access to compressed
+    // user images (2026-08-18).
+    if !images.is_empty() {
+        let mut state = internal_state.write().await;
+        for (i, url) in images.iter().enumerate() {
+            let cache_key = if i == 0 {
+                "user_image".to_string()
+            } else {
+                format!("user_image_{}", i)
+            };
+            state.large_data_cache.store_user_image(&cache_key, url);
+        }
+    }
+
+    // Convert the image strings to AgentMessageImage (mime parsed with the
+    // shared parse_image_data helper — non-standard data URLs handled
+    // consistently) and store the user message in history with them.
     let user_images: Vec<AgentMessageImage> = images
         .into_iter()
         .map(|data_url| {
@@ -133,22 +152,6 @@ pub async fn process_multimodal_stream_events_with_safeguards(
 
     let user_msg = AgentMessage::user_with_images(&user_message, user_images);
     internal_state.write().await.push_message(user_msg);
-
-    // Cache user-uploaded images so tools can reference them via $cached:user_image
-    // (or the auto-inject on image-shaped args). MUST use store_user_image —
-    // the regular store() passes anything under 32KB through uncached, which
-    // silently killed tool access to compressed user images (2026-08-18).
-    if !image_data_urls.is_empty() {
-        let mut state = internal_state.write().await;
-        for (i, url) in image_data_urls.iter().enumerate() {
-            let cache_key = if i == 0 {
-                "user_image".to_string()
-            } else {
-                format!("user_image_{}", i)
-            };
-            state.large_data_cache.store_user_image(&cache_key, url);
-        }
-    }
 
     Ok(Box::pin(async_stream::stream! {
         let mut stream = stream;

@@ -225,6 +225,27 @@ impl TimeSeriesStore {
         end: i64,
         limit: Option<usize>,
     ) -> Result<TimeSeriesResult, Error> {
+        // [fake-async fix] redb range scans are blocking — this used to run
+        // inline on a tokio worker (one spawn per metric from
+        // query_range_batch, so a wide query parked N workers mid-scan).
+        let src = source_id.to_string();
+        let met = metric.to_string();
+        let db2 = Arc::clone(&db);
+        tokio::task::spawn_blocking(move || {
+            Self::query_single_metric_blocking(db2, &src, &met, start, end, limit)
+        })
+        .await
+        .map_err(|e| Error::Storage(format!("query_single_metric join error: {}", e)))?
+    }
+
+    fn query_single_metric_blocking(
+        db: Arc<Database>,
+        source_id: &str,
+        metric: &str,
+        start: i64,
+        end: i64,
+        limit: Option<usize>,
+    ) -> Result<TimeSeriesResult, Error> {
         let read_txn = db.begin_read()?;
         let table = match read_txn.open_table(TIMESERIES_TABLE) {
             Ok(t) => t,
@@ -406,35 +427,37 @@ impl TimeSeriesStore {
             }
         }
 
-        // Cache miss - query from database
-        let read_txn = self.db.begin_read()?;
-
-        // Handle case where table doesn't exist yet (no data has been written)
-        let table = match read_txn.open_table(TIMESERIES_TABLE) {
-            Ok(t) => t,
-            Err(redb::TableError::TableDoesNotExist(_)) => {
-                tracing::debug!(
-                    "query_latest: table 'timeseries' does not exist yet, returning None for source_id={}, metric={}",
-                    source_id,
-                    metric
-                );
-                return Ok(None);
-            }
-            Err(e) => return Err(Error::Storage(format!("Failed to open table: {}", e))),
-        };
-
-        let start_key = (source_id, metric, i64::MIN);
-        let end_key = (source_id, metric, i64::MAX);
-
-        // Get the latest data point (most recent timestamp)
-        let latest: Option<DataPoint> = table
-            .range(start_key..=end_key)?
-            .next_back()
-            .map(|result| -> Result<DataPoint, Error> {
-                let (_key, value) = result?;
-                Ok(serde_json::from_slice(value.value())?)
+        // Cache miss - query from database. [fake-async fix] the reverse
+        // range read is blocking redb work; run it on the blocking pool.
+        let db = Arc::clone(&self.db);
+        let src = source_id.to_string();
+        let met = metric.to_string();
+        let latest: Option<DataPoint> =
+            tokio::task::spawn_blocking(move || -> Result<Option<DataPoint>, Error> {
+                let read_txn = db.begin_read()?;
+                let table = match read_txn.open_table(TIMESERIES_TABLE) {
+                    Ok(t) => t,
+                    Err(redb::TableError::TableDoesNotExist(_)) => {
+                        tracing::debug!(
+                            "query_latest: table 'timeseries' does not exist yet, returning None"
+                        );
+                        return Ok(None);
+                    }
+                    Err(e) => return Err(Error::Storage(format!("Failed to open table: {}", e))),
+                };
+                let start_key = (&*src, &*met, i64::MIN);
+                let end_key = (&*src, &*met, i64::MAX);
+                table
+                    .range(start_key..=end_key)?
+                    .next_back()
+                    .map(|result| -> Result<DataPoint, Error> {
+                        let (_key, value) = result?;
+                        Ok(serde_json::from_slice(value.value())?)
+                    })
+                    .transpose()
             })
-            .transpose()?;
+            .await
+            .map_err(|e| Error::Storage(format!("query_latest join error: {}", e)))??;
 
         // Update cache with result
         if let Some(ref point) = latest {
@@ -534,35 +557,50 @@ impl TimeSeriesStore {
 
         let cache_hits = results.len();
 
-        // Batch query cache misses with a single read transaction
+        // Batch query cache misses with a single read transaction.
+        // [fake-async fix] the redb reads run on the blocking pool; the
+        // cache updates stay async.
         if !misses.is_empty() {
-            let read_txn = self.db.begin_read()?;
+            let db = Arc::clone(&self.db);
+            let src = source_id.to_string();
+            let miss_list: Vec<String> = misses.iter().map(|m| m.to_string()).collect();
+            let from_db: std::collections::HashMap<String, DataPoint> =
+                tokio::task::spawn_blocking(move || -> Result<_, Error> {
+                    let read_txn = db.begin_read()?;
+                    let table = match read_txn.open_table(TIMESERIES_TABLE) {
+                        Ok(t) => t,
+                        Err(redb::TableError::TableDoesNotExist(_)) => {
+                            // No table — caller returns whatever cache gave
+                            return Ok(Default::default());
+                        }
+                        Err(e) => {
+                            return Err(Error::Storage(format!("Failed to open table: {}", e)))
+                        }
+                    };
+                    let mut found = std::collections::HashMap::new();
+                    for metric in &miss_list {
+                        let start_key = (&*src, &**metric, i64::MIN);
+                        let end_key = (&*src, &**metric, i64::MAX);
+                        if let Some(latest) = table
+                            .range(start_key..=end_key)?
+                            .next_back()
+                            .map(|result| -> Result<DataPoint, Error> {
+                                let (_key, value) = result?;
+                                Ok(serde_json::from_slice(value.value())?)
+                            })
+                            .transpose()?
+                        {
+                            found.insert(metric.clone(), latest);
+                        }
+                    }
+                    Ok(found)
+                })
+                .await
+                .map_err(|e| Error::Storage(format!("query_latest_batch join error: {}", e)))??;
 
-            let table = match read_txn.open_table(TIMESERIES_TABLE) {
-                Ok(t) => t,
-                Err(redb::TableError::TableDoesNotExist(_)) => {
-                    // No table — return whatever we got from cache
-                    return Ok(results);
-                }
-                Err(e) => return Err(Error::Storage(format!("Failed to open table: {}", e))),
-            };
-
-            for metric in &misses {
-                let start_key = (source_id, *metric, i64::MIN);
-                let end_key = (source_id, *metric, i64::MAX);
-
-                if let Some(latest) = table
-                    .range(start_key..=end_key)?
-                    .next_back()
-                    .map(|result| -> Result<DataPoint, Error> {
-                        let (_key, value) = result?;
-                        Ok(serde_json::from_slice(value.value())?)
-                    })
-                    .transpose()?
-                {
-                    self.update_cache(source_id, metric, latest.clone()).await;
-                    results.insert(metric.to_string(), latest);
-                }
+            for (metric, latest) in from_db {
+                self.update_cache(source_id, &metric, latest.clone()).await;
+                results.insert(metric, latest);
             }
         }
 
@@ -787,47 +825,65 @@ impl TimeSeriesStore {
             "list_all_metrics_grouped: cold start, rebuilding metrics index from database"
         );
 
-        let read_txn = self.db.begin_read()?;
+        // [fake-async fix] a FULL-TABLE iteration on the cold path — the
+        // worst offender of the lot (first call after restart walks every
+        // key inline on a tokio worker). The scan + grouping run on the
+        // blocking pool; the DashMap population is sync and rides along,
+        // only the result crosses back.
+        let db = Arc::clone(&self.db);
+        let (grouped, metric_last_ts): (
+            std::collections::HashMap<String, std::collections::HashSet<String>>,
+            std::collections::HashMap<String, i64>,
+        ) = tokio::task::spawn_blocking(move || -> Result<_, Error> {
+            let read_txn = db.begin_read()?;
+            let table = match read_txn.open_table(TIMESERIES_TABLE) {
+                Ok(t) => t,
+                Err(redb::TableError::TableDoesNotExist(_)) => {
+                    return Ok(Default::default());
+                }
+                Err(e) => return Err(Error::Storage(format!("Failed to open table: {}", e))),
+            };
 
-        let table = match read_txn.open_table(TIMESERIES_TABLE) {
-            Ok(t) => t,
-            Err(redb::TableError::TableDoesNotExist(_)) => {
-                return Ok(std::collections::HashMap::new())
+            let mut grouped: std::collections::HashMap<String, std::collections::HashSet<String>> =
+                std::collections::HashMap::new();
+            // Fold per-(source:metric) max timestamp; the DashMap
+            // population happens back on the async side (a &DashMap
+            // borrow cannot escape into 'static blocking work).
+            let mut metric_last_ts: std::collections::HashMap<String, i64> =
+                std::collections::HashMap::new();
+
+            for result in table.iter()? {
+                let (key, _value) = result?;
+                let (source_id, metric, ts) = key.value();
+                grouped
+                    .entry(source_id.to_string())
+                    .or_default()
+                    .insert(metric.to_string());
+
+                let metric_key = format!("{}:{}", source_id, metric);
+                let entry = metric_last_ts.entry(metric_key).or_insert(i64::MIN);
+                if ts > *entry {
+                    *entry = ts;
+                }
             }
-            Err(e) => return Err(Error::Storage(format!("Failed to open table: {}", e))),
-        };
+            Ok((grouped, metric_last_ts))
+        })
+        .await
+        .map_err(|e| Error::Storage(format!("list_all_metrics_grouped join error: {}", e)))??;
 
-        let mut grouped: std::collections::HashMap<String, std::collections::HashSet<String>> =
-            std::collections::HashMap::new();
-        let mut seen_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-        for result in table.iter()? {
-            let (key, _value) = result?;
-            let (source_id, metric, ts) = key.value();
-            grouped
-                .entry(source_id.to_string())
-                .or_default()
-                .insert(metric.to_string());
-
-            // Populate metrics_info for future fast-path (only once per source:metric)
-            let metric_key = format!("{}:{}", source_id, metric);
-            if seen_keys.insert(metric_key.clone()) {
-                self.metrics_info
-                    .entry(metric_key)
-                    .or_insert_with(|| MetricInfo {
-                        last_update: ts,
-                        point_count: 0, // We don't know exact count without counting; 0 is fine
-                    });
-            } else {
-                // Update last_update to the latest timestamp for this metric
-                self.metrics_info
-                    .entry(format!("{}:{}", source_id, metric))
-                    .and_modify(|info| {
-                        if ts > info.last_update {
-                            info.last_update = ts;
-                        }
-                    });
-            }
+        // Populate metrics_info for the fast path (unknown counts → 0).
+        for (metric_key, last_update) in metric_last_ts {
+            self.metrics_info
+                .entry(metric_key)
+                .and_modify(|info| {
+                    if last_update > info.last_update {
+                        info.last_update = last_update;
+                    }
+                })
+                .or_insert_with(|| MetricInfo {
+                    last_update,
+                    point_count: 0,
+                });
         }
 
         tracing::info!(
