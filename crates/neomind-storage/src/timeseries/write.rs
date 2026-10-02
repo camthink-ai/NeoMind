@@ -90,6 +90,10 @@ impl TimeSeriesStore {
                 if let Ok(mut stats) = self.stats.try_write() {
                     stats.write_failures += 1;
                 }
+                // The optimistic cache entry for this key may describe a
+                // value that never landed — retire it so latest reads fall
+                // back to disk instead of serving a phantom.
+                self.invalidate_latest(&source_id, &metric);
                 tracing::error!(
                     "Failed to flush batch for {}/{}: {} — isolating per-point",
                     source_id,
@@ -119,10 +123,27 @@ impl TimeSeriesStore {
         let mut requeued_count: usize = 0;
         if !requeue.is_empty() {
             requeued_count = requeue.len();
-            let dropped = self.write_buffer.requeue(requeue);
+            // Dedupe the affected keys first — needed for cache
+            // invalidation after the requeue call consumes the vector.
+            let requeued_keys: Vec<(String, String)> = {
+                let mut keys: Vec<(String, String)> = Vec::new();
+                for w in &requeue {
+                    let key = (w.source_id.clone(), w.metric.clone());
+                    if !keys.contains(&key) {
+                        keys.push(key);
+                    }
+                }
+                keys
+            };
+            let dropped = self.write_buffer.requeue(std::mem::take(&mut requeue));
             if dropped > 0 {
                 if let Ok(mut stats) = self.stats.try_write() {
                     stats.points_dropped += dropped as u64;
+                }
+                // Hard-cap drops are permanent data loss for these keys;
+                // their cached "latest" may be one of the dropped points.
+                for (source_id, metric) in requeued_keys {
+                    self.invalidate_latest(&source_id, &metric);
                 }
                 tracing::error!(
                     "Write buffer at hard cap under persistent flush failure — {} points re-queued, {} dropped",
@@ -252,6 +273,18 @@ impl TimeSeriesStore {
 }
 impl TimeSeriesStore {
     /// Update the latest value cache.
+    /// Drop the cached "latest" value for a key. Called when a buffered
+    /// write FAILED to persist: update_cache had optimistically published
+    /// the new value before the flush, so query_latest (which prefers the
+    /// cache absolutely) kept serving a value that does not exist on disk
+    /// — until the cache TTL expired and the reading jumped BACK to the
+    /// older persisted value. Invalidating makes query_latest fall through
+    /// to disk, where the truth is.
+    pub(crate) fn invalidate_latest(&self, source_id: &str, metric: &str) {
+        self.latest_cache
+            .invalidate(&(source_id.to_string(), metric.to_string()));
+    }
+
     pub(crate) async fn update_cache(&self, source_id: &str, metric: &str, point: DataPoint) {
         let key = (source_id.to_string(), metric.to_string());
 

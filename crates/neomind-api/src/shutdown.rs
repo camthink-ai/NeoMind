@@ -118,8 +118,22 @@ pub async fn cleanup_resources(state: &ServerState) {
     // 4. Flush any pending database writes
     tracing::info!("Flushing storage...");
 
-    // Note: TimeSeriesStorage doesn't have explicit flush/close
-    // The redb database handles this via Drop
+    // The timeseries WriteBuffer is a plain in-memory Vec — redb's Drop
+    // knows nothing about it. Without this flush, Ctrl+C / SIGTERM lost
+    // every point still sitting in the 200-point / 500ms buffer even
+    // though write() had already reported success for them. open() hits
+    // the process-wide singleton for the live path, so this flushes the
+    // SAME buffer the server has been writing through.
+    match neomind_storage::TimeSeriesStore::open(neomind_core::paths::store_path("telemetry.redb"))
+    {
+        Ok(ts) => {
+            ts.shutdown();
+            tracing::info!("Telemetry write buffer flushed");
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Could not open telemetry store for final flush");
+        }
+    }
 
     // 5. Log session counts
     let sessions = state.agents.session_manager.list_sessions().await;

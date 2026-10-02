@@ -458,6 +458,10 @@ impl TimeSeriesStore {
     /// `latest_cache` (capacity 1000), a single cleanup pass would evict
     /// the hot entries users are actively querying, causing a flurry of
     /// cache misses for ~60s after each hourly cleanup run.
+    /// Latest value straight from disk, bypassing the cache. No longer on
+    /// the retention path (which now classifies over a sample window), but
+    /// kept for callers that explicitly need the persisted truth.
+    #[allow(dead_code)]
     pub(crate) async fn query_latest_uncached(
         &self,
         source_id: &str,
@@ -472,6 +476,7 @@ impl TimeSeriesStore {
     }
 }
 impl TimeSeriesStore {
+    #[allow(dead_code)]
     pub(crate) fn query_latest_uncached_impl(
         db: &Database,
         source_id: &str,

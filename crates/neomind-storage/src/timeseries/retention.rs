@@ -95,6 +95,7 @@ impl TimeSeriesStore {
             // image_retention_hours (if the latest sample actually looks
             // like image data) → default_hours.
             //
+
             // The image-content check is content-based (peeks at the latest
             // data point's value), NOT name-based, so it works for any
             // metric name as long as the payload really is image data.
@@ -110,10 +111,21 @@ impl TimeSeriesStore {
                 // so, apply image_retention instead.
                 let use_image = match policy.image_retention_hours {
                     Some(img_hours) if Some(img_hours) != explicit_hours => {
-                        match self.query_latest_uncached(source_id, metric).await {
-                            Ok(Some(latest)) => value_looks_like_image(&latest.value),
-                            _ => false, // no sample → don't risk misclassifying
-                        }
+                        // MAJORITY of recent samples, not just the newest
+                        // one. A single-sample check misclassified mixed
+                        // series both ways: a `_raw` metric whose newest
+                        // entry happened to be a status string kept its
+                        // image blobs a month (storage bloat), and one whose
+                        // newest entry happened to be a frame purged a month
+                        // of interleaved normal data at image retention (data
+                        // loss). Majority-image applies the short window
+                        // only to series that really ARE image streams; a
+                        // genuine mixed series falls to normal retention —
+                        // the safe direction (kept too long, never lost).
+                        // unreadable/empty → don't risk misclassifying
+                        self.recent_samples_look_like_images(source_id, metric)
+                            .await
+                            .unwrap_or(false)
                     }
                     _ => false,
                 };
@@ -172,6 +184,25 @@ impl TimeSeriesStore {
     ///
     /// If total points ≤ target_count, returns all points without bucketing.
     /// Cheap existence probe: does (source, metric) have at least one point?
+    /// Whether the series' recent samples are (strict) majority image
+    /// payloads. `None` when nothing is readable.
+    async fn recent_samples_look_like_images(&self, source_id: &str, metric: &str) -> Option<bool> {
+        const SAMPLES: usize = 16;
+        let points = self
+            .query_range(source_id, metric, i64::MIN, i64::MAX, None)
+            .await
+            .ok()?;
+        if points.points.is_empty() {
+            return None;
+        }
+        let recent: Vec<_> = points.points.iter().rev().take(SAMPLES).collect();
+        let image_count = recent
+            .iter()
+            .filter(|p| value_looks_like_image(&p.value))
+            .count();
+        Some(image_count * 2 > recent.len())
+    }
+
     async fn has_any_point(&self, source_id: &str, metric: &str) -> bool {
         let db = self.db.clone();
         let (src, met) = (source_id.to_string(), metric.to_string());
