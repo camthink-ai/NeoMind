@@ -250,6 +250,17 @@ impl TimeSeriesStorage {
         let old = self.store();
         let mut migrated = 0u64;
         if !Arc::ptr_eq(&old, &new_store) {
+            // Flip the pointer BEFORE draining: new writers go straight to
+            // the persistent store. The old order (drain, then flip) left
+            // the ENTIRE copy-duration window un-drained — a concurrent
+            // write that fetched the old pointer mid-scan was silently
+            // evaporated by the flip. Post-swap, the only writes still
+            // landing in the placeholder are those that read the old
+            // pointer in the microseconds before the flip; this drain
+            // catches them.
+            self.swap_store(new_store.clone());
+            let _ = self.loaded_tx.send(true);
+
             // Buffered writes would be invisible to the scan below — force
             // them into the placeholder's storage first.
             if let Err(e) = old.flush() {
@@ -278,9 +289,10 @@ impl TimeSeriesStorage {
                 tracing::warn!(category = "storage", error = %e,
                     "flush of migrated telemetry failed — points may sit in the buffer");
             }
+        } else {
+            self.swap_store(new_store);
+            let _ = self.loaded_tx.send(true);
         }
-        self.swap_store(new_store);
-        let _ = self.loaded_tx.send(true);
         Ok(migrated)
     }
 

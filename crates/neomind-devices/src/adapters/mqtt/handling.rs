@@ -821,6 +821,19 @@ impl MqttAdapter {
                             (serde_json::json!(BASE64.encode(&payload)), true, "base64")
                         };
 
+                        // [policy asymmetry — deliberate] An UNREGISTERED
+                        // MQTT publisher's telemetry is NOT stored (only this
+                        // discovery sample survives): anyone who can reach
+                        // the broker could fabricate device ids and bloat the
+                        // series store; registration is the gate. The HTTP
+                        // webhook path DOES keep unknown devices' metrics
+                        // (it is authenticated + rate-limited). First frames
+                        // arriving via MQTT before registration are lost on
+                        // purpose — register the device to start recording.
+                        tracing::info!(
+                            topic = %topic,
+                            "Unregistered MQTT device: telemetry not recorded (discovery event only) — register the device to start recording"
+                        );
                         // Publish DeviceDiscovered event via DeviceEvent::Discovery for auto-onboarding
                         {
                             let adapter_id = config.name.clone();

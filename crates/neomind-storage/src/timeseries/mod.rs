@@ -350,6 +350,12 @@ fn value_looks_like_image(value: &serde_json::Value) -> bool {
 pub struct PerformanceStats {
     /// Total write operations
     pub write_count: u64,
+    /// Batch/persist attempts that failed (poison isolation path included).
+    pub write_failures: u64,
+    /// Points dropped after the re-queue cap under persistent failure —
+    /// telemetry lost for good; non-zero means disk trouble or poison
+    /// payloads.
+    pub points_dropped: u64,
     /// Total read operations
     pub read_count: u64,
     /// Total write time in nanoseconds

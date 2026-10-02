@@ -13,6 +13,11 @@ use thiserror::Error;
 use tokio::sync::RwLock;
 use tokio::time::{interval, Duration};
 
+/// How long a spawned scheduled task may WAIT for execution permits before
+/// deferring to the next tick. Bounds the running-slot squatter problem:
+/// waiting tasks must not hold concurrency accounting hostage.
+const PERMIT_WAIT_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// Shared per-LLM-backend concurrency limiter.
 ///
 /// Maps a backend ID (e.g. "ollama-local") to a semaphore that limits how many
@@ -509,12 +514,30 @@ impl AgentScheduler {
                             task_handles: Some(task_handles_clone.clone()),
                         };
 
-                        // Acquire semaphore permit for concurrency control
-                        // If semaphore is closed, log and skip execution
-                        let _permit = match semaphore_clone.acquire().await {
-                            Ok(p) => p,
-                            Err(_) => {
+                        // Acquire semaphore permit for concurrency control,
+                        // BOUNDED: this task already occupies its
+                        // running_executions slot, and reserve_due_tasks skips
+                        // agents while the running set is full — an unbounded
+                        // wait here meant N tasks queued on one saturated
+                        // backend could starve agents on OTHER backends of
+                        // their turn indefinitely. Give up after the wait
+                        // budget; the next tick retries.
+                        let _permit = match tokio::time::timeout(
+                            PERMIT_WAIT_BUDGET,
+                            semaphore_clone.acquire(),
+                        )
+                        .await
+                        {
+                            Ok(Ok(p)) => p,
+                            Ok(Err(_)) => {
                                 tracing::error!(agent_id = %agent_id, "Semaphore closed, skipping agent execution");
+                                return;
+                            }
+                            Err(_) => {
+                                tracing::debug!(
+                                    agent_id = %agent_id,
+                                    "Global permit wait exceeded budget — deferring to next tick"
+                                );
                                 return;
                             }
                         };
@@ -537,10 +560,26 @@ impl AgentScheduler {
                                         "Waiting for backend permit"
                                     );
                                 }
-                                let _backend_permit = match backend_sem.acquire().await {
-                                    Ok(p) => p,
-                                    Err(_) => {
+                                // Bounded for the same reason as the global
+                                // permit above: a saturated backend must not
+                                // hold this task's running slot hostage.
+                                let _backend_permit = match tokio::time::timeout(
+                                    PERMIT_WAIT_BUDGET,
+                                    backend_sem.acquire(),
+                                )
+                                .await
+                                {
+                                    Ok(Ok(p)) => p,
+                                    Ok(Err(_)) => {
                                         tracing::warn!(agent_id = %agent_id, "Backend semaphore closed");
+                                        return;
+                                    }
+                                    Err(_) => {
+                                        tracing::debug!(
+                                            agent_id = %agent_id,
+                                            backend_id = %backend_id,
+                                            "Backend permit wait exceeded budget — deferring to next tick"
+                                        );
                                         return;
                                     }
                                 };
@@ -673,7 +712,27 @@ impl AgentScheduler {
                                             let backoff = std::time::Duration::from_secs(
                                                 5 * 2_u64.pow(new_consecutive.saturating_sub(1)),
                                             );
+                                            // Nap WITHOUT the permits. Sleeping
+                                            // while holding the global and
+                                            // backend permits was a head-of-line
+                                            // block: one failing agent's retry
+                                            // could pin a backend's only permits
+                                            // (and a global slot) for 20s+,
+                                            // stalling every other agent.
+                                            drop(_backend_permit);
+                                            drop(_permit);
                                             tokio::time::sleep(backoff).await;
+                                            // Re-acquire before the retry (best
+                                            // effort; closed semaphore ends the
+                                            // attempt — the next tick retries).
+                                            let _permit = match semaphore_clone.acquire().await {
+                                                Ok(p) => p,
+                                                Err(_) => return,
+                                            };
+                                            let _backend_permit = match backend_sem.acquire().await {
+                                                Ok(p) => p,
+                                                Err(_) => return,
+                                            };
 
                                             match executor.execute_agent(agent, None, None).await {
                                                 Ok(retry_record) => {

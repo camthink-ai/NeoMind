@@ -620,6 +620,29 @@ pub struct HistoryQuery {
 /// a group would render a broken partial turn until the next full reload —
 /// the start walks back to the last user message (bounded so a pathological
 /// all-assistant history cannot degenerate into a full scan).
+/// Same pagination contract as [`slice_history`], over the persisted
+/// client form (image references instead of base64).
+fn slice_session_history(
+    history: &[neomind_storage::SessionMessage],
+    limit: Option<u32>,
+    before: Option<u32>,
+) -> (Vec<neomind_storage::SessionMessage>, bool) {
+    let total = history.len();
+    let Some(limit) = limit.filter(|l| *l > 0) else {
+        return (history.to_vec(), false);
+    };
+    let end = before.map_or(total, |b| (b as usize).min(total));
+    let mut start = end.saturating_sub(limit as usize);
+    let floor = start.saturating_sub(50);
+    while start > floor && !history[start].role.eq_ignore_ascii_case("user") {
+        start -= 1;
+    }
+    (history[start..end].to_vec(), start > 0)
+}
+
+/// In-memory-form pagination (kept for the unit tests below; the endpoint
+/// now serves the persisted client form).
+#[cfg_attr(not(test), allow(dead_code))]
 fn slice_history(
     history: &[AgentMessage],
     limit: Option<u32>,
@@ -672,14 +695,18 @@ pub async fn get_session_history_handler(
         .await
         .map_err(|_| ErrorResponse::not_found("Session"))?;
 
+    // Client form: image payloads become served `/api/images/<file>`
+    // references (content-hash persisted, idempotent). The old endpoint
+    // returned in-memory base64 data URLs — a photo-heavy session was a
+    // multi-megabyte payload per pull.
     let history = state
         .agents
         .session_manager
-        .get_history(&id)
+        .get_history_for_client(&id)
         .await
         .map_err(|e| ErrorResponse::internal(format!("Failed to get history: {}", e)))?;
 
-    let (slice, has_more) = slice_history(&history, query.limit, query.before);
+    let (slice, has_more) = slice_session_history(&history, query.limit, query.before);
 
     Ok(Json(ApiResponse::success(json!({
         "messages": slice,

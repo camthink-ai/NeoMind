@@ -2035,6 +2035,22 @@ Assistant: {ar}\n"
 
     /// Get conversation history for a session.
     /// If session doesn't exist, returns empty history (soft fail for dirty data).
+    /// History in the PERSISTED client form: images are served references
+    /// (`/api/images/<file>`), not in-memory base64 data URLs. The HTTP
+    /// history endpoint used to serialize `AgentMessage.images` verbatim —
+    /// a session with a few 5MB photos answered every pull with tens of
+    /// megabytes of base64, and disagreed with the WS replay (which sends
+    /// no images at all). Reuses the exact save_history conversion, so
+    /// images land on disk content-hash named (idempotent) and the client
+    /// gets stable URLs.
+    pub async fn get_history_for_client(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<neomind_storage::SessionMessage>> {
+        let messages = self.get_history(session_id).await?;
+        Ok(Self::agent_messages_to_session_messages(&messages))
+    }
+
     pub async fn get_history(&self, session_id: &str) -> Result<Vec<AgentMessage>> {
         // Try to get the session - this will restore from DB if needed
         match self.get_session(session_id).await {

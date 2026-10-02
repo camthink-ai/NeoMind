@@ -54,6 +54,8 @@ pub async fn get_telemetry_stats_handler(
             "cache_hit_rate": cache_hit_rate,
             "read_count": telemetry_stats.read_count,
             "write_count": telemetry_stats.write_count,
+            "write_failures": telemetry_stats.write_failures,
+            "points_dropped": telemetry_stats.points_dropped,
         },
         "health": {
             "status": if avg_read_ms < 200.0 { "healthy" } else { "degraded" },

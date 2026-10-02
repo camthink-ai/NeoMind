@@ -87,6 +87,9 @@ impl TimeSeriesStore {
         let mut requeue: Vec<BufferedWrite> = Vec::new();
         for ((source_id, metric), points) in groups {
             if let Err(e) = self.write_batch_sync(&source_id, &metric, &points) {
+                if let Ok(mut stats) = self.stats.try_write() {
+                    stats.write_failures += 1;
+                }
                 tracing::error!(
                     "Failed to flush batch for {}/{}: {} — isolating per-point",
                     source_id,
@@ -118,6 +121,9 @@ impl TimeSeriesStore {
             requeued_count = requeue.len();
             let dropped = self.write_buffer.requeue(requeue);
             if dropped > 0 {
+                if let Ok(mut stats) = self.stats.try_write() {
+                    stats.points_dropped += dropped as u64;
+                }
                 tracing::error!(
                     "Write buffer at hard cap under persistent flush failure — {} points re-queued, {} dropped",
                     requeued_count - dropped,
