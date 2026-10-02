@@ -25,6 +25,58 @@ const DATA_PUSH_MAX_INFLIGHT_DELIVERIES: usize = 4;
 /// batch_size) — bounds memory under event bursts with image-inlined values.
 const DATA_PUSH_MAX_BUFFER_ENTRIES: usize = 1000;
 
+/// Scrub credential-looking substrings from a delivery error before it is
+/// persisted to the delivery log (and read back via the logs API). reqwest
+/// errors embed the full request URL; push targets carry tokens in URL
+/// query params (or userinfo) — an upstream failure used to write the
+/// working credential into the delivery-log database verbatim.
+pub(crate) fn scrub_credentials(text: &str) -> String {
+    let mut out = text.to_string();
+    // Redact values of credential-bearing query parameters, and userinfo
+    // (user:pass@host), wherever they appear in the text.
+    for key in [
+        "token",
+        "access_token",
+        "api_key",
+        "apikey",
+        "secret",
+        "sign",
+        "key",
+        "password",
+    ] {
+        let mut search = 0usize;
+        while let Some(i) = out[search..].find(&format!("{key}=")) {
+            let val_start = search + i + key.len() + 1;
+            let val_end = out[val_start..]
+                .find(|c: char| c == '&' || c == '"' || c == '\'' || c.is_whitespace())
+                .map(|e| val_start + e)
+                .unwrap_or(out.len());
+            if val_end > val_start {
+                out.replace_range(val_start..val_end, "***");
+            }
+            search = val_start + 3; // skip past the inserted "***"
+            if search >= out.len() {
+                break;
+            }
+        }
+    }
+    // userinfo credentials: https://user:pass@host
+    if let Some(scheme_end) = out.find("://") {
+        let host_start = scheme_end + 3;
+        if let Some(at) = out[host_start..].find('@') {
+            let at = host_start + at;
+            let creds_start = out[..host_start]
+                .rfind('/')
+                .map(|i| i + 1)
+                .unwrap_or(host_start);
+            if creds_start < at && !out[creds_start..at].contains('/') {
+                out.replace_range(creds_start..at, "***");
+            }
+        }
+    }
+    out
+}
+
 /// Rate-limits backpressure-drop warnings: log once per window instead of
 /// once per dropped event (a storm would otherwise flood the logs).
 #[derive(Default)]
@@ -347,7 +399,29 @@ impl PushScheduler {
                                             if buffer.len() >= batch_size
                                                 || buffer.len() >= DATA_PUSH_MAX_BUFFER_ENTRIES
                                             {
-                                                flush_batch(&target, &store, &renderer, dest.as_ref(), &mut buffer, Some(&cancel)).await;
+                                                // [backpressure] spawn, don't await: an inline
+                                                // flush runs the full retry loop (endpoint
+                                                // timeout × retries + backoffs — minutes on a
+                                                // dead endpoint) with rx.recv() unpolled, and
+                                                // the bus lagged past its buffer. Same permit
+                                                // cap as the immediate path; when exhausted,
+                                                // the batch waits in memory (still bounded by
+                                                // MAX_BUFFER) and the next event retries.
+                                                if let Ok(_permit) =
+                                                    delivery_permits.clone().try_acquire_owned()
+                                                {
+                                                    let batch = std::mem::take(&mut buffer);
+                                                    let target = target.clone();
+                                                    let store = store.clone();
+                                                    let renderer = renderer.clone();
+                                                    let dest = dest.clone();
+                                                    let cancel = cancel.clone();
+                                                    tokio::spawn(async move {
+                                                        let _permit = _permit; // held for the flush duration
+                                                        let mut batch = batch;
+                                                        flush_batch(&target, &store, &renderer, dest.as_ref(), &mut batch, Some(&cancel)).await;
+                                                    });
+                                                }
                                                 flush_timer = tokio::time::Instant::now() + batch_interval;
                                             }
                                         }
@@ -371,7 +445,22 @@ impl PushScheduler {
                         }
                     }
                     _ = tokio::time::sleep_until(flush_timer), if batch_enabled && !buffer.is_empty() => {
-                        flush_batch(&target, &store, &renderer, dest.as_ref(), &mut buffer, Some(&cancel)).await;
+                        // [backpressure] same as the batch-full branch: the
+                        // interval flush must not run the retry loop inline
+                        // or a slow endpoint stalls event consumption.
+                        if let Ok(_permit) = delivery_permits.clone().try_acquire_owned() {
+                            let batch = std::mem::take(&mut buffer);
+                            let target = target.clone();
+                            let store = store.clone();
+                            let renderer = renderer.clone();
+                            let dest = dest.clone();
+                            let cancel = cancel.clone();
+                            tokio::spawn(async move {
+                                let _permit = _permit;
+                                let mut batch = batch;
+                                flush_batch(&target, &store, &renderer, dest.as_ref(), &mut batch, Some(&cancel)).await;
+                            });
+                        }
                         flush_timer = tokio::time::Instant::now() + batch_interval;
                     }
                 }
@@ -463,7 +552,22 @@ impl PushScheduler {
                                         continue;
                                     }
                                     resolve_image_urls_in_value(&mut value);
-                                    buffer.push((source_id, value, ts));
+                                    // [bounded buffer] the entry cap used to be
+                                    // enforced ONLY on the batch-enabled branch;
+                                    // an interval target (e.g. 3600s) under high
+                                    // event rates with a slow endpoint grew this
+                                    // buffer without bound. Same policy as the
+                                    // in-flight cap: drop the NEWEST event with a
+                                    // warn — visible, bounded loss.
+                                    if buffer.len() >= DATA_PUSH_MAX_BUFFER_ENTRIES {
+                                        tracing::warn!(
+                                            target_id = %target.id,
+                                            cap = DATA_PUSH_MAX_BUFFER_ENTRIES,
+                                            "Push buffer at cap for interval target — dropping newest event"
+                                        );
+                                    } else {
+                                        buffer.push((source_id, value, ts));
+                                    }
                                 }
                             }
                         }
@@ -690,7 +794,7 @@ async fn deliver_with_retry(
                         (backoff.min(target.retry_config.max_backoff_secs), false)
                     }
                 };
-                log.error = Some(e.to_string());
+                log.error = Some(scrub_credentials(&e.to_string()));
                 if attempt < max_retries {
                     log.status = DeliveryStatus::Retrying;
                     if let Err(e) = store.save_delivery_log(&log) {
@@ -708,7 +812,10 @@ async fn deliver_with_retry(
                         .await
                     {
                         log.status = DeliveryStatus::Failed;
-                        log.error = Some(format!("Cancelled during retry backoff: {}", e));
+                        log.error = Some(scrub_credentials(&format!(
+                            "Cancelled during retry backoff: {}",
+                            e
+                        )));
                         log.completed_at = Some(chrono::Utc::now().timestamp());
                         if let Err(e) = store.save_delivery_log(&log) {
                             tracing::warn!(target: "neomind::data_push", error = %e, "Delivery-log persist failed — audit trail diverges from actual delivery state");
@@ -975,7 +1082,7 @@ async fn flush_batch(
                         (backoff.min(target.retry_config.max_backoff_secs), false)
                     }
                 };
-                log.error = Some(e.to_string());
+                log.error = Some(scrub_credentials(&e.to_string()));
                 if attempt < max_retries {
                     log.status = DeliveryStatus::Retrying;
                     if let Err(e) = store.save_delivery_log(&log) {
@@ -994,7 +1101,10 @@ async fn flush_batch(
                         .await
                     {
                         log.status = DeliveryStatus::Failed;
-                        log.error = Some(format!("Cancelled during retry backoff: {}", e));
+                        log.error = Some(scrub_credentials(&format!(
+                            "Cancelled during retry backoff: {}",
+                            e
+                        )));
                         log.completed_at = Some(chrono::Utc::now().timestamp());
                         if let Err(e) = store.save_delivery_log(&log) {
                             tracing::warn!(target: "neomind::data_push", error = %e, "Delivery-log persist failed — audit trail diverges from actual delivery state");

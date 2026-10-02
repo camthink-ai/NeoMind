@@ -412,7 +412,37 @@ impl MessageManager {
             let msg = message.clone();
             tasks.push((
                 channel_name,
-                tokio::spawn(async move { channel.send(&msg).await }),
+                tokio::spawn(async move {
+                    // [bounded retry] a single transient failure (429, a
+                    // 5s network blip) used to permanently drop the alert
+                    // on that channel — notifications were at-most-once
+                    // while the sibling data-push subsystem retries with
+                    // backoff. Three attempts, short backoffs; a channel
+                    // that still fails is reported to the aggregate below.
+                    let mut last_err = None;
+                    for attempt in 1..=3 {
+                        match channel.send(&msg).await {
+                            Ok(()) => return Ok(()),
+                            Err(e) => {
+                                tracing::warn!(
+                                    attempt,
+                                    error = %crate::manager::scrub_credentials(&e.to_string()),
+                                    "channel send attempt failed"
+                                );
+                                last_err = Some(e);
+                                if attempt < 3 {
+                                    tokio::time::sleep(std::time::Duration::from_secs(
+                                        attempt as u64,
+                                    ))
+                                    .await;
+                                }
+                            }
+                        }
+                    }
+                    Err(last_err.unwrap_or_else(|| {
+                        Error::Other(anyhow::anyhow!("send failed without error"))
+                    }))
+                }),
             ));
         }
 
@@ -452,8 +482,16 @@ impl MessageManager {
         // Log if all channels failed (but message was still created successfully)
         let any_success = send_results.iter().any(|r| r.1.is_ok());
         if !any_success && !send_results.is_empty() {
-            tracing::warn!(
-                "All channels failed for message '{}', but message was stored successfully",
+            // Escalated to error with the per-channel reasons: "all channels
+            // failed" used to be a single anonymous warn line — the operator
+            // could not tell a dead webhook from a revoked token.
+            let failed: Vec<String> = send_results
+                .iter()
+                .filter_map(|(name, r)| r.as_ref().err().map(|e| format!("{name}: {e}")))
+                .collect();
+            tracing::error!(
+                channels = %failed.join("; "),
+                "ALL notification channels failed for message '{}' (after retries) — message stored, delivery lost",
                 message.title
             );
         }

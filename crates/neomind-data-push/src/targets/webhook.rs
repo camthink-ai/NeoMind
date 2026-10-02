@@ -84,7 +84,16 @@ impl PushDestination for WebhookTarget {
             .body(payload.to_string())
             .send()
             .await
-            .map_err(|e| super::DeliveryError::Other(anyhow!("Webhook request failed: {}", e)))?;
+            // Scrub at the source: reqwest's Display embeds the full URL,
+            // which for webhook targets may carry the token in a query param
+            // or userinfo — the raw error used to reach the delivery log
+            // (persisted) and the logs API.
+            .map_err(|e| {
+                super::DeliveryError::Other(anyhow!(
+                    "Webhook request failed: {}",
+                    crate::scheduler::scrub_credentials(&e.to_string())
+                ))
+            })?;
 
         let status = response.status();
         if status.is_success() {

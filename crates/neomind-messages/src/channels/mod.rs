@@ -581,12 +581,21 @@ impl ChannelRegistry {
                 message_zh: "测试消息发送成功".to_string(),
                 duration_ms: start.elapsed().as_millis() as u64,
             }),
-            Err(e) => Ok(TestResult {
-                success: false,
-                message: format!("Failed to send test message: {}", e),
-                message_zh: format!("发送测试消息失败: {}", e),
-                duration_ms: start.elapsed().as_millis() as u64,
-            }),
+            Err(e) => {
+                // Scrub BEFORE the response: reqwest's Display embeds the full
+                // request URL, and channel tokens live in URLs (telegram bot
+                // tokens, dingtalk access_token+sign, webhook keys). The
+                // manager's scrub on the create_message path used to be the
+                // ONLY scrub — this endpoint handed the working credential
+                // straight back to the API client.
+                let scrubbed = crate::manager::scrub_credentials(&e.to_string());
+                Ok(TestResult {
+                    success: false,
+                    message: format!("Failed to send test message: {}", scrubbed),
+                    message_zh: format!("发送测试消息失败: {}", scrubbed),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                })
+            }
         }
     }
 
