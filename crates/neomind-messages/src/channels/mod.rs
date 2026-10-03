@@ -1442,6 +1442,55 @@ pub(crate) fn credential_in_query(raw: &str, param: &str) -> Option<String> {
 }
 
 #[cfg(test)]
+mod test_endpoint_scrub_tests {
+    use super::*;
+
+    /// A channel whose errors embed the full credential URL (the reqwest
+    /// Display shape). registry.test() must SCRUB before the TestResult
+    /// crosses the API boundary — pre-fix, the working telegram/dingtalk
+    /// token went straight back to the client.
+    struct LeakyChannel;
+
+    #[async_trait::async_trait]
+    impl MessageChannel for LeakyChannel {
+        fn name(&self) -> &str {
+            "leaky"
+        }
+        fn channel_type(&self) -> &str {
+            "leaky"
+        }
+        fn is_enabled(&self) -> bool {
+            true
+        }
+        async fn send(&self, _m: &Message) -> Result<()> {
+            Err(Error::Other(anyhow::anyhow!(
+                // Real Telegram URL shape: /bot<id>:<secret>/method — no slash after /bot.
+                "error sending request for url (https://api.telegram.org/bot123456:AAH-SECRET-TOKEN/sendMessage)"
+            )))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_endpoint_scrubs_credentials_from_failures() {
+        let reg = ChannelRegistry::new();
+        reg.register(std::sync::Arc::new(LeakyChannel)).await;
+
+        let result = reg.test("leaky").await.expect("test returns a result");
+        assert!(!result.success);
+        assert!(
+            !result.message.contains("AAH-SECRET-TOKEN"),
+            "the token must not survive into the TestResult: {}",
+            result.message
+        );
+        assert!(
+            result.message.contains("***"),
+            "scrub leaves a visible redaction marker: {}",
+            result.message
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

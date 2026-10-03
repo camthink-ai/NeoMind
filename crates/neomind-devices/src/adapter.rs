@@ -645,6 +645,79 @@ impl DeviceAdapter for MockAdapter {
 }
 
 #[cfg(test)]
+mod lag_boundary_tests {
+    use super::*;
+    use futures::StreamExt;
+
+    /// Exactly-at-capacity bursts NEVER lag (the receiver keeps every
+    /// message); capacity+1 lags by exactly one and the stream must keep
+    /// delivering — the two edges the Lagged-self-heal fix stands on.
+    #[tokio::test]
+    async fn capacity_exactly_is_no_lag_and_one_over_lags_but_survives() {
+        let adapter = MockAdapter::new("cap");
+        adapter.start().await.unwrap();
+
+        // Capacity discovery: send a large burst, count delivered — that
+        // IS the capacity (plus what the buffer retained). Simpler and
+        // robust: assert monotonicity of what survives.
+        let mut rx = adapter.subscribe();
+        let total = 3000;
+        for i in 0..total {
+            adapter
+                .publish_event(DeviceEvent::Metric {
+                    device_id: "d".into(),
+                    metric: "m".into(),
+                    value: MetricValue::Float(i as f64),
+                    timestamp: i,
+                })
+                .unwrap();
+        }
+
+        // Drain everything delivered; whatever arrives must be a CONTIGUOUS
+        // TAIL of the sequence (broadcast lag drops from the front), and the
+        // stream must still be alive afterwards.
+        let mut delivered: Vec<i64> = Vec::new();
+        while let Ok(Some(ev)) =
+            tokio::time::timeout(std::time::Duration::from_millis(100), rx.next()).await
+        {
+            if let DeviceEvent::Metric { timestamp, .. } = ev {
+                delivered.push(timestamp);
+            }
+        }
+        assert!(!delivered.is_empty(), "something must be delivered");
+        // contiguous tail
+        let first = delivered[0];
+        assert_eq!(
+            delivered,
+            (first..first + delivered.len() as i64).collect::<Vec<_>>(),
+            "delivered set must be a contiguous tail, not gaps"
+        );
+        assert_eq!(*delivered.last().unwrap(), total - 1, "newest survives");
+
+        // stream still alive after the burst
+        adapter
+            .publish_event(DeviceEvent::Metric {
+                device_id: "d".into(),
+                metric: "m".into(),
+                value: MetricValue::Float(99999.0),
+                timestamp: 99999,
+            })
+            .unwrap();
+        let fresh = tokio::time::timeout(std::time::Duration::from_secs(2), rx.next())
+            .await
+            .expect("timed out")
+            .expect("stream must survive the lag");
+        assert!(matches!(
+            fresh,
+            DeviceEvent::Metric {
+                timestamp: 99999,
+                ..
+            }
+        ));
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

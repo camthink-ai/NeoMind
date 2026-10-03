@@ -1041,6 +1041,33 @@ fn alert_identity(message: &Message) -> Option<String> {
 pub(crate) fn scrub_credentials(text: &str) -> String {
     // Credential-bearing query parameters (value runs to the next & or quote).
     let mut out = text.to_string();
+
+    // PATH-embedded tokens first: Telegram puts the bot credential in the
+    // URL path (`.../bot<id>:<secret>/...`), which the query-parameter pass
+    // below never sees — caught by the test-endpoint impact test, where the
+    // working token survived the scrub and crossed the API boundary intact.
+    {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static SCAN: AtomicUsize = AtomicUsize::new(0);
+        let mut cursor = 0usize;
+        while let Some(rel) = out[cursor..].find("/bot") {
+            let start = cursor + rel + "/bot".len();
+            let end = out[start..]
+                .find('/')
+                .map(|e| start + e)
+                .unwrap_or(out.len());
+            if end > start && out[start..end].contains(':') {
+                out.replace_range(start..end, "***");
+                SCAN.fetch_add(1, Ordering::Relaxed);
+                cursor = start + 3;
+            } else {
+                cursor = start;
+            }
+            if cursor >= out.len() {
+                break;
+            }
+        }
+    }
     for key in [
         "token",
         "key",
@@ -1363,6 +1390,43 @@ mod tests {
                 Ok(())
             }
         }
+    }
+
+    /// Audit fields survive the FULL manager→storage→manager round trip:
+    /// acknowledged_at/by were nulled on every store write before the fix.
+    #[tokio::test]
+    async fn audit_fields_survive_storage_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = MessageManager::with_storage(dir.path()).unwrap();
+
+        let msg = Message::alert(
+            MessageSeverity::Warning,
+            "audit".into(),
+            "body".into(),
+            "rule_engine".into(),
+        );
+        let id = msg.id.clone();
+        manager.create_message(msg).await.unwrap();
+        manager.acknowledge(&id).await.unwrap();
+
+        // Same store, read via the SAME manager (redb is single-writer per
+        // process: a second open of the same file fails on the lock — the
+        // round-trip proof is that stored_to_message rehydrates the fields,
+        // which load_messages exercises on construction).
+        drop(manager);
+        let reloaded = MessageManager::with_storage(dir.path()).unwrap();
+        let all = reloaded.list_messages().await;
+        let stored = all.iter().find(|m| m.id == id).expect("message persisted");
+        assert_eq!(stored.status, MessageStatus::Acknowledged);
+        assert!(
+            stored.acknowledged_at.is_some(),
+            "acknowledged_at must survive the round trip"
+        );
+        assert_eq!(
+            stored.acknowledged_by.as_deref(),
+            Some("api"),
+            "acknowledged_by must survive the round trip"
+        );
     }
 
     #[tokio::test]

@@ -2145,6 +2145,52 @@ mod event_filter_tests {
         );
     }
 
+    /// Boundary: the completing event lands EXACTLY at the window edge
+    /// (opened_at + 300) — inside, the AND completes. One second later the
+    /// window is dead and the same event opens a fresh one instead.
+    #[test]
+    fn all_filter_default_window_boundary_is_inclusive_then_dead() {
+        let src = |id: &str| EventSource {
+            source_type: "device".to_string(),
+            id: id.to_string(),
+            field: Some("temp".to_string()),
+        };
+        let filter = EventFilter {
+            any: vec![],
+            all: vec![src("a"), src("b")],
+            within_secs: None,
+        };
+        let t0: i64 = 1_700_000_000;
+        let first = filter.observe(None, "device", "a", "temp", t0);
+        let state = match first {
+            WindowOutcome::Pending(Some(s)) => s,
+            other => panic!("expected window, got {other:?}"),
+        };
+        // Exactly at the edge (expiry check is `> window`): completes.
+        assert!(matches!(
+            filter.observe(
+                Some(&state),
+                "device",
+                "b",
+                "temp",
+                t0 + DEFAULT_ALL_WINDOW_SECS as i64
+            ),
+            WindowOutcome::Fire
+        ));
+        // One second past: dead — the same hit re-opens instead of firing.
+        let late = filter.observe(
+            Some(&state),
+            "device",
+            "b",
+            "temp",
+            t0 + DEFAULT_ALL_WINDOW_SECS as i64 + 1,
+        );
+        assert!(
+            matches!(late, WindowOutcome::Pending(Some(ref s)) if s.seen.len() == 1),
+            "expired window must not complete: {late:?}"
+        );
+    }
+
     /// The default window still expires: sources arriving past it must not
     /// complete an AND whose hits never actually overlapped.
     #[test]

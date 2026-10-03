@@ -438,6 +438,94 @@ impl Message {
 }
 
 #[cfg(test)]
+mod transition_matrix_tests {
+    use super::*;
+
+    /// The FULL action × status matrix for the guarded alert state machine.
+    /// Legal: ack only from Active; resolve from Active/Acknowledged;
+    /// false-positive from Active/Acknowledged (terminal after); archive
+    /// from anything except Archived/FalsePositive. Everything else must be
+    /// refused WITH THE STATUS UNTOUCHED — a refused transition that also
+    /// mutated would be worse than the unguarded original.
+    #[test]
+    fn transition_matrix_is_exactly_the_legal_set() {
+        let mut legal: Vec<(MessageStatus, &str)> = Vec::new();
+        for start in [
+            MessageStatus::Active,
+            MessageStatus::Acknowledged,
+            MessageStatus::Resolved,
+            MessageStatus::FalsePositive,
+            MessageStatus::Archived,
+        ] {
+            let (ack, res, fp, arch) = (
+                start == MessageStatus::Active,
+                matches!(start, MessageStatus::Active | MessageStatus::Acknowledged),
+                matches!(start, MessageStatus::Active | MessageStatus::Acknowledged),
+                !matches!(
+                    start,
+                    MessageStatus::Archived | MessageStatus::FalsePositive
+                ),
+            ); {
+                let mut m0 =
+                    Message::alert(MessageSeverity::Warning, "t".into(), "b".into(), "s".into());
+                m0.status = start;
+                let mut m = m0.clone();
+                assert_eq!(m.acknowledge(), ack, "acknowledge from {start:?}");
+                if !ack {
+                    assert_eq!(m.status, start, "refused ack must not mutate: {start:?}");
+                } else {
+                    legal.push((start, "ack"));
+                }
+
+                let mut m = m0.clone();
+                assert_eq!(m.resolve(), res, "resolve from {start:?}");
+                if !res {
+                    assert_eq!(
+                        m.status, start,
+                        "refused resolve must not mutate: {start:?}"
+                    );
+                } else {
+                    legal.push((start, "resolve"));
+                }
+
+                let mut m = m0.clone();
+                assert_eq!(m.mark_false_positive(), fp, "false-positive from {start:?}");
+                if !fp {
+                    assert_eq!(m.status, start, "refused fp must not mutate: {start:?}");
+                } else {
+                    legal.push((start, "fp"));
+                }
+
+                let mut m = m0;
+                assert_eq!(m.archive(), arch, "archive from {start:?}");
+                if !arch {
+                    assert_eq!(
+                        m.status, start,
+                        "refused archive must not mutate: {start:?}"
+                    );
+                } else {
+                    legal.push((start, "archive"));
+                }
+            }
+        }
+        // 8 legal transitions: ack(Active) + resolve(Active, Ack) +
+        // fp(Active, Ack) + archive(Active, Ack, Resolved).
+        assert_eq!(legal.len(), 8, "exactly the designed legal set: {legal:?}");
+    }
+
+    /// The audit stamps land exactly on the transitions that own them.
+    #[test]
+    fn audit_fields_stamp_on_their_own_transitions_only() {
+        let mut m = Message::alert(MessageSeverity::Warning, "t".into(), "b".into(), "s".into());
+        assert!(m.acknowledge());
+        assert!(m.acknowledged_at.is_some(), "ack stamps acknowledged_at");
+        assert!(m.resolve());
+        assert!(m.resolved_at.is_some(), "resolve stamps resolved_at");
+        assert!(m.acknowledged_at.is_some(), "resolve keeps the ack stamp");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     /// M2-5 / 002 §3.4: the alert-level feedback loop needs a verdict that
     /// means "this should not have fired". It is its own status rather than a

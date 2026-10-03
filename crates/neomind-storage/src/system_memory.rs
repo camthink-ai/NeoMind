@@ -2292,6 +2292,34 @@ mod tests_new_layout {
         (temp_dir, store)
     }
 
+    /// Boundary: a transform result EXACTLY at the limit is accepted;
+    /// one char over is rejected with the file untouched.
+    #[tokio::test]
+    async fn test_modify_file_exact_limit_boundary() {
+        let (_temp, store) = create_test_store().await;
+        let limit = 2000; // user_char_limit from the harness config
+        let exact: String = "a".repeat(limit);
+        store.write_file("user", &exact).await.unwrap();
+        let changed = store
+            .modify_file("user", |cur| {
+                assert_eq!(cur.chars().count(), limit);
+                cur.to_string() // unchanged at exactly the limit
+            })
+            .await
+            .unwrap();
+        assert!(!changed);
+        let over = "a".repeat(limit + 1);
+        assert!(
+            store.modify_file("user", |_| over.clone()).await.is_err(),
+            "one char over the limit must be rejected"
+        );
+        // file untouched by the rejected attempt
+        assert_eq!(
+            store.read_file("user").await.unwrap().chars().count(),
+            limit
+        );
+    }
+
     #[tokio::test]
     async fn test_read_write_user() {
         let (_temp, store) = create_test_store().await;
@@ -2532,6 +2560,26 @@ mod tests_new_layout {
             "log lines must be evicted first: {out}"
         );
         assert!(out.contains("<!-- keep -->"), "markers stay atomic");
+    }
+
+    /// Boundary: content EXACTLY at the limit is untouched; one char over
+    /// evicts the cheapest line (not the marker, not curated prose).
+    #[test]
+    fn evict_boundary_exact_limit_untouched() {
+        let content = "line\n"; // 5 chars
+        assert_eq!(
+            evict_to_limit_preserving_markers(content, 5)
+                .chars()
+                .count(),
+            5
+        );
+        let over = "line\nlong tail here\n";
+        let out = evict_to_limit_preserving_markers(over, 10);
+        assert!(out.chars().count() <= 10);
+        assert!(
+            out.contains("line"),
+            "first line survives when cheaper lines exist"
+        );
     }
 
     /// Unit level: pure eviction semantics with and without markers.

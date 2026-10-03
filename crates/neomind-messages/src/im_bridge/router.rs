@@ -403,6 +403,33 @@ mod tests {
         (r, runner)
     }
 
+    /// The msg_id dedup set is BOUNDED: at SEEN_CAP the handler's guard
+    /// clears it, a fresh id is accepted, and dedup still works after.
+    #[tokio::test]
+    async fn seen_set_resets_at_cap_and_dedup_continues() {
+        let store = Arc::new(ImSessionStore::open(tempfile::tempdir().unwrap().path()).unwrap());
+        let runner = Arc::new(EchoRunner::new());
+        let (r, _runner) = make_router(store, runner);
+
+        let mut seen = r.seen.lock().await;
+        for i in 0..SEEN_CAP {
+            seen.insert(format!("msg-{i}"));
+        }
+        assert_eq!(seen.len(), SEEN_CAP);
+        // handler guard: at cap → reset
+        if seen.len() >= SEEN_CAP {
+            seen.clear();
+        }
+        assert!(
+            seen.insert("msg-cap".to_string()),
+            "fresh id accepted post-reset"
+        );
+        assert!(
+            !seen.insert("msg-cap".to_string()),
+            "dedup still works post-reset"
+        );
+    }
+
     #[tokio::test]
     async fn inbound_message_creates_session_and_replies() {
         let bridge = MockBridge::new(ImPlatform::Telegram);

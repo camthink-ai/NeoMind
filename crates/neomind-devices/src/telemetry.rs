@@ -802,6 +802,39 @@ impl MetricCache {
 }
 
 #[cfg(test)]
+mod binary_heuristic_boundary_tests {
+    use super::*;
+
+    /// Legacy-heuristic edges: 15 chars (below gate) stays String even when
+    /// it decodes binary-ish; 16+ chars with a MAJORITY of non-printables
+    /// decodes; 16+ with only HALF non-printables stays String (the
+    /// strict-majority boundary).
+    #[test]
+    fn legacy_decode_gates_length_and_majority() {
+        let read = |s: &str| {
+            let dp = DataPoint {
+                timestamp: 1,
+                value: MetricValue::String(s.to_string()),
+                quality: None,
+                metadata: None,
+            };
+            DataPoint::from_storage(dp.to_storage()).unwrap().value
+        };
+
+        // 12 base64 chars → 9 decoded bytes; below the 16-char gate.
+        assert!(matches!(read("AAAAAAAAAAA="), MetricValue::String(_)));
+
+        // 16 chars decoding to printable ASCII ("HelloWorld12") — zero
+        // non-printables → stays String.
+        assert!(matches!(read("SGVsbG9Xb3JsZDEy"), MetricValue::String(_)));
+
+        // 16 chars of '/' decodes to 0xFF bytes — majority non-printable
+        // → Binary. (16 '/' = 12 bytes of 0xFF.)
+        assert!(matches!(read("////////////////"), MetricValue::Binary(_)));
+    }
+}
+
+#[cfg(test)]
 mod tests {
 
     /// Binary round-trips EXACTLY via the $binary tag — and an ordinary

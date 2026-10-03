@@ -358,6 +358,25 @@ pub fn select_messages_with_importance(
 }
 
 #[cfg(test)]
+mod boundary_tests {
+    use super::*;
+
+    /// The window tier flips at 16K INCLUSIVE: a 16000-token backend prices
+    /// images at the conservative 1600; 16001 keeps the 1024 midpoint.
+    #[test]
+    fn image_estimate_tier_boundary_at_16k() {
+        assert_eq!(image_token_estimate(16_000), 1600);
+        assert_eq!(image_token_estimate(16_001), 1024);
+        assert_eq!(image_token_estimate(8_000), 1600);
+        assert_eq!(image_token_estimate(128_000), 1024);
+        assert!(
+            image_token_estimate(0) >= 1024,
+            "degenerate window still prices sanely"
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
