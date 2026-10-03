@@ -4,6 +4,7 @@
 
 pub mod agent_tools;
 pub mod error;
+pub mod explore;
 pub mod extension_tools;
 pub mod file_edit;
 pub mod file_write;
@@ -34,6 +35,7 @@ pub use shell::ShellConfig;
 
 pub use memory_tool::MemoryTool;
 
+pub use explore::ExploreTool;
 pub use file_edit::FileEditTool;
 pub use file_write::FileWriteTool;
 pub use vision::{VisionConfig, VisionTool};

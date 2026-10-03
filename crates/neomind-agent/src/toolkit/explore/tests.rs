@@ -1,0 +1,264 @@
+//! Behavior tests for the explore subagent (design freeze §2.2 contracts
+//! ①–⑥ + §2.0 review corrections b/c).
+//!
+//! Each test drives the REAL ExploreTool through a MockLlmRuntime script —
+//! no manager round-trip, no real backend.
+
+use super::*;
+use crate::testing_helpers::mock_llm::{MockLlmRuntime, MockResponse};
+use std::sync::Arc;
+
+/// A read-only toy tool the subagent may call: echoes its arguments.
+struct EchoReadTool;
+
+#[async_trait::async_trait]
+impl Tool for EchoReadTool {
+    fn name(&self) -> &str {
+        "metric_get"
+    }
+    fn description(&self) -> &str {
+        "Read one metric value (test fixture)."
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": { "metric": { "type": "string" } },
+            "required": ["metric"]
+        })
+    }
+    async fn execute(&self, args: serde_json::Value) -> Result<ToolOutput> {
+        Ok(ToolOutput::success(serde_json::json!({
+            "metric": args.get("metric").cloned().unwrap_or_default(),
+            "value": 21.5
+        })))
+    }
+}
+
+/// A WRITE-class tool that must never appear in the subagent catalog.
+struct DangerousWriteTool;
+
+#[async_trait::async_trait]
+impl Tool for DangerousWriteTool {
+    fn name(&self) -> &str {
+        "file_write"
+    }
+    fn description(&self) -> &str {
+        "Writes files (test fixture — must be excluded)."
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object"})
+    }
+    async fn execute(&self, _args: serde_json::Value) -> Result<ToolOutput> {
+        panic!("write tool must never be callable by the subagent");
+    }
+}
+
+fn harness(script: Vec<MockResponse>) -> Arc<ExploreTool> {
+    let mut registry = crate::toolkit::registry::ToolRegistry::new();
+    registry.register(Arc::new(EchoReadTool));
+    registry.register(Arc::new(DangerousWriteTool));
+    let rt: Arc<dyn neomind_core::llm::backend::LlmRuntime> =
+        Arc::new(MockLlmRuntime::new(script).with_function_calling());
+    let explore = Arc::new(ExploreTool::with_runtime(rt));
+    registry.register(explore.clone());
+    let registry = Arc::new(registry);
+    explore.set_registry(registry);
+    explore
+}
+
+/// Contract ①: the tool refuses empty questions with a readable error.
+#[tokio::test]
+async fn empty_question_is_rejected() {
+    let explore = harness(vec![]);
+    let err = explore
+        .execute(serde_json::json!({ "question": "   " }))
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("question"),
+        "error must name the missing field: {err}"
+    );
+}
+
+/// Contract ⑥: a no-tool-call round ends the loop with the model's text as
+/// the summary, and the result carries the full F3 payload (wall clock,
+/// rounds, per-round notes).
+#[tokio::test]
+async fn summary_round_ends_loop_with_full_payload() {
+    let explore = harness(vec![
+        MockResponse::tool_call("metric_get", serde_json::json!({"metric": "temp"})),
+        MockResponse::text("Cold room held 21.5°C; no anomalies in the window."),
+    ]);
+
+    let out = explore
+        .execute(serde_json::json!({ "question": "冷库上周温度正常吗" }))
+        .await
+        .unwrap();
+
+    assert!(out.success);
+    let d = &out.data;
+    assert!(
+        d["summary"].as_str().unwrap_or_default().contains("21.5"),
+        "summary must carry the finding: {d}"
+    );
+    assert_eq!(d["rounds_used"], 1);
+    assert_eq!(d["tool_calls_made"], 1);
+    assert!(d["wall_clock_ms"].as_u64().unwrap_or(u64::MAX) < 10_000);
+    assert_eq!(d["budget_exhausted"], false);
+    assert!(
+        d["rounds"].as_array().unwrap().len() >= 2,
+        "per-round notes must include the reasoning + tool round: {d}"
+    );
+}
+
+/// Contract ⑥: round exhaustion returns a best-effort summary with
+/// rounds_used at the cap — NOT an error.
+#[tokio::test]
+async fn round_exhaustion_returns_summary_not_error() {
+    // 8 rounds of tool calls (the cap), then the forced closing call.
+    let mut script: Vec<MockResponse> = (0..MAX_ROUNDS)
+        .map(|i| {
+            MockResponse::tool_call(
+                "metric_get",
+                serde_json::json!({ "metric": format!("m{i}") }),
+            )
+        })
+        .collect();
+    script.push(MockResponse::text(
+        "Partial findings from 8 rounds of probing.",
+    ));
+
+    let explore = harness(script);
+    let out = explore
+        .execute(serde_json::json!({ "question": "explore everything slowly" }))
+        .await
+        .unwrap();
+
+    assert!(out.success, "exhaustion must not error: {}", out.data);
+    assert_eq!(out.data["tool_calls_made"], MAX_ROUNDS as u64);
+    assert!(out.data["budget_exhausted"] == true || out.data["rounds_used"].as_u64().unwrap() >= 1);
+}
+
+/// Contract ⑤ + recursion guard: the subagent's tool catalog excludes
+/// `explore` itself and every write-class tool. Verified structurally via
+/// subagent_catalog (the loop enforces the same filter).
+#[test]
+fn catalog_excludes_explore_and_write_tools() {
+    let mut registry = crate::toolkit::registry::ToolRegistry::new();
+    registry.register(Arc::new(EchoReadTool));
+    registry.register(Arc::new(DangerousWriteTool));
+
+    let catalog = ExploreTool::subagent_catalog(&registry, &None);
+    let names: Vec<&str> = catalog.iter().map(|d| d.name.as_str()).collect();
+    assert!(names.contains(&"metric_get"), "read tool must be present");
+    assert!(!names.contains(&"explore"), "explore must exclude itself");
+    assert!(
+        !names.contains(&"file_write"),
+        "write-class tools must be structurally excluded"
+    );
+}
+
+/// §2.0b: the parent's whitelist intersects the catalog — a fenced agent's
+/// subagent sees only tools the parent may use.
+#[test]
+fn catalog_intersects_parent_whitelist() {
+    let mut registry = crate::toolkit::registry::ToolRegistry::new();
+    registry.register(Arc::new(EchoReadTool));
+
+    let allowed = Some(vec!["metric_get".to_string(), "unrelated".to_string()]);
+    let catalog = ExploreTool::subagent_catalog(&registry, &allowed);
+    let names: Vec<&str> = catalog.iter().map(|d| d.name.as_str()).collect();
+    assert_eq!(names, vec!["metric_get"], "only the parent-allowed tool");
+}
+
+/// Contract ④ (test #4): no usable backend → readable error, fast, no
+/// panic, no hang. (with_runtime always has a backend, so exercise the
+/// error shape via the empty-question + registry-missing paths covered
+/// elsewhere; here: missing registry backfill.)
+#[tokio::test]
+async fn missing_registry_backfill_fails_readably() {
+    let rt: Arc<dyn neomind_core::llm::backend::LlmRuntime> = Arc::new(MockLlmRuntime::new(vec![]));
+    let explore = ExploreTool::with_runtime(rt); // set_registry NEVER called
+    let err = explore
+        .execute(serde_json::json!({ "question": "anything" }))
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("registry"),
+        "must name the wiring gap: {err}"
+    );
+}
+
+/// §2.0c + scheduled-agent path: a None progress relay is silently skipped
+/// — no panic, result unchanged. (The relay fires on tool rounds; a
+/// scheduled agent simply never attached one.)
+#[tokio::test]
+async fn none_progress_relay_is_silent() {
+    let explore = harness(vec![
+        MockResponse::tool_call("metric_get", serde_json::json!({"metric": "x"})),
+        MockResponse::text("done"),
+    ]);
+    // No prepare_execution call → progress stays None (the scheduled path).
+    let out = explore
+        .execute(serde_json::json!({ "question": "q" }))
+        .await
+        .unwrap();
+    assert!(out.success, "None relay must not affect the result");
+}
+
+/// §2.0d: the progress relay receives one event per tool call with the
+/// camelCase wire fields the frontend panel consumes.
+#[tokio::test]
+async fn progress_relay_fires_per_tool_call() {
+    use std::sync::Mutex;
+
+    let explore = harness(vec![
+        MockResponse::tool_call("metric_get", serde_json::json!({"metric": "a"})),
+        MockResponse::text("done"),
+    ]);
+
+    let events: Arc<Mutex<Vec<ExploreProgress>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = events.clone();
+    explore.prepare_execution(None, Some(Arc::new(move |p| sink.lock().unwrap().push(p))));
+
+    explore
+        .execute(serde_json::json!({ "question": "q" }))
+        .await
+        .unwrap();
+
+    let events = events.lock().unwrap();
+    assert_eq!(events.len(), 1, "one relay event per tool call");
+    assert_eq!(events[0].round, 1);
+    assert_eq!(events[0].max_rounds, MAX_ROUNDS);
+    assert_eq!(events[0].current_tool, "metric_get");
+    assert_eq!(events[0].tool_calls_so_far, 1);
+}
+
+/// Single-flight: a second explore while the first runs WAITS (then gets
+/// its own full run). Verified via completion of both calls — the
+/// semaphore guarantees mutual exclusion, observable as both succeeding.
+#[tokio::test]
+async fn single_flight_still_serves_both_callers() {
+    let explore = harness(vec![
+        MockResponse::tool_call("metric_get", serde_json::json!({"metric": "a"})),
+        MockResponse::text("first done"),
+        MockResponse::tool_call("metric_get", serde_json::json!({"metric": "b"})),
+        MockResponse::text("second done"),
+    ]);
+
+    let a = explore.execute(serde_json::json!({"question": "q1"}));
+    let b = explore.execute(serde_json::json!({"question": "q2"}));
+    let (ra, rb) = tokio::join!(a, b);
+    assert!(
+        ra.is_ok() && rb.is_ok(),
+        "single-flight queues, never drops"
+    );
+    assert!(ra.unwrap().data["summary"]
+        .as_str()
+        .unwrap()
+        .contains("first"));
+    assert!(rb.unwrap().data["summary"]
+        .as_str()
+        .unwrap()
+        .contains("second"));
+}

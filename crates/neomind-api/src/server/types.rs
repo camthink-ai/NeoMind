@@ -2350,6 +2350,17 @@ impl ServerState {
         )));
         tracing::info!(category = "ai", "Image edit tool registered");
 
+        // Explore subagent — heavy multi-round lookup in an isolated
+        // context. Needs ANY llm instance (not multimodal). Chicken-and-egg
+        // resolution happens after the Arc wrap (see set_registry below).
+        let mut explore_handle: Option<Arc<neomind_agent::toolkit::ExploreTool>> = None;
+        if let Ok(llm_manager) = neomind_agent::llm_backends::get_instance_manager() {
+            let explore = Arc::new(neomind_agent::toolkit::ExploreTool::new(llm_manager));
+            registry.register(explore.clone());
+            explore_handle = Some(explore);
+            tracing::info!(category = "ai", "Explore subagent registered");
+        }
+
         // Memory tool — persistent memory across sessions
         // Uses per-execution handle swapping for concurrency safety
         {
@@ -2362,6 +2373,11 @@ impl ServerState {
         }
 
         let tool_registry = Arc::new(registry);
+        // Two-phase backfill: explore is IN the registry and needs a handle
+        // TO it — only possible after the Arc wrap.
+        if let Some(explore) = explore_handle {
+            explore.set_registry(tool_registry.clone());
+        }
         self.agents
             .session_manager
             .set_tool_registry(tool_registry.clone())
