@@ -105,6 +105,12 @@ pub enum AgentEvent {
         /// Elapsed time in ms
         #[serde(rename = "elapsedMs", skip_serializing_if = "Option::is_none")]
         elapsed_ms: Option<u64>,
+        /// Structured payload for stage-specific consumers (§2.0d). The
+        /// explore relay ships camelCase keys here for the live panel; any
+        /// other stage may attach its own shape. Absent on all legacy
+        /// events — additive, old clients simply never see it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<serde_json::Value>,
     },
 }
 
@@ -243,6 +249,23 @@ impl AgentEvent {
             message: message.into(),
             stage: Some(stage.into()),
             elapsed_ms: Some(elapsed),
+            detail: None,
+        }
+    }
+
+    /// Create a structured progress event (stage-specific `detail`
+    /// payload; keys camelCase on the wire per the enum's convention).
+    pub fn progress_with_detail(
+        message: impl Into<String>,
+        stage: impl Into<String>,
+        elapsed: u64,
+        detail: serde_json::Value,
+    ) -> Self {
+        Self::Progress {
+            message: message.into(),
+            stage: Some(stage.into()),
+            elapsed_ms: Some(elapsed),
+            detail: Some(detail),
         }
     }
 

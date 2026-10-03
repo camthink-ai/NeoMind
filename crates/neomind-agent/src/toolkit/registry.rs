@@ -344,6 +344,25 @@ impl ToolRegistry {
         tool.swap_agent_context(agent_id, knowledge_files)
     }
 
+    /// Swap the explore subagent's per-execution scope (and optional live
+    /// progress relay). Called by the executor alongside
+    /// `prepare_memory_tool_execution` — the same handle-swap isolation.
+    pub(crate) fn prepare_explore_execution(
+        &self,
+        allowed_tools: Option<Vec<String>>,
+        progress: Option<crate::toolkit::explore::ProgressSender>,
+    ) {
+        if let Some(tool_arc) = self.tools.get("explore") {
+            if let Some(explore) = tool_arc
+                .as_ref()
+                .as_any()
+                .downcast_ref::<crate::toolkit::ExploreTool>()
+            {
+                explore.prepare_execution(allowed_tools, progress);
+            }
+        }
+    }
+
     /// Set the session ID on the MemoryTool for the current chat session.
     /// Called by the Agent at the start of each process cycle to avoid
     /// the global-handle race (where a concurrent session overwrites the ID

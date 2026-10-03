@@ -48,11 +48,12 @@ use crate::toolkit::tool::{Tool, ToolOutput};
 /// Round budget: the loop's hard ceiling (contract ⑥).
 pub(crate) const MAX_ROUNDS: usize = 8;
 
-/// Wall-clock budget. Deliberately equal to the SLOW timeout tier — this
-/// tool MUST be registered with `timeouts::SLOW` (300s), never DEFAULT
-/// (~120s): the outer tool timeout would otherwise kill an exploration
-/// mid-loop while rounds remain (the §2.0a trap).
-pub(crate) const WALL_CLOCK: std::time::Duration = std::time::Duration::from_secs(300);
+/// Wall-clock budget — derived from the SLOW tier (single source of truth
+/// in timeouts.rs), NOT a local constant: an explore registered at DEFAULT
+/// (~120s) would be killed by the outer tool timeout mid-loop while rounds
+/// remain (the §2.0a trap). The ordering assertions below make that drift
+/// a compile-time test failure instead of a production surprise.
+pub(crate) const WALL_CLOCK: std::time::Duration = crate::toolkit::timeouts::SLOW;
 
 /// Process-wide single-flight permit (contract: one explore at a time).
 static EXPLORE_SEMAPHORE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
@@ -72,8 +73,27 @@ const EXCLUDED_TOOLS: &[&str] = &[
 /// wire, matching the AgentEvent per-field rename convention (`elapsedMs`).
 /// Consumers (executor wiring + AgentEvent relay) land with the frontend
 /// panel commit on this branch.
+impl ExploreProgress {
+    /// The wire payload for AgentEvent::Progress.detail (§2.0d): camelCase
+    /// keys per the enum's per-field rename convention — the frontend panel
+    /// type maps 1:1.
+    #[allow(dead_code)] // consumer lands with the stream-relay commit
+    pub fn to_detail(&self) -> serde_json::Value {
+        serde_json::json!({
+            "toolCallId": null, // reserved: the Tool trait carries no call
+                                // id today; panels match by stage (single-flight)
+            "round": self.round,
+            "maxRounds": self.max_rounds,
+            "currentTool": self.current_tool,
+            "note": self.note,
+            "toolCallsSoFar": self.tool_calls_so_far,
+            "wallClockMs": self.wall_clock_ms,
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+#[allow(dead_code)] // consumers land with the stream-relay commit
 pub(crate) struct ExploreProgress {
     pub round: usize,
     pub max_rounds: usize,

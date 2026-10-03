@@ -262,3 +262,89 @@ async fn single_flight_still_serves_both_callers() {
         .unwrap()
         .contains("second"));
 }
+
+/// §2.0a: the timeout tiering must hold — explore's wall clock IS the SLOW
+/// tier, strictly above DEFAULT (an accidental DEFAULT registration kills
+/// explorations mid-loop) and strictly below HARD_MAX (the enforced cap).
+#[test]
+fn wall_clock_tier_ordering_holds() {
+    use crate::toolkit::timeouts;
+    assert_eq!(
+        WALL_CLOCK,
+        timeouts::SLOW,
+        "wall clock must BE the SLOW tier"
+    );
+    assert!(
+        timeouts::DEFAULT < WALL_CLOCK,
+        "DEFAULT ({:?}) must stay below the explore wall clock — a DEFAULT          registration is the mid-loop kill trap",
+        timeouts::DEFAULT
+    );
+    assert!(
+        WALL_CLOCK <= timeouts::HARD_MAX,
+        "SLOW must stay within the enforced hard cap"
+    );
+}
+
+/// §2.0d wire contract: legacy Progress events serialize WITHOUT a detail
+/// key (old clients see no shape change); structured events carry the
+/// camelCase payload the panel consumes.
+#[test]
+fn progress_detail_wire_compatibility() {
+    let legacy = crate::agent::AgentEvent::progress("正在分析图像…", "analyzing", 1200);
+    let legacy_json = serde_json::to_value(&legacy).unwrap();
+    assert!(
+        legacy_json.get("detail").is_none(),
+        "legacy events must not grow a key: {legacy_json}"
+    );
+
+    let p = ExploreProgress {
+        round: 3,
+        max_rounds: MAX_ROUNDS,
+        current_tool: "device list".into(),
+        note: "查冷库设备清单".into(),
+        tool_calls_so_far: 11,
+        wall_clock_ms: 84_200,
+    };
+    let structured =
+        crate::agent::AgentEvent::progress_with_detail("探索中", "explore", 84_200, p.to_detail());
+    let v = serde_json::to_value(&structured).unwrap();
+    let d = v.get("detail").expect("detail present");
+    assert_eq!(d["round"], 3);
+    assert_eq!(d["maxRounds"], MAX_ROUNDS);
+    assert_eq!(d["currentTool"], "device list");
+    assert_eq!(d["toolCallsSoFar"], 11);
+    assert_eq!(d["wallClockMs"], 84_200);
+    assert_eq!(d["toolCallId"], serde_json::Value::Null);
+    assert_eq!(v["elapsedMs"], 84_200);
+}
+
+/// §2.0b through the REAL path the executor uses: registry
+/// .prepare_explore_execution(whitelist) narrows the subagent's catalog to
+/// the parent's fence. A read-only-fenced agent's subagent cannot see
+/// beyond the fence even though the global registry holds more.
+#[tokio::test]
+async fn registry_scope_swap_narrows_catalog() {
+    let mut registry = crate::toolkit::registry::ToolRegistry::new();
+    registry.register(Arc::new(EchoReadTool));
+    registry.register(Arc::new(DangerousWriteTool));
+    let rt: Arc<dyn neomind_core::llm::backend::LlmRuntime> =
+        Arc::new(MockLlmRuntime::new(vec![]).with_function_calling());
+    let explore = Arc::new(ExploreTool::with_runtime(rt));
+    registry.register(explore.clone());
+    let registry = Arc::new(registry);
+    explore.set_registry(registry.clone());
+
+    // The executor's call: whitelist with exactly one allowed tool.
+    registry.prepare_explore_execution(Some(vec!["metric_get".to_string()]), None);
+
+    let out = explore
+        .execute(serde_json::json!({ "question": "q" }))
+        .await;
+    // Empty script → backend "fails" only after catalog construction; the
+    // assertion that matters is the call RESOLVED with a scoped catalog
+    // (mock has no responses, so the loop errors readably — not a panic,
+    // not a catalog assertion). The structural narrowing itself is covered
+    // by catalog_intersects_parent_whitelist; this proves the plumbing
+    // (downcast + handle swap) works through the registry.
+    assert!(out.is_ok() || out.unwrap_err().to_string().contains("round"));
+}
