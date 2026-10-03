@@ -820,9 +820,14 @@ impl MessageManager {
 
             for id in ids {
                 if let Some(message) = messages.get_mut(id) {
-                    message.acknowledge();
-                    count += 1;
-                    to_persist.push(Self::message_to_stored(message));
+                    // Guarded transition (review catch: the single-action
+                    // paths got guards, this bulk path was missed) — an
+                    // already-Resolved/FalsePositive entry is skipped, not
+                    // counted.
+                    if message.acknowledge() {
+                        count += 1;
+                        to_persist.push(Self::message_to_stored(message));
+                    }
                 }
             }
             (count, to_persist)
