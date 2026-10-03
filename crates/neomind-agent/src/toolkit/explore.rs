@@ -93,7 +93,6 @@ impl ExploreProgress {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // consumers land with the stream-relay commit
 pub(crate) struct ExploreProgress {
     pub round: usize,
     pub max_rounds: usize,

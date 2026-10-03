@@ -157,5 +157,11 @@
   "loadEarlierLoading": "加载中…",
   "suggestions": {
     "badge": "推荐"
+  },
+  "explore": {
+    "inProgress": "正在探索 · 第 {{round}}/{{max}} 轮",
+    "completed": "已探索 {{rounds}} 轮 · {{calls}} 次工具调用 · {{duration}}",
+    "budgetExhausted": "已达预算上限",
+    "toolCalls": "次调用"
   }
 }

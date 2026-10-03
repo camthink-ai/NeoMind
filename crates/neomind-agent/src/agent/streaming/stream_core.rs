@@ -971,6 +971,33 @@ pub async fn process_stream_events_with_safeguards(
                     .collect();
 
                 let reuse_map = executed_tool_signatures.clone();
+
+                // [explore relay §2.0d] If this batch calls the explore
+                // subagent, attach a buffered progress relay: the tool writes
+                // ExploreProgress into the buffer as its rounds run, and the
+                // tool-heartbeat select below drains it as structured
+                // progress events (≤ heartbeat_interval lag — no stream
+                // restructuring needed for a tool that can run minutes).
+                let explore_buffer: Option<Arc<std::sync::Mutex<Vec<crate::toolkit::explore::ExploreProgress>>>> =
+                    tool_inputs.iter().any(|(_, n, _)| n == "explore")
+                        .then(|| Arc::new(std::sync::Mutex::new(Vec::new())));
+                if let (Some(buf), tools_ref) = (&explore_buffer, &tools) {
+                    let buf = buf.clone();
+                    tools_ref.prepare_explore_execution(
+                        None,
+                        Some(Arc::new(move |p| {
+                            if let Ok(mut b) = buf.lock() {
+                                // Bounded: keep the freshest event per round;
+                                // a pathological emitter can't grow this.
+                                if b.len() >= 64 {
+                                    b.clear();
+                                }
+                                b.push(p);
+                            }
+                        })),
+                    );
+                }
+
                 let tool_futures = futures::stream::iter(tool_inputs.into_iter().map(|(i, name, arguments)| {
                     let tools_clone = tools.clone();
                     let cache_clone = cache.clone();
@@ -1055,6 +1082,25 @@ pub async fn process_stream_events_with_safeguards(
                 let mut tool_results_executed: Vec<_> = loop {
                     tokio::select! {
                         _ = tool_heartbeat.tick() => {
+                            // Drain the explore relay buffer BEFORE the
+                            // heartbeat: live subagent rounds surface as
+                            // structured progress, the heartbeat stays a
+                            // fallback keep-alive.
+                            if let Some(buf) = &explore_buffer {
+                                let drained: Vec<_> =
+                                    std::mem::take(&mut *buf.lock().unwrap());
+                                for p in drained {
+                                    yield AgentEvent::progress_with_detail(
+                                        format!(
+                                            "探索中 {}/{}：{}",
+                                            p.round, p.max_rounds, p.current_tool
+                                        ),
+                                        "explore",
+                                        p.wall_clock_ms,
+                                        p.to_detail(),
+                                    );
+                                }
+                            }
                             yield AgentEvent::heartbeat();
                         }
                         done = &mut collect_fut => break done,
