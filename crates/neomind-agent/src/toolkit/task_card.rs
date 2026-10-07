@@ -154,11 +154,30 @@ impl TaskCardTool {
 
     /// Set the current session (called by the stream per turn, same
     /// pattern as the memory tool's session handle).
+    /// Test-only: sync session binding without disk load (tests that
+    /// don't need the file-populated cache).
+    #[cfg(feature = "test-utils")]
     pub fn set_session(&self, id: Option<String>) {
         *self.session_id.write() = id;
-        // Clear the cache — the new session's card will be loaded on the
-        // first read_card call (or stay empty if no card exists).
         *self.cached_block.write() = String::new();
+    }
+
+    /// Bind the session and LOAD the card from disk in one step. The
+    /// context injection reads the cached block synchronously every round
+    /// — without this load, a card saved in a previous turn (or before a
+    /// server restart — the todo.md file persists) was INVISIBLE until
+    /// the model happened to call update_task_card again. The cache is
+    /// cleared FIRST so the context never sees the previous session's card.
+    pub async fn set_session_and_load(&self, id: Option<String>) {
+        *self.session_id.write() = id.clone();
+        *self.cached_block.write() = String::new();
+        if let Some(sid) = &id {
+            let store = self.store.read().await;
+            if let Ok(text) = store.read_session_file(sid, "todo").await {
+                let card = TaskCard::from_markdown(&text);
+                *self.cached_block.write() = card.to_context_block();
+            }
+        }
     }
 
     /// Set the progress relay (for the frontend refetch trigger).
@@ -210,11 +229,13 @@ impl Tool for TaskCardTool {
     }
 
     fn description(&self) -> &str {
-        "Update the current task card — pinned facts that survive context compression. \
-         Update any slot (goal/params/step/open/findings); omitted slots are preserved. \
-         The params slot should carry the user's EXACT words for critical parameters \
-         (locations, thresholds, file paths) so they are never lost. The findings slot \
-         is where you record what you've discovered (e.g., explore results)."
+        "Pin task facts so they survive context compression. WHEN to use: (1) at the \
+         START of any multi-step task — record the goal and the user's EXACT words for \
+         critical parameters (locations, thresholds, file paths); (2) after each explore \
+         call — record what was found in the findings slot; (3) when the current step \
+         changes. Update any slot (goal/params/step/open/findings); omitted slots are \
+         preserved. This card is shown to the user and re-injected into every turn — \
+         it is how you remember '厦门市集美区' across a long conversation."
     }
 
     fn parameters(&self) -> Value {

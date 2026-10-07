@@ -239,19 +239,28 @@ pub async fn process_stream_events_with_safeguards(
     // the summary filter works on history indices and the card sits at
     // index 0 outside the summarized range).
     let mut context_messages = history_messages.clone();
+    let mut index_offset = 0u64;
     if let Some(card_block) = tools.get_task_card_block() {
         if !card_block.is_empty() {
             let mut card_msg = AgentMessage::system(&card_block);
             card_msg.timestamp = 0; // ancient — sorts first, survives everything
             context_messages.insert(0, card_msg);
+            index_offset = 1;
         }
     }
+
+    // [summary offset] summary_up_to_index was computed against the
+    // ORIGINAL history (no card). With the card inserted at index 0, all
+    // original indices shift +1 — the summary filter must shift too, or
+    // it drops the card itself (index 0 <= up_to → filtered) AND keeps
+    // one extra original message that the summary already covers.
+    let adjusted_up_to = summary_up_to_index.map(|u| u + index_offset);
 
     let history_for_llm: Vec<neomind_core::Message> = build_context_window_with_summary(
         &context_messages,
         effective_max,
         conversation_summary.as_deref(),
-        summary_up_to_index,
+        adjusted_up_to,
     )
     .iter()
     .map(|msg| msg.to_core())

@@ -120,7 +120,8 @@ impl Agent {
             .set_memory_session_id(self.session_id.clone())
             .await;
         self.tools
-            .set_task_card_session(Some(self.session_id.clone()));
+            .set_task_card_session(Some(self.session_id.clone()))
+            .await;
 
         let start = std::time::Instant::now();
 
@@ -556,7 +557,8 @@ impl Agent {
             .set_memory_session_id(self.session_id.clone())
             .await;
         self.tools
-            .set_task_card_session(Some(self.session_id.clone()));
+            .set_task_card_session(Some(self.session_id.clone()))
+            .await;
 
         // Check if LLM is configured
         if !self.llm_interface.is_ready().await {
