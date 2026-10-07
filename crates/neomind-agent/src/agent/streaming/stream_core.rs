@@ -238,30 +238,32 @@ pub async fn process_stream_events_with_safeguards(
     // it as the first message (never summarized, never evicted, because
     // the summary filter works on history indices and the card sits at
     // index 0 outside the summarized range).
-    let mut context_messages = history_messages.clone();
-    let mut index_offset = 0u64;
-    if let Some(card_block) = tools.get_task_card_block() {
-        if !card_block.is_empty() {
-            let mut card_msg = AgentMessage::system(&card_block);
-            card_msg.timestamp = 0; // ancient — sorts first, survives everything
-            context_messages.insert(0, card_msg);
-            index_offset = 1;
+    // [task card §3.2 — round 40 fix] The card is injected AFTER the
+    // context window builder, not before. The builder's summary filter
+    // drops indices <= summary_up_to_index — the card at index 0 was
+    // ALWAYS dropped when a summary was active (0 <= up_to is always
+    // true for up_to >= 0), regardless of any index offset. Injecting
+    // into the RESULT (the final window) bypasses the filter entirely.
+    let history_for_llm: Vec<neomind_core::Message> = {
+        let window = build_context_window_with_summary(
+            &history_messages,
+            effective_max,
+            conversation_summary.as_deref(),
+            summary_up_to_index,
+        );
+        if let Some(card_block) = tools.get_task_card_block() {
+            if !card_block.is_empty() {
+                let card_msg = AgentMessage::system(&card_block);
+                let mut with_card = vec![card_msg];
+                with_card.extend(window);
+                with_card
+            } else {
+                window
+            }
+        } else {
+            window
         }
     }
-
-    // [summary offset] summary_up_to_index was computed against the
-    // ORIGINAL history (no card). With the card inserted at index 0, all
-    // original indices shift +1 — the summary filter must shift too, or
-    // it drops the card itself (index 0 <= up_to → filtered) AND keeps
-    // one extra original message that the summary already covers.
-    let adjusted_up_to = summary_up_to_index.map(|u| u + index_offset);
-
-    let history_for_llm: Vec<neomind_core::Message> = build_context_window_with_summary(
-        &context_messages,
-        effective_max,
-        conversation_summary.as_deref(),
-        adjusted_up_to,
-    )
     .iter()
     .map(|msg| msg.to_core())
     .collect::<Vec<_>>();
@@ -415,21 +417,26 @@ pub async fn process_stream_events_with_safeguards(
                     // round; rounds 2+ lost it, so draw_text in round 2 had
                     // no access to the pinned params — the watermark scenario
                     // was broken in exactly the multi-round case it targets).
-                    let mut context_messages = state_guard.memory.clone();
-                    let mut _card_offset = 0u64;
-                    if let Some(card_block) = tools.get_task_card_block() {
-                        if !card_block.is_empty() {
-                            let mut card_msg = AgentMessage::system(&card_block);
-                            card_msg.timestamp = 0;
-                            context_messages.insert(0, card_msg);
-                            _card_offset = 1;
-                        }
-                    }
+                    // Card injection AFTER the builder (same round-40 fix
+                    // as the initial path — the builder's compaction can
+                    // evict index 0, taking the card with it).
                     let config = CompactionConfig::for_context_size(max_context);
                     let compacted = build_context_window_with_config(
-                        &context_messages, effective_max, &config
+                        &state_guard.memory, effective_max, &config
                     );
-                    compacted.iter().map(|msg| msg.to_core()).collect::<Vec<_>>()
+                    if let Some(card_block) = tools.get_task_card_block() {
+                        if !card_block.is_empty() {
+                            let card_msg = AgentMessage::system(&card_block);
+                            let mut with_card = vec![card_msg];
+                            with_card.extend(compacted);
+                            with_card
+                        } else {
+                            compacted
+                        }
+                    } else {
+                        compacted
+                    }
+                    .iter().map(|msg| msg.to_core()).collect::<Vec<_>>()
                 };
 
                 // Build context for subsequent rounds - tell LLM what happened before
