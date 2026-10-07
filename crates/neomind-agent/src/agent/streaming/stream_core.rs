@@ -1109,6 +1109,17 @@ pub async fn process_stream_events_with_safeguards(
                 // Restore LLM-emission order (buffer_unordered completes in arbitrary order).
                 tool_results_executed.sort_by_key(|(i, _, _)| *i);
 
+                // [explore relay detach] The batch is done — REMOVE the
+                // relay so the NEXT explore call (possibly from a different
+                // chat session sharing this registry) cannot write into this
+                // stream's captured buffer. Events between the last heartbeat
+                // and completion are lost, which is fine: the completed
+                // panel renders from the tool result (F3), not the last
+                // progress event.
+                if explore_buffer.is_some() {
+                    tools.prepare_explore_execution(None, None);
+                }
+
                 // Process results
                 let mut tool_calls_with_results: Vec<ToolCall> = Vec::new();
                 let mut tool_call_results: Vec<(String, String)> = Vec::new();

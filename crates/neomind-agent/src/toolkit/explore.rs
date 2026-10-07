@@ -212,12 +212,18 @@ impl ExploreTool {
     fn subagent_catalog(
         registry: &crate::toolkit::registry::ToolRegistry,
         scope: &Option<Vec<String>>,
-    ) -> Vec<ToolDefinition> {
+    ) -> (
+        Vec<ToolDefinition>,
+        std::collections::HashMap<String, String>,
+    ) {
         // Registry definitions (toolkit type) filtered, then mapped to the
         // backend wire type LlmInput wants. Names sanitized for
-        // OpenAI-compatible APIs (extension tools carry `:`/`.`).
+        // OpenAI-compatible APIs (extension tools carry `:`/`.`). The
+        // reverse map (sanitized → raw) rides alongside: registry.execute
+        // expects the RAW name, and the LLM calls by the sanitized one.
         use neomind_core::llm::backend::sanitize_tool_name;
-        registry
+        let mut reverse = std::collections::HashMap::new();
+        let catalog: Vec<ToolDefinition> = registry
             .definitions_for_llm()
             .into_iter()
             .filter(|d| !EXCLUDED_TOOLS.contains(&d.name.as_str()))
@@ -225,12 +231,19 @@ impl ExploreTool {
                 Some(allowed) => allowed.iter().any(|a| a == &d.name),
                 None => true,
             })
-            .map(|d| ToolDefinition {
-                name: sanitize_tool_name(&d.name),
-                description: d.description.clone(),
-                parameters: d.parameters.clone(),
+            .map(|d| {
+                let sanitized = sanitize_tool_name(&d.name);
+                if sanitized != d.name {
+                    reverse.insert(sanitized.clone(), d.name.clone());
+                }
+                ToolDefinition {
+                    name: sanitized,
+                    description: d.description.clone(),
+                    parameters: d.parameters.clone(),
+                }
             })
-            .collect()
+            .collect();
+        (catalog, reverse)
     }
 }
 
@@ -282,7 +295,7 @@ impl Tool for ExploreTool {
             ));
         };
         let scope = self.scope.read().clone();
-        let catalog = Self::subagent_catalog(&registry, &scope);
+        let (catalog, name_map) = Self::subagent_catalog(&registry, &scope);
         if catalog.is_empty() {
             return Err(ToolError::Execution(
                 "explore: no read-only tools available under the current scope".into(),
@@ -305,7 +318,15 @@ impl Tool for ExploreTool {
             .await
             .map_err(|_| ToolError::Execution("explore semaphore closed".into()))?;
 
-        run_explore(&runtime, &registry, &catalog, question, progress.as_ref()).await
+        run_explore(
+            &runtime,
+            &registry,
+            &catalog,
+            &name_map,
+            question,
+            progress.as_ref(),
+        )
+        .await
     }
 
     fn category(&self) -> ToolCategory {
@@ -325,6 +346,7 @@ async fn run_explore(
     runtime: &Arc<dyn LlmRuntime>,
     registry: &Arc<crate::toolkit::registry::ToolRegistry>,
     catalog: &[ToolDefinition],
+    name_map: &std::collections::HashMap<String, String>,
     question: String,
     progress: Option<&ProgressSender>,
 ) -> Result<ToolOutput> {
@@ -405,10 +427,27 @@ async fn run_explore(
 
         // Native tool calls → execute them (read-only guaranteed by catalog).
         let calls = output.tool_calls.unwrap_or_default();
-        if calls.is_empty() {
-            // No tool call = the model is done; its text is the summary.
+        let text_is_empty = output.text.trim().is_empty();
+        if calls.is_empty() && !text_is_empty {
+            // No tool call + non-empty text = the model is done.
             return Ok(finish(
                 output.text,
+                rounds,
+                tool_calls_made,
+                rounds_used,
+                started,
+                false,
+            ));
+        }
+        if calls.is_empty() && text_is_empty {
+            // The narration-collapse analog at the subagent level: the
+            // model produced NOTHING (no text, no calls). End with a
+            // readable fallback rather than an empty-but-successful
+            // result — the caller cannot distinguish "found nothing" from
+            // "said nothing" with an empty summary.
+            return Ok(finish(
+                "The exploration model returned no output; no findings were                  produced. Try rephrasing the question."
+                    .to_string(),
                 rounds,
                 tool_calls_made,
                 rounds_used,
@@ -428,6 +467,9 @@ async fn run_explore(
                 Some(t) => t,
                 None => continue,
             };
+            // The LLM calls by the sanitized name; the registry indexes by
+            // the raw one (extension tools carry `:`/`.`).
+            let raw_name = name_map.get(&name).unwrap_or(&name).clone();
             tool_calls_made += 1;
 
             if let Some(relay) = progress {
@@ -444,7 +486,8 @@ async fn run_explore(
             // Tool timeout: the wall clock caps everything — a hung tool
             // cannot outlive the budget.
             let remaining = WALL_CLOCK.saturating_sub(started.elapsed());
-            let result = tokio::time::timeout(remaining, registry.execute(&name, arguments)).await;
+            let result =
+                tokio::time::timeout(remaining, registry.execute(&raw_name, arguments)).await;
 
             let tool_text = match result {
                 Ok(Ok(out)) => summarize_output(&out),
@@ -456,7 +499,7 @@ async fn run_explore(
             };
 
             rounds.push(RoundNote {
-                tool: name.clone(),
+                tool: raw_name.clone(),
                 note: first_line(&tool_text),
             });
             let _ = id;

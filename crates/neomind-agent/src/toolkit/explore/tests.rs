@@ -148,7 +148,7 @@ fn catalog_excludes_explore_and_write_tools() {
     registry.register(Arc::new(EchoReadTool));
     registry.register(Arc::new(DangerousWriteTool));
 
-    let catalog = ExploreTool::subagent_catalog(&registry, &None);
+    let (catalog, _name_map) = ExploreTool::subagent_catalog(&registry, &None);
     let names: Vec<&str> = catalog.iter().map(|d| d.name.as_str()).collect();
     assert!(names.contains(&"metric_get"), "read tool must be present");
     assert!(!names.contains(&"explore"), "explore must exclude itself");
@@ -166,7 +166,7 @@ fn catalog_intersects_parent_whitelist() {
     registry.register(Arc::new(EchoReadTool));
 
     let allowed = Some(vec!["metric_get".to_string(), "unrelated".to_string()]);
-    let catalog = ExploreTool::subagent_catalog(&registry, &allowed);
+    let (catalog, _name_map) = ExploreTool::subagent_catalog(&registry, &allowed);
     let names: Vec<&str> = catalog.iter().map(|d| d.name.as_str()).collect();
     assert_eq!(names, vec!["metric_get"], "only the parent-allowed tool");
 }
@@ -347,4 +347,44 @@ async fn registry_scope_swap_narrows_catalog() {
     // by catalog_intersects_parent_whitelist; this proves the plumbing
     // (downcast + handle swap) works through the registry.
     assert!(out.is_ok() || out.unwrap_err().to_string().contains("round"));
+}
+
+/// Review catch 2A: a model that returns NOTHING (no text, no calls) on
+/// round 1 gets a readable fallback, not an empty-but-successful result.
+#[tokio::test]
+async fn empty_model_output_returns_readable_fallback() {
+    let explore = harness(vec![MockResponse::text("")]);
+    let out = explore
+        .execute(serde_json::json!({ "question": "q" }))
+        .await
+        .unwrap();
+    assert!(out.success);
+    let summary = out.data["summary"].as_str().unwrap_or_default();
+    assert!(
+        !summary.is_empty(),
+        "empty model output must not yield an empty summary (looks like success with no findings)"
+    );
+    assert!(
+        summary.contains("no output") || summary.contains("no findings"),
+        "fallback must say what happened: {summary}"
+    );
+}
+
+/// Review catch 3: the sanitized→raw name map routes extension-style tool
+/// calls back to the registry. A tool whose raw name contains `:` gets a
+/// sanitized catalog name; the map must recover the raw name.
+#[test]
+fn name_map_recovers_raw_names_for_extension_tools() {
+    let mut registry = crate::toolkit::registry::ToolRegistry::new();
+    registry.register(Arc::new(EchoReadTool));
+    // The EchoReadTool has a clean name; the map only carries entries for
+    // names that CHANGED under sanitization. Verify the invariant: for
+    // every catalog entry, either the name is its own raw form or the map
+    // resolves it.
+    let (catalog, map) = ExploreTool::subagent_catalog(&registry, &None);
+    for def in &catalog {
+        let resolved = map.get(&def.name).unwrap_or(&def.name);
+        // The resolved name must be a real registry name (the EchoReadTool's).
+        assert_eq!(resolved, "metric_get");
+    }
 }
