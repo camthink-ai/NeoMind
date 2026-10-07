@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button"
 import { SessionSidebar } from "@/components/session/SessionSidebar"
 import { WelcomeArea } from "@/components/chat/WelcomeArea"
 import { ChatMessages } from "@/components/chat/ChatMessages"
+import { TaskCardBanner } from "@/components/chat/TaskCardBanner"
 import { ChatComposer } from "@/components/chat/ChatComposer"
 import { ConnectionStatus } from "@/components/chat/ConnectionStatus"
 import { MobilePageHeader } from "@/components/layout/MobilePageHeader"
@@ -98,6 +99,7 @@ export function ChatPage() {
 
   // Local state
   const [input, setInput] = useState("")
+  const [taskCardRefresh, setTaskCardRefresh] = useState(0)
   const [lastTokenUsage, setLastTokenUsage] = useState<{ promptTokens: number; systemPromptTokens?: number; toolTokens?: number; maxContextTokens?: number } | null>(null)
   const [isCompacting, setIsCompacting] = useState(false)
 
@@ -206,6 +208,11 @@ export function ChatPage() {
         data.sessionId && data.sessionId !== sessionId
       ) {
         switchSession(data.sessionId)
+      }
+      // Task card refetch trigger (§3.2: update_task_card fires a
+      // Progress event with stage "taskCard" — bump the refresh token).
+      if (data.type === "Progress" && (data as any).stage === "taskCard") {
+        setTaskCardRefresh((n) => n + 1)
       }
     },
   })
@@ -981,6 +988,7 @@ export function ChatPage() {
               handleBackdropClick()
             }}
           >
+            <TaskCardBanner sessionId={sessionId ?? ""} refreshToken={taskCardRefresh} />
             <ChatMessages
               messages={filteredMessages}
               user={user}
