@@ -392,6 +392,20 @@ impl ToolRegistry {
     /// Called by the Agent at the start of each process cycle to avoid
     /// the global-handle race (where a concurrent session overwrites the ID
     /// between handler-set and tool-read).
+    /// Set the current session on the TaskCardTool (per-turn, same pattern
+    /// as set_memory_session_id — avoids the cross-session handle race).
+    pub fn set_task_card_session(&self, session_id: Option<String>) {
+        if let Some(tool_arc) = self.tools.get("update_task_card") {
+            if let Some(tc) = tool_arc
+                .as_ref()
+                .as_any()
+                .downcast_ref::<super::task_card::TaskCardTool>()
+            {
+                tc.set_session(session_id);
+            }
+        }
+    }
+
     pub async fn set_memory_session_id(&self, session_id: String) {
         if let Some(tool_arc) = self.tools.get("memory") {
             if let Some(mem_tool) = tool_arc

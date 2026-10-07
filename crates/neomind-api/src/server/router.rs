@@ -427,6 +427,10 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         )
         .route("/api/sessions/:id", get(sessions::get_session_handler))
         .route(
+            "/api/sessions/:id/task-card",
+            get(sessions::get_session_task_card_handler),
+        )
+        .route(
             "/api/sessions/:id/history",
             get(sessions::get_session_history_handler),
         )

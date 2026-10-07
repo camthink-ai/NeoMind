@@ -716,6 +716,51 @@ pub async fn get_session_history_handler(
     }))))
 }
 
+/// Get the current task card for a session (§3.2 W2).
+#[utoipa::path(
+    get,
+    path = "/api/sessions/{id}/task-card",
+    tag = "sessions",
+    params(
+        ("id" = String, Path, description = "Session id"),
+    ),
+    responses(
+        (status = 200, description = "The session's task card (all slots optional; empty card = all null)"),
+        (status = 404, description = "Session not found"),
+    ),
+)]
+pub async fn get_session_task_card_handler(
+    State(state): State<ServerState>,
+    Path(id): Path<String>,
+) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
+    use neomind_agent::toolkit::task_card::TaskCard;
+
+    // Session must exist.
+    let _agent = state
+        .agents
+        .session_manager
+        .get_session(&id)
+        .await
+        .map_err(|_| ErrorResponse::not_found("Session"))?;
+
+    // Read the todo file from the memory store.
+    let store = state.agents.system_memory_store.clone();
+    let text = store
+        .read_session_file(&id, "todo")
+        .await
+        .unwrap_or_default();
+    let card = TaskCard::from_markdown(&text);
+
+    Ok(Json(ApiResponse::success(serde_json::json!({
+        "goal": card.goal,
+        "params": card.params,
+        "step": card.step,
+        "open": card.open,
+        "findings": card.findings,
+        "isEmpty": card.is_empty(),
+    }))))
+}
+
 /// Delete a session.
 #[utoipa::path(
     delete,
