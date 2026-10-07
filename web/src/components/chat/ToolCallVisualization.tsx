@@ -93,6 +93,9 @@ interface ToolProcessBlockProps {
   /** Per-round intermediate content (shown alongside tools in each round) */
   roundContents?: Record<number, string>
   isStreaming?: boolean
+  /** Latest live explore-subagent progress (§2.0d/F1): forwarded to the
+   *  explore tool-call item for its live panel state. */
+  exploreDetail?: ExploreDetail | null
 }
 
 /**
@@ -104,6 +107,7 @@ export function ToolProcessBlock({
   toolCalls,
   roundContents = {},
   isStreaming = false,
+  exploreDetail = null,
 }: ToolProcessBlockProps) {
   const { t } = useTranslation("chat")
   // Expansion is decided ONCE at mount: long completed batches start
@@ -178,6 +182,7 @@ export function ToolProcessBlock({
                     toolCall={tc}
                     isStreaming={stepStreaming && tc.result == null}
                     t={t}
+                    exploreDetail={tc.name === "explore" ? exploreDetail : null}
                   />
                 ))}
               </div>

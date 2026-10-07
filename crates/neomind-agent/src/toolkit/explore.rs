@@ -59,7 +59,14 @@ pub(crate) const WALL_CLOCK: std::time::Duration = crate::toolkit::timeouts::SLO
 static EXPLORE_SEMAPHORE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 
 /// Tool names the subagent must NEVER see (contract ⑤ + recursion guard).
-/// `explore` excludes itself; the rest can mutate system state.
+/// `explore` excludes itself; the rest either mutate system state or are
+/// meaningless (and stalling) in an isolated subagent context. Reviewed
+/// against the full production registry: shell/file_write/file_edit/memory
+/// mutate; run_now spawns agent runs; skill is CRUD; image_edit writes
+/// files; ask_user/confirm_action/clarify_intent BLOCK on user interaction
+/// that can never arrive — an explore round that calls one burns its wall
+/// clock waiting. Extension tools are kept: their value IS the point, and
+/// the extension runtime enforces its own command semantics.
 const EXCLUDED_TOOLS: &[&str] = &[
     "explore",
     "shell",
@@ -67,6 +74,12 @@ const EXCLUDED_TOOLS: &[&str] = &[
     "file_edit",
     "memory",
     "message",
+    "run_now",
+    "skill",
+    "image_edit",
+    "ask_user",
+    "confirm_action",
+    "clarify_intent",
 ];
 
 /// Progress payload for the live panel (§2.0d). Keys are camelCase on the
@@ -331,6 +344,14 @@ async fn run_explore(
     let mut exhausted = false;
 
     for round in 1..=MAX_ROUNDS {
+        // Context trim: the subagent's message list grows one assistant +
+        // up-to-N tool-result messages per round. On an 8K-token backend,
+        // 8 rounds × several 1500-char tool results overflows the window —
+        // the backend truncates from the FRONT, eating the system prompt
+        // and the original question. Keep the two seed messages + the
+        // newest body within budget.
+        trim_context(&mut messages);
+
         // Contract ⑥: the wall clock gates EVERY iteration, including the
         // LLM call itself — a slow backend eating the clock returns the
         // partial summary rather than erroring.
@@ -591,3 +612,36 @@ fn truncate_chars(s: &str, max: usize) -> String {
 
 #[cfg(all(test, feature = "test-utils"))]
 mod tests;
+
+/// Keep the subagent's context bounded: the two seed messages (system
+/// prompt + question) always survive; the body is trimmed to the newest
+/// messages that fit the budget. Uses the same estimator as the rest of
+/// the agent (`agent::tokenizer::estimate_tokens`).
+fn trim_context(messages: &mut Vec<Message>) {
+    const BODY_TOKEN_BUDGET: usize = 6_000;
+    if messages.len() <= 3 {
+        return;
+    }
+    let estimate = |m: &Message| -> usize {
+        match &m.content {
+            neomind_core::Content::Text(t) => crate::agent::tokenizer::estimate_tokens(t),
+            neomind_core::Content::Parts(parts) => parts
+                .iter()
+                .map(|p| crate::agent::tokenizer::estimate_tokens(&p.to_string()))
+                .sum(),
+        }
+    };
+    // Walk from the newest backward until the budget is spent.
+    let mut used = 0usize;
+    let mut keep_from = messages.len();
+    for i in (2..messages.len()).rev() {
+        used += estimate(&messages[i]);
+        if used > BODY_TOKEN_BUDGET {
+            break;
+        }
+        keep_from = i;
+    }
+    if keep_from > 2 {
+        messages.drain(2..keep_from);
+    }
+}

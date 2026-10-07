@@ -2459,6 +2459,16 @@ impl ServerState {
             self.data_dir.clone(),
         )));
 
+        // Re-register explore (review catch: this rebuild path dropped it —
+        // after the startup refresh, explore vanished from the registry and
+        // the chat session rebuilt its toolset without the subagent).
+        let mut explore_handle: Option<Arc<neomind_agent::toolkit::ExploreTool>> = None;
+        if let Ok(llm_manager) = neomind_agent::llm_backends::get_instance_manager() {
+            let explore = Arc::new(neomind_agent::toolkit::ExploreTool::new(llm_manager));
+            registry.register(explore.clone());
+            explore_handle = Some(explore);
+        }
+
         // Re-register memory tool (per-execution handle swapping for concurrency safety)
         {
             let memory_store = tokio::sync::RwLock::new((*self.agents.system_memory_store).clone());
@@ -2471,6 +2481,9 @@ impl ServerState {
 
         let tool_registry = Arc::new(registry);
         let tool_count = tool_registry.len();
+        if let Some(explore) = explore_handle {
+            explore.set_registry(tool_registry.clone());
+        }
         self.agents
             .session_manager
             .set_tool_registry(tool_registry.clone())
