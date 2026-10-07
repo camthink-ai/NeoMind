@@ -358,6 +358,20 @@ impl ToolRegistry {
         }
     }
 
+    /// Read the current session's task-card context block (§3.2): the
+    /// pinned task state injected before history on every round. Returns
+    /// empty string when no card exists or no session is bound.
+    pub fn get_task_card_block(&self) -> Option<String> {
+        let tool = self.tools.get("update_task_card")?;
+        let tc = tool
+            .as_ref()
+            .as_any()
+            .downcast_ref::<crate::toolkit::task_card::TaskCardTool>()?;
+        // Read the cached card synchronously (the tool reads the file on
+        // update, caches the parsed form; this returns the cached block).
+        tc.cached_context_block()
+    }
+
     /// Swap the explore subagent's PROGRESS relay (chat stream path).
     pub(crate) fn set_explore_progress(
         &self,

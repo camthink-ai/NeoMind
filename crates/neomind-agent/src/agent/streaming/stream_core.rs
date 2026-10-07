@@ -233,8 +233,22 @@ pub async fn process_stream_events_with_safeguards(
         max_context, prompt_overhead, RESERVE_FOR_RESPONSE, effective_max
     );
 
+    // [task card §3.2] If the session has a task card, prepend it as a
+    // system-role message BEFORE the history — the context builder treats
+    // it as the first message (never summarized, never evicted, because
+    // the summary filter works on history indices and the card sits at
+    // index 0 outside the summarized range).
+    let mut context_messages = history_messages.clone();
+    if let Some(card_block) = tools.get_task_card_block() {
+        if !card_block.is_empty() {
+            let mut card_msg = AgentMessage::system(&card_block);
+            card_msg.timestamp = 0; // ancient — sorts first, survives everything
+            context_messages.insert(0, card_msg);
+        }
+    }
+
     let history_for_llm: Vec<neomind_core::Message> = build_context_window_with_summary(
-        &history_messages,
+        &context_messages,
         effective_max,
         conversation_summary.as_deref(),
         summary_up_to_index,
