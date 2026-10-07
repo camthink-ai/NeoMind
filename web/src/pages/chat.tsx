@@ -100,6 +100,7 @@ export function ChatPage() {
   // Local state
   const [input, setInput] = useState("")
   const [taskCardRefresh, setTaskCardRefresh] = useState(0)
+  const [exploreDetail, setExploreDetail] = useState<import("@/components/chat/SubagentExplorePanel").ExploreDetail | null>(null)
   const [lastTokenUsage, setLastTokenUsage] = useState<{ promptTokens: number; systemPromptTokens?: number; toolTokens?: number; maxContextTokens?: number } | null>(null)
   const [isCompacting, setIsCompacting] = useState(false)
 
@@ -213,6 +214,17 @@ export function ChatPage() {
       // Progress event with stage "taskCard" — bump the refresh token).
       if (data.type === "Progress" && (data as any).stage === "taskCard") {
         setTaskCardRefresh((n) => n + 1)
+      }
+      // Explore live progress collector (F2): the backend emits Progress
+      // events with stage "explore" and a camelCase detail payload; store
+      // the LATEST for the SubagentExplorePanel's live state.
+      if (data.type === "end") {
+        // Clear stale explore detail — the next turn starts fresh.
+        setExploreDetail(null)
+      }
+      if (data.type === "Progress" && (data as any).stage === "explore") {
+        const detail = (data as any).detail
+        if (detail) setExploreDetail(detail as import("@/components/chat/SubagentExplorePanel").ExploreDetail)
       }
     },
   })
@@ -990,6 +1002,8 @@ export function ChatPage() {
           >
             <TaskCardBanner sessionId={sessionId ?? ""} refreshToken={taskCardRefresh} />
             <ChatMessages
+
+              exploreDetail={exploreDetail}
               messages={filteredMessages}
               user={user}
               isStreaming={isStreaming}
