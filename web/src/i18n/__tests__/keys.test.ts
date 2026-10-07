@@ -234,7 +234,7 @@ describe('translation keys referenced from source', () => {
     // English. There are too many to fix in one pass, so the count is frozen
     // here the way `.eslint-baseline` freezes the lint warnings: shrink it when
     // you touch these call sites, never raise it.
-    const FROZEN = 269 // +2: explore panel i18n keys (1.2.0 W1)
+    const FROZEN = 269 // +2 explore (W1); taskCard keys (W2) are fully translated, not counted as missing
     const soft = [...referenced.values()].filter(
       (r) => r.bare.length === 0 && resolve(bundleOf('en', r.ns) ?? {}, r.key) === undefined,
     )

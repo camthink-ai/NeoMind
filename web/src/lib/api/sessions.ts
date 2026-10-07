@@ -3,6 +3,17 @@ import type { ChatSession, SessionHistoryResponse } from '@/types'
 import { fetchAPI, type FetchOptions } from "./client"
 
 export const sessionsApi = {
+  /** Get the session's task card (W2 §3.2). */
+  getTaskCard: (id: string) =>
+    fetchAPI<{
+      goal?: string | null
+      params?: string | null
+      step?: string | null
+      open?: string | null
+      findings?: string | null
+      isEmpty?: boolean
+    }>(`/sessions/${id}/task-card`),
+
   // Sessions
   // Note: Backend returns paginated response with data as array (auto-unwrapped by fetchAPI)
   listSessions: (page = 1, pageSize = 10) =>
