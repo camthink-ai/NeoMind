@@ -409,10 +409,25 @@ pub async fn process_stream_events_with_safeguards(
                 let state_guard = internal_state.read().await;
 
                 let history_for_llm: Vec<neomind_core::Message> = {
-                    // Build context with the same effective_max budget as the initial call
+                    // Build context with the same budget-managed context builder
+                    // as the initial call — INCLUDING the task card injection
+                    // (round 16: the card was only injected in the initial
+                    // round; rounds 2+ lost it, so draw_text in round 2 had
+                    // no access to the pinned params — the watermark scenario
+                    // was broken in exactly the multi-round case it targets).
+                    let mut context_messages = state_guard.memory.clone();
+                    let mut _card_offset = 0u64;
+                    if let Some(card_block) = tools.get_task_card_block() {
+                        if !card_block.is_empty() {
+                            let mut card_msg = AgentMessage::system(&card_block);
+                            card_msg.timestamp = 0;
+                            context_messages.insert(0, card_msg);
+                            _card_offset = 1;
+                        }
+                    }
                     let config = CompactionConfig::for_context_size(max_context);
                     let compacted = build_context_window_with_config(
-                        &state_guard.memory, effective_max, &config
+                        &context_messages, effective_max, &config
                     );
                     compacted.iter().map(|msg| msg.to_core()).collect::<Vec<_>>()
                 };

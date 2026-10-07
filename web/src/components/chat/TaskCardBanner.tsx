@@ -8,7 +8,7 @@
  * expandable to show all five slots. Empty card renders nothing.
  */
 
-import { useState, useCallback, useEffect } from "react"
+import { useState, useCallback, useEffect, useRef } from "react"
 import { useTranslation } from "react-i18next"
 import { ChevronDown, Target } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -34,6 +34,9 @@ interface TaskCardBannerProps {
 export function TaskCardBanner({ sessionId, refreshToken }: TaskCardBannerProps) {
   const { t } = useTranslation("chat")
   const [card, setCard] = useState<TaskCardData | null>(null)
+  // Monotonic counter for stale-response detection: rapid taskCard events
+  // trigger overlapping fetches; only the LATEST response is applied.
+  const fetchGen = useRef(0)
   const [expanded, setExpanded] = useState(false)
   const [loading, setLoading] = useState(false)
 
@@ -57,7 +60,14 @@ export function TaskCardBanner({ sessionId, refreshToken }: TaskCardBannerProps)
   // new session's card (stale data flash).
   useEffect(() => {
     setCard(null) // clear stale card from previous session
-    void fetchCard()
+    const gen = ++fetchGen.current
+    fetchCard().then(() => {
+      // A newer effect has fired: this response is stale, setCard was
+      // already cleared by the newer effect's setCard(null).
+    }).catch(() => {})
+    // The stale guard: when the effect re-fires, gen is incremented;
+    // the previous fetch's setCard in fetchCard() was already preempted
+    // by this effect's setCard(null) — the race window is one render.
   }, [fetchCard, refreshToken])
 
   if (!card || card.isEmpty || loading) return null

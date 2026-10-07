@@ -388,3 +388,15 @@ fn name_map_recovers_raw_names_for_extension_tools() {
         assert_eq!(resolved, "metric_get");
     }
 }
+
+/// Round 14: the tool description hardcodes "8 rounds" (the Tool trait
+/// returns &str, so it can't format dynamically). If MAX_ROUNDS changes,
+/// this assertion fails and forces the description update.
+#[test]
+fn max_rounds_matches_description_constant() {
+    assert_eq!(
+        MAX_ROUNDS, 8,
+        "MAX_ROUNDS changed — update the hardcoded \
+         '8 rounds' in ExploreTool::description()"
+    );
+}
