@@ -14,4 +14,5 @@ pub mod messages_chain;
 pub mod rules;
 pub mod sessions;
 pub mod stats;
+pub mod explore_taskcard;
 // settings.rs deprecated - API changed significantly
