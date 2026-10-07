@@ -267,7 +267,8 @@ impl Tool for ExploreTool {
          to 8 rounds of read-only tool calls and returns {summary, rounds_used, tool_calls_made, \
          wall_clock_ms, rounds}. Use it when answering needs many lookups (history scans, \
          cross-device checks, finding a specific record) — the intermediate rounds never enter \
-         this conversation. Files/images it finds come back as paths in the summary."
+         this conversation. Files/images it finds come back as paths in the summary. \
+         AFTER explore returns, call update_task_card to record what you found in the findings slot."
     }
 
     fn parameters(&self) -> Value {
