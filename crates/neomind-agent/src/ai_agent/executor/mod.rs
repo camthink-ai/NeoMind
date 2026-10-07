@@ -984,7 +984,7 @@ impl AgentExecutor {
                 .as_ref()
                 .filter(|c| c.enabled && !c.allowed_tools.is_empty())
                 .map(|c| c.allowed_tools.clone());
-            registry.prepare_explore_execution(scope, None);
+            registry.set_explore_scope(scope);
         }
 
         // Execute with error handling for stability.

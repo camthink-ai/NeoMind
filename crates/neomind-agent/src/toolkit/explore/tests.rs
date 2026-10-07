@@ -219,7 +219,7 @@ async fn progress_relay_fires_per_tool_call() {
 
     let events: Arc<Mutex<Vec<ExploreProgress>>> = Arc::new(Mutex::new(Vec::new()));
     let sink = events.clone();
-    explore.prepare_execution(None, Some(Arc::new(move |p| sink.lock().unwrap().push(p))));
+    explore.set_progress(Some(Arc::new(move |p| sink.lock().unwrap().push(p))));
 
     explore
         .execute(serde_json::json!({ "question": "q" }))
@@ -335,7 +335,7 @@ async fn registry_scope_swap_narrows_catalog() {
     explore.set_registry(registry.clone());
 
     // The executor's call: whitelist with exactly one allowed tool.
-    registry.prepare_explore_execution(Some(vec!["metric_get".to_string()]), None);
+    registry.set_explore_scope(Some(vec!["metric_get".to_string()]));
 
     let out = explore
         .execute(serde_json::json!({ "question": "q" }))

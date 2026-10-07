@@ -194,16 +194,20 @@ impl ExploreTool {
         }
     }
 
-    /// Swap the per-execution scope + progress relay. Called by the executor
-    /// alongside `prepare_memory_tool_execution` — same handle-swap pattern.
-    /// (Executor call site lands with the AgentEvent relay commit.)
-    #[allow(dead_code)]
-    pub(crate) fn prepare_execution(
-        &self,
-        allowed_tools: Option<Vec<String>>,
-        progress: Option<ProgressSender>,
-    ) {
+    /// Swap the per-execution SCOPE (the parent agent's tool whitelist).
+    /// Called by the executor before every agent execution — INDEPENDENT of
+    /// the progress relay, so a chat stream attaching its relay mid-flight
+    /// cannot clear a scheduled agent's fence (and vice versa). The old
+    /// paired swap was a cross-path clobber: whichever path fired last
+    /// zeroed the other's handle.
+    pub(crate) fn set_scope(&self, allowed_tools: Option<Vec<String>>) {
         *self.scope.write() = allowed_tools;
+    }
+
+    /// Swap the live progress RELAY. Called by the chat stream before a
+    /// batch containing explore, and cleared (None) after the batch.
+    /// Independent of set_scope for the same cross-path reason.
+    pub(crate) fn set_progress(&self, progress: Option<ProgressSender>) {
         *self.progress.write() = progress;
     }
 
@@ -685,6 +689,14 @@ fn trim_context(messages: &mut Vec<Message>) {
         keep_from = i;
     }
     if keep_from > 2 {
-        messages.drain(2..keep_from);
+        // Snap to the next Assistant boundary: dropping between an
+        // assistant message and its tool results leaves orphaned
+        // "[tool result]" User messages the model can't contextualize.
+        while keep_from < messages.len() && messages[keep_from].role != MessageRole::Assistant {
+            keep_from += 1;
+        }
+        if keep_from > 2 && keep_from < messages.len() {
+            messages.drain(2..keep_from);
+        }
     }
 }

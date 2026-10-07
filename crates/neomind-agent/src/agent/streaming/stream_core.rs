@@ -983,19 +983,16 @@ pub async fn process_stream_events_with_safeguards(
                         .then(|| Arc::new(std::sync::Mutex::new(Vec::new())));
                 if let (Some(buf), tools_ref) = (&explore_buffer, &tools) {
                     let buf = buf.clone();
-                    tools_ref.prepare_explore_execution(
-                        None,
-                        Some(Arc::new(move |p| {
-                            if let Ok(mut b) = buf.lock() {
-                                // Bounded: keep the freshest event per round;
-                                // a pathological emitter can't grow this.
-                                if b.len() >= 64 {
-                                    b.clear();
-                                }
-                                b.push(p);
+                    tools_ref.set_explore_progress(Some(Arc::new(move |p| {
+                        if let Ok(mut b) = buf.lock() {
+                            // Bounded: keep the freshest event per round;
+                            // a pathological emitter can't grow this.
+                            if b.len() >= 64 {
+                                b.clear();
                             }
-                        })),
-                    );
+                            b.push(p);
+                        }
+                    })));
                 }
 
                 let tool_futures = futures::stream::iter(tool_inputs.into_iter().map(|(i, name, arguments)| {
@@ -1117,7 +1114,7 @@ pub async fn process_stream_events_with_safeguards(
                 // panel renders from the tool result (F3), not the last
                 // progress event.
                 if explore_buffer.is_some() {
-                    tools.prepare_explore_execution(None, None);
+                    tools.set_explore_progress(None);
                 }
 
                 // Process results

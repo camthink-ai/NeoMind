@@ -344,12 +344,23 @@ impl ToolRegistry {
         tool.swap_agent_context(agent_id, knowledge_files)
     }
 
-    /// Swap the explore subagent's per-execution scope (and optional live
-    /// progress relay). Called by the executor alongside
-    /// `prepare_memory_tool_execution` — the same handle-swap isolation.
-    pub(crate) fn prepare_explore_execution(
+    /// Swap the explore subagent's SCOPE (executor path — see
+    /// ExploreTool::set_scope for why scope and relay are independent).
+    pub(crate) fn set_explore_scope(&self, allowed_tools: Option<Vec<String>>) {
+        if let Some(tool_arc) = self.tools.get("explore") {
+            if let Some(explore) = tool_arc
+                .as_ref()
+                .as_any()
+                .downcast_ref::<crate::toolkit::ExploreTool>()
+            {
+                explore.set_scope(allowed_tools);
+            }
+        }
+    }
+
+    /// Swap the explore subagent's PROGRESS relay (chat stream path).
+    pub(crate) fn set_explore_progress(
         &self,
-        allowed_tools: Option<Vec<String>>,
         progress: Option<crate::toolkit::explore::ProgressSender>,
     ) {
         if let Some(tool_arc) = self.tools.get("explore") {
@@ -358,7 +369,7 @@ impl ToolRegistry {
                 .as_any()
                 .downcast_ref::<crate::toolkit::ExploreTool>()
             {
-                explore.prepare_execution(allowed_tools, progress);
+                explore.set_progress(progress);
             }
         }
     }

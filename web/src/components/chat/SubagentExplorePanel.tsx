@@ -66,7 +66,11 @@ export function SubagentExplorePanel({
       }
     | undefined
 
-  const isDone = !isStreaming && (result !== undefined || liveDetail === null)
+  // Done when: not streaming (definitively over), OR the result has landed
+  // (the tool finished; the stream may still be running its next round —
+  // the panel should show the completed state immediately, not vanish in
+  // the gap between "last progress event" and "stream end").
+  const isDone = result !== undefined || (!isStreaming && liveDetail === null)
 
   // ── Completed: from the persisted result ──
   if (isDone && result) {
