@@ -1008,10 +1008,17 @@ pub async fn process_stream_events_with_safeguards(
                     let buf = buf.clone();
                     tools_ref.set_explore_progress(Some(Arc::new(move |p| {
                         if let Ok(mut b) = buf.lock() {
-                            // Bounded: keep the freshest event per round;
-                            // a pathological emitter can't grow this.
+                            // Bounded: a pathological emitter can't grow
+                            // this. On overflow, keep the NEWEST event
+                            // (the one the panel needs most) — the old
+                            // clear() dropped everything including the
+                            // current round, leaving the panel blind.
                             if b.len() >= 64 {
+                                let newest = b.last().cloned();
                                 b.clear();
+                                if let Some(n) = newest {
+                                    b.push(n);
+                                }
                             }
                             b.push(p);
                         }

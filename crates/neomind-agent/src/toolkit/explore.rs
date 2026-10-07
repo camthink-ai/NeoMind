@@ -623,7 +623,18 @@ fn parse_tool_call(call: &Value) -> Option<(String, String, Value)> {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    let name = call.get("name")?.as_str()?.to_string();
+    // Name: top-level "name" (Anthropic/our format) or nested
+    // "function.name" (OpenAI format) — the old code only checked the
+    // top level, so OpenAI-format calls were silently dropped.
+    let name = call
+        .get("name")
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            call.get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(|v| v.as_str())
+        })?
+        .to_string();
     let arguments = call
         .get("arguments")
         .cloned()

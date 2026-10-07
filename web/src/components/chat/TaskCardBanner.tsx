@@ -51,8 +51,12 @@ export function TaskCardBanner({ sessionId, refreshToken }: TaskCardBannerProps)
     }
   }, [sessionId])
 
-  // Fetch on mount and whenever the refresh token bumps.
+  // Fetch on mount, on refresh token bump, and on session switch.
+  // The card is cleared IMMEDIATELY on session change — without this,
+  // the old session's card is visible during the async fetch for the
+  // new session's card (stale data flash).
   useEffect(() => {
+    setCard(null) // clear stale card from previous session
     void fetchCard()
   }, [fetchCard, refreshToken])
 
