@@ -531,6 +531,11 @@ pub static ROUTES: &[RouteDoc] = &[
     },
     RouteDoc {
         method: "GET",
+        path: "/api/sessions/:id/task-card",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
+        method: "GET",
         path: "/api/sessions/:id/history",
         auth: "jwt-or-api-key",
     },
