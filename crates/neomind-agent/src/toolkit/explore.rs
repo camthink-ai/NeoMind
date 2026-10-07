@@ -80,6 +80,10 @@ const EXCLUDED_TOOLS: &[&str] = &[
     "ask_user",
     "confirm_action",
     "clarify_intent",
+    "update_task_card", // the subagent must not write the PARENT's card —
+                        // its findings reach the card via the parent model
+                        // reading the explore result, not by the subagent
+                        // clobbering the pinned params directly
 ];
 
 /// Progress payload for the live panel (§2.0d). Keys are camelCase on the
