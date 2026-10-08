@@ -513,7 +513,8 @@
     "defaultTitle": "新对话",
     "deleteTitle": "删除会话",
     "deleteDescription": "确定要删除这个会话吗？此操作无法撤销。",
-    "sessionDeleted": "会话已删除"
+    "sessionDeleted": "会话已删除",
+    "generating": "生成中"
   },
   "language": {},
   "dataPush": {

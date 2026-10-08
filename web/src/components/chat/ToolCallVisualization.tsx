@@ -92,8 +92,6 @@ interface ToolProcessBlockProps {
   /** Per-round intermediate content (shown alongside tools in each round) */
   roundContents?: Record<number, string>
   isStreaming?: boolean
-  /** Latest live explore-subagent progress (§2.0d/F1): forwarded to the
-   *  explore tool-call item for its live panel state. */
 }
 
 /**
@@ -238,8 +236,7 @@ function ToolCallItem({
   toolCall: ToolCall
   isStreaming: boolean
   t: (key: string) => string
-  /** Latest live explore progress (§2.0d/F1): stage-matched, only when
-   *  this item IS the running explore call. */
+
 }) {
   const [isExpanded, setIsExpanded] = useState(false)
   const status = getToolStatus(

@@ -57,9 +57,22 @@ PY
 cp "$TMP" "$ASSET"
 echo "→ replaced $ASSET"
 echo
+
+# The registry tests are the step that catches what a refresh breaks (a
+# stale-text test pinned to a model whose flags changed, pruned alias
+# targets). Running them HERE instead of leaving them as a "next step"
+# printed at exit is what caught the deepseek-v4-flash pin during the
+# 2026-10-08 refresh — make it automatic.
+echo "→ running registry tests (cargo test -p neomind-core --lib llm::registry)"
+if cargo test -p neomind-core --lib llm::registry; then
+    echo "✓ registry tests pass"
+else
+    echo "✗ registry tests FAILED — likely a stale test pin or pruned alias target;" >&2
+    echo "  fix crates/neomind-core/src/llm/registry.rs + tests before committing." >&2
+    exit 1
+fi
+echo
 echo "Next steps:"
 echo "  1. Update the counts + date in the doc comment of"
 echo "     crates/neomind-core/src/llm/registry.rs"
-echo "  2. cargo test -p neomind-core --lib llm::registry"
-echo "     (fix aliases_for() targets if upstream pruned them)"
-echo "  3. Rebuild: the registry is include_str!-embedded."
+echo "  2. Rebuild: the registry is include_str!-embedded."
