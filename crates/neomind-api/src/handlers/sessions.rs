@@ -61,6 +61,21 @@ async fn process_stream_to_channel(
     // the client's IntermediateEnd counting.
     let mut pending_round: u32 = 1;
 
+    // Immediate pending-state save. Tool events and round boundaries must
+    // persist AT ONCE, not on the Thinking/Content debounce: a tool can run
+    // for minutes (shell, extension inference), and the last debounce-saved
+    // snapshot then predates the call — restoring mid-execution showed a
+    // bubble with no tool process (live-test: first-round tools vanished
+    // on switch-back, later rounds did not).
+    let save_pending_now = {
+        let store = session_store.clone();
+        move |st: &PendingStreamState| {
+            if let Err(e) = store.save_pending_stream(st) {
+                tracing::warn!(error = %e, "Failed to update pending stream (event)");
+            }
+        }
+    };
+
     // [detached-delivery] A failed channel send means the WS forwarding
     // loop is gone — the client navigated away or the connection dropped.
     // The turn must STILL run to completion: the stream itself appends the
@@ -146,6 +161,7 @@ async fn process_stream_to_channel(
                             "result": serde_json::Value::Null,
                             "round": round.unwrap_or(1),
                         }));
+                        save_pending_now(&pending_state);
                         let mut json = json!({
                             "type": "ToolCallStart",
                             "tool": tool,
@@ -168,6 +184,7 @@ async fn process_stream_to_channel(
                             round.map(|r| r as u32),
                             &json!(result),
                         );
+                        save_pending_now(&pending_state);
                         let mut json = json!({
                             "type": "ToolCallEnd",
                             "tool": tool,
@@ -216,6 +233,7 @@ async fn process_stream_to_channel(
                         // Send this to frontend but don't exit the loop
                         pending_state.rotate_round(pending_round);
                         pending_round += 1;
+                        save_pending_now(&pending_state);
                         tracing::debug!(
                             "*** Sending IntermediateEnd event (round {}) ***",
                             event_count

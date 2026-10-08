@@ -483,13 +483,19 @@ export function ChatPage() {
           const len = (result.content || "").length + (result.thinking || "").length
             + (result.toolCalls?.length ?? 0)
             + Object.values(result.roundContents || {}).reduce((a, b) => a + b.length, 0)
+          // While the snapshot's LAST call has no result yet, a tool is
+          // EXECUTING — legitimate silence up to the 300s tool ceiling. Use
+          // a 10-minute stall cap there; 60s everywhere else.
+          const calls = result.toolCalls ?? []
+          const lastResultless = calls.length > 0 && calls[calls.length - 1].result == null
+          const stallCap = lastResultless ? 200 : 20
           if (len > lastLen) { lastLen = len; stallTicks = 0 }
           else stallTicks += 1
           restoreIfBehind(result.content || "", result.thinking || "", {
             toolCalls: result.toolCalls,
             roundContents: result.roundContents,
           })
-          if (stallTicks >= 20) {
+          if (stallTicks >= stallCap) {
             setResumedPendingStream(null)
             hardReset()
           }
