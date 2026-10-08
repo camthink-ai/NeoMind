@@ -37,9 +37,9 @@ pub use memory_tool::MemoryTool;
 
 pub use explore::ExploreTool;
 pub mod task_card;
-pub use task_card::TaskCardTool;
 pub use file_edit::FileEditTool;
 pub use file_write::FileWriteTool;
+pub use task_card::TaskCardTool;
 pub use vision::{VisionConfig, VisionTool};
 
 pub use image_edit::ImageEditTool;

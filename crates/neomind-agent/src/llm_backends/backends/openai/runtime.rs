@@ -23,6 +23,18 @@ use crate::llm_backends::rate_limited_client::{ProviderRateLimits, RateLimitedCl
 
 use crate::llm_backends::text_tool_calls;
 
+fn stream_header_timeout() -> std::time::Duration {
+    // Edge deployments can pair the platform with slow local backends
+    // (llama.cpp on shared GPUs); the previous hard-coded 30s silently
+    // failed those requests the moment a decision-layer hint lengthened
+    // the prompt. NEOMIND_STREAM_HEADER_TIMEOUT_MS overrides.
+    std::env::var("NEOMIND_STREAM_HEADER_TIMEOUT_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(std::time::Duration::from_millis)
+        .unwrap_or(std::time::Duration::from_secs(30))
+}
+
 impl CloudRuntime {
     /// Create a new cloud runtime.
     pub fn new(config: CloudConfig) -> Result<Self, LlmError> {
@@ -962,8 +974,7 @@ impl CloudRuntime {
                 .header("Authorization", format!("Bearer {}", api_key))
                 .json(&request)
                 .send();
-            let send_result =
-                tokio::time::timeout(std::time::Duration::from_secs(30), send_fut).await;
+            let send_result = tokio::time::timeout(stream_header_timeout(), send_fut).await;
             let result: Result<_, LlmError> = match send_result {
                 Ok(Ok(r)) => Ok(r),
                 Ok(Err(e)) => Err(LlmError::Network(e.to_string())),
@@ -1242,8 +1253,7 @@ impl CloudRuntime {
                 .header("content-type", "application/json")
                 .json(&request)
                 .send();
-            let send_result =
-                tokio::time::timeout(std::time::Duration::from_secs(30), send_fut).await;
+            let send_result = tokio::time::timeout(stream_header_timeout(), send_fut).await;
             let result: Result<_, LlmError> = match send_result {
                 Ok(Ok(r)) => Ok(r),
                 Ok(Err(e)) => Err(LlmError::Network(e.to_string())),

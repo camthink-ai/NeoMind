@@ -86,7 +86,7 @@ impl TaskCard {
             parts.push(format!("**关键参数**: {p}"));
         }
         if let Some(s) = &self.step {
-            parts.push(format!("**当前步骤**: {s}"));
+            parts.push(format!("**步骤计划**: {s}"));
         }
         if let Some(o) = &self.open {
             parts.push(format!("**未决项**: {o}"));
@@ -97,7 +97,8 @@ impl TaskCard {
         format!(
             "\n<task-card>\nThese are the pinned facts of the current task. They are NOT part of \
              the conversation history and are NEVER subject to summarization. The parameters \
-             above are the user's exact words — use them verbatim in tool calls.\n{}\n</task-card>\n",
+             above are the user's exact words — use them verbatim in tool calls. Keep the step \
+             plan current: on each step change, rewrite it with ✅/▶/○ marks via update_task_card.\n{}\n</task-card>\n",
             parts.join("\n")
         )
     }
@@ -234,7 +235,11 @@ impl Tool for TaskCardTool {
          critical parameters (locations, thresholds, file paths); (2) after each explore \
          call — record what was found in the findings slot; (3) when the current step \
          changes. Update any slot (goal/params/step/open/findings); omitted slots are \
-         preserved. This card is shown to the user and re-injected into every turn — \
+         preserved. The step slot holds a NUMBERED PLAN of ALL steps, not just the \
+         current one: mark finished steps with ✅, the active one with ▶, upcoming \
+         with ○, and REWRITE the whole list on each update (the card is a snapshot, \
+         not an append log) — e.g. '1.✅ 查看设备列表 2.▶ 找到冷库传感器 3.○ 设置告警阈值'. \
+         This card is shown to the user and re-injected into every turn — \
          it is how you remember '厦门市集美区' across a long conversation."
     }
 
@@ -244,9 +249,9 @@ impl Tool for TaskCardTool {
             "properties": {
                 "goal": { "type": "string", "description": "The task's goal (one sentence)" },
                 "params": { "type": "string", "description": "Key parameters — the user's EXACT words for critical values (locations, thresholds, names)" },
-                "step": { "type": "string", "description": "What you're doing right now" },
+                "step": { "type": "string", "description": "Numbered plan of ALL steps: ✅ finished, ▶ active, ○ upcoming. Rewrite the whole list each update (snapshot, not append log). Example: '1.✅ 查看设备列表 2.▶ 找到冷库传感器 3.○ 设置告警阈值'" },
                 "open": { "type": "string", "description": "Unresolved questions / pending actions" },
-                "findings": { "type": "string", "description": "Durable discoveries (explore summaries land here)" }
+                "findings": { "type": "string", "description": "Durable discoveries (explore summaries land here); ACCUMULATE key facts across updates, one line per fact" }
             }
         })
     }

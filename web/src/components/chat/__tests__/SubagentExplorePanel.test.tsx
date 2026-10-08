@@ -86,4 +86,54 @@ describe("SubagentExplorePanel", () => {
     const panel = screen.getByTestId("explore-panel-done")
     expect(panel.textContent).toContain("explore.budgetExhausted")
   })
+
+  it("COMPLETED (live wire): string-shaped result is parsed and rendered", () => {
+    // The ToolCallEnd wire event carries the result as a display STRING —
+    // the JSON text — not the parsed object (only persisted history has the
+    // object). This is the "explore 没有任何内容" regression: string.summary
+    // was undefined and the body rendered empty.
+    const done: ToolCall = {
+      ...baseCall,
+      result: JSON.stringify({
+        summary: "3号冷库压缩机停机2小时",
+        rounds_used: 3,
+        tool_calls_made: 5,
+        wall_clock_ms: 42_000,
+        budget_exhausted: false,
+        rounds: [{ tool: "metric_get", note: "电流过载" }],
+      }),
+    }
+    render(<SubagentExplorePanel toolCall={done} liveDetail={null} />)
+    const panel = screen.getByTestId("explore-panel-done")
+    expect(panel.textContent).toContain("3号冷库压缩机停机2小时")
+    expect(panel.textContent).toContain("metric_get")
+  })
+
+  it("COMPLETED (live wire): non-JSON string degrades to a summary line, not empty", () => {
+    const done: ToolCall = {
+      ...baseCall,
+      // e.g. sanitizer-truncated JSON — unparseable, must not blank the panel
+      result: '{"summary": "冷库温度正…[trunc',
+    }
+    render(<SubagentExplorePanel toolCall={done} liveDetail={null} />)
+    const panel = screen.getByTestId("explore-panel-done")
+    expect(panel.textContent).toContain("冷库温度正")
+  })
+
+  it("COMPLETED shows the summary above the rounds list", () => {
+    const done: ToolCall = {
+      ...baseCall,
+      result: {
+        summary: "巡检结论：一切正常",
+        rounds_used: 2,
+        tool_calls_made: 4,
+        wall_clock_ms: 10_000,
+        rounds: [{ tool: "web_fetch", note: "抓取设备页" }],
+      },
+    }
+    render(<SubagentExplorePanel toolCall={done} liveDetail={null} />)
+    const panel = screen.getByTestId("explore-panel-done")
+    expect(panel.textContent).toContain("巡检结论：一切正常")
+    expect(panel.textContent).toContain("web_fetch")
+  })
 })

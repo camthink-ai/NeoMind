@@ -1,9 +1,10 @@
 /**
  * TaskCardBanner — display contract:
  * 1. Empty card → renders nothing.
- * 2. Card with goal → shows sticky banner with goal as summary.
+ * 2. Card with goal → shows the docked strip with goal as summary.
  * 3. Expanded → shows all five slots with labels.
  * 4. params slot gets the highlight treatment (the watermark lesson).
+ * 5. refreshToken bump → refetches and shows the updated card.
  */
 import { describe, it, expect, vi } from "vitest"
 import { render, screen, fireEvent } from "@testing-library/react"
@@ -65,5 +66,37 @@ describe("TaskCardBanner", () => {
     expect(banner.textContent).toContain("温度记录")
     expect(banner.textContent).toContain("报警阈值")
     expect(banner.textContent).toContain("温度正常")
+  })
+
+  it("refetches on refreshToken bump and shows the updated card", async () => {
+    mockGet.mockResolvedValue({ goal: "旧目标", isEmpty: false })
+    const { rerender } = render(
+      <TaskCardBanner sessionId="s1" refreshToken={0} />,
+    )
+    await new Promise((r) => setTimeout(r, 10))
+    expect(screen.getByTestId("task-card-banner").textContent).toContain("旧目标")
+
+    // Mid-stream card update bumps the token; the refetch lands new data.
+    mockGet.mockResolvedValue({ goal: "新目标", isEmpty: false })
+    rerender(<TaskCardBanner sessionId="s1" refreshToken={1} />)
+    await new Promise((r) => setTimeout(r, 10))
+    const banner = screen.getByTestId("task-card-banner")
+    expect(banner.textContent).toContain("新目标")
+    expect(banner.textContent).not.toContain("旧目标")
+  })
+
+  it("clears the card when the session changes", async () => {
+    mockGet.mockResolvedValue({ goal: "会话A的目标", isEmpty: false })
+    const { rerender } = render(
+      <TaskCardBanner sessionId="s1" refreshToken={0} />,
+    )
+    await new Promise((r) => setTimeout(r, 10))
+    expect(screen.getByTestId("task-card-banner").textContent).toContain("会话A的目标")
+
+    // Switch sessions: old card must not flash while the new one loads.
+    mockGet.mockImplementation(() => new Promise(() => {})) // never resolves
+    rerender(<TaskCardBanner sessionId="s2" refreshToken={0} />)
+    await new Promise((r) => setTimeout(r, 10))
+    expect(screen.queryByTestId("task-card-banner")).toBeNull()
   })
 })

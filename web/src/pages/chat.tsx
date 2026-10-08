@@ -1004,7 +1004,6 @@ export function ChatPage() {
               handleBackdropClick()
             }}
           >
-            <TaskCardBanner sessionId={sessionId ?? ""} refreshToken={taskCardRefresh} />
             <ChatMessages
 
               exploreDetail={exploreDetail}
@@ -1091,6 +1090,13 @@ export function ChatPage() {
                 </span>
               </div>
             )}
+
+            {/* Task card — docked above the composer, NOT pinned over the
+                message history (the v1 sticky-top banner covered content;
+                round-92 redesign). It is working context for the next
+                message, so it lives next to the input. Flex sibling →
+                pushes the message list up, never overlays it. */}
+            <TaskCardBanner sessionId={sessionId ?? ""} refreshToken={taskCardRefresh} />
 
             {composerEl}
           </div>

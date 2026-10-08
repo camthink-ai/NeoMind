@@ -274,6 +274,14 @@ fn wall_clock_tier_ordering_holds() {
         timeouts::SLOW,
         "wall clock must BE the SLOW tier"
     );
+    // The streaming executor's wrapper tier must match the tool's own wall
+    // clock — the live-test regression had the executor at DEFAULT 30s
+    // while the tool budgeted 300s ("Tool 'explore' timed out after 30s").
+    assert_eq!(
+        WALL_CLOCK,
+        timeouts::subagent_explore(),
+        "executor wrapper tier must equal the tool's wall clock"
+    );
     assert!(
         timeouts::DEFAULT < WALL_CLOCK,
         "DEFAULT ({:?}) must stay below the explore wall clock — a DEFAULT          registration is the mid-loop kill trap",

@@ -1,11 +1,20 @@
 /**
- * TaskCardBanner — sticky session-level display of the current task card.
+ * TaskCardBanner — session-level display of the current task card.
  *
  * Data flow (§3.2): GET /api/sessions/:id/task-card on mount + on the
  * "taskCard" progress event (the update_task_card tool fires it; the
- * chat page's onRawEvent collector triggers the refetch). Renders as a
- * sticky banner above the message list — collapsed to one line on mobile,
- * expandable to show all five slots. Empty card renders nothing.
+ * chat page's onRawEvent collector triggers the refetch).
+ *
+ * Placement: docked INSIDE the input area, directly above the composer —
+ * a flex sibling, never an overlay. The task card is working context for
+ * what the user is about to type, so it belongs next to the input rather
+ * than pinned over the conversation (the v1 sticky-top banner covered
+ * message history — round-92 redesign). Collapsed to one line; expands
+ * to all five slots. Empty card renders nothing.
+ *
+ * Refresh semantics: a refreshToken bump (mid-stream card update) keeps
+ * the previous card on screen until the fetch resolves — no flicker.
+ * Stale fetch responses are dropped via a monotonic generation counter.
  */
 
 import { useState, useCallback, useEffect, useRef } from "react"
@@ -34,50 +43,46 @@ interface TaskCardBannerProps {
 export function TaskCardBanner({ sessionId, refreshToken }: TaskCardBannerProps) {
   const { t } = useTranslation("chat")
   const [card, setCard] = useState<TaskCardData | null>(null)
-  // Monotonic counter for stale-response detection: rapid taskCard events
-  // trigger overlapping fetches; only the LATEST response is applied.
+  // Monotonic generation for stale-response detection: rapid taskCard
+  // events trigger overlapping fetches; only the LATEST response is applied.
   const fetchGen = useRef(0)
+  const prevSessionRef = useRef(sessionId)
   const [expanded, setExpanded] = useState(false)
-  const [loading, setLoading] = useState(false)
 
   const fetchCard = useCallback(async () => {
     if (!sessionId) return
-    setLoading(true)
+    const gen = ++fetchGen.current
     try {
       const resp = await sessionsApi.getTaskCard(sessionId)
+      if (gen !== fetchGen.current) return // a newer fetch superseded this one
       setCard(resp)
     } catch {
       // Non-fatal: the card is an enhancement, not a requirement.
-      setCard(null)
-    } finally {
-      setLoading(false)
+      if (gen === fetchGen.current) setCard(null)
     }
   }, [sessionId])
 
-  // Fetch on mount, on refresh token bump, and on session switch.
-  // The card is cleared IMMEDIATELY on session change — without this,
-  // the old session's card is visible during the async fetch for the
-  // new session's card (stale data flash).
+  // Fetch on mount, on refresh token bump, and on session switch. The card
+  // is cleared IMMEDIATELY on session change — without this, the old
+  // session's card is visible during the async fetch for the new session's
+  // card (stale data flash). A refreshToken bump does NOT clear: mid-stream
+  // updates keep the previous card visible until the fresh one lands.
   useEffect(() => {
-    setCard(null) // clear stale card from previous session
-    const gen = ++fetchGen.current
-    fetchCard().then(() => {
-      // A newer effect has fired: this response is stale, setCard was
-      // already cleared by the newer effect's setCard(null).
-    }).catch(() => {})
-    // The stale guard: when the effect re-fires, gen is incremented;
-    // the previous fetch's setCard in fetchCard() was already preempted
-    // by this effect's setCard(null) — the race window is one render.
-  }, [fetchCard, refreshToken])
+    if (prevSessionRef.current !== sessionId) {
+      setCard(null)
+      prevSessionRef.current = sessionId
+    }
+    fetchCard().catch(() => {})
+  }, [fetchCard, sessionId, refreshToken])
 
-  if (!card || card.isEmpty || loading) return null
+  if (!card || card.isEmpty) return null
 
   const summary = card.goal || card.params || card.step || ""
   if (!summary) return null
 
   return (
     <div
-      className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur-sm"
+      className="mb-2 overflow-hidden rounded-lg border border-border/60 bg-muted/30"
       data-testid="task-card-banner"
       role="region"
       aria-label={t("taskCard.title")}
@@ -85,11 +90,14 @@ export function TaskCardBanner({ sessionId, refreshToken }: TaskCardBannerProps)
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center gap-2 px-3 py-1.5 text-left"
+        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left"
         aria-expanded={expanded}
       >
         <Target className="size-3.5 shrink-0 text-primary" aria-hidden />
-        <span className={cn(textMini, "truncate text-muted-foreground")}>
+        <span className={cn(textMini, "shrink-0 font-medium text-primary")}>
+          {t("taskCard.title")}
+        </span>
+        <span className={cn(textMini, "min-w-0 truncate text-muted-foreground")}>
           {summary}
         </span>
         <ChevronDown
@@ -101,7 +109,7 @@ export function TaskCardBanner({ sessionId, refreshToken }: TaskCardBannerProps)
         />
       </button>
       {expanded && (
-        <div className="space-y-1 border-t border-border px-3 py-2">
+        <div className="space-y-1 border-t border-border/60 px-2.5 py-2">
           {card.goal && (
             <CardSlot label={t("taskCard.goal")} value={card.goal} />
           )}
@@ -144,6 +152,7 @@ function CardSlot({
       <span
         className={cn(
           textMini,
+          "min-w-0 whitespace-pre-wrap",
           highlight
             ? "rounded bg-primary/10 px-1 text-foreground"
             : "text-muted-foreground",
