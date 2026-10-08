@@ -16,7 +16,7 @@ use super::context::{
     build_context_window_with_config, build_context_window_with_summary, ToolExecutionResult,
 };
 use super::dedup::deduplicate_tool_results;
-use super::intent::build_list_only_dead_end_prompt;
+use super::intent::{all_tools_were_read_only, build_list_only_dead_end_prompt};
 use super::resolve::resolve_cached_arguments;
 use super::result_format::format_tool_results;
 use super::sanitize::sanitize_tool_result_for_prompt;
@@ -380,6 +380,17 @@ pub async fn process_stream_events_with_safeguards(
         // (observed: 11 rounds, no final text).
         let mut list_only_dead_end_injected = false;
 
+        // === POST-DEAD-END READ-ONLY STREAK (at most once per turn) ===
+        // If the forced continuation was already used and two more rounds
+        // pass with only read-only calls, the executor is stuck in an
+        // explore loop (v22 field incident 2026-10-08: round after round of
+        // --help/list, prompt ballooning to ~23K until the case timed out).
+        // One final "act now" directive; if that too is ignored, the
+        // existing safety nets (MAX_TOOL_ITERATIONS / stream timeout) end
+        // the turn as before.
+        let mut post_dead_end_read_only_rounds: u32 = 0;
+        let mut explore_recovery_nudged = false;
+
         // === NARRATION-COLLAPSE GUARD (at most once per turn) ===
         // Small models sometimes narrate a promised action ("我现在使用
         // image_edit 工具…") WITHOUT emitting any tool call. Ending the turn
@@ -486,8 +497,26 @@ pub async fn process_stream_events_with_safeguards(
                     if let Some(dead_end_msg) = dead_end_msg {
                         list_only_dead_end_injected = true;
                         dead_end_msg
+                    } else if post_dead_end_read_only_rounds >= 2 && !explore_recovery_nudged {
+                        explore_recovery_nudged = true;
+                        tracing::warn!(
+                            "Read-only explore loop after dead-end continuation \
+                             ({} consecutive rounds) — injecting act-now directive",
+                            post_dead_end_read_only_rounds
+                        );
+                        "You have now listed the relevant CLI surface more than once but the user's action is still not performed. Do NOT call any more list/help/query tools. Either execute the actual action command now with the concrete arguments, or — only if a required value is genuinely missing — ask the user for exactly that value and end your turn.".to_string()
                     } else {
-                        // Normal context message — no list-only dead end detected.
+                        // Streak bookkeeping for the act-now directive above:
+                        // count post-dead-end rounds that were still read-only.
+                        if list_only_dead_end_injected {
+                            let cmds: Vec<&str> =
+                                recently_executed_commands.iter().map(|s| s.as_str()).collect();
+                            if all_tools_were_read_only(&cmds, &all_round_tool_results) {
+                                post_dead_end_read_only_rounds += 1;
+                            } else {
+                                post_dead_end_read_only_rounds = 0;
+                            }
+                        }
                         // Anti-hallucination guard: small models sometimes
                         // report FAILED commands as successful in the final
                         // answer (observed: 404 on add-components → "已成功

@@ -230,6 +230,15 @@ pub async fn prefill_hint(
 /// across business growth — unlike the skill roster, which is live data.
 pub const WORKFLOW_SHAPES: &[&str] = &["direct", "multi_step", "guided", "converse"];
 
+/// Confidence gates for guidance-hint injection. Raised 0.7→0.8 / 0.6→0.7
+/// after the v22 field incident (2026-10-08): the KD-sharpened calibration
+/// pushed mid-conversation confidences over the old gates, and the injected
+/// hints sent small executor models into read-only explore loops until the
+/// case timeout. A hint must now clear a bar the previous calibration
+/// generation could not reach in ambiguous mid-conversation states.
+pub const GUIDANCE_CONF_GATE: f32 = 0.8;
+pub const SKILL_CONF_GATE: f32 = 0.7;
+
 /// First sentence of a skill's frontmatter description, capped: the question
 /// renderer concatenates every option, so long descriptions blow the sequence
 /// budget. Matches the sandbox trainer's gloss extraction (train/prod phrasing
@@ -283,15 +292,14 @@ pub fn guidance_questions(skills: Vec<(String, String)>) -> Vec<(String, Decisio
             DecisionQuestion::choice(
                 "What shape of work does this request need?",
                 vec![
-                    ("direct".into(), "a single direct command or lookup".into()),
+                    ("direct".into(), "exactly one command, lookup, or question".into()),
                     (
                         "multi_step".into(),
-                        "several sequential operations with dependencies".into(),
+                        "two or more operations chained or spread across turns".into(),
                     ),
                     (
                         "guided".into(),
-                        "an interactive guided setup flow (onboarding, first-run configuration)"
-                            .into(),
+                        "an interactive guided setup flow".into(),
                     ),
                     (
                         "converse".into(),
@@ -431,11 +439,11 @@ pub async fn guidance_hint(
             "[Router guidance] clarify: this request is missing a critical identifier or parameter (conf {cl_conf:.2}) — ask the user for exactly that missing piece. If the target is already named and specific, act instead of asking."
         ));
     }
-    if workflow != "converse" && wf_conf >= 0.7 {
+    if workflow != "converse" && wf_conf >= GUIDANCE_CONF_GATE {
         lines.push(format!(
             "[Router guidance] workflow: {workflow} (conf {wf_conf:.2})"
         ));
-        if skill != "none" && sk_conf >= 0.6 {
+        if skill != "none" && sk_conf >= SKILL_CONF_GATE {
             lines.push(format!("load skill: {skill} (conf {sk_conf:.2})"));
             if workflow == "guided" {
                 lines.push("This is a multi-turn guided flow: load the guide first, then follow its steps and confirm each one with the user.".into());
@@ -443,18 +451,18 @@ pub async fn guidance_hint(
         }
     }
     if let Some(op) = &memory_op {
-        if op == "write" && mem_conf >= 0.7 {
+        if op == "write" && mem_conf >= GUIDANCE_CONF_GATE {
             lines.push(format!(
                 "[Router guidance] memory: the user is stating a durable preference/fact (conf {mem_conf:.2}) — persist it with the memory tool."
             ));
-        } else if op == "read" && mem_conf >= 0.7 {
+        } else if op == "read" && mem_conf >= GUIDANCE_CONF_GATE {
             lines.push(format!(
                 "[Router guidance] memory: consult stored preferences/knowledge (conf {mem_conf:.2}) before answering."
             ));
         }
     }
     if let Some(sc) = &scope {
-        if sc == "out_of_scope" && sc_conf >= 0.7 {
+        if sc == "out_of_scope" && sc_conf >= GUIDANCE_CONF_GATE {
             lines.push(format!(
                 "[Router guidance] scope: outside the platform's scope (conf {sc_conf:.2}) — answer honestly instead of forcing a platform tool."
             ));

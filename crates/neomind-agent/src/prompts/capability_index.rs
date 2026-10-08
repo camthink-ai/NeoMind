@@ -39,8 +39,28 @@ impl CapabilityIndex {
         if !state.is_empty() {
             out.push_str(&state);
         }
+        out.push_str(&Self::boundary_rules());
         tracing::debug!(bytes = out.len(), "capability index built");
         out
+    }
+
+    /// Boundary rules (negative capability map). Hot-updatable without a
+    /// rebuild: set `NEOMIND_BOUNDARY_RULES` to a file path whose contents
+    /// are appended verbatim under a `## Boundary Rules` heading. When the
+    /// env var is unset (the default) nothing is injected — the shipped
+    /// prompt is unchanged.
+    pub fn boundary_rules() -> String {
+        match std::env::var("NEOMIND_BOUNDARY_RULES") {
+            Ok(path) if !path.is_empty() => match std::fs::read_to_string(&path) {
+                Ok(rules) if !rules.trim().is_empty() => format!("\n{}", rules.trim()),
+                Ok(_) => String::new(),
+                Err(e) => {
+                    tracing::warn!(path = %path, error = %e, "NEOMIND_BOUNDARY_RULES unreadable");
+                    String::new()
+                }
+            },
+            _ => String::new(),
+        }
     }
 
     /// CLI command tree skeleton, auto-generated from clap. Filters to the
