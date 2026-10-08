@@ -408,6 +408,12 @@
       "addLlmBackend": "Help me add an LLM backend",
       "createVirtualDevice": "Create a virtual device with simulated data"
     },
+    "mobileSuggestions": {
+      "devices": "Devices",
+      "alerts": "Alerts",
+      "rules": "Rules",
+      "agent": "AI Agent"
+    },
     "quickActions": {
       "devices": "Devices",
       "automation": "Automation",

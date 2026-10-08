@@ -404,6 +404,12 @@
       "addLlmBackend": "帮我添加一个大模型后端",
       "createVirtualDevice": "帮我创建一个虚拟设备（模拟数据源）"
     },
+    "mobileSuggestions": {
+      "devices": "设备状态",
+      "alerts": "查看告警",
+      "rules": "自动化",
+      "agent": "AI 代理"
+    },
     "quickActions": {
       "devices": "查看设备",
       "automation": "自动化规则",
