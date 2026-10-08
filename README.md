@@ -37,15 +37,15 @@
   <table>
     <tr>
       <td align="center">
-        <img src="docs/img/2026-08/chat.png" alt="AI Chat" width="400" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);" />
+        <img src="docs/img/2026-10/chat.png" alt="AI Chat" width="400" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);" />
         <br/><sub><b>AI Chat</b></sub>
       </td>
       <td align="center">
-        <img src="docs/img/2026-08/devices.png" alt="Devices" width="400" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);" />
+        <img src="docs/img/2026-10/devices.png" alt="Devices" width="400" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);" />
         <br/><sub><b>Device Management</b></sub>
       </td>
       <td align="center">
-        <img src="docs/img/mobile_web.png" alt="Mobile" width="180" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);" />
+        <img src="docs/img/2026-10/mobile-web.png" alt="Mobile" width="180" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);" />
         <br/><sub><b>Mobile Web</b></sub>
       </td>
     </tr>

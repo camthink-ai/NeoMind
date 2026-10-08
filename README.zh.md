@@ -33,15 +33,15 @@
   <table>
     <tr>
       <td align="center">
-        <img src="docs/img/2026-08/chat.png" alt="AI 对话" width="400" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);" />
+        <img src="docs/img/2026-10/chat.png" alt="AI 对话" width="400" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);" />
         <br/><sub><b>AI 对话</b></sub>
       </td>
       <td align="center">
-        <img src="docs/img/2026-08/devices.png" alt="设备" width="400" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);" />
+        <img src="docs/img/2026-10/devices.png" alt="设备" width="400" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);" />
         <br/><sub><b>设备管理</b></sub>
       </td>
       <td align="center">
-        <img src="docs/img/mobile_web.png" alt="移动端" width="180" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);" />
+        <img src="docs/img/2026-10/mobile-web.png" alt="移动端" width="180" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);" />
         <br/><sub><b>移动端</b></sub>
       </td>
     </tr>
