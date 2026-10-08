@@ -199,14 +199,14 @@ impl ShellTool {
         }
         #[cfg(windows)]
         {
-            let need_copy = std::fs::metadata(&alias)
-                .and_then(|m| m.len().checked_sub(0).map(|_| m.len()))
-                .map(|alias_len| {
-                    std::fs::metadata(exe)
-                        .map(|em| em.len() != alias_len)
-                        .unwrap_or(true)
-                })
-                .unwrap_or(true);
+            let alias_len = std::fs::metadata(&alias).map(|m| m.len()).ok();
+            let exe_len = std::fs::metadata(exe).map(|m| m.len()).ok();
+            let need_copy = match (alias_len, exe_len) {
+                (a, Some(e)) => a != Some(e),
+                // Exe unreadable (shouldn't happen — it's running) or first
+                // run: attempt the copy; fs::copy's own error decides.
+                _ => true,
+            };
             if need_copy {
                 std::fs::copy(exe, &alias).ok()?;
             }

@@ -465,7 +465,8 @@ mod transition_matrix_tests {
                     start,
                     MessageStatus::Archived | MessageStatus::FalsePositive
                 ),
-            ); {
+            );
+            {
                 let mut m0 =
                     Message::alert(MessageSeverity::Warning, "t".into(), "b".into(), "s".into());
                 m0.status = start;
