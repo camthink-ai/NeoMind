@@ -81,12 +81,31 @@ pub async fn process_multimodal_stream_events_with_safeguards(
     let prompt_overhead = llm_interface.estimate_prompt_overhead_tokens().await;
     let effective_max = super::stream_core::effective_history_budget(max_context, prompt_overhead);
 
-    let history_for_llm: Vec<neomind_core::Message> = build_context_window_with_summary(
-        &history_messages,
-        effective_max,
-        conversation_summary.as_deref(),
-        summary_up_to_index,
-    )
+    // [task card §3.2 — round 54] Same injection-after-builder pattern as
+    // stream_core: prepended to the BUILDER'S OUTPUT, so the summary filter
+    // and budget compaction never see it. Without this, multimodal
+    // conversations (photo + tool calls — the watermark scenario) lost the
+    // card entirely.
+    let history_for_llm: Vec<neomind_core::Message> = {
+        let window = build_context_window_with_summary(
+            &history_messages,
+            effective_max,
+            conversation_summary.as_deref(),
+            summary_up_to_index,
+        );
+        if let Some(card_block) = tools.get_task_card_block() {
+            if !card_block.is_empty() {
+                let card_msg = crate::agent::types::AgentMessage::system(&card_block);
+                let mut with_card = vec![card_msg];
+                with_card.extend(window);
+                with_card
+            } else {
+                window
+            }
+        } else {
+            window
+        }
+    }
     .iter()
     .map(|msg| msg.to_core())
     .collect::<Vec<_>>();

@@ -209,6 +209,10 @@ export function ChatPage() {
         data.sessionId && data.sessionId !== sessionId
       ) {
         switchSession(data.sessionId)
+        // Clear stale explore/taskCard state from the previous session
+        // (same class as round 15's TaskCardBanner fix).
+        setExploreDetail(null)
+        setTaskCardRefresh((n) => n + 1) // triggers banner refetch
       }
       // Task card refetch trigger (§3.2: update_task_card fires a
       // Progress event with stage "taskCard" — bump the refresh token).
