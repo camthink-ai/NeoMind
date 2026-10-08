@@ -80,6 +80,9 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
   // Independent panel state — does NOT touch global messages/sessionId
   const [panelMessages, setPanelMessages] = useState<Message[]>([])
   const [isHistoryLoading, setIsHistoryLoading] = useState(true)
+  /** Session id whose detached turn this panel resumed — drives the poll.
+   *  The panel has no recovery dialog; restore is automatic. */
+  const [resumedPendingPanel, setResumedPendingPanel] = useState<string | null>(null)
   const [attachedImages, setAttachedImages] = useState<ChatImage[]>([])
   const panelSessionIdRef = useRef<string | null>(null)
   // Session-filter binding for useChatStream. Unlike panelSessionIdRef this
@@ -105,11 +108,28 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     currentRound,
     beginTurn,
     hardReset,
+    restore,
+    restoreIfBehind,
   } = useChatStream({
     // Drop events from other sessions — the chat page shares this socket.
     // See filterSessionIdRef: intentionally never cleared on page change.
     sessionId: filterSessionIdRef.current,
     onEnd: (result) => {
+      setResumedPendingPanel(null)
+      if (result.interrupted) {
+        // The accumulator was reset mid-turn — the local assembly holds a
+        // tail only. Skip it and force-adopt the server's full message
+        // (the reconcile below skips when lengths match, which they would
+        // for a truncated single message — hence this dedicated path).
+        const sid = panelSessionIdRef.current
+        if (sid) {
+          api.getSessionHistory(sid, undefined, { skipErrorToast: true }).then(r => {
+            if (isStreamingRef.current) return
+            setPanelMessages(mergeAssistantMessages(r.messages || []))
+          }).catch(() => {})
+        }
+        return
+      }
       addPanelMessage({
         id: result.id,
         role: "assistant",
@@ -237,6 +257,32 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     setPanelMessages(prev => [...prev, msg])
   }, [])
 
+  // Detached-turn poll for a resumed panel turn: adopt the server snapshot
+  // when ahead; when pending clears the turn finished server-side — reload
+  // the panel history and clear the restored display.
+  useEffect(() => {
+    if (!resumedPendingPanel) return
+    let stopped = false
+    const timer = setInterval(() => {
+      if (stopped) return
+      api.getPendingStream(resumedPendingPanel).then(result => {
+        if (stopped) return
+        if (result?.hasPending) {
+          restoreIfBehind(result.content || "", result.thinking || "")
+        } else {
+          setResumedPendingPanel(null)
+          hardReset()
+          api.getSessionHistory(resumedPendingPanel, undefined, { skipErrorToast: true })
+            .then(r => {
+              if (isStreamingRef.current) return
+              setPanelMessages(mergeAssistantMessages(r.messages || []))
+            }).catch(() => {})
+        }
+      }).catch(() => { /* transient — keep polling */ })
+    }, 3000)
+    return () => { stopped = true; clearInterval(timer) }
+  }, [resumedPendingPanel, restoreIfBehind, hardReset])
+
   // Create a new panel session for the current page. The page profile
   // (system-prompt suffix + tool allowlist) rides the creation request —
   // the backend honors sessionConfig only at this moment. The stored
@@ -290,6 +336,16 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
         const merged = mergeAssistantMessages(result.messages || [])
         setPanelMessages(merged)
         setIsHistoryLoading(false)
+        // A turn that was generating when the page unmounted/refreshed is
+        // still running server-side; its events went to a dead socket. The
+        // panel has no recovery dialog — restore the partial answer and let
+        // the poll below carry it to completion.
+        api.getPendingStream(persistedId).then(p => {
+          if (p?.hasPending) {
+            restore(p.content || "", p.thinking || "")
+            setResumedPendingPanel(persistedId)
+          }
+        }).catch(() => {})
       }).catch(() => {
         // Session no longer exists — clear the bucket; a fresh one (with the
         // page profile) is created lazily on first send.

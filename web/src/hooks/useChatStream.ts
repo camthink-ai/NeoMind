@@ -57,6 +57,10 @@ export interface StreamEndResult {
   roundThinking?: Record<number, string>
   /** Wall time from the first streamed event to end, ms. */
   generationMs?: number
+  /** True when the accumulator was reset mid-turn (session switch away and
+   *  back, detach/restore) — the fields above are PARTIAL by construction.
+   *  The view should finalize from server history instead of this result. */
+  interrupted?: boolean
 }
 
 export interface UseChatStreamOptions {
@@ -109,6 +113,11 @@ export function useChatStream(options: UseChatStreamOptions) {
   const streamStartRef = useRef<number | null>(null)
   const streamingMessageIdRef = useRef<string | null>(null)
   const isStreamingRef = useRef(false)
+  // Accumulator-continuity flag: set by every hardReset/restore, cleared by
+  // beginTurn. When an `end` arrives with this set, the assembled result is
+  // missing whatever streamed before the reset — the view must take the
+  // server's persisted message instead.
+  const interruptedRef = useRef(false)
 
   // -- Throttled flush machinery --
   const epochRef = useRef(0)
@@ -138,6 +147,7 @@ export function useChatStream(options: UseChatStreamOptions) {
 
   const hardReset = useCallback(() => {
     epochRef.current += 1 // kills any scheduled flush
+    interruptedRef.current = true
     accRef.current = { content: "", thinking: "", toolCalls: [] }
     currentRoundRef.current = 1
     roundContentsAccRef.current = {}
@@ -160,6 +170,7 @@ export function useChatStream(options: UseChatStreamOptions) {
    *  finished message will keep (pass to nothing; it rides the result). */
   const beginTurn = useCallback((): string => {
     hardReset()
+    interruptedRef.current = false // fresh turn — accumulator is continuous
     const id = generateId()
     streamingMessageIdRef.current = id
     isStreamingRef.current = true
@@ -172,11 +183,27 @@ export function useChatStream(options: UseChatStreamOptions) {
   const restore = useCallback((content: string, thinking: string) => {
     isStreamingRef.current = true
     setIsStreaming(true)
+    interruptedRef.current = true // reattached turn: the end event will be partial
     accRef.current.content = content
     accRef.current.thinking = thinking
     streamStartRef.current = Date.now()
     flushNow(epochRef.current)
   }, [flushNow])
+
+  /** Pending-stream poll helper: adopt the server snapshot only when it is
+   *  AHEAD of the local accumulator. In the re-attached (live) case local
+   *  events are fresher than the ≤2s-lagged server snapshot; in the
+   *  detached case (hard refresh) local never grows and the snapshot is the
+   *  only progress source. Length comparison is safe: both sides are plain
+   *  delta concatenations that share the same prefix. */
+  const restoreIfBehind = useCallback((content: string, thinking: string) => {
+    if (
+      content.length > accRef.current.content.length ||
+      thinking.length > accRef.current.thinking.length
+    ) {
+      restore(content, thinking)
+    }
+  }, [restore])
 
   const markStreamStart = () => {
     if (streamStartRef.current === null) streamStartRef.current = Date.now()
@@ -307,9 +334,12 @@ export function useChatStream(options: UseChatStreamOptions) {
           roundContents: hasRoundContents ? { ...roundContentsAccRef.current } : undefined,
           roundThinking: hasRoundThinking ? { ...roundThinkingAccRef.current } : undefined,
           generationMs,
+          interrupted: interruptedRef.current || undefined,
         }
         hardReset()
-        if (result.content || result.thinking || result.toolCalls.length > 0) {
+        // An interrupted turn finalizes even with an empty accumulator —
+        // the view needs the end signal to reload the server's full message.
+        if (result.interrupted || result.content || result.thinking || result.toolCalls.length > 0) {
           optionsRef.current.onEnd(result)
         }
         break
@@ -362,5 +392,6 @@ export function useChatStream(options: UseChatStreamOptions) {
     beginTurn,
     hardReset,
     restore,
+    restoreIfBehind,
   }
 }

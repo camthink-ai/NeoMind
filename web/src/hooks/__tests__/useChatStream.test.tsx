@@ -157,4 +157,89 @@ describe('useChatStream', () => {
       's1',
     )
   })
+
+  // ── mid-turn interruption (session switch / detach-restore) ──
+
+  it('a mid-turn hardReset marks the end result interrupted (view takes server history)', async () => {
+    const onEnd = vi.fn()
+    render(<Harness onEnd={onEnd} sessionId="s1" />)
+
+    act(() => latest.beginTurn())
+    await act(async () => {
+      emit({ type: 'Content', content: '前半段', sessionId: 's1' })
+      await nextFrame()
+    })
+
+    // User switches away mid-stream: the session-switch effect hard-resets.
+    act(() => latest.hardReset())
+
+    await act(async () => {
+      emit({ type: 'Content', content: '后半段', sessionId: 's1' })
+      await nextFrame()
+      emit({ type: 'end', sessionId: 's1' })
+    })
+
+    expect(onEnd).toHaveBeenCalledTimes(1)
+    const result = onEnd.mock.calls[0][0] as StreamEndResult
+    // The local assembly holds only the post-switch tail...
+    expect(result.content).toBe('后半段')
+    // ...so it is flagged: the view must finalize from server history.
+    expect(result.interrupted).toBe(true)
+  })
+
+  it('a normal uninterrupted turn does NOT set interrupted', async () => {
+    const onEnd = vi.fn()
+    render(<Harness onEnd={onEnd} sessionId="s1" />)
+    act(() => latest.beginTurn())
+    await act(async () => {
+      emit({ type: 'Content', content: '完整', sessionId: 's1' })
+      emit({ type: 'end', sessionId: 's1' })
+    })
+    const result = onEnd.mock.calls[0][0] as StreamEndResult
+    expect(result.interrupted).toBeUndefined()
+  })
+
+  it('an interrupted turn with an EMPTY accumulator still fires onEnd (reload signal)', async () => {
+    const onEnd = vi.fn()
+    render(<Harness onEnd={onEnd} sessionId="s1" />)
+    act(() => latest.beginTurn())
+    await act(async () => {
+      emit({ type: 'Content', content: '全部内容在切走前', sessionId: 's1' })
+      await nextFrame()
+    })
+    act(() => latest.hardReset())
+    await act(async () => {
+      emit({ type: 'end', sessionId: 's1' })
+    })
+    // Empty content + interrupted → onEnd MUST still fire so the view
+    // reloads the server's persisted message.
+    expect(onEnd).toHaveBeenCalledTimes(1)
+    expect(onEnd.mock.calls[0][0].interrupted).toBe(true)
+  })
+
+  it('restore() marks the reattached turn interrupted', async () => {
+    const onEnd = vi.fn()
+    render(<Harness onEnd={onEnd} sessionId="s1" />)
+    act(() => latest.restore('服务端快照前缀', '思考前缀'))
+    expect(latest.isStreaming).toBe(true)
+    await act(async () => {
+      emit({ type: 'Content', content: '+增量', sessionId: 's1' })
+      await nextFrame()
+      emit({ type: 'end', sessionId: 's1' })
+    })
+    const result = onEnd.mock.calls[0][0] as StreamEndResult
+    expect(result.content).toBe('服务端快照前缀+增量')
+    expect(result.interrupted).toBe(true)
+  })
+
+  it('restoreIfBehind adopts the server snapshot only when it is ahead of local', async () => {
+    render(<Harness sessionId="s1" />)
+    act(() => latest.restore('短快照', ''))
+    // Server ahead → adopt
+    act(() => latest.restoreIfBehind('长一些的服务端快照', ''))
+    expect(latest.streamingContent).toBe('长一些的服务端快照')
+    // Local ahead (live events fresher than the ≤2s-lagged snapshot) → keep local
+    act(() => latest.restoreIfBehind('长一些的服务端快', ''))
+    expect(latest.streamingContent).toBe('长一些的服务端快照')
+  })
 })

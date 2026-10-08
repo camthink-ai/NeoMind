@@ -79,13 +79,15 @@ export function ChatPage() {
     messages,
     clearMessages,
     loadSessions,
-    isLoadingSession
+    isLoadingSession,
+    refreshCurrentSession
   } = useStore((s) => ({
     sessionId: s.sessionId,
     messages: s.messages,
     clearMessages: s.clearMessages,
     loadSessions: s.loadSessions,
     isLoadingSession: s.isLoadingSession,
+    refreshCurrentSession: s.refreshCurrentSession,
   }), shallow)
 
   const addMessage = useStore((s) => s.addMessage)
@@ -130,6 +132,9 @@ export function ChatPage() {
     thinking: string
     userMessage: string
   } | null>(null)
+  /** Session id whose detached turn we resumed — drives the 3s poll.
+   *  Null = no poll. Cleared by any live end event and by finalize. */
+  const [resumedPendingStream, setResumedPendingStream] = useState<string | null>(null)
 
   // WebSocket connection state (for reconnection UI)
   const [connectionState, setConnectionState] = useState<ConnectionState>({ status: 'disconnected' })
@@ -158,10 +163,21 @@ export function ChatPage() {
     beginTurn,
     hardReset,
     restore,
+    restoreIfBehind,
   } = useChatStream({
     // Drop events from other sessions — the side panel shares this socket.
     sessionId,
     onEnd: (result) => {
+      // Any end stops the detached-turn poll (a live end means the poll's
+      // finalize branch would race a possibly-already-started NEXT turn).
+      setResumedPendingStream(null)
+      if (result.interrupted) {
+        // The local accumulator was reset mid-turn (switch away/back,
+        // detach/restore) — it holds only a tail. The server persisted the
+        // full message; take history as the truth.
+        void refreshCurrentSession()
+        return
+      }
       const completeMessage: Message = {
         id: result.id,
         role: "assistant",
@@ -391,11 +407,13 @@ export function ChatPage() {
   }, [messages, streamingContent, scrollToBottom])
 
 
-  // Check for pending stream after reconnection
+  // Pending-stream recovery, path 1: reconnect. The dialog shown here is
+  // the same one path 2 (session enter) uses — restore happens on the
+  // user's Resume click (handleRestorePendingStream), not eagerly, so both
+  // paths share one recovery flow.
   useEffect(() => {
     const unsubscribe = ws.onConnection((connected, isReconnect) => {
       if (connected && isReconnect && sessionId) {
-        // Check if there's a pending stream from before disconnection
         api.getPendingStream(sessionId).then(result => {
           if (result?.hasPending) {
             setPendingStream({
@@ -404,8 +422,6 @@ export function ChatPage() {
               thinking: result.thinking || "",
               userMessage: result.userMessage || "",
             })
-            // Restore streaming state
-            restore(result.content || "", result.thinking || "")
           }
         }).catch(() => {
           // Ignore errors checking pending stream
@@ -414,6 +430,51 @@ export function ChatPage() {
     })
     return () => { void unsubscribe() }
   }, [sessionId])
+
+  // Pending-stream recovery, path 2: session ENTER (mount, switch, return
+  // from another page). The reconnect-only check missed the most common
+  // case — a hard refresh opens a FRESH socket whose first connect is not a
+  // "reconnect", so an in-flight answer was invisible until it silently
+  // landed in history. Switching back to a still-generating session had no
+  // check at all.
+  useEffect(() => {
+    if (!sessionId) return
+    let cancelled = false
+    api.getPendingStream(sessionId).then(result => {
+      if (cancelled || !result?.hasPending) return
+      setPendingStream({
+        hasPending: true,
+        content: result.content || "",
+        thinking: result.thinking || "",
+        userMessage: result.userMessage || "",
+      })
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [sessionId])
+
+  // Detached-turn poll: after a resume, the generating turn's events may be
+  // bound to a DEAD connection (hard refresh) — the server's pending
+  // snapshot (saved every ≤2s) is then the only progress source. Adopt it
+  // whenever it is ahead of local; when pending clears, the turn finished
+  // server-side: reset the partial display and take history.
+  useEffect(() => {
+    if (!resumedPendingStream) return
+    let stopped = false
+    const timer = setInterval(() => {
+      if (stopped) return
+      api.getPendingStream(resumedPendingStream).then(result => {
+        if (stopped) return
+        if (result?.hasPending) {
+          restoreIfBehind(result.content || "", result.thinking || "")
+        } else {
+          setResumedPendingStream(null)
+          hardReset()
+          void refreshCurrentSession()
+        }
+      }).catch(() => { /* transient — keep polling */ })
+    }, 3000)
+    return () => { stopped = true; clearInterval(timer) }
+  }, [resumedPendingStream, restoreIfBehind, hardReset, refreshCurrentSession])
 
   // Subscribe to WebSocket connection state changes
   useEffect(() => {
@@ -531,9 +592,15 @@ export function ChatPage() {
   // Handle pending stream recovery - restore
   const handleRestorePendingStream = () => {
     if (pendingStream) {
-      // The streaming state is already restored, just clear the prompt
-      setPendingStream(null)
+      // The dialog's snapshot is the authoritative prefix — reset anything
+      // the live filter accumulated beneath the dialog (it is missing the
+      // pre-switch portion by construction), then adopt it and start the
+      // detached-turn poll (live events, if any, keep appending on top).
+      hardReset()
+      restore(pendingStream.content || "", pendingStream.thinking || "")
+      if (sessionId) setResumedPendingStream(sessionId)
     }
+    setPendingStream(null)
   }
 
   // Handle pending stream recovery - discard

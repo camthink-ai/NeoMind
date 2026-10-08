@@ -39,6 +39,13 @@ export interface SessionSlice extends SessionState {
   loadSessions: () => Promise<void>
   loadMoreSessions: () => Promise<void>
   fetchSessionHistory: (sessionId: string) => Promise<void>
+  /** Unconditional reload of the CURRENT session's newest history page.
+   *  switchSession early-returns when the session is already loaded and
+   *  fetchSessionHistory is fetch-cached — neither works when the server
+   *  just persisted a message the local assembly missed (detached-stream
+   *  finalization). No cache, no loading state (the list is already on
+   *  screen). */
+  refreshCurrentSession: () => Promise<void>
 }
 
 /** History fields derived from a fetch — shared by every load path. */
@@ -489,6 +496,26 @@ export const createSessionSlice: StateCreator<
     } catch (error) {
       logError(error, { operation: 'Fetch session history' })
       fetchCache.invalidate(cacheKey)
+    }
+  },
+
+  refreshCurrentSession: async () => {
+    const { sessionId } = get()
+    if (!sessionId) return
+    try {
+      const historyResult = await api.getSessionHistory(
+        sessionId,
+        { limit: HISTORY_PAGE_SIZE },
+        { skipErrorToast: true },
+      )
+      if (!historyResult) return
+      const mergedMessages = mergeAssistantMessages(historyResult.messages || [])
+      set({
+        messages: mergedMessages,
+        ...historyFields(historyResult),
+      })
+    } catch (error) {
+      logError(error, { operation: 'Refresh current session' })
     }
   },
 })
