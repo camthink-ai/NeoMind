@@ -277,7 +277,7 @@ pub async fn metrics_handler(
     State(state): State<ServerState>,
 ) -> axum::http::Response<axum::body::Body> {
     let mut body = crate::metrics::render_prometheus(state.core.event_bus.as_deref());
-    if let Some(decision) = &state.decision {
+    if let Some(decision) = state.decision_snapshot() {
         body.push_str(&decision.prometheus_metrics());
     }
     axum::http::Response::builder()

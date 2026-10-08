@@ -14,6 +14,7 @@
 use axum::{extract::State, response::IntoResponse, Json};
 use serde::Deserialize;
 use serde_json::json;
+use std::sync::Arc;
 
 use super::{
     common::{ok, HandlerResult},
@@ -486,16 +487,25 @@ pub async fn guidance_hint(
 /// prefill. Any failure or timeout degrades to Passthrough — the turn must
 /// never be delayed or blocked by the decision layer.
 pub struct ChatDecisionPipeline {
-    decision: Option<std::sync::Arc<DecisionService>>,
+    /// SHARED slot with ServerState — a refresh (extension installed /
+    /// uninstalled) swaps the service and every subsequent turn sees it,
+    /// no restart, no pipeline rebuild.
+    decision: Arc<std::sync::RwLock<Option<Arc<DecisionService>>>>,
     skills: neomind_agent::skills::SharedSkillRegistry,
 }
 
 impl ChatDecisionPipeline {
     pub fn new(
-        decision: Option<std::sync::Arc<DecisionService>>,
+        decision: Arc<std::sync::RwLock<Option<Arc<DecisionService>>>>,
         skills: neomind_agent::skills::SharedSkillRegistry,
     ) -> Self {
         Self { decision, skills }
+    }
+
+    /// Snapshot the decision service out of the shared slot (guard dropped
+    /// before any await — RwLock guards are !Send).
+    fn current(&self) -> Option<Arc<DecisionService>> {
+        self.decision.read().unwrap().clone()
     }
 }
 
@@ -511,15 +521,14 @@ impl neomind_agent::ChatDecisionHook for ChatDecisionPipeline {
         allow_shortcircuit: bool,
     ) -> neomind_agent::ChatHookOutcome {
         use neomind_agent::ChatHookOutcome::{Answered, Passthrough, Rewritten};
-        spawn_shadow(&self.decision, message);
+        // One snapshot for the whole turn — consistent decisions even if a
+        // refresh swaps the backend mid-turn.
+        let decision = self.current();
+        spawn_shadow(&decision, message);
 
         if allow_shortcircuit && env_flag("NEOMIND_DECISION_SHORTCIRCUIT") {
-            if let Some(plan) = try_shortcircuit(
-                &self.decision,
-                message,
-                std::time::Duration::from_millis(600),
-            )
-            .await
+            if let Some(plan) =
+                try_shortcircuit(&decision, message, std::time::Duration::from_millis(600)).await
             {
                 match execute_shortcircuit(&plan).await {
                     Ok(text) => {
@@ -541,7 +550,7 @@ impl neomind_agent::ChatDecisionHook for ChatDecisionPipeline {
         let mut m = message.to_string();
         if env_flag("NEOMIND_DECISION_GUIDANCE") {
             if let Some(directive) = guidance_hint(
-                &self.decision,
+                &decision,
                 &self.skills,
                 message,
                 std::time::Duration::from_millis(600),
@@ -553,12 +562,8 @@ impl neomind_agent::ChatDecisionHook for ChatDecisionPipeline {
             }
         }
         if env_flag("NEOMIND_DECISION_PREFILL") {
-            if let Some(hint) = prefill_hint(
-                &self.decision,
-                message,
-                std::time::Duration::from_millis(500),
-            )
-            .await
+            if let Some(hint) =
+                prefill_hint(&decision, message, std::time::Duration::from_millis(500)).await
             {
                 tracing::info!(target: "neomind::decision", hint = %hint, "prefill hint injected");
                 m = format!("{m}\n\n{hint}");
@@ -1031,7 +1036,7 @@ pub struct DecideRequest {
     )
 )]
 pub async fn status(State(state): State<ServerState>) -> HandlerResult<serde_json::Value> {
-    match &state.decision {
+    match state.decision_snapshot() {
         None => ok(json!({
             "enabled": false,
             "reason": "LAYA_SIDECAR_URL not configured — decision layer inactive, platform behavior unchanged",
@@ -1072,7 +1077,7 @@ pub async fn decide(
     State(state): State<ServerState>,
     Json(body): Json<DecideRequest>,
 ) -> axum::response::Response {
-    let Some(ds) = &state.decision else {
+    let Some(ds) = state.decision_snapshot() else {
         return axum::response::IntoResponse::into_response(crate::models::ErrorResponse::new(
             "DECISION_NOT_CONFIGURED",
             "decision layer not configured (set LAYA_SIDECAR_URL)",

@@ -1480,6 +1480,10 @@ pub async fn install_marketplace_extension_handler(
                 // Rebuild tool registry so the new extension's tools are visible to the LLM
                 state.refresh_extension_tools().await;
 
+                // The laya-decision extension IS a decision-layer deployment
+                // — re-resolve it now so the effect is live without restart.
+                state.refresh_decision_layer();
+
                 ok(MarketplaceInstallResponse {
                     success: true,
                     extension_id: req.id,

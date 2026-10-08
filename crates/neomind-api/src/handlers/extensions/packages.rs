@@ -283,6 +283,10 @@ pub async fn uninstall_extension_handler(
     // Rebuild tool registry to remove the uninstalled extension's tools
     state.refresh_extension_tools().await;
 
+    // If this was laya-decision, the decision layer must go inert NOW
+    // (uninstall is the undeployment, same as install is the deployment).
+    state.refresh_decision_layer();
+
     ok(serde_json::json!({
         "message": "Extension uninstalled completely",
         "extension_id": id,
