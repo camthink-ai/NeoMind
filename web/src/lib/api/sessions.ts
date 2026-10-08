@@ -60,7 +60,8 @@ export const sessionsApi = {
       method: 'POST',
     }),
 
-  // Pending stream recovery (for WebSocket reconnection)
+  // Pending stream recovery (for WebSocket reconnection). Silent: the 3s
+  // poll would fire an error toast per tick against a struggling backend.
   getPendingStream: (id: string) =>
-    fetchAPI<{ hasPending: boolean; sessionId: string; userMessage?: string; content?: string; thinking?: string; toolCalls?: ToolCall[]; roundContents?: Record<number, string>; stage?: string; elapsed?: number; startedAt?: number }>(`/sessions/${id}/pending`),
+    fetchAPI<{ hasPending: boolean; sessionId: string; userMessage?: string; content?: string; thinking?: string; toolCalls?: ToolCall[]; roundContents?: Record<number, string>; currentRound?: number; stage?: string; elapsed?: number; startedAt?: number }>(`/sessions/${id}/pending`, { skipErrorToast: true }),
 }

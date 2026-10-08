@@ -514,6 +514,24 @@ impl AgentExecutor {
                     // cooldown-clear dead code — transient LLM faults got no
                     // retry and the 60s window stayed locked.
                     if record.status == neomind_storage::ExecutionStatus::Failed {
+                        // Daily-cap refusals arrive as Failed records (the
+                        // budget check lives inside execute_agent). Retrying a
+                        // midnight-resetting cap from a 5s backoff ladder just
+                        // burns attempts — skip cleanly; tomorrow's first
+                        // event proceeds under a fresh budget.
+                        if record
+                            .error
+                            .as_deref()
+                            .map(|e| e.to_lowercase().contains("daily run cap"))
+                            .unwrap_or(false)
+                        {
+                            tracing::info!(
+                                agent_id = %agent_id,
+                                execution_id = %record.id,
+                                "Event trigger refused by daily run cap — skipping (not a failure)"
+                            );
+                            return Ok(());
+                        }
                         if attempt <= retries {
                             tracing::warn!(
                                 agent_id = %agent_id,
@@ -539,6 +557,19 @@ impl AgentExecutor {
                     return Ok(());
                 }
                 Err(e) => {
+                    // Daily-cap refusals are a budget pause, not a fault:
+                    // retrying within the backoff window just burns 5s per
+                    // attempt against a cap that resets at midnight. The
+                    // listener's cooldown still applies, so tomorrow's first
+                    // event proceeds normally.
+                    if e.to_string().to_lowercase().contains("daily run cap") {
+                        tracing::info!(
+                            agent_id = %agent_id,
+                            error = %e,
+                            "Event trigger refused by daily run cap — skipping (not a failure)"
+                        );
+                        return Ok(());
+                    }
                     if attempt <= retries {
                         tracing::warn!(
                             agent_id = %agent_id,

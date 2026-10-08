@@ -509,6 +509,10 @@ export const createSessionSlice: StateCreator<
         { skipErrorToast: true },
       )
       if (!historyResult) return
+      // Fetch raced a session switch — applying A's history over B's view
+      // is the cross-session bleed loadSession guards against; same
+      // still-current re-check, the slice's house pattern.
+      if (get().sessionId !== sessionId) return
       const mergedMessages = mergeAssistantMessages(historyResult.messages || [])
       set({
         messages: mergedMessages,

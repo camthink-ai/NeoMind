@@ -172,6 +172,11 @@ export function ChatPage() {
     // store session is created BEFORE ws.sendMessage, so real events only
     // flow after this prop is the new session's id.
     sessionId: urlSessionId ? sessionId : WELCOME_DETACHED,
+    onCancelled: () => {
+      // Cross-tab cancel: another view killed this turn; stop the
+      // detached-poll before its next 3s tick resurrects a ghost stream.
+      setResumedPendingStream(null)
+    },
     onEnd: (result) => {
       // Any end stops the detached-turn poll (a live end means the poll's
       // finalize branch would race a possibly-already-started NEXT turn).
@@ -240,7 +245,7 @@ export function ChatPage() {
     sid: string,
     content: string,
     thinking: string,
-    extras?: import("@/hooks/useChatStream").RestoreExtras,
+    extras?: import("@/hooks/useChatStream").RestoreExtras & { currentRound?: number },
   ) => {
     hardReset()
     restore(content, thinking, extras)
@@ -431,11 +436,16 @@ export function ChatPage() {
   // Pending-stream recovery, path 1: reconnect while viewing a session.
   useEffect(() => {
     const unsubscribe = ws.onConnection((connected, isReconnect) => {
-      if (connected && isReconnect && sessionId) {
+      // urlSessionId gate, same as path 2: on the WELCOME page (bare
+      // /chat) the store session id still points at the session just
+      // abandoned — resuming it here would inject its stream onto a page
+      // showing no conversation (the leak path 2's gate exists for).
+      if (connected && isReconnect && sessionId && urlSessionId) {
         api.getPendingStream(sessionId).then(result => {
           if (result?.hasPending) resumePending(sessionId, result.content || "", result.thinking || "", {
               toolCalls: result.toolCalls,
               roundContents: result.roundContents,
+              currentRound: result.currentRound,
             })
         }).catch(() => {
           // Ignore errors checking pending stream
@@ -443,7 +453,7 @@ export function ChatPage() {
       }
     })
     return () => { void unsubscribe() }
-  }, [sessionId, resumePending])
+  }, [sessionId, urlSessionId, resumePending])
 
   // Pending-stream recovery, path 2: session ENTER (mount, switch, return
   // from another page). The reconnect-only check missed the most common
@@ -508,6 +518,7 @@ export function ChatPage() {
           restoreIfBehind(result.content || "", result.thinking || "", {
             toolCalls: result.toolCalls,
             roundContents: result.roundContents,
+            currentRound: result.currentRound,
           })
           if (stallTicks >= stallCap) {
             setResumedPendingStream(null)
@@ -651,6 +662,11 @@ export function ChatPage() {
     // Reset streaming state (local path — the server's `cancelled` ack
     // covers cross-tab cancels via the hook)
     hardReset()
+
+    // Kill the detached-turn poll too: the server deletes the pending
+    // snapshot on __CANCEL__, but the poll key must drop locally or the
+    // next 3s tick would resurrect whatever snapshot state remains.
+    setResumedPendingStream(null)
 
     // Add a message to indicate cancellation
     const cancelMsg: Message = {

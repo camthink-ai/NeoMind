@@ -240,8 +240,18 @@ pub struct PendingStreamState {
     /// only the LAST round's). Stringified round numbers as keys.
     #[serde(default)]
     pub round_contents: Option<serde_json::Map<String, serde_json::Value>>,
+    /// The round the turn is CURRENTLY in (1-based). Restoring a page mid-
+    /// turn without this left the client's round counter at 1 — the next
+    /// intermediate_end wrote round 3's narration into the round-1 slot,
+    /// overwriting the recovered round 1.
+    #[serde(default = "default_round")]
+    pub current_round: u32,
     /// Whether the stream was intentionally interrupted
     pub interrupted: bool,
+}
+
+fn default_round() -> u32 {
+    1
 }
 
 /// Current stage of stream processing.
@@ -265,6 +275,30 @@ pub enum StreamStage {
     Complete,
 }
 
+/// Pending tool results are the one UNBOUNDED field: a shell cat of a
+/// large file lands verbatim in the snapshot, rewritten to redb on every
+/// ToolCallEnd and shipped whole on every 3s poll. Cap at 8 KiB with a
+/// marker — the restored display shows the head, the completed turn
+/// persists the full result regardless.
+fn truncate_pending_tool_result(result: &serde_json::Value) -> serde_json::Value {
+    const MAX_TOOL_RESULT_BYTES: usize = 8 * 1024;
+    let s = match result.as_str() {
+        Some(s) => s,
+        None => return result.clone(),
+    };
+    if s.len() <= MAX_TOOL_RESULT_BYTES {
+        return result.clone();
+    }
+    let mut cut = MAX_TOOL_RESULT_BYTES;
+    while cut > 0 && !s.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    serde_json::Value::String(format!(
+        "{}\n…[pending snapshot truncated at 8 KiB — full result persists in the completed turn]",
+        &s[..cut]
+    ))
+}
+
 impl PendingStreamState {
     /// Create a new pending stream state.
     pub fn new(session_id: String, user_message: String) -> Self {
@@ -279,6 +313,7 @@ impl PendingStreamState {
             updated_at: now,
             tool_calls: None,
             round_contents: None,
+            current_round: 1,
             interrupted: false,
         }
     }
@@ -333,7 +368,7 @@ impl PendingStreamState {
                     None => true,
                 };
                 if name_ok && resultless && round_ok {
-                    c["result"] = result.clone();
+                    c["result"] = truncate_pending_tool_result(result);
                     break;
                 }
             }
@@ -345,6 +380,9 @@ impl PendingStreamState {
     /// the restored bubble's final content must be the LAST round's text,
     /// with earlier rounds' narration in the round sections.
     pub fn rotate_round(&mut self, round: u32) {
+        // Track even on empty content: an intermediate round with no text
+        // still advances the round the client must resume into.
+        self.current_round = self.current_round.max(round + 1);
         if self.content.is_empty() {
             return;
         }

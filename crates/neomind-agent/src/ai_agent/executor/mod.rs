@@ -1811,6 +1811,12 @@ fn is_transient_failure(error: Option<&str>) -> bool {
     // Busy, not broken: the re-entrancy guard's rejection means another run
     // holds the agent — demoting to Error would badge a healthy agent red.
     lower.contains("already executing")
+        // Daily run cap: a budget refusal, not a fault. Demoting to Error
+        // killed event agents permanently — the trigger cache only loads
+        // Active agents, the Error probe never comes due for event agents
+        // (next_execution=MAX), and startup no longer reactivates them.
+        // "paused until tomorrow" must mean exactly that.
+        || lower.contains("daily run cap")
         // Network errors (reqwest::Error display)
         || lower.contains("network")
         || lower.contains("error sending request")

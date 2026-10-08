@@ -114,6 +114,11 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     // Drop events from other sessions — the chat page shares this socket.
     // See filterSessionIdRef: intentionally never cleared on page change.
     sessionId: filterSessionIdRef.current,
+    onCancelled: () => {
+      // Cross-view cancel: stop the pending-poll before its next 3s tick
+      // resurrects a ghost stream from a deleted snapshot.
+      setResumedPendingPanel(null)
+    },
     onEnd: (result) => {
       setResumedPendingPanel(null)
       if (result.interrupted) {
@@ -355,10 +360,17 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     // reusing it would silently keep the OLD specialization forever.
     // sessionFingerprint comes from the URL/i18n-derived base profile, so
     // neither dashboard edits nor store load timing can flip it.
+    // Async-chain cancellation: a fast page switch re-runs this effect
+    // (the reset block above runs synchronously), but the OLD chain's late
+    // callbacks used to still fire — stomping panelSessionIdRef with the
+    // previous page's id, restoring ITS stream, and pinning the poll key.
+    // The poll guard only cleared the key, never the restored stream state.
+    let initCancelled = false
     const persistedId = readStoredPanelSession(pageKey, sessionFingerprint)
     if (persistedId) {
       // Load history for this page's persisted session
       api.getSessionHistory(persistedId, undefined, { skipErrorToast: true }).then(result => {
+        if (initCancelled) return
         panelSessionIdRef.current = persistedId
         filterSessionIdRef.current = persistedId
         ws.setSessionId(persistedId)
@@ -370,13 +382,15 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
         // panel has no recovery dialog — restore the partial answer and let
         // the poll below carry it to completion.
         api.getPendingStream(persistedId).then(p => {
+          if (initCancelled) return
           if (p?.hasPending) {
             restore(p.content || "", p.thinking || "",
-              { toolCalls: p.toolCalls, roundContents: p.roundContents })
+              { toolCalls: p.toolCalls, roundContents: p.roundContents, currentRound: p.currentRound })
             setResumedPendingPanel(persistedId)
           }
         }).catch(() => {})
       }).catch(() => {
+        if (initCancelled) return
         // Session no longer exists — clear the bucket; a fresh one (with the
         // page profile) is created lazily on first send.
         localStorage.removeItem(panelSessionKey(pageKey))
@@ -390,9 +404,11 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     // Best-effort skill matching for this page's domain
     if (assistant && assistant.skillKeywords.length > 0) {
       api.listSkills(1, 100).then(res => {
+        if (initCancelled) return
         matchedSkillIdsRef.current = matchSkills(res.skills || [], assistant.skillKeywords)
       }).catch(() => { /* skills stay unpinned */ })
     }
+    return () => { initCancelled = true }
   }, [location.pathname]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // New conversation handler — resets the CURRENT page's bucket
@@ -545,6 +561,9 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     if (!isStreaming) return
     ws.sendMessage("__CANCEL__", undefined)
     hardReset()
+    // Drop the pending-poll key with the stream state (the server deletes
+    // the snapshot on __CANCEL__; a lingering key would revive a ghost).
+    setResumedPendingPanel(null)
     addPanelMessage({
       id: generateId(),
       role: "assistant",

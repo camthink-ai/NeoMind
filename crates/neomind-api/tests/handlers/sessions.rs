@@ -81,6 +81,8 @@ mod tests {
             State(state),
             Path("nonexistent_session".to_string()),
             Query(query),
+            // No authenticated user → the "apikey" bucket principal.
+            None,
         )
         .await;
         assert!(result.is_err());
@@ -92,7 +94,8 @@ mod tests {
     async fn test_delete_session_handler_not_found() {
         let state = create_test_server_state().await;
         let result =
-            delete_session_handler(State(state), Path("nonexistent_session".to_string())).await;
+            delete_session_handler(State(state), Path("nonexistent_session".to_string()), None)
+                .await;
         assert!(result.is_err());
         let err = result.unwrap_err();
         // Handler returns NOT_FOUND for sessions that don't exist

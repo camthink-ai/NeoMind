@@ -49,6 +49,9 @@ export interface StreamTokenUsage {
 export interface RestoreExtras {
   toolCalls?: ToolCall[]
   roundContents?: Record<number, string>
+  /** Server-side round the snapshot is in (1-based) — adopted so a mid-round
+   *  restore doesn't write round N narration into the round-1 slot. */
+  currentRound?: number
 }
 
 /** What the view needs to persist the finished assistant turn. */
@@ -200,6 +203,13 @@ export function useChatStream(options: UseChatStreamOptions) {
     setIsStreaming(true)
     interruptedRef.current = true // reattached turn: the end event will be partial
     accRef.current.content = content
+    // The snapshot's thinking is the WHOLE turn's accumulation (the server
+    // never rotates it into rounds). Keep the invariant "effective thinking
+    // = thinkingAcc + current-round" equal to the snapshot by clearing the
+    // completed-rounds accumulator: the next intermediate_end moves it from
+    // the current-round slot into the accumulator verbatim instead of
+    // re-adding a full copy per round (the compounding-doubling bug).
+    thinkingAccRef.current = ""
     accRef.current.thinking = thinking
     if (extras?.toolCalls) {
       accRef.current.toolCalls = [...extras.toolCalls]
@@ -208,6 +218,13 @@ export function useChatStream(options: UseChatStreamOptions) {
     if (extras?.roundContents) {
       roundContentsAccRef.current = { ...extras.roundContents }
       setRoundContents({ ...extras.roundContents })
+    }
+    // Resume into the SERVER's round: without this the counter stayed at 1
+    // and the next intermediate_end wrote round N's narration into the
+    // round-1 slot, clobbering the recovered round 1.
+    if (extras?.currentRound && extras.currentRound > 0) {
+      currentRoundRef.current = extras.currentRound
+      setCurrentRound(extras.currentRound)
     }
     streamStartRef.current = Date.now()
     flushNow(epochRef.current)
@@ -228,9 +245,16 @@ export function useChatStream(options: UseChatStreamOptions) {
   ) => {
     const localCalls = accRef.current.toolCalls.length
     const snapCalls = extras?.toolCalls?.length ?? 0
+    // Thinking must compare against the ACCUMULATED total (completed rounds
+    // + current round): the server snapshot carries the whole turn's
+    // thinking, and after a round boundary the current-round slot alone is
+    // "" — comparing against it made every poll look "behind" and re-restore
+    // the full snapshot, duplicating old rounds' thinking compounding.
+    const localThinkingLen =
+      thinkingAccRef.current.length + accRef.current.thinking.length
     if (
       content.length > accRef.current.content.length ||
-      thinking.length > accRef.current.thinking.length ||
+      thinking.length > localThinkingLen ||
       snapCalls > localCalls
     ) {
       restore(content, thinking, extras)

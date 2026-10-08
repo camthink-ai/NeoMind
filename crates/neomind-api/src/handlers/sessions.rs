@@ -4,7 +4,7 @@ use super::ws::create_connection_metadata;
 
 use axum::extract::ws::{Message as AxumMessage, WebSocket, WebSocketUpgrade};
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query, State},
     response::Json,
 };
 use futures::stream::{Stream, StreamExt};
@@ -724,6 +724,7 @@ pub async fn get_session_history_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
     Query(query): Query<HistoryQuery>,
+    user: Option<Extension<crate::auth_users::SessionInfo>>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
     // First check if session exists (get_history returns empty for NotFound)
     let _agent = state
@@ -732,6 +733,20 @@ pub async fn get_session_history_handler(
         .get_session(&id)
         .await
         .map_err(|_| ErrorResponse::not_found("Session"))?;
+
+    // Ownership: same first-claim rule as the WS attach path (this read is
+    // how a page replays history — it must not outrank the attach guard).
+    if session_read_forbidden(
+        &state.agents.session_manager,
+        &id,
+        &rest_principal(user.as_deref()),
+    ) {
+        return Err(ErrorResponse::new(
+            "SESSION_FORBIDDEN",
+            "Session owned by another principal",
+            axum::http::StatusCode::FORBIDDEN,
+        ));
+    }
 
     // Client form: image payloads become served `/api/images/<file>`
     // references (content-hash persisted, idempotent). The old endpoint
@@ -770,7 +785,19 @@ pub async fn get_session_history_handler(
 pub async fn delete_session_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
+    user: Option<Extension<crate::auth_users::SessionInfo>>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
+    if session_read_forbidden(
+        &state.agents.session_manager,
+        &id,
+        &rest_principal(user.as_deref()),
+    ) {
+        return Err(ErrorResponse::new(
+            "SESSION_FORBIDDEN",
+            "Session owned by another principal",
+            axum::http::StatusCode::FORBIDDEN,
+        ));
+    }
     state
         .agents
         .session_manager
@@ -866,7 +893,19 @@ pub async fn clear_session_history_handler(
 pub async fn get_pending_stream_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
+    user: Option<Extension<crate::auth_users::SessionInfo>>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
+    if session_read_forbidden(
+        &state.agents.session_manager,
+        &id,
+        &rest_principal(user.as_deref()),
+    ) {
+        return Err(ErrorResponse::new(
+            "SESSION_FORBIDDEN",
+            "Session owned by another principal",
+            axum::http::StatusCode::FORBIDDEN,
+        ));
+    }
     let session_store = state.agents.session_manager.session_store();
 
     match session_store.get_pending_stream(&id) {
@@ -878,6 +917,7 @@ pub async fn get_pending_stream_handler(
             "thinking": pending.thinking,
             "toolCalls": pending.tool_calls.clone().unwrap_or_default(),
             "roundContents": pending.round_contents.clone().unwrap_or_default(),
+            "currentRound": pending.current_round,
             "stage": pending.stage,
             "elapsed": pending.elapsed_secs(),
             "startedAt": pending.started_at,
@@ -1452,6 +1492,26 @@ fn session_attach_allowed(
     }
 }
 
+/// Principal for a REST caller — same grammar as the WS path: JWT →
+/// `user:<name>`, API-key auth → the shared "apikey" bucket.
+fn rest_principal(user: Option<&crate::auth_users::SessionInfo>) -> String {
+    user.map(|u| format!("user:{}", u.username))
+        .unwrap_or_else(|| "apikey".to_string())
+}
+
+/// Ownership guard for session-scoped REST endpoints (history / pending /
+/// delete). The WS attach path enforces first-claim ownership; these HTTP
+/// reads used to bypass it entirely — any authenticated principal could
+/// replay another user's history or delete their sessions. Same decision
+/// function, same semantics: unstamped sessions are claimed by first touch.
+fn session_read_forbidden(
+    manager: &neomind_agent::SessionManager,
+    sid: &str,
+    principal: &str,
+) -> bool {
+    !session_attach_allowed(manager, sid, principal)
+}
+
 /// Handle WebSocket connection.
 async fn handle_ws_socket(
     mut socket: WebSocket,
@@ -1567,8 +1627,18 @@ async fn handle_ws_socket(
                                         };
 
                                         // Send interrupt signal to the active stream
-                                        if !cancel_session_id.is_empty() {
+                                        if !cancel_session_id.is_empty()
+                                            && session_allowed(&cancel_session_id, &principal)
+                                        {
                                             state.agents.session_manager.cancel_session(&cancel_session_id).await;
+                                            // The cancelled turn is dead — drop its pending-stream
+                                            // snapshot too. The End/timeout paths delete it, but a
+                                            // cancel that terminates via a non-End event (Error /
+                                            // dropped channel) leaves a FROZEN snapshot that the
+                                            // detached-page 3s poll would otherwise resurrect as a
+                                            // ghost stream, spinner and all, until the stall cap.
+                                            let _ = state.agents.session_manager.session_store()
+                                                .delete_pending_stream(&cancel_session_id);
                                         }
 
                                         // Send acknowledgment
