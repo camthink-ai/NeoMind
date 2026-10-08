@@ -296,18 +296,5 @@
   "confirmReloadDescription": "Confirm Reload Description",
   "reload": "Reload",
   "crashed": "Crashed",
-  "crashedTooltip": "Stopped after repeated crashes",
-  "decision": {
-    "title": "Decision layer (LAYA)",
-    "builtin": "built-in",
-    "modeShadow": "shadow · record only",
-    "modeGuidance": "guidance · LLM hints",
-    "off": "not enabled",
-    "offHint": "Auto-enabled when model artifacts exist under <data>/models/decision/ on a decision-native build",
-    "unavailable": "model unavailable",
-    "decides": "decisions",
-    "cache": "cache hits",
-    "errors": "errors",
-    "refresh": "refresh"
-  }
+  "crashedTooltip": "Stopped after repeated crashes"
 }

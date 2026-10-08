@@ -296,18 +296,5 @@
   "confirmReloadDescription": "重新加载将中断正在执行的指令，确定要继续吗？",
   "reload": "重新加载",
   "crashed": "已崩溃",
-  "crashedTooltip": "反复崩溃后已停止",
-  "decision": {
-    "title": "决策层 (LAYA)",
-    "builtin": "内置模块",
-    "modeShadow": "影子模式 · 只记录",
-    "modeGuidance": "引导模式 · 注入 LLM",
-    "off": "未启用",
-    "offHint": "放置模型产物到 <数据目录>/models/decision/ 并以 decision-native 构建后自动启用",
-    "unavailable": "模型不可用",
-    "decides": "决策",
-    "cache": "缓存命中",
-    "errors": "错误",
-    "refresh": "刷新"
-  }
+  "crashedTooltip": "反复崩溃后已停止"
 }

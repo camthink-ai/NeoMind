@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next"
 import { useStore } from "@/store"
 import { PageLayout } from "@/components/layout/PageLayout"
 import { ExtensionGrid, ExtensionDetailsDialog, MarketplaceDialog } from "@/components/extensions"
-import { ExtensionUploadDialog, DecisionLayerCard } from "@/components/extensions"
+import { ExtensionUploadDialog } from "@/components/extensions"
 import { useToast } from "@/hooks/use-toast"
 import { RefreshCw, Upload, Globe, Search, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -188,11 +188,6 @@ export function ExtensionsPage() {
         {/* Extensions Grid — mt-4 mirrors PageTabsContent's tabs→content
             gap (16px) so the no-tab toolbar doesn't touch the cards. */}
         <div className="mt-4">
-          {/* Built-in capability module — the LAYA decision layer. Compiled
-              in (feature + model artifacts), not installable like the
-              extension packages below; the card surfaces its live status. */}
-          <DecisionLayerCard />
-
           <ExtensionGrid
             extensions={extensions}
             loading={extensionsLoading}

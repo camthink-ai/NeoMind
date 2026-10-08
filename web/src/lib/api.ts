@@ -22,7 +22,6 @@ import { memoryApi } from "./api/memory";
 import { extensionsApi } from "./api/extensions";
 import { agentsApi } from "./api/agents";
 import { dataPushApi } from "./api/dataPush";
-import { decisionsApi } from "./api/decisions";
 
 export const api = {
   ...httpApi,
@@ -41,5 +40,4 @@ export const api = {
   ...extensionsApi,
   ...agentsApi,
   ...dataPushApi,
-  ...decisionsApi,
 };
