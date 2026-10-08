@@ -190,6 +190,7 @@ Full spec in [`web/DESIGN_SPEC.md`](web/DESIGN_SPEC.md). Non-negotiable rules:
 
 ## Code Hygiene Patterns
 
+- **CHANGELOG style (enforced since 1.1.2)**: entries are ONE LINE per change — what broke → how it behaves now. No essay narration, no story headings ("the watermark sequel" style), no investigation process. Structure per release: `Upgrade notes` (behavior changes operators must know) / `Added` / `Fixed — <area>` / `Test`. Reference shape: the 1.1.2 section. Validate with `python3 scripts/extract_changelog.py --version <ver> --check`.
 - **Dead re-export detection**: grep has a blind spot for multi-line brace imports (`neomind_crate::{\n TypeA,\n TypeB}`). Compiler-based is reliable: (1) strip all re-exports to empty, (2) `cargo build --tests 2>&1 | grep "unresolved import"`, (3) add back exactly what the compiler reports. Skip this for `neomind-extension-sdk` (public API).
 - **Dead `Default` impl**: check 4 patterns — `X::default()`, `unwrap_or_default()` on `Option<X>`, `HashMap::entry().or_default()` with X value, `..Default::default()` in struct literals.
 - **Subagent unreliability for dead code**: ~70% false-positive rate. Always verify candidates with manual greps before removing; prefer batch-remove + `cargo build` to catch errors.
