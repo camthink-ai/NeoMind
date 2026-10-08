@@ -75,6 +75,43 @@ describe('ChatMessages', () => {
     expect(screen.getByText('正在生成')).toBeTruthy()
   })
 
+  it('while streaming, hides the in-flight turn fragments that the history reload brought in', () => {
+    // Re-entering a session mid-turn loads the LIVE agent history, whose
+    // tail contains the running turn's fragments. They must not render
+    // next to the streaming bubble (double display: an extra Thinking
+    // block whose content then "restarts" below it).
+    render(
+      <ChatMessages
+        messages={[
+          { id: 'u1', role: 'user', content: '先分析系统', timestamp: 1 },
+          { id: 'a1', role: 'assistant', content: '上一次的完整回答', timestamp: 2 },
+          { id: 'u2', role: 'user', content: '更新记忆文件', timestamp: 3 },
+          {
+            id: 'a2', role: 'assistant', content: '', timestamp: 4,
+            thinking: '进行中回合的思考分片',
+            tool_calls: [{ name: 'shell', arguments: { command: 'ls' }, result: 'ok' }],
+          },
+        ] as unknown as Message[]}
+        user={null}
+        isStreaming
+        streamingContent="恢复后继续的正文"
+        streamingThinking=""
+        streamingRoundThinking={{}}
+        streamingToolCalls={[]}
+        roundContents={{}}
+        currentRound={1}
+        streamingMessageId="__streaming__"
+      />,
+    )
+    // The completed prior turn stays visible...
+    expect(screen.getByText('上一次的完整回答')).toBeTruthy()
+    expect(screen.getByText('更新记忆文件')).toBeTruthy()
+    // ...the in-flight fragment is hidden (the bubble owns the display)...
+    expect(screen.queryByText('进行中回合的思考分片')).toBeNull()
+    // ...and the streaming bubble shows.
+    expect(screen.getByText('恢复后继续的正文')).toBeTruthy()
+  })
+
   it('shows the load-earlier affordance only when earlier history exists', () => {
     const props = {
       messages: [{ id: 'u1', role: 'user', content: 'hi', timestamp: 1 }] as Message[],

@@ -17,7 +17,7 @@ import type { ChatImage, Message, UserInfo } from "@/types"
 import { cn } from "@/lib/utils"
 import { textMini, textNano } from "@/design-system/tokens/typography"
 import { formatTimestamp } from "@/lib/utils/format"
-import { cleanToolCallJson, mergeMessagesForDisplay } from "@/lib/messageUtils"
+import { cleanToolCallJson, mergeMessagesForDisplay, dropInFlightTurn } from "@/lib/messageUtils"
 import { getServerOrigin } from "@/lib/api"
 import { isThinkingDuplicate } from "./toolCallUtils"
 import { MarkdownMessage } from "./MarkdownMessage"
@@ -94,7 +94,16 @@ export function ChatMessages({
   const { t } = useTranslation("chat")
   const getUserInitials = (username: string) => username.slice(0, 2).toUpperCase()
 
-  const displayMessages = useMemo(() => mergeMessagesForDisplay(messages), [messages])
+  const displayMessages = useMemo(() => {
+    const merged = mergeMessagesForDisplay(messages)
+    // While a turn streams (fresh, or restored after switching back), the
+    // history already contains the in-flight turn's fragments (the history
+    // endpoint serves the LIVE agent history). Rendering them alongside the
+    // streaming bubble double-displays the same turn — an extra Thinking
+    // block whose content then "restarts" in the bubble below. The bubble
+    // owns the in-flight display; the completed turn replaces it on end.
+    return isStreaming ? dropInFlightTurn(merged) : merged
+  }, [messages, isStreaming])
 
   // Build display list including the streaming message (same loop = same
   // React key = no flicker between streaming and saved states).

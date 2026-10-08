@@ -128,6 +128,27 @@ export function mergeMessagesForDisplay(messages: Message[]): Message[] {
 }
 
 /**
+ * Drop the in-flight turn's messages: everything AFTER the last user
+ * message. While a turn is streaming (fresh or restored-after-reentry),
+ * the history endpoint serves the LIVE agent history — the running turn's
+ * fragments are already in it and would double-render next to the
+ * streaming bubble (the "extra Thinking process" live-test report). The
+ * streaming bubble owns the in-flight turn's display; the completed turn
+ * replaces it on end/reload.
+ */
+export function dropInFlightTurn(messages: Message[]): Message[] {
+  let lastUser = -1
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "user") {
+      lastUser = i
+      break
+    }
+  }
+  if (lastUser === -1) return messages
+  return messages.slice(0, lastUser + 1)
+}
+
+/**
  * Check if a message is a partial stream message.
  * Partial messages should not be displayed in the message list.
  */
