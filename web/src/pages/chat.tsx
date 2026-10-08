@@ -225,9 +225,14 @@ export function ChatPage() {
    *  snapshot visibly rewound content that had streamed beneath it). The
    *  restore happens on session enter / reconnect, before the user has seen
    *  anything in this visit — no rewind perception, no click. */
-  const resumePending = useCallback((sid: string, content: string, thinking: string) => {
+  const resumePending = useCallback((
+    sid: string,
+    content: string,
+    thinking: string,
+    extras?: import("@/hooks/useChatStream").RestoreExtras,
+  ) => {
     hardReset()
-    restore(content, thinking)
+    restore(content, thinking, extras)
     setResumedPendingStream(sid)
   }, [hardReset, restore])
 
@@ -417,7 +422,10 @@ export function ChatPage() {
     const unsubscribe = ws.onConnection((connected, isReconnect) => {
       if (connected && isReconnect && sessionId) {
         api.getPendingStream(sessionId).then(result => {
-          if (result?.hasPending) resumePending(sessionId, result.content || "", result.thinking || "")
+          if (result?.hasPending) resumePending(sessionId, result.content || "", result.thinking || "", {
+              toolCalls: result.toolCalls,
+              roundContents: result.roundContents,
+            })
         }).catch(() => {
           // Ignore errors checking pending stream
         })
@@ -442,7 +450,10 @@ export function ChatPage() {
     let cancelled = false
     api.getPendingStream(sessionId).then(result => {
       if (cancelled || !result?.hasPending) return
-      resumePending(sessionId, result.content || "", result.thinking || "")
+      resumePending(sessionId, result.content || "", result.thinking || "", {
+              toolCalls: result.toolCalls,
+              roundContents: result.roundContents,
+            })
     }).catch(() => {})
     return () => { cancelled = true }
   }, [sessionId, resumePending])
@@ -465,10 +476,19 @@ export function ChatPage() {
       api.getPendingStream(resumedPendingStream).then(result => {
         if (stopped) return
         if (result?.hasPending) {
+          // Tool-call COUNT is part of the stall signature and of "ahead":
+          // during a slow tool execution (shell, extension inference) text
+          // does not grow for minutes — a new call/round is the only
+          // aliveness signal a detached page can see.
           const len = (result.content || "").length + (result.thinking || "").length
+            + (result.toolCalls?.length ?? 0)
+            + Object.values(result.roundContents || {}).reduce((a, b) => a + b.length, 0)
           if (len > lastLen) { lastLen = len; stallTicks = 0 }
           else stallTicks += 1
-          restoreIfBehind(result.content || "", result.thinking || "")
+          restoreIfBehind(result.content || "", result.thinking || "", {
+            toolCalls: result.toolCalls,
+            roundContents: result.roundContents,
+          })
           if (stallTicks >= 20) {
             setResumedPendingStream(null)
             hardReset()
@@ -697,7 +717,12 @@ export function ChatPage() {
   // llmBackendLoading true) keeps the guide mounted — the old gate fell
   // through to the real chat UI for a frame on every refetch, flashing the
   // conversation beneath the guide.
-  if (!llmBackends || llmBackends.length === 0) {
+  // Rendered INSIDE the page layout, not via an early return: the early
+  // return skipped MobilePageHeader, and on phones that header is the ONLY
+  // navigation entry point — users landed on the setup guide with no way to
+  // reach settings or any other page.
+  const noLlmContent = (() => {
+    if (llmBackends && llmBackends.length > 0) return null
     // An install that HAS configured backends never shows the guide while a
     // load is in flight — including first paint, where llmBackendLoading is
     // still false (the mount effect flips it a tick later). The marker is
@@ -712,7 +737,7 @@ export function ChatPage() {
     }
     everLoadedBackendsRef.current = true
     return <LlmSetupGuide />
-  }
+  })()
 
   // Manual context compaction — force a summary now (backend bypasses the
   // auto threshold). Usage normalizes on the next turn.
@@ -864,12 +889,14 @@ export function ChatPage() {
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
         {/* Mobile per-page header: hamburger (nav drawer) + sessions toggle + new session */}
         <MobilePageHeader
-          title={(() => {
-            const s = sessions.find((x) => x.sessionId === urlSessionId)
-            return s?.title || t('chat:input.newChat')
-          })()}
+          title={noLlmContent
+            ? t('common:llmGuide.title')
+            : (() => {
+              const s = sessions.find((x) => x.sessionId === urlSessionId)
+              return s?.title || t('chat:input.newChat')
+            })()}
           leftExtra={
-            !isDesktop && (sessions.length > 0 || !isWelcomeMode) ? (
+            !isDesktop && !noLlmContent && (sessions.length > 0 || !isWelcomeMode) ? (
               <Button
                 variant="ghost"
                 size="icon"
@@ -882,7 +909,9 @@ export function ChatPage() {
             ) : undefined
           }
           actions={
-            !isDesktop ? (
+            // No "+" while the LLM setup guide owns the screen — a new session
+            // can't be talked to yet; the guide's two CTAs are the actions.
+            !isDesktop && !noLlmContent ? (
               <Button
                 variant="ghost"
                 size="icon"
@@ -900,7 +929,11 @@ export function ChatPage() {
         />
         {/* Chat Content Area */}
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-        {isWelcomeMode && !sessionsLoaded ? (
+        {noLlmContent ? (
+          /* LLM setup guide / first-load skeleton — replaces the chat area
+             while the header (mobile nav) stays mounted above it. */
+          noLlmContent
+        ) : isWelcomeMode && !sessionsLoaded ? (
           /* Loading state while sessions are being loaded - prevents race condition */
           <div className="flex-1 min-h-0 flex items-center justify-center">
             <div className="flex items-center gap-2 text-muted-foreground">
@@ -1029,8 +1062,9 @@ export function ChatPage() {
             hacks needed. No background: transparent to match the
             conversation area above and the desktop input.
             Welcome mode doesn't render this dock at all: its composer is
-            centered inside WelcomeArea instead. */}
-        {!isWelcomeMode && (
+            centered inside WelcomeArea instead. The no-LLM setup state
+            doesn't either — there is no backend to send to. */}
+        {!isWelcomeMode && !noLlmContent && (
         <div
           className="shrink-0 px-2.5 sm:px-4 pt-3 pb-[calc(1.25rem+env(safe-area-inset-bottom,0px))] sm:pt-3 sm:pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] border-0"
           style={isDesktop ? undefined : { paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 12px))' }}

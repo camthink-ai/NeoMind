@@ -11,7 +11,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useStore } from '@/store'
-import { cn } from '@/lib/utils'
 import { BrainCircuit, Server, ChevronRight, Download } from 'lucide-react'
 import { BuiltinModelWizard } from '@/components/llm/BuiltinModelWizard'
 
@@ -30,8 +29,12 @@ export function LlmSetupGuide() {
   )
 
   return (
-    <div className={cn('flex items-center justify-center', 'h-full', 'bg-background')}>
-      <div className="text-center max-w-2xl px-6">
+    // Outer scroller + min-h-full centered inner: when the guide is shorter
+    // than the viewport it centers; when taller (small phones, cards stacked)
+    // it scrolls — plain h-full + items-center would clip the top instead.
+    <div className="touch-scroll h-full overflow-y-auto bg-background">
+      <div className="flex min-h-full items-center justify-center">
+      <div className="text-center max-w-2xl px-6 py-6">
         <div className="mx-auto mb-5 flex size-14 items-center justify-center rounded-xl bg-primary-light text-primary">
           <BrainCircuit className="size-7" />
         </div>
@@ -80,6 +83,7 @@ export function LlmSetupGuide() {
         <p className="mt-5 text-xs text-muted-foreground">{t('common:llmGuide.footnote')}</p>
       </div>
       {wizard}
+      </div>
     </div>
   )
 }
