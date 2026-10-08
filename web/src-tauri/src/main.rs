@@ -722,6 +722,26 @@ mod cli_dispatch {
             return None;
         }
         let sub = argv[1].as_str();
+        // Top-level version/help: without this they'd fall to a GUI boot
+        // that the single-instance lock silently swallows — exit 0, no
+        // output, the exact silent-exit trap this dispatcher exists to fix.
+        match sub {
+            "--version" | "-V" => {
+                println!("neomind {} (desktop)", env!("CARGO_PKG_VERSION"));
+                return Some(0);
+            }
+            "--help" | "-h" => {
+                println!(
+                    "NeoMind {} — desktop app + CLI.\n\
+                     No arguments launches the app. Data subcommands run in-process:\n\
+                       neomind dashboard|device|agent|rule|transform|widget|extension|message|data ...\n\
+                     serve/chat/logs and api-key/user are handled by the app or a full CLI install.",
+                    env!("CARGO_PKG_VERSION")
+                );
+                return Some(0);
+            }
+            _ => {}
+        }
         if GUI_OWNED.contains(&sub) {
             return None;
         }

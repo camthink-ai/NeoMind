@@ -137,33 +137,81 @@ impl ShellTool {
         // which strips most useful information from the output.
         cmd.env("NEOMIND_JSON", "1");
 
-        // Prepend the current binary's directory to PATH so subprocess `neomind`
-        // invocations resolve to the same binary that's running the server.
-        // Without this, `/bin/sh -c "neomind ..."` walks PATH and may find a
-        // stale install (e.g. `~/.cargo/bin/neomind`), causing silent version
-        // drift between server and CLI — particularly for local-only commands
-        // (extension create/build/install) that bypass in-process dispatch.
+        // Prepend a directory containing a `neomind` that resolves to the
+        // binary currently running the server, so subprocess `neomind ...`
+        // invocations can't hit a stale install (`~/.cargo/bin/neomind` was
+        // 0.9.24 while the platform ran 1.1.2 — silent version AND data-dir
+        // drift, particularly for local-only commands that bypass in-process
+        // dispatch). When this binary IS `neomind`, its own directory is
+        // that directory. The desktop bundle names it differently
+        // (`neomind-tauri`), so a plain PATH entry can never satisfy a
+        // `neomind` lookup — alias it under <data>/bin/ and prepend THAT.
         if let Ok(exe) = std::env::current_exe() {
-            if let Some(exe_dir) = exe.parent() {
-                let exe_dir = exe_dir.display().to_string();
+            let is_plain_neomind = exe
+                .file_name()
+                .map(|f| f == "neomind" || f == "neomind.exe")
+                .unwrap_or(false);
+            let dir_to_prepend = if is_plain_neomind {
+                exe.parent().map(|p| p.to_path_buf())
+            } else {
+                Self::ensure_neomind_alias(&exe)
+            };
+            if let Some(dir) = dir_to_prepend {
+                let dir = dir.display().to_string();
                 match std::env::var_os("PATH") {
                     Some(existing) => {
-                        let new_path = format!(
-                            "{}{}{}",
-                            exe_dir,
-                            path_delimiter(),
-                            existing.to_string_lossy()
-                        );
+                        let new_path =
+                            format!("{}{}{}", dir, path_delimiter(), existing.to_string_lossy());
                         cmd.env("PATH", new_path);
                     }
                     None => {
-                        cmd.env("PATH", exe_dir);
+                        cmd.env("PATH", dir);
                     }
                 }
             }
         }
 
         cmd
+    }
+
+    /// Create/refresh `<data>/bin/neomind` pointing at `exe` (the running
+    /// binary, whatever it's named) and return the directory to prepend to
+    /// PATH. Best-effort: any failure returns None (PATH stays untouched —
+    /// the pre-fix behavior, no worse).
+    ///
+    /// Unix: symlink (cheap, refresh every call so a bundle update is
+    /// picked up on the next tool call). Windows: symlinks need privileges;
+    /// copy instead, guarded by size so we only re-copy when the binary
+    /// actually changed.
+    fn ensure_neomind_alias(exe: &std::path::Path) -> Option<std::path::PathBuf> {
+        let dir = neomind_core::paths::data_dir().join("bin");
+        std::fs::create_dir_all(&dir).ok()?;
+        let alias = dir.join(if cfg!(windows) {
+            "neomind.exe"
+        } else {
+            "neomind"
+        });
+        #[cfg(unix)]
+        {
+            // remove-then-symlink: handles both stale target and first run.
+            let _ = std::fs::remove_file(&alias);
+            std::os::unix::fs::symlink(exe, &alias).ok()?;
+        }
+        #[cfg(windows)]
+        {
+            let need_copy = std::fs::metadata(&alias)
+                .and_then(|m| m.len().checked_sub(0).map(|_| m.len()))
+                .map(|alias_len| {
+                    std::fs::metadata(exe)
+                        .map(|em| em.len() != alias_len)
+                        .unwrap_or(true)
+                })
+                .unwrap_or(true);
+            if need_copy {
+                std::fs::copy(exe, &alias).ok()?;
+            }
+        }
+        Some(dir)
     }
 
     /// Resolve API key for neomind CLI commands.
