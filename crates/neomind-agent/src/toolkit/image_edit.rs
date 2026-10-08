@@ -1082,15 +1082,66 @@ fn apply_crop(
     Ok(())
 }
 
-/// A parsed system font candidate kept alive for the process lifetime.
+/// A parsed system font kept alive for the process lifetime. Only SELECTED
+/// winners are ever materialized (see [`FONT_WINNERS`]) — ab_glyph's owned
+/// faces each carry a full copy of the source file, so caching every face of
+/// every TTC parked ~200MB of fonts on macOS (Hiragino 24.7MB x4 faces +
+/// STHeiti 53.2MB x2).
 struct FontCandidate {
     font: ab_glyph::FontArc,
     source: &'static str,
 }
 
-/// Parsed font candidates (cached after first use). CJK-capable paths are
-/// listed FIRST in [`system_font_paths`] so they win coverage ties.
-static FONT_CANDIDATES: OnceLock<Vec<FontCandidate>> = OnceLock::new();
+/// What [`select_font_for`] hands the caller: an Arc HANDLE to the winning
+/// face (clone-cheap, shares the cached tables) plus where it came from for
+/// diagnostics.
+struct FontSelection {
+    font: ab_glyph::FontArc,
+    source: &'static str,
+}
+
+/// A face ADDRESS — path + TTC index, no font data held. The scan reads only
+/// file headers, so listing every candidate face is effectively free.
+struct FaceAddr {
+    path: &'static str,
+    index: u32,
+}
+
+/// All probed face addresses (scanned once). CJK-capable paths are listed
+/// FIRST in [`system_font_paths`] so they win coverage ties.
+static FACE_ADDRS: OnceLock<Vec<FaceAddr>> = OnceLock::new();
+
+/// Parsed WINNERS, one per dominant script class (CJK / everything else).
+/// draw_text traffic resolves to one of at most two faces in practice, which
+/// bounds the font-resident set to two file copies however many TTCs exist.
+static FONT_WINNERS: std::sync::Mutex<[Option<FontCandidate>; 2]> =
+    std::sync::Mutex::new([None, None]);
+
+#[derive(Clone, Copy, PartialEq)]
+enum ScriptClass {
+    Cjk,
+    Other,
+}
+
+fn script_class(text: &str) -> ScriptClass {
+    // Any CJK char makes the text CJK-class: mixed watermark strings
+    // ("有人 NE302 …") must resolve to the CJK face, never the Latin one.
+    let cjk = text.chars().any(|c| {
+        matches!(c as u32,
+            0x3000..=0x303F   // CJK punctuation
+            | 0x3040..=0x30FF // kana
+            | 0x3400..=0x4DBF // ext A
+            | 0x4E00..=0x9FFF // unified
+            | 0xF900..=0xFAFF // compat
+            | 0xFF00..=0xFFEF // fullwidth
+        )
+    });
+    if cjk {
+        ScriptClass::Cjk
+    } else {
+        ScriptClass::Other
+    }
+}
 
 /// Candidate system font files, CJK-capable first. Order matters: for text
 /// every font covers equally (pure Latin), the earliest candidate is chosen.
@@ -1127,12 +1178,13 @@ fn system_font_paths() -> &'static [&'static str] {
     }
 }
 
-/// Parse one font file into `out`. TTC collections contribute one candidate
-/// per face: `try_from_vec` alone would only ever get face 0 (for
-/// NotoSansCJK-*.ttc that is the JP variant — legible for Chinese, but the
-/// other faces are kept as candidates too). ab_glyph exposes no name table,
-/// so faces are distinguished only by glyph coverage downstream.
-fn parse_font_file(bytes: Vec<u8>, path: &'static str, out: &mut Vec<FontCandidate>) {
+/// Enumerate candidate faces (headers only, no font data retained). TTC
+/// collections contribute one address per face: `try_from_vec` alone would
+/// only ever get face 0 (for NotoSansCJK-*.ttc that is the JP variant —
+/// legible for Chinese, but the other faces are kept as candidates too).
+/// ab_glyph exposes no name table, so faces are distinguished only by glyph
+/// coverage downstream.
+fn parse_face_addrs(bytes: &[u8], path: &'static str, out: &mut Vec<FaceAddr>) {
     const MAX_CACHED_FACES: usize = 8;
     if out.len() >= MAX_CACHED_FACES {
         return;
@@ -1141,35 +1193,35 @@ fn parse_font_file(bytes: Vec<u8>, path: &'static str, out: &mut Vec<FontCandida
         // TTC header: tag(4) version(4) numFonts(4 BE) offsets[...]
         let num_faces = u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
         for index in 0..num_faces.min(8) {
-            match ab_glyph::FontVec::try_from_vec_and_index(bytes.clone(), index)
-                .map(ab_glyph::FontArc::new)
-            {
-                Ok(font) => out.push(FontCandidate { font, source: path }),
-                Err(_) => break, // later faces rarely parse if this one didn't
-            }
+            out.push(FaceAddr { path, index });
             if out.len() >= MAX_CACHED_FACES {
                 break;
             }
         }
-    } else if let Ok(font) = ab_glyph::FontArc::try_from_vec(bytes) {
-        out.push(FontCandidate { font, source: path });
+    } else {
+        out.push(FaceAddr { path, index: 0 });
     }
 }
 
-/// Scan system font paths and parse every readable font (cached).
-fn probe_fonts() -> &'static [FontCandidate] {
-    FONT_CANDIDATES.get_or_init(|| {
+/// Scan system font paths and enumerate faces. Reads only the first 12
+/// bytes of each existing file — cheap, and nothing is retained.
+fn probe_faces() -> &'static [FaceAddr] {
+    FACE_ADDRS.get_or_init(|| {
         let mut out = Vec::new();
         for path in system_font_paths() {
-            match std::fs::read(path) {
-                Ok(bytes) => {
+            // Header-only read: face enumeration must not load font tables.
+            let mut header = [0u8; 12];
+            match std::fs::File::open(path)
+                .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut header))
+            {
+                Ok(()) => {
                     let before = out.len();
-                    parse_font_file(bytes, path, &mut out);
+                    parse_face_addrs(&header, path, &mut out);
                     if out.len() > before {
                         tracing::debug!(
                             font_path = %path,
                             faces = out.len() - before,
-                            "image_edit: font loaded"
+                            "image_edit: font discovered"
                         );
                     }
                 }
@@ -1181,6 +1233,42 @@ fn probe_fonts() -> &'static [FontCandidate] {
         }
         out
     })
+}
+
+/// Parse ONE face into an owned FontArc (one file copy — the unit of memory
+/// this module budgets).
+fn load_face(addr: &FaceAddr, bytes: Vec<u8>) -> Option<FontCandidate> {
+    if addr.index == 0 && !(bytes.len() >= 12 && &bytes[0..4] == b"ttcf") {
+        ab_glyph::FontArc::try_from_vec(bytes).ok()
+    } else {
+        ab_glyph::FontVec::try_from_vec_and_index(bytes, addr.index)
+            .ok()
+            .map(ab_glyph::FontArc::new)
+    }
+    .map(|font| FontCandidate {
+        font,
+        source: addr.path,
+    })
+}
+
+/// Glyph coverage of `text` in a ZERO-COPY borrowed face (probe without
+/// paying the owned-copy). Same counting rules as [`coverage`].
+fn coverage_of_ref(font: &ab_glyph::FontRef, text: &str) -> (usize, usize) {
+    let mut covered = 0usize;
+    let mut total = 0usize;
+    for ch in text.chars().filter(|c| !c.is_whitespace()) {
+        total += 1;
+        if font.glyph_id(ch).0 != 0 {
+            covered += 1;
+        }
+    }
+    (covered, total.max(1))
+}
+
+/// Available-face predicate for tests (warning paths probe inline).
+#[cfg(test)]
+fn probe_fonts_available() -> bool {
+    !probe_faces().is_empty()
 }
 
 /// Glyph coverage of `text` in `font`: (covered, total) over non-whitespace
@@ -1202,19 +1290,85 @@ fn coverage(font: &ab_glyph::FontArc, text: &str) -> (usize, usize) {
 /// candidate (CJK-capable paths are ordered first in [`system_font_paths`]).
 /// Returns the candidate with its (covered, total) so the caller can warn on
 /// partial coverage.
-fn select_font_for(text: &str) -> Option<(&'static FontCandidate, usize, usize)> {
-    let mut best: Option<(&'static FontCandidate, usize, usize)> = None;
-    for cand in probe_fonts() {
-        let (covered, total) = coverage(&cand.font, text);
+fn select_font_for(text: &str) -> Option<(FontSelection, usize, usize)> {
+    let class = script_class(text) as usize;
+    // Fast path: the cached winner for this script class still fully covers
+    // the text (re-checked — coverage is per-text, and a mixed follow-up
+    // string can outrun a Latin winner).
+    if let Ok(winners) = FONT_WINNERS.lock() {
+        if let Some(cand) = &winners[class] {
+            let (covered, total) = coverage(&cand.font, text);
+            if covered == total {
+                return Some((
+                    FontSelection {
+                        font: ab_glyph::FontArc::clone(&cand.font),
+                        source: cand.source,
+                    },
+                    covered,
+                    total,
+                ));
+            }
+        }
+    }
+
+    // Slow path: transient zero-copy probing of every candidate face, then
+    // materialize ONLY the winner (one owned copy) into the class slot.
+    let mut best: Option<(FaceAddr, usize, usize)> = None;
+    for addr in probe_faces() {
+        let Ok(bytes) = std::fs::read(addr.path) else {
+            continue;
+        };
+        let face = if addr.index == 0 && !(bytes.len() >= 12 && &bytes[0..4] == b"ttcf") {
+            ab_glyph::FontRef::try_from_slice(&bytes)
+        } else {
+            ab_glyph::FontRef::try_from_slice_and_index(&bytes, addr.index)
+        };
+        let Ok(face) = face else { continue };
+        let (covered, total) = coverage_of_ref(&face, text);
         let take = match best {
             None => true,
             Some((_, best_covered, _)) => covered > best_covered,
         };
         if take {
-            best = Some((cand, covered, total));
+            best = Some((
+                FaceAddr {
+                    path: addr.path,
+                    index: addr.index,
+                },
+                covered,
+                total,
+            ));
         }
     }
-    best
+    let (addr, covered, total) = best?;
+
+    // Prefer an already-cached face that ties (memory budget beats re-read).
+    if let Ok(winners) = FONT_WINNERS.lock() {
+        if let Some(existing) = &winners[class] {
+            let (ecov, etot) = coverage(&existing.font, text);
+            if ecov >= covered {
+                return Some((
+                    FontSelection {
+                        font: ab_glyph::FontArc::clone(&existing.font),
+                        source: existing.source,
+                    },
+                    ecov,
+                    etot,
+                ));
+            }
+        }
+    }
+
+    let bytes = std::fs::read(addr.path).ok()?;
+    let cand = load_face(&addr, bytes)?;
+    let selection = FontSelection {
+        font: ab_glyph::FontArc::clone(&cand.font),
+        source: cand.source,
+    };
+    if let Ok(mut winners) = FONT_WINNERS.lock() {
+        winners[class] = Some(cand);
+    }
+    Some((selection, covered, total))
 }
 
 /// Note: `stroke_width` is accepted for API uniformity with other draw operations
@@ -1745,7 +1899,7 @@ mod tests {
     /// coordinates must succeed (centered) instead of aborting the whole call.
     #[tokio::test]
     async fn draw_text_without_position_defaults_centered() {
-        if probe_fonts().is_empty() {
+        if !probe_fonts_available() {
             eprintln!("skipping: no system font available");
             return;
         }
@@ -1828,7 +1982,7 @@ mod tests {
     /// bare success the model relays as "done".
     #[tokio::test]
     async fn pixels_changed_flags_off_canvas_text() {
-        if probe_fonts().is_empty() {
+        if !probe_fonts_available() {
             eprintln!("skipping: no system font available");
             return;
         }
@@ -2130,11 +2284,10 @@ mod op_tests {
     #[test]
     fn draw_text_renders_glyphs_with_background() {
         // System-font dependent: skip cleanly on systems without any of the probed fonts
-        let fonts = probe_fonts();
-        if fonts.is_empty() {
+        let Some((sel, _, _)) = select_font_for("Hi") else {
             eprintln!("skipping: no system font available");
             return;
-        }
+        };
         let mut img = solid(200, 100, [0, 0, 0, 255]);
         apply_draw_text(
             &mut img,
@@ -2145,7 +2298,7 @@ mod op_tests {
             24,
             Some(image::Rgba([0, 0, 0, 255])),
             4,
-            &fonts[0].font,
+            &sel.font,
         )
         .unwrap();
         // (x,y) is the top-left of the background rect — still pure black bg
@@ -2158,17 +2311,24 @@ mod op_tests {
         // probe fell back to a Latin-only font. If ANY probed font covers the
         // drawn CJK text, selection must report full coverage.
         let text = "有人 NE302 2026-09-30 厦门市公安局";
-        if probe_fonts().is_empty() {
+        if !probe_fonts_available() {
             eprintln!("skipping: no system font available");
             return;
         }
         let Some((_, covered, total)) = select_font_for(text) else {
             panic!("fonts probed but select_font_for returned None");
         };
-        if !probe_fonts()
-            .iter()
-            .any(|c| coverage(&c.font, "厦门") == (2, 2))
-        {
+        // Transient zero-copy scan: does ANY candidate face cover CJK?
+        let any_cjk = probe_faces().iter().any(|addr| {
+            let Ok(b) = std::fs::read(addr.path) else { return false };
+            let face = if addr.index == 0 && !(b.len() >= 12 && &b[0..4] == b"ttcf") {
+                ab_glyph::FontRef::try_from_slice(&b)
+            } else {
+                ab_glyph::FontRef::try_from_slice_and_index(&b, addr.index)
+            };
+            face.map(|f| coverage_of_ref(&f, "厦门") == (2, 2)).unwrap_or(false)
+        });
+        if !any_cjk {
             eprintln!("skipping: no CJK-capable font probed (expected on bare CI)");
             return;
         }
@@ -2180,14 +2340,20 @@ mod op_tests {
 
     #[test]
     fn cjk_draw_text_changes_pixels() {
-        if probe_fonts().is_empty() {
+        if !probe_fonts_available() {
             eprintln!("skipping: no system font available");
             return;
         }
-        if !probe_fonts()
-            .iter()
-            .any(|c| coverage(&c.font, "厦门") == (2, 2))
-        {
+        let any_cjk = probe_faces().iter().any(|addr| {
+            let Ok(b) = std::fs::read(addr.path) else { return false };
+            let face = if addr.index == 0 && !(b.len() >= 12 && &b[0..4] == b"ttcf") {
+                ab_glyph::FontRef::try_from_slice(&b)
+            } else {
+                ab_glyph::FontRef::try_from_slice_and_index(&b, addr.index)
+            };
+            face.map(|f| coverage_of_ref(&f, "厦门") == (2, 2)).unwrap_or(false)
+        });
+        if !any_cjk {
             eprintln!("skipping: no CJK-capable font probed");
             return;
         }
@@ -2218,21 +2384,24 @@ mod op_tests {
             return;
         };
         let bytes = std::fs::read(&path).expect("read NEOMIND_TEST_CJK_TTC");
-        let mut faces = Vec::new();
-        parse_font_file(bytes, "env", &mut faces);
+        let mut addrs = Vec::new();
+        parse_face_addrs(&bytes, "env", &mut addrs);
         assert!(
-            faces.len() >= 2,
+            addrs.len() >= 2,
             "ttc must expose multiple faces, got {}",
-            faces.len()
+            addrs.len()
         );
         // Every face of NotoSansCJK covers the full pan-CJK charset — the
         // field bug (tofu) must be impossible once this font is probed.
-        for face in &faces {
+        for addr in &addrs {
+            let face = load_face(addr, std::fs::read(&path).expect("re-read face"))
+                .expect("face parses");
             assert_eq!(
                 coverage(&face.font, "厦门有人公安"),
                 (6, 6),
-                "face from {} lacks hanzi coverage",
-                face.source
+                "face {}[{}] lacks hanzi coverage",
+                face.source,
+                addr.index
             );
         }
     }
@@ -2343,7 +2512,7 @@ mod color_tests {
     /// End-to-end: the CSS rgba form that used to hard-fail now renders.
     #[tokio::test]
     async fn rgba_background_text_renders() {
-        if probe_fonts().is_empty() {
+        if !probe_fonts_available() {
             eprintln!("skipping: no system font available");
             return;
         }

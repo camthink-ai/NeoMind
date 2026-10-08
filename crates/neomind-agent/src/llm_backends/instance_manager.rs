@@ -1505,7 +1505,8 @@ mod tests {
             thinking_effort: None,
             capabilities: BackendCapabilities {
                 supports_streaming: true,
-                // Stale: deepseek-v4-flash is text-only but DB says true.
+                // Stale: deepseek-chat is text-only but DB says true (pinned here — the
+                // 2026-10-08 registry granted deepseek-v4-flash vision, breaking the old pin).
                 supports_multimodal: true,
                 multimodal_user_override: None,
                 multimodal_source: None,

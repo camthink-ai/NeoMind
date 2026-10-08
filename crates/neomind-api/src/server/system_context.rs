@@ -29,21 +29,31 @@ fn fingerprint(text: &str) -> u64 {
     h.finish()
 }
 
-/// True when `input` differs from the last accepted input for this slot
-/// (and the slot is updated). Call ONLY when about to run the LLM, so a
-/// failed run retries on the next cycle instead of being marked done.
-fn summary_input_changed(
+/// When `input` differs from the last ACCEPTED input for this slot, return
+/// the new fingerprint — WITHOUT marking. The caller commits it via
+/// [`summary_mark_done`] only after the LLM run SUCCEEDED: the previous
+/// mark-on-check version wrote the fingerprint before the generate() call,
+/// so one transient LLM failure permanently skipped the job (every later
+/// cycle saw identical input and never retried).
+fn summary_input_fingerprint(
     slot: &'static std::sync::OnceLock<std::sync::Mutex<u64>>,
     input: &str,
-) -> bool {
+) -> Option<u64> {
     let guard = slot.get_or_init(|| std::sync::Mutex::new(0));
-    let mut last = guard.lock().unwrap();
+    let last = guard.lock().unwrap();
     let fp = fingerprint(input);
     if *last == fp {
-        return false;
+        None
+    } else {
+        Some(fp)
     }
-    *last = fp;
-    true
+}
+
+/// Commit a fingerprint returned by [`summary_input_fingerprint`] — call
+/// only once the summary the fingerprint stands for is durably written.
+fn summary_mark_done(slot: &'static std::sync::OnceLock<std::sync::Mutex<u64>>, fp: u64) {
+    let guard = slot.get_or_init(|| std::sync::Mutex::new(0));
+    *guard.lock().unwrap() = fp;
 }
 /// Max chars for LLM chat summary (USER.md marker section).
 const CHAT_SUMMARY_CHAR_LIMIT: usize = 200;
@@ -233,10 +243,13 @@ pub async fn summarize_chat_context(
         return Ok(());
     }
 
-    if !summary_input_changed(&LAST_CHAT_SUMMARY_INPUT, &all_messages) {
-        tracing::debug!("chat summary input unchanged since last cycle — skipping LLM run");
-        return Ok(());
-    }
+    let chat_fp = match summary_input_fingerprint(&LAST_CHAT_SUMMARY_INPUT, &all_messages) {
+        Some(fp) => fp,
+        None => {
+            tracing::debug!("chat summary input unchanged since last cycle — skipping LLM run");
+            return Ok(());
+        }
+    };
 
     // English prompt with an explicit language-follow instruction: the
     // summary lands in USER.md/KNOWLEDGE.md regardless of deployment
@@ -269,6 +282,8 @@ pub async fn summarize_chat_context(
             {
                 tracing::warn!(error = %e, "Failed to write chat summary");
             }
+            // Written durably — NOW the input counts as summarized.
+            summary_mark_done(&LAST_CHAT_SUMMARY_INPUT, chat_fp);
         }
         Err(e) => {
             tracing::warn!(error = %e, "LLM chat summary generation failed");
@@ -331,10 +346,13 @@ pub async fn summarize_agent_context(
         return Ok(());
     }
 
-    if !summary_input_changed(&LAST_AGENT_SUMMARY_INPUT, &agent_data) {
-        tracing::debug!("agent summary input unchanged since last cycle — skipping LLM run");
-        return Ok(());
-    }
+    let agent_fp = match summary_input_fingerprint(&LAST_AGENT_SUMMARY_INPUT, &agent_data) {
+        Some(fp) => fp,
+        None => {
+            tracing::debug!("agent summary input unchanged since last cycle — skipping LLM run");
+            return Ok(());
+        }
+    };
 
     let prompt = format!(
         "Analyze the AI agent execution records below. Summarize in 2-3 bullet points (each starting \
@@ -363,6 +381,8 @@ pub async fn summarize_agent_context(
             {
                 tracing::warn!(error = %e, "Failed to write agent summary");
             }
+            // Written durably — NOW the input counts as summarized.
+            summary_mark_done(&LAST_AGENT_SUMMARY_INPUT, agent_fp);
         }
         Err(e) => {
             tracing::warn!(error = %e, "LLM agent summary generation failed");
@@ -380,21 +400,24 @@ mod tests {
     /// re-runs. This is what stops the 2-hourly LLM summary from firing on
     /// an idle box.
     #[test]
-    fn summary_input_changed_detects_changes() {
+    fn summary_input_fingerprint_commits_only_explicitly() {
         let slot: &'static std::sync::OnceLock<std::sync::Mutex<u64>> =
             Box::leak(Box::new(std::sync::OnceLock::new()));
+        let fp1 = summary_input_fingerprint(slot, "sessions: a b c");
+        assert!(fp1.is_some(), "first run always runs");
+        // A FAILED run never commits — the same input must re-run next cycle.
         assert!(
-            summary_input_changed(slot, "sessions: a b c"),
-            "first run always runs"
+            summary_input_fingerprint(slot, "sessions: a b c").is_some(),
+            "uncommitted fingerprint must not skip"
         );
+        summary_mark_done(slot, fp1.unwrap());
         assert!(
-            !summary_input_changed(slot, "sessions: a b c"),
-            "identical input must skip"
+            summary_input_fingerprint(slot, "sessions: a b c").is_none(),
+            "identical input skips only after commit"
         );
-        assert!(
-            summary_input_changed(slot, "sessions: a b d"),
-            "changed input re-runs"
-        );
-        assert!(!summary_input_changed(slot, "sessions: a b d"));
+        let fp2 = summary_input_fingerprint(slot, "sessions: a b d");
+        assert!(fp2.is_some(), "changed input re-runs");
+        summary_mark_done(slot, fp2.unwrap());
+        assert!(summary_input_fingerprint(slot, "sessions: a b d").is_none());
     }
 }
