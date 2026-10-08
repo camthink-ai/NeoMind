@@ -232,6 +232,28 @@ describe('useChatStream', () => {
     expect(result.interrupted).toBe(true)
   })
 
+  it('restore with extras brings back the tool process and round narration', async () => {
+    render(<Harness sessionId="s1" />)
+    act(() => latest.restore('正文', '', {
+      toolCalls: [{ name: 'shell', arguments: { command: 'ls' }, result: 'ok', round: 1 }],
+      roundContents: { 1: '第一轮旁白' },
+    }))
+    expect(latest.streamingToolCalls).toHaveLength(1)
+    expect(latest.streamingToolCalls[0]).toMatchObject({ name: 'shell', result: 'ok' })
+    expect(latest.roundContents[1]).toBe('第一轮旁白')
+  })
+
+  it('restoreIfBehind adopts on tool-count growth alone (slow tools grow no text)', async () => {
+    render(<Harness sessionId="s1" />)
+    act(() => latest.restore('正文', ''))
+    // Same text, but the snapshot now has a tool call — the detached page's
+    // only aliveness signal during a long tool execution.
+    act(() => latest.restoreIfBehind('正文', '', {
+      toolCalls: [{ name: 'shell', arguments: {}, result: 'ok', round: 1 }],
+    }))
+    expect(latest.streamingToolCalls).toHaveLength(1)
+  })
+
   it('restoreIfBehind adopts the server snapshot only when it is ahead of local', async () => {
     render(<Harness sessionId="s1" />)
     act(() => latest.restore('短快照', ''))

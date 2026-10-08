@@ -234,6 +234,12 @@ pub struct PendingStreamState {
     pub updated_at: i64,
     /// Tool calls detected so far (if any)
     pub tool_calls: Option<Vec<serde_json::Value>>,
+    /// Per-round narration content (the client moves each round's text out
+    /// of `content` on IntermediateEnd; the pending snapshot mirrors that
+    /// so a restored bubble shows rounds correctly and the final content is
+    /// only the LAST round's). Stringified round numbers as keys.
+    #[serde(default)]
+    pub round_contents: Option<serde_json::Map<String, serde_json::Value>>,
     /// Whether the stream was intentionally interrupted
     pub interrupted: bool,
 }
@@ -272,6 +278,7 @@ impl PendingStreamState {
             started_at: now,
             updated_at: now,
             tool_calls: None,
+            round_contents: None,
             interrupted: false,
         }
     }
@@ -296,6 +303,57 @@ impl PendingStreamState {
         Self::truncate_pending_field(&mut self.thinking);
         self.stage = StreamStage::Thinking;
         self.updated_at = chrono::Utc::now().timestamp();
+    }
+
+    /// Register a tool-call START (result filled later by
+    /// [`complete_tool_call`]). Bounded: display-only artifact.
+    pub fn push_tool_call(&mut self, call: serde_json::Value) {
+        const MAX_PENDING_TOOL_CALLS: usize = 200;
+        let v = self.tool_calls.get_or_insert_with(Vec::new);
+        if v.len() >= MAX_PENDING_TOOL_CALLS {
+            v.remove(0);
+        }
+        v.push(call);
+    }
+
+    /// Fill the result of the most recent still-resultless call matching
+    /// (name, round) — mirrors the client's ToolCallStart/End pairing.
+    pub fn complete_tool_call(
+        &mut self,
+        name: &str,
+        round: Option<u32>,
+        result: &serde_json::Value,
+    ) {
+        if let Some(v) = self.tool_calls.as_mut() {
+            for c in v.iter_mut().rev() {
+                let name_ok = c.get("name").and_then(|n| n.as_str()) == Some(name);
+                let resultless = c.get("result").map(|r| r.is_null()).unwrap_or(true);
+                let round_ok = match round {
+                    Some(r) => c.get("round").and_then(|x| x.as_u64()) == Some(r as u64),
+                    None => true,
+                };
+                if name_ok && resultless && round_ok {
+                    c["result"] = result.clone();
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Move the current round's accumulated content into `round_contents`
+    /// and reset `content` — the client does the same on IntermediateEnd:
+    /// the restored bubble's final content must be the LAST round's text,
+    /// with earlier rounds' narration in the round sections.
+    pub fn rotate_round(&mut self, round: u32) {
+        if self.content.is_empty() {
+            return;
+        }
+        let map = self.round_contents.get_or_insert_with(serde_json::Map::new);
+        let key = round.to_string();
+        let prev = map.get(&key).and_then(|v| v.as_str()).unwrap_or("");
+        let merged = format!("{prev}{}", self.content);
+        map.insert(key, serde_json::Value::String(merged));
+        self.content.clear();
     }
 
     /// Pending state is a display/recovery artifact — the completed turn is
@@ -1607,6 +1665,40 @@ mod tests {
         assert!(state.content.len() <= 1024 * 1024 + 10);
         assert!(state.content.ends_with("结尾"));
         assert!(state.content.starts_with('…'));
+    }
+
+    /// The restored bubble needs the tool process: Start registers a
+    /// resultless call, End fills the most recent match (name+round).
+    #[test]
+    fn test_pending_stream_tool_call_pairing() {
+        let mut state = PendingStreamState::new("s".to_string(), "q".to_string());
+        state.push_tool_call(serde_json::json!({
+            "name": "shell", "id": "", "arguments": {"command": "ls"},
+            "result": null, "round": 1,
+        }));
+        state.push_tool_call(serde_json::json!({
+            "name": "shell", "id": "", "arguments": {"command": "pwd"},
+            "result": null, "round": 2,
+        }));
+        // End for round 2's call must not clobber round 1's resultless one.
+        state.complete_tool_call("shell", Some(2), &serde_json::json!({"exit_code": 0}));
+        let calls = state.tool_calls.unwrap();
+        assert!(calls[0]["result"].is_null());
+        assert_eq!(calls[1]["result"]["exit_code"], 0);
+    }
+
+    /// Multi-round semantics: IntermediateEnd moves the round's text into
+    /// round_contents and resets content — the restored bubble's final
+    /// content must be the LAST round's, not a concatenation of all.
+    #[test]
+    fn test_pending_stream_round_rotation() {
+        let mut state = PendingStreamState::new("s".to_string(), "q".to_string());
+        state.update_content("第一轮旁白");
+        state.rotate_round(1);
+        state.update_content("最终回答");
+        assert_eq!(state.content, "最终回答");
+        let rounds = state.round_contents.unwrap();
+        assert_eq!(rounds.get("1").unwrap().as_str().unwrap(), "第一轮旁白");
     }
 
     #[test]

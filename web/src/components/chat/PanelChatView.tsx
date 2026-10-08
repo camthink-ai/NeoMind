@@ -277,10 +277,14 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
         if (stopped || panelSessionIdRef.current !== resumedPendingPanel) return
         if (result?.hasPending) {
           // Stall guard: 60s without snapshot growth = server died mid-turn.
+          // Tool-call COUNT is part of the signature (slow tools grow no text).
           const len = (result.content || "").length + (result.thinking || "").length
+            + (result.toolCalls?.length ?? 0)
+            + Object.values(result.roundContents || {}).reduce((a, b) => a + b.length, 0)
           if (len > lastLen) { lastLen = len; stallTicks = 0 }
           else stallTicks += 1
-          restoreIfBehind(result.content || "", result.thinking || "")
+          restoreIfBehind(result.content || "", result.thinking || "",
+            { toolCalls: result.toolCalls, roundContents: result.roundContents })
           if (stallTicks >= 20) {
             setResumedPendingPanel(null)
             hardReset()
@@ -361,7 +365,8 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
         // the poll below carry it to completion.
         api.getPendingStream(persistedId).then(p => {
           if (p?.hasPending) {
-            restore(p.content || "", p.thinking || "")
+            restore(p.content || "", p.thinking || "",
+              { toolCalls: p.toolCalls, roundContents: p.roundContents })
             setResumedPendingPanel(persistedId)
           }
         }).catch(() => {})

@@ -33,7 +33,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { generateId } from "@/lib/id"
 import { ws } from "@/lib/websocket"
-import type { ServerMessage } from "@/types"
+import type { ServerMessage, ToolCall } from "@/types"
 
 export interface StreamTokenUsage {
   promptTokens: number
@@ -41,6 +41,14 @@ export interface StreamTokenUsage {
   toolTokens?: number
   /** Session model's real context window (meter denominator). */
   maxContextTokens?: number
+}
+
+/** Snapshot extras for a detached-turn restore: the pending stream's tool
+ *  process and per-round narration. Without them a restored bubble shows
+ *  only thinking+content and loses the tool-process display. */
+export interface RestoreExtras {
+  toolCalls?: ToolCall[]
+  roundContents?: Record<number, string>
 }
 
 /** What the view needs to persist the finished assistant turn. */
@@ -179,13 +187,28 @@ export function useChatStream(options: UseChatStreamOptions) {
     return id
   }, [hardReset])
 
-  /** Restore a detached turn after reconnect (pending-stream recovery). */
-  const restore = useCallback((content: string, thinking: string) => {
+  /** Restore a detached turn after reconnect (pending-stream recovery).
+   *  `extras` carries the snapshot's tool calls and per-round narration —
+   *  without them a restored bubble shows only thinking+content and the
+   *  tool process (the dominant visual of a tool-loop turn) is missing. */
+  const restore = useCallback((
+    content: string,
+    thinking: string,
+    extras?: RestoreExtras,
+  ) => {
     isStreamingRef.current = true
     setIsStreaming(true)
     interruptedRef.current = true // reattached turn: the end event will be partial
     accRef.current.content = content
     accRef.current.thinking = thinking
+    if (extras?.toolCalls) {
+      accRef.current.toolCalls = [...extras.toolCalls]
+      setStreamingToolCalls([...extras.toolCalls])
+    }
+    if (extras?.roundContents) {
+      roundContentsAccRef.current = { ...extras.roundContents }
+      setRoundContents({ ...extras.roundContents })
+    }
     streamStartRef.current = Date.now()
     flushNow(epochRef.current)
   }, [flushNow])
@@ -195,13 +218,22 @@ export function useChatStream(options: UseChatStreamOptions) {
    *  events are fresher than the ≤2s-lagged server snapshot; in the
    *  detached case (hard refresh) local never grows and the snapshot is the
    *  only progress source. Length comparison is safe: both sides are plain
-   *  delta concatenations that share the same prefix. */
-  const restoreIfBehind = useCallback((content: string, thinking: string) => {
+   *  delta concatenations that share the same prefix. Tool-call COUNT is
+   *  part of "ahead": during a slow tool execution text does not grow, and
+   *  a detached page's only signal that the turn is alive is a new call. */
+  const restoreIfBehind = useCallback((
+    content: string,
+    thinking: string,
+    extras?: RestoreExtras,
+  ) => {
+    const localCalls = accRef.current.toolCalls.length
+    const snapCalls = extras?.toolCalls?.length ?? 0
     if (
       content.length > accRef.current.content.length ||
-      thinking.length > accRef.current.thinking.length
+      thinking.length > accRef.current.thinking.length ||
+      snapCalls > localCalls
     ) {
-      restore(content, thinking)
+      restore(content, thinking, extras)
     }
   }, [restore])
 

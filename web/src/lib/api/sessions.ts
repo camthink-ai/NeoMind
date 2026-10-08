@@ -1,5 +1,5 @@
 /** sessions api — split from api.ts 2026-09. */
-import type { ChatSession, SessionHistoryResponse } from '@/types'
+import type { ChatSession, SessionHistoryResponse, ToolCall } from '@/types'
 import { fetchAPI, type FetchOptions } from "./client"
 
 export const sessionsApi = {
@@ -55,5 +55,5 @@ export const sessionsApi = {
 
   // Pending stream recovery (for WebSocket reconnection)
   getPendingStream: (id: string) =>
-    fetchAPI<{ hasPending: boolean; sessionId: string; userMessage?: string; content?: string; thinking?: string; stage?: string; elapsed?: number; startedAt?: number }>(`/sessions/${id}/pending`),
+    fetchAPI<{ hasPending: boolean; sessionId: string; userMessage?: string; content?: string; thinking?: string; toolCalls?: ToolCall[]; roundContents?: Record<number, string>; stage?: string; elapsed?: number; startedAt?: number }>(`/sessions/${id}/pending`),
 }

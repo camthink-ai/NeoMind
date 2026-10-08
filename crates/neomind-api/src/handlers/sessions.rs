@@ -57,6 +57,10 @@ async fn process_stream_to_channel(
     // Track stream start time for progress reporting
     let stream_start = std::time::Instant::now();
 
+    // Round counter for the pending snapshot's round_contents — mirrors
+    // the client's IntermediateEnd counting.
+    let mut pending_round: u32 = 1;
+
     // [detached-delivery] A failed channel send means the WS forwarding
     // loop is gone — the client navigated away or the connection dropped.
     // The turn must STILL run to completion: the stream itself appends the
@@ -133,6 +137,15 @@ async fn process_stream_to_channel(
                         arguments,
                         round,
                     } => {
+                        // Pending snapshot: register the call so a restored
+                        // bubble shows the tool process (result arrives on End).
+                        pending_state.push_tool_call(json!({
+                            "name": tool,
+                            "id": "",
+                            "arguments": arguments,
+                            "result": serde_json::Value::Null,
+                            "round": round.unwrap_or(1),
+                        }));
                         let mut json = json!({
                             "type": "ToolCallStart",
                             "tool": tool,
@@ -150,6 +163,11 @@ async fn process_stream_to_channel(
                         success,
                         round,
                     } => {
+                        pending_state.complete_tool_call(
+                            &tool,
+                            round.map(|r| r as u32),
+                            &json!(result),
+                        );
                         let mut json = json!({
                             "type": "ToolCallEnd",
                             "tool": tool,
@@ -196,6 +214,8 @@ async fn process_stream_to_channel(
                         // Intermediate end - for multi-round tool calling
                         // This indicates the current round is complete but more processing is coming
                         // Send this to frontend but don't exit the loop
+                        pending_state.rotate_round(pending_round);
+                        pending_round += 1;
                         tracing::debug!(
                             "*** Sending IntermediateEnd event (round {}) ***",
                             event_count
@@ -838,6 +858,8 @@ pub async fn get_pending_stream_handler(
             "userMessage": pending.user_message,
             "content": pending.content,
             "thinking": pending.thinking,
+            "toolCalls": pending.tool_calls.clone().unwrap_or_default(),
+            "roundContents": pending.round_contents.clone().unwrap_or_default(),
             "stage": pending.stage,
             "elapsed": pending.elapsed_secs(),
             "startedAt": pending.started_at,
