@@ -7,9 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.1.2] - 2026-10-08 — the audit campaign: four subsystems audited, every finding closed; Linux hardened cross-distro
+## [1.1.2] - 2026-10-08 — the audit campaign closed, every finding fixed; live-tested chat resilience; Linux hardened cross-distro
 
-What follows is not a feature release. It is the output of a systematic review of the four subsystems an edge deployment must be able to trust — the telemetry chain, the agent execution chain, the chat/image chain, and underneath them the storage and notification layers — plus a self-review pass over the fixes themselves. Every high- and medium-severity finding from those audits is fixed here with tests; the two regressions the fixes themselves introduced were caught by that self-review and are called out below. The through-line: **nothing may be lost silently, and nothing may lie about what it did.**
+What follows is not a feature release. It is the output of a systematic review of the four subsystems an edge deployment must be able to trust — the telemetry chain, the agent execution chain, the chat/image chain, and underneath them the storage and notification layers — plus a self-review pass over the fixes themselves, a live-testing round on the deployed build that rebuilt how an in-flight answer survives the user leaving the chat, and a cross-distro Linux hardening pass. Every high- and medium-severity finding from those audits is fixed here with tests; the two regressions the fixes themselves introduced were caught by that self-review and are called out below. The through-line: **nothing may be lost silently, and nothing may lie about what it did.**
 
 ### Upgrade notes (1.1.1 →)
 - **`all` event filters without an explicit window now WORK.** The old semantics ("the sources must arrive in the same instant") was documented but practically unreachable — a saved AND-filter without `within_secs` was a silent dead trigger. It now defaults to a 300-second window; agents configured that way will start firing after upgrade, which is what their authors intended but may surprise an operator watching an unexpectedly live rule.
