@@ -277,16 +277,42 @@ impl PendingStreamState {
     }
 
     /// Update the content and timestamp.
-    pub fn update_content(&mut self, content: impl Into<String>) {
-        self.content = content.into();
+    ///
+    /// APPENDS the delta — the stream delivers Content events as chunks
+    /// (the WS client concatenates them the same way). The old replace
+    /// semantics stored only the LAST chunk, so resuming after a page
+    /// refresh restored an answer missing everything but its final few
+    /// characters (live-test regression 2026-10-08).
+    pub fn update_content(&mut self, delta: impl Into<String>) {
+        self.content.push_str(&delta.into());
+        Self::truncate_pending_field(&mut self.content);
         self.updated_at = chrono::Utc::now().timestamp();
     }
 
-    /// Update the thinking content and timestamp.
-    pub fn update_thinking(&mut self, thinking: impl Into<String>) {
-        self.thinking = thinking.into();
+    /// Update the thinking content and timestamp (same append semantics —
+    /// see [`update_content`]).
+    pub fn update_thinking(&mut self, delta: impl Into<String>) {
+        self.thinking.push_str(&delta.into());
+        Self::truncate_pending_field(&mut self.thinking);
         self.stage = StreamStage::Thinking;
         self.updated_at = chrono::Utc::now().timestamp();
+    }
+
+    /// Pending state is a display/recovery artifact — the completed turn is
+    /// persisted in full by `persist_history`. Beyond the cap the OLDEST
+    /// text is dropped (char-boundary-safe) so a pathological stream cannot
+    /// grow redb writes unboundedly.
+    fn truncate_pending_field(field: &mut String) {
+        const MAX_PENDING_FIELD_BYTES: usize = 1024 * 1024;
+        if field.len() <= MAX_PENDING_FIELD_BYTES {
+            return;
+        }
+        let cut = field.len() - MAX_PENDING_FIELD_BYTES;
+        let mut boundary = cut;
+        while boundary < field.len() && !field.is_char_boundary(boundary) {
+            boundary += 1;
+        }
+        field.replace_range(0..boundary, "…");
     }
 
     /// Update the processing stage.
@@ -1552,6 +1578,35 @@ mod tests {
         // Verify deleted
         let loaded = store.get_pending_stream("test-session").unwrap();
         assert!(loaded.is_none());
+    }
+
+    /// Regression (2026-10-08 live test): Content/Thinking events are
+    /// DELTAS. The old replace semantics kept only the last chunk, so a
+    /// page refresh mid-answer restored an answer missing everything but
+    /// its final few characters, plus a stray fragmentary thinking block.
+    #[test]
+    fn test_pending_stream_accumulates_deltas() {
+        let mut state = PendingStreamState::new("s".to_string(), "q".to_string());
+        state.update_content("你好");
+        state.update_content("，");
+        state.update_content("世界");
+        assert_eq!(state.content, "你好，世界");
+
+        state.update_thinking("先想");
+        state.update_thinking("第一步");
+        assert_eq!(state.thinking, "先想第一步");
+    }
+
+    /// The cap drops the OLDEST text and never splits a CJK char.
+    #[test]
+    fn test_pending_stream_cap_keeps_newest_tail() {
+        let mut state = PendingStreamState::new("s".to_string(), "q".to_string());
+        let big = "汉".repeat(600_000); // 1.8 MB > the 1 MiB cap
+        state.update_content(&big);
+        state.update_content("结尾");
+        assert!(state.content.len() <= 1024 * 1024 + 10);
+        assert!(state.content.ends_with("结尾"));
+        assert!(state.content.starts_with('…'));
     }
 
     #[test]
