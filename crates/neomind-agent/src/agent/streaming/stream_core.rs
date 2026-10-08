@@ -233,17 +233,6 @@ pub async fn process_stream_events_with_safeguards(
         max_context, prompt_overhead, RESERVE_FOR_RESPONSE, effective_max
     );
 
-    // [task card §3.2] If the session has a task card, prepend it as a
-    // system-role message BEFORE the history — the context builder treats
-    // it as the first message (never summarized, never evicted, because
-    // the summary filter works on history indices and the card sits at
-    // index 0 outside the summarized range).
-    // [task card §3.2 — round 40 fix] The card is injected AFTER the
-    // context window builder, not before. The builder's summary filter
-    // drops indices <= summary_up_to_index — the card at index 0 was
-    // ALWAYS dropped when a summary was active (0 <= up_to is always
-    // true for up_to >= 0), regardless of any index offset. Injecting
-    // into the RESULT (the final window) bypasses the filter entirely.
     let history_for_llm: Vec<neomind_core::Message> = {
         let window = build_context_window_with_summary(
             &history_messages,
@@ -251,18 +240,7 @@ pub async fn process_stream_events_with_safeguards(
             conversation_summary.as_deref(),
             summary_up_to_index,
         );
-        if let Some(card_block) = tools.get_task_card_block() {
-            if !card_block.is_empty() {
-                let card_msg = AgentMessage::system(&card_block);
-                let mut with_card = vec![card_msg];
-                with_card.extend(window);
-                with_card
-            } else {
-                window
-            }
-        } else {
-            window
-        }
+        window
     }
     .iter()
     .map(|msg| msg.to_core())
@@ -422,31 +400,13 @@ pub async fn process_stream_events_with_safeguards(
                 let state_guard = internal_state.read().await;
 
                 let history_for_llm: Vec<neomind_core::Message> = {
-                    // Build context with the same budget-managed context builder
-                    // as the initial call — INCLUDING the task card injection
-                    // (round 16: the card was only injected in the initial
-                    // round; rounds 2+ lost it, so draw_text in round 2 had
-                    // no access to the pinned params — the watermark scenario
-                    // was broken in exactly the multi-round case it targets).
-                    // Card injection AFTER the builder (same round-40 fix
-                    // as the initial path — the builder's compaction can
-                    // evict index 0, taking the card with it).
+                    // Build context with the same budget-managed context
+                    // builder as the initial call.
                     let config = CompactionConfig::for_context_size(max_context);
                     let compacted = build_context_window_with_config(
                         &state_guard.memory, effective_max, &config
                     );
-                    if let Some(card_block) = tools.get_task_card_block() {
-                        if !card_block.is_empty() {
-                            let card_msg = AgentMessage::system(&card_block);
-                            let mut with_card = vec![card_msg];
-                            with_card.extend(compacted);
-                            with_card
-                        } else {
-                            compacted
-                        }
-                    } else {
-                        compacted
-                    }
+                    compacted
                     .iter().map(|msg| msg.to_core()).collect::<Vec<_>>()
                 };
 

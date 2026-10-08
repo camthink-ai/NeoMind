@@ -163,13 +163,5 @@
     "completed": "Explored {{rounds}} rounds · {{calls}} tool calls · {{duration}}",
     "budgetExhausted": "budget limit reached",
     "toolCalls": "calls"
-  },
-  "taskCard": {
-    "title": "Current Task",
-    "goal": "Goal",
-    "params": "Key Parameters",
-    "step": "Current Step",
-    "open": "Open Items",
-    "findings": "Findings"
   }
 }

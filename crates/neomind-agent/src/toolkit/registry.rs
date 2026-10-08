@@ -358,20 +358,6 @@ impl ToolRegistry {
         }
     }
 
-    /// Read the current session's task-card context block (§3.2): the
-    /// pinned task state injected before history on every round. Returns
-    /// empty string when no card exists or no session is bound.
-    pub fn get_task_card_block(&self) -> Option<String> {
-        let tool = self.tools.get("update_task_card")?;
-        let tc = tool
-            .as_ref()
-            .as_any()
-            .downcast_ref::<crate::toolkit::task_card::TaskCardTool>()?;
-        // Read the cached card synchronously (the tool reads the file on
-        // update, caches the parsed form; this returns the cached block).
-        tc.cached_context_block()
-    }
-
     /// Swap the explore subagent's PROGRESS relay (chat stream path).
     pub(crate) fn set_explore_progress(
         &self,
@@ -392,20 +378,6 @@ impl ToolRegistry {
     /// Called by the Agent at the start of each process cycle to avoid
     /// the global-handle race (where a concurrent session overwrites the ID
     /// between handler-set and tool-read).
-    /// Set the current session on the TaskCardTool (per-turn, same pattern
-    /// as set_memory_session_id — avoids the cross-session handle race).
-    pub async fn set_task_card_session(&self, session_id: Option<String>) {
-        if let Some(tool_arc) = self.tools.get("update_task_card") {
-            if let Some(tc) = tool_arc
-                .as_ref()
-                .as_any()
-                .downcast_ref::<super::task_card::TaskCardTool>()
-            {
-                tc.set_session_and_load(session_id).await;
-            }
-        }
-    }
-
     pub async fn set_memory_session_id(&self, session_id: String) {
         if let Some(tool_arc) = self.tools.get("memory") {
             if let Some(mem_tool) = tool_arc

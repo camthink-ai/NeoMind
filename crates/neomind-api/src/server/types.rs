@@ -2350,15 +2350,6 @@ impl ServerState {
         )));
         tracing::info!(category = "ai", "Image edit tool registered");
 
-        // Task card tool — pinned task state that survives compaction (§3.2).
-        // Shares the memory store (the card lives in the session's todo.md).
-        {
-            let task_card = neomind_agent::toolkit::TaskCardTool::new(std::sync::Arc::new(
-                tokio::sync::RwLock::new((*self.agents.system_memory_store).clone()),
-            ));
-            registry.register(std::sync::Arc::new(task_card));
-        }
-
         // Explore subagent — heavy multi-round lookup in an isolated
         // context. Needs ANY llm instance (not multimodal). Chicken-and-egg
         // resolution happens after the Arc wrap (see set_registry below).
@@ -2486,15 +2477,6 @@ impl ServerState {
                 self.agents.memory_session_handle.clone(),
             );
             registry.register(Arc::new(memory_tool));
-        }
-
-        // Task card tool — pinned task state that survives compaction (§3.2).
-        // Shares the memory store (the card lives in the session's todo.md).
-        {
-            let task_card = neomind_agent::toolkit::TaskCardTool::new(std::sync::Arc::new(
-                tokio::sync::RwLock::new((*self.agents.system_memory_store).clone()),
-            ));
-            registry.register(std::sync::Arc::new(task_card));
         }
 
         let tool_registry = Arc::new(registry);

@@ -80,10 +80,6 @@ const EXCLUDED_TOOLS: &[&str] = &[
     "ask_user",
     "confirm_action",
     "clarify_intent",
-    "update_task_card", // the subagent must not write the PARENT's card —
-                        // its findings reach the card via the parent model
-                        // reading the explore result, not by the subagent
-                        // clobbering the pinned params directly
 ];
 
 /// Progress payload for the live panel (§2.0d). Keys are camelCase on the
@@ -267,8 +263,7 @@ impl Tool for ExploreTool {
          to 8 rounds of read-only tool calls and returns {summary, rounds_used, tool_calls_made, \
          wall_clock_ms, rounds}. Use it when answering needs many lookups (history scans, \
          cross-device checks, finding a specific record) — the intermediate rounds never enter \
-         this conversation. Files/images it finds come back as paths in the summary. \
-         AFTER explore returns, call update_task_card to record what you found in the findings slot."
+         this conversation. Files/images it finds come back as paths in the summary."
     }
 
     fn parameters(&self) -> Value {

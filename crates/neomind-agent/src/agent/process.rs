@@ -119,9 +119,6 @@ impl Agent {
         self.tools
             .set_memory_session_id(self.session_id.clone())
             .await;
-        self.tools
-            .set_task_card_session(Some(self.session_id.clone()))
-            .await;
 
         let start = std::time::Instant::now();
 
@@ -335,9 +332,6 @@ impl Agent {
         );
         // Bind the session on the task card tool (round 65 fix — the
         // non-streaming multimodal fallback was the one path missing it).
-        self.tools
-            .set_task_card_session(Some(self.session_id.clone()))
-            .await;
 
         // Create multimodal message content AND prepare images for storage
         let mut parts = vec![neomind_core::ContentPart::text(user_message)];
@@ -560,9 +554,6 @@ impl Agent {
         // Set session ID on memory tool to avoid cross-session contamination
         self.tools
             .set_memory_session_id(self.session_id.clone())
-            .await;
-        self.tools
-            .set_task_card_session(Some(self.session_id.clone()))
             .await;
 
         // Check if LLM is configured

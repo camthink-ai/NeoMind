@@ -292,15 +292,15 @@ pub fn guidance_questions(skills: Vec<(String, String)>) -> Vec<(String, Decisio
             DecisionQuestion::choice(
                 "What shape of work does this request need?",
                 vec![
-                    ("direct".into(), "exactly one command, lookup, or question".into()),
+                    (
+                        "direct".into(),
+                        "exactly one command, lookup, or question".into(),
+                    ),
                     (
                         "multi_step".into(),
                         "two or more operations chained or spread across turns".into(),
                     ),
-                    (
-                        "guided".into(),
-                        "an interactive guided setup flow".into(),
-                    ),
+                    ("guided".into(), "an interactive guided setup flow".into()),
                     (
                         "converse".into(),
                         "pure conversation, no platform operations".into(),

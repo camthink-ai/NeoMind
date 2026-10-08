@@ -163,13 +163,5 @@
     "completed": "已探索 {{rounds}} 轮 · {{calls}} 次工具调用 · {{duration}}",
     "budgetExhausted": "已达预算上限",
     "toolCalls": "次调用"
-  },
-  "taskCard": {
-    "title": "当前任务",
-    "goal": "目标",
-    "params": "关键参数",
-    "step": "当前步骤",
-    "open": "未决项",
-    "findings": "已发现"
   }
 }

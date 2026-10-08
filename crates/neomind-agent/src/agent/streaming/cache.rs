@@ -118,14 +118,6 @@ pub(crate) fn is_tool_cacheable(name: &str, arguments: &Value) -> bool {
         return false;
     }
 
-    // The `update_task_card` tool is a WRITE — caching a mutation's result
-    // means a repeat call returns a stale snapshot without performing the
-    // write. Not harmful (the result is informational), but semantically
-    // wrong to cache.
-    if resolved == "update_task_card" {
-        return false;
-    }
-
     // The `explore` subagent is NEVER cacheable: it searches live device
     // data that changes between calls — a cached exploration result is
     // stale by definition (the subagent's whole purpose is fresh lookup).

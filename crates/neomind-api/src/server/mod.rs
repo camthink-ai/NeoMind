@@ -360,8 +360,7 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                         // Canonical data dir (paths::data_dir treats an
                         // EMPTY env var as unset; a raw env read here treated
                         // it as "" and joined "./images").
-                        let images_dir =
-                            neomind_core::paths::data_dir().join("images");
+                        let images_dir = neomind_core::paths::data_dir().join("images");
 
                         let protected =
                             crate::server::image_cleanup::collect_referenced_image_files(

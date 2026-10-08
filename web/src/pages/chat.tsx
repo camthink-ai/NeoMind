@@ -11,7 +11,6 @@ import { Button } from "@/components/ui/button"
 import { SessionSidebar } from "@/components/session/SessionSidebar"
 import { WelcomeArea } from "@/components/chat/WelcomeArea"
 import { ChatMessages } from "@/components/chat/ChatMessages"
-import { TaskCardBanner } from "@/components/chat/TaskCardBanner"
 import { ChatComposer } from "@/components/chat/ChatComposer"
 import { ConnectionStatus } from "@/components/chat/ConnectionStatus"
 import { MobilePageHeader } from "@/components/layout/MobilePageHeader"
@@ -99,7 +98,6 @@ export function ChatPage() {
 
   // Local state
   const [input, setInput] = useState("")
-  const [taskCardRefresh, setTaskCardRefresh] = useState(0)
   const [exploreDetail, setExploreDetail] = useState<import("@/components/chat/SubagentExplorePanel").ExploreDetail | null>(null)
   const [lastTokenUsage, setLastTokenUsage] = useState<{ promptTokens: number; systemPromptTokens?: number; toolTokens?: number; maxContextTokens?: number } | null>(null)
   const [isCompacting, setIsCompacting] = useState(false)
@@ -209,15 +207,8 @@ export function ChatPage() {
         data.sessionId && data.sessionId !== sessionId
       ) {
         switchSession(data.sessionId)
-        // Clear stale explore/taskCard state from the previous session
-        // (same class as round 15's TaskCardBanner fix).
+        // Clear stale explore state from the previous session.
         setExploreDetail(null)
-        setTaskCardRefresh((n) => n + 1) // triggers banner refetch
-      }
-      // Task card refetch trigger (§3.2: update_task_card fires a
-      // Progress event with stage "taskCard" — bump the refresh token).
-      if (data.type === "Progress" && (data as any).stage === "taskCard") {
-        setTaskCardRefresh((n) => n + 1)
       }
       // Explore live progress collector (F2): the backend emits Progress
       // events with stage "explore" and a camelCase detail payload; store
@@ -1090,13 +1081,6 @@ export function ChatPage() {
                 </span>
               </div>
             )}
-
-            {/* Task card — docked above the composer, NOT pinned over the
-                message history (the v1 sticky-top banner covered content;
-                round-92 redesign). It is working context for the next
-                message, so it lives next to the input. Flex sibling →
-                pushes the message list up, never overlays it. */}
-            <TaskCardBanner sessionId={sessionId ?? ""} refreshToken={taskCardRefresh} />
 
             {composerEl}
           </div>

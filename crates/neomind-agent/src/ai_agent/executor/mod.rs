@@ -978,26 +978,14 @@ impl AgentExecutor {
         // agent's subagent must not run shell either). No progress relay
         // here: scheduled executions have no chat stream; the chat path
         // attaches its own relay when the stream machinery lands.
-        let task_card_registry = self.tool_registry.read().as_ref().map(|registry| {
+        if let Some(registry) = self.tool_registry.read().as_ref() {
             let scope = agent
                 .tool_config
                 .as_ref()
                 .filter(|c| c.enabled && !c.allowed_tools.is_empty())
                 .map(|c| c.allowed_tools.clone());
             registry.set_explore_scope(scope);
-            std::sync::Arc::clone(registry)
-        });
-        // Clear the task card session binding (round 64): this is a
-        // SCHEDULED/EVENT execution, not a chat turn — without this,
-        // a scheduled agent calling update_task_card would write to
-        // whatever chat session last used the tool (cross-path
-        // contamination). With no session bound, the tool returns a
-        // readable error instead. The .await must run OUTSIDE the
-        // tool_registry read guard (parking_lot guards are not Send).
-        if let Some(registry) = task_card_registry {
-            registry.set_task_card_session(None).await;
         }
-
         // Execute with error handling for stability.
         // Wrap with catch_unwind so panics (e.g. UTF-8 slice bugs) are converted
         // to Err and a proper Failed execution record is created instead of
