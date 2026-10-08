@@ -740,6 +740,46 @@ fn build_decision_service() -> Option<Arc<neomind_core::DecisionService>> {
             "LAYA_NATIVE_DIR set but this build lacks the `decision-native` feature — ignoring it");
     }
 
+    // Extension-hosted runtime: the laya-decision EXTENSION runs the same
+    // ONNX engine in its own process and serves the sidecar protocol on
+    // loopback. Any build (default, tauri desktop) gets the decision layer
+    // by installing the extension — no feature rebuild, no artifacts in the
+    // main binary. Discovered by the persisted install record, so this
+    // branch is completely inert when the extension is not installed.
+    // The extension loads seconds AFTER this point (extension storage loads
+    // later in startup) — LayaSidecar is a per-request HTTP client, so the
+    // first decisions during that window simply fail over to no-decision
+    // until the sidecar answers /health.
+    {
+        let ext_store_path = neomind_core::paths::data_dir().join("extensions.redb");
+        let installed = std::fs::metadata(&ext_store_path).is_ok()
+            && neomind_storage::extensions::ExtensionStore::open(&ext_store_path)
+                .ok()
+                .and_then(|store| {
+                    store
+                        .load("laya-decision")
+                        .ok()
+                        .flatten()
+                        .filter(|_| !store.is_uninstalled("laya-decision").unwrap_or(false))
+                })
+                .is_some();
+        if installed {
+            let port = std::env::var("LAYA_SIDECAR_PORT")
+                .ok()
+                .and_then(|v| v.parse::<u16>().ok())
+                .unwrap_or(8123);
+            let url = format!("http://127.0.0.1:{port}");
+            tracing::info!(target: "neomind::decision", url = %url,
+                "laya-decision extension installed — decision layer via extension sidecar");
+            let mut sidecar = neomind_core::LayaSidecar::new(url)
+                .with_timeout(std::time::Duration::from_millis(1500));
+            if let Ok(model) = std::env::var("LAYA_MODEL") {
+                sidecar = sidecar.with_model(model);
+            }
+            return finish(Arc::new(sidecar), "laya-extension-sidecar");
+        }
+    }
+
     let url = std::env::var("LAYA_SIDECAR_URL").ok()?;
     let mut sidecar = neomind_core::LayaSidecar::new(url);
     if let Ok(model) = std::env::var("LAYA_MODEL") {
