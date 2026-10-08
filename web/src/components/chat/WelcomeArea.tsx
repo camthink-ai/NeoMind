@@ -72,19 +72,48 @@ export function WelcomeArea({ className, onQuickAction, children }: WelcomeAreaP
         {children}
 
         {/* Prompt suggestions — quiet pill chips, self-explanatory: no
-            "try these questions" caption needed above them */}
-        <div className="flex flex-wrap items-center justify-center gap-2">
-          {promptSuggestions.map((prompt) => (
+            "try these questions" caption needed above them. Mobile: two
+            auto-scrolling rows (seamless marquee — the track carries two
+            copies of the row, chips stay tappable throughout the loop;
+            reduced-motion users get a swipeable row instead); sm+:
+            centered flex-wrap rows. */}
+        {(() => {
+          const renderChip = (prompt: string, keyPrefix = "c") => (
             <button
-              key={prompt}
+              key={`${keyPrefix}-${prompt}`}
               onClick={() => onQuickAction?.(prompt)}
-              className="group inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-transparent px-4 h-9 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground hover:border-muted-foreground/40"
+              className="group inline-flex max-w-full shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-border bg-transparent px-4 h-9 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground hover:border-muted-foreground/40"
             >
               <span className="truncate">{prompt}</span>
               <ArrowRight className="h-3.5 w-3.5 shrink-0 transition-all opacity-0 -ml-1.5 w-0 group-hover:opacity-100 group-hover:ml-0 group-hover:w-3.5" />
             </button>
-          ))}
-        </div>
+          )
+          const renderMarqueeRow = (list: string[], rowId: string) => (
+            <div className="chips-marquee-viewport scrollbar-none">
+              <div className="chips-marquee flex w-max">
+                {/* Two copies per track; pr-2 matches the track gap so the
+                    -50% loop point is seamless (see .chips-marquee). */}
+                {[0, 1].map((copy) => (
+                  <div key={copy} className="flex flex-nowrap items-center gap-2 pr-2">
+                    {list.map((prompt) => renderChip(prompt, `${rowId}${copy}`))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )
+          const mid = Math.ceil(promptSuggestions.length / 2)
+          return (
+            <>
+              <div className="flex flex-col gap-2 sm:hidden">
+                {renderMarqueeRow(promptSuggestions.slice(0, mid), "r1")}
+                {renderMarqueeRow(promptSuggestions.slice(mid), "r2")}
+              </div>
+              <div className="hidden flex-wrap items-center justify-center gap-2 sm:flex">
+                {promptSuggestions.map((prompt) => renderChip(prompt))}
+              </div>
+            </>
+          )
+        })()}
       </div>
       {/* Bottom spacer */}
       <div className="min-h-0 flex-1 shrink" />

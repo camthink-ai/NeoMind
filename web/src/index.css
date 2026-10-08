@@ -895,6 +895,31 @@ html {
     display: none;
   }
 
+  /* Seamless horizontal marquee for the welcome-screen suggestion chips
+     (mobile). The track holds TWO identical copies of the chip row, each
+     with a trailing gap (pr-2) so the track width is exactly 2×(copy+gap)
+     and translateX(-50%) lands on a pixel-perfect loop point. */
+  @keyframes chips-marquee {
+    from { transform: translateX(0); }
+    to   { transform: translateX(-50%); }
+  }
+  .chips-marquee {
+    animation: chips-marquee 22s linear infinite;
+    will-change: transform;
+  }
+  .chips-marquee-viewport {
+    overflow: hidden;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .chips-marquee {
+      animation: none;
+    }
+    /* No animation → give the swipe-scroll fallback back */
+    .chips-marquee-viewport {
+      overflow-x: auto;
+    }
+  }
+
   /* Subtle dot-grid backdrop used by full-screen loading/switching screens.
      Replaces a duplicated inline `radial-gradient(circle, #80808015 ...)`
      in StartupLoading & InstanceSwitchOverlay. Uses a theme-aware muted
