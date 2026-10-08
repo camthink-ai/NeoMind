@@ -369,13 +369,17 @@ pub async fn process_stream_events_with_safeguards(
         let mut post_dead_end_read_only_rounds: u32 = 0;
         let mut explore_recovery_nudged = false;
 
-        // === NARRATION-COLLAPSE GUARD (at most once per turn) ===
+        // === NARRATION-COLLAPSE GUARD (bounded: a few retries per turn) ===
         // Small models sometimes narrate a promised action ("我现在使用
         // image_edit 工具…") WITHOUT emitting any tool call. Ending the turn
         // there hands the user a promise instead of a result (observed:
-        // 0.3s turn end, then "你没有使用工具"). One pointed retry, then the
-        // second narration is accepted as the final answer.
-        let mut narration_nudged = false;
+        // 0.3s turn end, then "你没有使用工具"). The 2026-10-08 widget-task
+        // session showed once-per-turn is too few: the model collapsed FIVE
+        // consecutive nudged turns the same way and the user read it as the
+        // task being "interrupted". Budgeted retries now; beyond the budget
+        // the narration is accepted as the final answer.
+        const NARRATION_NUDGE_MAX: usize = 3;
+        let mut narration_nudges = 0usize;
         let mut narration_nudge_pending: Option<String> = None;
 
         // === INTENT & PLAN VISUALIZATION ===
@@ -1489,12 +1493,12 @@ pub async fn process_stream_events_with_safeguards(
                 // said, nudge once, and run another round. Fires only with
                 // round + wall-clock budget left; a second narration falls
                 // through and is accepted as the final answer.
-                if !narration_nudged
+                if narration_nudges < NARRATION_NUDGE_MAX
                     && tool_iteration_count < MAX_TOOL_ITERATIONS - 1
                     && turn_started_at.elapsed() < turn_wall_clock_budget
                     && crate::agent::is_narration_without_action(&raw_response)
                 {
-                    narration_nudged = true;
+                    narration_nudges += 1;
                     tracing::info!(
                         round = tool_iteration_count + 1,
                         chars = raw_response.len(),

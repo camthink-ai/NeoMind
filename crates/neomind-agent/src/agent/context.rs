@@ -228,6 +228,29 @@ const ACTION_PROMISE_PATTERNS: &[&str] = &[
     "现在调用",
     "现在执行",
     "现在运行",
+    // 2026-10-08 widget-task session: the small model ended FOUR turns with
+    // promise-narrations none of the patterns above matched — "现在让我重新
+    // 安装…到平台：", "现在最后一步：将气象站组件添加到…", "让我修正命令
+    // 语法：", "现在我来将气象站组件添加到…中：". Each read as a task
+    // "interruption" to the user, who had to nudge five times.
+    "现在让我",
+    "让我重新",
+    "让我继续",
+    "让我完成",
+    "让我修正",
+    "让我修复",
+    "让我安装",
+    "让我创建",
+    "让我添加",
+    "让我配置",
+    "让我检查",
+    "让我验证",
+    "让我试试",
+    "我来将",
+    "现在我来",
+    "接下来我",
+    "下一步我",
+    "最后一步",
     // English
     "i will use",
     "i'll use",
@@ -257,6 +280,14 @@ pub fn is_narration_without_action(text: &str) -> bool {
     let trimmed = text.trim();
     if trimmed.chars().count() > NARRATION_MAX_CHARS {
         return false;
+    }
+    // Trailing-colon heuristic: a SHORT reply that ends with "：" or ":"
+    // promises output that follows. The 2026-10-08 session's collapses all
+    // ended this way ("…现在让我重新安装自定义 Widget 到平台：") — pattern
+    // lists chase phrasings, a colon is the structural signature. A real
+    // final answer that short and colon-terminated is vanishingly rare.
+    if trimmed.ends_with('：') || trimmed.ends_with(':') {
+        return true;
     }
     let lower = trimmed.to_lowercase();
     ACTION_PROMISE_PATTERNS.iter().any(|p| lower.contains(p))
