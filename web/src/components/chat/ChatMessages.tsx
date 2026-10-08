@@ -49,9 +49,6 @@ interface ChatMessagesProps {
   hasEarlierHistory?: boolean
   loadingEarlier?: boolean
   onLoadEarlier?: () => void
-  /** Latest live explore-subagent progress (§2.0d/F2) — forwarded to the
-   *  explore tool call's SubagentExplorePanel for its live state. */
-  exploreDetail?: import("./SubagentExplorePanel").ExploreDetail | null
 }
 
 /** Image gallery for user messages */
@@ -93,7 +90,6 @@ export function ChatMessages({
   hasEarlierHistory,
   loadingEarlier,
   onLoadEarlier,
-  exploreDetail = null,
 }: ChatMessagesProps) {
   const { t } = useTranslation("chat")
   const getUserInitials = (username: string) => username.slice(0, 2).toUpperCase()
@@ -260,7 +256,6 @@ export function ChatMessages({
                           )}
                           <ToolProcessBlock
 
-                          exploreDetail={exploreDetail}
                           toolCalls={message.tool_calls!}
                             roundContents={cleanedRoundContents}
                             isStreaming={isCurrentlyStreaming}

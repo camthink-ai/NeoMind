@@ -330,9 +330,6 @@ impl Agent {
             image_count = images.len(),
             "Agent::process_multimodal starting"
         );
-        // Bind the session on the task card tool (round 65 fix — the
-        // non-streaming multimodal fallback was the one path missing it).
-
         // Create multimodal message content AND prepare images for storage
         let mut parts = vec![neomind_core::ContentPart::text(user_message)];
         let mut user_images = Vec::new();

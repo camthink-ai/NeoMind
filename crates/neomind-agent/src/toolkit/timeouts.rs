@@ -59,16 +59,6 @@ pub fn extension_invoke() -> Duration {
     SLOW
 }
 
-/// The explore subagent's executor-level ceiling. The tool runs its own
-/// multi-round loop under a WALL_CLOCK budget (= SLOW); the streaming
-/// executor's wrapper must not kill it at DEFAULT first (the live-test
-/// regression: "Tool 'explore' timed out after 30s" while the tool was
-/// designed for up to 300s).
-#[inline]
-pub fn subagent_explore() -> Duration {
-    SLOW
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,7 +84,6 @@ mod tests {
             vision_capture(),
             web_fetch(),
             extension_invoke(),
-            subagent_explore(),
         ] {
             assert!(v >= lo && v <= hi, "timeout {v:?} outside [{lo:?}, {hi:?}]");
         }

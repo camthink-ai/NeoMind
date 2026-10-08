@@ -65,7 +65,6 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
   const { loadBackends } = useStore(selectChatActions)
   const activeBackendId = useStore((s) => s.activeBackendId)
   const activateBackend = useStore((s) => s.activateBackend)
-  const [exploreDetail, setExploreDetail] = useState<import("./SubagentExplorePanel").ExploreDetail | null>(null)
   const [panelWizardOpen, setPanelWizardOpen] = useState(false)
   const user = useStore((s) => s.user)
 
@@ -616,7 +615,6 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
             </div>
           ) : (
             <ChatMessages
-              exploreDetail={exploreDetail}
               messages={filteredMessages}
               user={user}
               isStreaming={isStreaming && !(streamingMessageId && filteredMessages.some(m => m.id === streamingMessageId))}

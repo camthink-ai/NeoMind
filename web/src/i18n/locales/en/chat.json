@@ -157,11 +157,5 @@
   "loadEarlierLoading": "Loading…",
   "suggestions": {
     "badge": "Suggested"
-  },
-  "explore": {
-    "inProgress": "Exploring · round {{round}}/{{max}}",
-    "completed": "Explored {{rounds}} rounds · {{calls}} tool calls · {{duration}}",
-    "budgetExhausted": "budget limit reached",
-    "toolCalls": "calls"
   }
 }

@@ -344,36 +344,6 @@ impl ToolRegistry {
         tool.swap_agent_context(agent_id, knowledge_files)
     }
 
-    /// Swap the explore subagent's SCOPE (executor path — see
-    /// ExploreTool::set_scope for why scope and relay are independent).
-    pub(crate) fn set_explore_scope(&self, allowed_tools: Option<Vec<String>>) {
-        if let Some(tool_arc) = self.tools.get("explore") {
-            if let Some(explore) = tool_arc
-                .as_ref()
-                .as_any()
-                .downcast_ref::<crate::toolkit::ExploreTool>()
-            {
-                explore.set_scope(allowed_tools);
-            }
-        }
-    }
-
-    /// Swap the explore subagent's PROGRESS relay (chat stream path).
-    pub(crate) fn set_explore_progress(
-        &self,
-        progress: Option<crate::toolkit::explore::ProgressSender>,
-    ) {
-        if let Some(tool_arc) = self.tools.get("explore") {
-            if let Some(explore) = tool_arc
-                .as_ref()
-                .as_any()
-                .downcast_ref::<crate::toolkit::ExploreTool>()
-            {
-                explore.set_progress(progress);
-            }
-        }
-    }
-
     /// Set the session ID on the MemoryTool for the current chat session.
     /// Called by the Agent at the start of each process cycle to avoid
     /// the global-handle race (where a concurrent session overwrites the ID

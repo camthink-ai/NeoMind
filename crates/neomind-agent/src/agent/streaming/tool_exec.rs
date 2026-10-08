@@ -62,11 +62,7 @@ pub(crate) async fn execute_with_retry_impl(
         arguments.clone()
     };
 
-    // Tool execution timeout: tiered per tool (toolkit::timeouts is the
-    // single source of truth). Shell manages its own internal timeout;
-    // explore runs its own multi-round loop under a 300s wall clock and
-    // must get the SLOW tier here too — the DEFAULT 30s wrapper killed it
-    // mid-loop in live testing ("Tool 'explore' timed out after 30s").
+    // Tool execution timeout: 30s default, but respect shell tool's internal timeout
     const DEFAULT_TIMEOUT_SECS: u64 = 30;
     let timeout_secs = if real_tool_name == "shell" {
         // Shell tool manages its own timeout internally; give it room to breathe
@@ -76,16 +72,9 @@ pub(crate) async fn execute_with_retry_impl(
             .unwrap_or(30)
             .min(600);
         shell_timeout + 5 // buffer for process cleanup
-    } else if real_tool_name == "explore" {
-        crate::toolkit::timeouts::subagent_explore().as_secs()
     } else {
         DEFAULT_TIMEOUT_SECS
     };
-
-    // An explore timeout is budget exhaustion, not a transient blip:
-    // retrying would burn another full SLOW window for the same outcome.
-    // Its inner loop already retries transient sub-tool errors.
-    let no_retry = real_tool_name == "explore";
 
     for attempt in 0..=max_retries {
         let result = tokio::time::timeout(
@@ -102,11 +91,10 @@ pub(crate) async fn execute_with_retry_impl(
             Ok(output) if output.success => return result,
             Err(e) => {
                 let last_error = e.to_string();
-                let is_transient = !no_retry
-                    && (last_error.contains("timeout")
-                        || last_error.contains("network")
-                        || last_error.contains("connection")
-                        || last_error.contains("unavailable"));
+                let is_transient = last_error.contains("timeout")
+                    || last_error.contains("network")
+                    || last_error.contains("connection")
+                    || last_error.contains("unavailable");
 
                 if is_transient && attempt < max_retries {
                     let delay_ms = 100u64 * (2_u64.pow(attempt));

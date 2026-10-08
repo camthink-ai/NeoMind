@@ -973,19 +973,6 @@ impl AgentExecutor {
             })
             .map(|h| h.1);
 
-        // Same handle-swap for the explore subagent: its inner tool catalog
-        // must respect this agent's whitelist (§2.0b — a fenced read-only
-        // agent's subagent must not run shell either). No progress relay
-        // here: scheduled executions have no chat stream; the chat path
-        // attaches its own relay when the stream machinery lands.
-        if let Some(registry) = self.tool_registry.read().as_ref() {
-            let scope = agent
-                .tool_config
-                .as_ref()
-                .filter(|c| c.enabled && !c.allowed_tools.is_empty())
-                .map(|c| c.allowed_tools.clone());
-            registry.set_explore_scope(scope);
-        }
         // Execute with error handling for stability.
         // Wrap with catch_unwind so panics (e.g. UTF-8 slice bugs) are converted
         // to Err and a proper Failed execution record is created instead of

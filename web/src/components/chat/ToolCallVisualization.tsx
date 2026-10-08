@@ -18,7 +18,6 @@ import { Wrench, ChevronDown, CheckCircle2, Loader2, Code, FileText } from "luci
 import { cn } from "@/lib/utils"
 import { textMini, textCode } from "@/design-system/tokens/typography"
 import type { ToolCall } from "@/types"
-import { SubagentExplorePanel, type ExploreDetail } from "./SubagentExplorePanel"
 
 // ─── Helpers ───
 
@@ -95,7 +94,6 @@ interface ToolProcessBlockProps {
   isStreaming?: boolean
   /** Latest live explore-subagent progress (§2.0d/F1): forwarded to the
    *  explore tool-call item for its live panel state. */
-  exploreDetail?: ExploreDetail | null
 }
 
 /**
@@ -107,7 +105,6 @@ export function ToolProcessBlock({
   toolCalls,
   roundContents = {},
   isStreaming = false,
-  exploreDetail = null,
 }: ToolProcessBlockProps) {
   const { t } = useTranslation("chat")
   // Expansion is decided ONCE at mount: long completed batches start
@@ -182,7 +179,6 @@ export function ToolProcessBlock({
                     toolCall={tc}
                     isStreaming={stepStreaming && tc.result == null}
                     t={t}
-                    exploreDetail={tc.name === "explore" ? exploreDetail : null}
                   />
                 ))}
               </div>
@@ -238,14 +234,12 @@ function ToolCallItem({
   toolCall,
   isStreaming,
   t,
-  exploreDetail,
 }: {
   toolCall: ToolCall
   isStreaming: boolean
   t: (key: string) => string
   /** Latest live explore progress (§2.0d/F1): stage-matched, only when
    *  this item IS the running explore call. */
-  exploreDetail?: ExploreDetail | null
 }) {
   const [isExpanded, setIsExpanded] = useState(false)
   const status = getToolStatus(
@@ -300,13 +294,6 @@ function ToolCallItem({
           )} />
         )}
       </button>
-      {toolCall.name === "explore" && (
-        <SubagentExplorePanel
-          toolCall={toolCall}
-          liveDetail={exploreDetail ?? null}
-          isStreaming={status === "running"}
-        />
-      )}
       {isExpanded && hasDetails && (
         <div className="ml-5.5 mt-0.5 mb-1 space-y-1">
           {hasArguments && (

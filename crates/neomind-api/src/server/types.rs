@@ -2350,17 +2350,6 @@ impl ServerState {
         )));
         tracing::info!(category = "ai", "Image edit tool registered");
 
-        // Explore subagent — heavy multi-round lookup in an isolated
-        // context. Needs ANY llm instance (not multimodal). Chicken-and-egg
-        // resolution happens after the Arc wrap (see set_registry below).
-        let mut explore_handle: Option<Arc<neomind_agent::toolkit::ExploreTool>> = None;
-        if let Ok(llm_manager) = neomind_agent::llm_backends::get_instance_manager() {
-            let explore = Arc::new(neomind_agent::toolkit::ExploreTool::new(llm_manager));
-            registry.register(explore.clone());
-            explore_handle = Some(explore);
-            tracing::info!(category = "ai", "Explore subagent registered");
-        }
-
         // Memory tool — persistent memory across sessions
         // Uses per-execution handle swapping for concurrency safety
         {
@@ -2373,11 +2362,6 @@ impl ServerState {
         }
 
         let tool_registry = Arc::new(registry);
-        // Two-phase backfill: explore is IN the registry and needs a handle
-        // TO it — only possible after the Arc wrap.
-        if let Some(explore) = explore_handle {
-            explore.set_registry(tool_registry.clone());
-        }
         self.agents
             .session_manager
             .set_tool_registry(tool_registry.clone())
@@ -2459,16 +2443,6 @@ impl ServerState {
             self.data_dir.clone(),
         )));
 
-        // Re-register explore (review catch: this rebuild path dropped it —
-        // after the startup refresh, explore vanished from the registry and
-        // the chat session rebuilt its toolset without the subagent).
-        let mut explore_handle: Option<Arc<neomind_agent::toolkit::ExploreTool>> = None;
-        if let Ok(llm_manager) = neomind_agent::llm_backends::get_instance_manager() {
-            let explore = Arc::new(neomind_agent::toolkit::ExploreTool::new(llm_manager));
-            registry.register(explore.clone());
-            explore_handle = Some(explore);
-        }
-
         // Re-register memory tool (per-execution handle swapping for concurrency safety)
         {
             let memory_store = tokio::sync::RwLock::new((*self.agents.system_memory_store).clone());
@@ -2481,9 +2455,6 @@ impl ServerState {
 
         let tool_registry = Arc::new(registry);
         let tool_count = tool_registry.len();
-        if let Some(explore) = explore_handle {
-            explore.set_registry(tool_registry.clone());
-        }
         self.agents
             .session_manager
             .set_tool_registry(tool_registry.clone())

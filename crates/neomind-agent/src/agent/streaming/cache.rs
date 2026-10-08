@@ -118,16 +118,6 @@ pub(crate) fn is_tool_cacheable(name: &str, arguments: &Value) -> bool {
         return false;
     }
 
-    // The `explore` subagent is NEVER cacheable: it searches live device
-    // data that changes between calls — a cached exploration result is
-    // stale by definition (the subagent's whole purpose is fresh lookup).
-    // Also, the explore tool has its own identical-call dedup within a
-    // single execution; the chat-level cache would double-layer that with
-    // a LONGER lifetime (per-session, not per-turn).
-    if resolved == "explore" {
-        return false;
-    }
-
     // Other tools (skill, web_fetch, vision, ...) are read-only by default.
     true
 }
