@@ -180,7 +180,7 @@ async fn process_stream_to_channel(
                         round,
                     } => {
                         pending_state.complete_tool_call(
-                            &tool,
+                            tool,
                             round.map(|r| r as u32),
                             &json!(result),
                         );
