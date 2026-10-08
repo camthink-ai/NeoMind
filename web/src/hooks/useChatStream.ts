@@ -202,7 +202,9 @@ export function useChatStream(options: UseChatStreamOptions) {
       }
       prevSessionRef.current = current
     }
-  }, [options.sessionId])
+    // hardReset is a stable useCallback (empty deps) — listing it satisfies
+    // exhaustive-deps without changing when this effect fires.
+  }, [options.sessionId, hardReset])
 
   const handleEvent = useCallback((data: ServerMessage) => {
     // Session filter: one WS connection serves both chat surfaces; each
