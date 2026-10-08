@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased] - the audit campaign: four subsystem audits, every high and medium closed
+## [1.1.2] - 2026-10-08 — the audit campaign: four subsystems audited, every finding closed; Linux hardened cross-distro
 
 What follows is not a feature release. It is the output of a systematic review of the four subsystems an edge deployment must be able to trust — the telemetry chain, the agent execution chain, the chat/image chain, and underneath them the storage and notification layers — plus a self-review pass over the fixes themselves. Every high- and medium-severity finding from those audits is fixed here with tests; the two regressions the fixes themselves introduced were caught by that self-review and are called out below. The through-line: **nothing may be lost silently, and nothing may lie about what it did.**
 
@@ -66,6 +66,12 @@ What follows is not a feature release. It is the output of a systematic review o
 
 ### test
 - Twenty-eight new tests across the campaign, including six for behaviors initially written off as "hard to test": the is_virtual feedback-loop guard (real integration test driving the real spawned listener against the real event bus), failed-run publish semantics (inference error → old value stands, still pointing at its producing execution), the WS ownership decision (extracted and unit-tested, including that a refused attach cannot re-stamp ownership), channel retry counts (always-failing and fail-twice mock channels against the real fan-out), the byte-weighted cache budget, and cache-invalidation restoring disk truth. One extraction attempt (DeviceService's metric consumer) was deliberately reverted when its scripted extraction silently misplaced the method body — caught by the very test written for it; the test is ready to drop in when the by-hand extraction lands.
+
+### fix(ci,scripts): cross-distro Linux hardening — 64KB-page hosts, glibc drift, RHEL installs
+- arm64 server builds export `JEMALLOC_SYS_WITH_LG_PAGE=16`: the 4KB-page CI runner baked a 4KB assumption into jemalloc, which aborts at startup on 64KB-page hosts (Jetson Orin, Pi 5, Kunpeng). The compile-time assumption only needs to be ≥ the runtime page size; verified empirically across 4/16/64KB page sizes. Desktop linux-x86_64 pinned to ubuntu-22.04 to match the server's glibc 2.35 release baseline (floating ubuntu-latest silently required newer glibc). `.rpm` desktop bundles are now actually attached to releases. `install.sh` detects RHEL-family nginx layouts (conf.d includes, not sites-enabled), disables the stock default.conf that shadows the app, and installs libgomp via apt→dnf→yum→zypper fallback; the CJK font hint names the dnf package too.
+- **fix(web): streaming state bled across sessions** — while session A was generating, switching to session B showed A's thinking dots and partial content on B's screen. The stream machine now hard-resets when the bound sessionId changes; WS events were already session-filtered, the UI projection just never cleared.
+- **fix(agent,api): the v22 field incident — read-only explore loops** — a small executor model, nudged out of a list-only dead end, kept issuing read-only lookups (round after round of `--help`/`list`, the prompt ballooning ~23K tokens until the case timed out). Two complementary guards: after the dead-end continuation, two more consecutive read-only rounds trigger one final act-now directive (execute the action with concrete arguments, or ask for the one missing value and end the turn); and guidance-hint injection now requires confidences (0.8/0.7) that the previous calibration generation could not reach in ambiguous mid-conversation states — the KD-sharpened calibration had pushed mid-conversation hints past the old gates, and those hints were what sent the executor looping. Boundary rules (negative capability) can be hot-updated without a rebuild via `NEOMIND_BOUNDARY_RULES=<file>` — nothing is injected when the env var is unset.
+- **fix(agent): OpenAI-compatible backends with nested tool-call names** — tool calls arriving in the `function: {name, arguments}` shape were silently dropped by the runtime's top-level-only parser; both shapes parse now.
 
 ---
 
