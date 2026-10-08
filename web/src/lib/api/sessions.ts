@@ -3,9 +3,12 @@ import type { ChatSession, SessionHistoryResponse, ToolCall } from '@/types'
 import { fetchAPI, type FetchOptions } from "./client"
 
 export const sessionsApi = {
-  /** Sessions with an in-flight generation (for the list's live spinner). */
+  /** Sessions with an in-flight generation (for the list's live spinner).
+   *  Silent: this is a background indicator poll — an old backend without
+   *  the endpoint must not surface error toasts (the legacy router even
+   *  matches /sessions/:id with id="pending" → "Session not found"). */
   listPendingSessions: () =>
-    fetchAPI<{ sessionIds: string[]; count: number }>(`/sessions/pending`),
+    fetchAPI<{ sessionIds: string[]; count: number }>(`/sessions/pending`, { skipErrorToast: true }),
 
   // Sessions
   // Note: Backend returns paginated response with data as array (auto-unwrapped by fetchAPI)

@@ -138,13 +138,23 @@ export function SessionSidebar({
   const [generatingIds, setGeneratingIds] = useState<Set<string>>(new Set())
   useEffect(() => {
     let stopped = false
+    // Circuit breaker: an old backend predating the endpoint 404s forever
+    // (the legacy router even matches /sessions/:id with id="pending").
+    // Three consecutive failures = no endpoint there — stop polling until
+    // the sidebar remounts; transient failures reset the count.
+    let failures = 0
     const poll = () => {
+      if (stopped || failures >= 3) return
       sessionsApi.listPendingSessions()
         .then(r => {
           if (stopped) return
+          failures = 0
           setGeneratingIds(new Set(r.sessionIds ?? []))
         })
-        .catch(() => { /* transient — keep the last set */ })
+        .catch(() => {
+          if (stopped) return
+          failures += 1
+        })
     }
     poll()
     const timer = setInterval(poll, 5000)
