@@ -511,11 +511,7 @@
     "defaultTitle": "New Chat",
     "deleteTitle": "Delete Session",
     "deleteDescription": "Are you sure you want to delete this session? This action cannot be undone.",
-    "sessionDeleted": "Session deleted",
-    "resumeResponseTitle": "Resume incomplete response?",
-    "resumeResponseDesc": "Detected an in-progress response from previous disconnection",
-    "discard": "Discard",
-    "resume": "Resume"
+    "sessionDeleted": "Session deleted"
   },
   "language": {},
   "dataPush": {

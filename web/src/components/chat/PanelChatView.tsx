@@ -262,13 +262,29 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
   // the panel history and clear the restored display.
   useEffect(() => {
     if (!resumedPendingPanel) return
+    // Only poll while this is still the panel's active session (page
+    // switches swap it — see the init effect's reset block).
+    if (panelSessionIdRef.current !== resumedPendingPanel) {
+      setResumedPendingPanel(null)
+      return
+    }
     let stopped = false
+    let lastLen = -1
+    let stallTicks = 0
     const timer = setInterval(() => {
       if (stopped) return
       api.getPendingStream(resumedPendingPanel).then(result => {
-        if (stopped) return
+        if (stopped || panelSessionIdRef.current !== resumedPendingPanel) return
         if (result?.hasPending) {
+          // Stall guard: 60s without snapshot growth = server died mid-turn.
+          const len = (result.content || "").length + (result.thinking || "").length
+          if (len > lastLen) { lastLen = len; stallTicks = 0 }
+          else stallTicks += 1
           restoreIfBehind(result.content || "", result.thinking || "")
+          if (stallTicks >= 20) {
+            setResumedPendingPanel(null)
+            hardReset()
+          }
         } else {
           setResumedPendingPanel(null)
           hardReset()
@@ -281,7 +297,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
       }).catch(() => { /* transient — keep polling */ })
     }, 3000)
     return () => { stopped = true; clearInterval(timer) }
-  }, [resumedPendingPanel, restoreIfBehind, hardReset])
+  }, [resumedPendingPanel, restoreIfBehind, hardReset, isStreamingRef])
 
   // Create a new panel session for the current page. The page profile
   // (system-prompt suffix + tool allowlist) rides the creation request —
@@ -315,10 +331,13 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     currentPageKeyRef.current = pageKey
     matchedSkillIdsRef.current = []
 
-    // Reset transient state from the previous page's conversation
+    // Reset transient state from the previous page's conversation —
+    // including a resumed poll: keyed to the OLD page's session, it would
+    // re-inject that conversation's content into the new page's panel.
     panelSessionIdRef.current = null
     setPanelMessages([])
     setIsHistoryLoading(true)
+    setResumedPendingPanel(null)
     hardReset()
 
     // Fingerprint-aware: a session whose creation-time profile (prompt
@@ -421,7 +440,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
       clearKillTimer()
       void unsubscribe()
     }
-  }, [addPanelMessage, t, hardReset])
+  }, [addPanelMessage, t, hardReset, isStreamingRef])
 
   // Multimodal gate — mirrors the chat page's composer input
   const activeBackend = llmBackends.find(b => b.id === activeBackendId)

@@ -507,11 +507,7 @@
     "defaultTitle": "新对话",
     "deleteTitle": "删除会话",
     "deleteDescription": "确定要删除这个会话吗？此操作无法撤销。",
-    "sessionDeleted": "会话已删除",
-    "resumeResponseTitle": "恢复未完成的响应？",
-    "resumeResponseDesc": "检测到之前断线时有正在进行的响应",
-    "discard": "放弃",
-    "resume": "恢复"
+    "sessionDeleted": "会话已删除"
   },
   "language": {},
   "dataPush": {

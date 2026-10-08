@@ -56,9 +56,4 @@ export const sessionsApi = {
   // Pending stream recovery (for WebSocket reconnection)
   getPendingStream: (id: string) =>
     fetchAPI<{ hasPending: boolean; sessionId: string; userMessage?: string; content?: string; thinking?: string; stage?: string; elapsed?: number; startedAt?: number }>(`/sessions/${id}/pending`),
-  clearPendingStream: (id: string) =>
-    fetchAPI<{ cleared: boolean; sessionId: string }>(`/sessions/${id}/pending`, {
-      method: 'DELETE',
-    }),
-
 }

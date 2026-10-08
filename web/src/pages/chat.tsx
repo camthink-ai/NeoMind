@@ -6,7 +6,7 @@ import { useStore } from "@/store"
 import { shallow } from "zustand/shallow"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { generateId } from "@/lib/id"
-import { Sparkles, MessageSquare, Loader2, RotateCcw, Plus } from "lucide-react"
+import { Sparkles, MessageSquare, Loader2, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SessionSidebar } from "@/components/session/SessionSidebar"
 import { WelcomeArea } from "@/components/chat/WelcomeArea"
@@ -18,7 +18,6 @@ import { ws, type ConnectionState } from "@/lib/websocket"
 import { api } from "@/lib/api"
 import type { Message, ChatImage } from "@/types"
 import { cn } from "@/lib/utils"
-import { getPortalRoot } from "@/lib/portal"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { LoadingState } from "@/components/shared"
 import { forceViewportReset } from "@/hooks/useVisualViewport"
@@ -125,15 +124,10 @@ export function ChatPage() {
   const pageSidebarSlot = usePageSidebarSlot()
   // Track the ID of the last assistant message for tool call result updates
   const [_lastAssistantMessageId, setLastAssistantMessageId] = useState<string | null>(null)
-  // Pending stream recovery state (for reconnect)
-  const [pendingStream, setPendingStream] = useState<{
-    hasPending: boolean
-    content: string
-    thinking: string
-    userMessage: string
-  } | null>(null)
   /** Session id whose detached turn we resumed — drives the 3s poll.
-   *  Null = no poll. Cleared by any live end event and by finalize. */
+   *  Null = no poll. Cleared by any live end event, by finalize, and on
+   *  session switch (the poll must never display another session's
+   *  content on the screen the user is looking at). */
   const [resumedPendingStream, setResumedPendingStream] = useState<string | null>(null)
 
   // WebSocket connection state (for reconnection UI)
@@ -225,6 +219,17 @@ export function ChatPage() {
       }
     },
   })
+
+  /** Auto-resume a detached turn (live testing: a "resume?" dialog made the
+   *  user click before anything showed, and restoring its ≤2s-lagged
+   *  snapshot visibly rewound content that had streamed beneath it). The
+   *  restore happens on session enter / reconnect, before the user has seen
+   *  anything in this visit — no rewind perception, no click. */
+  const resumePending = useCallback((sid: string, content: string, thinking: string) => {
+    hardReset()
+    restore(content, thinking)
+    setResumedPendingStream(sid)
+  }, [hardReset, restore])
 
   // Active tool-loop round, derived from the last in-flight tool call — no
   // own state to reset (all streaming resets clear streamingToolCalls).
@@ -407,65 +412,67 @@ export function ChatPage() {
   }, [messages, streamingContent, scrollToBottom])
 
 
-  // Pending-stream recovery, path 1: reconnect. The dialog shown here is
-  // the same one path 2 (session enter) uses — restore happens on the
-  // user's Resume click (handleRestorePendingStream), not eagerly, so both
-  // paths share one recovery flow.
+  // Pending-stream recovery, path 1: reconnect while viewing a session.
   useEffect(() => {
     const unsubscribe = ws.onConnection((connected, isReconnect) => {
       if (connected && isReconnect && sessionId) {
         api.getPendingStream(sessionId).then(result => {
-          if (result?.hasPending) {
-            setPendingStream({
-              hasPending: true,
-              content: result.content || "",
-              thinking: result.thinking || "",
-              userMessage: result.userMessage || "",
-            })
-          }
+          if (result?.hasPending) resumePending(sessionId, result.content || "", result.thinking || "")
         }).catch(() => {
           // Ignore errors checking pending stream
         })
       }
     })
     return () => { void unsubscribe() }
-  }, [sessionId])
+  }, [sessionId, resumePending])
 
   // Pending-stream recovery, path 2: session ENTER (mount, switch, return
   // from another page). The reconnect-only check missed the most common
   // case — a hard refresh opens a FRESH socket whose first connect is not a
   // "reconnect", so an in-flight answer was invisible until it silently
   // landed in history. Switching back to a still-generating session had no
-  // check at all.
+  // check at all. Auto-resume: the user sees the generating answer as a
+  // normal streaming bubble — no dialog, no click.
   useEffect(() => {
+    // Leaving this session stops its poll — a poll keyed to the PREVIOUS
+    // session re-injected that session's content here every 3s (the
+    // live-test cross-session bleed).
+    setResumedPendingStream(null)
     if (!sessionId) return
     let cancelled = false
     api.getPendingStream(sessionId).then(result => {
       if (cancelled || !result?.hasPending) return
-      setPendingStream({
-        hasPending: true,
-        content: result.content || "",
-        thinking: result.thinking || "",
-        userMessage: result.userMessage || "",
-      })
+      resumePending(sessionId, result.content || "", result.thinking || "")
     }).catch(() => {})
     return () => { cancelled = true }
-  }, [sessionId])
+  }, [sessionId, resumePending])
 
   // Detached-turn poll: after a resume, the generating turn's events may be
   // bound to a DEAD connection (hard refresh) — the server's pending
   // snapshot (saved every ≤2s) is then the only progress source. Adopt it
   // whenever it is ahead of local; when pending clears, the turn finished
   // server-side: reset the partial display and take history.
+  // Guarded to the VIEWED session (see path 2) and stalled-guarded: a
+  // snapshot that stops growing for 60s means the server died mid-turn —
+  // stop pretending and clear the spinner instead of polling forever.
   useEffect(() => {
-    if (!resumedPendingStream) return
+    if (!resumedPendingStream || resumedPendingStream !== sessionId) return
     let stopped = false
+    let lastLen = -1
+    let stallTicks = 0
     const timer = setInterval(() => {
       if (stopped) return
       api.getPendingStream(resumedPendingStream).then(result => {
         if (stopped) return
         if (result?.hasPending) {
+          const len = (result.content || "").length + (result.thinking || "").length
+          if (len > lastLen) { lastLen = len; stallTicks = 0 }
+          else stallTicks += 1
           restoreIfBehind(result.content || "", result.thinking || "")
+          if (stallTicks >= 20) {
+            setResumedPendingStream(null)
+            hardReset()
+          }
         } else {
           setResumedPendingStream(null)
           hardReset()
@@ -474,7 +481,7 @@ export function ChatPage() {
       }).catch(() => { /* transient — keep polling */ })
     }, 3000)
     return () => { stopped = true; clearInterval(timer) }
-  }, [resumedPendingStream, restoreIfBehind, hardReset, refreshCurrentSession])
+  }, [resumedPendingStream, sessionId, restoreIfBehind, hardReset, refreshCurrentSession])
 
   // Subscribe to WebSocket connection state changes
   useEffect(() => {
@@ -587,31 +594,6 @@ export function ChatPage() {
     } finally {
       setLoadingEarlier(false)
     }
-  }
-
-  // Handle pending stream recovery - restore
-  const handleRestorePendingStream = () => {
-    if (pendingStream) {
-      // The dialog's snapshot is the authoritative prefix — reset anything
-      // the live filter accumulated beneath the dialog (it is missing the
-      // pre-switch portion by construction), then adopt it and start the
-      // detached-turn poll (live events, if any, keep appending on top).
-      hardReset()
-      restore(pendingStream.content || "", pendingStream.thinking || "")
-      if (sessionId) setResumedPendingStream(sessionId)
-    }
-    setPendingStream(null)
-  }
-
-  // Handle pending stream recovery - discard
-  const handleDiscardPendingStream = async () => {
-    if (sessionId && pendingStream) {
-      // Clear pending stream from server
-      await api.clearPendingStream(sessionId).catch(() => {})
-      // Reset streaming state
-      hardReset()
-    }
-    setPendingStream(null)
   }
 
   // Handle manual reconnect
@@ -823,59 +805,6 @@ export function ChatPage() {
       // notch. Falls back to 100dvh when --app-height is unset.
       height: 'var(--app-height, 100dvh)',
     }}>
-      {/* Pending stream recovery dialog */}
-      {pendingStream?.hasPending && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-glass-heavy backdrop-blur-sm">
-          <div className="max-w-md w-full mx-4 bg-card border border-border rounded-lg shadow-lg p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="h-10 w-10 rounded-full bg-info-light flex items-center justify-center">
-                <RotateCcw className="h-5 w-5 text-info" />
-              </div>
-              <div>
-                <h3 className="font-semibold">{t('common:session.resumeResponseTitle')}</h3>
-                <p className="text-sm text-muted-foreground">
-                  {t('common:session.resumeResponseDesc')}
-                </p>
-              </div>
-            </div>
-
-            {(pendingStream.content || pendingStream.thinking) && (
-              <div className="mb-4 p-3 bg-muted rounded-lg text-sm">
-                {pendingStream.thinking && (
-                  <div className="mb-2 text-muted-foreground italic">
-                    {pendingStream.thinking.slice(0, 200)}
-                    {pendingStream.thinking.length > 200 && "..."}
-                  </div>
-                )}
-                {pendingStream.content && (
-                  <div>
-                    {pendingStream.content.slice(0, 200)}
-                    {pendingStream.content.length > 200 && "..."}
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                className="flex-1"
-                onClick={handleDiscardPendingStream}
-              >
-                {t('common:session.discard')}
-              </Button>
-              <Button
-                className="flex-1"
-                onClick={handleRestorePendingStream}
-              >
-                {t('common:session.resume')}
-              </Button>
-            </div>
-          </div>
-        </div>,
-        getPortalRoot()
-      )}
-
       {/* Desktop Sidebar - always show when there are sessions or in chat mode.
           Hoisted to the shell's full-height slot (left of the content) so it
           sits level with the AppSidebar; falls back to in-flow if the slot
