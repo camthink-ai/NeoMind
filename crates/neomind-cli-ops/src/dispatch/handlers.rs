@@ -1341,3 +1341,82 @@ pub async fn run_user_cmd(user_cmd: UserCommand) -> Result<(CliResponse, OutputF
     };
     Ok((resp, fmt))
 }
+
+/// Run API key management commands — via the RUNNING SERVER's HTTP endpoints
+/// (`/api/auth/keys`), not by touching `api_keys.redb` directly.
+///
+/// Why HTTP: the key store's write path runs the crypto chain
+/// (hash_api_key + encrypt_str against the install's encryption_key) and
+/// holds the live in-memory key table — a second writer from outside the
+/// server process would race it (the server's DashMap stays authoritative
+/// until its next reload). The endpoints exist, are auth-protected, and
+/// auto_auth already provisions the agent key, so in-process dispatchers
+/// (agent shell, tauri pre-dispatch) reach them with zero setup. The
+/// `--data-dir` flag is therefore about the RUNNING server's store, not a
+/// local path this command opens.
+pub async fn run_api_key_cmd(key_cmd: ApiKeyCommand) -> Result<(CliResponse, OutputFormat)> {
+    let fmt = if std::env::var("NEOMIND_JSON").is_ok() {
+        OutputFormat::Json
+    } else {
+        OutputFormat::Human
+    };
+    let client = crate::ApiClient::new();
+    let resp = match key_cmd {
+        ApiKeyCommand::Create { name, .. } => {
+            let out = client
+                .post("/api/auth/keys", &serde_json::json!({ "name": name }))
+                .await?;
+            CliResponse::success(
+                serde_json::json!({
+                    "api_key": out.get("api_key").cloned().unwrap_or(serde_json::Value::Null),
+                    "info": out.get("info").cloned().unwrap_or(serde_json::Value::Null),
+                }),
+                "API key created. IMPORTANT: save the key now — it will not be shown again."
+                    .to_string(),
+            )
+        }
+        ApiKeyCommand::List { .. } => {
+            let out = client.get("/api/auth/keys").await?;
+            CliResponse::success(
+                out.get("keys").cloned().unwrap_or_default(),
+                "API keys listed".to_string(),
+            )
+        }
+        ApiKeyCommand::Delete { name, .. } => {
+            let out = client.get("/api/auth/keys").await?;
+            let matches: Vec<&serde_json::Value> = out
+                .get("keys")
+                .and_then(|k| k.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter(|k| k.get("name").and_then(|n| n.as_str()) == Some(name.as_str()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            match matches.as_slice() {
+                [] => CliResponse::error_with_suggestion(
+                    format!("API key '{name}' not found"),
+                    "NOT_FOUND",
+                    "Run 'neomind api-key list' to see existing keys",
+                ),
+                [first, rest @ ..] => {
+                    let id = first.get("id").and_then(|i| i.as_str()).unwrap_or_default();
+                    client.delete(&format!("/api/auth/keys/{id}")).await?;
+                    let note = if rest.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            " ({} more key(s) share this name — rerun to delete the next)",
+                            rest.len()
+                        )
+                    };
+                    CliResponse::success(
+                        serde_json::json!({ "deleted_id": id, "name": name }),
+                        format!("Deleted API key '{name}' (id {id}){note}"),
+                    )
+                }
+            }
+        }
+    };
+    Ok((resp, fmt))
+}

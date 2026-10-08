@@ -711,9 +711,14 @@ mod cli_dispatch {
     /// or local-only per dispatch()); when argv[1] is one of these, the
     /// desktop app behaves as before (GUI boot — `serve` is a legit way to
     /// start the bundled server).
+    ///
+    /// api-key/user are NOT here anymore: dispatch() serves them in-process
+    /// (HTTP endpoint / auth redb). When they were GUI_OWNED, the desktop
+    /// `neomind` alias made every agent shell call land here → GUI boot →
+    /// single-instance swallow → exit 0 with NO output — a fake success.
     const GUI_OWNED: &[&str] = &[
         "serve", "prompt", "chat", "list-models", "health", "logs",
-        "check-update", "upgrade", "uninstall", "api-key", "user",
+        "check-update", "upgrade", "uninstall",
     ];
 
     pub fn maybe_run_cli(argv: Vec<String>) -> Option<i32> {
@@ -735,7 +740,8 @@ mod cli_dispatch {
                     "NeoMind {} — desktop app + CLI.\n\
                      No arguments launches the app. Data subcommands run in-process:\n\
                        neomind dashboard|device|agent|rule|transform|widget|extension|message|data ...\n\
-                     serve/chat/logs and api-key/user are handled by the app or a full CLI install.",
+                     serve/chat/logs are handled by the app or a full CLI install; \
+                     extension-local and reset-password subcommands need the full CLI.",
                     env!("CARGO_PKG_VERSION")
                 );
                 return Some(0);
@@ -774,12 +780,30 @@ mod cli_dispatch {
                 } else {
                     neomind_cli_ops::types::OutputFormat::Human
                 };
-                println!("{}", neomind_cli_ops::output::format_output(&resp, fmt));
+                // format_output is pure — printing is the caller's job (the
+                // old print-inside-format double-printed for callers that
+                // print the return, like this one).
+                print!("{}", neomind_cli_ops::output::format_output(&resp, fmt));
                 Some(if resp.success { 0 } else { 3 })
             }
             Err(neomind_cli_ops::dispatch::DispatchError::Parse(msg)) => {
                 eprintln!("{msg}");
                 Some(2)
+            }
+            Err(neomind_cli_ops::dispatch::DispatchError::NotInProcess) => {
+                // Local-only subcommands (extension create/build/validate,
+                // user reset-password) have no in-process implementation and
+                // no subprocess fallback here — the desktop `neomind` alias
+                // points at THIS binary, so "fall back to a subprocess"
+                // would recurse into another GUI boot. Say so explicitly:
+                // the agent reads this stderr and can pick another route.
+                eprintln!(
+                    "error: this subcommand needs the full neomind CLI install \
+                     (it manages local files/processes the desktop in-process \
+                     dispatch cannot reach). For extension scaffolding use the \
+                     NeoMind-Extensions toolchain, or run against a server install."
+                );
+                Some(1)
             }
             Err(e) => {
                 eprintln!("{e}");

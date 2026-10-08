@@ -78,10 +78,29 @@ pub async fn dispatch(argv: &[String]) -> Result<CliResponse, DispatchError> {
         | Command::Upgrade { .. }
         | Command::Uninstall { .. } => Err(DispatchError::NotInProcess),
 
-        // --- Local-only commands (need redb/auth from neomind-api, or print
-        //     directly to stdout and rely on subprocess capture) ---
-        Command::ApiKey { .. } => Err(DispatchError::NotInProcess),
-        Command::User { .. } => Err(DispatchError::NotInProcess),
+        // --- api-key / user: IN-PROCESS capable. api-key goes through the
+        //     running server's HTTP endpoints (see run_api_key_cmd — the key
+        //     store must have exactly one writer); user list/set-role operate
+        //     directly on the auth redb (same data dir). reset-password is
+        //     the one exception: it reads a hidden password from stdin,
+        //     which an in-process caller (agent shell / tauri pre-dispatch)
+        //     cannot supply — keep it out-of-process. ---
+        Command::ApiKey { key_cmd } => {
+            let (resp, _) = handlers::run_api_key_cmd(key_cmd)
+                .await
+                .map_err(|e| DispatchError::Api(e.to_string()))?;
+            Ok(resp)
+        }
+        Command::User { user_cmd } => {
+            if matches!(user_cmd, commands::UserCommand::ResetPassword { .. }) {
+                Err(DispatchError::NotInProcess)
+            } else {
+                let (resp, _) = handlers::run_user_cmd(user_cmd)
+                    .await
+                    .map_err(|e| DispatchError::Api(e.to_string()))?;
+                Ok(resp)
+            }
+        }
         Command::Extension { extension_cmd } => {
             if handlers::is_local_extension_command(&extension_cmd) {
                 Err(DispatchError::NotInProcess)
@@ -232,11 +251,21 @@ mod tests {
         }
     }
 
-    /// Local-only commands (redb-backed or stdout-printing) also stay out of
-    /// process.
+    /// Local-only commands that an in-process caller cannot serve also stay
+    /// out of process: reset-password reads a hidden password from stdin
+    /// (an agent-shell dispatch would hang on it), and extension
+    /// create/build/validate manage local files via the full CLI's
+    /// implementation. api-key and user list/set-role ARE in-process now
+    /// (HTTP endpoint / auth redb mirror) — their dispatch must succeed or
+    /// fail with a real error, never NotInProcess (the desktop `neomind`
+    /// alias resolving to the tauri binary makes the subprocess fallback a
+    /// silent GUI-exit-0 — the exact fake-success this split exists to kill).
     #[tokio::test]
     async fn local_only_commands_are_not_in_process() {
-        for args in [vec!["api-key", "list"], vec!["user", "list"]] {
+        for args in [
+            vec!["user", "reset-password", "admin"],
+            vec!["extension", "create", "x"],
+        ] {
             let err = dispatch(&argv(&args)).await.unwrap_err();
             assert!(
                 matches!(err, DispatchError::NotInProcess),

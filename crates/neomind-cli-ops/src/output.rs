@@ -1,12 +1,13 @@
 use crate::types::{CliResponse, OutputFormat};
 
+/// Render a response to a string. PURE — callers print the return value.
+/// (The old version printed AND returned; in-process callers like the tauri
+/// pre-dispatch then printed it again, doubling every command's output.)
 pub fn format_output(response: &CliResponse, format: OutputFormat) -> String {
-    let output = match format {
+    match format {
         OutputFormat::Json => serde_json::to_string_pretty(response).unwrap_or_default(),
         OutputFormat::Human => format_human(response),
-    };
-    print!("{}", output);
-    output
+    }
 }
 
 fn format_human(resp: &CliResponse) -> String {

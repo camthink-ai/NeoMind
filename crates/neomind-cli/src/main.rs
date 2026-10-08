@@ -220,7 +220,7 @@ fn print_result(
     )>,
 ) -> Result<()> {
     let (resp, fmt) = result?;
-    neomind_cli_ops::output::format_output(&resp, fmt);
+    print!("{}", neomind_cli_ops::output::format_output(&resp, fmt));
     // [exit-code contract] A CliResponse that reports failure IS a failure:
     // scripts and the agent's shell tool key on the process exit status, and
     // every error path used to print "❌ …" and exit 0 — indistinguishable
