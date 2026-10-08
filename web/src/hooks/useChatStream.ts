@@ -186,6 +186,24 @@ export function useChatStream(options: UseChatStreamOptions) {
     }
   }
 
+  // ── Cross-session streaming isolation ──
+  // When sessionId changes (user switches session), the streaming state
+  // belongs to the PREVIOUS session — reset it. Without this, the thinking
+  // dots / partial content from session A bleed into session B's display.
+  // The actual WS events are already filtered by sessionId (line ~195); this
+  // clears the UI projection. If the user switches BACK to a still-streaming
+  // session, the next event from the WS will rebuild the display state.
+  const prevSessionRef = useRef(options.sessionId)
+  useEffect(() => {
+    const current = optionsRef.current.sessionId
+    if (prevSessionRef.current !== current) {
+      if (isStreamingRef.current || streamingMessageIdRef.current) {
+        hardReset()
+      }
+      prevSessionRef.current = current
+    }
+  }, [options.sessionId])
+
   const handleEvent = useCallback((data: ServerMessage) => {
     // Session filter: one WS connection serves both chat surfaces; each
     // machine only processes events belonging to ITS session. Events without
