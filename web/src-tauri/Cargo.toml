@@ -30,6 +30,9 @@ chrono = "0.4"
 # Local workspace crates - relative to web/src-tauri/ directory
 # neomind-api pulls in all other required crates as dependencies
 edge-api = { path = "../../crates/neomind-api", package = "neomind-api", features = ["embedded-broker"] }
+# CLI dispatch surface for main()'s pre-dispatch (the desktop binary doubles
+# as the `neomind` CLI entry on this platform).
+neomind-cli-ops = { path = "../../crates/neomind-cli-ops" }
 tauri-plugin-notification = "2"
 tauri-plugin-blec = "0.8"
 

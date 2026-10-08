@@ -689,5 +689,82 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn main() {
+    // CLI pre-dispatch: the desktop binary carries the full neomind-cli-ops
+    // dispatch surface (linked for the agent's shell tool), but main() never
+    // looked at argv — every `neomind-tauri dashboard list` was swallowed as
+    // a GUI launch argument and exited 0 with NO output (the silent-exit
+    // trap; the same binary IS the desktop's `neomind` CLI entry). When
+    // argv names a known data subcommand, run it in-process against the
+    // desktop data dir and exit with the CLI's exit-code contract (0 ok /
+    // 3 operation-failed / 2 parse). Serve and unknown/empty argv fall
+    // through to the normal GUI boot.
+    if let Some(code) = cli_dispatch::maybe_run_cli(std::env::args().collect()) {
+        std::process::exit(code);
+    }
     run()
+}
+
+/// One-shot CLI dispatch for `main`. `None` = no CLI subcommand (or one the
+/// GUI must own, like `serve` / `chat`) — fall through to the app.
+mod cli_dispatch {
+    /// Subcommands that must NOT run in-process (side-effecting, interactive,
+    /// or local-only per dispatch()); when argv[1] is one of these, the
+    /// desktop app behaves as before (GUI boot — `serve` is a legit way to
+    /// start the bundled server).
+    const GUI_OWNED: &[&str] = &[
+        "serve", "prompt", "chat", "list-models", "health", "logs",
+        "check-update", "upgrade", "uninstall", "api-key", "user",
+    ];
+
+    pub fn maybe_run_cli(argv: Vec<String>) -> Option<i32> {
+        // argv[0] = program path; a bare launch (no args) is the GUI.
+        if argv.len() < 2 {
+            return None;
+        }
+        let sub = argv[1].as_str();
+        if GUI_OWNED.contains(&sub) {
+            return None;
+        }
+        // Only dispatch argv that names a plausible subcommand (first token
+        // looks like a CLI word, not a file path / flag — the OS may hand us
+        // document paths or tauri dev flags on normal launches).
+        if sub.starts_with('-') || sub.contains('/') || sub.contains('.') {
+            return None;
+        }
+
+        // Minimal async runtime for the dispatch call.
+        let rt = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(rt) => rt,
+            Err(e) => {
+                eprintln!("cli dispatch runtime: {e}");
+                return None;
+            }
+        };
+        let tokenized: Vec<String> = argv[1..].to_vec();
+        let argv_full = std::iter::once("neomind".to_string())
+            .chain(tokenized.into_iter())
+            .collect::<Vec<_>>();
+        match rt.block_on(neomind_cli_ops::dispatch::dispatch(&argv_full)) {
+            Ok(resp) => {
+                let fmt = if std::env::var("NEOMIND_JSON").map(|v| v == "1").unwrap_or(false) {
+                    neomind_cli_ops::types::OutputFormat::Json
+                } else {
+                    neomind_cli_ops::types::OutputFormat::Human
+                };
+                println!("{}", neomind_cli_ops::output::format_output(&resp, fmt));
+                Some(if resp.success { 0 } else { 3 })
+            }
+            Err(neomind_cli_ops::dispatch::DispatchError::Parse(msg)) => {
+                eprintln!("{msg}");
+                Some(2)
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                Some(1)
+            }
+        }
+    }
 }
