@@ -280,8 +280,23 @@ EOF
     # Configure nginx (optional, for frontend-backend separation)
     if [ "$USE_NGINX" = "true" ]; then
         if available nginx; then
-            status "Configuring nginx..."
-            $SUDO tee /etc/nginx/sites-available/neomind >/dev/null <<'EOF'
+            # Debian-family nginx loads vhosts from sites-enabled (symlinked
+            # from sites-available); RHEL-family (RHEL/Rocky/Alma/openEuler/
+            # Kylin/UOS) only auto-loads /etc/nginx/conf.d/*.conf. Detect the
+            # layout and place the server block where this distro's nginx
+            # will actually load it.
+            if [ -d /etc/nginx/sites-available ] && [ -d /etc/nginx/sites-enabled ]; then
+                NGINX_SITE_CONF=/etc/nginx/sites-available/neomind
+                NGINX_DEBIAN_LAYOUT=true
+            else
+                NGINX_SITE_CONF=/etc/nginx/conf.d/neomind.conf
+                NGINX_DEBIAN_LAYOUT=false
+            fi
+            status "Configuring nginx (${NGINX_SITE_CONF})..."
+            # Source-built nginx may have neither layout dir — create the one
+            # we write into so tee doesn't abort the install (set -e).
+            $SUDO mkdir -p "$(dirname "$NGINX_SITE_CONF")"
+            $SUDO tee "$NGINX_SITE_CONF" >/dev/null <<'EOF'
 server {
     listen 80;
     server_name _;
@@ -345,17 +360,23 @@ server {
 }
 EOF
             # Replace placeholders with actual values
-            $SUDO sed -i "s|WEB_DIR_PLACEHOLDER|${WEB_DIR}|g" /etc/nginx/sites-available/neomind
-            $SUDO sed -i "s|PORT_PLACEHOLDER|${PORT}|g" /etc/nginx/sites-available/neomind
+            $SUDO sed -i "s|WEB_DIR_PLACEHOLDER|${WEB_DIR}|g" "$NGINX_SITE_CONF"
+            $SUDO sed -i "s|PORT_PLACEHOLDER|${PORT}|g" "$NGINX_SITE_CONF"
 
-            # Enable site
-            if [ ! -L /etc/nginx/sites-enabled/neomind ]; then
-                $SUDO ln -sf /etc/nginx/sites-available/neomind /etc/nginx/sites-enabled/neomind
-            fi
+            if [ "$NGINX_DEBIAN_LAYOUT" = "true" ]; then
+                # Enable site
+                if [ ! -L /etc/nginx/sites-enabled/neomind ]; then
+                    $SUDO ln -sf /etc/nginx/sites-available/neomind /etc/nginx/sites-enabled/neomind
+                fi
 
-            # Remove default site if it exists and neomind is the only site
-            if [ -L /etc/nginx/sites-enabled/default ]; then
-                $SUDO rm -f /etc/nginx/sites-enabled/default
+                # Remove default site if it exists and neomind is the only site
+                if [ -L /etc/nginx/sites-enabled/default ]; then
+                    $SUDO rm -f /etc/nginx/sites-enabled/default
+                fi
+            elif [ -f /etc/nginx/conf.d/default.conf ]; then
+                # RHEL-family ships a default.conf server on :80 — move it
+                # aside so it doesn't conflict with our server block.
+                $SUDO mv /etc/nginx/conf.d/default.conf /etc/nginx/conf.d/default.conf.disabled 2>/dev/null || true
             fi
 
             # Test and reload nginx
@@ -363,7 +384,7 @@ EOF
                 $SUDO systemctl reload nginx 2>/dev/null || $SUDO systemctl restart nginx 2>/dev/null || true
                 success "Nginx configured and reloaded"
             else
-                warning "Nginx config test failed. Please check /etc/nginx/sites-available/neomind"
+                warning "Nginx config test failed. Please check ${NGINX_SITE_CONF}"
             fi
         else
             warning "nginx not found. Skipping nginx configuration."
@@ -594,13 +615,28 @@ llama_asset() {
 # official prebuilt binaries so the built-in LLM works out of the box.
 install_llm_runtime() {
     [ "$WITH_LLM" = "true" ] || return 0
-    # The prebuilt binaries link OpenMP — on glibc Linux they need libgomp1
+    # The prebuilt binaries link OpenMP — on glibc Linux they need libgomp
     # (identical to the Docker runtime stage's libgomp1 fix). Missing → the
     # binary fails to exec with "libgomp.so.1: cannot open shared object".
-    if command -v apt-get >/dev/null 2>&1; then
-        if ! ldconfig -p 2>/dev/null | grep -q 'libgomp.so.1'; then
-            status "Installing libgomp1 (llama.cpp OpenMP dependency)..."
-            apt-get install -y -qq libgomp1 >/dev/null 2>&1 ||                 warning "Could not install libgomp1 — neomind-llama-server may fail to start"
+    # Linux-only: darwin has no ldconfig/libgomp and the macos prebuilts
+    # don't need this.
+    if [ "$OS" = "linux" ] && ! ldconfig -p 2>/dev/null | grep -q 'libgomp.so.1'; then
+        status "Installing libgomp (llama.cpp OpenMP dependency)..."
+        if available apt-get; then
+            $SUDO apt-get install -y -qq libgomp1 >/dev/null 2>&1 || \
+                warning "Could not install libgomp1 — neomind-llama-server may fail to start"
+        elif available dnf; then
+            $SUDO dnf install -y -q libgomp >/dev/null 2>&1 || \
+                warning "Could not install libgomp — neomind-llama-server may fail to start"
+        elif available yum; then
+            $SUDO yum install -y -q libgomp >/dev/null 2>&1 || \
+                warning "Could not install libgomp — neomind-llama-server may fail to start"
+        elif available zypper; then
+            $SUDO zypper --non-interactive install libgomp1 >/dev/null 2>&1 || \
+                warning "Could not install libgomp1 — neomind-llama-server may fail to start"
+        else
+            warning "No supported package manager found (apt/dnf/yum/zypper)."
+            warning "Install libgomp manually or neomind-llama-server may fail to start."
         fi
     fi
     local asset url tmp bin

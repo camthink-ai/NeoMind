@@ -960,7 +960,7 @@ fn apply_operation(
                 // of letting the model relay a bare "success" for a garbled
                 // watermark.
                 warnings.push(format!(
-                    "operations[{}]: draw_text — best probed font ({}) still lacks glyphs for {}/{} char(s) (e.g. CJK); they will render as boxes. Install a CJK font (Linux: `sudo apt install fonts-noto-cjk`)",
+                    "operations[{}]: draw_text — best probed font ({}) still lacks glyphs for {}/{} char(s) (e.g. CJK); they will render as boxes. Install a CJK font (Linux: `apt install fonts-noto-cjk` / `dnf install google-noto-sans-cjk-ttc-fonts`)",
                     op_index,
                     font.source,
                     total - covered,

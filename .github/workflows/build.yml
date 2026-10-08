@@ -126,7 +126,7 @@ jobs:
             os: windows-latest
             target: x86_64-pc-windows-msvc
           - platform: 'linux-x86_64'
-            os: ubuntu-latest
+            os: ubuntu-22.04  # pin to match server glibc 2.35 baseline (floating ubuntu-latest builds require a newer glibc on install targets)
             target: x86_64-unknown-linux-gnu
           - platform: 'linux-aarch64'
             os: ubuntu-22.04-arm
@@ -300,6 +300,7 @@ jobs:
             web/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
             web/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
             web/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.deb
+            web/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.rpm
           retention-days: 30
           if-no-files-found: warn
 
@@ -377,6 +378,17 @@ jobs:
         shell: bash
         run: |
           set -e
+          # jemalloc (neomind-cli allocator) bakes a compile-time page size.
+          # The arm64 runner is 4KB-page, so without this the release binary
+          # aborts with "<jemalloc>: Unsupported system page size" on 64KB-page
+          # hosts (Jetson, Pi5, Kunpeng). jemalloc's contract is compile-time
+          # >= runtime page size (--with-lg-page in jemalloc INSTALL.md), so
+          # 16 (64KB) is safe on 4/16/64KB hosts alike — same fix the Docker
+          # build stage applies. tikv-jemalloc-sys emits rerun-if-env-changed,
+          # so cached builds rebuild automatically when this env flips.
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            export JEMALLOC_SYS_WITH_LG_PAGE=16
+          fi
           cargo build --release -p neomind-cli --target ${{ matrix.target }}
           cargo build --release -p neomind-extension-runner --target ${{ matrix.target }}
 
@@ -593,7 +605,7 @@ jobs:
           ### Desktop Application (Recommended for Personal Use)
           - **macOS**: Download `.dmg` file
           - **Windows**: Download `.msi` installer or `.exe` portable
-          - **Linux**: Download `.AppImage` (universal) or `.deb` (Debian/Ubuntu)
+          - **Linux**: Download `.AppImage` (universal), `.deb` (Debian/Ubuntu), or `.rpm` (RHEL/Fedora/openEuler)
 
           ### Server Deployment
           1. **Backend Server**: Download `neomind-server-{os}-{arch}.tar.gz`
@@ -643,6 +655,7 @@ jobs:
             artifacts/**/*.exe
             artifacts/**/*.AppImage
             artifacts/**/*.deb
+            artifacts/**/*.rpm
             artifacts/neomind-updater-**/*.app.tar.gz
             artifacts/neomind-server-linux-amd64/**/*.tar.gz
             artifacts/neomind-server-linux-arm64/**/*.tar.gz
