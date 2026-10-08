@@ -422,6 +422,10 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         .route("/api/sessions", post(sessions::create_session_handler))
         .route("/api/sessions", get(sessions::list_sessions_handler))
         .route(
+            "/api/sessions/pending",
+            get(sessions::list_pending_sessions_handler),
+        )
+        .route(
             "/api/sessions/cleanup",
             post(sessions::cleanup_sessions_handler),
         )

@@ -157,5 +157,8 @@
   "loadEarlierLoading": "Loading…",
   "suggestions": {
     "badge": "Suggested"
+  },
+  "session": {
+    "generating": "generating…"
   }
 }

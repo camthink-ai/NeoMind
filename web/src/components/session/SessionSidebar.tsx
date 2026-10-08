@@ -10,6 +10,7 @@ import { useState, useEffect, useRef, useMemo } from "react"
 import { useTranslation } from "react-i18next"
 import { useNavigate, useParams } from "react-router-dom"
 import { useStore } from "@/store"
+import { sessionsApi } from '@/lib/api/sessions'
 import { createPortal } from "react-dom"
 import type { ChatSession } from "@/types"
 import { cn } from "@/lib/utils"
@@ -24,6 +25,7 @@ import {
   Clock,
   Pencil,
   Check,
+  Loader2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -128,6 +130,26 @@ export function SessionSidebar({
     observer.observe(trigger)
     return () => observer.disconnect()
   }, [sessionsHasMore, sessionsLoading, searchQuery, loadMoreSessions])
+
+  // Sessions with an in-flight generation (server truth — a session left
+  // mid-turn keeps generating server-side; local streaming state dies on
+  // navigation). Polled while the sidebar is mounted; stale pending entries
+  // (>10 min, hard-killed servers) are already filtered server-side.
+  const [generatingIds, setGeneratingIds] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    let stopped = false
+    const poll = () => {
+      sessionsApi.listPendingSessions()
+        .then(r => {
+          if (stopped) return
+          setGeneratingIds(new Set(r.sessionIds ?? []))
+        })
+        .catch(() => { /* transient — keep the last set */ })
+    }
+    poll()
+    const timer = setInterval(poll, 5000)
+    return () => { stopped = true; clearInterval(timer) }
+  }, [])
 
   // Filter and sort sessions - memoized to prevent unnecessary re-renders
   const sortedSessions = useMemo(() => {
@@ -360,6 +382,7 @@ export function SessionSidebar({
                     const isActive = session.sessionId === currentSessionId
                     const isDeleting = deletingId === session.sessionId
                     const isEditing = editingId === session.sessionId
+                    const isGenerating = generatingIds.has(session.sessionId)
 
                     return (
                       <div
@@ -408,10 +431,17 @@ export function SessionSidebar({
                           // Normal mode
                           <>
                             <div className="flex items-center gap-2 min-w-0 flex-1">
-                              <MessageSquare className={cn(
-                                "h-4 w-4 shrink-0",
-                                isActive ? "text-foreground" : "text-muted-foreground"
-                              )} />
+                              {isGenerating ? (
+                                <Loader2
+                                  className="h-4 w-4 shrink-0 animate-spin text-primary motion-reduce:animate-none motion-reduce:text-primary"
+                                  aria-label={t('session.generating')}
+                                />
+                              ) : (
+                                <MessageSquare className={cn(
+                                  "h-4 w-4 shrink-0",
+                                  isActive ? "text-foreground" : "text-muted-foreground"
+                                )} />
+                              )}
                               <div className="min-w-0 flex-1">
                                 <h4 className={cn(
                                   "text-sm truncate",

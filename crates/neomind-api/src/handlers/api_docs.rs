@@ -520,6 +520,11 @@ pub static ROUTES: &[RouteDoc] = &[
         auth: "jwt-or-api-key",
     },
     RouteDoc {
+        method: "GET",
+        path: "/api/sessions/pending",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
         method: "POST",
         path: "/api/sessions/cleanup",
         auth: "jwt-or-api-key",

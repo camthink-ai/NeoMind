@@ -3,6 +3,10 @@ import type { ChatSession, SessionHistoryResponse, ToolCall } from '@/types'
 import { fetchAPI, type FetchOptions } from "./client"
 
 export const sessionsApi = {
+  /** Sessions with an in-flight generation (for the list's live spinner). */
+  listPendingSessions: () =>
+    fetchAPI<{ sessionIds: string[]; count: number }>(`/sessions/pending`),
+
   // Sessions
   // Note: Backend returns paginated response with data as array (auto-unwrapped by fetchAPI)
   listSessions: (page = 1, pageSize = 10) =>

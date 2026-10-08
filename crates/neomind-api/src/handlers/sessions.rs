@@ -893,6 +893,35 @@ pub async fn get_pending_stream_handler(
     }
 }
 
+/// List sessions with an in-flight (pending) generation — for the session
+/// list's live "generating" indicator. Stale entries (>10 min without an
+/// update — a hard-killed server leaves them behind) are excluded: a
+/// spinner that never resolves is worse than no spinner.
+#[utoipa::path(
+    get,
+    path = "/api/sessions/pending",
+    tag = "sessions",
+    responses(
+        (status = 200, description = "Session ids with an in-flight generation"),
+    ),
+)]
+pub async fn list_pending_sessions_handler(
+    State(state): State<ServerState>,
+) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
+    let store = state.agents.session_manager.session_store();
+    let ids = store
+        .get_all_pending_streams()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|p| !p.is_stale())
+        .map(|p| p.session_id)
+        .collect::<Vec<_>>();
+    Ok(Json(ApiResponse::success(serde_json::json!({
+        "sessionIds": ids,
+        "count": ids.len(),
+    }))))
+}
+
 /// P0.3: Clear pending stream state for a session (user chose to discard).
 #[utoipa::path(
     delete,
