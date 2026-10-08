@@ -290,6 +290,17 @@ impl TimeSeriesStore {
     pub(crate) async fn update_cache(&self, source_id: &str, metric: &str, point: DataPoint) {
         let key = (source_id.to_string(), metric.to_string());
 
+        // "latest" means max(timestamp), not last-arrived: replayed or
+        // clock-skewed backfills used to overwrite the cache with an OLDER
+        // point, and monitoring/rules read the regression for the cache TTL
+        // (query_latest prefers the cache absolutely). Refuse to regress;
+        // the disk write itself is unaffected.
+        if let Some(existing) = self.latest_cache.get(&key) {
+            if existing.point.timestamp > point.timestamp {
+                return;
+            }
+        }
+
         // moka handles LRU eviction automatically when capacity is reached
         self.latest_cache.insert(
             key,
@@ -313,7 +324,10 @@ impl TimeSeriesStore {
         // Run the transaction on the blocking pool; the lock-free in-memory
         // cache updates below stay on the async side.
         let now = Utc::now().timestamp();
-        let last_ts = points.last().map(|p| p.timestamp).unwrap_or(now);
+        // max-by-timestamp, not points.last(): backfill batches arrive in
+        // arbitrary order, and the cache must hold the LATEST point.
+        let newest = points.iter().max_by_key(|p| p.timestamp).cloned();
+        let last_ts = newest.as_ref().map(|p| p.timestamp).unwrap_or(now);
         let count = points.len();
         let (src, met) = (source_id.to_string(), metric.to_string());
         let db = self.db.clone();
@@ -349,6 +363,10 @@ impl TimeSeriesStore {
 
         // Mark metrics_info as populated (prevents cold-start full scan in list_metrics)
         self.metrics_initialized.store(true, Ordering::Release);
+
+        if let Some(point) = newest {
+            self.update_cache(source_id, metric, point).await;
+        }
 
         Ok(())
     }

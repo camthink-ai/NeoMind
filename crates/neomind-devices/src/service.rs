@@ -501,7 +501,12 @@ impl DeviceService {
                         metric,
                         value,
                         timestamp,
-                        quality: _,
+                        // Carried into the storage re-write below: this
+                        // consumer re-writes the SAME (device, metric, ts)
+                        // key the adapter's direct write landed on, and a
+                        // hardcoded None made redb's last-wins semantics
+                        // erase payload.quality on every uplink.
+                        quality,
                         is_virtual,
                         ..
                     } => {
@@ -611,7 +616,7 @@ impl DeviceService {
                                 let data_point = super::telemetry::DataPoint {
                                     timestamp,
                                     value: metric_value,
-                                    quality: None,
+                                    quality,
                                     metadata: None,
                                 };
 

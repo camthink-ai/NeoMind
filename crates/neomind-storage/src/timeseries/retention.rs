@@ -209,18 +209,19 @@ impl TimeSeriesStore {
     /// payloads. `None` when nothing is readable.
     async fn recent_samples_look_like_images(&self, source_id: &str, metric: &str) -> Option<bool> {
         const SAMPLES: usize = 16;
-        // BOUNDED reverse query: the first cut loaded the ENTIRE series
-        // (i64::MIN..=MAX, no limit) just to look at 16 samples — a full
-        // table scan per metric per retention cycle, brutal on image
-        // series. query_range_rev reads only the newest SAMPLES points.
+        // BOUNDED reverse probe: query_range_rev (even with a limit) scans
+        // the whole range for an exact total_count — O(series) per metric
+        // per cycle on camera deployments. query_latest_samples BREAKS the
+        // reverse iteration after SAMPLES keys: O(SAMPLES) regardless of
+        // series size.
         let points = self
-            .query_range_rev(source_id, metric, i64::MIN, i64::MAX, Some(SAMPLES), 0)
+            .query_latest_samples(source_id, metric, SAMPLES)
             .await
             .ok()?;
-        if points.points.is_empty() {
+        if points.is_empty() {
             return None;
         }
-        let recent: Vec<_> = points.points.iter().take(SAMPLES).collect();
+        let recent: Vec<_> = points.iter().take(SAMPLES).collect();
         let image_count = recent
             .iter()
             .filter(|p| value_looks_like_image(&p.value))

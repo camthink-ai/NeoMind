@@ -124,14 +124,26 @@ pub async fn cleanup_resources(state: &ServerState) {
     // though write() had already reported success for them. open() hits
     // the process-wide singleton for the live path, so this flushes the
     // SAME buffer the server has been writing through.
-    match neomind_storage::TimeSeriesStore::open(neomind_core::paths::store_path("telemetry.redb"))
-    {
-        Ok(ts) => {
-            ts.shutdown();
+    // Route through the LIVE telemetry wrapper, not a fresh open(): the
+    // persistent store opens DEFERRED in the background, and when shutdown
+    // races that open the singleton is unset — open() here would create a
+    // second redb handle, hit the exclusive file lock, and fail, leaving the
+    // placeholder store that actually holds the buffered points undrained.
+    // state.devices.telemetry always addresses the store currently receiving
+    // writes (placeholder or persistent), whichever won the race.
+    match state.devices.telemetry.flush() {
+        Ok(()) => {
             tracing::info!("Telemetry write buffer flushed");
         }
         Err(e) => {
-            tracing::warn!(error = %e, "Could not open telemetry store for final flush");
+            tracing::warn!(error = %e, "Telemetry final flush failed");
+            // Fallback for paths that bypass the wrapper (tests, embedded use).
+            if let Ok(ts) = neomind_storage::TimeSeriesStore::open(neomind_core::paths::store_path(
+                "telemetry.redb",
+            )) {
+                ts.shutdown();
+                tracing::info!("Telemetry write buffer flushed (singleton fallback)");
+            }
         }
     }
 

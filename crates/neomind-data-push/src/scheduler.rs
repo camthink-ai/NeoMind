@@ -137,7 +137,6 @@ enum ScheduleInfo {
 /// endpoint silently dropping frames was invisible.
 #[derive(Default)]
 pub(crate) struct DeliveryCounters {
-    pub total: std::sync::atomic::AtomicU64,
     pub success: std::sync::atomic::AtomicU64,
     pub failed: std::sync::atomic::AtomicU64,
     pub dropped_backpressure: std::sync::atomic::AtomicU64,
@@ -145,19 +144,37 @@ pub(crate) struct DeliveryCounters {
 
 static DELIVERY_COUNTERS: std::sync::OnceLock<DeliveryCounters> = std::sync::OnceLock::new();
 
+/// Shared in-flight-delivery cap for the INTERVAL-target flush path (the
+/// event-driven path has its own local semaphore of the same size; a
+/// process-wide one keeps the code simple while capping total concurrent
+/// retry ladders the same way).
+static DELIVERY_PERMITS: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
+
+fn delivery_permits() -> &'static tokio::sync::Semaphore {
+    DELIVERY_PERMITS.get_or_init(|| tokio::sync::Semaphore::new(DATA_PUSH_MAX_INFLIGHT_DELIVERIES))
+}
+
 /// Access the process-wide delivery counters.
 pub(crate) fn delivery_counters() -> &'static DeliveryCounters {
     DELIVERY_COUNTERS.get_or_init(DeliveryCounters::default)
 }
 
-fn record_delivery_outcome(success: bool) {
+fn record_delivery_outcome(status: DeliveryStatus) {
+    // Only TERMINAL outcomes count as deliveries: Pending/Retrying are
+    // per-attempt states, and counting them made /stats report one
+    // delivery that failed twice then succeeded as total=3/failed=2/
+    // success=1 — systematically exaggerating endpoint failure. total is
+    // derived (success + failed) at read time.
     use std::sync::atomic::Ordering::Relaxed;
     let c = delivery_counters();
-    c.total.fetch_add(1, Relaxed);
-    if success {
-        c.success.fetch_add(1, Relaxed);
-    } else {
-        c.failed.fetch_add(1, Relaxed);
+    match status {
+        DeliveryStatus::Success => {
+            c.success.fetch_add(1, Relaxed);
+        }
+        DeliveryStatus::Failed => {
+            c.failed.fetch_add(1, Relaxed);
+        }
+        _ => {}
     }
 }
 
@@ -606,9 +623,43 @@ impl PushScheduler {
                         }
                     }
                     _ = flush_timer.tick() => {
+                        // [backpressure] the flush must not run the retry
+                        // ladder inline: a dead endpoint's timeouts+backoffs
+                        // would stall this target's event consumption and
+                        // lag the bus — the exact failure the immediate path
+                        // fixed. Spawn under the shared delivery-permit cap;
+                        // events keep buffering for the next tick if the cap
+                        // is saturated.
                         if !buffer.is_empty() {
                             tracing::debug!(target_id = %target.id, count = buffer.len(), "Interval flush");
-                            flush_batch(&target, &store, &renderer, dest.as_ref(), &mut buffer, Some(&cancel)).await;
+                            let batch = std::mem::take(&mut buffer);
+                            let target_c = target.clone();
+                            let store_c = store.clone();
+                            let renderer_c = renderer.clone();
+                            let cancel_c = cancel.clone();
+                            if let Ok(_permit) = delivery_permits().try_acquire() {
+                                tokio::spawn(async move {
+                                    let _permit = _permit;
+                                    let mut batch = batch;
+                                    // dest is a per-task Box (not shareable) — the
+                                    // flush builds its own connection the same way
+                                    // this task did at startup.
+                                    match create_destination(&target_c.target_type, &target_c.config) {
+                                        Ok(dest) => {
+                                            flush_batch(&target_c, &store_c, &renderer_c, dest.as_ref(), &mut batch, Some(&cancel_c)).await;
+                                        }
+                                        Err(e) => tracing::error!(
+                                            target_id = %target_c.id, error = %e,
+                                            "Interval flush: destination creation failed"
+                                        ),
+                                    }
+                                });
+                            } else {
+                                // Cap saturated: put the events back so the
+                                // next tick retries (drop policy stays with
+                                // the buffer cap, not the permit cap).
+                                buffer = batch;
+                            }
                         }
                     }
                 }
@@ -805,7 +856,7 @@ async fn deliver_with_retry(
             Ok(()) => {
                 log.status = DeliveryStatus::Success;
                 log.completed_at = Some(chrono::Utc::now().timestamp());
-                record_delivery_outcome(matches!(log.status, DeliveryStatus::Success));
+                record_delivery_outcome(log.status.clone());
                 if let Err(e) = store.save_delivery_log(&log) {
                     tracing::warn!(target: "neomind::data_push", error = %e, "Delivery-log persist failed — audit trail diverges from actual delivery state");
                 }
@@ -831,7 +882,7 @@ async fn deliver_with_retry(
                 log.error = Some(scrub_credentials(&e.to_string()));
                 if attempt < max_retries {
                     log.status = DeliveryStatus::Retrying;
-                    record_delivery_outcome(matches!(log.status, DeliveryStatus::Success));
+                    record_delivery_outcome(log.status.clone());
                     if let Err(e) = store.save_delivery_log(&log) {
                         tracing::warn!(target: "neomind::data_push", error = %e, "Delivery-log persist failed — audit trail diverges from actual delivery state");
                     }
@@ -852,7 +903,7 @@ async fn deliver_with_retry(
                             e
                         )));
                         log.completed_at = Some(chrono::Utc::now().timestamp());
-                        record_delivery_outcome(matches!(log.status, DeliveryStatus::Success));
+                        record_delivery_outcome(log.status.clone());
                         if let Err(e) = store.save_delivery_log(&log) {
                             tracing::warn!(target: "neomind::data_push", error = %e, "Delivery-log persist failed — audit trail diverges from actual delivery state");
                         }
@@ -869,7 +920,7 @@ async fn deliver_with_retry(
                 } else {
                     log.status = DeliveryStatus::Failed;
                     log.completed_at = Some(chrono::Utc::now().timestamp());
-                    record_delivery_outcome(matches!(log.status, DeliveryStatus::Success));
+                    record_delivery_outcome(log.status.clone());
                     if let Err(e) = store.save_delivery_log(&log) {
                         tracing::warn!(target: "neomind::data_push", error = %e, "Delivery-log persist failed — audit trail diverges from actual delivery state");
                     }
@@ -1092,7 +1143,7 @@ async fn flush_batch(
             Ok(()) => {
                 log.status = DeliveryStatus::Success;
                 log.completed_at = Some(chrono::Utc::now().timestamp());
-                record_delivery_outcome(matches!(log.status, DeliveryStatus::Success));
+                record_delivery_outcome(log.status.clone());
                 if let Err(e) = store.save_delivery_log(&log) {
                     tracing::warn!(target: "neomind::data_push", error = %e, "Delivery-log persist failed — audit trail diverges from actual delivery state");
                 }
@@ -1123,7 +1174,7 @@ async fn flush_batch(
                 log.error = Some(scrub_credentials(&e.to_string()));
                 if attempt < max_retries {
                     log.status = DeliveryStatus::Retrying;
-                    record_delivery_outcome(matches!(log.status, DeliveryStatus::Success));
+                    record_delivery_outcome(log.status.clone());
                     if let Err(e) = store.save_delivery_log(&log) {
                         tracing::warn!(target: "neomind::data_push", error = %e, "Delivery-log persist failed — audit trail diverges from actual delivery state");
                     }
@@ -1145,7 +1196,7 @@ async fn flush_batch(
                             e
                         )));
                         log.completed_at = Some(chrono::Utc::now().timestamp());
-                        record_delivery_outcome(matches!(log.status, DeliveryStatus::Success));
+                        record_delivery_outcome(log.status.clone());
                         if let Err(e) = store.save_delivery_log(&log) {
                             tracing::warn!(target: "neomind::data_push", error = %e, "Delivery-log persist failed — audit trail diverges from actual delivery state");
                         }
@@ -1164,7 +1215,7 @@ async fn flush_batch(
                 } else {
                     log.status = DeliveryStatus::Failed;
                     log.completed_at = Some(chrono::Utc::now().timestamp());
-                    record_delivery_outcome(matches!(log.status, DeliveryStatus::Success));
+                    record_delivery_outcome(log.status.clone());
                     if let Err(e) = store.save_delivery_log(&log) {
                         tracing::warn!(target: "neomind::data_push", error = %e, "Delivery-log persist failed — audit trail diverges from actual delivery state");
                     }

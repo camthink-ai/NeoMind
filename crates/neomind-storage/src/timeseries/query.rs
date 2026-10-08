@@ -145,6 +145,46 @@ impl TimeSeriesStore {
     }
 }
 impl TimeSeriesStore {
+    /// Newest-first sample probe WITHOUT total_count: unlike
+    /// [`query_range_rev`], the reverse iteration STOPS after `n` points
+    /// instead of scanning the whole range to produce an exact count —
+    /// the retention classifier only needs the newest 16 samples, and on a
+    /// camera series that scan was O(total points) per metric per cycle.
+    pub async fn query_latest_samples(
+        &self,
+        source_id: &str,
+        metric: &str,
+        n: usize,
+    ) -> Result<Vec<DataPoint>, Error> {
+        let db = self.db.clone();
+        let (src, met) = (source_id.to_string(), metric.to_string());
+        tokio::task::spawn_blocking(move || -> Result<Vec<DataPoint>, Error> {
+            let read_txn = db.begin_read()?;
+            let table = match read_txn.open_table(TIMESERIES_TABLE) {
+                Ok(t) => t,
+                Err(redb::TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+                Err(e) => return Err(Error::Storage(format!("Failed to open table: {}", e))),
+            };
+            let mut points = Vec::with_capacity(n.min(64));
+            for result in table
+                .range(
+                    (src.as_str(), met.as_str(), i64::MIN)..=(src.as_str(), met.as_str(), i64::MAX),
+                )?
+                .rev()
+            {
+                if points.len() >= n {
+                    break;
+                }
+                let (_key, value) = result?;
+                points.push(serde_json::from_slice(value.value())?);
+            }
+            Ok(points)
+        })
+        .await
+        .map_err(|e| Error::Storage(format!("query_latest_samples join error: {}", e)))?
+    }
+}
+impl TimeSeriesStore {
     fn query_range_rev_impl(
         db: &Database,
         source_id: &str,

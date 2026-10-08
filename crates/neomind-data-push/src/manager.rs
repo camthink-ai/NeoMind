@@ -309,7 +309,9 @@ impl PushManager {
         Ok(PushStats {
             total_targets: targets.len(),
             active_targets: active,
-            total_deliveries: c.total.load(Relaxed),
+            // Derived: attempts-in-progress states no longer pollute the
+            // total (see record_delivery_outcome).
+            total_deliveries: c.success.load(Relaxed) + c.failed.load(Relaxed),
             successful_deliveries: c.success.load(Relaxed),
             failed_deliveries: c.failed.load(Relaxed),
             dropped_backpressure: c.dropped_backpressure.load(Relaxed),
