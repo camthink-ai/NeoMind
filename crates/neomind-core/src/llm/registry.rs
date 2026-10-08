@@ -1,8 +1,9 @@
 //! Curated model capability registry, embedded at compile time.
 //!
 //! The data file `data/model_registry.json` is sourced from LiteLLM's
-//! community-maintained `model_prices_and_context_window.json` (2988 entries
-//! as of 2026-08-11, 778 marked `supports_reasoning: true`).
+//! community-maintained `model_prices_and_context_window.json` (4504 keys
+//! as of 2026-10-08, 1792 marked `supports_vision`, 1785
+//! `supports_reasoning`; refresh via scripts/update-model-registry.sh).
 //!
 //! This module implements the same 3-tier fallback chain LiteLLM uses:
 //!
@@ -148,9 +149,12 @@ pub fn lookup_function_calling(model: &str) -> Option<bool> {
 /// This is intentionally a small, hand-curated table — providers rarely
 /// introduce new aliases, and adding them here is a one-line change.
 fn aliases_for(model: &str) -> Vec<&'static str> {
-    // Anthropic family. LiteLLM's bare-key coverage is spotty for the 3.5
-    // generation, so we fall back to the vertex_ai entries which are always
-    // present and reflect the same model capabilities.
+    // Anthropic family. LiteLLM's bare-key coverage is spotty and CHURNS:
+    // the 2026-10 snapshot dropped the dated bare Claude-3 keys while
+    // keeping the undated vertex_ai ones (and vice versa in other cycles).
+    // Each alias lists multiple candidates in preference order — the lookup
+    // takes the first that exists, so upstream pruning of any single key
+    // no longer breaks the family.
     if model.starts_with("claude-3-5-sonnet") {
         return vec!["vertex_ai/claude-3-5-sonnet"];
     }
@@ -158,27 +162,48 @@ fn aliases_for(model: &str) -> Vec<&'static str> {
         return vec!["vertex_ai/claude-3-5-haiku"];
     }
     if model.starts_with("claude-3-opus") {
-        return vec!["claude-3-opus-20240229"];
+        return vec!["vertex_ai/claude-3-opus", "claude-3-opus-20240229"];
     }
     if model.starts_with("claude-3-sonnet") {
-        return vec!["claude-3-sonnet-20240229"];
+        return vec!["vertex_ai/claude-3-sonnet", "claude-3-sonnet-20240229"];
     }
     if model.starts_with("claude-3-haiku") {
-        return vec!["claude-3-haiku-20240307"];
+        return vec!["vertex_ai/claude-3-haiku", "claude-3-haiku-20240307"];
     }
     // Claude 4 family — bare aliases like `claude-opus-4`, `claude-sonnet-4`.
+    // The dated 4.0 keys were pruned upstream; the x.5 successors carry the
+    // same capability profile (all vision-capable).
     if model.starts_with("claude-opus-4-") || model == "claude-opus-4" {
-        return vec!["claude-opus-4-20250514"];
+        return vec!["claude-opus-4-20250514", "claude-opus-4-5"];
     }
     if model.starts_with("claude-sonnet-4-") || model == "claude-sonnet-4" {
-        return vec!["claude-sonnet-4-20250514"];
+        return vec!["claude-sonnet-4-20250514", "claude-sonnet-4-5"];
     }
     if model.starts_with("claude-haiku-4-") || model == "claude-haiku-4" {
-        return vec!["claude-haiku-4-5-20251001"];
+        return vec!["claude-haiku-4-5-20251001", "claude-haiku-4-5"];
     }
     // OpenAI aliases — `gpt-4-turbo` and `-latest` variants
     if model == "gpt-4-turbo" || model == "gpt-4-turbo-latest" {
         return vec!["gpt-4-turbo-2024-04-09"];
+    }
+    // Gemini aliases — the 2.0-generation bare keys were pruned upstream
+    // (2026-10 snapshot) and the surviving vertex_ai forms are deprecated
+    // entries whose supports_vision flag was stripped. The exp-image-
+    // generation entries carry the (true) flag; the 2.5 successor is the
+    // last resort — same capability family for our purposes.
+    if model.starts_with("gemini-2.0-flash") {
+        return vec![
+            "gemini-2.0-flash",
+            "gemini-2.0-flash-exp-image-generation",
+            "gemini-2.5-flash",
+        ];
+    }
+    if model.starts_with("gemini-2.0-pro") {
+        return vec![
+            "gemini-2.0-pro-exp",
+            "vertex_ai/gemini-2.0-pro-exp-0810",
+            "gemini-2.5-pro",
+        ];
     }
     Vec::new()
 }
