@@ -53,6 +53,9 @@ function getActiveBackendSupportsMultimodal(llmBackends: any[], activeBackendId:
 
 // Convert file to base64 data URL
 
+/** Welcome-mode stream binding: matches no real session id. */
+const WELCOME_DETACHED = "\u0000__welcome_detached__"
+
 export function ChatPage() {
   const { t } = useTranslation(['common', 'chat'])
   const { toast } = useToast()
@@ -160,7 +163,15 @@ export function ChatPage() {
     restoreIfBehind,
   } = useChatStream({
     // Drop events from other sessions — the side panel shares this socket.
-    sessionId,
+    // Welcome mode binds a sentinel matching NO session: navigating to bare
+    // /chat keeps the store's sessionId (sidebar entries don't clear it), so
+    // binding the stale id would keep accepting the left session's stream —
+    // its isStreaming then spun the WELCOME composer with no conversation
+    // visible. The sentinel change also trips the hook's session-change
+    // hard-reset, clearing the spinner. The welcome-mode send is safe: the
+    // store session is created BEFORE ws.sendMessage, so real events only
+    // flow after this prop is the new session's id.
+    sessionId: urlSessionId ? sessionId : WELCOME_DETACHED,
     onEnd: (result) => {
       // Any end stops the detached-turn poll (a live end means the poll's
       // finalize branch would race a possibly-already-started NEXT turn).
@@ -444,9 +455,12 @@ export function ChatPage() {
   useEffect(() => {
     // Leaving this session stops its poll — a poll keyed to the PREVIOUS
     // session re-injected that session's content here every 3s (the
-    // live-test cross-session bleed).
+    // live-test cross-session bleed). Includes leaving to the WELCOME page
+    // (bare /chat): the store session id survives that navigation, so
+    // without the urlSessionId gate this effect would auto-resume the
+    // abandoned session's stream onto a page that shows no conversation.
     setResumedPendingStream(null)
-    if (!sessionId) return
+    if (!sessionId || !urlSessionId) return
     let cancelled = false
     api.getPendingStream(sessionId).then(result => {
       if (cancelled || !result?.hasPending) return
@@ -456,7 +470,7 @@ export function ChatPage() {
             })
     }).catch(() => {})
     return () => { cancelled = true }
-  }, [sessionId, resumePending])
+  }, [sessionId, urlSessionId, resumePending])
 
   // Detached-turn poll: after a resume, the generating turn's events may be
   // bound to a DEAD connection (hard refresh) — the server's pending
