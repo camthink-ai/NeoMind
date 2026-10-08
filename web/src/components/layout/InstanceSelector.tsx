@@ -4,7 +4,7 @@
  * Click opens the full-screen InstanceManagerDialog for switching + managing.
  */
 
-import { useEffect } from 'react'
+import { forwardRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useStore } from '@/store'
 import { cn } from '@/lib/utils'
@@ -16,7 +16,11 @@ interface InstanceSelectorProps {
   compact?: boolean
 }
 
-export function InstanceSelector({ onManageInstances, compact = false }: InstanceSelectorProps) {
+// forwardRef: the collapsed rail wraps this in TooltipTrigger asChild, which
+// forwards a ref onto the rendered element — a plain function component
+// drops it and React warns ("Function components cannot be given refs").
+export const InstanceSelector = forwardRef<HTMLButtonElement, InstanceSelectorProps>(
+  function InstanceSelector({ onManageInstances, compact = false }, ref) {
   const { t } = useTranslation('instances')
   const instances = useStore((s) => s.instances)
   const currentInstanceId = useStore((s) => s.currentInstanceId)
@@ -37,6 +41,7 @@ export function InstanceSelector({ onManageInstances, compact = false }: Instanc
 
   return (
     <button
+      ref={ref}
       disabled={isSwitching}
       onClick={onManageInstances}
       className={cn(
@@ -77,4 +82,4 @@ export function InstanceSelector({ onManageInstances, compact = false }: Instanc
       )}
     </button>
   )
-}
+})
