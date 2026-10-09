@@ -54,6 +54,20 @@ pub async fn dispatch(argv: &[String]) -> Result<CliResponse, DispatchError> {
     let parsed = match Args::try_parse_from(argv.iter()) {
         Ok(args) => args,
         Err(e) => {
+            // `--help` / `--version` arrive here as clap ERRORS
+            // (DisplayHelp/DisplayVersion) — but the REAL CLI exits 0 with
+            // the rendered text. Classifying them as parse errors made every
+            // `... --help` read as a failure to the agent (exit 2, "error:"
+            // prefix) and triggered identical-command retries. Return the
+            // rendered text as a SUCCESS: same observable contract as the
+            // binary.
+            use clap::error::ErrorKind;
+            if matches!(e.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion) {
+                return Ok(CliResponse::success(
+                    serde_json::json!({ "help": e.to_string() }),
+                    "help requested (exit 0 — this is rendered output, not an error)",
+                ));
+            }
             // First-shot flag errors from the agent's shell tool land here.
             // Counted from logs to rank which commands need surface fixes.
             tracing::warn!(
@@ -273,6 +287,28 @@ mod tests {
                 args
             );
         }
+    }
+
+    /// `--help` (and `-V`) are clap DisplayHelp/Version "errors" — the
+    /// in-process path must return them as SUCCESS with the rendered text,
+    /// matching the real binary's exit-0 contract. Regression: the agent's
+    /// `dashboard list --help` came back exit 2 with an "error:" prefix, so
+    /// the model treated a working help call as a failure and retried it.
+    #[tokio::test]
+    async fn help_is_success_not_parse_error() {
+        let resp = dispatch(&argv(&["dashboard", "list", "--help"]))
+            .await
+            .expect("--help must not be a Parse error");
+        assert!(resp.success, "help is exit 0");
+        let text = resp.data.expect("help payload")["help"]
+            .as_str()
+            .expect("rendered help text")
+            .to_string();
+        assert!(text.contains("Usage"), "help text must render: {text}");
+        assert!(
+            !text.starts_with("error:"),
+            "no error prefix on help: {text}"
+        );
     }
 
     /// Malformed input must yield Parse (so the caller can surface clap's

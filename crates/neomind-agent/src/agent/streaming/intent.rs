@@ -217,6 +217,32 @@ pub(crate) fn build_list_only_dead_end_prompt(
     Some(msg)
 }
 
+/// TURN-END completeness note: the user asked for an ACTION and NO mutation
+/// command ever executed this turn (only read/build steps ran). Reuses the
+/// mid-turn detectors so the false-positive scoping matches: an action hint
+/// must be extractable (noun false-positives skipped) and every executed
+/// shell command must be read-only. With NO shell commands at all the
+/// read-only check is undeterminable and returns false — we stay silent
+/// rather than guess.
+pub(crate) fn build_incomplete_action_note(
+    user_message: &str,
+    executed_commands: &[&str],
+) -> Option<String> {
+    if !user_message_requires_action(user_message) {
+        return None;
+    }
+    let action_hint = extract_action_hint(user_message);
+    if action_hint.is_empty() {
+        return None;
+    }
+    if !all_tools_were_read_only(executed_commands, &[]) {
+        return None;
+    }
+    Some(format!(
+        "\n\n---\nℹ️ **[系统提示 / System note]** 用户要求的操作（{action_hint}）**本轮未执行**——只跑了查询/文件步骤，以上内容是进度说明而非最终结果。发送「继续」可恢复执行；ID 等标识符请取自 list/get 命令的真实输出，不要自行构造。\nNote: the requested ACTION ({action_hint}) was NOT executed this turn — only read/build steps ran; the reply above is a progress report, not a result. Send \"继续 / continue\" to resume, and take identifiers from list/get output instead of constructing them."
+    ))
+}
+
 /// Extract the domain and expected action from the user message for the forced prompt.
 pub(crate) fn extract_action_hint(msg: &str) -> String {
     let msg_lower = msg.to_lowercase();
@@ -409,6 +435,36 @@ mod tests {
         let msg = "创建一个温湿度仪表盘";
         let cmds = ["neomind device list", "neomind widget list"];
         assert!(build_list_only_dead_end_prompt(msg, &cmds, &[]).is_some());
+    }
+
+    /// Turn-end completeness: fires when an action was requested and only
+    /// read-only commands ran; stays silent for mutations, non-action asks,
+    /// and the no-shell-evidence case.
+    #[test]
+    fn incomplete_action_note_fires_and_scopes() {
+        // The live incident: "添加到dashboard", only --help/list shell calls.
+        let note = build_incomplete_action_note(
+            "帮我开发一个前端画图组件 并且添加到dashboard",
+            &[
+                "neomind dashboard list --help 2>&1 | head -50",
+                "neomind dashboard list --help 2>&1 | head -50",
+            ],
+        )
+        .expect("must flag the un-executed action");
+        assert!(note.contains("NOT executed"), "{note}");
+        assert!(note.contains("add"), "action hint carried: {note}");
+        // A mutation command ran → the action happened; no note.
+        assert!(build_incomplete_action_note(
+            "帮我加到dashboard",
+            &["neomind dashboard add-components d1 --components '[]'"],
+        )
+        .is_none());
+        // Pure query → no note.
+        assert!(
+            build_incomplete_action_note("现在有哪些设备?", &["neomind device list"]).is_none()
+        );
+        // No shell activity at all → undeterminable; stay silent.
+        assert!(build_incomplete_action_note("帮我创建规则", &[]).is_none());
     }
 
     /// The dead-end injection must NAME the shell tool — the live incident

@@ -1628,6 +1628,24 @@ pub async fn process_stream_events_with_safeguards(
                         const NOTE: &str = "\n\n---\nℹ️ **[系统提示 / System note]** 本轮对话到此结束（已达护栏预算），以上内容是**进度说明而非最终结果**——描述的后续步骤尚未执行。发送“继续”可从断点恢复。\nThe turn ended here (guard budget spent): the reply above is a progress report, not a completed result — the promised next step did NOT run. Send \"继续 / continue\" to resume from this point.";
                         yield AgentEvent::content(NOTE);
                         raw_response.push_str(NOTE);
+                    } else if let Some(note) = {
+                        // === TURN-END ACTION-COMPLETENESS NOTE ===
+                        // Live incident: a 400s turn ended with the requested
+                        // "add to dashboard" NEVER executed (files written,
+                        // install/add-components skipped) while the summary
+                        // (>500 chars, so the promise guard's cap exempted it)
+                        // framed the task as done. The mid-turn dead-end
+                        // injection fires at most once; this closes the loop
+                        // at the point the turn actually ends.
+                        let cmds: Vec<&str> =
+                            recently_executed_commands.iter().map(|s| s.as_str()).collect();
+                        super::intent::build_incomplete_action_note(&user_message, &cmds)
+                    } {
+                        tracing::warn!(
+                            "Turn ending with the requested ACTION never executed — appending completeness note"
+                        );
+                        yield AgentEvent::content(note.clone());
+                        raw_response.push_str(&note);
                     }
 
                     // `buffer` holds *every* streamed chunk for this round and is the
