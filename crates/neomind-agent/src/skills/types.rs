@@ -43,7 +43,16 @@ pub struct SkillTriggers {
     pub tool_target: Vec<ToolTarget>,
 }
 
-/// Tool-action pair for trigger matching.
+/// One `tool_target` trigger — **TEXT triggers, not tool bindings**.
+///
+/// `tool` and `actions` are matched as SUBSTRINGS of the user's message
+/// (see `matcher::score_skill`: `tool` hit = +0.2, tool+action = +0.5) and
+/// are also concatenated into the skill tool's search corpus. The names
+/// echo CLI domains (`rule`, `widget`, `dashboard`…) for authoring clarity,
+/// but they are NEVER looked up against the tool registry — `tool: widget`
+/// fires when the user's message mentions "widget", whether or not any
+/// tool by that name exists. (Read once as "stale bindings to a
+/// nonexistent widget tool" — they are neither bindings nor stale.)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolTarget {
     pub tool: String,
