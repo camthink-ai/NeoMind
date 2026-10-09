@@ -404,9 +404,9 @@
   "ofOneCore": "of one core",
   "threads": "Threads",
   "processUptime": "Process uptime",
-  "decisionLayer": "Decision Layer",
+  "decisionLayer": "Decision Model",
   "decision": {
-    "statusTitle": "Decision layer status",
+    "statusTitle": "Decision model status",
     "modesTitle": "Action modes",
     "shadow": "Shadow mode (audit only)",
     "shadowHintShort": "Record decisions only; action modes take effect once off",

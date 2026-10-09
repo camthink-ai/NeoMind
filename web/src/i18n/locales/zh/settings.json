@@ -404,9 +404,9 @@
   "ofOneCore": "单核占比",
   "threads": "线程",
   "processUptime": "进程运行时长",
-  "decisionLayer": "决策层",
+  "decisionLayer": "决策模型",
   "decision": {
-    "statusTitle": "决策层状态",
+    "statusTitle": "决策模型状态",
     "modesTitle": "行动模式",
     "shadow": "影子模式（仅审计）",
     "shadowHintShort": "只记录决策，不影响回复；关闭后行动模式才会生效",
