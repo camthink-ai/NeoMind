@@ -131,8 +131,22 @@ pub async fn create_agent(
     match schedule_type_val {
         "interval" => {
             if let Some(config) = schedule_config {
-                if let Ok(secs) = config.parse::<u64>() {
-                    schedule["interval_seconds"] = json!(secs);
+                // Parse failure must ERROR, not silently drop: the dropped
+                // field made the API reject with "interval_seconds is
+                // required" while the caller DID pass --schedule-config —
+                // an unexplainable error (same silent-drop family as the
+                // update-component id/type strip).
+                match config.parse::<u64>() {
+                    Ok(secs) => schedule["interval_seconds"] = json!(secs),
+                    Err(_) => {
+                        return Ok(CliResponse::error(
+                            format!(
+                                "--schedule-config '{}' is not a plain number of SECONDS — pass e.g. --schedule-config 300 for a 5-minute interval",
+                                config
+                            ),
+                            "INVALID_SCHEDULE_CONFIG",
+                        ))
+                    }
                 }
             }
         }
@@ -369,8 +383,17 @@ pub async fn update_agent(
         match st {
             "interval" => {
                 if let Some(config) = schedule_config {
-                    if let Ok(secs) = config.parse::<u64>() {
-                        schedule["interval_seconds"] = json!(secs);
+                    match config.parse::<u64>() {
+                        Ok(secs) => schedule["interval_seconds"] = json!(secs),
+                        Err(_) => {
+                            return Ok(CliResponse::error(
+                                format!(
+                                    "--schedule-config '{}' is not a plain number of SECONDS — pass e.g. --schedule-config 300",
+                                    config
+                                ),
+                                "INVALID_SCHEDULE_CONFIG",
+                            ))
+                        }
                     }
                 }
             }

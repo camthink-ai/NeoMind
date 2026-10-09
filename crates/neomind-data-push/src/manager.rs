@@ -103,7 +103,12 @@ impl PushManager {
         let target_type: PushTargetType = match config.target_type.as_str() {
             "webhook" => PushTargetType::Webhook,
             "mqtt" => PushTargetType::Mqtt,
-            other => return Err(anyhow!("Unknown target type: {}", other)),
+            other => {
+                return Err(anyhow!(
+                    "Unknown target type: {} (valid: webhook | mqtt)",
+                    other
+                ))
+            }
         };
 
         let dest = create_destination(&target_type, &config.config)?;
@@ -152,7 +157,12 @@ impl PushManager {
             target.target_type = match target_type_str.as_str() {
                 "webhook" => PushTargetType::Webhook,
                 "mqtt" => PushTargetType::Mqtt,
-                other => return Err(anyhow!("Unknown target type: {}", other)),
+                other => {
+                    return Err(anyhow!(
+                        "Unknown target type: {} (valid: webhook | mqtt)",
+                        other
+                    ))
+                }
             };
         }
         if let Some(config_val) = config.config {

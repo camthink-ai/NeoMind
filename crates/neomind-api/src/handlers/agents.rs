@@ -1095,12 +1095,15 @@ pub async fn create_agent(
             None => {
                 return Err(ErrorResponse::validation(
                     "interval_seconds is required when schedule_type is 'interval'",
+                ).with_hint(
+                    "CLI: --schedule-type interval --schedule-config <SECONDS>, e.g. --schedule-config 300 for a 5-minute interval. A non-numeric --schedule-config is silently dropped by older CLI builds — pass a plain number.",
                 ));
             }
             Some(secs) if secs < 10 => {
                 return Err(ErrorResponse::validation(
                     "interval_seconds must be at least 10 seconds",
-                ));
+                )
+                .with_hint("Pass --schedule-config 10 or higher (seconds)."));
             }
             _ => {}
         }
