@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.0] - 2026-10-09 — review-hardening wave + the decision layer becomes operable
+
+Two threads: every actionable finding from a full pre-push review (3 high, 20 medium, the low-severity backlog) is fixed with gates green; and the decision layer grows its operations surface — runtime config API + UI, a generic ask endpoint, hot effect on extension install.
+
+### Upgrade notes (1.1.2 →)
+- Session-scoped REST endpoints (history/pending/delete/clear, `__CANCEL__`) enforce the same first-claim ownership as the WS attach path — a foreign authenticated principal now gets 403 instead of reading/wiping another user's session.
+- Desktop `neomind api-key/user` now execute in-process against the running server (previously a silent GUI-exit-0 on the desktop alias); `user reset-password` and extension-local subcommands still need the full CLI and say so.
+- Deleting a session cancels its in-flight turn and drops the pending snapshot; the cancelled WS ack carries sessionId (shared-socket views no longer reset each other).
+- The event-bus carries Binary values tagged (`{"$binary": …}`) instead of bare base64 strings; the storage read-back heuristic no longer re-detects types.
+- Decision defaults unchanged; anything configured via the new config API beats the env seeds on every boot.
+
+### Added
+- `GET/PUT /api/decisions/config` + a Settings → Decision Layer section: posture switches (shadow/prefill/guidance/shortcircuit), confidence gates, latency budgets, int8, and read-only backend availability — all hot-reload, persisted, no env vars or restarts.
+- `POST /api/decisions/ask` — generic question decision (choice/noul/score over plain options, ranked distribution back); the laya-decision extension gains a matching `decide` command with the same shorthand.
+- Installing/uninstalling/configuring the laya-decision extension takes effect immediately (`refresh_decision_layer`) — "install IS the deployment" now holds on a running server; the extension branch reads sidecarPort from the extension's own config, and an explicit `LAYA_SIDECAR_URL` outranks auto-discovery.
+
+### Fixed — desktop CLI
+- Every successful desktop command printed twice (format_output printed AND returned); `neomind api-key/user` exited 0 with no output via the GUI_OWNED trap; Windows GUI-subsystem builds attach the parent console before dispatching; backslash paths no longer misparse as subcommands.
+
+### Fixed — chat & sessions
+- Restored turns resume into the server's round (pending snapshot carries currentRound) and no longer double thinking every poll tick; reconnect-path fetch races and Panel init chains are cancellable; refreshCurrentSession won't paint session A over B.
+- Pending tool results cap at 8 KiB in the snapshot; ToolCallEnd pairing direction matches the client; staleness rules agree between the sidebar list and session enter.
+
+### Fixed — telemetry, storage & notifications
+- Latest-cache refuses regressions and batches publish max-by-timestamp; the shutdown flush routes through the live store (no redb lock race during deferred open); retention's classifier stops after 16 keys.
+- webhook `quality` survives the bus consumer re-write; the interval-flush retry ladder no longer stalls event consumption; /stats counts only terminal delivery outcomes.
+- All-channels-failed releases the dedup key; the IM seen-set evicts oldest-quarter instead of clearing; bulk-acknowledge stamps `acknowledged_by`.
+
+### Fixed — agents & memory
+- A daily-cap refusal pauses instead of killing event agents (busy-not-broken classification + clean skip); overlapping triggers don't pollute consecutive_failures; permit-budget timeouts re-arm in 5s instead of dropping a cycle; cron agents keep one timezone across reschedules.
+- image_edit caches at most two parsed font faces (was every face of every TTC, ~200 MB on macOS); summary fingerprints commit only after a durable write.
+- Gemini 2.0 aliases no longer borrow the 2.5 successors' reasoning=true.
+
+### Test
+- Ownership/gates/dedup/FIFO-rotation behaviors gained positive tests; suites: cargo workspace green, web 285, i18n parity.
+
+---
+
 ## [1.1.2] - 2026-10-08 — audit fixes, live-tested chat resilience, cross-distro Linux hardening
 
 Output of a systematic audit across telemetry, agent execution, chat/image, storage and notifications, plus a live-testing round on chat streaming and a Linux hardening pass. Every high/medium finding is fixed with tests; behavior changes operators must know are in the upgrade notes.
@@ -53,7 +91,7 @@ Output of a systematic audit across telemetry, agent execution, chat/image, stor
 - Model registry refreshed from the 2026-08-11 snapshot (stale multimodal/context data for new models); nested `function: {name}` tool calls parse on OpenAI-compatible backends.
 - Watermark `draw_text` picks fonts by glyph coverage (CJK no longer draws tofu); conclusion prose image paths upgraded to markdown image syntax.
 - Startup no longer mass-reactivates Error agents; notification dedup is check-and-mark in one lock scope; alert round-trips and the generating-indicator poll hardened.
-- Web: InstanceSelector ref warning, welcome-page spinner inheritance, mobile setup guide keeps its navigation header.
+- Web: InstanceSelector ref warning, welcome-page spinner inheritance, mobile setup guide keeps its navigation header; mobile welcome suggestion chips are a curated static 2-row set (short labels, full prompts on tap); README screenshots re-shot from the current UI.
 - Linux: arm64 builds set `JEMALLOC_SYS_WITH_LG_PAGE=16` (64KB-page hosts abort at startup otherwise), desktop glibc pinned to the 2.35 baseline, `.rpm` bundles attached to releases, `install.sh` supports RHEL-family nginx layouts and dnf/yum/zypper.
 
 ### Test
