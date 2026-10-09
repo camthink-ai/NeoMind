@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.2.0] - 2026-10-09 — review-hardening wave + the decision layer becomes operable
 
-Two threads: every actionable finding from a full pre-push review (3 high, 20 medium, the low-severity backlog) is fixed with gates green; and the decision layer grows its operations surface — runtime config API + UI, a generic ask endpoint, hot effect on extension install.
+Three threads: every actionable finding from a full pre-push review (3 high, 20 medium, the low-severity backlog) is fixed with gates green; the decision model becomes fully operable — runtime config API + settings UI, a generic ask endpoint, hot effect on install/uninstall, honest int8; and the file tools + small-model guardrails are rebuilt from five live widget-task diagnostic runs.
 
 ### Upgrade notes (1.1.2 →)
 - Session-scoped REST endpoints (history/pending/delete/clear, `__CANCEL__`) enforce the same first-claim ownership as the WS attach path — a foreign authenticated principal now gets 403 instead of reading/wiping another user's session.
@@ -19,8 +19,9 @@ Two threads: every actionable finding from a full pre-push review (3 high, 20 me
 - Decision defaults unchanged; anything configured via the new config API beats the env seeds on every boot.
 
 ### Added
-- `GET/PUT /api/decisions/config` + a Settings → Decision Layer section: posture switches (shadow/prefill/guidance/shortcircuit), confidence gates, latency budgets, int8, and read-only backend availability — all hot-reload, persisted, no env vars or restarts.
+- `GET/PUT /api/decisions/config` + a Settings → Decision Model section (决策模型): posture switches (shadow/prefill/guidance/shortcircuit), confidence gates, latency budgets, int8, and read-only backend availability — all hot-reload, persisted, no env vars or restarts.
 - `POST /api/decisions/ask` — generic question decision (choice/noul/score over plain options, ranked distribution back); the laya-decision extension gains a matching `decide` command with the same shorthand.
+- File tools v2 (industry-pattern upgrade): `file_edit` batch edits (validate-all-then-apply atomicity), append mode, whitespace-tolerant fallback, JSON/TOML syntax gates that never let invalid content reach disk, ±5-line context echo (verify without a re-read round); `file_write` idempotency (identical content is a confirmed no-op); new `file_read` (line numbers, windowed reads, binary rejection) and an opt-in freshness guard (`state`/`expected`) across the family.
 - Installing/uninstalling/configuring the laya-decision extension takes effect immediately (`refresh_decision_layer`) — "install IS the deployment" now holds on a running server; the extension branch reads sidecarPort from the extension's own config, and an explicit `LAYA_SIDECAR_URL` outranks auto-discovery.
 
 ### Fixed — desktop CLI
@@ -39,6 +40,19 @@ Two threads: every actionable finding from a full pre-push review (3 high, 20 me
 - A daily-cap refusal pauses instead of killing event agents (busy-not-broken classification + clean skip); overlapping triggers don't pollute consecutive_failures; permit-budget timeouts re-arm in 5s instead of dropping a cycle; cron agents keep one timezone across reschedules.
 - image_edit caches at most two parsed font faces (was every face of every TTC, ~200 MB on macOS); summary fingerprints commit only after a durable write.
 - Gemini 2.0 aliases no longer borrow the 2.5 successors' reasoning=true.
+
+### Fixed — small-model agentic loops (from five live widget-task runs)
+- web_fetch-on-invented-endpoint loops: a per-turn failure-strike breaker (identical failing call refused at #3 with a redirect), failure notes that name the right tool per task, and a dead-end injection that names shell + the neomind CLI (and the widget→dashboard install pipeline with the type=id convention).
+- Shell failures were counted as successes by every control-flow reader (loop guards, retry branch, agent success-rate/journal, tool-result cache); a shared effective-success now reads the exit code everywhere. API `hint`s (schema cheat-sheets) are no longer dropped by the CLI client or the web error extractor.
+- `--help` answered exit 2 as a parse error (in-process dispatch); a turn ending on an action promise is labeled a progress report; a turn ending with the requested action never successfully executed is flagged with how to resume; `--schedule-config` silently dropped non-numeric values instead of erroring.
+- Bypass-family hardening across all 12 CLI domains: update-component reports ignored_keys instead of silently stripping id/type; device connection_config errors warn that typo'd fields are stored as metadata; data-push target errors list valid types.
+
+### Fixed — decision model
+- Config surface merge-on-write (an unrelated PUT can never reset sidecar_ms/int8), PUT responses carry the full GET shape (the settings tab crashed on first toggle), gates restore into the service on every build, persist-first transactional PUT, engine.int8 now actually reaches the extension engine (auto-reload on change), uninstall via the UI route deactivates the layer immediately, and an inert layer reports "not enabled" instead of a fake shadow badge.
+- Shadow config persistence verified intact (settings.redb held the operator's value); the loader no longer silently falls back to env seeds on a transient store-open failure.
+
+### Fixed — web
+- Assistant thinking/tool cards stop resizing mid-stream (full-column width); mobile welcome chips are a curated static 2-row set; DecisionTab restyled to the Preferences conventions.
 
 ### Test
 - Ownership/gates/dedup/FIFO-rotation behaviors gained positive tests; suites: cargo workspace green, web 285, i18n parity.
