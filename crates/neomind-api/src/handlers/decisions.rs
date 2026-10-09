@@ -21,6 +21,7 @@ use super::{
     common::{ok, HandlerResult},
     ServerState,
 };
+use crate::models::{ApiResponse, ErrorResponse};
 use neomind_core::{DecisionQuestion, DecisionRequest, DecisionService};
 
 // ---------------------------------------------------------------------------
@@ -1117,6 +1118,171 @@ pub struct QuestionEntryDto {
 pub struct DecideRequest {
     pub state: String,
     pub questions: Vec<QuestionEntryDto>,
+}
+
+/// Ad-hoc single-question convenience over the decision model: supply a
+/// state and an option set, get the ranked answer — no knowledge of the
+/// wire question format required. This is the GENERIC question-decision
+/// surface (`POST /api/decisions` remains the raw multi-question primitive).
+#[derive(Debug, Deserialize)]
+pub struct AskRequest {
+    /// The context to classify — for platform routing this is
+    /// "User request: <message>", but ANY text works (documents, alerts,
+    /// sensor summaries…).
+    pub state: String,
+    /// `choice` (pick from options — default), `noul` (yes/no, options
+    /// ignored), `score` (options = ordered ladder, low→high).
+    #[serde(default = "default_ask_mode")]
+    pub mode: String,
+    /// Question wording; defaults to a generic phrasing. The trained heads
+    /// were fit on instruction+criteria semantics — a precise instruction
+    /// improves calibration.
+    pub instructions: Option<String>,
+    /// choice: array of labels, or {label: description} (descriptions
+    /// improve accuracy — they are what the model actually scores).
+    /// score: ordered level descriptions.
+    pub options: Option<serde_json::Value>,
+}
+
+fn default_ask_mode() -> String {
+    "choice".to_string()
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/decisions/ask",
+    tag = "decisions",
+    request_body = AskRequest,
+    responses(
+        (status = 200, description = "Ranked decision for one ad-hoc question"),
+        (status = 503, description = "Decision layer not configured"),
+    )
+)]
+pub async fn ask(
+    State(state): State<ServerState>,
+    Json(req): Json<AskRequest>,
+) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
+    let Some(ds) = state.decision_snapshot() else {
+        return Err(ErrorResponse::new(
+            "DECISION_NOT_CONFIGURED",
+            "decision layer not configured (install the laya-decision extension)",
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+        ));
+    };
+
+    let instructions = req
+        .instructions
+        .unwrap_or_else(|| "Which option best matches the user request?".to_string());
+    let question = match req.mode.as_str() {
+        "noul" => DecisionQuestion::noul(&instructions),
+        "score" => {
+            let ladder: Vec<String> = req
+                .options
+                .as_ref()
+                .and_then(|o| o.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if ladder.len() < 2 {
+                return Err(ErrorResponse::new(
+                    "BAD_OPTIONS",
+                    "score mode needs options: an ordered array of level descriptions (low→high)",
+                    axum::http::StatusCode::BAD_REQUEST,
+                ));
+            }
+            DecisionQuestion::score(
+                &instructions,
+                ladder
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, desc)| (format!("level_{}", i + 1), desc))
+                    .collect(),
+            )
+        }
+        _ => {
+            // choice: accept ["a","b"] or {"a": "desc", ...}
+            let mut pairs: Vec<(String, String)> = Vec::new();
+            match req.options {
+                Some(serde_json::Value::Array(arr)) => {
+                    for v in arr {
+                        if let Some(l) = v.as_str() {
+                            pairs.push((l.to_string(), l.to_string()));
+                        }
+                    }
+                }
+                Some(serde_json::Value::Object(map)) => {
+                    for (k, v) in map {
+                        pairs.push((k.clone(), v.as_str().unwrap_or(&k).to_string()));
+                    }
+                }
+                _ => {}
+            }
+            if pairs.len() < 2 {
+                return Err(ErrorResponse::new(
+                    "BAD_OPTIONS",
+                    "choice mode needs options: [\"a\",\"b\"] or {\"label\": \"description\"} (≥2)",
+                    axum::http::StatusCode::BAD_REQUEST,
+                ));
+            }
+            DecisionQuestion::choice(&instructions, pairs)
+        }
+    };
+
+    let mut decision_req = DecisionRequest::new(req.state);
+    decision_req = decision_req.with_question("ask", question);
+    let out = match tokio::time::timeout(
+        std::time::Duration::from_millis(1500),
+        ds.decide(&decision_req),
+    )
+    .await
+    {
+        Ok(Ok(out)) => out,
+        Ok(Err(e)) => {
+            return Err(ErrorResponse::new(
+                "DECISION_BACKEND",
+                format!("decision backend error: {e}"),
+                axum::http::StatusCode::BAD_GATEWAY,
+            ))
+        }
+        Err(_) => {
+            return Err(ErrorResponse::new(
+                "DECISION_TIMEOUT",
+                "decision backend did not answer within 1500ms",
+                axum::http::StatusCode::GATEWAY_TIMEOUT,
+            ))
+        }
+    };
+
+    let Some(a) = out.get("ask") else {
+        return Err(ErrorResponse::new(
+            "DECISION_NO_ANSWER",
+            "backend returned no answer for the question",
+            axum::http::StatusCode::BAD_GATEWAY,
+        ));
+    };
+    let mut ranked: Vec<(String, f32)> = a
+        .probabilities
+        .clone()
+        .map(|m| m.into_iter().collect())
+        .unwrap_or_default();
+    ranked.sort_by(|x, y| y.1.partial_cmp(&x.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    ok(json!({
+        "mode": req.mode,
+        "kind": format!("{:?}", a.kind).to_lowercase(),
+        "choice": a.choice,
+        "noul": a.noul,
+        "score": a.score,
+        "confidence": a.answer_confidence,
+        "ranked": ranked.into_iter()
+            .map(|(label, p)| json!({"label": label, "probability": p}))
+            .collect::<Vec<_>>(),
+        "latency_ms": out.latency_ms,
+        "backend": out.backend,
+    }))
 }
 
 /// GET /api/decisions/config — the runtime posture: action-mode switches

@@ -751,6 +751,7 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         .route("/api/llm/generate", post(settings::llm_generate_handler))
         // Global Timezone Settings API
         .route("/api/decisions", post(decisions::decide))
+        .route("/api/decisions/ask", post(decisions::ask))
         .route("/api/decisions/status", get(decisions::status))
         .route(
             "/api/decisions/config",
