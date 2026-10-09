@@ -436,6 +436,18 @@
     "budgetSidecar": "后端超时 (ms)",
     "int8": "int8 量化模型",
     "int8Hint": "体积约 1/4，边界样本一致率约 -14%；引擎重载后生效",
-    "updateFailed": "决策层配置更新失败"
+    "updateFailed": "决策层配置更新失败",
+    "decisions": "决策数",
+    "cacheHits": "缓存命中",
+    "errors": "错误",
+    "loading": "加载中…",
+    "backendAvailDesc": "自动发现（扩展安装记录）+ 环境变量覆盖，无需手动切换",
+    "modesLockedHint": "影子模式下行动模式开关不可用——先关闭影子模式。",
+    "gateDomainDesc": "路由提示（预填/短路/引导注入）采纳所需的最低置信度",
+    "gateOtherDesc": "服务级通用门控（审计中的 gated 判定与预填技能门）",
+    "budgetDesc": "超时预算；超时自动降级为跳过，绝不阻塞回合",
+    "budgetSidecarDesc": "决策后端 HTTP 客户端超时；保存后重建决策层生效",
+    "refresh": "刷新",
+    "loadFailed": "决策层配置加载失败——请检查服务是否在运行"
   }
 }

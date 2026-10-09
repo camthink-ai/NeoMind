@@ -436,6 +436,18 @@
     "budgetSidecar": "Backend timeout (ms)",
     "int8": "int8 quantized model",
     "int8Hint": "~1/4 the size, ~-14% borderline agreement; applies on engine reload",
-    "updateFailed": "Failed to update decision config"
+    "updateFailed": "Failed to update decision config",
+    "decisions": "Decisions",
+    "cacheHits": "Cache hits",
+    "errors": "Errors",
+    "loading": "Loading…",
+    "backendAvailDesc": "Auto-discovery (extension install record) + env override; no manual switching",
+    "modesLockedHint": "Action modes are locked while shadow mode is on — turn shadow off first.",
+    "gateDomainDesc": "Minimum confidence before routing hints (prefill/short-circuit/guidance) are acted on",
+    "gateOtherDesc": "Service-wide general gate (the audit's gated verdicts and the prefill skill gate)",
+    "budgetDesc": "Timeout budget; overruns degrade to a skip and never block the turn",
+    "budgetSidecarDesc": "HTTP client timeout for the decision backend; applies after the next layer rebuild",
+    "refresh": "Refresh",
+    "loadFailed": "Failed to load decision config — check that the server is running"
   }
 }

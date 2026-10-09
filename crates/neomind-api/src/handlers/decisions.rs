@@ -184,11 +184,13 @@ fn guard_shadow(ds: &std::sync::Arc<DecisionService>, mode: &str) -> bool {
     true
 }
 
-pub async fn prefill_hint(
+/// A/B-tuned display-hint gate (see the match arm in prefill_hint).
+const PREFILL_DOMAIN_HINT_GATE: f32 = 0.7;
+
+async fn prefill_hint(
     decision: &Option<std::sync::Arc<DecisionService>>,
     message: &str,
     budget: std::time::Duration,
-    domain_gate: f32,
 ) -> Option<String> {
     let ds = decision.as_ref()?;
     if !guard_shadow(ds, "prefill") {
@@ -218,7 +220,12 @@ pub async fn prefill_hint(
     // run_now off a 0.48 domain; device-types-list zh wandered into `system
     // --help` off a 0.61). Only include the domain when it clears a real gate.
     let dom_part = match (domain.picked(), domain.answer_confidence) {
-        (Some(d), Some(c)) if d != "converse" && c >= domain_gate => {
+        // 0.7 is the A/B-validated display-hint bar (qwen3.5:4b, "zero
+        // misleading" round) — deliberately NOT the configurable domain
+        // gate: a weaker bar for a hint the model merely READS is safe, and
+        // coupling it to gates.domain would drag the short-circuit SAFETY
+        // bar down with every "show more hints" tuning.
+        (Some(d), Some(c)) if d != "converse" && c >= PREFILL_DOMAIN_HINT_GATE => {
             format!(", domain={d} (conf {c:.2})")
         }
         _ => String::new(),
@@ -242,9 +249,13 @@ pub const WORKFLOW_SHAPES: &[&str] = &["direct", "multi_step", "guided", "conver
 /// hints sent small executor models into read-only explore loops until the
 /// case timeout. A hint must now clear a bar the previous calibration
 /// generation could not reach in ambiguous mid-conversation states.
+/// Guidance gates: the live values come from the runtime config
+/// (gates.domain for workflow/memory, gates.other for the skill pick) —
+/// EXCEPT the clarify/scope family below, which stays fixed: those bars
+/// were raised after the v22 field incident and are not exposed.
 pub const GUIDANCE_CONF_GATE: f32 = 0.8;
 pub const SKILL_CONF_GATE: f32 = 0.7;
-
+/// FIXED (not config-exposed): the clarify suggestion and scope/memory-op
 /// First sentence of a skill's frontmatter description, capped: the question
 /// renderer concatenates every option, so long descriptions blow the sequence
 /// budget. Matches the sandbox trainer's gloss extraction (train/prod phrasing
@@ -378,6 +389,7 @@ pub async fn guidance_hint(
     registry: &neomind_agent::skills::SharedSkillRegistry,
     message: &str,
     budget: std::time::Duration,
+    gates: (f32, f32),
 ) -> Option<String> {
     let ds = decision.as_ref()?;
     if !guard_shadow(ds, "guidance") {
@@ -445,11 +457,11 @@ pub async fn guidance_hint(
             "[Router guidance] clarify: this request is missing a critical identifier or parameter (conf {cl_conf:.2}) — ask the user for exactly that missing piece. If the target is already named and specific, act instead of asking."
         ));
     }
-    if workflow != "converse" && wf_conf >= GUIDANCE_CONF_GATE {
+    if workflow != "converse" && wf_conf >= gates.0 {
         lines.push(format!(
             "[Router guidance] workflow: {workflow} (conf {wf_conf:.2})"
         ));
-        if skill != "none" && sk_conf >= SKILL_CONF_GATE {
+        if skill != "none" && sk_conf >= gates.1 {
             lines.push(format!("load skill: {skill} (conf {sk_conf:.2})"));
             if workflow == "guided" {
                 lines.push("This is a multi-turn guided flow: load the guide first, then follow its steps and confirm each one with the user.".into());
@@ -457,11 +469,11 @@ pub async fn guidance_hint(
         }
     }
     if let Some(op) = &memory_op {
-        if op == "write" && mem_conf >= GUIDANCE_CONF_GATE {
+        if op == "write" && mem_conf >= gates.0 {
             lines.push(format!(
                 "[Router guidance] memory: the user is stating a durable preference/fact (conf {mem_conf:.2}) — persist it with the memory tool."
             ));
-        } else if op == "read" && mem_conf >= GUIDANCE_CONF_GATE {
+        } else if op == "read" && mem_conf >= gates.0 {
             lines.push(format!(
                 "[Router guidance] memory: consult stored preferences/knowledge (conf {mem_conf:.2}) before answering."
             ));
@@ -543,33 +555,33 @@ pub struct DecisionRuntimeFlags {
 
 /// Persistence shape (see [`load_decision_flags`]).
 #[derive(serde::Serialize, serde::Deserialize, Default, Clone, Copy)]
-struct DecisionFlagsPersist {
+pub struct DecisionFlagsPersist {
     #[serde(default)]
-    prefill: bool,
+    pub prefill: bool,
     #[serde(default)]
-    guidance: bool,
+    pub guidance: bool,
     #[serde(default)]
-    shortcircuit: bool,
+    pub shortcircuit: bool,
     /// None = never configured via API (env/default decides); Some = the
     /// operator's persisted choice, which beats the env seed.
     #[serde(default)]
-    shadow: Option<bool>,
+    pub shadow: Option<bool>,
     #[serde(default = "default_gates")]
-    gates: GatesPersist,
+    pub gates: GatesPersist,
     #[serde(default = "default_budgets")]
-    budgets: BudgetsPersist,
+    pub budgets: BudgetsPersist,
     #[serde(default)]
-    engine: EnginePersist,
+    pub engine: EnginePersist,
 }
 
 /// Confidence gates: `domain` is the stricter family (routing hints the
 /// executor acts on), `other` maps to the service-wide GatePolicy.
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy)]
-struct GatesPersist {
+pub struct GatesPersist {
     #[serde(default = "default_gate_domain")]
-    domain: f32,
+    pub domain: f32,
     #[serde(default = "default_gate_other")]
-    other: f32,
+    pub other: f32,
 }
 
 impl Default for GatesPersist {
@@ -581,15 +593,15 @@ impl Default for GatesPersist {
 /// Latency budgets (ms) for the decision calls. `sidecar_ms` applies to the
 /// HTTP client at the next decision-layer refresh.
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy)]
-struct BudgetsPersist {
+pub struct BudgetsPersist {
     #[serde(default = "default_prefill_ms")]
-    prefill_ms: u32,
+    pub prefill_ms: u32,
     #[serde(default = "default_guidance_ms")]
-    guidance_ms: u32,
+    pub guidance_ms: u32,
     #[serde(default = "default_ask_ms")]
-    ask_ms: u32,
+    pub ask_ms: u32,
     #[serde(default = "default_sidecar_ms")]
-    sidecar_ms: u32,
+    pub sidecar_ms: u32,
 }
 
 impl Default for BudgetsPersist {
@@ -600,12 +612,12 @@ impl Default for BudgetsPersist {
 
 /// Engine-level knobs — apply at the next engine (re)load.
 #[derive(serde::Serialize, serde::Deserialize, Default, Clone, Copy)]
-struct EnginePersist {
+pub struct EnginePersist {
     /// int8 quantized model (4x smaller, ~14% borderline agreement cost).
     /// Consumed by the native branch on refresh; the extension sidecar
     /// reads its own env until it grows a config field.
     #[serde(default)]
-    int8: bool,
+    pub int8: bool,
 }
 
 fn default_gate_domain() -> f32 {
@@ -614,7 +626,7 @@ fn default_gate_domain() -> f32 {
 fn default_gate_other() -> f32 {
     0.7
 }
-fn default_gates() -> GatesPersist {
+pub fn default_gates() -> GatesPersist {
     GatesPersist {
         domain: default_gate_domain(),
         other: default_gate_other(),
@@ -632,7 +644,7 @@ fn default_ask_ms() -> u32 {
 fn default_sidecar_ms() -> u32 {
     1500
 }
-fn default_budgets() -> BudgetsPersist {
+pub fn default_budgets() -> BudgetsPersist {
     BudgetsPersist {
         prefill_ms: default_prefill_ms(),
         guidance_ms: default_guidance_ms(),
@@ -660,32 +672,14 @@ impl DecisionRuntimeFlags {
         }
     }
 
-    fn snapshot(&self) -> DecisionFlagsPersist {
-        let f32_of = |a: &AtomicU32| f32::from_bits(a.load(Ordering::Relaxed));
-        DecisionFlagsPersist {
-            prefill: self.prefill.load(Ordering::Relaxed),
-            guidance: self.guidance.load(Ordering::Relaxed),
-            shortcircuit: self.shortcircuit.load(Ordering::Relaxed),
-            shadow: None, // owned by the service, persisted separately in put_config
-            gates: GatesPersist {
-                domain: f32_of(&self.gate_domain),
-                other: f32_of(&self.gate_other),
-            },
-            budgets: BudgetsPersist {
-                prefill_ms: self.budget_prefill_ms.load(Ordering::Relaxed),
-                guidance_ms: self.budget_guidance_ms.load(Ordering::Relaxed),
-                ask_ms: self.budget_ask_ms.load(Ordering::Relaxed),
-                // informational only at read time; the live value sits in
-                // the constructed sidecar client until the next refresh
-                sidecar_ms: default_sidecar_ms(),
-            },
-            engine: EnginePersist::default(),
-        }
-    }
 
     /// Live gate values for consumers (prefill's inline comparisons).
     pub fn gate_domain(&self) -> f32 {
         f32::from_bits(self.gate_domain.load(Ordering::Relaxed))
+    }
+
+    pub fn gate_other(&self) -> f32 {
+        f32::from_bits(self.gate_other.load(Ordering::Relaxed))
     }
 
     pub fn budget_prefill(&self) -> std::time::Duration {
@@ -708,14 +702,98 @@ pub const DECISION_SETTINGS_KEY: &str = "decision.config";
 /// default) > all-off. Env is only a SEED — once the API writes a config it
 /// wins on every boot, which is the point (the env no longer silently
 /// re-shadows a layer the operator turned on from the UI).
-/// Saved shadow posture, if an operator ever PUT one. Precedence in
-/// build_decision_service: this > NEOMIND_DECISION_SHADOW env > true.
-pub fn load_decision_shadow() -> Option<bool> {
+/// The FULL persisted settings doc, defaulted from env where the operator
+/// never PUT anything. THE single read path for every decision-config
+/// consumer (GET payload, PUT merge, backend construction) — the previous
+/// split (flags.snapshot for some fields, store reads for others) is what
+/// let int8/sidecar_ms silently round-trip through placeholder values.
+pub fn load_decision_settings() -> DecisionFlagsPersist {
+    let seeded = || DecisionFlagsPersist {
+        prefill: std::env::var("NEOMIND_DECISION_PREFILL")
+            .map(|v| v == "1")
+            .unwrap_or(false),
+        guidance: std::env::var("NEOMIND_DECISION_GUIDANCE")
+            .map(|v| v == "1")
+            .unwrap_or(false),
+        shortcircuit: std::env::var("NEOMIND_DECISION_SHORTCIRCUIT")
+            .map(|v| v == "1")
+            .unwrap_or(false),
+        shadow: std::env::var("NEOMIND_DECISION_SHADOW")
+            .map(|v| Some(v != "0"))
+            .unwrap_or(None),
+        gates: default_gates(),
+        budgets: default_budgets(),
+        engine: EnginePersist {
+            int8: std::env::var("LAYA_NATIVE_INT8")
+                .map(|v| v == "1")
+                .unwrap_or(false),
+        },
+    };
     crate::config::open_settings_store()
         .ok()
         .and_then(|store| store.load(DECISION_SETTINGS_KEY).ok().flatten())
         .and_then(|raw| serde_json::from_str::<DecisionFlagsPersist>(&raw).ok())
-        .and_then(|p| p.shadow)
+        .unwrap_or_else(seeded)
+}
+
+/// Saved shadow posture, if an operator ever PUT one. Precedence in
+/// build_decision_service: this > NEOMIND_DECISION_SHADOW env > true.
+pub fn load_decision_shadow() -> Option<bool> {
+    load_decision_settings().shadow
+}
+
+/// Persisted sidecar timeout — the ONE live value source (the old duplicate
+/// in server/types.rs read the same store; kept here as the shared fn).
+pub fn decision_sidecar_timeout_ms() -> u64 {
+    load_decision_settings()
+        .budgets
+        .sidecar_ms
+        .clamp(100, 10_000) as u64
+}
+
+/// Pure merge: apply a PUT's partial update onto the CURRENT persisted doc.
+/// Field-by-field None = keep — an unrelated PUT can never reset sidecar_ms
+/// or engine.int8 through placeholder values again.
+fn apply_config_update(doc: &mut DecisionFlagsPersist, req: &DecisionConfigUpdate) {
+    if let Some(v) = req.prefill {
+        doc.prefill = v;
+    }
+    if let Some(v) = req.guidance {
+        doc.guidance = v;
+    }
+    if let Some(v) = req.shortcircuit {
+        doc.shortcircuit = v;
+    }
+    if let Some(v) = req.shadow {
+        doc.shadow = Some(v);
+    }
+    if let Some(g) = &req.gates {
+        if let Some(v) = g.domain {
+            doc.gates.domain = v;
+        }
+        if let Some(v) = g.other {
+            doc.gates.other = v;
+        }
+    }
+    if let Some(b) = &req.budgets {
+        if let Some(v) = b.prefill_ms {
+            doc.budgets.prefill_ms = v;
+        }
+        if let Some(v) = b.guidance_ms {
+            doc.budgets.guidance_ms = v;
+        }
+        if let Some(v) = b.ask_ms {
+            doc.budgets.ask_ms = v;
+        }
+        if let Some(v) = b.sidecar_ms {
+            doc.budgets.sidecar_ms = v;
+        }
+    }
+    if let Some(e) = &req.engine {
+        if let Some(v) = e.int8 {
+            doc.engine.int8 = v;
+        }
+    }
 }
 
 pub fn load_decision_flags() -> DecisionRuntimeFlags {
@@ -760,8 +838,13 @@ impl neomind_agent::ChatDecisionHook for ChatDecisionPipeline {
         spawn_shadow(&decision, message);
 
         if allow_shortcircuit && self.flags.shortcircuit.load(Ordering::Relaxed) {
-            if let Some(plan) =
-                try_shortcircuit(&decision, message, self.flags.budget_guidance()).await
+            if let Some(plan) = try_shortcircuit(
+                &decision,
+                message,
+                self.flags.budget_guidance(),
+                self.flags.gate_domain(),
+            )
+            .await
             {
                 match execute_shortcircuit(&plan).await {
                     Ok(text) => {
@@ -787,6 +870,7 @@ impl neomind_agent::ChatDecisionHook for ChatDecisionPipeline {
                 &self.skills,
                 message,
                 self.flags.budget_guidance(),
+                (self.flags.gate_domain(), self.flags.gate_other()),
             )
             .await
             {
@@ -795,13 +879,7 @@ impl neomind_agent::ChatDecisionHook for ChatDecisionPipeline {
             }
         }
         if self.flags.prefill.load(Ordering::Relaxed) {
-            if let Some(hint) = prefill_hint(
-                &decision,
-                message,
-                self.flags.budget_prefill(),
-                self.flags.gate_domain(),
-            )
-            .await
+            if let Some(hint) = prefill_hint(&decision, message, self.flags.budget_prefill()).await
             {
                 tracing::info!(target: "neomind::decision", hint = %hint, "prefill hint injected");
                 m = format!("{m}\n\n{hint}");
@@ -1030,6 +1108,7 @@ pub async fn try_shortcircuit(
     decision: &Option<std::sync::Arc<DecisionService>>,
     message: &str,
     budget: std::time::Duration,
+    domain_gate: f32,
 ) -> Option<ShortCircuitPlan> {
     let ds = decision.as_ref()?;
     if !guard_shadow(ds, "short-circuit") {
@@ -1049,12 +1128,12 @@ pub async fn try_shortcircuit(
         return None;
     }
     let tool = out.get("tool")?;
-    if tool.picked() != Some("shell") || !tool.passes_gate(0.8) {
+    if tool.picked() != Some("shell") || !tool.passes_gate(domain_gate) {
         return None;
     }
     let domain = out.get("domain")?;
     let dom = domain.picked()?;
-    if !domain.passes_gate(0.8) {
+    if !domain.passes_gate(domain_gate) {
         return None;
     }
 
@@ -1176,6 +1255,106 @@ fn format_sc_reply(val: &serde_json::Value, domain: &str, action: &str) -> Strin
 #[cfg(test)]
 mod sc_tests {
     use super::*;
+
+    /// The config round-trip invariants the settings UI depends on. These
+    /// are PURE (no store): apply_config_update is the merge under test.
+    /// Save → load roundtrip through a REAL SettingsStore (the live bug was
+    /// in this ring, not the pure merge): the stored doc must parse back
+    /// with the configured values intact.
+    #[test]
+    fn settings_store_roundtrip_preserves_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = neomind_storage::SettingsStore::open(dir.path().join("settings.redb")).unwrap();
+        let mut doc = DecisionFlagsPersist::default();
+        apply_config_update(
+            &mut doc,
+            &DecisionConfigUpdate {
+                budgets: Some(BudgetsUpdate {
+                    sidecar_ms: Some(5000),
+                    ..Default::default()
+                }),
+                engine: Some(EngineUpdate { int8: Some(true) }),
+                ..Default::default()
+            },
+        );
+        let raw = serde_json::to_string(&doc).unwrap();
+        store.save(DECISION_SETTINGS_KEY, &raw).unwrap();
+        let back = store.load(DECISION_SETTINGS_KEY).unwrap().unwrap();
+        let parsed: DecisionFlagsPersist = serde_json::from_str(&back).unwrap();
+        assert_eq!(
+            parsed.budgets.sidecar_ms, 5000,
+            "stored sidecar_ms must parse back"
+        );
+        assert!(parsed.engine.int8, "stored int8 must parse back");
+    }
+
+    #[test]
+    fn unrelated_put_never_resets_sidecar_or_int8() {
+        let mut doc = DecisionFlagsPersist {
+            budgets: BudgetsPersist {
+                sidecar_ms: 5000,
+                ..default_budgets()
+            },
+            engine: EnginePersist { int8: true },
+            ..DecisionFlagsPersist::default()
+        };
+        apply_config_update(
+            &mut doc,
+            &DecisionConfigUpdate {
+                prefill: Some(true),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            doc.budgets.sidecar_ms, 5000,
+            "sidecar_ms must survive an unrelated PUT"
+        );
+        assert!(doc.engine.int8, "int8 must survive an unrelated PUT");
+    }
+
+    #[test]
+    fn explicit_put_overrides_and_keeps_siblings() {
+        let mut doc = DecisionFlagsPersist::default();
+        apply_config_update(
+            &mut doc,
+            &DecisionConfigUpdate {
+                gates: Some(GatesUpdate {
+                    domain: Some(0.85),
+                    ..Default::default()
+                }),
+                budgets: Some(BudgetsUpdate {
+                    ask_ms: Some(2000),
+                    ..Default::default()
+                }),
+                engine: Some(EngineUpdate { int8: Some(true) }),
+                ..Default::default()
+            },
+        );
+        assert!((doc.gates.domain - 0.85).abs() < 1e-6);
+        assert_eq!(doc.budgets.ask_ms, 2000);
+        assert!(doc.engine.int8);
+        assert_eq!(doc.gates.other, default_gates().other);
+        assert_eq!(doc.budgets.sidecar_ms, default_budgets().sidecar_ms);
+    }
+
+    #[test]
+    fn shadow_none_stays_none_until_explicitly_put() {
+        let mut doc = DecisionFlagsPersist::default();
+        assert!(doc.shadow.is_none(), "unseeded doc has no forced shadow");
+        apply_config_update(&mut doc, &DecisionConfigUpdate::default());
+        assert!(
+            doc.shadow.is_none(),
+            "empty PUT must not stamp a shadow choice"
+        );
+        apply_config_update(
+            &mut doc,
+            &DecisionConfigUpdate {
+                shadow: Some(false),
+                ..Default::default()
+            },
+        );
+        assert_eq!(doc.shadow, Some(false));
+    }
 
     #[test]
     fn whitelist_is_read_only_and_argless() {
@@ -1404,7 +1583,7 @@ pub async fn ask(
             Err(_) => {
                 return Err(ErrorResponse::new(
                     "DECISION_TIMEOUT",
-                    "decision backend did not answer within 1500ms",
+                    "decision backend did not answer within the configured ask budget",
                     axum::http::StatusCode::GATEWAY_TIMEOUT,
                 ))
             }
@@ -1451,45 +1630,33 @@ pub async fn ask(
     )
 )]
 pub async fn get_config(State(state): State<ServerState>) -> HandlerResult<serde_json::Value> {
-    let ds = state.decision_snapshot();
-    let mut flags = state.decision_flags.snapshot();
-    // Report the LIVE persisted sidecar timeout (snapshot()'s is the
-    // default placeholder — the live value sits in the constructed client).
-    flags.budgets.sidecar_ms = decision_settings_timeout_ms_live(&state) as u32;
-    ok(json!({
-        "shadow": ds.as_ref().map(|d| d.shadow()).unwrap_or(true),
-        "prefill": flags.prefill,
-        "guidance": flags.guidance,
-        "shortcircuit": flags.shortcircuit,
-        "gates": flags.gates,
-        "budgets": flags.budgets,
-        "engine": flags.engine,
-        "backend": ds.as_ref().map(|d| d.primary_backend_id().to_string()),
-        "backends": available_backends(),
-    }))
+    ok(decision_config_payload(&state))
 }
 
-/// Live sidecar timeout for the report: read the persisted doc the client
-/// was built from (same source build_decision_service uses).
-fn decision_settings_timeout_ms_live(_state: &ServerState) -> u64 {
-    crate::config::open_settings_store()
-        .ok()
-        .and_then(|store| store.load(DECISION_SETTINGS_KEY).ok().flatten())
-        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-        .and_then(|d| {
-            d.get("budgets")
-                .and_then(|b| b.get("sidecar_ms"))
-                .and_then(|v| v.as_u64())
-        })
-        .filter(|ms| (100..=10_000).contains(ms))
-        .unwrap_or(1500)
+/// The FULL config response shape — shared by GET and PUT so a PUT's return
+/// value can replace the client's config state wholesale (a PUT that omitted
+/// backend/backends crashed the settings tab the moment a toggle answered).
+fn decision_config_payload(state: &ServerState) -> serde_json::Value {
+    let ds = state.decision_snapshot();
+    let doc = load_decision_settings();
+    json!({
+        "shadow": ds.as_ref().map(|d| d.shadow()).unwrap_or(true),
+        "prefill": doc.prefill,
+        "guidance": doc.guidance,
+        "shortcircuit": doc.shortcircuit,
+        "gates": doc.gates,
+        "budgets": doc.budgets,
+        "engine": doc.engine,
+        "backend": ds.as_ref().map(|d| d.primary_backend_id().to_string()),
+        "backends": available_backends(),
+    })
 }
 
 /// Read-only availability of every decision backend (selection itself stays
 /// auto-discovery + env override — one source of truth, no UI switching).
 fn available_backends() -> serde_json::Value {
     let ext_installed = {
-        let p = neomind_core::paths::data_dir().join("extensions.redb");
+        let p = neomind_core::paths::store_path("extensions.redb");
         std::fs::metadata(&p).is_ok()
             && neomind_storage::extensions::ExtensionStore::open(&p)
                 .ok()
@@ -1521,7 +1688,7 @@ fn available_backends() -> serde_json::Value {
     })
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct DecisionConfigUpdate {
     /// Record-only posture (true) or act (false).
     pub shadow: Option<bool>,
@@ -1533,13 +1700,13 @@ pub struct DecisionConfigUpdate {
     pub engine: Option<EngineUpdate>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct GatesUpdate {
     pub domain: Option<f32>,
     pub other: Option<f32>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct BudgetsUpdate {
     pub prefill_ms: Option<u32>,
     pub guidance_ms: Option<u32>,
@@ -1547,7 +1714,7 @@ pub struct BudgetsUpdate {
     pub sidecar_ms: Option<u32>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct EngineUpdate {
     /// Engine-level: applies at the next decision-layer refresh (native) —
     /// the extension sidecar reads its own env until it grows a config.
@@ -1591,7 +1758,7 @@ pub async fn put_config(
     State(state): State<ServerState>,
     Json(req): Json<DecisionConfigUpdate>,
 ) -> HandlerResult<serde_json::Value> {
-    // Validate before touching anything — a rejected PUT leaves state intact.
+    // Validate BEFORE touching anything — a rejected PUT leaves state intact.
     if let Some(g) = &req.gates {
         if let Some(v) = g.domain {
             validate_gate(v)?;
@@ -1601,27 +1768,21 @@ pub async fn put_config(
         }
     }
     if let Some(b) = &req.budgets {
-        if let Some(v) = b.prefill_ms {
-            validate_budget("prefill_ms", v)?;
-        }
-        if let Some(v) = b.guidance_ms {
-            validate_budget("guidance_ms", v)?;
-        }
-        if let Some(v) = b.ask_ms {
-            validate_budget("ask_ms", v)?;
-        }
-        if let Some(v) = b.sidecar_ms {
-            validate_budget("sidecar_ms", v)?;
+        for (name, v) in [
+            ("prefill_ms", b.prefill_ms),
+            ("guidance_ms", b.guidance_ms),
+            ("ask_ms", b.ask_ms),
+            ("sidecar_ms", b.sidecar_ms),
+        ] {
+            if let Some(v) = v {
+                validate_budget(name, v)?;
+            }
         }
     }
 
-    // shadow applies to the service itself (guard_shadow reads it live)
-    if let Some(shadow) = req.shadow {
-        if let Some(ds) = state.decision_snapshot() {
-            ds.set_shadow(shadow);
-        }
-    }
-    let mut sidecar_changed = false;
+    // Live application. Hot knobs first (flags atomics + service), then the
+    // knobs that live in the CONSTRUCTED client/engine: those re-derive from
+    // the persisted doc on refresh, so persist FIRST and refresh after.
     {
         let flags = &state.decision_flags;
         if let Some(v) = req.prefill {
@@ -1633,14 +1794,12 @@ pub async fn put_config(
         if let Some(v) = req.shortcircuit {
             flags.shortcircuit.store(v, Ordering::Relaxed);
         }
-        if let Some(g) = req.gates {
+        if let Some(g) = &req.gates {
             if let Some(v) = g.domain {
                 flags.gate_domain.store(v.to_bits(), Ordering::Relaxed);
             }
             if let Some(v) = g.other {
                 flags.gate_other.store(v.to_bits(), Ordering::Relaxed);
-                // `other` is the service-wide GatePolicy (audit gating +
-                // passes_gate consumers) — hot-apply it.
                 if let Some(ds) = state.decision_snapshot() {
                     ds.set_gate(neomind_core::decision::GatePolicy { min_confidence: v });
                 }
@@ -1656,65 +1815,63 @@ pub async fn put_config(
             if let Some(v) = b.ask_ms {
                 flags.budget_ask_ms.store(v, Ordering::Relaxed);
             }
-            if b.sidecar_ms.is_some() {
-                sidecar_changed = true;
+        }
+    }
+    if let Some(shadow) = req.shadow {
+        if let Some(ds) = state.decision_snapshot() {
+            ds.set_shadow(shadow);
+        }
+    }
+
+    // Merge onto the CURRENT persisted doc (field-by-field) and persist.
+    // This is the fix for the placeholder round-trip: sidecar_ms/int8 can
+    // no longer be reset by an unrelated PUT.
+    let mut doc = load_decision_settings();
+    apply_config_update(&mut doc, &req);
+    match crate::config::open_settings_store() {
+        Ok(store) => {
+            if let Err(e) = store.save(
+                DECISION_SETTINGS_KEY,
+                &serde_json::to_string(&doc).unwrap_or_default(),
+            ) {
+                tracing::warn!(target: "neomind::decision", error = %e, "Failed to persist decision config (live values still applied)");
             }
         }
+        Err(e) => {
+            tracing::warn!(target: "neomind::decision", error = ?e,
+                resolved_path = %neomind_core::paths::store_path("settings.redb").display(),
+                "settings store OPEN failed — decision config not persisted");
+        }
     }
-    let engine_int8_changed = req.engine.as_ref().and_then(|e| e.int8).is_some();
 
     // sidecar_ms / engine.int8 live in the CONSTRUCTED client/engine —
-    // rebuild the decision layer to apply them (cheap; cache resets).
-    if sidecar_changed || engine_int8_changed {
-        state.refresh_decision_layer();
-    }
-
-    // Persist (merged snapshot) so the setting survives restarts and beats
-    // the env seed. Shadow rides along in the same document.
-    let persist = state.decision_flags.snapshot();
-    let shadow_now = state
-        .decision_snapshot()
-        .map(|d| d.shadow())
-        .unwrap_or(true);
-    let engine_int8 = req
-        .engine
-        .as_ref()
-        .and_then(|e| e.int8)
-        .unwrap_or(persist.engine.int8);
-    let sidecar_ms = req
+    // rebuild the decision layer when the request touches them (cheap; the
+    // cache resets, accepted for a config change).
+    if req
         .budgets
         .as_ref()
-        .and_then(|b| b.sidecar_ms)
-        .unwrap_or(persist.budgets.sidecar_ms);
-    let doc = json!({
-        "prefill": persist.prefill,
-        "guidance": persist.guidance,
-        "shortcircuit": persist.shortcircuit,
-        "shadow": shadow_now,
-        "gates": persist.gates,
-        "budgets": {
-            "prefill_ms": persist.budgets.prefill_ms,
-            "guidance_ms": persist.budgets.guidance_ms,
-            "ask_ms": persist.budgets.ask_ms,
-            "sidecar_ms": sidecar_ms,
-        },
-        "engine": { "int8": engine_int8 },
-    });
-    if let Ok(store) = crate::config::open_settings_store() {
-        if let Err(e) = store.save(DECISION_SETTINGS_KEY, &doc.to_string()) {
-            tracing::warn!(target: "neomind::decision", error = %e, "Failed to persist decision config (live values still applied)");
-        }
+        .map(|b| b.sidecar_ms.is_some())
+        .unwrap_or(false)
+        || req
+            .engine
+            .as_ref()
+            .map(|e| e.int8.is_some())
+            .unwrap_or(false)
+    {
+        state.refresh_decision_layer();
     }
 
     tracing::info!(
         target: "neomind::decision",
-        shadow = shadow_now,
-        prefill = persist.prefill,
-        guidance = persist.guidance,
-        shortcircuit = persist.shortcircuit,
+        shadow = ?doc.shadow,
+        prefill = doc.prefill,
+        guidance = doc.guidance,
+        shortcircuit = doc.shortcircuit,
         "decision config updated (live)"
     );
-    ok(doc)
+    // Full GET shape (backend/backends included) — a bare doc here crashed
+    // the settings tab on the first toggle (config.backends undefined).
+    ok(decision_config_payload(&state))
 }
 
 /// Decision backend status.
@@ -1730,7 +1887,7 @@ pub async fn status(State(state): State<ServerState>) -> HandlerResult<serde_jso
     match state.decision_snapshot() {
         None => ok(json!({
             "enabled": false,
-            "reason": "LAYA_SIDECAR_URL not configured — decision layer inactive, platform behavior unchanged",
+            "reason": "no decision backend resolved — install the laya-decision extension (any build), set LAYA_SIDECAR_URL, or ship decision-native artifacts; until then the layer is inert and platform behavior is unchanged",
         })),
         Some(ds) => {
             // Bound the probe so status stays snappy even with a dead sidecar.
@@ -1771,7 +1928,7 @@ pub async fn decide(
     let Some(ds) = state.decision_snapshot() else {
         return axum::response::IntoResponse::into_response(crate::models::ErrorResponse::new(
             "DECISION_NOT_CONFIGURED",
-            "decision layer not configured (set LAYA_SIDECAR_URL)",
+            "decision layer not configured (install the laya-decision extension or set LAYA_SIDECAR_URL)",
             axum::http::StatusCode::SERVICE_UNAVAILABLE,
         ));
     };

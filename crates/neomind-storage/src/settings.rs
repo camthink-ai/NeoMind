@@ -881,7 +881,12 @@ impl SettingsStore {
             }
         }
 
-        // Create a new store
+        // Create a new store. NOTE on lock errors: redb's file lock is
+        // EXCLUSIVE ACROSS PROCESSES — a second server on the same data dir
+        // (desktop app + headless CLI) fails here by design. Do NOT "fix"
+        // this by falling back to a cached handle: with the legacy↔canonical
+        // path split the cache can point at a DIFFERENT FILE, silently
+        // writing config where no one reads it. Fail loudly instead.
         let db = if path_ref.exists() {
             Database::open(path_ref)?
         } else {
