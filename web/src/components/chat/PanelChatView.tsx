@@ -286,17 +286,16 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
           const len = (result.content || "").length + (result.thinking || "").length
             + (result.toolCalls?.length ?? 0)
             + Object.values(result.roundContents || {}).reduce((a, b) => a + b.length, 0)
-          // While the snapshot's LAST call has no result yet, a tool is
-          // EXECUTING — legitimate silence up to the 300s tool ceiling. Use
-          // a 10-minute stall cap there; 60s everywhere else.
-          const calls = result.toolCalls ?? []
-          const lastResultless = calls.length > 0 && calls[calls.length - 1].result == null
-          const stallCap = lastResultless ? 200 : 20
+          // Stall = 60s with no growth across SUCCESSFUL polls. (A previous
+          // "resultless last call ⇒ 10-minute cap" branch was dead code: the
+          // server emits a tool batch's Start/End back-to-back after
+          // execution completes, so an EXECUTING tool never appears
+          // resultless in a snapshot.)
           if (len > lastLen) { lastLen = len; stallTicks = 0 }
           else stallTicks += 1
           restoreIfBehind(result.content || "", result.thinking || "",
-            { toolCalls: result.toolCalls, roundContents: result.roundContents })
-          if (stallTicks >= stallCap) {
+            { toolCalls: result.toolCalls, roundContents: result.roundContents, currentRound: result.currentRound })
+          if (stallTicks >= 20) {
             setResumedPendingPanel(null)
             hardReset()
           }
@@ -309,7 +308,17 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
               setPanelMessages(mergeAssistantMessages(r.messages || []))
             }).catch(() => {})
         }
-      }).catch(() => { /* transient — keep polling */ })
+      }).catch(() => {
+        // Transient blip OR a dead server — both count toward the stall
+        // cap (a dead server rejects every poll; the old catch-branch
+        // polled forever). A blip resets on the next successful poll.
+        if (stopped) return
+        stallTicks += 1
+        if (stallTicks >= 20) {
+          setResumedPendingPanel(null)
+          hardReset()
+        }
+      })
     }, 3000)
     return () => { stopped = true; clearInterval(timer) }
   }, [resumedPendingPanel, restoreIfBehind, hardReset, isStreamingRef])

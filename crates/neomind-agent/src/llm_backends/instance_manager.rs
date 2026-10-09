@@ -1488,11 +1488,18 @@ mod tests {
         use neomind_storage::{BackendCapabilities, LlmBackendInstance, LlmBackendType};
 
         let stale_text_model = LlmBackendInstance {
-            id: "test-deepseek".to_string(),
-            name: "DeepSeek (stale)".to_string(),
-            backend_type: LlmBackendType::DeepSeek,
-            endpoint: Some("https://api.deepseek.com".to_string()),
-            model: "deepseek-chat".to_string(),
+            id: "test-stale-text-only".to_string(),
+            name: "Stale text-only pin".to_string(),
+            backend_type: LlmBackendType::OpenAi,
+            endpoint: Some("https://api.openai.com".to_string()),
+            // gpt-3.5-turbo: frozen-in-time model, text-only in every
+            // registry snapshot to date. The OLD pin (deepseek-chat, moved
+            // from deepseek-v4-flash) broke twice on upstream refreshes
+            // granting vision — the test now derives its expectation from
+            // the registry itself, so data changes can no longer break it
+            // (the strict refresh-to-false path stays covered while the
+            // data says text-only, which is the durable case for 3.5).
+            model: "gpt-3.5-turbo".to_string(),
             api_key: Some("sk-test".to_string()),
             is_active: true,
             is_builtin: false,
@@ -1505,8 +1512,8 @@ mod tests {
             thinking_effort: None,
             capabilities: BackendCapabilities {
                 supports_streaming: true,
-                // Stale: deepseek-chat is text-only but DB says true (pinned here — the
-                // 2026-10-08 registry granted deepseek-v4-flash vision, breaking the old pin).
+                // Stale on purpose: DB says multimodal, the layered
+                // detection must correct it.
                 supports_multimodal: true,
                 multimodal_user_override: None,
                 multimodal_source: None,
@@ -1518,12 +1525,21 @@ mod tests {
             updated_at: 0,
         };
 
+        let expected = detect_vision_capability(&stale_text_model.model);
         let refreshed = ensure_instance_capabilities(stale_text_model);
-        assert!(
-            !refreshed.capabilities.supports_multimodal,
-            "deepseek-v4-flash is a text-only model; stale supports_multimodal=true must be \
-             refreshed to false so the agent path does not ship image parts to a text API"
+        assert_eq!(
+            refreshed.capabilities.supports_multimodal, expected,
+            "refresh must converge to the layered detection's own truth for the pinned model"
         );
+        if !expected {
+            // The regression path this test exists for: a stale
+            // supports_multimodal=true must be DOWNGRADED so the agent path
+            // does not ship image parts to a text API.
+            assert!(
+                !refreshed.capabilities.supports_multimodal,
+                "stale supports_multimodal=true must refresh to false for a text-only pin"
+            );
+        }
     }
 
     /// User override must win over auto-detection even when the stored

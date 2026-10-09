@@ -29,7 +29,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use parking_lot::RwLock;
 
@@ -444,7 +444,7 @@ pub struct MarkdownMemoryStore {
     /// `write_lock`. Without this, concurrent writes to the same custom
     /// file from multiple chat sessions would lose updates — `atomic_write`
     /// prevents corruption but not lost-write races.
-    custom_write_lock: Arc<Mutex<()>>,
+    custom_write_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// Manual clone: the two lock Arcs are SHARED, not duplicated.
@@ -477,7 +477,7 @@ impl MarkdownMemoryStore {
             config: MemoryConfig::default(),
             cache: Arc::new(RwLock::new(HashMap::new())),
             write_lock: Arc::new(tokio::sync::Mutex::new(())),
-            custom_write_lock: Arc::new(Mutex::new(())),
+            custom_write_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -488,7 +488,7 @@ impl MarkdownMemoryStore {
             config,
             cache: Arc::new(RwLock::new(HashMap::new())),
             write_lock: Arc::new(tokio::sync::Mutex::new(())),
-            custom_write_lock: Arc::new(Mutex::new(())),
+            custom_write_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -1150,7 +1150,7 @@ impl MarkdownMemoryStore {
     }
 
     /// Write a custom memory file. Enforces per-file char limit.
-    pub fn write_custom_file(&self, name: &str, content: &str) -> Result<()> {
+    pub async fn write_custom_file(&self, name: &str, content: &str) -> Result<()> {
         Self::validate_custom_name(name)?;
         let limit = self.config.agent_char_limit; // reuse agent_char_limit as per-file limit
         let char_count = content.chars().count();
@@ -1161,15 +1161,23 @@ impl MarkdownMemoryStore {
             )));
         }
         let dir = self.base_path.join("custom");
-        fs::create_dir_all(&dir)?;
         let path = dir.join(format!("{}.md", name));
         // Serialize against concurrent writers to the same custom file.
-        let _lock = self
-            .custom_write_lock
-            .lock()
-            .map_err(|e| Error::Storage(format!("Custom write lock poisoned: {}", e)))?;
-        atomic_write::write(&path, content)
-            .map_err(|e| Error::Storage(format!("Failed to write custom file {}: {}", name, e)))?;
+        // [fake-async fix] the create-dir + fsync'd write are blocking IO —
+        // run on the blocking pool, lock held across (same treatment
+        // write_file got).
+        let _lock = self.custom_write_lock.lock().await;
+        let content_owned = content.to_string();
+        let name_owned = name.to_string();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            fs::create_dir_all(&dir)?;
+            atomic_write::write(&path, &content_owned).map_err(|e| {
+                Error::Storage(format!("Failed to write custom file {}: {}", name_owned, e))
+            })?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| Error::Storage(format!("write_custom_file join error: {}", e)))??;
         info!(name = %name, chars = char_count, "Wrote custom memory file");
         Ok(())
     }
@@ -1182,7 +1190,7 @@ impl MarkdownMemoryStore {
     ///
     /// Returns `false` when the closure left the content unchanged (no
     /// write happened). Enforces the per-file char limit on the result.
-    pub fn modify_custom_file<F>(
+    pub async fn modify_custom_file<F>(
         &self,
         agent_id: Option<&str>,
         name: &str,
@@ -1206,18 +1214,26 @@ impl MarkdownMemoryStore {
             None => self.base_path.join("custom").join(format!("{}.md", name)),
         };
 
-        let _lock = self
-            .custom_write_lock
-            .lock()
-            .map_err(|e| Error::Storage(format!("Custom write lock poisoned: {}", e)))?;
+        // [fake-async fix] same treatment as modify_file: the read and the
+        // fsync'd write are blocking IO — they run on the blocking pool while
+        // the async lock stays held ACROSS them (the read-modify-write must
+        // stay atomic vs concurrent writers); the caller-supplied transform
+        // (arbitrary F, not Send) runs on the async side between them.
+        let _lock = self.custom_write_lock.lock().await;
 
-        let current = if path.exists() {
-            fs::read_to_string(&path).map_err(|e| {
-                Error::Storage(format!("Failed to read custom file {}: {}", name, e))
-            })?
-        } else {
-            String::new()
-        };
+        let read_path = path.clone();
+        let name_owned = name.to_string();
+        let current = tokio::task::spawn_blocking(move || {
+            if read_path.exists() {
+                fs::read_to_string(&read_path).map_err(|e| {
+                    Error::Storage(format!("Failed to read custom file {}: {}", name_owned, e))
+                })
+            } else {
+                Ok(String::new())
+            }
+        })
+        .await
+        .map_err(|e| Error::Storage(format!("modify_custom_file join error: {}", e)))??;
 
         let new_content = transform(&current);
         if new_content == current {
@@ -1234,12 +1250,22 @@ impl MarkdownMemoryStore {
             )));
         }
 
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        atomic_write::write(&path, &new_content)
-            .map_err(|e| Error::Storage(format!("Failed to write custom file {}: {}", name, e)))?;
-        info!(name = %name, chars = new_content.chars().count(), "Modified custom memory file");
+        let write_path = path;
+        let name_owned = name.to_string();
+        let chars = new_content.chars().count();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            if let Some(parent) = write_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            atomic_write::write(&write_path, &new_content).map_err(|e| {
+                Error::Storage(format!("Failed to write custom file {}: {}", name_owned, e))
+            })?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| Error::Storage(format!("modify_custom_file join error: {}", e)))??;
+
+        info!(name = %name, chars = chars, "Modified custom memory file");
         Ok(true)
     }
 
@@ -1308,7 +1334,12 @@ impl MarkdownMemoryStore {
 
     /// Write an agent-scoped custom file. Enforces per-file char limit.
     /// Path: `agents/{agent_id}/custom/{name}.md`
-    pub fn write_agent_custom_file(&self, agent_id: &str, name: &str, content: &str) -> Result<()> {
+    pub async fn write_agent_custom_file(
+        &self,
+        agent_id: &str,
+        name: &str,
+        content: &str,
+    ) -> Result<()> {
         Self::validate_agent_id(agent_id)?;
         Self::validate_custom_name(name)?;
         let limit = self.config.agent_char_limit;
@@ -1320,19 +1351,25 @@ impl MarkdownMemoryStore {
             )));
         }
         let dir = self.base_path.join("agents").join(agent_id).join("custom");
-        fs::create_dir_all(&dir)?;
         let path = dir.join(format!("{}.md", name));
         // Serialize against concurrent writers to the same agent custom file.
-        let _lock = self
-            .custom_write_lock
-            .lock()
-            .map_err(|e| Error::Storage(format!("Custom write lock poisoned: {}", e)))?;
-        atomic_write::write(&path, content).map_err(|e| {
-            Error::Storage(format!(
-                "Failed to write agent custom file {}/{}: {}",
-                agent_id, name, e
-            ))
-        })?;
+        // [fake-async fix] the create-dir + fsync'd write are blocking IO —
+        // run on the blocking pool, lock held across.
+        let _lock = self.custom_write_lock.lock().await;
+        let content_owned = content.to_string();
+        let (agent_owned, name_owned) = (agent_id.to_string(), name.to_string());
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            fs::create_dir_all(&dir)?;
+            atomic_write::write(&path, &content_owned).map_err(|e| {
+                Error::Storage(format!(
+                    "Failed to write agent custom file {}/{}: {}",
+                    agent_owned, name_owned, e
+                ))
+            })?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| Error::Storage(format!("write_agent_custom_file join error: {}", e)))??;
         info!(agent_id = %agent_id, name = %name, chars = char_count, "Wrote agent custom file");
         Ok(())
     }
@@ -2402,6 +2439,7 @@ mod tests_new_layout {
                 assert!(cur.is_empty());
                 "## Patterns\n- temp normal".to_string()
             })
+            .await
             .unwrap();
         assert!(changed);
         assert_eq!(
@@ -2412,9 +2450,11 @@ mod tests_new_layout {
         // Agent scope lands in agents/{id}/custom/.
         store
             .modify_custom_file(Some("agent-1"), "notes", |_| "first".to_string())
+            .await
             .unwrap();
         let merged = store
             .modify_custom_file(Some("agent-1"), "notes", |cur| format!("{}\nsecond", cur))
+            .await
             .unwrap();
         assert!(merged);
         assert_eq!(
@@ -2425,6 +2465,7 @@ mod tests_new_layout {
         // Unchanged → Ok(false). Over-limit → error, file untouched.
         assert!(!store
             .modify_custom_file(Some("agent-1"), "notes", |cur| cur.to_string())
+            .await
             .unwrap());
         let before = store.read_agent_custom_file("agent-1", "notes").unwrap();
         assert!(store
@@ -2433,6 +2474,7 @@ mod tests_new_layout {
                 cur,
                 "z".repeat(21_000)
             ))
+            .await
             .is_err());
         assert_eq!(
             store.read_agent_custom_file("agent-1", "notes").unwrap(),

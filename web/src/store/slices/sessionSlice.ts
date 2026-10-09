@@ -26,6 +26,8 @@ const HISTORY_PAGE_SIZE = 200
 export interface SessionSlice extends SessionState {
   // Actions
   setSessionId: (id: string) => void
+  /** Mark a just-sent turn's session (welcome-page send → remount hint). */
+  setPendingTurnHint: (sessionId: string | null) => void
   addMessage: (message: Message) => void
   clearMessages: () => void
   createSession: () => Promise<string | null>
@@ -80,10 +82,15 @@ export const createSessionSlice: StateCreator<
   hasEarlierHistory: false,
   earlierCursor: 0,
   isLoadingEarlier: false,
+  pendingTurnHint: null,
 
   // Actions
   setSessionId: (id: string) => {
     set({ sessionId: id })
+  },
+
+  setPendingTurnHint: (sessionId) => {
+    set({ pendingTurnHint: sessionId })
   },
 
   addMessage: (message: Message) => {

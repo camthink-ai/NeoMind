@@ -49,6 +49,12 @@ export interface SessionState {
   earlierCursor: number
   // An older page is being fetched (store-level in-flight guard + spinner)
   isLoadingEarlier: boolean
+  // Session id of a turn JUST sent from the welcome page. The send
+  // navigates to /chat/:id which REMOUNTS the page (separate route) — this
+  // hint tells the fresh mount that a turn is already in flight so it can
+  // show the streaming spinner immediately (the pending fetch or the first
+  // live event arrives a beat later). Consumed on first read.
+  pendingTurnHint: string | null
 }
 
 // ============================================================================

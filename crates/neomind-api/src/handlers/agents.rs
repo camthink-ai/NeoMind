@@ -1410,7 +1410,9 @@ async fn init_agent_knowledge_file(state: &crate::server::ServerState, agent: &A
     );
 
     // Write the knowledge file
-    if let Err(e) = memory_store.write_agent_custom_file(&agent.id, "task-understanding", &content)
+    if let Err(e) = memory_store
+        .write_agent_custom_file(&agent.id, "task-understanding", &content)
+        .await
     {
         tracing::warn!(
             agent_id = %agent.id,

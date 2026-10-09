@@ -21,7 +21,7 @@ use futures::future::try_join_all;
 use moka::sync::Cache;
 use redb::{Database, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{RwLock, Semaphore};
+use tokio::sync::RwLock;
 
 use crate::Error;
 
@@ -604,8 +604,6 @@ pub struct TimeSeriesStore {
     retention_policy: RwLock<RetentionPolicy>,
     /// Performance statistics - using Arc<RwLock> for sharing across tasks
     stats: Arc<RwLock<PerformanceStats>>,
-    /// Semaphore for concurrent writes
-    write_semaphore: Arc<Semaphore>,
     /// Cache TTL
     cache_ttl: Duration,
     /// Storage path for singleton
@@ -731,7 +729,6 @@ impl TimeSeriesStore {
                 .build(),
             retention_policy: RwLock::new(config.retention_policy),
             stats: Arc::new(RwLock::new(PerformanceStats::default())),
-            write_semaphore: Arc::new(Semaphore::new(config.max_concurrent_writes)),
             cache_ttl: config.cache_ttl,
             path: path_str.clone(),
             write_buffer: WriteBuffer::new(config.write_buffer_size),

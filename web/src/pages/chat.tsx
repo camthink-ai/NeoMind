@@ -185,7 +185,31 @@ export function ChatPage() {
         // The local accumulator was reset mid-turn (switch away/back,
         // detach/restore) — it holds only a tail. The server persisted the
         // full message; take history as the truth.
-        void refreshCurrentSession()
+        void (async () => {
+          // Turn wall-time stats are LOCAL knowledge — the refreshed
+          // server history carries no generationMs. Derive them from the
+          // user message that started the turn (captured BEFORE the
+          // refresh replaces the local view) and re-attach them to the
+          // last assistant message after the refresh lands, so the
+          // "x.xs · N chars/s" footnote survives the welcome-page remount.
+          const turnStart = useStore
+            .getState()
+            .messages.filter(m => m.role === "user")
+            .pop()?.timestamp
+          await refreshCurrentSession()
+          if (turnStart == null) return
+          const generationMs = Date.now() - turnStart
+          useStore.setState(s => {
+            const messages = [...s.messages]
+            for (let i = messages.length - 1; i >= 0; i--) {
+              if (messages[i].role === "assistant") {
+                messages[i] = { ...messages[i], generationMs }
+                break
+              }
+            }
+            return { messages }
+          })
+        })()
         return
       }
       const completeMessage: Message = {
@@ -477,15 +501,35 @@ export function ChatPage() {
     setResumedPendingStream(null)
     if (!sessionId || !urlSessionId) return
     let cancelled = false
+    // Welcome-send remount: the hint set at send time says a turn is
+    // already in flight on THIS page — show the streaming spinner now
+    // instead of an idle composer; the pending fetch (a beat later) or the
+    // first live event replaces this optimistic state.
+    const optimisticTurn = useStore.getState().pendingTurnHint === sessionId
+    if (optimisticTurn) {
+      useStore.getState().setPendingTurnHint(null)
+      restore("", "", {})
+    }
     api.getPendingStream(sessionId).then(result => {
-      if (cancelled || !result?.hasPending) return
+      if (cancelled) return
+      if (!result?.hasPending) {
+        // The turn finished BEFORE this page mounted — its end event had no
+        // live listener. Clear the optimistic spinner (if any) and take the
+        // server's completed answer.
+        if (optimisticTurn) {
+          hardReset()
+          void refreshCurrentSession()
+        }
+        return
+      }
       resumePending(sessionId, result.content || "", result.thinking || "", {
               toolCalls: result.toolCalls,
               roundContents: result.roundContents,
+              currentRound: result.currentRound,
             })
     }).catch(() => {})
     return () => { cancelled = true }
-  }, [sessionId, urlSessionId, resumePending])
+  }, [sessionId, urlSessionId, resumePending, restore, hardReset, refreshCurrentSession])
 
   // Detached-turn poll: after a resume, the generating turn's events may be
   // bound to a DEAD connection (hard refresh) — the server's pending
@@ -512,12 +556,11 @@ export function ChatPage() {
           const len = (result.content || "").length + (result.thinking || "").length
             + (result.toolCalls?.length ?? 0)
             + Object.values(result.roundContents || {}).reduce((a, b) => a + b.length, 0)
-          // While the snapshot's LAST call has no result yet, a tool is
-          // EXECUTING — legitimate silence up to the 300s tool ceiling. Use
-          // a 10-minute stall cap there; 60s everywhere else.
-          const calls = result.toolCalls ?? []
-          const lastResultless = calls.length > 0 && calls[calls.length - 1].result == null
-          const stallCap = lastResultless ? 200 : 20
+          // Stall = 60s with no growth across SUCCESSFUL polls. (A previous
+          // "resultless last call ⇒ 10-minute cap" branch was dead code: the
+          // server emits a tool batch's Start/End back-to-back after
+          // execution completes, so an EXECUTING tool never appears
+          // resultless in a snapshot.)
           if (len > lastLen) { lastLen = len; stallTicks = 0 }
           else stallTicks += 1
           restoreIfBehind(result.content || "", result.thinking || "", {
@@ -525,7 +568,7 @@ export function ChatPage() {
             roundContents: result.roundContents,
             currentRound: result.currentRound,
           })
-          if (stallTicks >= stallCap) {
+          if (stallTicks >= 20) {
             setResumedPendingStream(null)
             hardReset()
           }
@@ -534,7 +577,17 @@ export function ChatPage() {
           hardReset()
           void refreshCurrentSession()
         }
-      }).catch(() => { /* transient — keep polling */ })
+      }).catch(() => {
+        // Transient blip OR a dead server — both count toward the stall
+        // cap (a dead server rejects every poll; the old catch-branch
+        // polled forever). A blip resets on the next successful poll.
+        if (stopped) return
+        stallTicks += 1
+        if (stallTicks >= 20) {
+          setResumedPendingStream(null)
+          hardReset()
+        }
+      })
     }, 3000)
     return () => { stopped = true; clearInterval(timer) }
   }, [resumedPendingStream, sessionId, restoreIfBehind, hardReset, refreshCurrentSession])
@@ -565,6 +618,10 @@ export function ChatPage() {
         return
       }
       targetSessionId = newSessionId
+      // The remount hint: /chat → /chat/:id is a route CHANGE (full
+      // remount) — without it the fresh page shows an idle composer until
+      // the pending fetch or first live event lands.
+      useStore.getState().setPendingTurnHint(newSessionId)
       // Navigate to the new session URL
       navigate(`/chat/${newSessionId}`)
     }

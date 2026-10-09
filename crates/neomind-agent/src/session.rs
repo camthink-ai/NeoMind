@@ -265,6 +265,12 @@ pub trait ChatDecisionHook: Send + Sync {
     async fn on_message(&self, message: &str, allow_shortcircuit: bool) -> ChatHookOutcome;
 }
 
+/// Serializes first-claim ownership stamping (see
+/// [`SessionManager::claim_session_owner`]): the read-check-write must be
+/// atomic within this process. Process-wide rather than a manager field —
+/// there is one session store per process, so there is one claim order.
+static OWNER_CLAIM_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub struct SessionManager {
     /// Active sessions (in-memory cache)
     sessions: Arc<RwLock<HashMap<String, Arc<Agent>>>>,
@@ -884,13 +890,10 @@ impl SessionManager {
         Ok(session_id)
     }
 
-    /// Create a new session with the supplied options merged on top of the
-    /// manager's `default_config`. Fields left `None` in `opts` fall back to
-    /// the default. Use this when you need per-session overrides (e.g. a
-    /// voice-assistant extension baking in a system prompt) without changing
-    /// global defaults.
     /// Stamp the owning principal on a session (first attachment wins).
     /// Best-effort: a failure to stamp never blocks the conversation.
+    /// Raw stamper — for the race-free first-CLAIM decision use
+    /// [`SessionManager::claim_session_owner`].
     pub fn set_session_owner(&self, session_id: &str, owner: &str) {
         if let Ok(mut meta) = self.store.get_session_metadata(session_id) {
             if meta.owner.as_deref() != Some(owner) && meta.owner.is_none() {
@@ -908,6 +911,26 @@ impl SessionManager {
             .get_session_metadata(session_id)
             .ok()
             .and_then(|m| m.owner)
+    }
+
+    /// First-claim ownership decision, ATOMIC within this process: returns
+    /// `true` (stamping `principal` as owner) for an unclaimed session or
+    /// one this principal already owns; `false` when a different principal
+    /// holds it. The naive read-check-write raced: two concurrent FIRST
+    /// attachments (a WS attach and a REST history read on a fresh session)
+    /// could both observe "unclaimed" and each stamp themselves. The claim
+    /// runs under [`OWNER_CLAIM_LOCK`].
+    pub fn claim_session_owner(&self, session_id: &str, principal: &str) -> bool {
+        let _guard = OWNER_CLAIM_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match self.session_owner(session_id) {
+            Some(owner) if owner != principal => false,
+            _ => {
+                self.set_session_owner(session_id, principal);
+                true
+            }
+        }
     }
 
     pub async fn create_session_with_options(&self, opts: CreateSessionOptions) -> Result<String> {

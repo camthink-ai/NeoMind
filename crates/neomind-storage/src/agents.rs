@@ -263,8 +263,11 @@ pub struct EventFilter {
     /// Fires only when ALL of these sources have reported.
     #[serde(default)]
     pub all: Vec<EventSource>,
-    /// Aggregation window for `all`, in seconds. None = the sources must be
-    /// seen together with no window.
+    /// Aggregation window for `all`, in seconds. `None` = the default
+    /// window (`DEFAULT_ALL_WINDOW_SECS`, currently 300s) — NOT "no
+    /// window": a literal no-window `all` could only fire when every
+    /// source arrived in the SAME event, which the event-by-event
+    /// evaluation can never observe.
     #[serde(default)]
     pub within_secs: Option<u64>,
 }

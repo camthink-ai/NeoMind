@@ -597,6 +597,14 @@ impl SessionStore {
                 messages.len(),
                 session_id
             );
+
+            // Touch the session's recency stamp in the SAME transaction:
+            // list_sessions (and the summary worker's "recent sessions")
+            // sorts by this stamp, and it used to be creation-only — a
+            // long-lived active session never came up for summarization
+            // while newest-created ones were re-picked every cycle.
+            let mut sessions_table = write_txn.open_table(SESSIONS_TABLE)?;
+            sessions_table.insert(session_id, chrono::Utc::now().timestamp())?;
         }
         write_txn.commit()?;
         Ok(())
@@ -701,6 +709,11 @@ impl SessionStore {
             let value = serde_json::to_vec(message)?;
             table.insert(key, value)?;
 
+            // Refresh the recency stamp (see save_history) in the same
+            // transaction so incremental appends keep the session "recent".
+            let mut sessions_table = write_txn.open_table(SESSIONS_TABLE)?;
+            sessions_table.insert(session_id, chrono::Utc::now().timestamp())?;
+
             max_index
         };
         write_txn.commit()?;
@@ -742,6 +755,11 @@ impl SessionStore {
                 table.insert(key, value)?;
                 next_index += 1;
             }
+
+            // Refresh the recency stamp (see save_history) in the same
+            // transaction so incremental appends keep the session "recent".
+            let mut sessions_table = write_txn.open_table(SESSIONS_TABLE)?;
+            sessions_table.insert(session_id, chrono::Utc::now().timestamp())?;
 
             messages.len()
         };
@@ -818,11 +836,13 @@ impl SessionStore {
             Err(_) => return Ok(Vec::new()),
         };
 
-        // The table value is the session's recency stamp (creation, touched
-        // by every save_history). redb iterates in KEY order — with UUID
-        // session IDs that is a random-but-fixed order, so a `take(n)` caller
-        // summarizing "recent sessions" would keep picking the same arbitrary
-        // subset forever. Sort by the stamp, newest first.
+        // The table value is the session's recency stamp: set at creation
+        // and refreshed by every history write (save_history and the
+        // append_* paths touch it in the same transaction). redb iterates
+        // in KEY order — with UUID session IDs that is a random-but-fixed
+        // order, so a `take(n)` caller summarizing "recent sessions" would
+        // keep picking the same arbitrary subset forever. Sort by the
+        // stamp, newest first — ACTIVITY order, not creation order.
         let mut sessions: Vec<(String, i64)> = Vec::new();
         for result in table.iter()? {
             let (key, value) = result?;
@@ -2143,18 +2163,21 @@ mod retention_tests {
     }
 
     fn seed(store: &SessionStore, id: &str, age_secs: i64) {
-        let old_ts = chrono::Utc::now().timestamp() - age_secs;
         store.save_session_id(id).unwrap();
-        // overwrite the timestamp with an artificial age
+        store
+            .save_history(id, &[SessionMessage::user("hello")])
+            .unwrap();
+        // Overwrite the stamp with an artificial LAST-ACTIVITY age. History
+        // writes refresh the stamp (activity semantics — see save_history),
+        // so the overwrite must come AFTER the write to simulate a session
+        // whose last message landed N seconds ago.
+        let old_ts = chrono::Utc::now().timestamp() - age_secs;
         let write_txn = store.db.begin_write().unwrap();
         {
             let mut table = write_txn.open_table(SESSIONS_TABLE).unwrap();
             table.insert(id, old_ts).unwrap();
         }
         write_txn.commit().unwrap();
-        store
-            .save_history(id, &[SessionMessage::user("hello")])
-            .unwrap();
     }
 
     #[test]
@@ -2175,6 +2198,42 @@ mod retention_tests {
 
         // Idempotent second pass
         assert_eq!(store.cleanup_old_sessions(30 * 24 * 3600).unwrap(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A history write REFRESHES the session's recency stamp: list_sessions
+    /// sorts by it and the chat-summary worker picks "recent sessions" from
+    /// it, so the stamp must mean last ACTIVITY, not creation (the
+    /// creation-only stamp starved long-lived active sessions of
+    /// summarization forever).
+    #[test]
+    fn history_write_refreshes_recency_stamp() {
+        let dir = scratch("touch");
+        let store = SessionStore::open_isolated(dir.join("sessions.redb")).unwrap();
+
+        store.save_session_id("s").unwrap();
+        // Age the stamp artificially: a session whose last activity was
+        // 90 days ago.
+        let old_ts = chrono::Utc::now().timestamp() - 90 * 24 * 3600;
+        let write_txn = store.db.begin_write().unwrap();
+        {
+            let mut table = write_txn.open_table(SESSIONS_TABLE).unwrap();
+            table.insert("s", old_ts).unwrap();
+        }
+        write_txn.commit().unwrap();
+
+        // One incremental append — any history write counts — must bring the
+        // session back inside the retention window.
+        store
+            .append_message("s", &SessionMessage::user("still alive"))
+            .unwrap();
+
+        assert_eq!(
+            store.cleanup_old_sessions(30 * 24 * 3600).unwrap(),
+            0,
+            "an active session must not be reaped as old"
+        );
+        assert!(store.session_exists("s").unwrap());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -842,7 +842,7 @@ pub async fn update_custom_file(
 ) -> Response {
     let store = get_memory_store(&state);
 
-    match store.write_custom_file(&name, &req.content) {
+    match store.write_custom_file(&name, &req.content).await {
         Ok(()) => {
             tracing::info!(name = %name, chars = req.content.len(), "Custom memory file updated via API");
             Json(serde_json::json!({

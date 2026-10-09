@@ -21,7 +21,10 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ASSET="$REPO_ROOT/crates/neomind-core/src/assets/model_registry.json"
 URL="${LITELLM_REGISTRY_URL:-https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json}"
-TMP="$(mktemp -t model_registry.XXXXXX.json)"
+# Temp file in the ASSET's own directory: the final replace is a same-fs
+# `mv` (atomic rename). A /tmp temp forced `cp`, which an interrupted run
+# could leave as a truncated asset — include_str! would then embed garbage.
+TMP="$(mktemp "${ASSET}.XXXXXX")"
 trap 'rm -f "$TMP"' EXIT
 
 echo "→ downloading $URL"
@@ -54,7 +57,8 @@ print(f"new: {n[0]} entries, {n[1]} vision, {n[2]} reasoning")
 print(f"added {len(set(new)-set(old))}, removed {len(set(old)-set(new))}")
 PY
 
-cp "$TMP" "$ASSET"
+chmod 644 "$TMP"   # mktemp creates 0600; the asset is a normal repo file
+mv "$TMP" "$ASSET" # same-directory rename — atomic replace
 echo "→ replaced $ASSET"
 echo
 

@@ -26,10 +26,11 @@ static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Atomically write `content` to `path`.
 ///
-/// Writes a sibling hidden temp file `<filename>.tmp` (in the same
+/// Writes a sibling hidden temp file `.{filename}.{pid}.{n}.tmp` (same
 /// directory — required so `rename` doesn't degrade to non-atomic
-/// copy+unlink across filesystems), then renames over the target.
-/// Cleans up the temp file on either step failing.
+/// copy+unlink across filesystems; the pid+counter suffix keeps concurrent
+/// writers from clobbering each other's temp), then renames over the
+/// target. Cleans up the temp file on either step failing.
 ///
 /// Accepts `impl AsRef<[u8]>` so callers can pass `&str` or `&[u8]`
 /// without manual conversion — drop-in replacement for `fs::write`.

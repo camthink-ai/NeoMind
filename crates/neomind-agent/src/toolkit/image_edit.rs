@@ -18,7 +18,7 @@ use ab_glyph::Font as _;
 use neomind_core::tools::ToolCategory;
 use serde::Deserialize;
 use serde_json::Value;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 /// Color newtype with hex/CSS deserialization support.
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -1290,6 +1290,68 @@ fn coverage(font: &ab_glyph::FontArc, text: &str) -> (usize, usize) {
 /// candidate (CJK-capable paths are ordered first in [`system_font_paths`]).
 /// Returns the candidate with its (covered, total) so the caller can warn on
 /// partial coverage.
+/// Byte-bounded cache of raw font-file bytes for the SLOW probe path (text
+/// the cached winners don't fully cover — emoji, rare scripts). Without it
+/// every such call re-reads every candidate file from disk (~80MB of
+/// transient reads on a stock macOS font set, worse on edge-device SD
+/// cards); with it, repeat probes are CPU-only. FIFO eviction, budget well
+/// under the two owned winner copies the module already holds.
+struct FontBytesCache {
+    entries: Vec<(&'static str, Arc<Vec<u8>>)>,
+    bytes: usize,
+}
+
+impl FontBytesCache {
+    const BUDGET: usize = 32 * 1024 * 1024;
+
+    fn get(&self, path: &str) -> Option<Arc<Vec<u8>>> {
+        self.entries
+            .iter()
+            .find(|(p, _)| *p == path)
+            .map(|(_, b)| Arc::clone(b))
+    }
+
+    fn put(&mut self, path: &'static str, bytes: Arc<Vec<u8>>) {
+        // A single file over budget would evict everything else for one
+        // entry — skip caching it (it still gets read this call).
+        if bytes.len() > Self::BUDGET {
+            return;
+        }
+        if self.get(path).is_some() {
+            return;
+        }
+        self.bytes += bytes.len();
+        self.entries.push((path, bytes));
+        while self.bytes > Self::BUDGET {
+            let Some((_, evicted)) = self.entries.first() else {
+                break;
+            };
+            self.bytes -= evicted.len();
+            self.entries.remove(0);
+        }
+    }
+}
+
+static FONT_BYTES_CACHE: std::sync::Mutex<FontBytesCache> = std::sync::Mutex::new(FontBytesCache {
+    entries: Vec::new(),
+    bytes: 0,
+});
+
+/// Read a font file through [`FONT_BYTES_CACHE`] — hit: Arc clone, miss:
+/// disk read + insert. Lock failures degrade to an uncached read.
+fn read_font_bytes(path: &'static str) -> Option<Arc<Vec<u8>>> {
+    if let Ok(cache) = FONT_BYTES_CACHE.lock() {
+        if let Some(hit) = cache.get(path) {
+            return Some(hit);
+        }
+    }
+    let bytes = Arc::new(std::fs::read(path).ok()?);
+    if let Ok(mut cache) = FONT_BYTES_CACHE.lock() {
+        cache.put(path, Arc::clone(&bytes));
+    }
+    Some(bytes)
+}
+
 fn select_font_for(text: &str) -> Option<(FontSelection, usize, usize)> {
     let class = script_class(text) as usize;
     // Fast path: the cached winner for this script class still fully covers
@@ -1315,7 +1377,7 @@ fn select_font_for(text: &str) -> Option<(FontSelection, usize, usize)> {
     // materialize ONLY the winner (one owned copy) into the class slot.
     let mut best: Option<(FaceAddr, usize, usize)> = None;
     for addr in probe_faces() {
-        let Ok(bytes) = std::fs::read(addr.path) else {
+        let Some(bytes) = read_font_bytes(addr.path) else {
             continue;
         };
         let face = if addr.index == 0 && !(bytes.len() >= 12 && &bytes[0..4] == b"ttcf") {
@@ -1359,8 +1421,8 @@ fn select_font_for(text: &str) -> Option<(FontSelection, usize, usize)> {
         }
     }
 
-    let bytes = std::fs::read(addr.path).ok()?;
-    let cand = load_face(&addr, bytes)?;
+    let bytes = read_font_bytes(addr.path)?;
+    let cand = load_face(&addr, (*bytes).clone())?;
     let selection = FontSelection {
         font: ab_glyph::FontArc::clone(&cand.font),
         source: cand.source,

@@ -736,6 +736,11 @@ pub async fn get_session_history_handler(
 
     // Ownership: same first-claim rule as the WS attach path (this read is
     // how a page replays history — it must not outrank the attach guard).
+    // NOTE on GET purity: the client-form conversion below persists image
+    // payloads to the served /api/images directory (content-hash file
+    // names, idempotent re-runs) — a GET that can materialize files it
+    // already decided to serve. Accepted: without it, every replay would
+    // re-ship megabytes of base64 that the images endpoint exists to avoid.
     if session_read_forbidden(
         &state.agents.session_manager,
         &id,
@@ -1525,13 +1530,9 @@ fn session_attach_allowed(
     sid: &str,
     principal: &str,
 ) -> bool {
-    match manager.session_owner(sid) {
-        Some(owner) if owner != principal => false,
-        _ => {
-            manager.set_session_owner(sid, principal);
-            true
-        }
-    }
+    // Atomic first-claim: the unlocked read-check-write raced concurrent
+    // first attachments (WS + REST) into double-stamping.
+    manager.claim_session_owner(sid, principal)
 }
 
 /// Principal for a REST caller — same grammar as the WS path: JWT →

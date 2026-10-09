@@ -649,41 +649,6 @@ async fn test_null_values_in_data_point() {
 }
 
 #[tokio::test]
-async fn test_write_batch_concurrent() {
-    let store = TimeSeriesStore::memory().unwrap();
-
-    // Create multiple batch requests
-    let mut requests = Vec::new();
-    for device_id in 0..5 {
-        let mut batch = BatchWriteRequest::new(format!("device{}", device_id));
-        for metric_idx in 0..3 {
-            let metric_name = format!("metric{}", metric_idx);
-            for i in 0..10 {
-                let point = DataPoint::new(1000 + i * 10, i as f64);
-                batch.add_point(metric_name.clone(), point);
-            }
-        }
-        requests.push(batch);
-    }
-
-    // Write concurrently
-    let total_written = store.write_batch_concurrent(requests).await.unwrap();
-    assert_eq!(total_written, 5 * 3 * 10); // 5 devices * 3 metrics * 10 points
-
-    // Verify data
-    for device_id in 0..5 {
-        for metric_idx in 0..3 {
-            let metric_name = format!("metric{}", metric_idx);
-            let latest = store
-                .query_latest(&format!("device{}", device_id), &metric_name)
-                .await
-                .unwrap();
-            assert!(latest.is_some());
-        }
-    }
-}
-
-#[tokio::test]
 async fn test_query_range_batch() {
     let store = TimeSeriesStore::memory().unwrap();
 

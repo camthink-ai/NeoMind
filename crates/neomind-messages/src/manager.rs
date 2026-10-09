@@ -37,6 +37,23 @@ impl Default for MessageManager {
     }
 }
 
+/// Delivery outcome of [`MessageManager::try_create_message`].
+///
+/// `create_message` returns `Ok` even when every channel failed (the
+/// message is stored; only the push was lost) — callers that keep their own
+/// audit records, like the rule engine's history rows, need this report to
+/// distinguish "alert delivered" from "alert accepted, delivery lost".
+#[derive(Debug, Clone)]
+pub struct DeliveryReport {
+    /// At least one channel attempted delivery (enabled, passed filter,
+    /// routed). False = deduped or no channel was tried.
+    pub attempted: bool,
+    /// At least one channel acknowledged the send.
+    pub delivered_any: bool,
+    /// Per-channel failure reasons, "name: error" — empty on success.
+    pub failures: Vec<String>,
+}
+
 impl MessageManager {
     /// Create a new in-memory message manager (no persistence).
     pub fn new() -> Self {
@@ -306,7 +323,18 @@ impl MessageManager {
     }
 
     /// Create and send a message.
+    ///
+    /// Returns `Ok` even when every channel failed — the message IS stored;
+    /// only the push was lost (that distinction used to live solely in
+    /// logs). Callers that need the delivery outcome to keep their own
+    /// records honest (the rule engine's history rows) use
+    /// [`MessageManager::try_create_message`].
     pub async fn create_message(&self, message: Message) -> Result<Message> {
+        self.try_create_message(message).await.map(|(m, _)| m)
+    }
+
+    /// Create and send a message, reporting the delivery outcome.
+    pub async fn try_create_message(&self, message: Message) -> Result<(Message, DeliveryReport)> {
         let id = message.id.clone();
         let _is_active = message.is_active();
         let severity = message.severity;
@@ -354,7 +382,14 @@ impl MessageManager {
                         let stored = Self::message_to_stored(&message);
                         let _ = store.insert_async(stored).await;
                     }
-                    return Ok(message);
+                    return Ok((
+                        message,
+                        DeliveryReport {
+                            attempted: false,
+                            delivered_any: false,
+                            failures: Vec::new(),
+                        },
+                    ));
                 }
             }
         }
@@ -499,9 +534,19 @@ impl MessageManager {
             }
         }
 
+        // Delivery outcome for the caller (see DeliveryReport): computed
+        // once here, reused by the all-failed log below and the return.
+        let report = DeliveryReport {
+            attempted: !send_results.is_empty(),
+            delivered_any: send_results.iter().any(|r| r.1.is_ok()),
+            failures: send_results
+                .iter()
+                .filter_map(|(name, r)| r.as_ref().err().map(|e| format!("{name}: {e}")))
+                .collect(),
+        };
+
         // Log if all channels failed (but message was still created successfully)
-        let any_success = send_results.iter().any(|r| r.1.is_ok());
-        if !any_success && !send_results.is_empty() {
+        if !report.delivered_any && report.attempted {
             // Release the dedup key: it was marked BEFORE the fan-out to
             // close the concurrent-duplicate window, but with EVERY channel
             // dead the mark now only suppresses the NEXT legitimate alert
@@ -520,12 +565,8 @@ impl MessageManager {
             // Escalated to error with the per-channel reasons: "all channels
             // failed" used to be a single anonymous warn line — the operator
             // could not tell a dead webhook from a revoked token.
-            let failed: Vec<String> = send_results
-                .iter()
-                .filter_map(|(name, r)| r.as_ref().err().map(|e| format!("{name}: {e}")))
-                .collect();
             tracing::error!(
-                channels = %failed.join("; "),
+                channels = %report.failures.join("; "),
                 "ALL notification channels failed for message '{}' (after retries) — message stored, delivery lost",
                 message.title
             );
@@ -564,7 +605,7 @@ impl MessageManager {
             message.category
         );
 
-        Ok(message)
+        Ok((message, report))
     }
 
     /// Create a simple alert message.

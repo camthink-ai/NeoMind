@@ -345,7 +345,7 @@ impl MemoryTool {
     }
 
     /// Write a custom file, respecting agent scope.
-    fn write_custom(
+    async fn write_custom(
         &self,
         store: &MarkdownMemoryStore,
         agent_id: Option<&str>,
@@ -355,10 +355,12 @@ impl MemoryTool {
         if let Some(aid) = agent_id {
             store
                 .write_agent_custom_file(aid, name, content)
+                .await
                 .map_err(|e| ToolError::Execution(e.to_string()))
         } else {
             store
                 .write_custom_file(name, content)
+                .await
                 .map_err(|e| ToolError::Execution(e.to_string()))
         }
     }
@@ -412,9 +414,10 @@ impl MemoryTool {
         }
     }
 
-    /// Sync twin of [`modify_persisted`] for custom files (the custom-file
-    /// path is sync and uses the store's custom-write lock).
-    fn modify_custom_persisted<F>(
+    /// Async twin of [`modify_persisted`] for custom files — the custom-file
+    /// path runs its blocking IO on the pool under the store's async
+    /// custom-write lock (same fake-async treatment as the main files).
+    async fn modify_custom_persisted<F>(
         store: &MarkdownMemoryStore,
         agent_id: Option<&str>,
         name: &str,
@@ -436,6 +439,7 @@ impl MemoryTool {
                     existing.to_string()
                 }
             })
+            .await
             .map_err(|e| ToolError::Execution(e.to_string()))?;
         match op_err {
             Some(e) => Err(e),
@@ -565,7 +569,8 @@ If a write exceeds the per-file limit, the error reports the exact limit — tru
                          unless content is genuinely scoped and reusable across all future conversations."
                     );
                 }
-                self.write_custom(&store, agent_id.as_deref(), custom_name, content)?;
+                self.write_custom(&store, agent_id.as_deref(), custom_name, content)
+                    .await?;
 
                 // Extract description from first line of content
                 let description = content
@@ -600,16 +605,18 @@ If a write exceeds the per-file limit, the error reports the exact limit — tru
                     // history every analysis).
                     let mut skipped = false;
                     let mut merged_chars = 0usize;
-                    store.modify_custom_file(agent_id.as_deref(), custom_name, |existing| {
-                        let merged = Self::merge_custom_content(existing, content, &dedup);
-                        if merged.trim() == existing.trim() {
-                            skipped = true;
-                            existing.to_string()
-                        } else {
-                            merged_chars = merged.chars().count();
-                            merged
-                        }
-                    })?;
+                    store
+                        .modify_custom_file(agent_id.as_deref(), custom_name, |existing| {
+                            let merged = Self::merge_custom_content(existing, content, &dedup);
+                            if merged.trim() == existing.trim() {
+                                skipped = true;
+                                existing.to_string()
+                            } else {
+                                merged_chars = merged.chars().count();
+                                merged
+                            }
+                        })
+                        .await?;
                     if skipped {
                         return Ok(ToolOutput::success(serde_json::json!({
                             "message": format!(
@@ -707,7 +714,8 @@ If a write exceeds the per-file limit, the error reports the exact limit — tru
                         agent_id.as_deref(),
                         custom_name,
                         |existing| Self::replace_in_content(existing, old_text, content),
-                    )?;
+                    )
+                    .await?;
                     format!("Replaced in custom:{} ({} chars)", custom_name, new_chars)
                 } else {
                     match target {
@@ -756,7 +764,8 @@ If a write exceeds the per-file limit, the error reports the exact limit — tru
                         agent_id.as_deref(),
                         custom_name,
                         |existing| Self::remove_from_content(existing, old_text),
-                    )?;
+                    )
+                    .await?;
                     format!("Removed from custom:{} ({} chars)", custom_name, new_chars)
                 } else {
                     match target {

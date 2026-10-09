@@ -320,6 +320,7 @@ mod tests {
         // Create custom files — should NOT appear in snapshot
         store
             .write_custom_file("test-file", "Custom content")
+            .await
             .unwrap();
 
         let snapshot = MemorySnapshot::load(&store);

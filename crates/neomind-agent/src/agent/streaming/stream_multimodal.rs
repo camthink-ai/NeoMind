@@ -359,7 +359,10 @@ pub async fn process_multimodal_stream_events_with_safeguards(
             for (name, execution) in tool_results_executed {
                 // Use arguments from the execution result (preserves per-call arguments for same-name tools)
                 let exec_arguments = execution.arguments.clone();
-                yield AgentEvent::tool_call_start(&name, exec_arguments.clone());
+                // Round-stamped like stream_core: the pending-stream snapshot
+                // stores whatever round the event carries — unstamped events
+                // all collapsed to round 1, mismatching the persisted turn.
+                yield AgentEvent::tool_call_start_round(&name, exec_arguments.clone(), 1);
 
                 match execution.result {
                     Ok(output) => {
@@ -414,7 +417,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                             round: Some(1),
                         });
 
-                        yield AgentEvent::tool_call_end(&name, &display_str, output.success);
+                        yield AgentEvent::tool_call_end_round(&name, &display_str, output.success, 1);
 
                         tool_call_results.push((name.clone(), sanitized_str));
                     }
@@ -430,7 +433,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                             round: Some(1),
                         });
 
-                        yield AgentEvent::tool_call_end(&name, &error_msg, false);
+                        yield AgentEvent::tool_call_end_round(&name, &error_msg, false, 1);
                         tool_call_results.push((name.clone(), error_msg));
                     }
                 }
@@ -556,7 +559,9 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                         internal_state.write().await.push_message(cont_msg);
 
                         for (name, execution) in cont_results {
-                            yield AgentEvent::tool_call_start(&name, execution.arguments.clone());
+                            // Continuation round — matches the ToolCall struct's
+                            // round: Some(2) persisted to history.
+                            yield AgentEvent::tool_call_start_round(&name, execution.arguments.clone(), 2);
                             match execution.result {
                                 Ok(output) => {
                                     let result_str = if output.success {
@@ -579,14 +584,14 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                     // as the main path above.
                                     let sanitized_str = sanitize_tool_result_for_prompt(&slimmed_str);
                                     let display_str = sanitized_str.clone();
-                                    yield AgentEvent::tool_call_end(&name, &display_str, output.success);
+                                    yield AgentEvent::tool_call_end_round(&name, &display_str, output.success, 2);
                                     let mut state = internal_state.write().await;
                                     state.push_message(AgentMessage::tool_result(&name, &sanitized_str));
                                     tool_call_results.push((name.clone(), sanitized_str));
                                 }
                                 Err(e) => {
                                     let err_msg = format!("Tool execution failed: {}", e);
-                                    yield AgentEvent::tool_call_end(&name, &err_msg, false);
+                                    yield AgentEvent::tool_call_end_round(&name, &err_msg, false, 2);
                                     tool_call_results.push((name.clone(), err_msg));
                                 }
                             }
@@ -782,7 +787,8 @@ pub async fn process_multimodal_stream_events_with_safeguards(
 
                     let mut nudge_tool_results: Vec<(String, String)> = Vec::new();
                     for (name, execution) in nudge_results {
-                        yield AgentEvent::tool_call_start(&name, execution.arguments.clone());
+                        // Nudge round — matches the ToolCall struct's round: Some(2).
+                        yield AgentEvent::tool_call_start_round(&name, execution.arguments.clone(), 2);
                         match execution.result {
                             Ok(output) => {
                                 let result_str = if output.success {
@@ -803,14 +809,14 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                 };
                                 let sanitized_str = sanitize_tool_result_for_prompt(&slimmed_str);
                                 let display_str = sanitized_str.clone();
-                                yield AgentEvent::tool_call_end(&name, &display_str, output.success);
+                                yield AgentEvent::tool_call_end_round(&name, &display_str, output.success, 2);
                                 let mut state = internal_state.write().await;
                                 state.push_message(AgentMessage::tool_result(&name, &sanitized_str));
                                 nudge_tool_results.push((name.clone(), sanitized_str));
                             }
                             Err(e) => {
                                 let err_msg = format!("Tool execution failed: {}", e);
-                                yield AgentEvent::tool_call_end(&name, &err_msg, false);
+                                yield AgentEvent::tool_call_end_round(&name, &err_msg, false, 2);
                                 nudge_tool_results.push((name.clone(), err_msg));
                             }
                         }

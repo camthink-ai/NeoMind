@@ -114,7 +114,8 @@ impl AgentExecutor {
         }
 
         // Auto-init knowledge file on first SUCCESSFUL execution
-        self.auto_init_knowledge_file(agent, &mut updated_memory, conclusion, success);
+        self.auto_init_knowledge_file(agent, &mut updated_memory, conclusion, success)
+            .await;
 
         // Cap knowledge_files FIFO (see MAX_KNOWLEDGE_FILES for why)
         while updated_memory.knowledge_files.len() > MAX_KNOWLEDGE_FILES {
@@ -145,7 +146,7 @@ impl AgentExecutor {
     /// Auto-initialize a knowledge file when the agent has none yet.
     /// Covers both newly-created agents (whose init happened at creation time)
     /// and legacy agents created before the init-at-creation feature was added.
-    pub(crate) fn auto_init_knowledge_file(
+    pub(crate) async fn auto_init_knowledge_file(
         &self,
         agent: &AiAgent,
         updated_memory: &mut AgentMemory,
@@ -240,7 +241,10 @@ impl AgentExecutor {
         );
 
         // Write file to agent-scoped directory
-        if let Err(e) = store.write_agent_custom_file(&agent.id, "task-understanding", &content) {
+        if let Err(e) = store
+            .write_agent_custom_file(&agent.id, "task-understanding", &content)
+            .await
+        {
             tracing::warn!(
                 agent_id = %agent.id,
                 "Failed to auto-init knowledge file: {}", e

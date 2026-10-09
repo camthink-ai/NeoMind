@@ -142,8 +142,9 @@ pub struct RuleEngine {
 /// the history row is written with, or the reference dangles.
 #[derive(Debug, Clone)]
 struct RuleExecutionRef {
-    rule_id: String,
+    rule_id: RuleId,
     triggered_at: chrono::DateTime<chrono::Utc>,
+    rule_name: String,
 }
 
 impl RuleEngine {
@@ -473,8 +474,9 @@ impl RuleEngine {
         let mut error = None;
 
         let execution = RuleExecutionRef {
-            rule_id: id.to_string(),
+            rule_id: id.clone(),
             triggered_at: now,
+            rule_name: rule.name.clone(),
         };
         for action in &rule.actions {
             match self
@@ -647,8 +649,9 @@ impl RuleEngine {
         let start = Instant::now();
         let triggered_at = Utc::now();
         let execution = RuleExecutionRef {
-            rule_id: rule_id.to_string(),
+            rule_id: rule_id.clone(),
             triggered_at,
+            rule_name: rule.name.clone(),
         };
         let mut actions_executed = Vec::new();
         let mut first_error = None;
@@ -759,6 +762,67 @@ impl RuleEngine {
         find_first(condition, provider)
     }
 
+    /// Overwrite the recorded outcome of an execution whose action was
+    /// SPAWNED (accepted) and later failed for real. `RuleStore::save_history`
+    /// keys rows by (triggered_at, rule_id), so re-saving the same identity
+    /// REPLACES the optimistic "(spawned)" row — durable history never claims
+    /// a delivery that did not happen. The in-memory deque entry is updated
+    /// in place so the API matches the store. (Process death between spawn
+    /// and this correction still leaves only the optimistic row; that
+    /// residual window is accepted and noted at the spawn sites.)
+    async fn correct_spawned_outcome(
+        history: &Arc<RwLock<VecDeque<RuleExecutionResult>>>,
+        store: Option<Arc<RuleStore>>,
+        execution: &RuleExecutionRef,
+        action_label: String,
+        failure: String,
+    ) {
+        let corrected = RuleExecutionResult {
+            rule_id: execution.rule_id.clone(),
+            rule_name: execution.rule_name.clone(),
+            success: false,
+            actions_executed: vec![action_label],
+            error: Some(format!("delivery failed: {failure}")),
+            // Delivery time, not rule-eval time — the row corrects the
+            // OUTCOME of the accepted execution, not its timing.
+            duration_ms: 0,
+            triggered_at: execution.triggered_at,
+        };
+        if let Some(store) = store {
+            // The optimistic row is written by `record_history` AFTER this
+            // spawn returns — a fast-failing delivery can reach this point
+            // first, and the optimistic save (same identity key) would then
+            // clobber the correction. Wait, bounded, for the identity to
+            // appear in the in-memory deque; record_history pushes to the
+            // deque immediately after its store save, so presence here
+            // means the optimistic row is durable and safe to overwrite.
+            // (All-channels-failed deliveries take ≥ seconds of retries and
+            // never wait; only hard errors can land in this window.)
+            for _ in 0..40 {
+                if history.read().await.iter().any(|r| {
+                    r.rule_id == corrected.rule_id && r.triggered_at == corrected.triggered_at
+                }) {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            if let Err(e) = store.save_history(&corrected) {
+                tracing::warn!(
+                    rule_id = %corrected.rule_id,
+                    error = %e,
+                    "Failed to correct rule history after delivery failure"
+                );
+            }
+        }
+        let mut history = history.write().await;
+        if let Some(entry) = history
+            .iter_mut()
+            .find(|r| r.rule_id == corrected.rule_id && r.triggered_at == corrected.triggered_at)
+        {
+            *entry = corrected;
+        }
+    }
+
     async fn execute_action(
         &self,
         action: &RuleAction,
@@ -804,13 +868,49 @@ impl RuleEngine {
                     // stalled every other rule's evaluation and the EventBus
                     // lagged past its buffer — silently DROPPING threshold
                     // crossings (missed alerts). Rule history records the
-                    // action as spawned; delivery failures log here.
+                    // action as spawned; a real delivery failure CORRECTS
+                    // that row here (same identity key, overwrite).
+                    let history = Arc::clone(&self.history);
+                    let store = self.rule_store.read().as_ref().cloned();
+                    let execution_ref = execution.clone();
+                    let accepted = format!("NOTIFY: {}", formatted);
+                    let accepted_for_correction = accepted.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = manager.create_message(msg).await {
-                            tracing::warn!(error = %e, "NOTIFY action failed (spawned)");
+                        // try_create_message (not create_message): the plain
+                        // call returns Ok even when EVERY channel failed —
+                        // the message is stored, only the push is lost — and
+                        // that lost-alert case is exactly what the history
+                        // correction exists to record.
+                        match manager.try_create_message(msg).await {
+                            Err(e) => {
+                                tracing::warn!(error = %e, "NOTIFY action failed (spawned)");
+                                Self::correct_spawned_outcome(
+                                    &history,
+                                    store,
+                                    &execution_ref,
+                                    accepted_for_correction,
+                                    format!("persist failed: {e}"),
+                                )
+                                .await;
+                            }
+                            Ok((_, report)) if report.delivered_any || !report.attempted => {}
+                            Ok((_, report)) => {
+                                tracing::warn!(
+                                    channels = %report.failures.join("; "),
+                                    "NOTIFY delivery lost on every channel (message stored)"
+                                );
+                                Self::correct_spawned_outcome(
+                                    &history,
+                                    store,
+                                    &execution_ref,
+                                    accepted_for_correction,
+                                    format!("all channels failed: {}", report.failures.join("; ")),
+                                )
+                                .await;
+                            }
                         }
                     });
-                    Ok(format!("NOTIFY: {} (spawned)", formatted))
+                    Ok(format!("{accepted} (spawned)"))
                 } else {
                     tracing::info!("NOTIFY: {} (no MessageManager)", formatted);
                     Ok(format!("NOTIFY: {} (logged only)", formatted))
@@ -836,7 +936,11 @@ impl RuleEngine {
                         // which the single consumer loop could not drain the
                         // EventBus (dropped threshold crossings). Spawned, per
                         // the same reasoning as TriggerAgent below.
-                        let label = format!("EXECUTE: {}.{} (spawned)", target, command);
+                        let label = format!("EXECUTE: {}.{}", target, command);
+                        let label_for_correction = label.clone();
+                        let history = Arc::clone(&self.history);
+                        let store = self.rule_store.read().as_ref().cloned();
+                        let execution_ref = execution.clone();
                         let (target, command) = (target.clone(), command.clone());
                         tokio::spawn(async move {
                             if let Err(e) = ex
@@ -844,9 +948,17 @@ impl RuleEngine {
                                 .await
                             {
                                 tracing::warn!(error = %e, "EXECUTE device action failed (spawned)");
+                                Self::correct_spawned_outcome(
+                                    &history,
+                                    store,
+                                    &execution_ref,
+                                    label_for_correction,
+                                    e.to_string(),
+                                )
+                                .await;
                             }
                         });
-                        Ok(label)
+                        Ok(format!("{label} (spawned)"))
                     } else {
                         tracing::info!("EXECUTE device {}.{} (no executor)", target, command);
                         Ok(format!("EXECUTE: {}.{} (logged only)", target, command))
@@ -862,19 +974,36 @@ impl RuleEngine {
                         // [decoupled] extension processes run out-of-process
                         // with their own timeouts; same consumer-loop stall
                         // risk as the device arm above.
+                        let label = format!("EXTENSION: {}.{}", target, command);
+                        let label_for_correction = label.clone();
+                        let history = Arc::clone(&self.history);
+                        let store = self.rule_store.read().as_ref().cloned();
+                        let execution_ref = execution.clone();
                         tokio::spawn(async move {
-                            match ex.execute(&ext_action).await {
-                                Ok(result) if result.success => {}
-                                Ok(result) => tracing::warn!(
-                                    error = result.error.unwrap_or_else(|| "Failed".to_string()),
-                                    "EXTENSION action failed (spawned)"
-                                ),
-                                Err(e) => {
-                                    tracing::warn!(error = %e, "EXTENSION action failed (spawned)")
+                            let failure = match ex.execute(&ext_action).await {
+                                Ok(result) if result.success => None,
+                                Ok(result) => {
+                                    let e = result.error.unwrap_or_else(|| "Failed".to_string());
+                                    tracing::warn!(error = %e, "EXTENSION action failed (spawned)");
+                                    Some(e)
                                 }
+                                Err(e) => {
+                                    tracing::warn!(error = %e, "EXTENSION action failed (spawned)");
+                                    Some(e.to_string())
+                                }
+                            };
+                            if let Some(failure) = failure {
+                                Self::correct_spawned_outcome(
+                                    &history,
+                                    store,
+                                    &execution_ref,
+                                    label_for_correction,
+                                    failure,
+                                )
+                                .await;
                             }
                         });
-                        Ok(format!("EXTENSION: {}.{} (spawned)", target, command))
+                        Ok(format!("{label} (spawned)"))
                     } else {
                         tracing::info!("EXECUTE extension {}.{} (no executor)", target, command);
                         Ok(format!("EXTENSION: {}.{} (logged only)", target, command))
@@ -1262,8 +1391,9 @@ mod tests {
                     agent_id: "cam01-view".to_string(),
                 },
                 &RuleExecutionRef {
-                    rule_id: "r-1".to_string(),
+                    rule_id: RuleId::new(),
                     triggered_at: Utc::now(),
+                    rule_name: "test-rule".to_string(),
                 },
                 None,
                 None,
