@@ -242,7 +242,15 @@ Timeout: 15 seconds. Max response: 1MB."#
                 if e.is_timeout() {
                     ToolError::Timeout
                 } else {
-                    ToolError::Execution(format!("Request failed: {}", e))
+                    // Connection-class failures carry a redirect note: the
+                    // live incident had a small model hammering an INVENTED
+                    // endpoint (api.neomind.com) because each echoed-URL
+                    // error read as "real address, transient problem".
+                    // Name the alternative at the point of failure.
+                    ToolError::Execution(format!(
+                        "Request failed: {}. NOTE: if this host was your guess for a NeoMind platform API, that is the wrong interface — platform operations (dashboards, widgets, devices, rules, agents) run via the `shell` tool with the `neomind` CLI (e.g. `neomind dashboard add-components <ID> --components '<json>'`), and the platform exposes no public HTTP API at external domains. This tool is for EXTERNAL URLs only.",
+                        e
+                    ))
                 }
             })?;
 

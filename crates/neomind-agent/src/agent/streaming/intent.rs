@@ -180,7 +180,7 @@ pub(crate) fn build_list_only_dead_end_prompt(
 
     let mut msg = format!(
         "⚠️ CRITICAL: The user asked you to perform an ACTION, but you ONLY ran list/query commands.\n\
-        You MUST now execute the actual action command.\n\n\
+        You MUST now execute the actual action AS A `shell` TOOL CALL running the `neomind` CLI — not web_fetch, not any HTTP endpoint (the platform is NOT reachable over web_fetch).\n\n\
         Previously executed (read-only):\n{}\n\n",
         executed_summary
     );
@@ -409,6 +409,20 @@ mod tests {
         let msg = "创建一个温湿度仪表盘";
         let cmds = ["neomind device list", "neomind widget list"];
         assert!(build_list_only_dead_end_prompt(msg, &cmds, &[]).is_some());
+    }
+
+    /// The dead-end injection must NAME the shell tool — the live incident
+    /// had a small model answer "output a tool call NOW" with web_fetch.
+    #[test]
+    fn dead_end_injection_names_shell_tool() {
+        let msg = build_list_only_dead_end_prompt(
+            "帮我开发一个前端画图组件 并且添加到dashboard",
+            &["neomind dashboard list", "neomind widget list"],
+            &[],
+        )
+        .expect("action request with only list calls must inject");
+        assert!(msg.contains("`shell` TOOL CALL"), "{msg}");
+        assert!(msg.contains("not web_fetch"), "{msg}");
     }
 
     #[test]

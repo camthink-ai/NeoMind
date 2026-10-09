@@ -353,6 +353,15 @@ pub async fn process_stream_events_with_safeguards(
             let executed_tool_signatures: std::sync::Arc<
                 std::sync::Mutex<std::collections::HashMap<String, String>>,
             > = std::sync::Arc::new(std::collections::HashMap::new().into());
+            // LOOP BREAK: per-turn failure strikes — signature → (failures,
+            // last error). A small model fixated on an invented endpoint
+            // (live incident: 15× `web_fetch https://api.neomind.com/...`,
+            // every call failing identically) needs a deterministic stop:
+            // after 2 failures of the EXACT same tool+arguments, the next
+            // identical call is refused with the error text + a redirect.
+            let failed_tool_signatures: std::sync::Arc<
+                std::sync::Mutex<std::collections::HashMap<String, (u32, String)>>,
+            > = std::sync::Arc::new(std::collections::HashMap::new().into());
             // Track per-round thinking and content for persistence (round number → text)
             let mut round_thinking_map: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
             let mut round_contents_map: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
@@ -1020,11 +1029,13 @@ pub async fn process_stream_events_with_safeguards(
                         .collect();
 
                     let reuse_map = executed_tool_signatures.clone();
+                    let failed_map = failed_tool_signatures.clone();
 
                     let tool_futures = futures::stream::iter(tool_inputs.into_iter().map(|(i, name, arguments)| {
                         let tools_clone = tools.clone();
                         let cache_clone = cache.clone();
                         let reuse_map = reuse_map.clone();
+                        let failed_map = failed_map.clone();
 
                         async move {
                             // Shell policy check — same deny-list as Loop A (tool_loop.rs).
@@ -1050,6 +1061,26 @@ pub async fn process_stream_events_with_safeguards(
                                 name,
                                 serde_json::to_string(&arguments).unwrap_or_default()
                             );
+
+                            // === LOOP BREAK (see failed_tool_signatures) ===
+                            if let Some((failures, last_err)) =
+                                failed_map.lock().unwrap().get(&sig).cloned()
+                            {
+                                if let Some(msg) = loop_break_message(failures, &last_err) {
+                                    tracing::warn!(
+                                        tool = %name,
+                                        failures,
+                                        "Loop break: identical call already failed {}× this turn — refusing to re-execute",
+                                        failures
+                                    );
+                                    return (i, name.clone(), ToolExecutionResult {
+                                        _name: name.clone(),
+                                        arguments: arguments.clone(),
+                                        result: Err(crate::toolkit::error::ToolError::Execution(msg)),
+                                    });
+                                }
+                            }
+
                             if reusable {
                                 if let Some(prev) = reuse_map.lock().unwrap().get(&sig).cloned() {
                                     if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&prev) {
@@ -1072,6 +1103,25 @@ pub async fn process_stream_events_with_safeguards(
                             }
                             let result =
                                 execute_tool_with_retry(&tools_clone, &cache_clone, &name, arguments.clone()).await;
+
+                            // Strike bookkeeping: failures accumulate per
+                            // signature; a success clears the strikes.
+                            {
+                                let failed_now: Option<String> = match &result {
+                                    Ok(out) if out.success => {
+                                        failed_map.lock().unwrap().remove(&sig);
+                                        None
+                                    }
+                                    Ok(out) => Some(out.error.clone().unwrap_or_else(|| "tool reported failure".to_string())),
+                                    Err(e) => Some(e.to_string()),
+                                };
+                                if let Some(err) = failed_now {
+                                    let mut m = failed_map.lock().unwrap();
+                                    let entry = m.entry(sig.clone()).or_insert((0, String::new()));
+                                    entry.0 += 1;
+                                    entry.1 = err;
+                                }
+                            }
                             if reusable {
                                 if let Ok(out) = &result {
                                     if out.success {
@@ -1849,9 +1899,47 @@ pub(crate) fn effective_history_budget(max_context: usize, prompt_overhead: usiz
     effective
 }
 
+/// Loop-break decision (pure, tested): after `LOOP_BREAK_AFTER_FAILURES`
+/// failures of the EXACT same tool+arguments within one turn, refuse the
+/// next identical call with the last error and a redirect note. Returns the
+/// message to refuse with, or None to proceed.
+pub(crate) const LOOP_BREAK_AFTER_FAILURES: u32 = 2;
+
+pub(crate) fn loop_break_message(failures: u32, last_err: &str) -> Option<String> {
+    if failures < LOOP_BREAK_AFTER_FAILURES {
+        return None;
+    }
+    Some(format!(
+        "LOOP BREAK: this exact call has already FAILED {failures}× this turn — running it unchanged again cannot succeed. Last error: {last_err}. Change the approach NOW: fix the arguments, or use a different tool. Note: NeoMind platform operations (dashboards, widgets, devices, rules, agents) run via the `shell` tool with the `neomind` CLI — e.g. `neomind dashboard add-components <DASHBOARD_ID> --components '<json>'` — NOT via web_fetch; the platform has no public HTTP endpoint at external domains."
+    ))
+}
+
 #[cfg(test)]
 mod history_budget_tests {
     use super::*;
+
+    /// Loop-break state machine: one failure never breaks; the refusal
+    /// carries the previous error and the shell/CLI redirect.
+    #[test]
+    fn loop_break_fires_only_after_repeated_failure() {
+        assert!(loop_break_message(0, "err").is_none());
+        assert!(loop_break_message(1, "err").is_none());
+        let msg = loop_break_message(
+            2,
+            "error sending request for url (https://api.neomind.com/dashboards)",
+        )
+        .expect("2 failures must break the loop");
+        assert!(msg.contains("FAILED 2"), "{msg}");
+        assert!(
+            msg.contains("api.neomind.com"),
+            "must carry the last error: {msg}"
+        );
+        assert!(
+            msg.contains("`shell` tool"),
+            "must name the correct tool: {msg}"
+        );
+        assert!(msg.contains("neomind dashboard add-components"), "{msg}");
+    }
 
     /// The regression that motivated the extraction: a 8K-class model whose
     /// platform prompt + tools overhead crosses ~5.5K tokens. The old floor

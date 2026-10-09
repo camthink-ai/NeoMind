@@ -27,6 +27,9 @@ neomind widget create "My Widget" --widget-type chart
 # Creates: data/frontend-components/<widget-id>/manifest.json + bundle.js
 
 # Step 2: Edit both files — use file_write or file_edit tools (preferred over shell commands)
+# NOTE: file_write/file_read paths are relative to the server data dir — write
+# `frontend-components/<widget-id>/manifest.json`, NEVER `data/frontend-...`
+# (a `data/` prefix lands it in <data>/data/, where no tool will find it).
 ```
 
 **Editing files (use file_write / file_edit instead of shell):**
