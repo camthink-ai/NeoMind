@@ -125,6 +125,9 @@ export interface BuiltinLlmStatus {
   /** Whether the model GGUF is present on disk. */
   installed: boolean
   model_id: string | null
+  /** Registry display name of the installed model (newer backends; the
+   * frontend keeps an id→name fallback map for older ones). */
+  model_name?: string | null
   /**
    * Derived server state:
    * - `not_configured` — model not downloaded

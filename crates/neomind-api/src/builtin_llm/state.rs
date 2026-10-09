@@ -181,6 +181,11 @@ pub async fn bootstrap(
                 // whatever a PREVIOUS build stamped (e.g. Ling imported
                 // before the registry field existed).
                 updated.thinking_is_integral = def.thinking_is_integral;
+                // Same for the display name — the stable instance id means a
+                // name stamped by an older build/model switch would otherwise
+                // outlive the model it described (spawn_builtin_server has the
+                // matching restamp).
+                updated.name = def.display_name.to_string();
                 // Record what the server ACTUALLY runs with: an explicit
                 // override (NEOMIND_BUILTIN_LLM_CTX / restart API) beats the
                 // per-model default — stamping the bare default here used to
@@ -235,10 +240,13 @@ pub async fn bootstrap(
         ctx: effective_ctx,
         ngl: cfg.ngl,
         threads: None,
-        // Per-model sampling defaults → server-side --temp/--top-p/--top-k.
+        // Per-model sampling defaults → server-side --temp/--top-p/--top-k
+        // (plus --min-p/--repeat-penalty where the official card demands).
         temperature: def.temperature,
         top_p: def.top_p,
         top_k: def.top_k,
+        min_p: def.min_p,
+        repeat_penalty: def.repeat_penalty,
     };
     let mut proc = match LlamaServerProcess::spawn(&server_cfg) {
         Ok(p) => p,
@@ -273,6 +281,9 @@ pub async fn bootstrap(
         ),
     };
     instance.is_builtin = true;
+    // Restamp the name per spawn — the stable instance id would otherwise
+    // keep the FIRST model's display name after a model switch.
+    instance.name = def.display_name.to_string();
     // Integral thinking is a MODEL property (LFM's template ignores any
     // reasoning toggle), not "is this the default model" — the default
     // moving off LFM must not flip this flag for LFM installs.
@@ -382,6 +393,15 @@ mod tests {
             "healthy server with instance record must short-circuit (got {:?})",
             outcome
         );
+        // Regression (model-switch stale name): the refresh path must restamp
+        // the display name — the STABLE instance id otherwise keeps whatever
+        // name the first model stamped, and the chat picker showed the OLD
+        // model after a switch. Model "" resolves to the default def
+        // (MiniCPM5-2B).
+        let refreshed = manager
+            .get_instance(BUILTIN_INSTANCE_ID)
+            .expect("instance survived refresh");
+        assert_eq!(refreshed.name, "MiniCPM5-2B");
     }
 }
 

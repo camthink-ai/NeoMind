@@ -698,6 +698,27 @@ impl ServerState {
 
 /// Build the decision layer from the environment. No `LAYA_SIDECAR_URL` =
 /// None: the decision layer stays completely inert.
+/// Persisted sidecar timeout (settings > default 1500ms). Extracted so
+/// refresh_decision_layer applies PUT-configured budgets to the new client.
+fn decision_settings_timeout_ms() -> u64 {
+    crate::config::open_settings_store()
+        .ok()
+        .and_then(|store| {
+            store
+                .load(crate::handlers::decisions::DECISION_SETTINGS_KEY)
+                .ok()
+                .flatten()
+        })
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|d| {
+            d.get("budgets")
+                .and_then(|b| b.get("sidecar_ms"))
+                .and_then(|v| v.as_u64())
+        })
+        .filter(|ms| (100..=10_000).contains(ms))
+        .unwrap_or(1500)
+}
+
 fn build_decision_service() -> Option<Arc<neomind_core::DecisionService>> {
     use neomind_core::decision::JsonlAudit;
 
@@ -822,8 +843,9 @@ fn build_decision_service() -> Option<Arc<neomind_core::DecisionService>> {
             let url = format!("http://127.0.0.1:{port}");
             tracing::info!(target: "neomind::decision", url = %url,
                 "laya-decision extension installed — decision layer via extension sidecar");
+            let timeout_ms = decision_settings_timeout_ms();
             let mut sidecar = neomind_core::LayaSidecar::new(url)
-                .with_timeout(std::time::Duration::from_millis(1500));
+                .with_timeout(std::time::Duration::from_millis(timeout_ms));
             if let Ok(model) = std::env::var("LAYA_MODEL") {
                 sidecar = sidecar.with_model(model);
             }
@@ -876,6 +898,27 @@ impl ServerState {
         // Ensure data directory exists
         if let Err(e) = std::fs::create_dir_all(neomind_core::paths::data_dir()) {
             tracing::warn!(category = "storage", error = %e, "Failed to create data directory");
+        }
+
+        // Engine knob seed: a persisted int8 setting overrides the env for
+        // the engine's model pick (native.rs / the extension read the env at
+        // engine load time). Runs before build_decision_service below.
+        if let Some(int8) = crate::config::open_settings_store()
+            .ok()
+            .and_then(|store| {
+                store
+                    .load(crate::handlers::decisions::DECISION_SETTINGS_KEY)
+                    .ok()
+                    .flatten()
+            })
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+            .and_then(|d| {
+                d.get("engine")
+                    .and_then(|e| e.get("int8"))
+                    .and_then(|v| v.as_bool())
+            })
+        {
+            std::env::set_var("LAYA_NATIVE_INT8", if int8 { "1" } else { "0" });
         }
 
         // ========== Parallel store opens (spawn_blocking for concurrent I/O) ==========

@@ -278,7 +278,7 @@ impl DecisionOutcome {
 pub struct DecisionService {
     primary: Arc<dyn DecisionRuntime>,
     fallback: Option<Arc<dyn DecisionRuntime>>,
-    gate: GatePolicy,
+    gate: std::sync::RwLock<GatePolicy>,
     cache: DecisionCache,
     audit: Option<Arc<dyn DecisionAudit>>,
     shadow: AtomicBool,
@@ -293,7 +293,7 @@ impl DecisionService {
         Self {
             primary,
             fallback: None,
-            gate: GatePolicy::default(),
+            gate: std::sync::RwLock::new(GatePolicy::default()),
             cache: DecisionCache::new(Duration::from_secs(60), 256),
             audit: None,
             shadow: AtomicBool::new(false),
@@ -332,8 +332,14 @@ impl DecisionService {
     }
 
     pub fn with_gate(mut self, gate: GatePolicy) -> Self {
-        self.gate = gate;
+        self.gate = std::sync::RwLock::new(gate);
         self
+    }
+
+    /// Hot-update the confidence gate (runtime config API). Takes effect on
+    /// the next decide(); the audit's `gated` flags follow immediately.
+    pub fn set_gate(&self, gate: GatePolicy) {
+        *self.gate.write().unwrap() = gate;
     }
 
     pub fn with_audit(mut self, audit: Arc<dyn DecisionAudit>) -> Self {
@@ -382,7 +388,12 @@ impl DecisionService {
                 // hits systematically undercounted real traffic.
                 let gated: Vec<(String, bool)> = answers
                     .iter()
-                    .map(|(id, a)| (id.clone(), a.passes_gate(self.gate.min_confidence)))
+                    .map(|(id, a)| {
+                        (
+                            id.clone(),
+                            a.passes_gate(self.gate.read().unwrap().min_confidence),
+                        )
+                    })
                     .collect();
                 audit.record(audit_entry(
                     "cache", 0, true, shadow, gated, &req.state, key, &answers,
@@ -422,7 +433,12 @@ impl DecisionService {
 
         let gated: Vec<(String, bool)> = answers
             .iter()
-            .map(|(id, a)| (id.clone(), a.passes_gate(self.gate.min_confidence)))
+            .map(|(id, a)| {
+                (
+                    id.clone(),
+                    a.passes_gate(self.gate.read().unwrap().min_confidence),
+                )
+            })
             .collect();
         let answers_arc = Arc::new(answers);
         self.cache.put(key, (*answers_arc).clone());

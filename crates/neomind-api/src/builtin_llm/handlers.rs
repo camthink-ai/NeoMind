@@ -137,6 +137,8 @@ fn builtin_to_catalog(def: &BuiltinModelDef) -> super::catalog::CatalogModel {
         temperature: def.temperature,
         top_p: def.top_p,
         top_k: def.top_k,
+        min_p: def.min_p,
+        repeat_penalty: def.repeat_penalty,
     }
 }
 
@@ -243,6 +245,8 @@ pub struct InstalledModel {
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
     pub top_k: Option<u32>,
+    pub min_p: Option<f32>,
+    pub repeat_penalty: Option<f32>,
     pub default_thinking: bool,
     /// Model property (see the registry field): thinking cannot be disabled.
     pub thinking_is_integral: bool,
@@ -262,6 +266,8 @@ pub fn installed_model_any(mdir: &Path) -> Option<InstalledModel> {
             temperature: def.temperature,
             top_p: def.top_p,
             top_k: def.top_k,
+            min_p: def.min_p,
+            repeat_penalty: def.repeat_penalty,
             default_thinking: def.default_thinking,
             thinking_is_integral: def.thinking_is_integral,
             is_custom: false,
@@ -322,6 +328,8 @@ pub fn installed_model_any(mdir: &Path) -> Option<InstalledModel> {
         temperature: None,
         top_p: None,
         top_k: None,
+        min_p: None,
+        repeat_penalty: None,
         default_thinking: false,
         // Genuinely unknown provenance (a GGUF dropped in models/ with no
         // registry or catalog entry) — assume the thinking toggle works.
@@ -351,10 +359,10 @@ pub fn installed_model_by_id(mdir: &Path, id: &str) -> Option<InstalledModel> {
     // Catalog-only model? Try the cached catalog for its sampling point
     // (sync read of the last fetch; a cold process falls back to the global
     // defaults until the next /models refresh warms the cache).
-    let (temperature, top_p, top_k) = super::catalog::cached_catalog()
+    let (temperature, top_p, top_k, min_p, repeat_penalty) = super::catalog::cached_catalog()
         .and_then(|c| c.into_iter().find(|m| m.id == id))
-        .map(|m| (m.temperature, m.top_p, m.top_k))
-        .unwrap_or((None, None, None));
+        .map(|m| (m.temperature, m.top_p, m.top_k, m.min_p, m.repeat_penalty))
+        .unwrap_or((None, None, None, None, None));
     Some(InstalledModel {
         display_name: id.to_string(),
         default_ctx: ctx,
@@ -362,6 +370,8 @@ pub fn installed_model_by_id(mdir: &Path, id: &str) -> Option<InstalledModel> {
         temperature,
         top_p,
         top_k,
+        min_p,
+        repeat_penalty,
         default_thinking: false,
         // If this id names a registry model (importing an LFM/Ling GGUF
         // under its real id), keep that model's integral-thinking property —
@@ -848,6 +858,10 @@ pub async fn status_handler(
     ok(json!({
         "installed": true,
         "model_id": model_id,
+        // Registry display name for the installed model — the frontend used
+        // to guess it from a hardcoded id→name map that drifted from the
+        // registry (e.g. MiniCPM missing entirely).
+        "model_name": installed_pair.as_ref().map(|(d, _)| d.display_name),
         "server_state": server_state,
         "downloaded_bytes": file_size,
         "total_bytes": file_size,
@@ -1308,6 +1322,8 @@ async fn spawn_builtin_server(
         temperature: installed.temperature,
         top_p: installed.top_p,
         top_k: installed.top_k,
+        min_p: installed.min_p,
+        repeat_penalty: installed.repeat_penalty,
     };
     let mut proc = LlamaServerProcess::spawn(&server_cfg)?;
     if let Err(e) = proc.wait_healthy(Duration::from_secs(60)).await {
@@ -1338,6 +1354,10 @@ async fn spawn_builtin_server(
         ),
     };
     instance.is_builtin = true;
+    // The builtin instance id is STABLE across model switches, so the name
+    // pinned at first creation kept showing the OLD model in the chat picker
+    // (`name` renders before `model` there) — restamp it per spawn.
+    instance.name = installed.display_name.clone();
     // LFM2.5's thinking is integral (cannot be turned off); this is a MODEL
     // property, not "is the default" — the comparison against
     // BUILTIN_MODEL_ID silently flipped when the default moved to MiniCPM,

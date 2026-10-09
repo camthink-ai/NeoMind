@@ -603,13 +603,18 @@ export function UnifiedLLMBackendsTab({
     const builtinInstance = instances.find(i => i.is_builtin)
     const builtinIsActive = !!builtinInstance && builtinInstance.id === activeBackendId
     const BUILTIN_MODEL_NAMES: Record<string, string> = {
+      'minicpm5-2b': 'MiniCPM5-2B',
       'lfm25-2.6b': 'LFM2.5-2.6B',
       'qwen3.5-4b': 'Qwen3.5-4B',
       'gemma4-e2b': 'Gemma4-E2B',
     }
-    const installedModelName = builtinStatus?.model_id
-      ? (BUILTIN_MODEL_NAMES[builtinStatus.model_id] ?? builtinStatus.model_id)
-      : null
+    // Prefer the registry-provided name; the map is the fallback for older
+    // backends that don't return model_name.
+    const installedModelName = builtinStatus?.model_name
+      ? builtinStatus.model_name
+      : builtinStatus?.model_id
+        ? (BUILTIN_MODEL_NAMES[builtinStatus.model_id] ?? builtinStatus.model_id)
+        : null
     const builtinInfo = builtinStatus ? getBuiltinStatusInfo(builtinStatus, t) : null
     const builtinCard = builtinStatus && builtinInfo ? (
       <Card

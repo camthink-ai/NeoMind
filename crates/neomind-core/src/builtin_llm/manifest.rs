@@ -42,6 +42,12 @@ pub struct BuiltinModelDef {
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
     pub top_k: Option<u32>,
+    /// min_p override (llama.cpp default 0.05). MiniCPM5's official card
+    /// requires 0.0 — see the model entry.
+    pub min_p: Option<f32>,
+    /// repeat_penalty override (llama.cpp default 1.0 = off). Part of the
+    /// official cards that specify it (MiniCPM 1.05, LFM 1.1).
+    pub repeat_penalty: Option<f32>,
     /// One-line capability note for the picker.
     pub notes: &'static str,
     /// This entry is a fallback if the model cannot run (reserved).
@@ -85,12 +91,20 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
                 quant: "q4_k_m".to_string(),
             },
             display_name: "MiniCPM5-2B",
-            // Eval-validated on the 2026-09 harness (81% tool accuracy);
-            // the model card's chat setting is 1.0/0.95 — agent use favors
-            // the focused sampler.
-            temperature: Some(0.6),
-            top_p: Some(0.85),
+            // Official openbmb card (2026-10 official-first policy):
+            // temperature=1.0, top_p=0.95, min_p=0.0, repetition_penalty
+            // 1.05. The card + OpenBMB issue #374 warn llama.cpp's default
+            // min_p=0.05 causes repetition loops on this model — min_p=0
+            // and rep 1.05 are REQUIRED parts of the official point, not
+            // optional extras. No top_k on the card; 40 = llama.cpp
+            // default. The prior focused sampler (0.6/0.85/40, no
+            // min_p/rep overrides) is what the 2026-09 eval's 81% tool
+            // accuracy was measured at.
+            temperature: Some(1.0),
+            top_p: Some(0.95),
             top_k: Some(40),
+            min_p: Some(0.0),
+            repeat_penalty: Some(1.05),
             // Official model-author repo — the previous third-party mirror
             // (Abiray) served a byte-different repack and personal repos
             // vanish; openbmb is the durable, authoritative source.
@@ -126,10 +140,16 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
                 quant: "qad_q4_0".to_string(),
             },
             display_name: "LFM2.5-2.6B",
-            // Measured-best (154-case A/B beat the official 0.1 card values).
-            temperature: Some(0.6),
-            top_p: Some(0.85),
-            top_k: Some(20),
+            // Official card (2026-10 official-first policy):
+            // generation_config temperature=0.1, top_k=50,
+            // repetition_penalty=1.1 (top_p unset → 1.0 = off). The
+            // superseded measured-best 0.6/0.85/20 scored 58% vs official
+            // 55% on the 154-case A/B — inside the ~7pp noise floor.
+            temperature: Some(0.1),
+            top_p: Some(1.0),
+            top_k: Some(50),
+            min_p: None,
+            repeat_penalty: Some(1.1),
             hf_repo: "LiquidAI/LFM2.5-2.6B-GGUF",
             hf_file: "LFM2.5-2.6B-QAD-Q4_0.gguf",
             size_bytes: 1_500_000_000,
@@ -155,15 +175,20 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             temperature: Some(0.7),
             top_p: Some(0.8),
             top_k: Some(20),
+            min_p: None,
+            repeat_penalty: None,
             hf_repo: "unsloth/Qwen3.5-4B-GGUF",
             hf_file: "Qwen3.5-4B-Q4_K_M.gguf",
             size_bytes: 2_740_000_000,
-            // 16K is the measured sweet spot (2026-09 eval: 70/100 @16K vs
-            // 38 @8K starved).
-            default_ctx: 16384,
+            // 32K (product decision 2026-10-09): the eval's 16K sweet
+            // spot assumed the harness's light prompt; the 4-6K platform
+            // prompt leaves ~10K for long agent turns at 16K — same
+            // rationale as MiniCPM's 8K→32K. KV doubles vs 16K;
+            // revalidate the 4 GB floor on target devices.
+            default_ctx: 32768,
             max_ctx: 262144,
             notes:
-                "16K 窗口下最强端侧 agent(2026-09 评测 70 分)— 8K 下会大幅退化;可挂 mmproj 加视觉",
+                "端侧最强 agent 之一(2026-09 评测 70 分@16K)— 8K 下会大幅退化;可挂 mmproj 加视觉",
             recommended: false,
             default_thinking: false,
             thinking_is_integral: false,
@@ -183,6 +208,8 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             temperature: Some(1.0),
             top_p: Some(0.95),
             top_k: Some(64),
+            min_p: None,
+            repeat_penalty: None,
             hf_repo: "google/gemma-4-E2B-it-qat-q4_0-gguf",
             hf_file: "gemma-4-E2B_q4_0-it.gguf",
             size_bytes: 3_100_000_000,
@@ -208,6 +235,8 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             temperature: Some(1.0),
             top_p: Some(0.95),
             top_k: Some(20),
+            min_p: None,
+            repeat_penalty: None,
             hf_repo: "inclusionAI/Ling-3.0-tiny-GGUF",
             hf_file: "Ling-3.0-tiny-Q4_K_M.gguf",
             size_bytes: 4_823_894_880,
@@ -287,7 +316,7 @@ mod tests {
         }
     }
 
-    /// The registry is hand-maintained — lock the four official/measured
+    /// The registry is hand-maintained — lock the official/measured
     /// points so a typo can't silently shift a model's behavior.
     #[test]
     fn builtin_models_sampling_values_locked() {
@@ -297,11 +326,25 @@ mod tests {
                 .find(|d| d.manifest.id == id)
                 .unwrap_or_else(|| panic!("{id} missing from registry"))
         };
+        let minicpm = by_id("minicpm5-2b");
+        assert_eq!(
+            (minicpm.temperature, minicpm.top_p, minicpm.top_k),
+            (Some(1.0), Some(0.95), Some(40))
+        );
+        // The anti-repetition pair is a REQUIRED part of MiniCPM5's
+        // official point (OpenBMB issue #374) — lock it separately so a
+        // refactor can't drop the fields silently.
+        assert_eq!(
+            (minicpm.min_p, minicpm.repeat_penalty),
+            (Some(0.0), Some(1.05))
+        );
         let lfm = by_id("lfm25-2.6b");
         assert_eq!(
             (lfm.temperature, lfm.top_p, lfm.top_k),
-            (Some(0.6), Some(0.85), Some(20))
+            (Some(0.1), Some(1.0), Some(50))
         );
+        assert_eq!(lfm.repeat_penalty, Some(1.1));
+        assert_eq!(lfm.min_p, None);
         let qwen = by_id("qwen3.5-4b");
         assert_eq!(
             (qwen.temperature, qwen.top_p, qwen.top_k),

@@ -26,6 +26,7 @@ import { useThemeColor } from "@/hooks/useThemeColor"
 import { cn } from "@/lib/utils"
 import { AboutTab } from "@/pages/settings/AboutTab"
 import { PreferencesTab } from "@/pages/settings/PreferencesTab"
+import { DecisionTab } from "@/pages/settings/DecisionTab"
 import { UnifiedLLMBackendsTab } from "@/components/llm/UnifiedLLMBackendsTab"
 import { UnifiedDeviceConnectionsTab } from "@/components/connections"
 import { ImBridgesTab } from "@/components/im/ImBridgesTab"
@@ -133,6 +134,7 @@ export function SettingsDialog() {
                 )}
                 {activeSection === "connections" && <UnifiedDeviceConnectionsTab />}
                 {activeSection === "im" && <ImBridgesTab />}
+                {activeSection === "decision" && <DecisionTab />}
                 {activeSection === "preferences" && <PreferencesTab />}
                 {activeSection === "about" && <AboutTab />}
               </div>

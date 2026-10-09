@@ -18,6 +18,13 @@ pub struct LlamaServerConfig {
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
     pub top_k: Option<u32>,
+    /// min_p: MiniCPM5's official card REQUIRES 0.0 — llama.cpp's 0.05
+    /// default truncates the tail the model was trained with and causes
+    /// repetition loops (OpenBMB issue #374).
+    pub min_p: Option<f32>,
+    /// repeat_penalty: part of some official cards (LFM 1.1, MiniCPM 1.05
+    /// for anti-repetition); llama.cpp's default is 1.0 (off).
+    pub repeat_penalty: Option<f32>,
 }
 
 #[derive(Clone)]
@@ -144,6 +151,12 @@ impl LlamaServerProcess {
         }
         if let Some(k) = cfg.top_k {
             cmd.arg("--top-k").arg(k.to_string());
+        }
+        if let Some(m) = cfg.min_p {
+            cmd.arg("--min-p").arg(format!("{m:.2}"));
+        }
+        if let Some(r) = cfg.repeat_penalty {
+            cmd.arg("--repeat-penalty").arg(format!("{r:.2}"));
         }
         // [deterministic cleanup] The process must die with the server even
         // on abnormal termination (crash, kill -9, force-quit): without

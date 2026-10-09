@@ -55,6 +55,13 @@ pub struct CatalogModel {
     pub top_p: Option<f32>,
     #[serde(default)]
     pub top_k: Option<u32>,
+    /// min_p override (llama.cpp default 0.05); absent = server default.
+    #[serde(default)]
+    pub min_p: Option<f32>,
+    /// repeat_penalty override (llama.cpp default 1.0 = off); absent =
+    /// server default.
+    #[serde(default)]
+    pub repeat_penalty: Option<f32>,
 }
 
 /// Catalog fetch target. The Runtimes repo's `models/catalog.json` on the
