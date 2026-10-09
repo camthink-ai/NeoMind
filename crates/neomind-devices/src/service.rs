@@ -522,8 +522,8 @@ impl DeviceService {
                         // "transform:" device namespace) are synthetic and
                         // don't count as device liveness.
                         // We still write them to telemetry storage below.
-                        let synthetic = metric.starts_with("transform.")
-                            || device_id.starts_with("transform:");
+                        let synthetic =
+                            metric.starts_with("transform.") || device_id.starts_with("transform:");
                         if !synthetic {
                             let mut status = device_status.write().await;
                             let entry = status.entry(device_id.clone()).or_default();
