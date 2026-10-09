@@ -33,7 +33,7 @@ Manage dashboard widgets and the widget marketplace. (For *developing* a widget 
 | `neomind widget list` | List installed widgets |
 | `neomind widget get <id>` | Show widget details |
 | `neomind widget bundle <id>` | Get a widget's bundle (JS/CSS) |
-| `neomind widget install <path>` | Install from a scaffolded dir or `.zip` |
+| `neomind widget install <path>` | Install from a scaffolded dir or `.zip`. Use DATA-RELATIVE paths (`frontend-components/<id>`) — absolute macOS paths contain a space ("Application Support") and must be quoted; relative sidesteps it |
 | `neomind widget uninstall <id>` | Uninstall a widget |
 | `neomind widget market-list` | List widgets available in the marketplace |
 | `neomind widget market-install <id>` | Install a widget from the marketplace |

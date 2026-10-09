@@ -1249,7 +1249,7 @@ impl ShellTool {
                 } else if action == "create" && is_validation {
                     Some("Valid widget types: chart, gauge, stat, table, image, custom. Example: neomind widget create \"My Chart\" --widget-type chart".to_string())
                 } else if action == "install" && is_validation {
-                    Some("Provide a widget directory (containing manifest.json + bundle.js) or a .zip file. Example: neomind widget install data/frontend-components/my-widget".to_string())
+                    Some("Provide a widget directory (containing manifest.json + bundle.js) or a .zip file. Use DATA-RELATIVE paths (no leading data/): neomind widget install frontend-components/my-widget — absolute ~/Library/Application Support/... paths contain a space and need quotes".to_string())
                 } else {
                     Some("Available actions: list, get, create, install, uninstall, market-list, market-install".to_string())
                 }

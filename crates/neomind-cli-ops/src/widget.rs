@@ -454,7 +454,19 @@ pub async fn get_widget_bundle(client: &ApiClient, id: &str) -> Result<CliRespon
 /// - If `path` is a directory: reads manifest.json + bundle.js and uploads as separate fields.
 /// - If `path` is a .zip file: uploads as a `package` field for server-side extraction.
 pub async fn install_widget_file(client: &ApiClient, path: &str) -> Result<CliResponse> {
-    let p = Path::new(path);
+    // Data-relative paths resolve against the server DATA DIR — the model's
+    // space-free form. Absolute paths under the macOS data root
+    // ("~/Library/Application Support/...") must be shell-QUOTED (the
+    // in-process tokenizer splits at unquoted whitespace); relative paths
+    // sidestep the trap entirely, and the API-side from-path endpoint has
+    // resolved them data-relative all along — aligning the two surfaces.
+    let resolved;
+    let p: &Path = if Path::new(path).is_absolute() || Path::new(path).exists() {
+        Path::new(path)
+    } else {
+        resolved = neomind_core::paths::data_dir().join(path);
+        resolved.as_path()
+    };
 
     if !p.exists() {
         return Ok(CliResponse::error(

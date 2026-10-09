@@ -46,7 +46,8 @@ file_edit(path="frontend-components/<widget-id>/bundle.js", old_string="Hello", 
 
 ```bash
 # Step 3: Install (re-run after each edit to apply changes)
-neomind widget install data/frontend-components/<widget-id>
+neomind widget install frontend-components/<widget-id>
+  (data-relative — NEVER paste the absolute ~/Library/Application Support/... path: it contains a space and an unquoted space splits the command; relative is the canonical form)
 
 # Step 4: Use in dashboard
 neomind dashboard add-components <DASHBOARD_ID> --components '[{
