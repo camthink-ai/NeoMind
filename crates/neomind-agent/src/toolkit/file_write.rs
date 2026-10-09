@@ -41,6 +41,11 @@ impl Tool for FileWriteTool {
                     "type": "string",
                     "description": "File path (relative to data/ or absolute). Example: 'skills/my-skill.md', 'extensions/my-ext/src/lib.rs'"
                 },
+                "expected": {
+                    "type": "object",
+                    "description": "Freshness guard (optional): pass the `state` from your last file_read/file_write of this path ({mtime_ms, size}); if the file changed since, the write is REFUSED as stale with the fresh state for a re-read.",
+                    "properties": { "mtime_ms": {"type": "integer"}, "size": {"type": "integer"} }
+                },
                 "content": {
                     "type": "string",
                     "description": "The file content to write"
@@ -95,6 +100,12 @@ impl Tool for FileWriteTool {
             }
         }
 
+        // Opt-in freshness guard (see file_read): refuse to touch a file
+        // that changed since the caller's last snapshot.
+        if let Err(stale) = super::file_read::check_expected(&resolved, &args["expected"]) {
+            return Ok(*stale);
+        }
+
         // Idempotency short-circuit: a rewrite with IDENTICAL content is a
         // no-op. Small models in long tool loops re-emit the same file
         // verbatim without remembering they wrote it (observed live: the
@@ -141,6 +152,7 @@ impl Tool for FileWriteTool {
         );
 
         Ok(ToolOutput::success(serde_json::json!({
+            "state": super::file_read::FileState::of(&resolved).ok().map(|st| st.to_json()),
             "path": resolved.display().to_string(),
             "bytes_written": bytes,
             "message": format!("Successfully wrote {} bytes to {}", bytes, resolved.display()),

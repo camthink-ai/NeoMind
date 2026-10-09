@@ -2455,6 +2455,10 @@ impl ServerState {
 
         // Web fetch tool — retrieves URL content
         registry.register(Arc::new(neomind_agent::toolkit::WebFetchTool::new()));
+        // File read tool — line-numbered reads + freshness snapshots
+        registry.register(Arc::new(neomind_agent::toolkit::FileReadTool::new(
+            self.data_dir.clone(),
+        )));
         // File write tool — creates/overwrites files in data/
         registry.register(Arc::new(neomind_agent::toolkit::FileWriteTool::new(
             self.data_dir.clone(),
@@ -2552,6 +2556,9 @@ impl ServerState {
 
         // Re-register web/file tools
         registry.register(Arc::new(neomind_agent::toolkit::WebFetchTool::new()));
+        registry.register(Arc::new(neomind_agent::toolkit::FileReadTool::new(
+            self.data_dir.clone(),
+        )));
         registry.register(Arc::new(neomind_agent::toolkit::FileWriteTool::new(
             self.data_dir.clone(),
         )));

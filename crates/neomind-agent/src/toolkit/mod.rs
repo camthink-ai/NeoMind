@@ -6,6 +6,7 @@ pub mod agent_tools;
 pub mod error;
 pub mod extension_tools;
 pub mod file_edit;
+pub mod file_read;
 pub mod file_write;
 pub mod image_edit;
 pub mod memory_tool;
@@ -35,6 +36,7 @@ pub use shell::ShellConfig;
 pub use memory_tool::MemoryTool;
 
 pub use file_edit::FileEditTool;
+pub use file_read::FileReadTool;
 pub use file_write::FileWriteTool;
 pub use vision::{VisionConfig, VisionTool};
 

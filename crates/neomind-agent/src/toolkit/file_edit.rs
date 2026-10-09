@@ -77,6 +77,11 @@ For whole-file create use `file_write`; for agent cross-run memory use `memory`.
                     "type": "string",
                     "description": "File path (relative to data/ or absolute)"
                 },
+                "expected": {
+                    "type": "object",
+                    "description": "Freshness guard (optional): the `state` from your last file_read/file_edit of this path; a mismatch REFUSES the edit as stale.",
+                    "properties": { "mtime_ms": {"type": "integer"}, "size": {"type": "integer"} }
+                },
                 "edits": {
                     "type": "array",
                     "description": "Batch form: list of {old_string, new_string, replace_all?} applied top-to-bottom in one atomic call. Preferred over the single-pair form.",
@@ -187,6 +192,10 @@ For whole-file create use `file_write`; for agent cross-run memory use `memory`.
                 file_metadata.len(),
                 MAX_FILE_SIZE / 1024 / 1024
             )));
+        }
+        // Opt-in freshness guard (see file_read).
+        if let Err(stale) = super::file_read::check_expected(&resolved, &args["expected"]) {
+            return Ok(*stale);
         }
         let original = std::fs::read_to_string(&resolved).map_err(|e| {
             ToolError::Execution(format!("Failed to read '{}': {}", resolved.display(), e))
@@ -343,8 +352,10 @@ For whole-file create use `file_write`; for agent cross-run memory use `memory`.
                 .collect()
         };
 
+        let post_state = super::file_read::FileState::of(&resolved).ok();
         Ok(ToolOutput::success(serde_json::json!({
             "path": resolved.display().to_string(),
+            "state": post_state.map(|st| st.to_json()),
             "edits_applied": applied.len(),
             "replacements": replacements,
             "whitespace_tolerant": applied.iter().any(|a| a.whitespace_tolerant),

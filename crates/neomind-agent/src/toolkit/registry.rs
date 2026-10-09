@@ -140,6 +140,7 @@ impl ToolRegistry {
             "vision",
             "image_edit",
             "web_fetch",
+            "file_read",
             "file_write",
             "file_edit",
         ];
