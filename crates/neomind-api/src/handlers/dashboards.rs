@@ -776,7 +776,10 @@ pub async fn add_components_handler(
         .find(|c| !known.contains(&c.component_type))
     {
         return Err(ErrorResponse::bad_request(format!(
-            "Unknown component type '{}' — run `neomind widget list` for valid types",
+            "Unknown component type '{}' — run `neomind widget list` for valid types. \
+             If this is a CUSTOM widget whose files you just wrote under frontend-components/, it is NOT registered yet: \
+             run `neomind widget install <frontend-components/<id>>` first. After install, the component type IS the \
+             widget's ID (e.g. `drawing-component`) — NOT the manifest's `category` field.",
             bad.component_type
         ))
         .with_hint(

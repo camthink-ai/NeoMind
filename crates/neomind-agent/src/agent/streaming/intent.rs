@@ -203,7 +203,7 @@ pub(crate) fn build_list_only_dead_end_prompt(
             msg.push_str(
                 "⚠️ WIDGET → DASHBOARD PIPELINE — do these IN ORDER:\n\
                 1) If you created widget FILES this turn: `neomind widget install <dir>` — this registers the widget TYPE; add-components rejects unregistered types.\n\
-                2) `neomind dashboard add-components <ID> --components '[{\"id\":\"c1\",\"type\":\"<widget-type>\",\"position\":{\"x\":0,\"y\":0,\"w\":4,\"h\":3}}]'\n\
+                2) `neomind dashboard add-components <ID> --components '[{\"id\":\"c1\",\"type\":\"<widget-type>\",\"position\":{\"x\":0,\"y\":0,\"w\":4,\"h\":3}}]' — AFTER install, <widget-type> IS the widget's id (e.g. \"drawing-component\"), NOT the manifest's category field.\n\
                 The --components value is an ARRAY OF FULL COMPONENT OBJECTS (id + type + position) — never widget names or ids.\n\
                 Component ids and free grid positions come from `neomind dashboard get <ID>`.\n\n",
             );

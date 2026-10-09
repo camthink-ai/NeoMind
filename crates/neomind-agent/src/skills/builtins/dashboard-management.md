@@ -63,6 +63,7 @@ Creating dashboards with data-bound components is the most complex CLI operation
 - `id` + `type` + `position` are REQUIRED; `title`, `data_source`, `display`, `config` are optional.
 - `position` is an OBJECT with four required integers `x, y, w, h` — never a number or an array.
 - `type` must be a real widget type (`widget list`); a typo'd type is rejected on add.
+- CUSTOM widget (files under `frontend-components/`): register it FIRST — `neomind widget install <dir>` — then use the widget's ID as `type` (e.g. `"type": "drawing-component"`). `"custom"` is the manifest's category, NOT a valid type.
 - Unsure about the shape? `dashboard get <ID>` prints existing components — copy one and change the fields (safest for unfamiliar widget types).
 
 ## Component Management Commands
