@@ -97,6 +97,23 @@ Use for skill files, widget bundles, extension source, configs. For the agent cr
             }
         }
 
+        // Idempotency short-circuit: a rewrite with IDENTICAL content is a
+        // no-op. Small models in long tool loops re-emit the same file
+        // verbatim without remembering they wrote it (observed live: the
+        // same manifest written 3× across rounds); answering "already up to
+        // date" gives them the missing signal AND skips the disk churn.
+        if let Ok(existing) = std::fs::read_to_string(&resolved) {
+            if existing == content {
+                tracing::info!(path = %resolved.display(), bytes = content.len(), "File write skipped — identical content already on disk");
+                return Ok(ToolOutput::success(serde_json::json!({
+                    "path": resolved.display().to_string(),
+                    "bytes_written": 0,
+                    "identical": true,
+                    "message": "Identical content already on disk — no write needed. You already wrote this exact file in a previous step; move on to the NEXT step. / 该文件内容已完全相同，无需重写，请继续下一步。"
+                })));
+            }
+        }
+
         // Write file atomically (temp file + rename)
         let bytes = content.len();
         super::path_validator::atomic_write(&resolved, content).map_err(|e| {
@@ -129,6 +146,38 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.keep();
         FileWriteTool::new(path)
+    }
+
+    #[tokio::test]
+    async fn identical_rewrite_is_a_noop_with_signal() {
+        let tool = tool();
+        let args = serde_json::json!({
+            "path": "idem-test.txt",
+            "content": "hello widget"
+        });
+        // First write: real.
+        let first = tool.execute(args.clone()).await.expect("first write");
+        assert!(first.success);
+        assert_eq!(first.data["bytes_written"], serde_json::json!(12));
+        // Second write, IDENTICAL content: short-circuits — bytes_written 0,
+        // identical flag set, and an explicit move-on hint for the model.
+        let second = tool.execute(args).await.expect("second write");
+        assert!(second.success, "idempotent rewrite must still succeed");
+        assert_eq!(second.data["bytes_written"], serde_json::json!(0));
+        assert_eq!(second.data["identical"], serde_json::json!(true));
+        assert!(
+            second.data["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("NEXT step"),
+            "the no-op result must tell the model to move on"
+        );
+        // A CHANGED content still writes for real.
+        let third = tool
+            .execute(serde_json::json!({ "path": "idem-test.txt", "content": "hello widget v2" }))
+            .await
+            .expect("changed write");
+        assert_eq!(third.data["bytes_written"], serde_json::json!(15));
     }
 
     #[test]

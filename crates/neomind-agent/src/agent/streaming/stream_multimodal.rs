@@ -734,9 +734,20 @@ pub async fn process_multimodal_stream_events_with_safeguards(
 
                 if nudge_tool_calls.is_empty() {
                     // Escape hatch: the model gave a real answer without
-                    // tools — that IS the final response now.
-                    yield AgentEvent::content(nudge_buffer.clone());
-                    let final_text = remove_tool_calls_from_response(&nudge_buffer);
+                    // tools — that IS the final response now. Unless it's
+                    // STILL an action promise (narration collapse twice in a
+                    // row): label it as a progress report rather than letting
+                    // the promise impersonate a finished answer (see the
+                    // stream_core backstop for the rationale).
+                    let mut nudge_final = nudge_buffer.clone();
+                    if crate::agent::is_narration_without_action(&nudge_final) {
+                        tracing::warn!("Multimodal turn ending on an action promise after nudge — appending progress note");
+                        const NOTE: &str = "\n\n---\nℹ️ **[系统提示 / System note]** 本轮对话到此结束，以上内容是**进度说明而非最终结果**。发送“继续”可从断点恢复。\nThe turn ended here: the reply above is a progress report, not a completed result. Send \"继续 / continue\" to resume.";
+                        yield AgentEvent::content(NOTE.to_string());
+                        nudge_final.push_str(NOTE);
+                    }
+                    yield AgentEvent::content(nudge_final.clone());
+                    let final_text = remove_tool_calls_from_response(&nudge_final);
                     let final_msg = AgentMessage::assistant(&final_text);
                     internal_state.write().await.push_message(final_msg);
                     handled_by_nudge = true;
