@@ -510,12 +510,21 @@ impl DeviceService {
                         is_virtual,
                         ..
                     } => {
-                        // Skip virtual metrics for device status tracking.
-                        // Virtual metrics come from extensions/transforms, not real devices.
+                        // Device status tracking. Extension-relayed metrics
+                        // (written through the `device_metrics_write`
+                        // capability) are tagged `is_virtual` purely for
+                        // feedback-loop prevention in extension event
+                        // subscriptions — they are REAL device data and MUST
+                        // refresh status, or every extension-managed device
+                        // shows offline forever while its telemetry flows.
+                        // Only derived transform metrics (rule-engine
+                        // transforms, "transform.*" metric namespace /
+                        // "transform:" device namespace) are synthetic and
+                        // don't count as device liveness.
                         // We still write them to telemetry storage below.
-                        if !neomind_core::NeoMindEvent::is_virtual_device_metric(
-                            is_virtual, &metric,
-                        ) {
+                        let synthetic = metric.starts_with("transform.")
+                            || device_id.starts_with("transform:");
+                        if !synthetic {
                             let mut status = device_status.write().await;
                             let entry = status.entry(device_id.clone()).or_default();
                             let now_ts = chrono::Utc::now().timestamp();
