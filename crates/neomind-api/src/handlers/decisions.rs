@@ -655,6 +655,7 @@ pub fn default_budgets() -> BudgetsPersist {
 
 impl DecisionRuntimeFlags {
     /// All-off flags (tests: decision behavior identical to pre-module).
+    #[cfg(test)]
     pub(crate) fn default_for_tests() -> Self {
         Self::from_persist(&DecisionFlagsPersist::default())
     }
