@@ -1576,7 +1576,7 @@ pub async fn process_stream_events_with_safeguards(
                             "Turn ending on an action promise with guard budget spent — appending progress note"
                         );
                         const NOTE: &str = "\n\n---\nℹ️ **[系统提示 / System note]** 本轮对话到此结束（已达护栏预算），以上内容是**进度说明而非最终结果**——描述的后续步骤尚未执行。发送“继续”可从断点恢复。\nThe turn ended here (guard budget spent): the reply above is a progress report, not a completed result — the promised next step did NOT run. Send \"继续 / continue\" to resume from this point.";
-                        yield AgentEvent::content(NOTE.to_string());
+                        yield AgentEvent::content(NOTE);
                         raw_response.push_str(NOTE);
                     }
 

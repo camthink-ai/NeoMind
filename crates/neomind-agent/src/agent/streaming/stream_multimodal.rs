@@ -743,7 +743,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                     if crate::agent::is_narration_without_action(&nudge_final) {
                         tracing::warn!("Multimodal turn ending on an action promise after nudge — appending progress note");
                         const NOTE: &str = "\n\n---\nℹ️ **[系统提示 / System note]** 本轮对话到此结束，以上内容是**进度说明而非最终结果**。发送“继续”可从断点恢复。\nThe turn ended here: the reply above is a progress report, not a completed result. Send \"继续 / continue\" to resume.";
-                        yield AgentEvent::content(NOTE.to_string());
+                        yield AgentEvent::content(NOTE);
                         nudge_final.push_str(NOTE);
                     }
                     yield AgentEvent::content(nudge_final.clone());
