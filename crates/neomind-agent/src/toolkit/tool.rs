@@ -83,6 +83,57 @@ impl ToolOutput {
     }
 }
 
+/// Effective success for CONTROL-FLOW consumers (retries, caching, success
+/// accounting, loop guards). The SHELL tool reports `success=true` with the
+/// exit code inside `data` BY DESIGN — the model must read stderr to fix
+/// its command. Anything keying on `ToolOutput.success` to mean "the
+/// operation worked" must use THIS instead: a shell exit_code != 0 or a
+/// timed-out shell is a FAILURE. (Live: failing add-components calls were
+/// counted as successes by the agent executor's success-rate/journal, got
+/// an "already succeeded" duplicate advisory, and their failed results were
+/// cached.)
+pub fn effective_success(name: &str, out: &ToolOutput) -> bool {
+    if !out.success {
+        return false;
+    }
+    if name == "shell" {
+        if out
+            .data
+            .get("timed_out")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            return false;
+        }
+        if let Some(code) = out.data.get("exit_code").and_then(|v| v.as_i64()) {
+            return code == 0;
+        }
+    }
+    true
+}
+
+#[cfg(test)]
+mod effective_success_tests {
+    use super::*;
+
+    #[test]
+    fn shell_exit_codes_decide_success() {
+        let ok = ToolOutput::success(serde_json::json!({"exit_code": 0, "stdout": "fine"}));
+        assert!(effective_success("shell", &ok));
+        let bad = ToolOutput::success(
+            serde_json::json!({"exit_code": 1, "stderr": "missing field `position`"}),
+        );
+        assert!(!effective_success("shell", &bad), "exit 1 is a failure");
+        let t = ToolOutput::success(serde_json::json!({"exit_code": null, "timed_out": true}));
+        assert!(!effective_success("shell", &t), "timeout is a failure");
+        // Non-shell tools: ToolOutput.success is authoritative.
+        let w = ToolOutput::success(serde_json::json!({"path": "x"}));
+        assert!(effective_success("file_write", &w));
+        let e = ToolOutput::error("nope");
+        assert!(!effective_success("web_fetch", &e));
+    }
+}
+
 /// Tool parameter definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Parameter {

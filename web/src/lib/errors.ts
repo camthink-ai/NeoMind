@@ -13,7 +13,7 @@
  */
 export type StandardError =
   | Error
-  | { error: { code?: string; message?: string } }
+  | { error: { code?: string; message?: string; hint?: string } }
   | { message: string }
   | { status?: number }
   | unknown
@@ -51,11 +51,14 @@ export function getErrorMessage(error: StandardError): string {
   if (typeof error === 'object' && error !== null) {
     const err = error as Record<string, unknown>
 
-    // Check for nested error object
+    // Check for nested error object. The API's `hint` (agent/user-facing
+    // recovery guidance) rides along — dropping it here left users with the
+    // bare message, same class of loss as the CLI client's extractor.
     if (err.error && typeof err.error === 'object') {
-      const nestedErr = err.error as { message?: string; code?: string }
-      if (nestedErr.message) return nestedErr.message
-      if (nestedErr.code) return `Error: ${nestedErr.code}`
+      const nestedErr = err.error as { message?: string; code?: string; hint?: string }
+      const hintSuffix = nestedErr.hint ? `\n${nestedErr.hint}` : ''
+      if (nestedErr.message) return `${nestedErr.message}${hintSuffix}`
+      if (nestedErr.code) return `Error: ${nestedErr.code}${hintSuffix}`
     }
 
     // Check for direct message property

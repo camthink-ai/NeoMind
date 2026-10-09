@@ -31,7 +31,11 @@ pub(crate) async fn execute_tool_with_retry(
     // Cache successful results for cacheable tools
     if is_tool_cacheable(name, &arguments) {
         if let Ok(ref output) = result {
-            if output.success {
+            // effective_success: a FAILED read-only command (exit 1) must
+            // not be cached — the cached failure would answer every later
+            // identical call, so the model could never retry after fixing
+            // the environment.
+            if crate::toolkit::tool::effective_success(name, output) {
                 let cache_key = ToolResultCache::make_key(name, &arguments);
                 let mut cache_write = cache.write().await;
                 cache_write.insert(cache_key, output.clone());

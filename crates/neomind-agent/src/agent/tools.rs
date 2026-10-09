@@ -285,8 +285,10 @@ impl Agent {
                 Ok(output) => {
                     let elapsed = start.elapsed();
 
-                    // Check if tool execution itself failed
-                    if !output.success {
+                    // Check if tool execution itself failed (effective:
+                    // shell exit_code != 0 is a failure even though the
+                    // shell tool reports success=true for display purposes)
+                    if !crate::toolkit::tool::effective_success(&real_tool_name, &output) {
                         let error_msg = output.error.unwrap_or_else(|| "Unknown error".to_string());
 
                         // Log detailed error with context

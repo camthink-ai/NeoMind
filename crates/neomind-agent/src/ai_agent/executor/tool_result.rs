@@ -475,7 +475,11 @@ pub(crate) fn build_tool_result(
             let (desc, conf, step_type) = match &tc.result.result {
                 Ok(output) => (
                     format!("Executed tool '{}'", tc.name),
-                    if output.success { 0.9 } else { 0.3 },
+                    if crate::toolkit::tool::effective_success(&tc.name, output) {
+                        0.9
+                    } else {
+                        0.3
+                    },
                     "tool_call",
                 ),
                 Err(e) => (format!("Tool '{}' failed: {}", tc.name, e), 0.2, "error"),
@@ -547,7 +551,11 @@ pub(crate) fn build_tool_result(
             // failure (the command ran but reported failure) — it must not
             // count as success, or success_rate pins to 1.0 and the journal
             // learns nothing. Mirrors the dedup set's success semantics.
-            let success = matches!(&r.result, Ok(o) if o.success);
+            // effective_success, not o.success: the shell tool reports
+            // success=true with the exit code in data — plain success pinned
+            // failure rates to 0 and taught the journal nothing.
+            let success =
+                matches!(&r.result, Ok(o) if crate::toolkit::tool::effective_success(&r.name, o));
             neomind_storage::ActionExecuted {
                 action_type: "tool_call".to_string(),
                 description: format!("Execute tool '{}'", r.name),
@@ -557,7 +565,12 @@ pub(crate) fn build_tool_result(
                 result: if success {
                     r.result.as_ref().ok().map(|o| o.data.to_string())
                 } else {
-                    r.result.as_ref().err().map(|e| e.to_string())
+                    r.result.as_ref().err().map(|e| e.to_string()).or_else(|| {
+                        r.result
+                            .as_ref()
+                            .ok()
+                            .map(|o| o.error.clone().unwrap_or_else(|| o.data.to_string()))
+                    })
                 },
             }
         })
