@@ -51,8 +51,19 @@ Creating dashboards with data-bound components is the most complex CLI operation
 6. **Grid is 12 columns wide** — plan layout accordingly
 7. **NEVER use Python/pipe/file tricks** — each shell call is an isolated process; you cannot share data between calls via files, pipes, or variables. Build the complete JSON string inline.
 8. **Use `widget get <type>` to inspect config_schema** before configuring unfamiliar widgets
-9. **NEVER use emoji in component titles or descriptions** — use plain text labels only. Example: use "Temperature" not "Temperature", use "Humidity" not "Humidity"
+9. **NEVER use emoji in component titles or descriptions** — plain text labels only ("Temperature" / "温度", not "🌡 Temperature")
 10. **Charts (line-chart, area-chart, bar-chart, sparkline, pie-chart) MUST use `mode: "timeseries"`** — using `mode: "latest"` on charts causes rendering errors. Always include `timeWindow` (e.g., `"timeWindow": {"type": "last_24hours"}`) for proper historical data. Value-cards and indicators use `mode: "latest"`.
+
+## Minimal Component Shape (the schema validators REQUIRE exactly this)
+
+```json
+{"id": "my-unique-id", "type": "value-card", "title": "Temp", "position": {"x": 0, "y": 0, "w": 4, "h": 2}}
+```
+
+- `id` + `type` + `position` are REQUIRED; `title`, `data_source`, `display`, `config` are optional.
+- `position` is an OBJECT with four required integers `x, y, w, h` — never a number or an array.
+- `type` must be a real widget type (`widget list`); a typo'd type is rejected on add.
+- Unsure about the shape? `dashboard get <ID>` prints existing components — copy one and change the fields (safest for unfamiliar widget types).
 
 ## Component Management Commands
 

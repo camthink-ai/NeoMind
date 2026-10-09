@@ -1108,11 +1108,21 @@ pub async fn process_stream_events_with_safeguards(
                             // signature; a success clears the strikes.
                             {
                                 let failed_now: Option<String> = match &result {
-                                    Ok(out) if out.success => {
+                                    Ok(out) if effective_tool_success(&name, out) => {
                                         failed_map.lock().unwrap().remove(&sig);
                                         None
                                     }
-                                    Ok(out) => Some(out.error.clone().unwrap_or_else(|| "tool reported failure".to_string())),
+                                    Ok(out) => Some(
+                                        out.error
+                                            .clone()
+                                            .or_else(|| {
+                                                out.data
+                                                    .get("stderr")
+                                                    .and_then(|v| v.as_str())
+                                                    .map(str::to_string)
+                                            })
+                                            .unwrap_or_else(|| "tool reported failure".to_string()),
+                                    ),
                                     Err(e) => Some(e.to_string()),
                                 };
                                 if let Some(err) = failed_now {
@@ -1187,7 +1197,7 @@ pub async fn process_stream_events_with_safeguards(
 
                         match execution.result {
                             Ok(output) => {
-                                if output.success {
+                                if effective_tool_success(&name, &output) {
                                     this_round_success_sigs.insert(dup_sig);
                                 }
                                 let mut result_value = if output.success {
@@ -1923,6 +1933,34 @@ pub(crate) fn effective_history_budget(max_context: usize, prompt_overhead: usiz
 /// message to refuse with, or None to proceed.
 pub(crate) const LOOP_BREAK_AFTER_FAILURES: u32 = 2;
 
+/// Effective success for the loop guards. The SHELL tool reports
+/// `success=true` with the exit code inside `data` BY DESIGN (the model
+/// must read stderr to fix its command) — guards keying on
+/// `ToolOutput.success` therefore counted FAILING shell commands as
+/// successes: the failure-strike break never fired for shell (the most
+/// common failure!), and the duplicate advisory told the model a command
+/// that exited 1 "succeeded last round" (live: add-components exit 1 →
+/// "already succeeded" note — actively wrong guidance).
+pub(crate) fn effective_tool_success(name: &str, out: &crate::toolkit::tool::ToolOutput) -> bool {
+    if !out.success {
+        return false;
+    }
+    if name == "shell" {
+        if out
+            .data
+            .get("timed_out")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            return false;
+        }
+        if let Some(code) = out.data.get("exit_code").and_then(|v| v.as_i64()) {
+            return code == 0;
+        }
+    }
+    true
+}
+
 pub(crate) fn loop_break_message(failures: u32, last_err: &str) -> Option<String> {
     if failures < LOOP_BREAK_AFTER_FAILURES {
         return None;
@@ -1935,6 +1973,32 @@ pub(crate) fn loop_break_message(failures: u32, last_err: &str) -> Option<String
 #[cfg(test)]
 mod history_budget_tests {
     use super::*;
+
+    /// The shell tool reports success=true with the exit code in DATA —
+    /// the guards must read the exit code, or failing shell commands count
+    /// as successes (live: a failed add-components got the "already
+    /// succeeded last round" advisory, and the failure-strike break never
+    /// armed for shell).
+    #[test]
+    fn effective_success_reads_shell_exit_code() {
+        use crate::toolkit::tool::ToolOutput;
+        // shell exit 0 → success
+        let ok = ToolOutput::success(serde_json::json!({"exit_code": 0, "stdout": "fine"}));
+        assert!(effective_tool_success("shell", &ok));
+        // shell exit 1 → FAILURE despite ToolOutput.success==true
+        let bad = ToolOutput::success(
+            serde_json::json!({"exit_code": 1, "stderr": "missing field `position`"}),
+        );
+        assert!(!effective_tool_success("shell", &bad));
+        // timed out → failure
+        let t = ToolOutput::success(serde_json::json!({"exit_code": null, "timed_out": true}));
+        assert!(!effective_tool_success("shell", &t));
+        // non-shell tools: ToolOutput.success is authoritative
+        let w = ToolOutput::success(serde_json::json!({"path": "x"}));
+        assert!(effective_tool_success("file_write", &w));
+        let e = ToolOutput::error("nope");
+        assert!(!effective_tool_success("web_fetch", &e));
+    }
 
     /// Loop-break state machine: one failure never breaks; the refusal
     /// carries the previous error and the shell/CLI redirect.

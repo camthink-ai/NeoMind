@@ -411,14 +411,30 @@ pub fn extract_inner_data(resp: serde_json::Value) -> serde_json::Value {
     resp.get("data").cloned().unwrap_or(resp)
 }
 
-/// Extract error message from API response body.
+/// Extract error message from API response body — message PLUS the API's
+/// `hint` when present.
+///
+/// The hint field carries schema cheat-sheets and recovery guidance written
+/// for agents (e.g. add-components' "position needs {x,y,w,h}" example).
+/// Dropping it left agents with bare serde errors and burned rounds guessing
+/// required fields (live: four attempts at the component schema, each one
+/// field further). Every CLI-surfaced error now keeps the hint.
 fn extract_error_message(body: &serde_json::Value) -> String {
-    body.get("error")
+    let message = body
+        .get("error")
         .and_then(|e| e.get("message").and_then(|v| v.as_str()))
         .or_else(|| body.get("message").and_then(|v| v.as_str()))
         .or_else(|| body.get("error").and_then(|v| v.as_str()))
         .unwrap_or("Unknown error")
-        .to_string()
+        .to_string();
+    let hint = body
+        .get("error")
+        .and_then(|e| e.get("hint").and_then(|v| v.as_str()))
+        .or_else(|| body.get("hint").and_then(|v| v.as_str()));
+    match hint {
+        Some(h) if !h.trim().is_empty() => format!("{message}\nHint: {h}"),
+        _ => message,
+    }
 }
 
 /// Context-aware next-command hint for 401 responses.
@@ -445,6 +461,28 @@ fn unauthorized_hint() -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    /// The API's `hint` (agent-facing cheat-sheets / recovery guidance) must
+    /// survive the CLI's error extraction — dropping it cost a live run four
+    /// schema-guessing rounds.
+    #[test]
+    fn extract_error_message_keeps_hint() {
+        let body = serde_json::json!({
+            "success": false,
+            "error": {
+                "code": "BAD_REQUEST",
+                "message": "Invalid component data: component[0]: missing field `position`",
+                "hint": "Each component needs: id, type, title, position {x, y, w, h}."
+            }
+        });
+        let out = extract_error_message(&body);
+        assert!(out.contains("missing field"), "{out}");
+        assert!(out.contains("Hint:"), "hint must be appended: {out}");
+        assert!(out.contains("position {x, y, w, h}"), "{out}");
+        // No hint → message unchanged, no dangling "Hint:".
+        let bare = serde_json::json!({"error": {"message": "boom"}});
+        assert_eq!(extract_error_message(&bare), "boom");
+    }
+
     use super::*;
 
     #[test]
