@@ -31,9 +31,7 @@ impl Tool for FileWriteTool {
     }
 
     fn description(&self) -> &str {
-        r##"Create or overwrite a file (data dir or NEOMIND_ALLOWED_WRITE_DIRS). Relative paths preferred. No binary (.so/.dll) or security (.env) files. Max 1MB; parent dirs auto-created.
-
-Use for skill files, widget bundles, extension source, configs. For the agent cross-run memory use `memory`; to edit part of a file use `file_edit`."##
+        r#"Create or overwrite a WHOLE file. JSON/TOML content is syntax-checked BEFORE writing — invalid content is rejected with the parser position and nothing is written (fix and retry). Writing content identical to what is already on disk is a confirmed no-op ("identical": true). For targeted changes to an EXISTING file prefer `file_edit` (batch edits, context echo); for agent cross-run memory use `memory`. Allowed dirs only (data dir + NEOMIND_ALLOWED_WRITE_DIRS). Max 10MB."#
     }
 
     fn parameters(&self) -> Value {
@@ -114,6 +112,18 @@ Use for skill files, widget bundles, extension source, configs. For the agent cr
             }
         }
 
+        // Syntax gate (shared with file_edit): invalid JSON/TOML never
+        // reaches disk. A typo'd manifest used to surface rounds later as a
+        // mysteriously broken artifact; now it is an immediate, positioned
+        // error the model can fix in one retry.
+        if let Some(err) = super::file_edit::syntax_check(&resolved, content) {
+            tracing::info!(path = %resolved.display(), "File write rejected by syntax gate");
+            return Ok(ToolOutput::error(serde_json::json!({
+                "message": format!("Content is INVALID — nothing written. Fix and retry: {err}"),
+                "syntax_error": err,
+            }).to_string()));
+        }
+
         // Write file atomically (temp file + rename)
         let bytes = content.len();
         super::path_validator::atomic_write(&resolved, content).map_err(|e| {
@@ -146,6 +156,33 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.keep();
         FileWriteTool::new(path)
+    }
+
+    #[tokio::test]
+    async fn invalid_json_never_reaches_disk() {
+        let tool = tool();
+        let r = tool
+            .execute(serde_json::json!({
+                "path": "bad.json",
+                "content": "{\"a\": 1,}" // trailing comma
+            }))
+            .await
+            .unwrap();
+        assert!(!r.success, "syntax gate must reject");
+        assert!(
+            r.error.unwrap_or_default().contains("INVALID"),
+            "error must state nothing was written"
+        );
+        assert!(
+            !tool.validator.resolve_path("bad.json").unwrap().exists(),
+            "file must not be created"
+        );
+        // The VALID version writes fine (regression: gate must not block good content).
+        let ok = tool
+            .execute(serde_json::json!({"path": "good.json", "content": "{\"a\": 1}"}))
+            .await
+            .unwrap();
+        assert!(ok.success, "{:?}", ok.data);
     }
 
     #[tokio::test]

@@ -26,6 +26,12 @@ pub struct PathValidator {
 
 impl PathValidator {
     /// Create a new validator with the given data directory.
+    /// The primary data directory this validator was built with (tests use
+    /// it to construct sibling tools over the same sandbox).
+    pub fn data_dir(&self) -> &std::path::Path {
+        &self.data_dir
+    }
+
     pub fn new(data_dir: PathBuf) -> Self {
         let extra_dirs = Self::load_extra_dirs();
         Self {
