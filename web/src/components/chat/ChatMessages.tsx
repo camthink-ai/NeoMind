@@ -191,7 +191,19 @@ export function ChatMessages({
               </div>
             )}
 
-            <div className={`max-w-[85%] sm:max-w-[80%] ${message.role === "user" ? "order-1" : ""}`}>
+            {/* User bubbles hug their content (right-aligned). Assistant
+                messages span the FULL column: the thinking/tool cards inside
+                size to the widest sibling, so a content-hugging max-width
+                made their width jump (short during early streaming, wide
+                once long text/tables arrive) — a fixed full width keeps the
+                card geometry stable through the whole turn. */}
+            <div
+              className={
+                message.role === "user"
+                  ? "order-1 max-w-[85%] sm:max-w-[80%]"
+                  : "w-full"
+              }
+            >
               <div
                 className={cn(
                   message.role === "user"
