@@ -448,6 +448,7 @@
     "budgetDesc": "Timeout budget; overruns degrade to a skip and never block the turn",
     "budgetSidecarDesc": "HTTP client timeout for the decision backend; applies after the next layer rebuild",
     "refresh": "Refresh",
-    "loadFailed": "Failed to load decision config — check that the server is running"
+    "loadFailed": "Failed to load decision config — check that the server is running",
+    "noBackendHint": "No decision backend detected — install the laya-decision extension (or set LAYA_SIDECAR_URL) and this section activates automatically"
   }
 }

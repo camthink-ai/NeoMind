@@ -448,6 +448,7 @@
     "budgetDesc": "超时预算；超时自动降级为跳过，绝不阻塞回合",
     "budgetSidecarDesc": "决策后端 HTTP 客户端超时；保存后重建决策层生效",
     "refresh": "刷新",
-    "loadFailed": "决策层配置加载失败——请检查服务是否在运行"
+    "loadFailed": "决策层配置加载失败——请检查服务是否在运行",
+    "noBackendHint": "未检测到决策后端——安装 laya-decision 扩展（或配置 LAYA_SIDECAR_URL）后此区块自动启用"
   }
 }

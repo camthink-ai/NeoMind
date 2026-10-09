@@ -175,7 +175,12 @@ export function DecisionTab() {
               </span>
             </div>
           )}
-          {config.shadow && (
+          {!config.backend && (
+            <p className="text-xs text-amber-600 dark:text-amber-400">
+              {t("decision.noBackendHint")}
+            </p>
+          )}
+          {config.backend && config.shadow && (
             <p className="text-xs text-muted-foreground">{t("decision.shadowHint")}</p>
           )}
         </div>
