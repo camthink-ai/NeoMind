@@ -753,9 +753,69 @@ mod cli_dispatch {
         }
         // Only dispatch argv that names a plausible subcommand (first token
         // looks like a CLI word, not a file path / flag — the OS may hand us
-        // document paths or tauri dev flags on normal launches).
-        if sub.starts_with('-') || sub.contains('/') || sub.contains('.') {
+        // document paths or tauri dev flags on normal launches). Backslash
+        // matters on Windows paths specifically; on Unix it's legal in
+        // filenames but never starts a subcommand we know.
+        if sub.starts_with('-') || sub.contains('/') || sub.contains('.') || sub.contains('\\') {
             return None;
+        }
+
+        // Windows GUI-subsystem builds have NO console: stdout/stderr are
+        // detached from the parent even when launched from a terminal, so a
+        // data subcommand would run and print into the void (exit 0, no
+        // output — the fake-success shape). Attach to the PARENT's console
+        // and reopen the standard handles over CONOUT$ before dispatch.
+        // Not runtime-verifiable on macOS — the pattern is the documented
+        // AttachConsole dance; no-op attaches (launched from Explorer)
+        // simply leave output detached as before.
+        #[cfg(target_os = "windows")]
+        {
+            #[link(name = "kernel32")]
+            unsafe extern "system" {
+                fn AttachConsole(dw_process_id: usize) -> i32;
+                fn CreateFileW(
+                    lpfilename: *const u16,
+                    dwdesiredaccess: u32,
+                    dwsharemode: u32,
+                    lpsecurityattributes: *const core::ffi::c_void,
+                    dwcreationdisposition: u32,
+                    dwflagsandattributes: u32,
+                    htemplatefile: *mut core::ffi::c_void,
+                ) -> *mut core::ffi::c_void;
+            }
+            #[link(name = "msvcrt")]
+            unsafe extern "system" {
+                fn _open_osfhandle(osfhandle: isize, flags: i32) -> i32;
+                fn _dup2(fd1: i32, fd2: i32) -> i32;
+            }
+            const ATTACH_PARENT_PROCESS: usize = usize::MAX;
+            const GENERIC_WRITE: u32 = 0x4000_0000;
+            const FILE_SHARE_WRITE: u32 = 0x2;
+            const OPEN_EXISTING: u32 = 3;
+            unsafe {
+                if AttachConsole(ATTACH_PARENT_PROCESS) != 0 {
+                    // Reopen 1/2 onto CONOUT$: the inherited handles point at
+                    // the (nonexistent) creating console, not the parent's.
+                    let path: Vec<u16> = "CONOUT$\0".encode_utf16().collect();
+                    let handle = CreateFileW(
+                        path.as_ptr(),
+                        GENERIC_WRITE,
+                        FILE_SHARE_WRITE,
+                        std::ptr::null(),
+                        OPEN_EXISTING,
+                        0,
+                        std::ptr::null_mut(),
+                    );
+                    // INVALID_HANDLE_VALUE (-1), not null, is the failure sentry.
+                    if handle as isize != -1 {
+                        let dup = _open_osfhandle(handle as isize, 0);
+                        if dup >= 0 {
+                            let _ = _dup2(dup, 1);
+                            let _ = _dup2(dup, 2);
+                        }
+                    }
+                }
+            }
         }
 
         // Minimal async runtime for the dispatch call.
