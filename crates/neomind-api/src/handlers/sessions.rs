@@ -798,6 +798,17 @@ pub async fn delete_session_handler(
             axum::http::StatusCode::FORBIDDEN,
         ));
     }
+    // A deleted session may still be GENERATING server-side (detached
+    // delivery) — cancel the turn and drop its pending snapshot, or the
+    // sidebar keeps listing a ghost "generating" session and the poll
+    // chases a snapshot whose owner no longer exists.
+    state.agents.session_manager.cancel_session(&id).await;
+    let _ = state
+        .agents
+        .session_manager
+        .session_store()
+        .delete_pending_stream(&id);
+
     state
         .agents
         .session_manager
@@ -920,7 +931,14 @@ pub async fn get_pending_stream_handler(
     }
     let session_store = state.agents.session_manager.session_store();
 
-    match session_store.get_pending_stream(&id) {
+    match session_store
+        .get_pending_stream(&id)
+        // Same staleness rule as the list endpoint: a >10-minute-old
+        // snapshot is hidden from the sidebar's generating indicator, and
+        // entering the session must agree — recovering a snapshot the list
+        // says doesn't exist left the enter-path spinning on a dead turn.
+        .map(|p| p.filter(|p| !p.is_stale()))
+    {
         Ok(Some(pending)) => Ok(Json(ApiResponse::success(json!({
             "hasPending": true,
             "sessionId": id,

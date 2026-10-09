@@ -281,6 +281,24 @@ struct CacheEntry {
     point: DataPoint,
     /// When this entry was cached
     cached_at: Instant,
+    /// Serialized size of `point.value`, computed ONCE at construction.
+    /// The moka weigher used to re-serialize on EVERY insert (and cache
+    /// op) — for image payloads that's a multi-MB clone per write.
+    value_weight: u32,
+}
+
+impl CacheEntry {
+    fn new(point: DataPoint) -> Self {
+        const KEY_OVERHEAD: u32 = 64;
+        let value_bytes = serde_json::to_vec(&point.value)
+            .map(|v| v.len() as u32)
+            .unwrap_or(u32::MAX);
+        Self {
+            point,
+            cached_at: Instant::now(),
+            value_weight: KEY_OVERHEAD.saturating_add(value_bytes),
+        }
+    }
 }
 /// Heuristic: does this DataPoint value look like image/binary data?
 ///
@@ -709,13 +727,7 @@ impl TimeSeriesStore {
             // the payload mix.
             latest_cache: Cache::builder()
                 .max_capacity(config.max_cache_size as u64)
-                .weigher(|_key, entry: &CacheEntry| {
-                    const KEY_OVERHEAD: u32 = 64;
-                    let value_bytes = serde_json::to_vec(&entry.point.value)
-                        .map(|v| v.len() as u32)
-                        .unwrap_or(u32::MAX);
-                    KEY_OVERHEAD.saturating_add(value_bytes)
-                })
+                .weigher(|_key, entry: &CacheEntry| entry.value_weight)
                 .build(),
             retention_policy: RwLock::new(config.retention_policy),
             stats: Arc::new(RwLock::new(PerformanceStats::default())),

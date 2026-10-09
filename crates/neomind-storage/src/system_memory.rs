@@ -658,20 +658,34 @@ impl MarkdownMemoryStore {
             }
         };
 
+        // [fake-async fix] the read + fsync'd write are BLOCKING IO — doing
+        // them inline while holding the async lock parked a tokio worker for
+        // the whole fsync. The lock stays held ACROSS the spawn_blocking (the
+        // read-modify-write must stay atomic); only the thread stops blocking.
         let _lock = self.write_lock.lock().await;
+        let target_owned = target.to_string();
 
-        let current = if path.exists() {
-            fs::read_to_string(&path)
-                .map_err(|e| Error::Storage(format!("Failed to read {}.md: {}", target, e)))?
-        } else {
-            String::new()
-        };
+        // [fake-async fix] the blocking read and the fsync'd write each run
+        // on the blocking pool; the caller-supplied transform (arbitrary
+        // F, not Send) runs on the async side between them. The lock is
+        // held across all three, preserving read-modify-write atomicity.
+        let read_path = path.clone();
+        let current = tokio::task::spawn_blocking(move || {
+            if read_path.exists() {
+                fs::read_to_string(&read_path).map_err(|e| {
+                    Error::Storage(format!("Failed to read {}.md: {}", target_owned, e))
+                })
+            } else {
+                Ok(String::new())
+            }
+        })
+        .await
+        .map_err(|e| Error::Storage(format!("modify_file join error: {}", e)))??;
 
         let new_content = transform(&current);
         if new_content == current {
             return Ok(false);
         }
-
         if new_content.chars().count() > limit {
             return Err(Error::InvalidInput(format!(
                 "Content exceeds {} char limit: {} > {}",
@@ -681,10 +695,17 @@ impl MarkdownMemoryStore {
             )));
         }
 
-        atomic_write::write(&path, &new_content)
-            .map_err(|e| Error::Storage(format!("Failed to write {}.md: {}", target, e)))?;
+        let target_owned = target.to_string();
+        let write_path = path.clone();
+        let chars = new_content.chars().count();
+        tokio::task::spawn_blocking(move || {
+            atomic_write::write(&write_path, &new_content)
+                .map_err(|e| Error::Storage(format!("Failed to write {}.md: {}", target_owned, e)))
+        })
+        .await
+        .map_err(|e| Error::Storage(format!("modify_file join error: {}", e)))??;
 
-        info!(target = %target, chars = new_content.chars().count(), "Modified persistent file");
+        info!(target = %target, chars = chars, "Modified persistent file");
         Ok(true)
     }
 
@@ -809,86 +830,33 @@ impl MarkdownMemoryStore {
 
         // Serialize the read-modify-write so a concurrent writer cannot
         // read our pre-write state and clobber our update (and vice versa).
+        // [fake-async fix] blocking IO (read + fsync'd write) runs on the
+        // blocking pool — the lock is still held across it for atomicity.
         let _lock = self.write_lock.lock().await;
-
-        let current = if path.exists() {
-            fs::read_to_string(&path)
-                .map_err(|e| Error::Storage(format!("Failed to read {}.md: {}", target, e)))?
-        } else {
-            String::new()
-        };
-
-        let original = current.clone();
-        let open_tag = format!("<!-- {} -->", marker);
-        let close_tag = format!("<!-- /{} -->", marker);
-
-        let new_text = if let Some(start) = current.find(&open_tag) {
-            // Marker exists — replace content between markers
-            let after_open = start + open_tag.len();
-            if let Some(end) = current[after_open..].find(&close_tag) {
-                let close_pos = after_open + end;
-                let mut result =
-                    String::with_capacity(start + new_content.len() + (current.len() - close_pos));
-                result.push_str(&current[..after_open]);
-                result.push('\n');
-                result.push_str(new_content);
-                result.push('\n');
-                result.push_str(&current[close_pos..]);
-                result
-            } else {
-                // Open tag found but no close tag — recover by replacing everything after open tag
-                let mut result =
-                    String::with_capacity(after_open + new_content.len() + close_tag.len() + 4);
-                result.push_str(&current[..after_open]);
-                result.push('\n');
-                result.push_str(new_content);
-                result.push('\n');
-                result.push_str(&close_tag);
-                result.push('\n');
-                result
-            }
-        } else {
-            // Marker not found — append new section
-            let mut result = current.clone();
-            if !result.ends_with('\n') {
-                result.push('\n');
-            }
-            result.push('\n');
-            result.push_str(&open_tag);
-            result.push('\n');
-            result.push_str(new_content);
-            result.push('\n');
-            result.push_str(&close_tag);
-            result.push('\n');
-            result
-        };
-
-        // Check if anything changed
-        if new_text == original {
-            return Ok(false);
-        }
-
-        // Self-heal past the char limit. write_file REJECTS oversized
-        // writes — the right contract for tool edits, which get an
-        // actionable error and can retry smaller. This path has no
-        // feedback loop: telling the background writer "no" leaves the
-        // file over limit forever while every later tool write_file also
-        // fails. Evict ordinary lines from the bottom instead, keeping
-        // marker blocks intact so a regenerating job never destroys its
-        // own or another job's section.
         let limit = match target {
             "user" => self.config.user_char_limit,
             "knowledge" => self.config.knowledge_char_limit,
             "procedures" => self.config.procedures_char_limit,
             _ => unreachable!(), // checked above
         };
-        let new_text = evict_to_limit_preserving_markers(&new_text, limit);
-
-        atomic_write::write(&path, &new_text)
-            .map_err(|e| Error::Storage(format!("Failed to write {}.md: {}", target, e)))?;
-
-        info!(target = %target, marker = %marker, "Replaced marker section");
-        Ok(true)
+        let target_owned = target.to_string();
+        let marker_owned = marker.to_string();
+        let new_content = new_content.to_string();
+        // [fake-async fix] the read + fsync'd write are blocking IO — run on
+        // the blocking pool; the async lock stays held across it (the
+        // read-modify-write must remain atomic vs. concurrent writers).
+        let inner_path = path.clone();
+        tokio::task::spawn_blocking(move || -> Result<bool> {
+            replace_marker_section_locked(
+                &inner_path,
+                &target_owned,
+                &marker_owned,
+                &new_content,
+                limit,
+            )
+        })
+        .await
+        .map_err(|e| Error::Storage(format!("replace_marker_section join error: {}", e)))?
     }
 
     /// Get stats for all memory targets.
@@ -3012,4 +2980,82 @@ mod tests {
         assert_eq!(lines[0], "## NewSection");
         assert!(lines.contains(&"NewContent"));
     }
+}
+
+/// Blocking core of [`MarkdownMemoryStore::replace_marker_section`] — runs
+/// on the blocking pool while the caller holds the async write lock.
+fn replace_marker_section_locked(
+    path: &std::path::Path,
+    target: &str,
+    marker: &str,
+    new_content: &str,
+    limit: usize,
+) -> Result<bool> {
+    let current = if path.exists() {
+        fs::read_to_string(path)
+            .map_err(|e| Error::Storage(format!("Failed to read {}.md: {}", target, e)))?
+    } else {
+        String::new()
+    };
+
+    let original = current.clone();
+    let open_tag = format!("<!-- {} -->", marker);
+    let close_tag = format!("<!-- /{} -->", marker);
+
+    let new_text = if let Some(start) = current.find(&open_tag) {
+        // Marker exists — replace content between markers
+        let after_open = start + open_tag.len();
+        if let Some(end) = current[after_open..].find(&close_tag) {
+            let close_pos = after_open + end;
+            let mut result =
+                String::with_capacity(start + new_content.len() + (current.len() - close_pos));
+            result.push_str(&current[..after_open]);
+            result.push('\n');
+            result.push_str(new_content);
+            result.push('\n');
+            result.push_str(&current[close_pos..]);
+            result
+        } else {
+            // Open tag found but no close tag — recover by replacing everything after open tag
+            let mut result =
+                String::with_capacity(after_open + new_content.len() + close_tag.len() + 4);
+            result.push_str(&current[..after_open]);
+            result.push('\n');
+            result.push_str(new_content);
+            result.push('\n');
+            result.push_str(&close_tag);
+            result.push('\n');
+            result
+        }
+    } else {
+        // No marker at all — append the full section at the end
+        let mut result = String::with_capacity(
+            current.len() + open_tag.len() + close_tag.len() + new_content.len() + 4,
+        );
+        result.push_str(&current);
+        if !current.ends_with('\n') && !current.is_empty() {
+            result.push('\n');
+        }
+        result.push_str(&open_tag);
+        result.push('\n');
+        result.push_str(new_content);
+        result.push('\n');
+        result.push_str(&close_tag);
+        result.push('\n');
+        result
+    };
+
+    if new_text == original {
+        return Ok(false);
+    }
+
+    // Self-heal past the char limit (see the caller's doc for why eviction,
+    // not rejection).
+    let new_text = evict_to_limit_preserving_markers(&new_text, limit);
+
+    atomic_write::write(path, &new_text)
+        .map_err(|e| Error::Storage(format!("Failed to write {}.md: {}", target, e)))?;
+
+    info!(target = %target, marker = %marker, "Replaced marker section");
+    Ok(true)
 }

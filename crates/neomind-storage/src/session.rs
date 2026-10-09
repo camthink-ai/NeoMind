@@ -246,8 +246,6 @@ pub struct PendingStreamState {
     /// overwriting the recovered round 1.
     #[serde(default = "default_round")]
     pub current_round: u32,
-    /// Whether the stream was intentionally interrupted
-    pub interrupted: bool,
 }
 
 fn default_round() -> u32 {
@@ -314,7 +312,6 @@ impl PendingStreamState {
             tool_calls: None,
             round_contents: None,
             current_round: 1,
-            interrupted: false,
         }
     }
 
@@ -351,8 +348,12 @@ impl PendingStreamState {
         v.push(call);
     }
 
-    /// Fill the result of the most recent still-resultless call matching
-    /// (name, round) — mirrors the client's ToolCallStart/End pairing.
+    /// Fill the result of the FIRST still-resultless call matching
+    /// (name, round) — the SAME forward direction the client's
+    /// ToolCallStart/End pairing uses (`findIndex` scans oldest-first).
+    /// The two projections must agree: the poll adopts this snapshot into
+    /// the client's state, so opposite pairing directions drift the two
+    /// views apart when one round holds several same-name calls.
     pub fn complete_tool_call(
         &mut self,
         name: &str,
@@ -360,7 +361,7 @@ impl PendingStreamState {
         result: &serde_json::Value,
     ) {
         if let Some(v) = self.tool_calls.as_mut() {
-            for c in v.iter_mut().rev() {
+            for c in v.iter_mut() {
                 let name_ok = c.get("name").and_then(|n| n.as_str()) == Some(name);
                 let resultless = c.get("result").map(|r| r.is_null()).unwrap_or(true);
                 let round_ok = match round {
@@ -2085,7 +2086,6 @@ mod tests {
         assert!(state.thinking.is_empty());
         assert!(matches!(state.stage, StreamStage::Waiting));
         assert!(state.tool_calls.is_none());
-        assert!(!state.interrupted);
 
         // Elapsed time should be small
         let elapsed = state.elapsed_secs();

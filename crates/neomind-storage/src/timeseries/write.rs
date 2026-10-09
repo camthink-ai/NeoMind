@@ -302,13 +302,7 @@ impl TimeSeriesStore {
         }
 
         // moka handles LRU eviction automatically when capacity is reached
-        self.latest_cache.insert(
-            key,
-            CacheEntry {
-                point,
-                cached_at: Instant::now(),
-            },
-        );
+        self.latest_cache.insert(key, CacheEntry::new(point));
     }
 }
 impl TimeSeriesStore {
@@ -434,13 +428,7 @@ impl TimeSeriesStore {
                         for (metric, points) in &metrics {
                             if let Some(last) = points.last() {
                                 let key = (source_id.clone(), metric.clone());
-                                cache.insert(
-                                    key,
-                                    CacheEntry {
-                                        point: last.clone(),
-                                        cached_at: Instant::now(),
-                                    },
-                                );
+                                cache.insert(key, CacheEntry::new(last.clone()));
                             }
                         }
                         Ok(written)

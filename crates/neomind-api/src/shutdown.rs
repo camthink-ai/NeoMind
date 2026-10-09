@@ -147,6 +147,18 @@ pub async fn cleanup_resources(state: &ServerState) {
         }
     }
 
+    // 4b. Stale atomic-write temps: unique per process now, so a crashed
+    // run's leftovers are pure garbage — sweep them at shutdown (the fn's
+    // own doc suggested init-time, but shutdown is when the directory is
+    // guaranteed quiescent for OUR writes).
+    {
+        let dir = neomind_core::paths::data_dir();
+        let removed = neomind_storage::atomic_write::cleanup_stale_temps(&dir);
+        if removed > 0 {
+            tracing::info!(count = removed, "Swept stale atomic-write temp files");
+        }
+    }
+
     // 5. Log session counts
     let sessions = state.agents.session_manager.list_sessions().await;
     tracing::info!("Shutdown complete. Active sessions: {}", sessions.len());
