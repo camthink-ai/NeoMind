@@ -863,7 +863,19 @@ pub async fn compact_session_handler(
 pub async fn clear_session_history_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
+    user: Option<Extension<crate::auth_users::SessionInfo>>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
+    if session_read_forbidden(
+        &state.agents.session_manager,
+        &id,
+        &rest_principal(user.as_deref()),
+    ) {
+        return Err(ErrorResponse::new(
+            "SESSION_FORBIDDEN",
+            "Session owned by another principal",
+            axum::http::StatusCode::FORBIDDEN,
+        ));
+    }
     state
         .agents
         .session_manager
@@ -978,7 +990,19 @@ pub async fn list_pending_sessions_handler(
 pub async fn clear_pending_stream_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
+    user: Option<Extension<crate::auth_users::SessionInfo>>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
+    if session_read_forbidden(
+        &state.agents.session_manager,
+        &id,
+        &rest_principal(user.as_deref()),
+    ) {
+        return Err(ErrorResponse::new(
+            "SESSION_FORBIDDEN",
+            "Session owned by another principal",
+            axum::http::StatusCode::FORBIDDEN,
+        ));
+    }
     let session_store = state.agents.session_manager.session_store();
 
     session_store.delete_pending_stream(&id).map_err(|e| {
@@ -1641,9 +1665,17 @@ async fn handle_ws_socket(
                                                 .delete_pending_stream(&cancel_session_id);
                                         }
 
-                                        // Send acknowledgment
+                                        // Send acknowledgment. sessionId is
+                                        // load-bearing: the chat page and
+                                        // the side panel share this socket,
+                                        // and the client's event filter
+                                        // routes by sessionId — without it
+                                        // the ack passes every filter and
+                                        // hard-resets whichever OTHER view
+                                        // happens to be streaming.
                                         let cancel_msg = json!({
                                             "type": "cancelled",
+                                            "sessionId": cancel_session_id,
                                             "message": "Request cancelled by user"
                                         }).to_string();
                                         if socket.send(AxumMessage::Text(cancel_msg)).await.is_err() {
@@ -2209,6 +2241,36 @@ mod history_pagination_tests {
         // API-key connections share the "apikey" bucket (single-tenant
         // admin credential): they attach as one principal.
         assert!(!session_attach_allowed(&manager, &sid, "apikey"));
+    }
+
+    /// The REST ownership guard (history/pending/delete/clear*) must give a
+    /// foreign principal the same refusal the WS attach path does — the
+    /// endpoints used to bypass ownership entirely. Positive test: claimed
+    /// by alice → bob's request maps to FORBIDDEN.
+    #[tokio::test]
+    async fn rest_guard_refuses_foreign_principal() {
+        let manager = neomind_agent::SessionManager::memory();
+        let sid = manager.create_session().await.unwrap();
+        assert!(session_attach_allowed(&manager, &sid, "user:alice"));
+
+        // The handlers take Option<Extension<SessionInfo>>; the guard logic
+        // itself is what decides FORBIDDEN — exercise it through the same
+        // principal derivation the handlers use.
+        assert!(
+            !session_read_forbidden(&manager, &sid, "user:alice"),
+            "the owner's own requests must pass"
+        );
+        assert!(
+            session_read_forbidden(&manager, &sid, "user:bob"),
+            "a foreign principal must be refused (403 path)"
+        );
+        // Unclaimed session: first REST touch claims it (same once-only
+        // semantics as attach).
+        let sid2 = manager.create_session().await.unwrap();
+        assert!(
+            !session_read_forbidden(&manager, &sid2, "user:bob"),
+            "an unclaimed session is claimable by first touch"
+        );
     }
 
     fn msg(role: &str, content: &str) -> AgentMessage {

@@ -435,6 +435,10 @@ export function ChatPage() {
 
   // Pending-stream recovery, path 1: reconnect while viewing a session.
   useEffect(() => {
+    // Cancel flag, same as path 2: the reconnect fires a fetch whose RTT
+    // can outlive a session switch — a late restore() would paint the OLD
+    // session's stream onto the NEW view.
+    let cancelled = false
     const unsubscribe = ws.onConnection((connected, isReconnect) => {
       // urlSessionId gate, same as path 2: on the WELCOME page (bare
       // /chat) the store session id still points at the session just
@@ -442,6 +446,7 @@ export function ChatPage() {
       // showing no conversation (the leak path 2's gate exists for).
       if (connected && isReconnect && sessionId && urlSessionId) {
         api.getPendingStream(sessionId).then(result => {
+          if (cancelled) return
           if (result?.hasPending) resumePending(sessionId, result.content || "", result.thinking || "", {
               toolCalls: result.toolCalls,
               roundContents: result.roundContents,
@@ -452,7 +457,7 @@ export function ChatPage() {
         })
       }
     })
-    return () => { void unsubscribe() }
+    return () => { cancelled = true; void unsubscribe() }
   }, [sessionId, urlSessionId, resumePending])
 
   // Pending-stream recovery, path 2: session ENTER (mount, switch, return

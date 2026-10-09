@@ -157,8 +157,5 @@
   "loadEarlierLoading": "加载中…",
   "suggestions": {
     "badge": "推荐"
-  },
-  "session": {
-    "generating": "正在生成回复"
   }
 }

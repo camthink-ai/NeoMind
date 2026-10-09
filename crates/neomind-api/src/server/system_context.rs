@@ -276,14 +276,23 @@ pub async fn summarize_chat_context(
                 summary = summary.chars().take(CHAT_SUMMARY_CHAR_LIMIT).collect();
             }
 
-            if let Err(e) = memory_store
+            match memory_store
                 .replace_marker_section("user", "chat-summary", &summary)
                 .await
             {
-                tracing::warn!(error = %e, "Failed to write chat summary");
+                // Written durably — NOW the input counts as summarized. On a
+                // write failure the fingerprint stays uncommitted so the
+                // next cycle retries (a warn-and-mark here made a failing
+                // disk permanently skip this input — same trap the LLM
+                // failure path had).
+                Ok(true) => summary_mark_done(&LAST_CHAT_SUMMARY_INPUT, chat_fp),
+                // Ok(false) = marker section absent (marker file not yet
+                // materialized) — treat as unwritten so the next cycle retries.
+                Ok(false) => {
+                    tracing::debug!("chat-summary marker section absent — not marking done")
+                }
+                Err(e) => tracing::warn!(error = %e, "Failed to write chat summary"),
             }
-            // Written durably — NOW the input counts as summarized.
-            summary_mark_done(&LAST_CHAT_SUMMARY_INPUT, chat_fp);
         }
         Err(e) => {
             tracing::warn!(error = %e, "LLM chat summary generation failed");
@@ -375,14 +384,16 @@ pub async fn summarize_agent_context(
                 summary = summary.chars().take(AGENT_SUMMARY_CHAR_LIMIT).collect();
             }
 
-            if let Err(e) = memory_store
+            match memory_store
                 .replace_marker_section("knowledge", "agent-summary", &summary)
                 .await
             {
-                tracing::warn!(error = %e, "Failed to write agent summary");
+                Ok(true) => summary_mark_done(&LAST_AGENT_SUMMARY_INPUT, agent_fp),
+                Ok(false) => {
+                    tracing::debug!("agent-summary marker section absent — not marking done")
+                }
+                Err(e) => tracing::warn!(error = %e, "Failed to write agent summary"),
             }
-            // Written durably — NOW the input counts as summarized.
-            summary_mark_done(&LAST_AGENT_SUMMARY_INPUT, agent_fp);
         }
         Err(e) => {
             tracing::warn!(error = %e, "LLM agent summary generation failed");
