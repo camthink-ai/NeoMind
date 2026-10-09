@@ -358,13 +358,20 @@ impl AgentScheduler {
             .await
             .map_err(|e| crate::NeoMindError::Config(format!("Schedule error: {}", e)))?;
 
+        // Bake the RESOLVED timezone (agent's own, else the scheduler
+        // default) into the task: calculate_next_execution falls back to the
+        // default tz, but update_next_execution reads task.timezone alone —
+        // leaving it None made the FIRST run fire on Shanghai time and every
+        // RESCHEDULE on UTC, drifting the schedule by the tz offset.
+        let default_tz = self.config.read().await.default_timezone.clone();
+        let resolved_tz = agent.schedule.timezone.clone().or(default_tz);
         let task = ScheduledTask {
             agent_id: agent.id.clone(),
             next_execution,
             interval_seconds: agent.schedule.interval_seconds,
             cron_expression: agent.schedule.cron_expression.clone(),
             cron_schedule,
-            timezone: agent.schedule.timezone.clone(),
+            timezone: resolved_tz,
             enabled: agent.status == neomind_storage::AgentStatus::Active,
             priority: agent.priority,
         };
@@ -477,6 +484,7 @@ impl AgentScheduler {
                     let executor = executor_ref.clone();
                     let running_executions_clone = running_executions.clone();
                     let task_handles_clone = running_task_handles.clone();
+                    let tasks_clone = tasks.clone();
                     let semaphore_clone = semaphore.clone();
                     let backend_sems = backend_semaphores.clone();
 
@@ -534,10 +542,21 @@ impl AgentScheduler {
                                 return;
                             }
                             Err(_) => {
+                                // The reservation already ADVANCED
+                                // next_execution — returning now would drop
+                                // the entire cycle (the comment used to say
+                                // "deferring to next tick", but the next
+                                // tick is a full interval away). Re-arm to a
+                                // few seconds out so a freed permit is
+                                // picked up almost immediately; the running
+                                // slot is released by the RAII guard below.
                                 tracing::debug!(
                                     agent_id = %agent_id,
-                                    "Global permit wait exceeded budget — deferring to next tick"
+                                    "Global permit wait exceeded budget — re-arming for a near retry"
                                 );
+                                if let Some(t) = tasks_clone.write().await.get_mut(&agent_id) {
+                                    t.next_execution = chrono::Utc::now().timestamp() + 5;
+                                }
                                 return;
                             }
                         };
@@ -673,6 +692,21 @@ impl AgentScheduler {
                                         }
                                     }
                                     Err(e) => {
+                                        // Busy, not broken: the re-entrancy
+                                        // guard's rejection means a run we
+                                        // triggered is already in flight —
+                                        // counting it as a failure fed
+                                        // consecutive_failures and could
+                                        // demote a healthy agent after a few
+                                        // overlapping triggers. Return without
+                                        // counting (the slot guard cleans up).
+                                        if e.to_string().contains("already executing") {
+                                            tracing::debug!(
+                                                agent_id = %agent_id,
+                                                "Scheduled run overlapped an in-flight run — not a failure"
+                                            );
+                                            return;
+                                        }
                                         let new_consecutive = consecutive + 1;
 
                                         tracing::error!(

@@ -618,27 +618,6 @@ impl AiAgentManager {
         if errored.is_empty() {
             return;
         }
-        let errored = match self
-            .list_agents(AgentFilter {
-                status: Some(AgentStatus::Error),
-                ..Default::default()
-            })
-            .await
-        {
-            Ok(agents) => agents,
-            Err(e) => {
-                tracing::warn!(
-                    category = "agent",
-                    error = %e,
-                    "Failed to scan for Error agents; skipping reactivation"
-                );
-                return;
-            }
-        };
-
-        if errored.is_empty() {
-            return;
-        }
 
         let count = errored.len();
         tracing::warn!(
@@ -654,11 +633,6 @@ impl AiAgentManager {
                 "Agent in Error at startup"
             );
         }
-
-        tracing::info!(
-            reactivated_count = count,
-            "Error agents reactivated to Active"
-        );
     }
 
     /// Stop the scheduler.
