@@ -155,8 +155,16 @@ export function DecisionTab() {
               <span className="text-muted-foreground">{t("decision.backend")}: </span>
               <span className="font-medium">{config.backend ?? t("decision.backendNone")}</span>
             </div>
-            <Badge variant={config.shadow ? "secondary" : "default"}>
-              {config.shadow ? t("decision.shadowOn") : t("decision.activeMode")}
+            <Badge
+              variant={
+                config.shadow == null ? "outline" : config.shadow ? "secondary" : "default"
+              }
+            >
+              {config.shadow == null
+                ? t("decision.backendNone")
+                : config.shadow
+                  ? t("decision.shadowOn")
+                  : t("decision.activeMode")}
             </Badge>
           </div>
           <SettingsRow label={t("decision.backendAvail")} description={t("decision.backendAvailDesc")}>
@@ -197,7 +205,7 @@ export function DecisionTab() {
             description={t("decision.shadowHintShort")}
           >
             <Switch
-              checked={config.shadow}
+              checked={config.shadow ?? false}
               disabled={busy || !config.backend}
               onCheckedChange={(v) => apply({ shadow: v })}
             />
@@ -205,25 +213,25 @@ export function DecisionTab() {
           <SettingsRow label={t("decision.prefill")} description={t("decision.prefillHint")}>
             <Switch
               checked={config.prefill}
-              disabled={busy || config.shadow || !config.backend}
+              disabled={busy || config.shadow !== false || !config.backend}
               onCheckedChange={(v) => apply({ prefill: v })}
             />
           </SettingsRow>
           <SettingsRow label={t("decision.guidance")} description={t("decision.guidanceHint")}>
             <Switch
               checked={config.guidance}
-              disabled={busy || config.shadow || !config.backend}
+              disabled={busy || config.shadow !== false || !config.backend}
               onCheckedChange={(v) => apply({ guidance: v })}
             />
           </SettingsRow>
           <SettingsRow label={t("decision.shortcircuit")} description={t("decision.shortcircuitHint")}>
             <Switch
               checked={config.shortcircuit}
-              disabled={busy || config.shadow || !config.backend}
+              disabled={busy || config.shadow !== false || !config.backend}
               onCheckedChange={(v) => apply({ shortcircuit: v })}
             />
           </SettingsRow>
-          {config.shadow && (
+          {config.shadow !== false && !!config.backend && (
             <p className="text-xs text-muted-foreground">{t("decision.modesLockedHint")}</p>
           )}
         </div>

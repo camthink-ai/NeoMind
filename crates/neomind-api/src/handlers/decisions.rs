@@ -711,6 +711,35 @@ pub const DECISION_SETTINGS_KEY: &str = "decision.config";
 /// split (flags.snapshot for some fields, store reads for others) is what
 /// let int8/sidecar_ms silently round-trip through placeholder values.
 pub fn load_decision_settings() -> DecisionFlagsPersist {
+    // One bounded retry: transient open failures (a sibling process holding
+    // the redb lock during a restart handover) used to fall through to the
+    // seeds SILENTLY — a boot that lost this read came up with default
+    // shadow=true while the operator's setting sat intact on disk.
+    let read_raw = || -> Option<String> {
+        crate::config::open_settings_store()
+            .ok()
+            .and_then(|store| store.load(DECISION_SETTINGS_KEY).ok().flatten())
+    };
+    let raw = match read_raw() {
+        Some(v) => Some(v),
+        None => {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            read_raw()
+        }
+    };
+    match raw {
+        Some(raw) => match serde_json::from_str::<DecisionFlagsPersist>(&raw) {
+            Ok(doc) => return doc,
+            Err(e) => tracing::warn!(
+                target: "neomind::decision", error = %e,
+                "decision.config present but unparseable — falling back to env/default seeds"
+            ),
+        },
+        None => tracing::debug!(
+            target: "neomind::decision",
+            "no persisted decision.config (first boot or store unavailable) — env/default seeds"
+        ),
+    }
     let seeded = || DecisionFlagsPersist {
         prefill: std::env::var("NEOMIND_DECISION_PREFILL")
             .map(|v| v == "1")
@@ -732,11 +761,7 @@ pub fn load_decision_settings() -> DecisionFlagsPersist {
                 .unwrap_or(false),
         },
     };
-    crate::config::open_settings_store()
-        .ok()
-        .and_then(|store| store.load(DECISION_SETTINGS_KEY).ok().flatten())
-        .and_then(|raw| serde_json::from_str::<DecisionFlagsPersist>(&raw).ok())
-        .unwrap_or_else(seeded)
+    seeded()
 }
 
 /// Saved shadow posture, if an operator ever PUT one. Precedence in
@@ -1642,8 +1667,12 @@ pub async fn get_config(State(state): State<ServerState>) -> HandlerResult<serde
 fn decision_config_payload(state: &ServerState) -> serde_json::Value {
     let ds = state.decision_snapshot();
     let doc = load_decision_settings();
+    // Option: null when NO service is resolved (extension uninstalled /
+    // no backend). Reporting `true` here displayed "影子 ON" on an INERT
+    // layer — the user read it as their persisted setting being reverted,
+    // while it actually sat intact on disk. null = "no posture at all".
     json!({
-        "shadow": ds.as_ref().map(|d| d.shadow()).unwrap_or(true),
+        "shadow": ds.as_ref().map(|d| d.shadow()),
         "prefill": doc.prefill,
         "guidance": doc.guidance,
         "shortcircuit": doc.shortcircuit,
@@ -1783,9 +1812,36 @@ pub async fn put_config(
         }
     }
 
-    // Live application. Hot knobs first (flags atomics + service), then the
-    // knobs that live in the CONSTRUCTED client/engine: those re-derive from
-    // the persisted doc on refresh, so persist FIRST and refresh after.
+    // ── Persist FIRST (transactional): merged onto the CURRENT persisted
+    // doc so an unrelated PUT can never reset a sibling field. If the write
+    // fails, NOTHING is applied and the caller gets an error — the old
+    // order (apply live, warn on save failure) could leave a change that
+    // looked applied in the UI but silently reverted on the next restart.
+    let mut doc = load_decision_settings();
+    apply_config_update(&mut doc, &req);
+    match crate::config::open_settings_store() {
+        Ok(store) => {
+            store
+                .save(
+                    DECISION_SETTINGS_KEY,
+                    &serde_json::to_string(&doc).unwrap_or_default(),
+                )
+                .map_err(|e| {
+                    ErrorResponse::internal(format!(
+                        "decision config NOT persisted (nothing applied): {e}"
+                    ))
+                })?;
+        }
+        Err(e) => {
+            return Err(ErrorResponse::internal(format!(
+                "settings store unavailable — decision config NOT persisted (nothing applied): {e:?}"
+            )));
+        }
+    }
+
+    // Apply live (the persisted doc above is already durable). Hot knobs
+    // first (flags atomics + service), then the knobs that live in the
+    // CONSTRUCTED client/engine — those re-derive on the refresh below.
     {
         let flags = &state.decision_flags;
         if let Some(v) = req.prefill {
@@ -1823,27 +1879,6 @@ pub async fn put_config(
     if let Some(shadow) = req.shadow {
         if let Some(ds) = state.decision_snapshot() {
             ds.set_shadow(shadow);
-        }
-    }
-
-    // Merge onto the CURRENT persisted doc (field-by-field) and persist.
-    // This is the fix for the placeholder round-trip: sidecar_ms/int8 can
-    // no longer be reset by an unrelated PUT.
-    let mut doc = load_decision_settings();
-    apply_config_update(&mut doc, &req);
-    match crate::config::open_settings_store() {
-        Ok(store) => {
-            if let Err(e) = store.save(
-                DECISION_SETTINGS_KEY,
-                &serde_json::to_string(&doc).unwrap_or_default(),
-            ) {
-                tracing::warn!(target: "neomind::decision", error = %e, "Failed to persist decision config (live values still applied)");
-            }
-        }
-        Err(e) => {
-            tracing::warn!(target: "neomind::decision", error = ?e,
-                resolved_path = %neomind_core::paths::store_path("settings.redb").display(),
-                "settings store OPEN failed — decision config not persisted");
         }
     }
 

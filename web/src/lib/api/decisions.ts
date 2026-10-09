@@ -21,7 +21,11 @@ export interface DecisionBudgets {
 }
 
 export interface DecisionConfig {
-  shadow: boolean
+  /** null = no decision service resolved at all (extension uninstalled /
+   *  no backend) — the persisted setting is intact but nothing is running.
+   *  The status card shows "Not enabled" in that state instead of a
+   *  misleading posture badge. */
+  shadow: boolean | null
   prefill: boolean
   guidance: boolean
   shortcircuit: boolean
