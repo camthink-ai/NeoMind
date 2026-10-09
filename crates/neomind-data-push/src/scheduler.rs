@@ -510,8 +510,19 @@ impl PushScheduler {
                                 let mut batch = batch;
                                 flush_batch(&target, &store, &renderer, dest.as_ref(), &mut batch, Some(&cancel)).await;
                             });
+                            // Advance the timer ONLY when a flush actually
+                            // went out — resetting it on a saturated permit
+                            // cap silently dropped the whole interval's
+                            // events (buffer kept them, but the next attempt
+                            // was a full interval away).
+                            flush_timer = tokio::time::Instant::now() + batch_interval;
+                        } else {
+                            // Permit cap saturated: retry shortly, keeping
+                            // the buffered events (drop policy stays with
+                            // the buffer cap).
+                            flush_timer = tokio::time::Instant::now()
+                                + std::time::Duration::from_secs(2);
                         }
-                        flush_timer = tokio::time::Instant::now() + batch_interval;
                     }
                 }
             }

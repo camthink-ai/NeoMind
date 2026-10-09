@@ -12,6 +12,54 @@
 use super::*;
 use crate::im_bridge::session_store::{ImSessionStore, SessionKey};
 use std::collections::{HashMap, HashSet};
+
+/// Bounded msg_id dedup set with FIFO eviction (replaces HashSet+clear-at-
+/// cap, whose full reset re-processed every recent id after a redelivery
+/// burst). `insert` returns true when the id is NEW.
+#[derive(Default)]
+pub(crate) struct SeenSet {
+    set: HashSet<String>,
+    order: std::collections::VecDeque<String>,
+}
+
+impl SeenSet {
+    pub fn insert(&mut self, id: String) -> bool {
+        if self.set.contains(&id) {
+            return false;
+        }
+        if self.order.len() >= SEEN_CAP {
+            // Evict the oldest QUARTER (not one — amortized O(1) churn; not
+            // all — recent protection survives).
+            let evict = self.order.len() / 4;
+            for _ in 0..evict {
+                if let Some(old) = self.order.pop_front() {
+                    self.set.remove(&old);
+                }
+            }
+            tracing::debug!(
+                cap = SEEN_CAP,
+                evicted = evict,
+                "im_router seen-set rotated"
+            );
+        }
+        self.set.insert(id.clone());
+        self.order.push_back(id);
+        true
+    }
+
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.set.len()
+    }
+
+    /// Un-see an id (used when a pre-send failure wants redelivery to be
+    /// re-processable).
+    pub fn remove(&mut self, id: &str) {
+        if self.set.remove(id) {
+            self.order.retain(|x| x != id);
+        }
+    }
+}
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -48,7 +96,7 @@ pub struct ImRouter {
     /// msg_id 去重。带容量上限：每条入站消息的 id 曾永久驻留（进程生命
     /// 周期内无界内存）；到上限时整表重建只保留现有条目并记一条 warn
     /// （去重窗口本来就该短——Telegram 重投发生在秒级，不是天级）。
-    seen: Mutex<HashSet<String>>,
+    seen: Mutex<SeenSet>,
     /// per-chat 串行锁。
     chat_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     /// How long a run may stay silent before the user is told it is still
@@ -80,7 +128,7 @@ impl ImRouter {
             runner,
             default_agent,
             allowlist: Mutex::new(allowlist),
-            seen: Mutex::new(HashSet::new()),
+            seen: Mutex::new(SeenSet::default()),
             chat_locks: Mutex::new(HashMap::new()),
             interim_after: INTERIM_AFTER_DEFAULT,
         }
@@ -147,17 +195,14 @@ impl ImRouter {
         // 2) msg_id 去重（同一 msg_id 只处理一次）。锁在 await 前显式释放。
         {
             let mut seen = self.seen.lock().await;
-            // Bounded: at the cap, drop the whole set (redelivery windows
-            // are seconds, not days — a full reset risks one duplicate at
-            // worst, while unbounded growth risks the box).
-            if seen.len() >= SEEN_CAP {
-                tracing::warn!(
-                    cap = SEEN_CAP,
-                    "im_router seen-set at capacity — resetting (oldest ids forgotten)"
-                );
-                seen.clear();
-            }
-            if !seen.insert(m.msg_id.clone()) {
+            // Bounded with FIFO eviction: the old clear()-on-overflow reset
+            // the WHOLE set at the cap — a redelivery burst right after a
+            // full window re-processed every recently-seen id (double
+            // agent runs, double replies). Evicting only the OLDEST quarter
+            // keeps recent protection while staying bounded.
+            if seen.insert(m.msg_id.clone()) {
+                // newly inserted — dedup MISS, continue processing below
+            } else {
                 return;
             }
         }
@@ -416,17 +461,25 @@ mod tests {
             seen.insert(format!("msg-{i}"));
         }
         assert_eq!(seen.len(), SEEN_CAP);
-        // handler guard: at cap → reset
-        if seen.len() >= SEEN_CAP {
-            seen.clear();
-        }
+        // At cap, insertion rotates the OLDEST quarter out; the id being
+        // inserted now is accepted, recent ids stay deduped, and the very
+        // oldest ones are forgotten (bounded).
         assert!(
             seen.insert("msg-cap".to_string()),
-            "fresh id accepted post-reset"
+            "fresh id accepted at cap (rotation, not reset)"
         );
+        assert_eq!(seen.len(), SEEN_CAP - SEEN_CAP / 4 + 1);
         assert!(
             !seen.insert("msg-cap".to_string()),
-            "dedup still works post-reset"
+            "dedup still works post-rotation"
+        );
+        assert!(
+            !seen.insert(format!("msg-{}", SEEN_CAP - 2)),
+            "RECENT ids stay protected (no full reset)"
+        );
+        assert!(
+            seen.insert("msg-0".to_string()),
+            "the OLDEST ids are evicted by the rotation"
         );
     }
 

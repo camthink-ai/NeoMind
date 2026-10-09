@@ -598,8 +598,26 @@ impl DeviceService {
                                         MetricValue::Boolean(*b)
                                     }
                                     neomind_core::MetricValue::Json(j) => {
+                                        // $binary tag first: the bus encodes
+                                        // Binary as this exact shape (see
+                                        // convert_metric_value) — falling
+                                        // through the scalar probes used to
+                                        // stringify it, losing the type.
+                                        let tagged_binary = j
+                                            .get("$binary")
+                                            .and_then(|b| b.as_str())
+                                            .and_then(|b| {
+                                                use base64::Engine;
+                                                base64::engine::general_purpose::STANDARD
+                                                    .decode(b)
+                                                    .ok()
+                                            })
+                                            .map(MetricValue::Binary);
+                                        if let Some(binary) = tagged_binary {
+                                            binary
+                                        }
                                         // Try to convert JSON to appropriate type
-                                        if let Some(n) = j.as_i64() {
+                                        else if let Some(n) = j.as_i64() {
                                             MetricValue::Integer(n)
                                         } else if let Some(f) = j.as_f64() {
                                             MetricValue::Float(f)

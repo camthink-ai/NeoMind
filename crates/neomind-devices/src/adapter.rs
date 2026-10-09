@@ -222,7 +222,14 @@ fn convert_metric_value(value: MetricValue) -> neomind_core::MetricValue {
         // Fallback: Binary values should normally be converted to URLs by the ingestion fork
         // (MqttAdapter/WebhookAdapter::convert_binary_to_url) before reaching this point.
         // This handles edge cases where conversion failed or no data_dir is configured.
-        MetricValue::Binary(v) => neomind_core::MetricValue::String(STANDARD.encode(v)),
+        // TAGGED ($binary), not a bare base64 String: a bare String relied on
+        // the storage read-back heuristic to re-detect the type, which both
+        // missed real binary and wrongly swallowed ordinary base64-ish
+        // strings; the tag round-trips exactly (same shape the storage
+        // writer uses).
+        MetricValue::Binary(v) => {
+            neomind_core::MetricValue::Json(json!({ "$binary": STANDARD.encode(v) }))
+        }
         MetricValue::Null => neomind_core::MetricValue::String("null".to_string()),
     }
 }

@@ -502,6 +502,21 @@ impl MessageManager {
         // Log if all channels failed (but message was still created successfully)
         let any_success = send_results.iter().any(|r| r.1.is_ok());
         if !any_success && !send_results.is_empty() {
+            // Release the dedup key: it was marked BEFORE the fan-out to
+            // close the concurrent-duplicate window, but with EVERY channel
+            // dead the mark now only suppresses the NEXT legitimate alert
+            // for the whole DEDUP_INTERVAL — the outage goes quiet exactly
+            // when it should be loudest. The in-flight-send window already
+            // passed; concurrent duplicates at this point are far less
+            // costly than a 60s black hole.
+            {
+                let mut cache = self.dedup_cache.write().await;
+                cache.remove(&dedup_key);
+                tracing::warn!(
+                    key = %dedup_key,
+                    "All channels failed — dedup key released so the next occurrence can retry"
+                );
+            }
             // Escalated to error with the per-channel reasons: "all channels
             // failed" used to be a single anonymous warn line — the operator
             // could not tell a dead webhook from a revoked token.
@@ -825,6 +840,7 @@ impl MessageManager {
                     // already-Resolved/FalsePositive entry is skipped, not
                     // counted.
                     if message.acknowledge() {
+                        message.acknowledged_by = Some("api".to_string());
                         count += 1;
                         to_persist.push(Self::message_to_stored(message));
                     }

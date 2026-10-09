@@ -189,21 +189,20 @@ fn aliases_for(model: &str) -> Vec<&'static str> {
     // Gemini aliases — the 2.0-generation bare keys were pruned upstream
     // (2026-10 snapshot) and the surviving vertex_ai forms are deprecated
     // entries whose supports_vision flag was stripped. The exp-image-
-    // generation entries carry the (true) flag; the 2.5 successor is the
-    // last resort — same capability family for our purposes.
+    // generation entries carry the (true) flag. The 2.5 successors were
+    // REMOVED from the chains: the borrow also carried reasoning=TRUE
+    // across generations, and a 2.0-flash advertised as reasoning-capable
+    // is wrong in the other direction. Family-level borrows must carry
+    // ONLY flags that hold for the WHOLE family.
     if model.starts_with("gemini-2.0-flash") {
         return vec![
             "gemini-2.0-flash",
             "gemini-2.0-flash-exp-image-generation",
-            "gemini-2.5-flash",
+            "gemini-2.0-flash-lite", // present in older snapshots
         ];
     }
     if model.starts_with("gemini-2.0-pro") {
-        return vec![
-            "gemini-2.0-pro-exp",
-            "vertex_ai/gemini-2.0-pro-exp-0810",
-            "gemini-2.5-pro",
-        ];
+        return vec!["gemini-2.0-pro-exp", "vertex_ai/gemini-2.0-pro-exp-0810"];
     }
     Vec::new()
 }
