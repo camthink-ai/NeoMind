@@ -2320,13 +2320,16 @@ mod op_tests {
         };
         // Transient zero-copy scan: does ANY candidate face cover CJK?
         let any_cjk = probe_faces().iter().any(|addr| {
-            let Ok(b) = std::fs::read(addr.path) else { return false };
+            let Ok(b) = std::fs::read(addr.path) else {
+                return false;
+            };
             let face = if addr.index == 0 && !(b.len() >= 12 && &b[0..4] == b"ttcf") {
                 ab_glyph::FontRef::try_from_slice(&b)
             } else {
                 ab_glyph::FontRef::try_from_slice_and_index(&b, addr.index)
             };
-            face.map(|f| coverage_of_ref(&f, "厦门") == (2, 2)).unwrap_or(false)
+            face.map(|f| coverage_of_ref(&f, "厦门") == (2, 2))
+                .unwrap_or(false)
         });
         if !any_cjk {
             eprintln!("skipping: no CJK-capable font probed (expected on bare CI)");
@@ -2345,13 +2348,16 @@ mod op_tests {
             return;
         }
         let any_cjk = probe_faces().iter().any(|addr| {
-            let Ok(b) = std::fs::read(addr.path) else { return false };
+            let Ok(b) = std::fs::read(addr.path) else {
+                return false;
+            };
             let face = if addr.index == 0 && !(b.len() >= 12 && &b[0..4] == b"ttcf") {
                 ab_glyph::FontRef::try_from_slice(&b)
             } else {
                 ab_glyph::FontRef::try_from_slice_and_index(&b, addr.index)
             };
-            face.map(|f| coverage_of_ref(&f, "厦门") == (2, 2)).unwrap_or(false)
+            face.map(|f| coverage_of_ref(&f, "厦门") == (2, 2))
+                .unwrap_or(false)
         });
         if !any_cjk {
             eprintln!("skipping: no CJK-capable font probed");
@@ -2394,8 +2400,8 @@ mod op_tests {
         // Every face of NotoSansCJK covers the full pan-CJK charset — the
         // field bug (tofu) must be impossible once this font is probed.
         for addr in &addrs {
-            let face = load_face(addr, std::fs::read(&path).expect("re-read face"))
-                .expect("face parses");
+            let face =
+                load_face(addr, std::fs::read(&path).expect("re-read face")).expect("face parses");
             assert_eq!(
                 coverage(&face.font, "厦门有人公安"),
                 (6, 6),
