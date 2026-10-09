@@ -1885,18 +1885,28 @@ pub async fn put_config(
     // sidecar_ms / engine.int8 live in the CONSTRUCTED client/engine —
     // rebuild the decision layer when the request touches them (cheap; the
     // cache resets, accepted for a config change).
+    //
+    // engine.int8 ALSO needs the EXTENSION reloaded: the engine runs in the
+    // extension process and picks its model file from the env it inherited
+    // AT SPAWN — set_var + a client rebuild alone changes nothing for a
+    // running engine. Order matters: refresh first (sets LAYA_NATIVE_INT8 in
+    // this process), then reload (the respawned runner inherits it).
+    let int8_touched = req
+        .engine
+        .as_ref()
+        .map(|e| e.int8.is_some())
+        .unwrap_or(false);
     if req
         .budgets
         .as_ref()
         .map(|b| b.sidecar_ms.is_some())
         .unwrap_or(false)
-        || req
-            .engine
-            .as_ref()
-            .map(|e| e.int8.is_some())
-            .unwrap_or(false)
+        || int8_touched
     {
         state.refresh_decision_layer();
+    }
+    if int8_touched {
+        reload_decision_extension(&state).await;
     }
 
     tracing::info!(
@@ -1910,6 +1920,48 @@ pub async fn put_config(
     // Full GET shape (backend/backends included) — a bare doc here crashed
     // the settings tab on the first toggle (config.backends undefined).
     ok(decision_config_payload(&state))
+}
+
+/// Reload the laya-decision extension so its process respawns and the engine
+/// loads the model the CURRENT `LAYA_NATIVE_INT8` selects. Called by
+/// put_config when engine.int8 changes; a no-op when the extension is not
+/// loaded (native deployments / uninstalled). Failure is logged, never
+/// propagated — the config itself was persisted and the client rebuilt, so
+/// the worst case is "takes full effect on the next server restart".
+async fn reload_decision_extension(state: &ServerState) {
+    const EXT_ID: &str = "laya-decision";
+    let runtime = &state.extensions.runtime;
+    let Some(info) = runtime.get_info(EXT_ID).await else {
+        return; // not loaded — native path or extension absent
+    };
+    let Some(path) = info.path.clone() else {
+        return;
+    };
+    if let Err(e) = runtime.unload(EXT_ID).await {
+        tracing::warn!(target: "neomind::decision", error = %e,
+            "engine.int8: failed to unload the decision extension for reload");
+        return;
+    }
+    match runtime.load(&path).await {
+        Ok(meta) => {
+            // Re-apply the extension's saved config (sidecarPort etc.) — the
+            // respawned process starts without it otherwise.
+            let cfg = state
+                .extensions
+                .store
+                .load(EXT_ID)
+                .ok()
+                .flatten()
+                .and_then(|r| r.config);
+            if let Some(cfg) = cfg {
+                let _ = runtime.send_config_update(&meta.id, &cfg).await;
+            }
+            tracing::info!(target: "neomind::decision",
+                "decision extension reloaded — engine will load the int8/fp32 model per the new setting (takes a few seconds)");
+        }
+        Err(e) => tracing::warn!(target: "neomind::decision", error = %e,
+            "engine.int8: decision extension reload failed — applies on next restart"),
+    }
 }
 
 /// Decision backend status.
