@@ -215,6 +215,11 @@ pub struct ServerState {
     /// [`ServerState::decision_snapshot`].
     pub decision: Arc<std::sync::RwLock<Option<Arc<neomind_core::DecisionService>>>>,
 
+    /// Hot-reloadable decision action-mode switches (see
+    /// handlers::decisions::DecisionRuntimeFlags) — shared with the chat
+    /// pipeline so a config PUT is live on the next message.
+    pub decision_flags: Arc<crate::handlers::decisions::DecisionRuntimeFlags>,
+
     /// Data directory for persistent storage (e.g. skills, extensions).
     pub data_dir: std::path::PathBuf,
 
@@ -698,9 +703,14 @@ fn build_decision_service() -> Option<Arc<neomind_core::DecisionService>> {
 
     // Shadow is the default posture: record decisions on real traffic before
     // anything acts on them. Set NEOMIND_DECISION_SHADOW=0 to disable.
-    let shadow = std::env::var("NEOMIND_DECISION_SHADOW")
-        .map(|v| v != "0")
-        .unwrap_or(true);
+    // Precedence: operator-saved config (PUT /api/decisions/config) > env
+    // > default shadow. A UI-set value must survive restarts even when the
+    // env seed says otherwise.
+    let shadow = crate::handlers::decisions::load_decision_shadow().unwrap_or_else(|| {
+        std::env::var("NEOMIND_DECISION_SHADOW")
+            .map(|v| v != "0")
+            .unwrap_or(true)
+    });
     let finish = |primary: std::sync::Arc<dyn neomind_core::decision::DecisionRuntime>,
                   label: &str|
      -> Option<Arc<neomind_core::DecisionService>> {
@@ -1471,9 +1481,11 @@ impl ServerState {
         // The pipeline SHARES the RwLock slot (no snapshot) so extension
         // install/uninstall refreshes propagate without a restart.
         let decision = Arc::new(std::sync::RwLock::new(build_decision_service()));
+        let decision_flags = Arc::new(crate::handlers::decisions::load_decision_flags());
         {
             let pipeline = crate::handlers::decisions::ChatDecisionPipeline::new(
                 decision.clone(),
+                decision_flags.clone(),
                 agents.session_manager.skill_registry(),
             );
             agents
@@ -1490,6 +1502,7 @@ impl ServerState {
             agents,
             auth,
             decision,
+            decision_flags,
             response_cache,
             rate_limiter,
             auto_onboard_manager,
@@ -1727,6 +1740,9 @@ impl ServerState {
             agents,
             auth,
             decision: Arc::new(std::sync::RwLock::new(None)), // tests: decision layer off unless explicitly built
+            decision_flags: Arc::new(
+                crate::handlers::decisions::DecisionRuntimeFlags::default_for_tests(),
+            ),
             response_cache,
             rate_limiter,
             auto_onboard_manager,

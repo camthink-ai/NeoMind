@@ -752,6 +752,10 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         // Global Timezone Settings API
         .route("/api/decisions", post(decisions::decide))
         .route("/api/decisions/status", get(decisions::status))
+        .route(
+            "/api/decisions/config",
+            get(decisions::get_config).put(decisions::put_config),
+        )
         .route("/api/settings/timezone", get(settings::get_timezone))
         .route("/api/settings/timezone", put(settings::update_timezone))
         .route("/api/settings/timezones", get(settings::list_timezones))

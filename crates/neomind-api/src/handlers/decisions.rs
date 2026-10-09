@@ -14,6 +14,7 @@
 use axum::{extract::State, response::IntoResponse, Json};
 use serde::Deserialize;
 use serde_json::json;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use super::{
@@ -491,15 +492,23 @@ pub struct ChatDecisionPipeline {
     /// uninstalled) swaps the service and every subsequent turn sees it,
     /// no restart, no pipeline rebuild.
     decision: Arc<std::sync::RwLock<Option<Arc<DecisionService>>>>,
+    /// SHARED action-mode switches — a config PUT flips these live; the
+    /// env_flag reads (per-turn getenv) are gone.
+    flags: Arc<DecisionRuntimeFlags>,
     skills: neomind_agent::skills::SharedSkillRegistry,
 }
 
 impl ChatDecisionPipeline {
     pub fn new(
         decision: Arc<std::sync::RwLock<Option<Arc<DecisionService>>>>,
+        flags: Arc<DecisionRuntimeFlags>,
         skills: neomind_agent::skills::SharedSkillRegistry,
     ) -> Self {
-        Self { decision, skills }
+        Self {
+            decision,
+            flags,
+            skills,
+        }
     }
 
     /// Snapshot the decision service out of the shared slot (guard dropped
@@ -509,8 +518,92 @@ impl ChatDecisionPipeline {
     }
 }
 
-fn env_flag(name: &str) -> bool {
-    std::env::var(name).map(|v| v == "1").unwrap_or(false)
+/// Hot-reloadable action-mode switches, SHARED between ServerState and the
+/// chat pipeline. Persisted in settings.redb (`decision.config`), seeded
+/// from env on first boot, editable at runtime via
+/// `PUT /api/decisions/config` — no restart, no env vars, which desktop
+/// deployments cannot set at all.
+#[derive(Debug)]
+pub struct DecisionRuntimeFlags {
+    pub prefill: AtomicBool,
+    pub guidance: AtomicBool,
+    pub shortcircuit: AtomicBool,
+}
+
+/// Persistence shape (see [`load_decision_flags`]).
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct DecisionFlagsPersist {
+    #[serde(default)]
+    prefill: bool,
+    #[serde(default)]
+    guidance: bool,
+    #[serde(default)]
+    shortcircuit: bool,
+    /// None = never configured via API (env/default decides); Some = the
+    /// operator's persisted choice, which beats the env seed.
+    #[serde(default)]
+    shadow: Option<bool>,
+}
+
+impl DecisionRuntimeFlags {
+    /// All-off flags (tests: decision behavior identical to pre-module).
+    pub(crate) fn default_for_tests() -> Self {
+        Self::from_persist(&DecisionFlagsPersist::default())
+    }
+
+    fn from_persist(p: &DecisionFlagsPersist) -> Self {
+        Self {
+            prefill: AtomicBool::new(p.prefill),
+            guidance: AtomicBool::new(p.guidance),
+            shortcircuit: AtomicBool::new(p.shortcircuit),
+        }
+    }
+
+    fn snapshot(&self) -> DecisionFlagsPersist {
+        DecisionFlagsPersist {
+            prefill: self.prefill.load(Ordering::Relaxed),
+            guidance: self.guidance.load(Ordering::Relaxed),
+            shortcircuit: self.shortcircuit.load(Ordering::Relaxed),
+            shadow: None, // owned by the service, persisted separately in put_config
+        }
+    }
+}
+
+/// Decision-layer config persistence key.
+pub const DECISION_SETTINGS_KEY: &str = "decision.config";
+
+/// Precedence: saved settings (operator set via API) > env (deployment
+/// default) > all-off. Env is only a SEED — once the API writes a config it
+/// wins on every boot, which is the point (the env no longer silently
+/// re-shadows a layer the operator turned on from the UI).
+/// Saved shadow posture, if an operator ever PUT one. Precedence in
+/// build_decision_service: this > NEOMIND_DECISION_SHADOW env > true.
+pub fn load_decision_shadow() -> Option<bool> {
+    crate::config::open_settings_store()
+        .ok()
+        .and_then(|store| store.load(DECISION_SETTINGS_KEY).ok().flatten())
+        .and_then(|raw| serde_json::from_str::<DecisionFlagsPersist>(&raw).ok())
+        .and_then(|p| p.shadow)
+}
+
+pub fn load_decision_flags() -> DecisionRuntimeFlags {
+    let persist = crate::config::open_settings_store()
+        .ok()
+        .and_then(|store| store.load(DECISION_SETTINGS_KEY).ok().flatten())
+        .and_then(|raw| serde_json::from_str::<DecisionFlagsPersist>(&raw).ok())
+        .unwrap_or_else(|| DecisionFlagsPersist {
+            prefill: std::env::var("NEOMIND_DECISION_PREFILL")
+                .map(|v| v == "1")
+                .unwrap_or(false),
+            guidance: std::env::var("NEOMIND_DECISION_GUIDANCE")
+                .map(|v| v == "1")
+                .unwrap_or(false),
+            shortcircuit: std::env::var("NEOMIND_DECISION_SHORTCIRCUIT")
+                .map(|v| v == "1")
+                .unwrap_or(false),
+            shadow: None,
+        });
+    DecisionRuntimeFlags::from_persist(&persist)
 }
 
 #[async_trait::async_trait]
@@ -526,7 +619,7 @@ impl neomind_agent::ChatDecisionHook for ChatDecisionPipeline {
         let decision = self.current();
         spawn_shadow(&decision, message);
 
-        if allow_shortcircuit && env_flag("NEOMIND_DECISION_SHORTCIRCUIT") {
+        if allow_shortcircuit && self.flags.shortcircuit.load(Ordering::Relaxed) {
             if let Some(plan) =
                 try_shortcircuit(&decision, message, std::time::Duration::from_millis(600)).await
             {
@@ -548,7 +641,7 @@ impl neomind_agent::ChatDecisionHook for ChatDecisionPipeline {
         }
 
         let mut m = message.to_string();
-        if env_flag("NEOMIND_DECISION_GUIDANCE") {
+        if self.flags.guidance.load(Ordering::Relaxed) {
             if let Some(directive) = guidance_hint(
                 &decision,
                 &self.skills,
@@ -561,7 +654,7 @@ impl neomind_agent::ChatDecisionHook for ChatDecisionPipeline {
                 m = format!("{m}\n\n{directive}");
             }
         }
-        if env_flag("NEOMIND_DECISION_PREFILL") {
+        if self.flags.prefill.load(Ordering::Relaxed) {
             if let Some(hint) =
                 prefill_hint(&decision, message, std::time::Duration::from_millis(500)).await
             {
@@ -1024,6 +1117,105 @@ pub struct QuestionEntryDto {
 pub struct DecideRequest {
     pub state: String,
     pub questions: Vec<QuestionEntryDto>,
+}
+
+/// GET /api/decisions/config — the runtime posture: action-mode switches
+/// plus the shadow flag and the effective backend id. Everything here is
+/// hot-reloadable via PUT.
+#[utoipa::path(
+    get,
+    path = "/api/decisions/config",
+    tag = "decisions",
+    responses(
+        (status = 200, description = "Decision-layer runtime configuration"),
+    )
+)]
+pub async fn get_config(State(state): State<ServerState>) -> HandlerResult<serde_json::Value> {
+    let ds = state.decision_snapshot();
+    let flags = state.decision_flags.snapshot();
+    ok(json!({
+        "shadow": ds.as_ref().map(|d| d.shadow()).unwrap_or(true),
+        "prefill": flags.prefill,
+        "guidance": flags.guidance,
+        "shortcircuit": flags.shortcircuit,
+        "backend": ds.as_ref().map(|d| d.primary_backend_id().to_string()),
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DecisionConfigUpdate {
+    /// Record-only posture (true) or act (false).
+    pub shadow: Option<bool>,
+    pub prefill: Option<bool>,
+    pub guidance: Option<bool>,
+    pub shortcircuit: Option<bool>,
+}
+
+/// PUT /api/decisions/config — flip the decision posture WITHOUT a restart
+/// or any environment variable (desktop deployments cannot set env vars at
+/// all). Persists to settings.redb: saved values win over the env seed on
+/// every later boot.
+#[utoipa::path(
+    put,
+    path = "/api/decisions/config",
+    tag = "decisions",
+    request_body = DecisionConfigUpdate,
+    responses(
+        (status = 200, description = "Updated runtime configuration"),
+    )
+)]
+pub async fn put_config(
+    State(state): State<ServerState>,
+    Json(req): Json<DecisionConfigUpdate>,
+) -> HandlerResult<serde_json::Value> {
+    // shadow applies to the service itself (guard_shadow reads it live)
+    if let Some(shadow) = req.shadow {
+        if let Some(ds) = state.decision_snapshot() {
+            ds.set_shadow(shadow);
+        }
+    }
+    {
+        let flags = &state.decision_flags;
+        if let Some(v) = req.prefill {
+            flags.prefill.store(v, Ordering::Relaxed);
+        }
+        if let Some(v) = req.guidance {
+            flags.guidance.store(v, Ordering::Relaxed);
+        }
+        if let Some(v) = req.shortcircuit {
+            flags.shortcircuit.store(v, Ordering::Relaxed);
+        }
+    }
+
+    // Persist (merged snapshot) so the setting survives restarts and beats
+    // the env seed. Shadow rides along in the same document.
+    let mut persist = state.decision_flags.snapshot();
+    let shadow_now = state
+        .decision_snapshot()
+        .map(|d| d.shadow())
+        .unwrap_or(true);
+    let doc = json!({
+        "prefill": persist.prefill,
+        "guidance": persist.guidance,
+        "shortcircuit": persist.shortcircuit,
+        "shadow": shadow_now,
+    });
+    if let Ok(store) = crate::config::open_settings_store() {
+        if let Err(e) = store.save(DECISION_SETTINGS_KEY, &doc.to_string()) {
+            tracing::warn!(target: "neomind::decision", error = %e, "Failed to persist decision config (live values still applied)");
+        }
+    }
+    let _ = &mut persist;
+
+    tracing::info!(
+        target: "neomind::decision",
+        shadow = shadow_now,
+        prefill = persist.prefill,
+        guidance = persist.guidance,
+        shortcircuit = persist.shortcircuit,
+        "decision config updated (live)"
+    );
+    ok(doc)
 }
 
 /// Decision backend status.
