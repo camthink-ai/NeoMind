@@ -1865,6 +1865,13 @@ impl ServerState {
                         loaded = count,
                         "Loaded extensions from storage"
                     );
+                    // The decision layer was built BEFORE extensions loaded
+                    // (it probes the extension store at ServerState::new; a
+                    // boot-time store failure or a first-install auto-discovery
+                    // left it inert). Loading changed the install surface —
+                    // re-resolve so laya-decision takes effect without a
+                    // restart. Same hook the marketplace install path uses.
+                    self.refresh_decision_layer();
                 }
             }
             Err(e) => {

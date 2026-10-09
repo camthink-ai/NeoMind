@@ -655,7 +655,10 @@ pub fn default_budgets() -> BudgetsPersist {
 
 impl DecisionRuntimeFlags {
     /// All-off flags (tests: decision behavior identical to pre-module).
-    #[cfg(test)]
+    /// Gate mirrors `ServerState::new_for_testing` — integration tests build
+    /// the lib with the `testing` feature and WITHOUT cfg(test), so a plain
+    /// #[cfg(test)] gate breaks that build (5eaf4ac9 regression).
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn default_for_tests() -> Self {
         Self::from_persist(&DecisionFlagsPersist::default())
     }
@@ -672,7 +675,6 @@ impl DecisionRuntimeFlags {
             budget_ask_ms: AtomicU32::new(p.budgets.ask_ms),
         }
     }
-
 
     /// Live gate values for consumers (prefill's inline comparisons).
     pub fn gate_domain(&self) -> f32 {
