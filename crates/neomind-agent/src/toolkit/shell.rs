@@ -523,6 +523,16 @@ impl ShellTool {
             }
             Ok(Err(neomind_cli_ops::dispatch::DispatchError::Parse(msg))) => {
                 let mut stderr = format!("error: {}", msg);
+                // [context-injection] unquoted paths with spaces are the #1
+                // live parse failure ("... /Users/x/Library/Application
+                // Support/..." → "unexpected argument 'Support/...' found"
+                // — the model retried IDENTICALLY twice without adding
+                // quotes). Name the fix on the error itself.
+                if msg.contains("unexpected argument") && !command.contains("\"") {
+                    stderr.push_str(
+                        "\nHint: an argument containing SPACES (e.g. a path under \"Application Support\") must be wrapped in double quotes: neomind widget install \"/Users/.../Application Support/.../device-info-widget\".",
+                    );
+                }
                 // [context-injection] bad subcommand/args → append domain --help.
                 if let Some(domain) = argv.get(1) {
                     let subcommand = argv
@@ -1908,6 +1918,31 @@ mod dispatch_edge_tests {
         // CJK passes through as ordinary argument characters.
         let toks = tokenize_neomind_command("rule create --name 温湿度告警").unwrap();
         assert_eq!(toks, ["rule", "create", "--name", "温湿度告警"]);
+    }
+
+    /// The unquoted-path-with-spaces hint rides the clap parse error
+    /// exactly when it should (live incident: identical retry x2 without
+    /// quotes). Pure-string test on the same conditions as the branch.
+    #[test]
+    fn quote_hint_conditions() {
+        let case = |msg: &str, command: &str| {
+            msg.contains("unexpected argument") && !command.contains("\"")
+        };
+        // live shape: split path fragment, no quotes in the raw command
+        assert!(case(
+            "unexpected argument 'Support/com.neomind.neomind/data/frontend-components/device-info-widget' found",
+            "neomind widget install /Users/x/Library/Application Support/com.neomind.neomind/data/frontend-components/device-info-widget",
+        ));
+        // already-quoted command: no duplicate nagging
+        assert!(!case(
+            "unexpected argument 'foo' found",
+            "neomind widget install \"/Users/x/Library/Application Support/x\"",
+        ));
+        // different parse error: no hint
+        assert!(!case(
+            "missing required arguments",
+            "neomind widget install"
+        ));
     }
 
     #[test]
