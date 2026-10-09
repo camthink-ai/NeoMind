@@ -248,7 +248,7 @@ Timeout: 15 seconds. Max response: 1MB."#
                     // error read as "real address, transient problem".
                     // Name the alternative at the point of failure.
                     ToolError::Execution(format!(
-                        "Request failed: {}. NOTE: if this host was your guess for a NeoMind platform API, that is the wrong interface — platform operations (dashboards, widgets, devices, rules, agents) run via the `shell` tool with the `neomind` CLI (e.g. `neomind dashboard add-components <ID> --components '<json>'`), and the platform exposes no public HTTP API at external domains. This tool is for EXTERNAL URLs only.",
+                        "Request failed: {}. NOTE: if this host was your guess for a NeoMind platform API, that is the wrong interface. Right tool per task: CLI-backed platform domains (dashboards, widgets, devices, rules, agents) → `shell` tool with `neomind ...` (e.g. `neomind dashboard add-components <ID> --components '<json>'`); file work → file_read/file_write/file_edit; image work → vision/image_edit; memory facts → memory. web_fetch is for EXTERNAL URLs only — the platform has no public HTTP API at external domains.",
                         e
                     ))
                 }

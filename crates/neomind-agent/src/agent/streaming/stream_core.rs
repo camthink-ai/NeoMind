@@ -1910,7 +1910,7 @@ pub(crate) fn loop_break_message(failures: u32, last_err: &str) -> Option<String
         return None;
     }
     Some(format!(
-        "LOOP BREAK: this exact call has already FAILED {failures}× this turn — running it unchanged again cannot succeed. Last error: {last_err}. Change the approach NOW: fix the arguments, or use a different tool. Note: NeoMind platform operations (dashboards, widgets, devices, rules, agents) run via the `shell` tool with the `neomind` CLI — e.g. `neomind dashboard add-components <DASHBOARD_ID> --components '<json>'` — NOT via web_fetch; the platform has no public HTTP endpoint at external domains."
+        "LOOP BREAK: this exact call has already FAILED {failures}× this turn — running it unchanged again cannot succeed. Last error: {last_err}. Change the approach NOW: fix the arguments, or switch to the right tool. Tool map: CLI-backed platform domains (dashboards, widgets, devices, rules, agents) → `shell` tool with `neomind ...` (e.g. `neomind dashboard add-components <ID> --components '<json>'`); file work → file_read/file_write/file_edit; image work → vision/image_edit; agent memory → memory. web_fetch is for EXTERNAL URLs only — the platform has no public HTTP API at external domains."
     ))
 }
 
@@ -1935,8 +1935,20 @@ mod history_budget_tests {
             "must carry the last error: {msg}"
         );
         assert!(
+            msg.contains("Tool map"),
+            "must state the tool division: {msg}"
+        );
+        assert!(
             msg.contains("`shell` tool"),
-            "must name the correct tool: {msg}"
+            "must name shell for CLI domains: {msg}"
+        );
+        assert!(
+            msg.contains("file_read/file_write/file_edit"),
+            "must route file work: {msg}"
+        );
+        assert!(
+            msg.contains("vision/image_edit"),
+            "must route image work: {msg}"
         );
         assert!(msg.contains("neomind dashboard add-components"), "{msg}");
     }

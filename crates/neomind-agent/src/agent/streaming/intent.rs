@@ -180,7 +180,7 @@ pub(crate) fn build_list_only_dead_end_prompt(
 
     let mut msg = format!(
         "⚠️ CRITICAL: The user asked you to perform an ACTION, but you ONLY ran list/query commands.\n\
-        You MUST now execute the actual action AS A `shell` TOOL CALL running the `neomind` CLI — not web_fetch, not any HTTP endpoint (the platform is NOT reachable over web_fetch).\n\n\
+        You MUST now execute the actual action via the `shell` tool running the `neomind` CLI — these platform domains (rule/agent/device/dashboard/widget/extension/message) are CLI-managed; web_fetch is never the way for them.\n\n\
         Previously executed (read-only):\n{}\n\n",
         executed_summary
     );
@@ -421,8 +421,8 @@ mod tests {
             &[],
         )
         .expect("action request with only list calls must inject");
-        assert!(msg.contains("`shell` TOOL CALL"), "{msg}");
-        assert!(msg.contains("not web_fetch"), "{msg}");
+        assert!(msg.contains("`shell` tool"), "{msg}");
+        assert!(msg.contains("web_fetch is never the way"), "{msg}");
     }
 
     #[test]
