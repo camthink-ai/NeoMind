@@ -832,8 +832,15 @@ pub async fn add_device_handler(
 
     // Parse connection_config JSON into ConnectionConfig
     let connection_config: neomind_devices::ConnectionConfig =
-        serde_json::from_value(req.connection_config)
-            .map_err(|e| ErrorResponse::bad_request(format!("Invalid connection_config: {}", e)))?;
+        serde_json::from_value(req.connection_config).map_err(|e| {
+            ErrorResponse::bad_request(format!("Invalid connection_config: {}", e)).with_hint(
+                "connection_config is an object of OPTIONAL adapter fields: MQTT — \
+                 telemetry_topic, command_topic, json_path; Home Assistant — entity_id. \
+                 Typos are NOT rejected (extra keys are stored as metadata): spellings like \
+                 'topic' or 'telemetryTopic' silently create a device that never receives data. \
+                 Example: {\"connection_config\":{\"telemetry_topic\":\"devices/sensor1/uplink\"}}",
+            )
+        })?;
 
     // Same range rules as the update path for a provided create override.
     if let Some(secs) = req.offline_timeout_secs {
@@ -911,8 +918,13 @@ pub async fn update_device_handler(
 
     // Parse connection_config if provided
     let connection_config = if let Some(config_json) = req.connection_config {
-        serde_json::from_value(config_json)
-            .map_err(|e| ErrorResponse::bad_request(format!("Invalid connection_config: {}", e)))?
+        serde_json::from_value(config_json).map_err(|e| {
+            ErrorResponse::bad_request(format!("Invalid connection_config: {}", e)).with_hint(
+                "Optional adapter fields: MQTT — telemetry_topic, command_topic, json_path; \
+                 Home Assistant — entity_id. Typos are NOT rejected (stored as metadata): \
+                 'topic'/'telemetryTopic' silently creates a device that never receives data.",
+            )
+        })?
     } else {
         existing.connection_config
     };

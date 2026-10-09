@@ -950,10 +950,17 @@ pub async fn update_component_handler(
     let mut value = serde_json::to_value(&*component)
         .map_err(|e| ErrorResponse::internal(format!("Failed to serialize component: {}", e)))?;
     // id and type identify the component — never let a patch move/retype it.
+    // The ignored keys are REPORTED in the response: a silent strip made a
+    // retype attempt "succeed" while nothing changed (same bypass-family
+    // trap as the unknown-type escalation to a builtin widget).
+    let mut ignored_keys: Vec<&str> = Vec::new();
     if let serde_json::Value::Object(patch) = &set {
         let mut sanitized = patch.clone();
-        sanitized.remove("id");
-        sanitized.remove("type");
+        for key in ["id", "type"] {
+            if sanitized.remove(key).is_some() {
+                ignored_keys.push(key);
+            }
+        }
         deep_merge_json(&mut value, &serde_json::Value::Object(sanitized));
     }
     let patched: StoredComponent = serde_json::from_value(value)
@@ -973,6 +980,10 @@ pub async fn update_component_handler(
         "ok": true,
         "dashboard_id": id,
         "component_id": patched_id,
+        // Non-empty when the patch tried to change identity fields: they
+        // were IGNORED (id/type are immutable). To REPLACE a component use
+        // remove-components + add-components with a NEW type.
+        "ignored_keys": ignored_keys,
         "component": serde_json::to_value(
             dashboard.components.iter().find(|c| c.id == patched_id)
         ).unwrap_or(serde_json::Value::Null),
