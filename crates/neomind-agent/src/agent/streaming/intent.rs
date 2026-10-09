@@ -193,6 +193,22 @@ pub(crate) fn build_list_only_dead_end_prompt(
             action_hint
         ));
 
+        // Widget-to-dashboard tasks have a TWO-STEP pipeline the generic
+        // "execute the action" demand glossed over: the widget FILES must be
+        // REGISTERED (`widget install`) before add-components accepts the
+        // type — and --components takes full component OBJECTS, never widget
+        // names (live: four runs guessed string arrays and rebuilt widget
+        // files instead of fixing the command).
+        if action_hint.contains("dashboard") && action_hint.contains("add") {
+            msg.push_str(
+                "⚠️ WIDGET → DASHBOARD PIPELINE — do these IN ORDER:\n\
+                1) If you created widget FILES this turn: `neomind widget install <dir>` — this registers the widget TYPE; add-components rejects unregistered types.\n\
+                2) `neomind dashboard add-components <ID> --components '[{\"id\":\"c1\",\"type\":\"<widget-type>\",\"position\":{\"x\":0,\"y\":0,\"w\":4,\"h\":3}}]'\n\
+                The --components value is an ARRAY OF FULL COMPONENT OBJECTS (id + type + position) — never widget names or ids.\n\
+                Component ids and free grid positions come from `neomind dashboard get <ID>`.\n\n",
+            );
+        }
+
         // Rule-specific: if creating a rule, verify device/metric discovery was done
         if action_hint.contains("rule") && action_hint.contains("create") {
             let has_device_list = executed_commands
@@ -218,28 +234,35 @@ pub(crate) fn build_list_only_dead_end_prompt(
 }
 
 /// TURN-END completeness note: the user asked for an ACTION and NO mutation
-/// command ever executed this turn (only read/build steps ran). Reuses the
-/// mid-turn detectors so the false-positive scoping matches: an action hint
-/// must be extractable (noun false-positives skipped) and every executed
-/// shell command must be read-only. With NO shell commands at all the
-/// read-only check is undeterminable and returns false — we stay silent
-/// rather than guess.
+/// command SUCCEEDED this turn. Covers BOTH failure shapes observed live:
+/// the action never ran at all (files written, install/add-components
+/// skipped), and the action ran but every attempt failed (add-components
+/// exit 1 ×2). The predicate is the caller-tracked `mutation_succeeded`
+/// (effective-success of any mutation-flavored shell command). Scoping
+/// matches the mid-turn detector: an action hint must be extractable
+/// (noun false-positives skipped); with no extractable hint we stay silent.
 pub(crate) fn build_incomplete_action_note(
     user_message: &str,
     executed_commands: &[&str],
+    mutation_succeeded: bool,
 ) -> Option<String> {
-    if !user_message_requires_action(user_message) {
+    if mutation_succeeded || !user_message_requires_action(user_message) {
         return None;
     }
     let action_hint = extract_action_hint(user_message);
     if action_hint.is_empty() {
         return None;
     }
-    if !all_tools_were_read_only(executed_commands, &[]) {
-        return None;
-    }
+    let done_summary = if executed_commands.is_empty() {
+        "no commands ran".to_string()
+    } else {
+        format!(
+            "commands ran but none of them changed anything: {}",
+            executed_commands.join("; ")
+        )
+    };
     Some(format!(
-        "\n\n---\nℹ️ **[系统提示 / System note]** 用户要求的操作（{action_hint}）**本轮未执行**——只跑了查询/文件步骤，以上内容是进度说明而非最终结果。发送「继续」可恢复执行；ID 等标识符请取自 list/get 命令的真实输出，不要自行构造。\nNote: the requested ACTION ({action_hint}) was NOT executed this turn — only read/build steps ran; the reply above is a progress report, not a result. Send \"继续 / continue\" to resume, and take identifiers from list/get output instead of constructing them."
+        "\n\n---\nℹ️ **[系统提示 / System note]** 用户要求的操作（{action_hint}）**本轮未成功执行**——要么没有发出动作命令、要么发出的命令全部失败（见上文错误）。以上内容是进度说明而非最终结果。发送「继续」可恢复；重试前先按错误提示修正命令（ID 取自 list/get 的真实输出，不要自行构造）。\nNote: the requested ACTION ({action_hint}) was NOT successfully executed this turn ({done_summary}). The reply above is a progress report, not a result. Send \"继续 / continue\" to resume — fix the command per the reported error first, and take identifiers from list/get output instead of constructing them."
     ))
 }
 
@@ -353,6 +376,40 @@ pub(crate) fn extract_action_hint(msg: &str) -> String {
     }
 }
 
+/// Mutation command patterns (shared): a shell command containing any of
+/// these mutates platform state. Used by the read-only detector AND the
+/// turn-end "did any mutation SUCCEED" tracker.
+pub(crate) const MUTATION_COMMAND_PATTERNS: &[&str] = &[
+    " create",
+    " delete",
+    " update",
+    " control",
+    " enable",
+    " disable",
+    " write-metric",
+    " send-message",
+    " share",
+    " install ",
+    " uninstall ",
+    " control ",
+    " send ",
+    " channel-create",
+    " channel-update",
+    " channel-delete",
+    " add-component",
+    " remove-component",
+    " update-component",
+    " publish",
+    " push",
+    " register",
+    " import",
+];
+
+/// Does this shell command look like a mutation?
+pub(crate) fn is_mutation_command(cmd: &str) -> bool {
+    MUTATION_COMMAND_PATTERNS.iter().any(|p| cmd.contains(p))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -449,22 +506,46 @@ mod tests {
                 "neomind dashboard list --help 2>&1 | head -50",
                 "neomind dashboard list --help 2>&1 | head -50",
             ],
+            false,
         )
         .expect("must flag the un-executed action");
-        assert!(note.contains("NOT executed"), "{note}");
+        assert!(note.contains("NOT successfully executed"), "{note}");
         assert!(note.contains("add"), "action hint carried: {note}");
-        // A mutation command ran → the action happened; no note.
+        // A mutation SUCCEEDED → the action happened; no note.
         assert!(build_incomplete_action_note(
             "帮我加到dashboard",
-            &["neomind dashboard add-components d1 --components '[]'"],
+            &["neomind dashboard add-components d1 --components '[{...}]'"],
+            true,
         )
         .is_none());
-        // Pure query → no note.
+        // Pure query → no note (no extractable action hint).
         assert!(
-            build_incomplete_action_note("现在有哪些设备?", &["neomind device list"]).is_none()
+            build_incomplete_action_note("现在有哪些设备?", &["neomind device list"], false)
+                .is_none()
         );
-        // No shell activity at all → undeterminable; stay silent.
-        assert!(build_incomplete_action_note("帮我创建规则", &[]).is_none());
+        // No shell activity at all BUT an action was requested (e.g. a
+        // widget built purely via file_write, never installed) → NOTE
+        // (supersedes the old silence-on-undeterminable rule, which missed
+        // exactly this live case).
+        let no_shell = build_incomplete_action_note("帮我创建规则", &[], false)
+            .expect("action requested with zero successful mutations must be flagged");
+        assert!(no_shell.contains("no commands ran"), "{no_shell}");
+    }
+
+    /// Widget-to-dashboard tasks must get the two-step pipeline (install →
+    /// add-components with component OBJECTS) — four live runs guessed
+    /// string arrays instead.
+    #[test]
+    fn dead_end_injection_carries_widget_pipeline() {
+        let msg = build_list_only_dead_end_prompt(
+            "帮我开发一个前端画图组件 并且添加到dashboard",
+            &["neomind widget list"],
+            &[],
+        )
+        .expect("action request must inject");
+        assert!(msg.contains("widget install"), "{msg}");
+        assert!(msg.contains("ARRAY OF FULL COMPONENT OBJECTS"), "{msg}");
+        assert!(msg.contains("--components"), "{msg}");
     }
 
     /// The dead-end injection must NAME the shell tool — the live incident

@@ -737,6 +737,21 @@ pub async fn add_components_handler(
         .iter()
         .enumerate()
         .map(|(i, c)| {
+            // The exact live misuse: a widget NAME/ID passed as a bare
+            // string (["drawing-chart"]). serde's generic "invalid type:
+            // string" left the model concluding its WIDGET TYPE was wrong
+            // and rebuilding widget files for 10 minutes instead of fixing
+            // the command. Name the actual mistake AND the install
+            // prerequisite here.
+            if let Some(name) = c.as_str() {
+                return Err(format!(
+                    "component[{i}] is the plain string \"{name}\" — --components takes an ARRAY OF COMPONENT OBJECTS, \
+                     not widget names or ids. If \"{name}\" is a custom widget that exists only as files under \
+                     frontend-components/, register it FIRST with `neomind widget install <dir>` (add-components \
+                     rejects unregistered types), then add an object like: \
+                     [{{\"id\":\"my-card\",\"type\":\"{name}\",\"position\":{{\"x\":0,\"y\":0,\"w\":4,\"h\":3}}}}]"
+                ));
+            }
             serde_json::from_value::<StoredComponent>(c.clone()).map_err(|e| {
                 format!("component[{}]: {}", i, e)
             })

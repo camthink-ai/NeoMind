@@ -312,6 +312,11 @@ pub async fn process_stream_events_with_safeguards(
             let mut recently_executed_tools: VecDeque<String> = VecDeque::new();
             // Track actual shell command strings (for list-only dead end detection)
             let mut recently_executed_commands: VecDeque<String> = VecDeque::new();
+            // Did ANY mutation-flavored command (see intent MUTATION_COMMANDS
+            // phrasing) actually SUCCEED this turn? The completeness note keys
+            // on this — "a command ran" is not enough (live: add-components
+            // ran and FAILED, and the note stayed silent).
+            let mut mutation_succeeded = false;
 
             // === SAFEGUARD: Track multi-round tool calling iterations ===
             let mut tool_iteration_count = 0usize;
@@ -1184,6 +1189,25 @@ pub async fn process_stream_events_with_safeguards(
                         let exec_arguments = execution.arguments.clone();
                         yield AgentEvent::tool_call_start_round(&name, exec_arguments.clone(), tool_iteration_count + 1);
 
+                        // Did a mutation-flavored SHELL command effectively
+                        // SUCCEED this turn? Feeds the turn-end completeness
+                        // note — "a command ran" is not enough (live:
+                        // add-components ran and FAILED, note stayed silent).
+                        if name == "shell" {
+                            if let Some(cmd) =
+                                exec_arguments.get("command").and_then(|v| v.as_str())
+                            {
+                                if super::intent::is_mutation_command(cmd)
+                                    && matches!(
+                                        &execution.result,
+                                        Ok(out) if crate::toolkit::tool::effective_success("shell", out)
+                                    )
+                                {
+                                    mutation_succeeded = true;
+                                }
+                            }
+                        }
+
                         // Duplicate-call advisory (see last_round_success_sigs):
                         // non-reusable tool, identical signature, succeeded LAST
                         // round. Tag the result value; execution already happened.
@@ -1644,12 +1668,17 @@ pub async fn process_stream_events_with_safeguards(
                         // "add to dashboard" NEVER executed (files written,
                         // install/add-components skipped) while the summary
                         // (>500 chars, so the promise guard's cap exempted it)
-                        // framed the task as done. The mid-turn dead-end
-                        // injection fires at most once; this closes the loop
-                        // at the point the turn actually ends.
+                        // framed the task as done. A follow-up run then ended
+                        // with the action ATTEMPTED but every mutation FAILING
+                        // — "a command ran" was not enough. The predicate is
+                        // now "no mutation command SUCCEEDED this turn".
                         let cmds: Vec<&str> =
                             recently_executed_commands.iter().map(|s| s.as_str()).collect();
-                        super::intent::build_incomplete_action_note(&user_message, &cmds)
+                        super::intent::build_incomplete_action_note(
+                            &user_message,
+                            &cmds,
+                            mutation_succeeded,
+                        )
                     } {
                         tracing::warn!(
                             "Turn ending with the requested ACTION never executed — appending completeness note"
