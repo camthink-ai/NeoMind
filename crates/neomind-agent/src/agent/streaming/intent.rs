@@ -574,6 +574,91 @@ fn segment_satisfies_action(seg: &str, hint_domain: &str, hint_action: &str) -> 
     classes.is_empty() || classes.contains(&hint_action)
 }
 
+// ---------------------------------------------------------------------------
+// Stated-intent mismatch (promise-action coherence)
+// ---------------------------------------------------------------------------
+
+/// `neomind <domain> <sub>` commands the narration NAMES — the model's own
+/// stated intent. Only real domain/subcommand pairs count (checked against
+/// the live clap tree), so prose like "the neomind CLI" never registers.
+pub(crate) fn promised_commands(text: &str) -> Vec<String> {
+    let lower = text.to_lowercase();
+    let toks: Vec<&str> = lower.split_whitespace().collect();
+    let mut out: Vec<String> = Vec::new();
+    for w in toks.windows(3) {
+        if !w[0].ends_with("neomind") {
+            continue;
+        }
+        let d = w[1].trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-');
+        let s = w[2].trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-');
+        if let Some(subs) = cli_domain_subcommands(d) {
+            if subs.iter().any(|x| x == s) {
+                out.push(format!("neomind {d} {s}"));
+            }
+        }
+    }
+    out
+}
+
+/// One round of the stated-intent tracker (caller keeps the state across
+/// rounds). `narration` is the round's visible text; `executed_shell_cmds`
+/// every shell command the round ATTEMPTED (success or failure — an
+/// attempt is not an unkept promise).
+///
+/// Live shape this tracks (2026-10-10 tomato-clock session, rounds 25-37):
+/// every reply ended "Let me use the neomind dashboard add-components
+/// command" — never executed, while file_write/skill load ran instead.
+/// Every existing guard passed: tools WERE called, they were not all
+/// read-only, and narration wasn't tool-less. The signal is REPETITION of
+/// a concrete promise without execution, not a single mention (a strong
+/// model legitimately stating intent once before prep work must not be
+/// nagged).
+pub(crate) fn promise_tracker_step(
+    narration: &str,
+    executed_shell_cmds: &[String],
+    tracked: &mut Option<String>,
+    rounds: &mut usize,
+) {
+    // Execution resets: once the promised command runs (even a failed
+    // attempt), the promise is kept as far as this guard is concerned.
+    if let Some(cmd) = tracked {
+        let done = executed_shell_cmds.iter().any(|c| {
+            let cl = c.to_lowercase();
+            cl.starts_with(cmd.as_str()) || cl.contains(cmd.as_str())
+        });
+        if done {
+            *tracked = None;
+            *rounds = 0;
+            return;
+        }
+    }
+
+    if let Some(last) = promised_commands(narration).last() {
+        if tracked.as_deref() == Some(last.as_str()) {
+            *rounds += 1;
+        } else {
+            *tracked = Some(last.clone());
+            *rounds = 1;
+        }
+    }
+}
+
+/// The mid-turn directive for a repeatedly promised, never executed
+/// command. Advisory in tone and actionable: re-run the exact command the
+/// model itself stated, or name what is missing — never a bare "do it".
+pub(crate) fn build_unkept_promise_directive(cmd: &str, rounds: usize) -> String {
+    format!(
+        "⚠️ STATED-INTENT MISMATCH: your last {rounds} replies each said you would run \
+         `{cmd}` — but it was never executed, while other tools ran instead. Either run \
+         `{cmd}` NOW with the `shell` tool (re-use the exact full command you already \
+         stated, including its identifiers), or reply with ONE sentence naming the \
+         identifier/information that is missing. Do not restate the plan and do not \
+         run other tools first.\n\
+         你的最近 {rounds} 轮回复都说明要执行 `{cmd}`，但它从未被执行。现在就用 shell 工具执行它\
+         （直接复用你陈述过的完整命令），或用一句话说明缺少哪个标识/信息。不要再次复述计划。"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -919,5 +1004,61 @@ mod tests {
             "widget",
             "install"
         ));
+    }
+
+    /// The stated-intent mismatch guard: repetition of a concrete command
+    /// promise without execution is the signal — a single mention before
+    /// legitimate prep work must NOT trigger (strong-model friendly).
+    #[test]
+    fn promise_tracker_fires_on_repetition_only() {
+        // The live round-8 narration, verbatim shape.
+        let narration = "I need to add the tomato-clock widget to the temperature/humidity \
+                         dashboard (ID: dashboard_63df). Let me use the neomind dashboard \
+                         add-components command.";
+        let files = ["neomind widget list".to_string()]; // tools ran, not the promise
+
+        let mut tracked: Option<String> = None;
+        let mut rounds = 0usize;
+
+        // Round 1: first mention — track, no trigger.
+        promise_tracker_step(narration, &files, &mut tracked, &mut rounds);
+        assert_eq!(rounds, 1, "first mention records but does not fire");
+        assert_eq!(tracked.as_deref(), Some("neomind dashboard add-components"));
+
+        // Round 2: same promise, still not executed → threshold reached.
+        promise_tracker_step(narration, &files, &mut tracked, &mut rounds);
+        assert_eq!(rounds, 2);
+
+        // Execution (even a FAILED attempt) resets the tracker.
+        let attempted = [
+            "neomind widget list".to_string(),
+            "neomind dashboard add-components dashboard_63df --components '[{...}]'".to_string(),
+        ];
+        promise_tracker_step(narration, &attempted, &mut tracked, &mut rounds);
+        assert_eq!(rounds, 0, "an attempt is not an unkept promise");
+        assert!(tracked.is_none());
+
+        // A single mention followed by OTHER narration (no re-promise)
+        // never accumulates — the strong-model prep-work case.
+        let mut tracked: Option<String> = None;
+        let mut rounds = 0usize;
+        promise_tracker_step(narration, &files, &mut tracked, &mut rounds);
+        promise_tracker_step(
+            "Reading the manifest to confirm global_name.",
+            &files,
+            &mut tracked,
+            &mut rounds,
+        );
+        assert_eq!(rounds, 1, "non-promising rounds do not accumulate");
+
+        // Prose mentions of the CLI never register as promises.
+        assert!(promised_commands("Run the neomind CLI to manage your platform.").is_empty());
+        assert_eq!(
+            promised_commands("use the neomind widget install frontend-components/x step"),
+            vec!["neomind widget install".to_string()]
+        );
+        let directive = build_unkept_promise_directive("neomind dashboard add-components", 2);
+        assert!(directive.contains("STATED-INTENT MISMATCH"), "{directive}");
+        assert!(directive.contains("add-components"), "{directive}");
     }
 }

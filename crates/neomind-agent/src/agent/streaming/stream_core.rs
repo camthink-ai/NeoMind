@@ -409,6 +409,17 @@ pub async fn process_stream_events_with_safeguards(
             let mut narration_nudges = 0usize;
             let mut narration_nudge_pending: Option<String> = None;
 
+            // === STATED-INTENT MISMATCH GUARD (once per turn) ===
+            // The model's own narrated command promises vs what actually
+            // ran (see intent::promise_tracker_step). Fires only on
+            // REPETITION of a concrete promise without execution — a
+            // single stated intent before prep work is legitimate and is
+            // never nagged.
+            let mut promised_cmd: Option<String> = None;
+            let mut promise_rounds: usize = 0;
+            let mut promise_directive_sent = false;
+            let mut promise_directive_pending: Option<String> = None;
+
             // === INTENT & PLAN VISUALIZATION ===
             // Send intent and plan events first to show user what's happening
             yield intent_event;
@@ -450,6 +461,10 @@ pub async fn process_stream_events_with_safeguards(
                         // generic round prompt so the model can't pattern-match
                         // its way around it.
                         nudge
+                    } else if let Some(directive) = promise_directive_pending.take() {
+                        // Stated-intent mismatch: same principle — a pointed
+                        // directive replaces the generic round prompt.
+                        directive
                     } else if recently_executed.is_empty() {
                         format!(
                             "Round {} of processing. Call ALL needed tools in ONE batch using JSON array format. Give the final response if no more tools needed.",
@@ -1341,9 +1356,11 @@ pub async fn process_stream_events_with_safeguards(
                     let shell_ran_this_round = tool_calls_to_execute
                         .iter()
                         .any(|tc| tc.name == "shell");
+                    let mut round_shell_cmds: Vec<String> = Vec::new();
                     for tc in &tool_calls_to_execute {
                         if tc.name == "shell" {
                             if let Some(cmd) = tc.arguments.get("command").and_then(|v| v.as_str()) {
+                                round_shell_cmds.push(cmd.to_string());
                                 recently_executed_commands.push_back(cmd.to_string());
                                 if recently_executed_commands.len() > 20 {
                                     recently_executed_commands.pop_front();
@@ -1379,6 +1396,41 @@ pub async fn process_stream_events_with_safeguards(
                                         streak, key
                                     );
                                 }
+                            }
+                        }
+                    }
+
+                    // === STATED-INTENT MISMATCH (fires once per turn) ===
+                    // Rounds 25-37 of the 2026-10-10 tomato-clock session
+                    // each SAID "Let me use the neomind dashboard
+                    // add-components command" while running file_write /
+                    // skill load instead — every other guard passed (tools
+                    // were called, they were not all read-only, narration
+                    // was not tool-less). Compare this round's narration
+                    // against this round's shell commands and queue the
+                    // directive when repetition crosses the threshold.
+                    {
+                        let narration = remove_tool_calls_from_response(&content_before_tools);
+                        super::intent::promise_tracker_step(
+                            &narration,
+                            &round_shell_cmds,
+                            &mut promised_cmd,
+                            &mut promise_rounds,
+                        );
+                        if promise_rounds >= 2 && !promise_directive_sent {
+                            if let Some(cmd) = promised_cmd.clone() {
+                                promise_directive_sent = true;
+                                tracing::warn!(
+                                    promised = %cmd,
+                                    rounds = promise_rounds,
+                                    "Stated-intent mismatch — same command promised without execution, injecting directive"
+                                );
+                                promise_directive_pending = Some(
+                                    super::intent::build_unkept_promise_directive(
+                                        &cmd,
+                                        promise_rounds,
+                                    ),
+                                );
                             }
                         }
                     }

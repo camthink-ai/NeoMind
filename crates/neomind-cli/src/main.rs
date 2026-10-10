@@ -40,6 +40,15 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
+    // `--format json` maps onto the existing NEOMIND_JSON switch so every
+    // output-format reader (terminal print paths) sees one signal;
+    // `--format text` leaves the human default alone. The in-process agent
+    // path already returns JSON regardless — the flag's main job there is
+    // being ACCEPTED (it's a generic CLI convention models reach for).
+    if args.format.as_deref() == Some("json") {
+        std::env::set_var("NEOMIND_JSON", "1");
+    }
+
     // Initialize logging
     let json_logging = std::env::var("NEOMIND_LOG_JSON")
         .ok()

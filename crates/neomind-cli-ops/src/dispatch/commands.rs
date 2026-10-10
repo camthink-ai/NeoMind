@@ -24,6 +24,16 @@ pub struct Args {
     /// Verbose output.
     #[arg(short, long, global = true)]
     pub verbose: bool,
+
+    /// Terminal output format: `json` or `text`. No default flag value —
+    /// the terminal stays human-readable unless NEOMIND_JSON is set (the
+    /// flag maps onto that switch in main), and the in-process agent path
+    /// always receives JSON regardless. Accepted globally because
+    /// `--format json` is a generic CLI convention every model reaches
+    /// for; rejecting it burned the opening round of a live session twice
+    /// (`dashboard list --format=json`, `widget list --format=json`).
+    #[arg(long, global = true, value_parser = ["json", "text"])]
+    pub format: Option<String>,
 }
 
 /// Available commands.
