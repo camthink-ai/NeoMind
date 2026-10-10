@@ -188,10 +188,12 @@ pub async fn bootstrap(
                 updated.name = def.display_name.to_string();
                 // Record what the server ACTUALLY runs with: an explicit
                 // override (NEOMIND_BUILTIN_LLM_CTX / restart API) beats the
-                // per-model default — stamping the bare default here used to
+                // per-model default, and the RAM guard caps what the device
+                // can fund — stamping the bare default here used to
                 // silently rewrite a raised ctx back down (and the agent's
                 // history budget shrank to match the phantom smaller window).
-                updated.capabilities.max_context = cfg.effective_ctx(def.default_ctx);
+                updated.capabilities.max_context =
+                    super::handlers::guarded_ctx(cfg, def.default_ctx, Some(&def));
                 let _ = manager.upsert_instance(updated).await;
             }
         }
@@ -231,8 +233,9 @@ pub async fn bootstrap(
     }
 
     // spawn + healthy — ctx: explicit override (NEOMIND_BUILTIN_LLM_CTX /
-    // restart API) wins over the per-model default.
-    let effective_ctx = cfg.effective_ctx(def.default_ctx);
+    // restart API) picks the starting point, the RAM guard caps what the
+    // device can fund (128K defaults on small edge devices would OOM).
+    let effective_ctx = super::handlers::guarded_ctx(cfg, def.default_ctx, Some(&def));
     let server_cfg = LlamaServerConfig {
         binary,
         model: model_path,

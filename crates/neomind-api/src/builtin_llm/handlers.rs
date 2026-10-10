@@ -203,6 +203,43 @@ fn resolve_quant(
     }
 }
 
+/// effective_ctx (env override / per-model default) + the spawn-time RAM
+/// guard in one step — every spawn AND status path goes through this so the
+/// window the UI shows is the window the server actually gets. Models
+/// without a KV cost model (Ling, catalog-only imports) pass through
+/// uncapped.
+pub(crate) fn guarded_ctx(
+    cfg: &BuiltinConfig,
+    default_ctx: u32,
+    def: Option<&BuiltinModelDef>,
+) -> usize {
+    let requested = cfg.effective_ctx(default_ctx);
+    let Some(d) = def else {
+        return requested;
+    };
+    let Some(kv_per_token) = d.kv_bytes_per_token else {
+        return requested;
+    };
+    let (total_mb, _) = memory_snapshot_mb();
+    let capped = super::server::cap_ctx_by_ram(
+        requested,
+        u64::from(total_mb) * 1_048_576,
+        d.size_bytes,
+        kv_per_token,
+        d.kv_const_bytes.unwrap_or(0),
+    );
+    if capped < requested {
+        tracing::warn!(
+            model = %d.manifest.id,
+            requested,
+            capped,
+            total_ram_mb = total_mb,
+            "builtin llm: ctx capped by device RAM (KV cache would not fit)"
+        );
+    }
+    capped
+}
+
 /// The installed model, if any (scan the registry — one builtin model is
 /// installed at a time; the server runs one llama-server process).
 ///
@@ -705,8 +742,9 @@ async fn import_gguf_from_path(
         kill_process_on_port(cfg.port);
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
-    // The ctx the server will actually run with (env override wins).
-    let spawn_ctx = cfg.effective_ctx(import_default_ctx(&dest));
+    // The ctx the server will actually run with (env override wins, RAM
+    // guard caps) — registry id if the import names one, else uncapped.
+    let spawn_ctx = guarded_ctx(&cfg, import_default_ctx(&dest), model_def(&id));
 
     let spawned_endpoint = match get_instance_manager() {
         Ok(manager) => match spawn_builtin_server(&state.data_dir, &cfg, &manager, Some(&id)).await
@@ -848,7 +886,7 @@ pub async fn status_handler(
         .as_ref()
         .map(|(d, _)| d.default_ctx)
         .unwrap_or(0);
-    let effective_ctx = cfg.effective_ctx(model_def_ctx);
+    let effective_ctx = guarded_ctx(&cfg, model_def_ctx, installed_pair.as_ref().map(|(d, _)| d));
     let (total_mb, available_mb) = memory_snapshot_mb();
     let min_ram_mb = installed_pair
         .as_ref()
@@ -1308,10 +1346,11 @@ async fn spawn_builtin_server(
         anyhow::bail!("model file missing at {}", model_path.display());
     }
 
-    // Per-model context: LFM runs its native 128K (cheap hybrid KV), other
-    // models default to 32K so their KV fits comfortably — an explicit
-    // override (NEOMIND_BUILTIN_LLM_CTX / restart ?ctx=) wins.
-    let ctx = cfg.effective_ctx(installed.default_ctx);
+    // Context: per-model default (128K on RAM-rich hosts) with the RAM
+    // guard capping what the device can fund; an explicit override
+    // (NEOMIND_BUILTIN_LLM_CTX / restart ?ctx=) picks the starting point
+    // but the guard still applies.
+    let ctx = guarded_ctx(cfg, installed.default_ctx, model_def(&installed.manifest.id));
     let server_cfg = LlamaServerConfig {
         binary,
         model: model_path,

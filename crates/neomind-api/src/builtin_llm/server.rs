@@ -27,6 +27,29 @@ pub struct LlamaServerConfig {
     pub repeat_penalty: Option<f32>,
 }
 
+/// Largest context window the device RAM can fund for a given model.
+/// 70% of total RAM is the llama.cpp budget (OS + this process live in the
+/// rest); a further 512 MB covers llama.cpp compute/activation buffers.
+/// Returns min(requested, cap), floored at 8192 — the guard shrinks the
+/// window, it never disables the model.
+///
+/// Callers supply the per-model KV cost (bytes/token over full-attention
+/// layers + context-independent state) from the registry; models without a
+/// cost model skip the guard entirely.
+pub fn cap_ctx_by_ram(
+    requested: usize,
+    total_ram_bytes: u64,
+    size_bytes: u64,
+    kv_bytes_per_token: u32,
+    kv_const_bytes: u64,
+) -> usize {
+    const RUNTIME_HEADROOM: u64 = 512 * 1024 * 1024;
+    let budget = total_ram_bytes * 70 / 100;
+    let avail = budget.saturating_sub(size_bytes + kv_const_bytes + RUNTIME_HEADROOM);
+    let cap = (avail / u64::from(kv_bytes_per_token)) as usize;
+    requested.min(cap).max(8192)
+}
+
 #[derive(Clone)]
 pub struct LlamaServerProcess {
     pub port: u16,
@@ -232,6 +255,44 @@ mod tests {
     use super::*;
     use axum::{routing::get, Router};
     use std::time::Duration;
+
+    const GB: u64 = 1024 * 1024 * 1024;
+
+    #[test]
+    fn eight_gb_jetson_caps_minicpm_below_default() {
+        // MiniCPM5-2B on an Orin Nano 8GB: 5.5 GB of KV at 128K cannot fit.
+        let ctx = cap_ctx_by_ram(131_072, 8 * GB, 1_561_318_368, 43_008, 0);
+        assert!(ctx < 131_072, "must cap on 8GB, got {ctx}");
+        assert!(ctx > 32_768, "cap should still buy headroom, got {ctx}");
+    }
+
+    #[test]
+    fn ram_rich_host_keeps_full_default() {
+        // 32 GB host: budget 22.4 GB − weights − headroom ≫ 128K needs.
+        let ctx = cap_ctx_by_ram(131_072, 32 * GB, 1_561_318_368, 43_008, 0);
+        assert_eq!(ctx, 131_072);
+    }
+
+    #[test]
+    fn floor_is_8192_even_on_ridiculously_small_ram() {
+        let ctx = cap_ctx_by_ram(131_072, 2 * GB, 1_561_318_368, 43_008, 0);
+        assert_eq!(ctx, 8192);
+    }
+
+    #[test]
+    fn small_request_below_cap_untouched() {
+        let ctx = cap_ctx_by_ram(8_192, 8 * GB, 1_561_318_368, 43_008, 0);
+        assert_eq!(ctx, 8_192);
+    }
+
+    #[test]
+    fn qwen_linear_state_const_counts_against_budget() {
+        // Qwen3.5-4B on 8GB: 8 full-attn layers (32,768 B/token) + 201 MB
+        // linear-attention state — the const must reduce the cap.
+        let with_const = cap_ctx_by_ram(131_072, 8 * GB, 2_740_000_000, 32_768, 201_326_592);
+        let without = cap_ctx_by_ram(131_072, 8 * GB, 2_740_000_000, 32_768, 0);
+        assert!(with_const < without);
+    }
 
     #[tokio::test]
     async fn health_check_true_when_server_up() {

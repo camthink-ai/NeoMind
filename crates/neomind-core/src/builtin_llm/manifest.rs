@@ -33,11 +33,19 @@ pub struct BuiltinModelDef {
     pub hf_file: &'static str,
     /// Download size in bytes (for the picker).
     pub size_bytes: u64,
-    /// Default context window for this model (KV size differs a lot — LFM's
-    /// hybrid arch is cheap at 128K; Qwen/Gemma should run at 32K).
+    /// Default context window for this model. Defaults are generous (128K
+    /// where the arch allows) — the spawn path caps the window to what the
+    /// device RAM can fund (see `kv_bytes_per_token` + cap_ctx_by_ram).
     pub default_ctx: u32,
     /// Native context ceiling (display); default_ctx is the run default.
     pub max_ctx: u32,
+    /// KV-cache cost model backing the spawn-time RAM guard, exact from the
+    /// HF config (fp16 K+V): bytes/token over the FULL-attention layers,
+    /// plus context-independent state (sliding-window layers keep a fixed
+    /// window; linear-attention layers keep a fixed recurrence). None = no
+    /// guard data → the RAM cap is skipped for this model.
+    pub kv_bytes_per_token: Option<u32>,
+    pub kv_const_bytes: Option<u64>,
     /// Per-model sampling defaults (None = platform-wide legacy default).
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
@@ -111,19 +119,16 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             hf_repo: "openbmb/MiniCPM5-2B-GGUF",
             hf_file: "MiniCPM5-2B-Q4_K_M.gguf",
             size_bytes: 1_561_320_448,
-            // 32K default (product decision 2026-09-12): the 2026-09 eval's
-            // "8K optimum" was measured on the HARNESS prompt — the
-            // production platform prompt (system + tool definitions +
-            // memory/skill context) alone weighs 4-6K tokens, which starved
-            // an 8K window (see stream_core::effective_history_budget for
-            // the overflow this caused) and left 16K merely adequate for
-            // long agent turns. The older 5-scenario suite scored 32K at
-            // ~68 (≥ the 8K R24 run within ties), the profile is flat
-            // across windows, and the native ceiling is 128K — so 32K buys
-            // agent headroom at no measured accuracy cost. KV cache for a
-            // 2B model at 32K stays negligible against the 3 GB floor.
-            default_ctx: 32768,
+            // 128K default (2026-10-10, user demand: real agent sessions
+            // exceed 32K): dense arch so KV is the expensive kind — 42L ×
+            // 2kv × 128hd × 2(K+V) × 2B = 43,008 B/token → 5.5 GB at 128K.
+            // Fine on RAM-rich hosts; the spawn RAM guard caps small
+            // devices (~91K on an 8 GB Orin). Eval profile is flat across
+            // windows and the native ceiling is 128K.
+            default_ctx: 131072,
             max_ctx: 131072,
+            kv_bytes_per_token: Some(43_008),
+            kv_const_bytes: Some(0),
             notes: "2026-09 评测首选 — 工具命中 81%、全窗口最稳、Apache-2.0 可分发",
             recommended: true,
             default_thinking: true,
@@ -155,6 +160,11 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             size_bytes: 1_500_000_000,
             default_ctx: 131072,
             max_ctx: 131072,
+            // Hybrid: 10 full-attn L × 8kv × 64hd × 2 × 2B (head_dim not in
+            // the config; 64 is the LFM2 family value) → 20,480 B/token;
+            // 20 conv layers hold fixed recurrence state (~1 MB, ignored).
+            kv_bytes_per_token: Some(20_480),
+            kv_const_bytes: Some(0),
             notes: "原生 128K 上下文(hybrid KV 很省)— 长会话细分场景;默认首选已让位 MiniCPM5-2B",
             recommended: false,
             default_thinking: true,
@@ -180,13 +190,15 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             hf_repo: "unsloth/Qwen3.5-4B-GGUF",
             hf_file: "Qwen3.5-4B-Q4_K_M.gguf",
             size_bytes: 2_740_000_000,
-            // 32K (product decision 2026-10-09): the eval's 16K sweet
-            // spot assumed the harness's light prompt; the 4-6K platform
-            // prompt leaves ~10K for long agent turns at 16K — same
-            // rationale as MiniCPM's 8K→32K. KV doubles vs 16K;
-            // revalidate the 4 GB floor on target devices.
-            default_ctx: 32768,
+            // 128K default (2026-10-10): hybrid arch — 24 of 32 layers are
+            // linear attention (fixed recurrence, f32 state 24L × 32v ×
+            // 128×128 × 4B ≈ 201 MB const), 8 full-attn L × 4kv × 256hd ×
+            // 2 × 2B = 32,768 B/token → 4.2 GB at 128K. RAM-rich hosts run
+            // the full window; the spawn guard caps small devices.
+            default_ctx: 131072,
             max_ctx: 262144,
+            kv_bytes_per_token: Some(32_768),
+            kv_const_bytes: Some(201_326_592),
             notes:
                 "端侧最强 agent 之一(2026-09 评测 70 分@16K)— 8K 下会大幅退化;可挂 mmproj 加视觉",
             recommended: false,
@@ -213,8 +225,15 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             hf_repo: "google/gemma-4-E2B-it-qat-q4_0-gguf",
             hf_file: "gemma-4-E2B_q4_0-it.gguf",
             size_bytes: 3_100_000_000,
-            default_ctx: 32768,
+            // 128K default (2026-10-10): 5:1 sliding-window arch — 28
+            // local layers pin at window 512 (28L × 512 × 1kv × 256hd × 2
+            // × 2B ≈ 14 MB const), 7 global L × 1kv × 512 global_hd × 2 ×
+            // 2B = 14,336 B/token → only ~1.9 GB KV at 128K. Cheapest big
+            // window in the registry.
+            default_ctx: 131072,
             max_ctx: 131072,
+            kv_bytes_per_token: Some(14_336),
+            kv_const_bytes: Some(14_680_064),
             notes: "Google 官方 QAT 量化 — 可挂 mmproj 加视觉",
             recommended: false,
             default_thinking: true,
@@ -241,9 +260,14 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             hf_file: "Ling-3.0-tiny-Q4_K_M.gguf",
             size_bytes: 4_823_894_880,
             // 8K-only per the 2026-09 eval (62 → 48 at 16K — cliff);
-            // the 6 GB floor also steers small devices away.
+            // the 6 GB floor also steers small devices away. NOT raised to
+            // the registry-wide 128K default: the cliff is a model-quality
+            // property — a bigger window makes every session worse, not
+            // better. No KV cost model → RAM guard skipped (8K is small).
             default_ctx: 8192,
             max_ctx: 131072,
+            kv_bytes_per_token: None,
+            kv_const_bytes: None,
             notes: "高速 tiny MoE — 仅适合 8K 短会话(过 8K 滑坡),需 llama.cpp ≥ b10545",
             recommended: false,
             default_thinking: true,
