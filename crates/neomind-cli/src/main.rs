@@ -446,6 +446,12 @@ async fn run_chat(session_id: Option<String>) -> Result<()> {
                         neomind_agent::AgentEvent::Warning { message } => {
                             eprintln!("[Warning] {}", message);
                         }
+                        neomind_agent::AgentEvent::SystemNote { note } => {
+                            // Guard note (incomplete action, budget spent) —
+                            // the chat UI renders these as callouts; the
+                            // terminal gets a clear labeled line instead.
+                            println!("\n[system] {}", note);
+                        }
                         neomind_agent::AgentEvent::IntermediateEnd => {
                             // Intermediate end - more content coming, don't break
                             println!("[Continuing...]");
