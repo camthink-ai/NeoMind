@@ -84,12 +84,24 @@ name = "neomind-extension-my-extension"
 version = "1.0.0"
 edition = "2021"
 
+# REQUIRED for standalone projects: the empty [workspace] table detaches
+# this crate from any parent workspace. Without it, a project created
+# inside the neomind repo tree tries to JOIN the main workspace and cargo
+# fails with "not listed in workspace members". `neomind extension create`
+# scaffolds the same shape.
+[workspace]
+
 [lib]
 name = "neomind_extension_my_extension"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-neomind-extension-sdk = { path = "../../crates/neomind-extension-sdk" }
+# Registry form — works ANYWHERE (`neomind extension create` scaffolds the
+# current SDK version). Use the path form ONLY for in-repo development
+# against unreleased SDK changes, and then ONLY with the [workspace]
+# detach above plus the correct relative path:
+#   neomind-extension-sdk = { path = "../../crates/neomind-extension-sdk" }
+neomind-extension-sdk = "0.7"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 async-trait = "0.1"
@@ -101,6 +113,10 @@ opt-level = 3
 lto = "thin"
 panic = "unwind"    # Required for safe extension unloading
 ```
+
+⚠️ **SDK version**: keep it at (or above) the version `neomind extension
+create` scaffolds — an older SDK can fail to load with "ABI version
+mismatch" against the running platform.
 
 **`src/lib.rs`:**
 ```rust

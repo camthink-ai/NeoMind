@@ -1401,8 +1401,10 @@ fn create_extension_scaffold(
         anyhow::bail!("Output directory already exists: {}", out_dir.display());
     }
 
-    // SDK version — use the version of this binary's SDK dependency
-    let sdk_version = "0.6.3";
+    // SDK version — single-sourced from the SDK crate (the hardcoded
+    // "0.6.3" here had drifted while the SDK moved on, and ^0.6 semver
+    // locked fresh scaffolds to the stale line).
+    let sdk_version = neomind_extension_sdk::VERSION;
 
     // Create directory structure
     let src_dir = out_dir.join("src");
@@ -1569,6 +1571,22 @@ neomind_export!({struct_name});
 /// manifest.json into a `.nep` zip archive. On success, prints a structured
 /// marker line `NEP_PATH=<path>` so downstream tools (and the agent) can
 /// extract the package path deterministically.
+/// Last `max` lines of captured cargo output, with a truncation marker.
+fn tail_lines(bytes: &[u8], max: usize) -> String {
+    let text = String::from_utf8_lossy(bytes).trim().to_string();
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.len() > max {
+        let start = lines.len() - max;
+        format!(
+            "... ({} earlier lines truncated)\n{}",
+            start,
+            lines[start..].join("\n")
+        )
+    } else {
+        text
+    }
+}
+
 fn build_extension(path: &std::path::PathBuf) -> Result<()> {
     use std::fs;
     use std::process::Command;
@@ -1613,17 +1631,37 @@ fn build_extension(path: &std::path::PathBuf) -> Result<()> {
         .unwrap_or("0.1.0")
         .to_string();
 
-    // 2. cargo build --release
-    let status = Command::new("cargo")
+    // 2. cargo build --release — CAPTURED, not inherited: the compiler's
+    //    diagnostics belong in THIS command's output/error, labeled and
+    //    bounded. They previously leaked through only via inherited stderr
+    //    (unlabeled, ANSI-colored, unbounded) and the error message itself
+    //    carried none of them — a caller reading just the error saw
+    //    "non-zero status" with zero compile errors.
+    let output = Command::new("cargo")
         .args(["build", "--release"])
         .current_dir(path)
-        .status()?;
+        .env("CARGO_TERM_COLOR", "never")
+        .output()?;
 
-    if !status.success() {
-        anyhow::bail!("Extension build failed (cargo build returned non-zero status)");
+    if !output.status.success() {
+        anyhow::bail!(
+            "Extension build FAILED — cargo exited {}. Fix the compile errors below and rebuild:\n--- cargo stderr ---\n{}\n--- cargo stdout ---\n{}",
+            output
+                .status
+                .code()
+                .map_or("by signal".to_string(), |c| c.to_string()),
+            tail_lines(&output.stderr, 40),
+            tail_lines(&output.stdout, 20),
+        );
     }
 
     println!("✅ Cargo build succeeded");
+    let cargo_stdout = tail_lines(&output.stdout, 20);
+    if !cargo_stdout.is_empty() {
+        println!();
+        println!("--- cargo output ---");
+        println!("{cargo_stdout}");
+    }
     println!();
 
     // 3. Locate the compiled cdylib in target/release/.

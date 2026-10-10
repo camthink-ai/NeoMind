@@ -3823,6 +3823,7 @@ dependencies = [
  "neomind-api",
  "neomind-cli-ops",
  "neomind-core",
+ "neomind-extension-sdk",
  "predicates",
  "reqwest",
  "serde",

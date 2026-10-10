@@ -15,6 +15,9 @@ jemalloc = ["dep:tikv-jemallocator"]
 static = ["neomind-api/static"]
 
 [dependencies]
+# Only for the SDK VERSION constant (extension-create scaffolds it into
+# fresh projects' Cargo.toml).
+neomind-extension-sdk = { path = "../neomind-extension-sdk" }
 neomind-core = { path = "../neomind-core" }
 neomind-agent = { path = "../neomind-agent" }
 neomind-api = { path = "../neomind-api" }

@@ -118,6 +118,12 @@
 //! neomind_export!(MyExtension);
 //! ```
 
+/// This SDK's semver. `neomind extension create` scaffolds it into new
+/// projects' Cargo.toml — single source (a hardcoded copy in the CLI had
+/// drifted to 0.6.3 while the SDK was at 0.7.1, and ^0.6 semver then
+/// locked fresh scaffolds to the stale line).
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 // ============================================================================
 // IPC Boundary Types (Stable - for IPC serialization)
 // ============================================================================
