@@ -13,6 +13,8 @@ features = ["axum_extras", "chrono", "uuid"]
 [dev-dependencies]
 serial_test = "3"
 regex = { workspace = true }
+# DOMAIN_ACTIONS sync test reads the live clap tree
+clap = { workspace = true }
 # Enable testing feature when running tests
 neomind-api = { path = ".", features = ["testing"] }
 # Cross-crate auth-format check: neomind-cli-ops' offline reset must read/write

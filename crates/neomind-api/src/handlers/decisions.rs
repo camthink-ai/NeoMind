@@ -22,7 +22,7 @@ use super::{
     ServerState,
 };
 use crate::models::{ApiResponse, ErrorResponse};
-use neomind_core::{DecisionQuestion, DecisionRequest, DecisionService};
+use neomind_core::{DecisionOutcome, DecisionQuestion, DecisionRequest, DecisionService};
 
 // ---------------------------------------------------------------------------
 // Canonical router questions — the EXACT wording the fine-tuned heads were
@@ -130,7 +130,9 @@ pub fn router_questions() -> Vec<(String, DecisionQuestion)> {
 
 /// While an LLM turn runs, answer the router questions on the same message
 /// and record the result. Fire-and-forget by design: a slow or dead decision
-/// backend must never delay a chat turn.
+/// backend must never delay a chat turn. When the turn already resolved its
+/// router decision inline (an action mode was on), `on_message` logs that
+/// outcome instead — one backend call, one audit row, per message.
 pub fn spawn_shadow(decision: &Option<std::sync::Arc<DecisionService>>, message: &str) {
     let Some(ds) = decision else { return };
     let ds = ds.clone();
@@ -143,16 +145,7 @@ pub fn spawn_shadow(decision: &Option<std::sync::Arc<DecisionService>>, message:
     };
     tokio::spawn(async move {
         match ds.decide(&req).await {
-            Ok(out) => tracing::info!(
-                target: "neomind::decision",
-                shadow = out.shadow,
-                backend = %out.backend,
-                latency_ms = out.latency_ms,
-                tool = out.get("tool").and_then(|a| a.picked().map(str::to_string)).as_deref().unwrap_or("?"),
-                simple_conf = out.get("simple").and_then(|a| a.answer_confidence).map(|c| c.to_string()).as_deref().unwrap_or("?"),
-                domain = out.get("domain").and_then(|a| a.picked().map(str::to_string)).as_deref().unwrap_or("?"),
-                "decision shadow"
-            ),
+            Ok(out) => log_shadow_outcome(&out),
             Err(e) => {
                 tracing::debug!(target: "neomind::decision", error = %e, "decision shadow failed")
             }
@@ -160,16 +153,46 @@ pub fn spawn_shadow(decision: &Option<std::sync::Arc<DecisionService>>, message:
     });
 }
 
-/// P1 prefill: resolve the router decision inline (bounded) and format the
-/// hint line for the LLM's first round.
-///
-/// The wording is the EXACT string A/B-tested on qwen3.5:4b (+4.7 tool
-/// accuracy, zero cases of a wrong hint misleading the model — "verify, use
-/// only if right" is load-bearing, don't reword it). Returns None unless the
-/// decision lands within the budget; a timeout simply means no hint, the turn
-/// proceeds exactly as before.
-/// Shadow posture is record-only, PERIOD: an action-mode env flag left on
-/// while the service runs shadow must never silently act. Callers wanting
+/// The shadow-recorder log line for a router outcome (the decide call itself
+/// writes the audit row).
+fn log_shadow_outcome(out: &DecisionOutcome) {
+    tracing::info!(
+        target: "neomind::decision",
+        shadow = out.shadow,
+        backend = %out.backend,
+        latency_ms = out.latency_ms,
+        tool = out.get("tool").and_then(|a| a.picked().map(str::to_string)).as_deref().unwrap_or("?"),
+        simple_conf = out.get("simple").and_then(|a| a.answer_confidence).map(|c| c.to_string()).as_deref().unwrap_or("?"),
+        domain = out.get("domain").and_then(|a| a.picked().map(str::to_string)).as_deref().unwrap_or("?"),
+        "decision shadow"
+    );
+}
+
+/// The turn's ROUTER decision (router_questions over the message), bounded
+/// by `budget`. Resolved ONCE per turn in `on_message` and shared by every
+/// router consumer (shadow log, short-circuit, prefill hint) — the trio
+/// used to race identical backend requests for one message (live
+/// 2026-10-09: shadow + prefill decided concurrently, both cache misses,
+/// duplicate audit rows). A failure here degrades all router consumers for
+/// the turn exactly as each one's own timeout used to.
+async fn resolve_router(
+    decision: &Option<std::sync::Arc<DecisionService>>,
+    message: &str,
+    budget: std::time::Duration,
+) -> Option<DecisionOutcome> {
+    let ds = decision.as_ref()?;
+    let mut req = DecisionRequest::new(format!("User request: {message}"));
+    for (id, q) in router_questions() {
+        req = req.with_question(id, q);
+    }
+    tokio::time::timeout(budget, ds.decide(&req))
+        .await
+        .ok()?
+        .ok()
+}
+
+/// P1 prefill posture gate: an action mode's env/config flag left on while
+/// the service runs shadow must never silently act. Callers wanting
 /// prefill/short-circuit/guidance to take effect must explicitly leave
 /// shadow mode (NEOMIND_DECISION_SHADOW=0).
 fn guard_shadow(ds: &std::sync::Arc<DecisionService>, mode: &str) -> bool {
@@ -184,26 +207,22 @@ fn guard_shadow(ds: &std::sync::Arc<DecisionService>, mode: &str) -> bool {
     true
 }
 
-/// A/B-tuned display-hint gate (see the match arm in prefill_hint).
+/// A/B-tuned display-hint gate (see the match arm in hint_from_decision).
 const PREFILL_DOMAIN_HINT_GATE: f32 = 0.7;
 
-async fn prefill_hint(
-    decision: &Option<std::sync::Arc<DecisionService>>,
-    message: &str,
-    budget: std::time::Duration,
-) -> Option<String> {
-    let ds = decision.as_ref()?;
-    if !guard_shadow(ds, "prefill") {
-        return None;
-    }
-    let mut req = DecisionRequest::new(format!("User request: {message}"));
-    for (id, q) in router_questions() {
-        req = req.with_question(id, q);
-    }
-    let out = tokio::time::timeout(budget, ds.decide(&req))
-        .await
-        .ok()?
-        .ok()?;
+/// P1 prefill: format the hint line from the turn's ROUTER decision
+/// (resolved once in `on_message`; see `resolve_router`).
+///
+/// The wording is the EXACT string A/B-tested on qwen3.5:4b (+4.7 tool
+/// accuracy, zero cases of a wrong hint misleading the model — "verify, use
+/// only if right" is load-bearing, don't reword it). Returns None when the
+/// decision carries no usable routing signal; the turn proceeds exactly as
+/// before.
+/// Shadow posture is record-only, PERIOD: an action-mode env flag left on
+/// while the service runs shadow must never silently act. `on_message`
+/// only resolves the router inline outside shadow posture, so a hint can
+/// never be built from a shadow-posture decision.
+fn hint_from_decision(out: &DecisionOutcome) -> Option<String> {
     let tool = out.get("tool")?;
     let domain = out.get("domain")?;
     let picked = tool.picked()?;
@@ -499,10 +518,12 @@ pub async fn guidance_hint(
 // extension chat capability) gets identical coverage at the chokepoint.
 // ---------------------------------------------------------------------------
 
-/// The full cascade for one inbound chat message:
-/// shadow (always) → short-circuit (gated, text-only turns) → guidance →
-/// prefill. Any failure or timeout degrades to Passthrough — the turn must
-/// never be delayed or blocked by the decision layer.
+/// The full cascade for one inbound chat message: router decision (resolved
+/// ONCE when any synchronous consumer is on — see `resolve_router`) →
+/// shadow record (reuses that outcome, else fire-and-forget) → short-circuit
+/// (gated, text-only turns) → guidance (own question set) → prefill. Any
+/// failure or timeout degrades to Passthrough — the turn must never be
+/// delayed or blocked by the decision layer.
 pub struct ChatDecisionPipeline {
     /// SHARED slot with ServerState — a refresh (extension installed /
     /// uninstalled) swaps the service and every subsequent turn sees it,
@@ -863,14 +884,48 @@ impl neomind_agent::ChatDecisionHook for ChatDecisionPipeline {
         // One snapshot for the whole turn — consistent decisions even if a
         // refresh swaps the backend mid-turn.
         let decision = self.current();
-        spawn_shadow(&decision, message);
+        let shortcircuit_on = allow_shortcircuit && self.flags.shortcircuit.load(Ordering::Relaxed);
+        let prefill_on = self.flags.prefill.load(Ordering::Relaxed);
 
-        if allow_shortcircuit && self.flags.shortcircuit.load(Ordering::Relaxed) {
+        // Resolve the ROUTER decision ONCE for the whole turn when any
+        // synchronous consumer (short-circuit, prefill) is on, and let the
+        // shadow recorder reuse it. The trio used to race identical backend
+        // requests for one message (live 2026-10-09: shadow + prefill
+        // decided concurrently, both cache misses, duplicate audit rows).
+        // Budget: the first-ordered consumer's own budget (short-circuit's
+        // when it is on, else prefill's) — latencies are unchanged for
+        // single-consumer configurations. In shadow posture nothing may
+        // consume the decision inline: record-only, off the critical path.
+        let act_allowed = decision.as_ref().map(|ds| !ds.shadow()).unwrap_or(false);
+        if !act_allowed && (shortcircuit_on || prefill_on) {
+            if let Some(ds) = decision.as_ref() {
+                guard_shadow(ds, "router");
+            }
+        }
+        let router = if act_allowed && (shortcircuit_on || prefill_on) {
+            let budget = if shortcircuit_on {
+                self.flags.budget_guidance()
+            } else {
+                self.flags.budget_prefill()
+            };
+            resolve_router(&decision, message, budget).await
+        } else {
+            None
+        };
+
+        if let Some(out) = &router {
+            log_shadow_outcome(out);
+        } else {
+            spawn_shadow(&decision, message);
+        }
+
+        if shortcircuit_on {
             if let Some(plan) = try_shortcircuit(
                 &decision,
                 message,
                 self.flags.budget_guidance(),
                 self.flags.gate_domain(),
+                router.clone(),
             )
             .await
             {
@@ -906,9 +961,8 @@ impl neomind_agent::ChatDecisionHook for ChatDecisionPipeline {
                 m = format!("{m}\n\n{directive}");
             }
         }
-        if self.flags.prefill.load(Ordering::Relaxed) {
-            if let Some(hint) = prefill_hint(&decision, message, self.flags.budget_prefill()).await
-            {
+        if prefill_on {
+            if let Some(hint) = router.as_ref().and_then(hint_from_decision) {
                 tracing::info!(target: "neomind::decision", hint = %hint, "prefill hint injected");
                 m = format!("{m}\n\n{hint}");
             }
@@ -966,6 +1020,10 @@ const DOMAIN_ACTIONS: &[(&str, &[&str])] = &[
             "drafts",
             "get",
             "history",
+            // `latest` was missing until the clap-tree sync test caught it
+            // (first run): the short-circuit action question could never
+            // offer it.
+            "latest",
             "list",
             "types",
             "update",
@@ -1082,8 +1140,10 @@ const DOMAIN_ACTIONS: &[(&str, &[&str])] = &[
     (
         "push",
         &[
-            "create", "delete", "disable", "enable", "get", "list", "logs", "stats", "test",
-            "update",
+            // `start`/`stop` were missing until the clap-tree sync test
+            // caught them (first run).
+            "create", "delete", "disable", "enable", "get", "list", "logs", "start", "stats",
+            "stop", "test", "update",
         ],
     ),
     (
@@ -1137,19 +1197,16 @@ pub async fn try_shortcircuit(
     message: &str,
     budget: std::time::Duration,
     domain_gate: f32,
+    router: Option<DecisionOutcome>,
 ) -> Option<ShortCircuitPlan> {
     let ds = decision.as_ref()?;
     if !guard_shadow(ds, "short-circuit") {
         return None;
     }
-    let mut req = DecisionRequest::new(format!("User request: {message}"));
-    for (id, q) in router_questions() {
-        req = req.with_question(id, q);
-    }
-    let out = tokio::time::timeout(budget, ds.decide(&req))
-        .await
-        .ok()?
-        .ok()?;
+    // The turn's router decision, resolved ONCE by `on_message` and shared
+    // with the shadow recorder and prefill — a resolution failure degrades
+    // all router consumers for the turn (one message, one backend call).
+    let out = router?;
 
     let simple = out.get("simple")?;
     if simple.noul_bool() != Some(true) {
@@ -2073,5 +2130,99 @@ pub async fn decide(
             format!("decision backend error: {e}"),
             axum::http::StatusCode::BAD_GATEWAY,
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use neomind_core::decision::QuestionKind;
+    use neomind_core::DecisionAnswer;
+
+    /// DOMAIN_ACTIONS is a HAND-MIRRORED table feeding the short-circuit
+    /// "which subcommand" question — a stale row makes the router pick a
+    /// subcommand that no longer exists (or never learn one that does;
+    /// first run caught `device latest` missing). Lock it to the live clap
+    /// tree so drift fails the suite, the same pattern as the agent
+    /// crate's domain-index check. TOP-LEVEL subcommands only: the table
+    /// offers two-token `neomind <domain> <sub>` choices, so nested groups
+    /// (e.g. `device drafts <sub>`) are deliberately out of scope.
+    #[test]
+    fn domain_actions_mirror_the_live_cli_tree() {
+        use clap::CommandFactory;
+        let root = neomind_cli_ops::dispatch::commands::Args::command();
+        for (domain, actions) in DOMAIN_ACTIONS {
+            let Some(cmd) = root.get_subcommands().find(|c| c.get_name() == *domain) else {
+                panic!("DOMAIN_ACTIONS lists `{domain}` but the CLI has no such domain");
+            };
+            let live: std::collections::BTreeSet<&str> = cmd
+                .get_subcommands()
+                .map(|c| c.get_name())
+                .filter(|n| *n != "help")
+                .collect();
+            let mirrored: std::collections::BTreeSet<&str> = actions.iter().copied().collect();
+            assert_eq!(
+                live, mirrored,
+                "DOMAIN_ACTIONS[{domain}] drifted from the live CLI tree"
+            );
+        }
+    }
+
+    fn choice_answer(picked: &str, conf: f32) -> DecisionAnswer {
+        DecisionAnswer {
+            kind: QuestionKind::Choice,
+            choice: Some(picked.to_string()),
+            noul: None,
+            score: None,
+            answer_confidence: Some(conf),
+            probabilities: None,
+        }
+    }
+
+    fn outcome(answers: Vec<(&str, DecisionAnswer)>) -> DecisionOutcome {
+        DecisionOutcome {
+            answers: std::sync::Arc::new(
+                answers
+                    .into_iter()
+                    .map(|(id, a)| (id.to_string(), a))
+                    .collect(),
+            ),
+            backend: "test".into(),
+            latency_ms: 0,
+            cached: false,
+            shadow: false,
+        }
+    }
+
+    /// The prefill hint line: tool always shown, domain only above the
+    /// 0.7 display gate (the A/B post-mortem: a 0.48 domain guess actively
+    /// misled the model), chitchat (tool=none) gets no hint at all.
+    #[test]
+    fn hint_formats_tool_and_gates_domain() {
+        // The exact round-7 numbers: tool=shell 0.95, domain=dashboard 0.81.
+        let out = outcome(vec![
+            ("tool", choice_answer("shell", 0.95)),
+            ("domain", choice_answer("dashboard", 0.81)),
+        ]);
+        let hint = hint_from_decision(&out).expect("confident router answer must hint");
+        assert!(hint.contains("tool=shell (conf 0.95)"), "{hint}");
+        assert!(hint.contains("domain=dashboard (conf 0.81)"), "{hint}");
+        assert!(hint.contains("verify, use only if right"), "{hint}");
+
+        // Below the domain display gate → tool only, no domain part.
+        let out = outcome(vec![
+            ("tool", choice_answer("shell", 0.95)),
+            ("domain", choice_answer("agent", 0.48)),
+        ]);
+        let hint = hint_from_decision(&out).expect("hint");
+        assert!(hint.contains("tool=shell"), "{hint}");
+        assert!(!hint.contains("domain="), "{hint}");
+
+        // Chitchat needs no routing help.
+        let out = outcome(vec![
+            ("tool", choice_answer("none", 0.99)),
+            ("domain", choice_answer("converse", 0.99)),
+        ]);
+        assert!(hint_from_decision(&out).is_none());
     }
 }

@@ -33,6 +33,8 @@ pub mod types;
 #[cfg(feature = "decision-native")]
 pub use native::{native_runtime, NativeOnnx};
 pub use runtime::DecisionRuntime;
-pub use service::{AuditEntry, DecisionService, GatePolicy, JsonlAudit, MemoryAudit};
+pub use service::{
+    AuditEntry, DecisionOutcome, DecisionService, GatePolicy, JsonlAudit, MemoryAudit,
+};
 pub use sidecar::LayaSidecar;
 pub use types::{DecisionAnswer, DecisionError, DecisionQuestion, DecisionRequest, QuestionKind};

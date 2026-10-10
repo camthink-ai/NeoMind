@@ -312,11 +312,13 @@ pub async fn process_stream_events_with_safeguards(
             let mut recently_executed_tools: VecDeque<String> = VecDeque::new();
             // Track actual shell command strings (for list-only dead end detection)
             let mut recently_executed_commands: VecDeque<String> = VecDeque::new();
-            // Did ANY mutation-flavored command (see intent MUTATION_COMMANDS
-            // phrasing) actually SUCCEED this turn? The completeness note keys
-            // on this — "a command ran" is not enough (live: add-components
-            // ran and FAILED, and the note stayed silent).
-            let mut mutation_succeeded = false;
+            // Mutation-flavored commands (see intent MUTATION_COMMANDS
+            // phrasing) that actually SUCCEEDED this turn, kept as raw
+            // command strings — the completeness note judges whether any of
+            // them DELIVERED the requested (domain, action) rather than
+            // whether any mutation merely happened (live round 7: widget
+            // create succeeded, the requested add-to-dashboard never ran).
+            let mut successful_mutations: Vec<String> = Vec::new();
 
             // === SAFEGUARD: Track multi-round tool calling iterations ===
             let mut tool_iteration_count = 0usize;
@@ -1189,10 +1191,13 @@ pub async fn process_stream_events_with_safeguards(
                         let exec_arguments = execution.arguments.clone();
                         yield AgentEvent::tool_call_start_round(&name, exec_arguments.clone(), tool_iteration_count + 1);
 
-                        // Did a mutation-flavored SHELL command effectively
-                        // SUCCEED this turn? Feeds the turn-end completeness
-                        // note — "a command ran" is not enough (live:
-                        // add-components ran and FAILED, note stayed silent).
+                        // Mutation-flavored SHELL commands that effectively
+                        // SUCCEEDED this turn, as raw strings — feeds the
+                        // turn-end completeness note, which checks whether
+                        // any of them DELIVERS the requested action ("a
+                        // command ran" is not enough: live, add-components
+                        // ran and FAILED, and widget create on another
+                        // domain ran and SUCCEEDED).
                         if name == "shell" {
                             if let Some(cmd) =
                                 exec_arguments.get("command").and_then(|v| v.as_str())
@@ -1203,7 +1208,7 @@ pub async fn process_stream_events_with_safeguards(
                                         Ok(out) if crate::toolkit::tool::effective_success("shell", out)
                                     )
                                 {
-                                    mutation_succeeded = true;
+                                    successful_mutations.push(cmd.to_string());
                                 }
                             }
                         }
@@ -1670,14 +1675,17 @@ pub async fn process_stream_events_with_safeguards(
                         // (>500 chars, so the promise guard's cap exempted it)
                         // framed the task as done. A follow-up run then ended
                         // with the action ATTEMPTED but every mutation FAILING
-                        // — "a command ran" was not enough. The predicate is
-                        // now "no mutation command SUCCEEDED this turn".
+                        // — "a command ran" was not enough. Round 7 added the
+                        // third shape: a DIFFERENT domain's mutation succeeded
+                        // (widget create) while the requested one never ran.
+                        // The predicate is now "no successful mutation
+                        // DELIVERS the requested (domain, action)".
                         let cmds: Vec<&str> =
                             recently_executed_commands.iter().map(|s| s.as_str()).collect();
                         super::intent::build_incomplete_action_note(
                             &user_message,
                             &cmds,
-                            mutation_succeeded,
+                            &successful_mutations,
                         )
                     } {
                         tracing::warn!(

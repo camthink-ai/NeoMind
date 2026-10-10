@@ -838,7 +838,7 @@ pub async fn get_component_handler(
 ) -> HandlerResult<serde_json::Value> {
     // Check built-in components first
     if let Some(builtin) = builtin_component_list().into_iter().find(|c| c.id == id) {
-        return ok(json!({ "component": builtin }));
+        return ok(json!({ "component": builtin, "builtin": true, "registered": true }));
     }
 
     // Check installed community components
@@ -850,7 +850,13 @@ pub async fn get_component_handler(
         .map_err(|e| ErrorResponse::internal(format!("Failed to load component: {}", e)))?;
 
     match manifest {
-        Some(m) => ok(json!({ "component": m })),
+        // `registered` tells the store-manifest provenance apart: scaffolds
+        // written directly into the store directory (e.g. `widget create`
+        // without --install) answer `get` like installed ones but carry no
+        // install stamp (installed_at is a unix timestamp, 0 = never
+        // installed) — callers used that to conclude "created ==
+        // installed" and skip the install step.
+        Some(m) => ok(json!({ "component": m, "registered": m.installed_at != 0 })),
         None => Err(ErrorResponse::not_found(format!(
             "Component '{}' not found",
             id

@@ -39,6 +39,6 @@ pub use eventbus::EventBus;
 
 // Decision layer exports (typed System-1 decisions beside the LLM)
 pub use decision::{
-    DecisionAnswer, DecisionError, DecisionQuestion, DecisionRequest, DecisionRuntime,
-    DecisionService, GatePolicy, LayaSidecar,
+    DecisionAnswer, DecisionError, DecisionOutcome, DecisionQuestion, DecisionRequest,
+    DecisionRuntime, DecisionService, GatePolicy, LayaSidecar,
 };

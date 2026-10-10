@@ -3755,6 +3755,7 @@ dependencies = [
  "boa_engine",
  "chrono",
  "chrono-tz",
+ "clap",
  "cron",
  "dashmap",
  "flate2",

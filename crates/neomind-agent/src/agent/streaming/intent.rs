@@ -233,26 +233,37 @@ pub(crate) fn build_list_only_dead_end_prompt(
     Some(msg)
 }
 
-/// TURN-END completeness note: the user asked for an ACTION and NO mutation
-/// command SUCCEEDED this turn. Covers BOTH failure shapes observed live:
-/// the action never ran at all (files written, install/add-components
-/// skipped), and the action ran but every attempt failed (add-components
-/// exit 1 ×2). The predicate is the caller-tracked `mutation_succeeded`
-/// (effective-success of any mutation-flavored shell command). Scoping
-/// matches the mid-turn detector: an action hint must be extractable
-/// (noun false-positives skipped); with no extractable hint we stay silent.
+/// TURN-END completeness note: the user asked for an ACTION and no
+/// successful mutation DELIVERED it this turn. Covers the failure shapes
+/// observed live: the action never ran at all (files written,
+/// install/add-components skipped), every attempt failed (add-components
+/// exit 1 ×2), AND the round-7 shape where a DIFFERENT mutation succeeded
+/// (widget create exit 0 while the requested add-to-dashboard never ran —
+/// "any mutation succeeded" suppressed the note and the turn ended
+/// promising "let me install it now"). Delivery is judged by
+/// `mutation_satisfies_action` against the same action vocabulary as the
+/// hint. Scoping matches the mid-turn detector: an action hint must be
+/// extractable (noun false-positives skipped); with no extractable hint we
+/// stay silent.
 pub(crate) fn build_incomplete_action_note(
     user_message: &str,
     executed_commands: &[&str],
-    mutation_succeeded: bool,
+    successful_mutations: &[String],
 ) -> Option<String> {
-    if mutation_succeeded || !user_message_requires_action(user_message) {
+    if !user_message_requires_action(user_message) {
+        return None;
+    }
+    let (domain, action) = extract_action_parts(user_message);
+    if domain.is_empty() && action.is_empty() {
+        return None;
+    }
+    let delivered = successful_mutations
+        .iter()
+        .any(|c| mutation_satisfies_action(c, domain, action));
+    if delivered {
         return None;
     }
     let action_hint = extract_action_hint(user_message);
-    if action_hint.is_empty() {
-        return None;
-    }
     let done_summary = if executed_commands.is_empty() {
         "no commands ran".to_string()
     } else {
@@ -268,6 +279,115 @@ pub(crate) fn build_incomplete_action_note(
 
 /// Extract the domain and expected action from the user message for the forced prompt.
 pub(crate) fn extract_action_hint(msg: &str) -> String {
+    let (domain, action) = extract_action_parts(msg);
+    if domain.is_empty() && action.is_empty() {
+        String::new()
+    } else if domain.is_empty() {
+        format!("the {} action", action)
+    } else if action.is_empty() {
+        format!("neomind {}", domain)
+    } else {
+        // Name the REAL delivering subcommand, not the class label: the
+        // compat filter accepted `add-components` as delivering "add", and
+        // a hint that reads like a command must BE one ("neomind dashboard
+        // add" / "neomind message create" name subcommands that do not
+        // exist; their real deliveries are add-components/channel-create).
+        let real = delivering_subcommand(domain, action).unwrap_or(action);
+        format!("neomind {} {}", domain, real)
+    }
+}
+
+/// Action classes in the shared hint/mutation vocabulary. One table, two
+/// consumers: `extract_action_parts` (what did the user ask for) and
+/// `mutation_satisfies_action` (did a successful command deliver it).
+///
+/// - message keywords: the old first-match chain verbatim, in the same
+///   order — class priority IS table position;
+/// - subcommand tokens: a CLI subcommand DELIVERS the class when any
+///   hyphen-token of its name equals one of these (`add-components` → add,
+///   `write-metric` → write/send, `channel-create` → create).
+const ACTION_CLASSES: &[(&str, &[&str], &[&str])] = &[
+    ("create", &["创建", "create", "新建"], &["create"]),
+    ("delete", &["删除", "delete", "移除"], &["delete", "remove"]),
+    (
+        "control",
+        &["控制", "control", "打开", "关闭", "开启"],
+        &["control"],
+    ),
+    (
+        "enable/start",
+        &["启用", "enable", "启动", "start"],
+        &["enable", "start"],
+    ),
+    (
+        "disable/stop",
+        &["禁用", "disable", "停止", "stop"],
+        &["disable", "stop"],
+    ),
+    ("update", &["更新", "update", "修改", "替换"], &["update"]),
+    (
+        "write/send",
+        &["写入", "write", "发送", "send"],
+        &["write", "send"],
+    ),
+    ("add", &["添加", "add"], &["add"]),
+    ("install", &["安装", "install"], &["install"]),
+    ("uninstall", &["卸载", "uninstall"], &["uninstall"]),
+    ("share", &["分享", "share"], &["share"]),
+];
+
+/// The REAL subcommand names of `neomind <domain>`, straight from the live
+/// clap tree — the same tree the model drives, so domain/action
+/// compatibility can never drift from the binary.
+fn cli_domain_subcommands(domain: &str) -> Option<&'static [String]> {
+    use std::sync::OnceLock;
+    static SURFACES: OnceLock<std::collections::HashMap<String, Vec<String>>> = OnceLock::new();
+    let surfaces = SURFACES.get_or_init(|| {
+        use clap::CommandFactory;
+        fn collect(cmd: &clap::Command, out: &mut Vec<String>) {
+            for sub in cmd.get_subcommands() {
+                if sub.get_name() == "help" {
+                    continue;
+                }
+                out.push(sub.get_name().to_string());
+                collect(sub, out);
+            }
+        }
+        let root = neomind_cli_ops::dispatch::commands::Args::command();
+        let mut map = std::collections::HashMap::new();
+        for domain in root.get_subcommands() {
+            let mut names = Vec::new();
+            collect(domain, &mut names);
+            map.insert(domain.get_name().to_string(), names);
+        }
+        map
+    });
+    surfaces.get(domain).map(|v| v.as_slice())
+}
+
+/// The first (tree-order) `neomind <domain>` subcommand that DELIVERS
+/// `class`, if any. `None` means the domain has no delivering subcommand —
+/// the class is undeliverable there and a hint must not name it.
+fn delivering_subcommand(domain: &str, class: &str) -> Option<&'static str> {
+    let subs = cli_domain_subcommands(domain)?;
+    let (_, _, tokens) = ACTION_CLASSES.iter().find(|(c, _, _)| *c == class)?;
+    subs.iter()
+        .find(|s| s.split('-').any(|part| tokens.contains(&part)))
+        .map(|s| s.as_str())
+}
+
+/// Domain + action class the user asked for. Identical to the old
+/// first-match chain, plus one refinement: when the domain is known, a
+/// candidate class the domain's real CLI surface cannot deliver is skipped
+/// in favor of the next match. A hint naming a nonexistent subcommand
+/// actively steers the model wrong (live 2026-10-09: a timer SPEC's 停止
+/// — the widget's own stop control — outranked the actual 添加, the
+/// dead-end prompt pushed "neomind dashboard disable/stop", and the
+/// add-components pipeline guide keyed on "add" never fired).
+/// `extract_action_hint` additionally resolves the class to the REAL
+/// delivering subcommand name (`add` → `add-components`), so a hint that
+/// reads like a command always IS one.
+pub(crate) fn extract_action_parts(msg: &str) -> (&'static str, &'static str) {
     let msg_lower = msg.to_lowercase();
 
     // Domain detection
@@ -312,68 +432,27 @@ pub(crate) fn extract_action_hint(msg: &str) -> String {
         ""
     };
 
-    // Action detection
-    let action =
-        if msg_lower.contains("创建") || msg_lower.contains("create") || msg_lower.contains("新建")
-        {
-            "create"
-        } else if msg_lower.contains("删除")
-            || msg_lower.contains("delete")
-            || msg_lower.contains("移除")
-        {
-            "delete"
-        } else if msg_lower.contains("控制")
-            || msg_lower.contains("control")
-            || msg_lower.contains("打开")
-            || msg_lower.contains("关闭")
-            || msg_lower.contains("开启")
-        {
-            "control"
-        } else if msg_lower.contains("启用")
-            || msg_lower.contains("enable")
-            || msg_lower.contains("启动")
-            || msg_lower.contains("start")
-        {
-            "enable/start"
-        } else if msg_lower.contains("禁用")
-            || msg_lower.contains("disable")
-            || msg_lower.contains("停止")
-            || msg_lower.contains("stop")
-        {
-            "disable/stop"
-        } else if msg_lower.contains("更新")
-            || msg_lower.contains("update")
-            || msg_lower.contains("修改")
-            || msg_lower.contains("替换")
-        {
-            "update"
-        } else if msg_lower.contains("写入")
-            || msg_lower.contains("write")
-            || msg_lower.contains("发送")
-            || msg_lower.contains("send")
-        {
-            "write/send"
-        } else if msg_lower.contains("添加") || msg_lower.contains("add") {
-            "add"
-        } else if msg_lower.contains("安装") || msg_lower.contains("install") {
-            "install"
-        } else if msg_lower.contains("卸载") || msg_lower.contains("uninstall") {
-            "uninstall"
-        } else if msg_lower.contains("分享") || msg_lower.contains("share") {
-            "share"
-        } else {
-            ""
-        };
+    // Action candidates in table-priority order (= the old chain order).
+    let candidates: Vec<&str> = ACTION_CLASSES
+        .iter()
+        .filter(|(_, kws, _)| kws.iter().any(|k| msg_lower.contains(k)))
+        .map(|(class, _, _)| *class)
+        .collect();
 
-    if domain.is_empty() && action.is_empty() {
-        String::new()
-    } else if domain.is_empty() {
-        format!("the {} action", action)
-    } else if action.is_empty() {
-        format!("neomind {}", domain)
+    let action = if domain.is_empty() || candidates.is_empty() {
+        candidates.first().copied().unwrap_or("")
     } else {
-        format!("neomind {} {}", domain, action)
-    }
+        candidates
+            .iter()
+            .copied()
+            .find(|class| delivering_subcommand(domain, class).is_some())
+            // No candidate is a real subcommand of this domain → keep the
+            // domain, drop the action: an unnamed "do it" beats a named
+            // but fake subcommand.
+            .unwrap_or("")
+    };
+
+    (domain, action)
 }
 
 /// Mutation command patterns (shared): a shell command containing any of
@@ -408,6 +487,91 @@ pub(crate) const MUTATION_COMMAND_PATTERNS: &[&str] = &[
 /// Does this shell command look like a mutation?
 pub(crate) fn is_mutation_command(cmd: &str) -> bool {
     MUTATION_COMMAND_PATTERNS.iter().any(|p| cmd.contains(p))
+}
+
+/// Mutation-pattern → action class (the same vocabulary ACTION_CLASSES
+/// uses for hints). Order matters: " uninstall " must classify before
+/// " install " matches inside it. Patterns with no class
+/// (publish/push/register/import) stay generic.
+fn pattern_action_class(pattern: &str) -> Option<&'static str> {
+    Some(match pattern {
+        p if p.contains("uninstall") => "uninstall",
+        p if p.contains("install") => "install",
+        p if p.contains("create") => "create",
+        p if p.contains("delete") || p.contains("remove") => "delete",
+        p if p.contains("update") => "update",
+        p if p.contains("control") => "control",
+        p if p.contains("enable") => "enable/start",
+        p if p.contains("disable") => "disable/stop",
+        p if p.contains("write") || p.contains("send") => "write/send",
+        p if p.contains("add") => "add",
+        p if p.contains("share") => "share",
+        _ => return None,
+    })
+}
+
+/// The `neomind <domain>` token of a command, when present.
+fn command_domain(cmd: &str) -> Option<String> {
+    let mut toks = cmd.split_whitespace();
+    let first = toks.next()?;
+    if !first.ends_with("neomind") {
+        return None;
+    }
+    toks.next().map(str::to_lowercase)
+}
+
+/// Did this SUCCESSFUL mutation command DELIVER the requested
+/// (domain, action)? Relevance, not bare occurrence — the round-7 live
+/// incident: `widget create` succeeded, the requested add-to-dashboard
+/// never ran, and "any mutation succeeded" silenced the completeness note
+/// while the model ended the turn promising "let me install it now".
+///
+/// Rules: a segment can only deliver via a mutation it actually performs;
+/// when both the hint and the segment name a domain they must agree; when
+/// an action class was extracted from the request, the segment's mutation
+/// class must match it. Mutations with no class (publish/import/…) keep the
+/// old conservative satisfied-by-default semantics rather than inventing
+/// precision. Compound commands (`a && b`, `a; b`) deliver when ANY
+/// segment does — judging only the first would flag a delivered
+/// add-components chained after an install, while non-mutation noise
+/// segments (`; echo done`) must NOT deliver anything.
+pub(crate) fn mutation_satisfies_action(cmd: &str, hint_domain: &str, hint_action: &str) -> bool {
+    cmd.split("&&")
+        .flat_map(|seg| seg.split(';'))
+        .any(|seg| segment_satisfies_action(seg, hint_domain, hint_action))
+}
+
+fn segment_satisfies_action(seg: &str, hint_domain: &str, hint_action: &str) -> bool {
+    let seg_lower = seg.to_lowercase();
+
+    let matched: Vec<&str> = MUTATION_COMMAND_PATTERNS
+        .iter()
+        .copied()
+        .filter(|p| seg_lower.contains(p))
+        .collect();
+    // Delivery requires a mutation; a noise segment (`echo done`) inside a
+    // compound command must not satisfy anything — without this gate the
+    // unclassified-mutation fallback below let ANY trailing segment count.
+    if matched.is_empty() {
+        return false;
+    }
+
+    if !hint_domain.is_empty() {
+        if let Some(d) = command_domain(&seg_lower) {
+            if d != hint_domain {
+                return false;
+            }
+        }
+    }
+
+    if hint_action.is_empty() {
+        return true;
+    }
+    let classes: Vec<&str> = matched
+        .iter()
+        .filter_map(|p| pattern_action_class(p))
+        .collect();
+    classes.is_empty() || classes.contains(&hint_action)
 }
 
 #[cfg(test)]
@@ -506,30 +670,145 @@ mod tests {
                 "neomind dashboard list --help 2>&1 | head -50",
                 "neomind dashboard list --help 2>&1 | head -50",
             ],
-            false,
+            &[],
         )
         .expect("must flag the un-executed action");
         assert!(note.contains("NOT successfully executed"), "{note}");
         assert!(note.contains("add"), "action hint carried: {note}");
-        // A mutation SUCCEEDED → the action happened; no note.
+        // The REQUESTED mutation SUCCEEDED → delivered; no note.
         assert!(build_incomplete_action_note(
             "帮我加到dashboard",
             &["neomind dashboard add-components d1 --components '[{...}]'"],
-            true,
+            &["neomind dashboard add-components d1 --components '[{...}]'".to_string()],
         )
         .is_none());
         // Pure query → no note (no extractable action hint).
         assert!(
-            build_incomplete_action_note("现在有哪些设备?", &["neomind device list"], false)
+            build_incomplete_action_note("现在有哪些设备?", &["neomind device list"], &[])
                 .is_none()
         );
         // No shell activity at all BUT an action was requested (e.g. a
         // widget built purely via file_write, never installed) → NOTE
         // (supersedes the old silence-on-undeterminable rule, which missed
         // exactly this live case).
-        let no_shell = build_incomplete_action_note("帮我创建规则", &[], false)
+        let no_shell = build_incomplete_action_note("帮我创建规则", &[], &[])
             .expect("action requested with zero successful mutations must be flagged");
         assert!(no_shell.contains("no commands ran"), "{no_shell}");
+    }
+
+    /// Live incident (2026-10-09 round 7): a timer SPEC mentioning 停止 —
+    /// the widget's own stop control — won the action match over the actual
+    /// 添加, producing the nonexistent "neomind dashboard disable/stop"
+    /// while skipping the add-components pipeline guide keyed on "add".
+    /// Hints also name the REAL delivering subcommand, never a class label
+    /// that reads like a command but isn't one.
+    #[test]
+    fn action_hint_prefers_subcommand_the_domain_actually_has() {
+        let msg = "开发一个番茄时钟组件并添加到dashboard中展示，支持启动和停止";
+        assert_eq!(extract_action_hint(msg), "neomind dashboard add-components");
+        // A domain that really has the subcommand keeps it — under its real
+        // name ("disable", not the class label "disable/stop").
+        assert_eq!(
+            extract_action_hint("帮我停止这条规则"),
+            "neomind rule disable"
+        );
+        // Compound deliveries resolve to the delivering subcommand too.
+        assert_eq!(
+            extract_action_hint("帮我创建通知通道"),
+            "neomind message channel-create"
+        );
+        // No compatible action on the domain → domain-only hint, never a
+        // fake subcommand.
+        assert_eq!(extract_action_hint("禁用这个仪表盘"), "neomind dashboard");
+        // No domain in the message → old first-match behavior.
+        assert_eq!(extract_action_hint("帮我停止"), "the disable/stop action");
+    }
+
+    #[test]
+    fn mutation_relevance_not_occurrence() {
+        // Scaffold success on ANOTHER domain does not deliver a dashboard add.
+        assert!(!mutation_satisfies_action(
+            "neomind widget create \"番茄时钟\" --widget-type gauge",
+            "dashboard",
+            "add",
+        ));
+        // The real delivery.
+        assert!(mutation_satisfies_action(
+            "neomind dashboard add-components d1 --components '[{...}]'",
+            "dashboard",
+            "add",
+        ));
+        // Same domain, wrong class: a dashboard create is not an add.
+        assert!(!mutation_satisfies_action(
+            "neomind dashboard create x",
+            "dashboard",
+            "add",
+        ));
+        // Generic hint: class match is enough.
+        assert!(mutation_satisfies_action(
+            "neomind rule create r1",
+            "",
+            "create"
+        ));
+        // Domain-only hint: any mutation on the domain counts.
+        assert!(mutation_satisfies_action(
+            "neomind rule create r1",
+            "rule",
+            ""
+        ));
+        // Unclassifiable mutation patterns keep the old any-mutation rule
+        // (same domain, no action class to compare).
+        assert!(mutation_satisfies_action(
+            "neomind rule import f.csv",
+            "rule",
+            "create"
+        ));
+        // Compound commands deliver when ANY segment does.
+        assert!(mutation_satisfies_action(
+            "neomind widget install gauge-3832 && neomind dashboard add-components d1 --components '[]'",
+            "dashboard",
+            "add",
+        ));
+        // Noise segments must NOT deliver — the unclassified-mutation
+        // fallback used to let any trailing segment satisfy (adversarial
+        // review: `widget create x; echo done` would have silenced the
+        // note for a pending dashboard add).
+        assert!(!mutation_satisfies_action(
+            "neomind widget create x; echo done",
+            "dashboard",
+            "add",
+        ));
+        // A semicolon inside argument DATA must not fake-deliver either.
+        assert!(!mutation_satisfies_action(
+            "neomind widget create x --description \"a;b\"",
+            "dashboard",
+            "add",
+        ));
+    }
+
+    /// Round-7 shape: `widget create` succeeded, the requested
+    /// add-to-dashboard never ran — the note MUST fire (the old
+    /// any-mutation predicate stayed silent) and MUST stay silent once the
+    /// dashboard mutation itself succeeds.
+    #[test]
+    fn incomplete_note_demands_the_requested_mutation() {
+        let msg = "开发一个番茄时钟组件并添加到dashboard中展示，支持启动和停止";
+        let note = build_incomplete_action_note(
+            msg,
+            &[
+                "neomind widget create \"番茄时钟\" --widget-type gauge",
+                "neomind widget install gauge-3832",
+            ],
+            &["neomind widget create \"番茄时钟\" --widget-type gauge".to_string()],
+        )
+        .expect("a widget-domain create must NOT satisfy a dashboard add");
+        assert!(note.contains("add"), "{note}");
+        assert!(build_incomplete_action_note(
+            msg,
+            &["neomind dashboard add-components d1 --components '[]'"],
+            &["neomind dashboard add-components d1 --components '[]'".to_string()],
+        )
+        .is_none());
     }
 
     /// Widget-to-dashboard tasks must get the two-step pipeline (install →

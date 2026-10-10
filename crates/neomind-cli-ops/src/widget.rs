@@ -117,12 +117,25 @@ pub fn create_widget(
             "name": name,
             "type": widget_type,
             "directory": dir_str,
+            "registered": false,
             "files": [
                 { "name": "manifest.json", "path": manifest_path.display().to_string() },
                 { "name": "bundle.js", "path": bundle_path.display().to_string() }
             ]
         }),
-        format!("Widget scaffold created in {}", dir_str),
+        // Scaffold ≠ deliverable: bundle.js is a TYPE TEMPLATE, and the
+        // scaffold is not registered until `widget install`. Both facts
+        // were missed live (round 7): the model treated the gauge template
+        // as the finished component and moved straight to adding it to a
+        // dashboard. State the whole pipeline in the success message.
+        format!(
+            "Widget scaffold created (TEMPLATE code, not yet registered): {dir_str}. \
+             Next: 1) edit bundle.js to implement the component, \
+             2) `neomind widget install {widget_id}` to register, \
+             3) `neomind dashboard add-components <dashboard-id> --components \
+             '[{{\"id\":\"c1\",\"type\":\"{widget_id}\",\"position\":{{\"x\":0,\"y\":0,\"w\":4,\"h\":3}}}}]'`. \
+             Shortcut: re-run create with --install to scaffold AND register in one step."
+        ),
     ))
 }
 
@@ -438,7 +451,25 @@ fn extract_list_array(data: &serde_json::Value, key: &str) -> Option<Vec<serde_j
 /// Get widget by ID
 pub async fn get_widget(client: &ApiClient, id: &str) -> Result<CliResponse> {
     let data = client.get(&format!("/frontend-components/{}", id)).await?;
-    Ok(CliResponse::success(data, "Widget retrieved"))
+    // Scaffolds land in the same directory the store serves, so a bare
+    // `widget create` output answers `get` BEFORE registration — surface
+    // the difference instead of letting "get succeeded" read as
+    // "installed" (live: round 7 concluded created == installed and
+    // skipped the install step). Only act on the server's EXPLICIT
+    // provenance flag: a server that predates it stays silent rather than
+    // mislabeling registered widgets.
+    let msg = match data.get("registered").and_then(|v| v.as_bool()) {
+        Some(true) if data.get("builtin").and_then(|v| v.as_bool()) == Some(true) => {
+            "Widget retrieved (built-in component, always available)"
+        }
+        Some(true) => "Widget retrieved (registered)",
+        Some(false) => {
+            "Widget retrieved — SCAFFOLD ONLY, not registered: run \
+             `neomind widget install <id>` to register it before adding it to a dashboard"
+        }
+        None => "Widget retrieved",
+    };
+    Ok(CliResponse::success(data, msg))
 }
 
 /// Get widget bundle by ID
@@ -458,19 +489,52 @@ pub async fn install_widget_file(client: &ApiClient, path: &str) -> Result<CliRe
     // space-free form. Absolute paths under the macOS data root
     // ("~/Library/Application Support/...") must be shell-QUOTED (the
     // in-process tokenizer splits at unquoted whitespace); relative paths
-    // sidestep the trap entirely, and the API-side from-path endpoint has
-    // resolved them data-relative all along — aligning the two surfaces.
+    // sidestep the trap entirely. A bare WIDGET ID (what `widget list` /
+    // `widget get` report) additionally resolves into the store directory —
+    // callers should not need to know the layout (live: round 7 ran
+    // `widget install gauge-3832` right after `widget get gauge-3832`
+    // succeeded and hit PATH_NOT_FOUND).
+    //
+    // The dir comes from the FULL resolver (env → desktop app dir → ./data),
+    // not `neomind_core::paths::data_dir()` (env or literal "data"): that
+    // one is right inside the server process (env set) but a standalone
+    // `neomind` terminal invocation falls back to cwd-relative "data" and
+    // misses the desktop store entirely — `widget create` (which uses the
+    // full resolver) then writes where `widget install` cannot find (live
+    // smoke test caught exactly this split).
     let resolved;
     let p: &Path = if Path::new(path).is_absolute() || Path::new(path).exists() {
         Path::new(path)
     } else {
-        resolved = neomind_core::paths::data_dir().join(path);
+        let data_dir = std::path::PathBuf::from(crate::auto_auth::data_dir_for_paths());
+        let by_data = data_dir.join(path);
+        let by_id = data_dir.join("frontend-components").join(path);
+        resolved = if by_data.exists() {
+            by_data
+        } else if by_id.exists() {
+            by_id
+        } else {
+            return Ok(CliResponse::error(
+                format!(
+                    "Path not found: {}. Tried: as given, data-relative ({}), widget id ({}). \
+                     Usage: neomind widget install <directory | widget-id | file.zip>",
+                    path,
+                    by_data.display(),
+                    by_id.display()
+                ),
+                "PATH_NOT_FOUND",
+            ));
+        };
         resolved.as_path()
     };
 
+    // Absolute paths skip the resolution branches above, so a mistyped
+    // absolute path still needs its own existence check — without this it
+    // fell through to the zip-extension check and reported a misleading
+    // INVALID_PATH_TYPE instead of PATH_NOT_FOUND.
     if !p.exists() {
         return Ok(CliResponse::error(
-            format!("Path not found: {}", path),
+            format!("Path not found: {}", p.display()),
             "PATH_NOT_FOUND",
         ));
     }
