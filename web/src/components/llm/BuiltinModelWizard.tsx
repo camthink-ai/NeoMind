@@ -530,7 +530,11 @@ export function BuiltinModelWizard({
                             </span>
                           )}
                         </div>
-                        <p className="text-xs text-muted-foreground leading-relaxed">
+                        {/* Fixed 2-line description: capped AND floored so
+                            every card is exactly the same height regardless
+                            of notes length (one-liners would otherwise make
+                            shorter cards in the same grid row). */}
+                        <p className="min-h-10 line-clamp-2 text-xs text-muted-foreground leading-relaxed">
                           {modelNotes}
                         </p>
                         <div className="mt-auto flex items-center gap-2">
