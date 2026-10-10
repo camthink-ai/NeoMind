@@ -531,7 +531,6 @@ impl Agent {
             conversation_summary,
             summary_up_to_index,
             StreamSafeguards::default(),
-            None,
         )
         .await
     }
@@ -544,7 +543,6 @@ impl Agent {
         conversation_summary: Option<String>,
         summary_up_to_index: Option<u64>,
         safeguards: StreamSafeguards,
-        llm_addon: Option<String>,
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
         // Add user message to history
         let user_msg = AgentMessage::user(user_message);
@@ -581,7 +579,6 @@ impl Agent {
             safeguards,
             conversation_summary,
             summary_up_to_index,
-            llm_addon.as_deref(),
         )
         .await
         {

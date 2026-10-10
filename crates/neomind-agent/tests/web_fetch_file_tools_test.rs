@@ -921,7 +921,7 @@ async fn file_write_rejects_content_too_large() {
 }
 
 #[tokio::test]
-async fn file_edit_rejects_empty_old_string() {
+async fn file_edit_empty_old_string_appends() {
     let env = TestEnv::new();
     // Create a file first
     env.write_tool
@@ -932,20 +932,22 @@ async fn file_edit_rejects_empty_old_string() {
         .await
         .unwrap();
 
+    // v2 semantics: an EMPTY old_string (single-pair form) appends
+    // new_string to the end of the file instead of rejecting. A line
+    // separator is inserted when the file doesn't already end with one.
     let result = env
         .edit_tool
         .execute(serde_json::json!({
             "path": "test.txt",
             "old_string": "",
-            "new_string": "replaced"
+            "new_string": "appended line"
         }))
         .await
         .unwrap();
-    assert!(!result.success, "should reject empty old_string");
+    assert!(result.success, "empty old_string is append mode");
 
-    // Verify original content is intact
     let content = std::fs::read_to_string(env.data_dir.join("test.txt")).unwrap();
-    assert_eq!(content, "hello world", "file should not be modified");
+    assert_eq!(content, "hello world\nappended line");
 }
 
 #[tokio::test]
@@ -1094,7 +1096,7 @@ async fn file_edit_not_found_helpful_error() {
     let error = result.error.unwrap();
     assert!(error.contains("not found"), "error should say not found");
     assert!(
-        error.contains("preview"),
-        "should include file preview for context"
+        error.contains("First lines"),
+        "should include the file's first lines for context"
     );
 }

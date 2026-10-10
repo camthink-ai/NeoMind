@@ -1350,7 +1350,11 @@ async fn spawn_builtin_server(
     // guard capping what the device can fund; an explicit override
     // (NEOMIND_BUILTIN_LLM_CTX / restart ?ctx=) picks the starting point
     // but the guard still applies.
-    let ctx = guarded_ctx(cfg, installed.default_ctx, model_def(&installed.manifest.id));
+    let ctx = guarded_ctx(
+        cfg,
+        installed.default_ctx,
+        model_def(&installed.manifest.id),
+    );
     let server_cfg = LlamaServerConfig {
         binary,
         model: model_path,

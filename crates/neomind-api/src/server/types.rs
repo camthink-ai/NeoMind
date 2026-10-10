@@ -1496,8 +1496,8 @@ impl ServerState {
         // Decision-layer cascade: build the service, then inject the chat
         // pipeline into SessionManager's chokepoint so EVERY user-NL entry
         // point (WS text/multimodal, REST chat, IM bridge, extension chat
-        // capability) gets identical shadow/short-circuit/guidance/prefill
-        // coverage (audit D1 — was: only the WS text branch was wired).
+        // capability) gets identical shadow/short-circuit coverage
+        // (audit D1 — was: only the WS text branch was wired).
         // The pipeline SHARES the RwLock slot (no snapshot) so extension
         // install/uninstall refreshes propagate without a restart.
         let decision = Arc::new(std::sync::RwLock::new(build_decision_service()));
@@ -1506,7 +1506,6 @@ impl ServerState {
             let pipeline = crate::handlers::decisions::ChatDecisionPipeline::new(
                 decision.clone(),
                 decision_flags.clone(),
-                agents.session_manager.skill_registry(),
             );
             agents
                 .session_manager

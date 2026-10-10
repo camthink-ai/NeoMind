@@ -210,20 +210,6 @@ export function DecisionTab() {
               onCheckedChange={(v) => apply({ shadow: v })}
             />
           </SettingsRow>
-          <SettingsRow label={t("decision.prefill")} description={t("decision.prefillHint")}>
-            <Switch
-              checked={config.prefill}
-              disabled={busy || config.shadow !== false || !config.backend}
-              onCheckedChange={(v) => apply({ prefill: v })}
-            />
-          </SettingsRow>
-          <SettingsRow label={t("decision.guidance")} description={t("decision.guidanceHint")}>
-            <Switch
-              checked={config.guidance}
-              disabled={busy || config.shadow !== false || !config.backend}
-              onCheckedChange={(v) => apply({ guidance: v })}
-            />
-          </SettingsRow>
           <SettingsRow label={t("decision.shortcircuit")} description={t("decision.shortcircuitHint")}>
             <Switch
               checked={config.shortcircuit}
@@ -257,18 +243,11 @@ export function DecisionTab() {
               onCommit={(v) => apply({ gates: { other: v } })}
             />
           </SettingsRow>
-          <SettingsRow label={t("decision.budgetPrefill")} description={t("decision.budgetDesc")}>
+          <SettingsRow label={t("decision.budgetShortcircuit")} description={t("decision.budgetDesc")}>
             <MsInput
-              value={config.budgets.prefill_ms}
+              value={config.budgets.shortcircuit_ms}
               disabled={busy}
-              onCommit={(v) => apply({ budgets: { prefill_ms: v } })}
-            />
-          </SettingsRow>
-          <SettingsRow label={t("decision.budgetGuidance")} description={t("decision.budgetDesc")}>
-            <MsInput
-              value={config.budgets.guidance_ms}
-              disabled={busy}
-              onCommit={(v) => apply({ budgets: { guidance_ms: v } })}
+              onCommit={(v) => apply({ budgets: { shortcircuit_ms: v } })}
             />
           </SettingsRow>
           <SettingsRow label={t("decision.budgetAsk")} description={t("decision.budgetDesc")}>

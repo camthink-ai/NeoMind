@@ -119,7 +119,7 @@ impl StreamSafeguards {
     }
 }
 
-// 8 params: the streaming entry's dependency bundle (iface/state/tools)
+// 7 params: the streaming entry's dependency bundle (iface/state/tools)
 // plus the turn's inputs; grouping them into a struct has been rejected to
 // keep the nudge_tests harness calls flat.
 #[allow(clippy::too_many_arguments)]
@@ -131,17 +131,8 @@ pub async fn process_stream_events_with_safeguards(
     safeguards: StreamSafeguards,
     conversation_summary: Option<String>,
     summary_up_to_index: Option<u64>,
-    first_round_addon: Option<&str>,
 ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
     let user_message = user_message.to_string();
-    // LLM-only first-round addon (decision-layer guidance/prefill): the
-    // user message in MEMORY and every guard stays the ORIGINAL text; only
-    // the round-1 request carries the addon (live 2026-10-10: appending it
-    // to the message leaked the hint into the user's bubble and history).
-    let llm_first_user_message = match first_round_addon {
-        Some(addon) if !addon.is_empty() => format!("{user_message}\n\n{addon}"),
-        _ => user_message.clone(),
-    };
 
     // === INTENT RECOGNITION: Understand user intent before LLM call ===
     // This helps reduce cognitive load and provides better visualization
@@ -280,7 +271,7 @@ pub async fn process_stream_events_with_safeguards(
 
     // Get the stream from llm_interface - thinking is controlled by instance/user settings
     let stream_result = llm_interface
-        .chat_stream_with_history(&llm_first_user_message, &history_for_llm)
+        .chat_stream_with_history(&user_message, &history_for_llm)
         .await;
 
     let stream = stream_result.map_err(|e| NeoMindError::Llm(e.to_string()))?;

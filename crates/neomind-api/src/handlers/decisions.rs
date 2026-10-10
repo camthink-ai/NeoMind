@@ -170,7 +170,7 @@ fn log_shadow_outcome(out: &DecisionOutcome) {
 
 /// The turn's ROUTER decision (router_questions over the message), bounded
 /// by `budget`. Resolved ONCE per turn in `on_message` and shared by every
-/// router consumer (shadow log, short-circuit, prefill hint) — the trio
+/// router consumer (shadow log, short-circuit) — the pair
 /// used to race identical backend requests for one message (live
 /// 2026-10-09: shadow + prefill decided concurrently, both cache misses,
 /// duplicate audit rows). A failure here degrades all router consumers for
@@ -191,10 +191,10 @@ async fn resolve_router(
         .ok()
 }
 
-/// P1 prefill posture gate: an action mode's env/config flag left on while
+/// Action-mode posture gate: an action mode's env/config flag left on while
 /// the service runs shadow must never silently act. Callers wanting
-/// prefill/short-circuit/guidance to take effect must explicitly leave
-/// shadow mode (NEOMIND_DECISION_SHADOW=0).
+/// short-circuit to take effect must explicitly leave shadow mode
+/// (NEOMIND_DECISION_SHADOW=0).
 fn guard_shadow(ds: &std::sync::Arc<DecisionService>, mode: &str) -> bool {
     if ds.shadow() {
         tracing::warn!(
@@ -207,311 +207,6 @@ fn guard_shadow(ds: &std::sync::Arc<DecisionService>, mode: &str) -> bool {
     true
 }
 
-/// A/B-tuned display-hint gate (see the match arm in hint_from_decision).
-const PREFILL_DOMAIN_HINT_GATE: f32 = 0.7;
-
-/// P1 prefill: format the hint line from the turn's ROUTER decision
-/// (resolved once in `on_message`; see `resolve_router`).
-///
-/// The wording is the EXACT string A/B-tested on qwen3.5:4b (+4.7 tool
-/// accuracy, zero cases of a wrong hint misleading the model — "verify, use
-/// only if right" is load-bearing, don't reword it). Returns None when the
-/// decision carries no usable routing signal; the turn proceeds exactly as
-/// before.
-/// Shadow posture is record-only, PERIOD: an action-mode env flag left on
-/// while the service runs shadow must never silently act. `on_message`
-/// only resolves the router inline outside shadow posture, so a hint can
-/// never be built from a shadow-posture decision.
-fn hint_from_decision(out: &DecisionOutcome) -> Option<String> {
-    let tool = out.get("tool")?;
-    let domain = out.get("domain")?;
-    let picked = tool.picked()?;
-    // Chitchat needs no routing help; a "none" hint only adds noise.
-    if picked == "none" {
-        return None;
-    }
-    let conf = tool
-        .answer_confidence
-        .map(|c| format!("{c:.2}"))
-        .unwrap_or_else(|| "?".into());
-    // Post-mortem on the first A/B round (5 regressed cases): a low-confidence
-    // domain guess actively misled the model (agent-conversation picked
-    // run_now off a 0.48 domain; device-types-list zh wandered into `system
-    // --help` off a 0.61). Only include the domain when it clears a real gate.
-    let dom_part = match (domain.picked(), domain.answer_confidence) {
-        // 0.7 is the A/B-validated display-hint bar (qwen3.5:4b, "zero
-        // misleading" round) — deliberately NOT the configurable domain
-        // gate: a weaker bar for a hint the model merely READS is safe, and
-        // coupling it to gates.domain would drag the short-circuit SAFETY
-        // bar down with every "show more hints" tuning.
-        (Some(d), Some(c)) if d != "converse" && c >= PREFILL_DOMAIN_HINT_GATE => {
-            format!(", domain={d} (conf {c:.2})")
-        }
-        _ => String::new(),
-    };
-    Some(format!(
-        "Router hint (a fast assistant's guess — verify, use only if right): tool={picked} (conf {conf}){dom_part}\n         If the first command doesn't fit or returns empty, keep going: check the subcommand surface (`<domain> --help`, `<domain> <sub> --help`) and retry — do not stop at the first attempt."
-    ))
-}
-
-// ---------------------------------------------------------------------------
-// Guidance injection (P3): model output → LLM directive
-// ---------------------------------------------------------------------------
-
-/// Workflow shapes the guidance head can report. Intent CONCEPTS, stable
-/// across business growth — unlike the skill roster, which is live data.
-pub const WORKFLOW_SHAPES: &[&str] = &["direct", "multi_step", "guided", "converse"];
-
-/// Confidence gates for guidance-hint injection. Raised 0.7→0.8 / 0.6→0.7
-/// after the v22 field incident (2026-10-08): the KD-sharpened calibration
-/// pushed mid-conversation confidences over the old gates, and the injected
-/// hints sent small executor models into read-only explore loops until the
-/// case timeout. A hint must now clear a bar the previous calibration
-/// generation could not reach in ambiguous mid-conversation states.
-/// Guidance gates: the live values come from the runtime config
-/// (gates.domain for workflow/memory, gates.other for the skill pick) —
-/// EXCEPT the clarify/scope family below, which stays fixed: those bars
-/// were raised after the v22 field incident and are not exposed.
-pub const GUIDANCE_CONF_GATE: f32 = 0.8;
-pub const SKILL_CONF_GATE: f32 = 0.7;
-/// FIXED (not config-exposed): the clarify suggestion and scope/memory-op
-/// First sentence of a skill's frontmatter description, capped: the question
-/// renderer concatenates every option, so long descriptions blow the sequence
-/// budget. Matches the sandbox trainer's gloss extraction (train/prod phrasing
-/// stays one source: the registry file itself).
-fn skill_gloss(id: &str, description: &str) -> String {
-    let d = description.trim();
-    if d.is_empty() {
-        return format!("the {id} workflow guide");
-    }
-    let first = d.split(['.', '。']).next().unwrap_or(d).trim();
-    let mut s: String = first.chars().take(160).collect();
-    if first.chars().count() > 160 {
-        s.push('…');
-    }
-    s
-}
-
-/// Snapshot the live skill registry into (id, gloss) options for the guidance
-/// question. A skill added under data/skills/ or a builtin overridden there is
-/// picked up on the next turn — no rebuild, no retrain needed for acceptable
-/// routing (zero-shot new-skill: 92%, distractor cost 0 — growth_test).
-pub async fn skill_options(
-    registry: &neomind_agent::skills::SharedSkillRegistry,
-) -> Vec<(String, String)> {
-    let reg = registry.read().await;
-    let mut opts: Vec<(String, String)> = reg
-        .list()
-        .iter()
-        .map(|s| {
-            (
-                s.metadata.id.clone(),
-                skill_gloss(&s.metadata.id, &s.metadata.description),
-            )
-        })
-        .collect();
-    drop(reg);
-    opts.sort();
-    opts.push((
-        "none".into(),
-        "no guide needed — chit-chat, direct operation, or information lookup".into(),
-    ));
-    opts
-}
-
-/// Build the guidance question batch (workflow shape + skill selection) from
-/// the live skill roster.
-pub fn guidance_questions(skills: Vec<(String, String)>) -> Vec<(String, DecisionQuestion)> {
-    vec![
-        (
-            "workflow".into(),
-            DecisionQuestion::choice(
-                "What shape of work does this request need?",
-                vec![
-                    (
-                        "direct".into(),
-                        "exactly one command, lookup, or question".into(),
-                    ),
-                    (
-                        "multi_step".into(),
-                        "two or more operations chained or spread across turns".into(),
-                    ),
-                    ("guided".into(), "an interactive guided setup flow".into()),
-                    (
-                        "converse".into(),
-                        "pure conversation, no platform operations".into(),
-                    ),
-                ],
-            ),
-        ),
-        (
-            "skill".into(),
-            DecisionQuestion::choice(
-                "Which workflow guide (if any) should be loaded for this request?",
-                skills,
-            ),
-        ),
-        (
-            "clarify".into(),
-            DecisionQuestion::noul(
-                "Does this request need more details from the user before acting?",
-            ),
-        ),
-        (
-            "memory_op".into(),
-            DecisionQuestion::choice(
-                "Should persistent memory be used for this turn?",
-                vec![
-                    ("none".into(), "no memory access needed".into()),
-                    (
-                        "read".into(),
-                        "consult stored user preferences or knowledge".into(),
-                    ),
-                    (
-                        "write".into(),
-                        "persist a durable fact or preference".into(),
-                    ),
-                ],
-            ),
-        ),
-        (
-            "scope".into(),
-            DecisionQuestion::choice(
-                "What is the scope of this request?",
-                vec![
-                    (
-                        "neomind_op".into(),
-                        "an operation on platform entities".into(),
-                    ),
-                    (
-                        "neomind_setup".into(),
-                        "initial configuration or onboarding of the platform itself".into(),
-                    ),
-                    (
-                        "general_chat".into(),
-                        "general conversation, opinions, greetings".into(),
-                    ),
-                    (
-                        "out_of_scope".into(),
-                        "a request the IoT platform cannot serve".into(),
-                    ),
-                ],
-            ),
-        ),
-    ]
-}
-
-/// Resolve guidance for a message. Returns None on any doubt (timeout, missing
-/// answer) — the turn then proceeds exactly as before.
-pub async fn guidance_hint(
-    decision: &Option<std::sync::Arc<DecisionService>>,
-    registry: &neomind_agent::skills::SharedSkillRegistry,
-    message: &str,
-    budget: std::time::Duration,
-    gates: (f32, f32),
-) -> Option<String> {
-    let ds = decision.as_ref()?;
-    if !guard_shadow(ds, "guidance") {
-        return None;
-    }
-    let skills = skill_options(registry).await;
-    let mut req = DecisionRequest::new(format!("User request: {message}"));
-    for (id, q) in guidance_questions(skills) {
-        req = req.with_question(id, q);
-    }
-    let out = tokio::time::timeout(budget, ds.decide(&req))
-        .await
-        .ok()?
-        .ok()?;
-
-    let workflow = out.get("workflow")?.picked()?.to_string();
-    let wf_conf = out
-        .get("workflow")
-        .and_then(|a| a.answer_confidence)
-        .unwrap_or(0.0);
-    let skill = out.get("skill")?.picked()?.to_string();
-    let sk_conf = out
-        .get("skill")
-        .and_then(|a| a.answer_confidence)
-        .unwrap_or(0.0);
-    // Semantic heads (clarify / memory_op / scope): soft signals, each gated
-    // on its own confidence so a weak head never adds noise.
-    let clarify = out
-        .get("clarify")
-        .and_then(|a| a.noul_bool())
-        .unwrap_or(false);
-    let cl_conf = out
-        .get("clarify")
-        .and_then(|a| a.answer_confidence)
-        .unwrap_or(0.0);
-    let memory_op = out
-        .get("memory_op")
-        .and_then(|a| a.picked())
-        .map(str::to_string);
-    let mem_conf = out
-        .get("memory_op")
-        .and_then(|a| a.answer_confidence)
-        .unwrap_or(0.0);
-    let scope = out
-        .get("scope")
-        .and_then(|a| a.picked())
-        .map(str::to_string);
-    let sc_conf = out
-        .get("scope")
-        .and_then(|a| a.answer_confidence)
-        .unwrap_or(0.0);
-
-    let mut lines: Vec<String> = vec![];
-    // Highest-value directive first: missing information blocks everything.
-    // Post-mortem gate: a false clarify on a well-targeted request
-    // ("clear demo-agent's memory") made the model only ask and never act
-    // (zero tool calls). Require BOTH high clarify confidence AND a weak
-    // tool signal — a confident tool pick means the target is clear.
-    let tool_conf = out
-        .get("tool")
-        .and_then(|a| a.answer_confidence)
-        .unwrap_or(0.0);
-    if clarify && cl_conf >= 0.85 && tool_conf < 0.85 {
-        lines.push(format!(
-            "[Router guidance] clarify: this request is missing a critical identifier or parameter (conf {cl_conf:.2}) — ask the user for exactly that missing piece. If the target is already named and specific, act instead of asking."
-        ));
-    }
-    if workflow != "converse" && wf_conf >= gates.0 {
-        lines.push(format!(
-            "[Router guidance] workflow: {workflow} (conf {wf_conf:.2})"
-        ));
-        if skill != "none" && sk_conf >= gates.1 {
-            lines.push(format!("load skill: {skill} (conf {sk_conf:.2})"));
-            if workflow == "guided" {
-                lines.push("This is a multi-turn guided flow: load the guide first, then follow its steps and confirm each one with the user.".into());
-            }
-        }
-    }
-    if let Some(op) = &memory_op {
-        if op == "write" && mem_conf >= gates.0 {
-            lines.push(format!(
-                "[Router guidance] memory: the user is stating a durable preference/fact (conf {mem_conf:.2}) — persist it with the memory tool."
-            ));
-        } else if op == "read" && mem_conf >= gates.0 {
-            lines.push(format!(
-                "[Router guidance] memory: consult stored preferences/knowledge (conf {mem_conf:.2}) before answering."
-            ));
-        }
-    }
-    if let Some(sc) = &scope {
-        if sc == "out_of_scope" && sc_conf >= GUIDANCE_CONF_GATE {
-            lines.push(format!(
-                "[Router guidance] scope: outside the platform's scope (conf {sc_conf:.2}) — answer honestly instead of forcing a platform tool."
-            ));
-        }
-    }
-    if lines.is_empty() {
-        return None;
-    }
-    lines.push("[end guidance]".into());
-    Some(lines.join("\n"))
-}
-
 // ---------------------------------------------------------------------------
 // The chat decision pipeline — injected as SessionManager's ChatDecisionHook
 // so every user-NL entry point (WS text/multimodal, REST chat, IM bridge,
@@ -519,11 +214,18 @@ pub async fn guidance_hint(
 // ---------------------------------------------------------------------------
 
 /// The full cascade for one inbound chat message: router decision (resolved
-/// ONCE when any synchronous consumer is on — see `resolve_router`) →
-/// shadow record (reuses that outcome, else fire-and-forget) → short-circuit
-/// (gated, text-only turns) → guidance (own question set) → prefill. Any
-/// failure or timeout degrades to Passthrough — the turn must never be
-/// delayed or blocked by the decision layer.
+/// ONCE when short-circuit is on — see `resolve_router`) → shadow record
+/// (reuses that outcome, else fire-and-forget) → short-circuit (gated,
+/// text-only turns). Any failure or timeout degrades to Passthrough — the
+/// turn must never be delayed or blocked by the decision layer.
+///
+/// The decision layer only ever ANSWERS directly (short-circuit) or records;
+/// it never injects advice into the LLM's prompt. Rendering classifier
+/// output as natural-language hints for the model was tried (prefill/guidance,
+/// removed 2026-10-10): small models ignore hedged hints, strong models don't
+/// need them, and mis-calibrated ones actively misleaded — the Jev-style
+/// contract expects decisions to be consumed by CODE (routing, gating), not
+/// read by the LLM.
 pub struct ChatDecisionPipeline {
     /// SHARED slot with ServerState — a refresh (extension installed /
     /// uninstalled) swaps the service and every subsequent turn sees it,
@@ -532,20 +234,14 @@ pub struct ChatDecisionPipeline {
     /// SHARED action-mode switches — a config PUT flips these live; the
     /// env_flag reads (per-turn getenv) are gone.
     flags: Arc<DecisionRuntimeFlags>,
-    skills: neomind_agent::skills::SharedSkillRegistry,
 }
 
 impl ChatDecisionPipeline {
     pub fn new(
         decision: Arc<std::sync::RwLock<Option<Arc<DecisionService>>>>,
         flags: Arc<DecisionRuntimeFlags>,
-        skills: neomind_agent::skills::SharedSkillRegistry,
     ) -> Self {
-        Self {
-            decision,
-            flags,
-            skills,
-        }
+        Self { decision, flags }
     }
 
     /// Snapshot the decision service out of the shared slot (guard dropped
@@ -562,25 +258,18 @@ impl ChatDecisionPipeline {
 /// deployments cannot set at all.
 #[derive(Debug)]
 pub struct DecisionRuntimeFlags {
-    pub prefill: AtomicBool,
-    pub guidance: AtomicBool,
     pub shortcircuit: AtomicBool,
     /// f32 confidence gates, stored as to_bits (lock-free hot path).
     pub gate_domain: AtomicU32,
     pub gate_other: AtomicU32,
     /// Latency budgets (ms).
-    pub budget_prefill_ms: AtomicU32,
-    pub budget_guidance_ms: AtomicU32,
+    pub budget_shortcircuit_ms: AtomicU32,
     pub budget_ask_ms: AtomicU32,
 }
 
 /// Persistence shape (see [`load_decision_flags`]).
 #[derive(serde::Serialize, serde::Deserialize, Default, Clone, Copy)]
 pub struct DecisionFlagsPersist {
-    #[serde(default)]
-    pub prefill: bool,
-    #[serde(default)]
-    pub guidance: bool,
     #[serde(default)]
     pub shortcircuit: bool,
     /// None = never configured via API (env/default decides); Some = the
@@ -615,10 +304,8 @@ impl Default for GatesPersist {
 /// HTTP client at the next decision-layer refresh.
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy)]
 pub struct BudgetsPersist {
-    #[serde(default = "default_prefill_ms")]
-    pub prefill_ms: u32,
-    #[serde(default = "default_guidance_ms")]
-    pub guidance_ms: u32,
+    #[serde(default = "default_shortcircuit_ms")]
+    pub shortcircuit_ms: u32,
     #[serde(default = "default_ask_ms")]
     pub ask_ms: u32,
     #[serde(default = "default_sidecar_ms")]
@@ -653,10 +340,7 @@ pub fn default_gates() -> GatesPersist {
         other: default_gate_other(),
     }
 }
-fn default_prefill_ms() -> u32 {
-    500
-}
-fn default_guidance_ms() -> u32 {
+fn default_shortcircuit_ms() -> u32 {
     600
 }
 fn default_ask_ms() -> u32 {
@@ -667,8 +351,7 @@ fn default_sidecar_ms() -> u32 {
 }
 pub fn default_budgets() -> BudgetsPersist {
     BudgetsPersist {
-        prefill_ms: default_prefill_ms(),
-        guidance_ms: default_guidance_ms(),
+        shortcircuit_ms: default_shortcircuit_ms(),
         ask_ms: default_ask_ms(),
         sidecar_ms: default_sidecar_ms(),
     }
@@ -686,18 +369,15 @@ impl DecisionRuntimeFlags {
 
     fn from_persist(p: &DecisionFlagsPersist) -> Self {
         Self {
-            prefill: AtomicBool::new(p.prefill),
-            guidance: AtomicBool::new(p.guidance),
             shortcircuit: AtomicBool::new(p.shortcircuit),
             gate_domain: AtomicU32::new(p.gates.domain.to_bits()),
             gate_other: AtomicU32::new(p.gates.other.to_bits()),
-            budget_prefill_ms: AtomicU32::new(p.budgets.prefill_ms),
-            budget_guidance_ms: AtomicU32::new(p.budgets.guidance_ms),
+            budget_shortcircuit_ms: AtomicU32::new(p.budgets.shortcircuit_ms),
             budget_ask_ms: AtomicU32::new(p.budgets.ask_ms),
         }
     }
 
-    /// Live gate values for consumers (prefill's inline comparisons).
+    /// Live gate values for consumers (short-circuit's inline comparisons).
     pub fn gate_domain(&self) -> f32 {
         f32::from_bits(self.gate_domain.load(Ordering::Relaxed))
     }
@@ -706,12 +386,8 @@ impl DecisionRuntimeFlags {
         f32::from_bits(self.gate_other.load(Ordering::Relaxed))
     }
 
-    pub fn budget_prefill(&self) -> std::time::Duration {
-        std::time::Duration::from_millis(self.budget_prefill_ms.load(Ordering::Relaxed) as u64)
-    }
-
-    pub fn budget_guidance(&self) -> std::time::Duration {
-        std::time::Duration::from_millis(self.budget_guidance_ms.load(Ordering::Relaxed) as u64)
+    pub fn budget_shortcircuit(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(self.budget_shortcircuit_ms.load(Ordering::Relaxed) as u64)
     }
 
     pub fn budget_ask(&self) -> std::time::Duration {
@@ -762,12 +438,6 @@ pub fn load_decision_settings() -> DecisionFlagsPersist {
         ),
     }
     let seeded = || DecisionFlagsPersist {
-        prefill: std::env::var("NEOMIND_DECISION_PREFILL")
-            .map(|v| v == "1")
-            .unwrap_or(false),
-        guidance: std::env::var("NEOMIND_DECISION_GUIDANCE")
-            .map(|v| v == "1")
-            .unwrap_or(false),
         shortcircuit: std::env::var("NEOMIND_DECISION_SHORTCIRCUIT")
             .map(|v| v == "1")
             .unwrap_or(false),
@@ -804,12 +474,6 @@ pub fn decision_sidecar_timeout_ms() -> u64 {
 /// Field-by-field None = keep — an unrelated PUT can never reset sidecar_ms
 /// or engine.int8 through placeholder values again.
 fn apply_config_update(doc: &mut DecisionFlagsPersist, req: &DecisionConfigUpdate) {
-    if let Some(v) = req.prefill {
-        doc.prefill = v;
-    }
-    if let Some(v) = req.guidance {
-        doc.guidance = v;
-    }
     if let Some(v) = req.shortcircuit {
         doc.shortcircuit = v;
     }
@@ -825,11 +489,8 @@ fn apply_config_update(doc: &mut DecisionFlagsPersist, req: &DecisionConfigUpdat
         }
     }
     if let Some(b) = &req.budgets {
-        if let Some(v) = b.prefill_ms {
-            doc.budgets.prefill_ms = v;
-        }
-        if let Some(v) = b.guidance_ms {
-            doc.budgets.guidance_ms = v;
+        if let Some(v) = b.shortcircuit_ms {
+            doc.budgets.shortcircuit_ms = v;
         }
         if let Some(v) = b.ask_ms {
             doc.budgets.ask_ms = v;
@@ -851,12 +512,6 @@ pub fn load_decision_flags() -> DecisionRuntimeFlags {
         .and_then(|store| store.load(DECISION_SETTINGS_KEY).ok().flatten())
         .and_then(|raw| serde_json::from_str::<DecisionFlagsPersist>(&raw).ok())
         .unwrap_or_else(|| DecisionFlagsPersist {
-            prefill: std::env::var("NEOMIND_DECISION_PREFILL")
-                .map(|v| v == "1")
-                .unwrap_or(false),
-            guidance: std::env::var("NEOMIND_DECISION_GUIDANCE")
-                .map(|v| v == "1")
-                .unwrap_or(false),
             shortcircuit: std::env::var("NEOMIND_DECISION_SHORTCIRCUIT")
                 .map(|v| v == "1")
                 .unwrap_or(false),
@@ -880,35 +535,27 @@ impl neomind_agent::ChatDecisionHook for ChatDecisionPipeline {
         message: &str,
         allow_shortcircuit: bool,
     ) -> neomind_agent::ChatHookOutcome {
-        use neomind_agent::ChatHookOutcome::{Addon, Answered, Passthrough};
+        use neomind_agent::ChatHookOutcome::{Answered, Passthrough};
         // One snapshot for the whole turn — consistent decisions even if a
         // refresh swaps the backend mid-turn.
         let decision = self.current();
         let shortcircuit_on = allow_shortcircuit && self.flags.shortcircuit.load(Ordering::Relaxed);
-        let prefill_on = self.flags.prefill.load(Ordering::Relaxed);
 
-        // Resolve the ROUTER decision ONCE for the whole turn when any
-        // synchronous consumer (short-circuit, prefill) is on, and let the
-        // shadow recorder reuse it. The trio used to race identical backend
-        // requests for one message (live 2026-10-09: shadow + prefill
-        // decided concurrently, both cache misses, duplicate audit rows).
-        // Budget: the first-ordered consumer's own budget (short-circuit's
-        // when it is on, else prefill's) — latencies are unchanged for
-        // single-consumer configurations. In shadow posture nothing may
-        // consume the decision inline: record-only, off the critical path.
+        // Resolve the ROUTER decision ONCE for the whole turn when
+        // short-circuit is on, and let the shadow recorder reuse it. The
+        // pair used to race identical backend requests for one message
+        // (live 2026-10-09: shadow + prefill decided concurrently, both
+        // cache misses, duplicate audit rows). In shadow posture nothing
+        // may consume the decision inline: record-only, off the critical
+        // path.
         let act_allowed = decision.as_ref().map(|ds| !ds.shadow()).unwrap_or(false);
-        if !act_allowed && (shortcircuit_on || prefill_on) {
+        if !act_allowed && shortcircuit_on {
             if let Some(ds) = decision.as_ref() {
                 guard_shadow(ds, "router");
             }
         }
-        let router = if act_allowed && (shortcircuit_on || prefill_on) {
-            let budget = if shortcircuit_on {
-                self.flags.budget_guidance()
-            } else {
-                self.flags.budget_prefill()
-            };
-            resolve_router(&decision, message, budget).await
+        let router = if act_allowed && shortcircuit_on {
+            resolve_router(&decision, message, self.flags.budget_shortcircuit()).await
         } else {
             None
         };
@@ -923,7 +570,7 @@ impl neomind_agent::ChatDecisionHook for ChatDecisionPipeline {
             if let Some(plan) = try_shortcircuit(
                 &decision,
                 message,
-                self.flags.budget_guidance(),
+                self.flags.budget_shortcircuit(),
                 self.flags.gate_domain(),
                 router.clone(),
             )
@@ -946,35 +593,7 @@ impl neomind_agent::ChatDecisionHook for ChatDecisionPipeline {
             }
         }
 
-        // Addons are LLM-ONLY first-round injections — the user message is
-        // never modified (live 2026-10-10: appending to it leaked the hint
-        // into the user's chat bubble and the stored history).
-        let mut addons: Vec<String> = Vec::new();
-        if self.flags.guidance.load(Ordering::Relaxed) {
-            if let Some(directive) = guidance_hint(
-                &decision,
-                &self.skills,
-                message,
-                self.flags.budget_guidance(),
-                (self.flags.gate_domain(), self.flags.gate_other()),
-            )
-            .await
-            {
-                tracing::info!(target: "neomind::decision", directive = %directive, "guidance injected");
-                addons.push(directive);
-            }
-        }
-        if prefill_on {
-            if let Some(hint) = router.as_ref().and_then(hint_from_decision) {
-                tracing::info!(target: "neomind::decision", hint = %hint, "prefill hint injected");
-                addons.push(hint);
-            }
-        }
-        if addons.is_empty() {
-            Passthrough
-        } else {
-            Addon(addons.join("\n\n"))
-        }
+        Passthrough
     }
 }
 
@@ -1207,7 +826,7 @@ pub async fn try_shortcircuit(
         return None;
     }
     // The turn's router decision, resolved ONCE by `on_message` and shared
-    // with the shadow recorder and prefill — a resolution failure degrades
+    // with the shadow recorder — a resolution failure degrades
     // all router consumers for the turn (one message, one backend call).
     let out = router?;
 
@@ -1389,7 +1008,7 @@ mod sc_tests {
         apply_config_update(
             &mut doc,
             &DecisionConfigUpdate {
-                prefill: Some(true),
+                shortcircuit: Some(true),
                 ..Default::default()
             },
         );
@@ -1733,8 +1352,6 @@ fn decision_config_payload(state: &ServerState) -> serde_json::Value {
     // while it actually sat intact on disk. null = "no posture at all".
     json!({
         "shadow": ds.as_ref().map(|d| d.shadow()),
-        "prefill": doc.prefill,
-        "guidance": doc.guidance,
         "shortcircuit": doc.shortcircuit,
         "gates": doc.gates,
         "budgets": doc.budgets,
@@ -1784,8 +1401,6 @@ fn available_backends() -> serde_json::Value {
 pub struct DecisionConfigUpdate {
     /// Record-only posture (true) or act (false).
     pub shadow: Option<bool>,
-    pub prefill: Option<bool>,
-    pub guidance: Option<bool>,
     pub shortcircuit: Option<bool>,
     pub gates: Option<GatesUpdate>,
     pub budgets: Option<BudgetsUpdate>,
@@ -1800,8 +1415,7 @@ pub struct GatesUpdate {
 
 #[derive(Debug, Deserialize, Default)]
 pub struct BudgetsUpdate {
-    pub prefill_ms: Option<u32>,
-    pub guidance_ms: Option<u32>,
+    pub shortcircuit_ms: Option<u32>,
     pub ask_ms: Option<u32>,
     pub sidecar_ms: Option<u32>,
 }
@@ -1861,8 +1475,7 @@ pub async fn put_config(
     }
     if let Some(b) = &req.budgets {
         for (name, v) in [
-            ("prefill_ms", b.prefill_ms),
-            ("guidance_ms", b.guidance_ms),
+            ("shortcircuit_ms", b.shortcircuit_ms),
             ("ask_ms", b.ask_ms),
             ("sidecar_ms", b.sidecar_ms),
         ] {
@@ -1904,12 +1517,6 @@ pub async fn put_config(
     // CONSTRUCTED client/engine — those re-derive on the refresh below.
     {
         let flags = &state.decision_flags;
-        if let Some(v) = req.prefill {
-            flags.prefill.store(v, Ordering::Relaxed);
-        }
-        if let Some(v) = req.guidance {
-            flags.guidance.store(v, Ordering::Relaxed);
-        }
         if let Some(v) = req.shortcircuit {
             flags.shortcircuit.store(v, Ordering::Relaxed);
         }
@@ -1925,11 +1532,8 @@ pub async fn put_config(
             }
         }
         if let Some(b) = &req.budgets {
-            if let Some(v) = b.prefill_ms {
-                flags.budget_prefill_ms.store(v, Ordering::Relaxed);
-            }
-            if let Some(v) = b.guidance_ms {
-                flags.budget_guidance_ms.store(v, Ordering::Relaxed);
+            if let Some(v) = b.shortcircuit_ms {
+                flags.budget_shortcircuit_ms.store(v, Ordering::Relaxed);
             }
             if let Some(v) = b.ask_ms {
                 flags.budget_ask_ms.store(v, Ordering::Relaxed);
@@ -1972,8 +1576,6 @@ pub async fn put_config(
     tracing::info!(
         target: "neomind::decision",
         shadow = ?doc.shadow,
-        prefill = doc.prefill,
-        guidance = doc.guidance,
         shortcircuit = doc.shortcircuit,
         "decision config updated (live)"
     );
@@ -2139,8 +1741,6 @@ pub async fn decide(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use neomind_core::decision::QuestionKind;
-    use neomind_core::DecisionAnswer;
 
     /// DOMAIN_ACTIONS is a HAND-MIRRORED table feeding the short-circuit
     /// "which subcommand" question — a stale row makes the router pick a
@@ -2169,63 +1769,5 @@ mod tests {
                 "DOMAIN_ACTIONS[{domain}] drifted from the live CLI tree"
             );
         }
-    }
-
-    fn choice_answer(picked: &str, conf: f32) -> DecisionAnswer {
-        DecisionAnswer {
-            kind: QuestionKind::Choice,
-            choice: Some(picked.to_string()),
-            noul: None,
-            score: None,
-            answer_confidence: Some(conf),
-            probabilities: None,
-        }
-    }
-
-    fn outcome(answers: Vec<(&str, DecisionAnswer)>) -> DecisionOutcome {
-        DecisionOutcome {
-            answers: std::sync::Arc::new(
-                answers
-                    .into_iter()
-                    .map(|(id, a)| (id.to_string(), a))
-                    .collect(),
-            ),
-            backend: "test".into(),
-            latency_ms: 0,
-            cached: false,
-            shadow: false,
-        }
-    }
-
-    /// The prefill hint line: tool always shown, domain only above the
-    /// 0.7 display gate (the A/B post-mortem: a 0.48 domain guess actively
-    /// misled the model), chitchat (tool=none) gets no hint at all.
-    #[test]
-    fn hint_formats_tool_and_gates_domain() {
-        // The exact round-7 numbers: tool=shell 0.95, domain=dashboard 0.81.
-        let out = outcome(vec![
-            ("tool", choice_answer("shell", 0.95)),
-            ("domain", choice_answer("dashboard", 0.81)),
-        ]);
-        let hint = hint_from_decision(&out).expect("confident router answer must hint");
-        assert!(hint.contains("tool=shell (conf 0.95)"), "{hint}");
-        assert!(hint.contains("domain=dashboard (conf 0.81)"), "{hint}");
-        assert!(hint.contains("verify, use only if right"), "{hint}");
-
-        // Below the domain display gate → tool only, no domain part.
-        let out = outcome(vec![
-            ("tool", choice_answer("shell", 0.95)),
-            ("domain", choice_answer("agent", 0.48)),
-        ]);
-        let hint = hint_from_decision(&out).expect("hint");
-        assert!(hint.contains("tool=shell"), "{hint}");
-        assert!(!hint.contains("domain="), "{hint}");
-
-        // Chitchat needs no routing help.
-        let out = outcome(vec![
-            ("tool", choice_answer("none", 0.99)),
-            ("domain", choice_answer("converse", 0.99)),
-        ]);
-        assert!(hint_from_decision(&out).is_none());
     }
 }

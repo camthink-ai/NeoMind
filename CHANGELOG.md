@@ -9,17 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.2.0] - 2026-10-10 — review-hardening wave + the decision layer becomes operable
 
-Three threads: every actionable finding from a full pre-push review (3 high, 20 medium, the low-severity backlog) is fixed with gates green; the decision model becomes fully operable — runtime config API + settings UI, a generic ask endpoint, hot effect on install/uninstall, honest int8; and the file tools + small-model guardrails are rebuilt from five live widget-task diagnostic runs. A sixth-through-eleventh live-run wave followed: guardrails rebuilt from eleven recorded widget/extension task runs across four model tiers (2B→DeepSeek), the widget pipeline closed end-to-end, and decision-layer injections made LLM-only.
+Three threads: every actionable finding from a full pre-push review (3 high, 20 medium, the low-severity backlog) is fixed with gates green; the decision model becomes fully operable — runtime config API + settings UI, a generic ask endpoint, hot effect on install/uninstall, honest int8; and the file tools + small-model guardrails are rebuilt from five live widget-task diagnostic runs. A sixth-through-eleventh live-run wave followed: guardrails rebuilt from eleven recorded widget/extension task runs across four model tiers (2B→DeepSeek), the widget pipeline closed end-to-end, and the decision layer's LLM-injection modes (prefill/guidance) removed after checking them against the Jev/System-One usage contract.
 
 ### Upgrade notes (1.1.2 →)
-- Session-scoped REST endpoints (history/pending/delete/clear, `__CANCEL__`) enforce the same first-claim ownership as the WS attach path — a foreign authenticated principal now gets 403 instead of reading/wiping another user's session.
+- Session-scoped REST endpoints (history/pending/delete/clear, `__CANCEL__`) enforce the same first-claim ownership as the WS attach path — a foreign authenticated principal now gets 403 instead of reading/writing another user's session.
 - Desktop `neomind api-key/user` now execute in-process against the running server (previously a silent GUI-exit-0 on the desktop alias); `user reset-password` and extension-local subcommands still need the full CLI and say so.
 - Deleting a session cancels its in-flight turn and drops the pending snapshot; the cancelled WS ack carries sessionId (shared-socket views no longer reset each other).
 - The event-bus carries Binary values tagged (`{"$binary": …}`) instead of bare base64 strings; the storage read-back heuristic no longer re-detects types.
 - Decision defaults unchanged; anything configured via the new config API beats the env seeds on every boot.
+- The decision layer no longer injects hints into LLM turns: the experimental prefill/guidance modes and their env vars (`NEOMIND_DECISION_PREFILL`/`_GUIDANCE`), config fields and settings toggles are removed pre-release; shadow audit and the gated short-circuit answerer remain, and `budgets.prefill_ms`/`guidance_ms` fold into `shortcircuit_ms`.
 
 ### Added
-- `GET/PUT /api/decisions/config` + a Settings → Decision Model section (决策模型): posture switches (shadow/prefill/guidance/shortcircuit), confidence gates, latency budgets, int8, and read-only backend availability — all hot-reload, persisted, no env vars or restarts.
+- `GET/PUT /api/decisions/config` + a Settings → Decision Model section (决策模型): posture switches (shadow/shortcircuit), confidence gates, latency budgets, int8, and read-only backend availability — all hot-reload, persisted, no env vars or restarts.
 - `POST /api/decisions/ask` — generic question decision (choice/noul/score over plain options, ranked distribution back); the laya-decision extension gains a matching `decide` command with the same shorthand.
 - File tools v2 (industry-pattern upgrade): `file_edit` batch edits (validate-all-then-apply atomicity), append mode, whitespace-tolerant fallback, JSON/TOML syntax gates that never let invalid content reach disk, ±5-line context echo (verify without a re-read round); `file_write` idempotency (identical content is a confirmed no-op); new `file_read` (line numbers, windowed reads, binary rejection) and an opt-in freshness guard (`state`/`expected`) across the family.
 - Installing/uninstalling/configuring the laya-decision extension takes effect immediately (`refresh_decision_layer`) — "install IS the deployment" now holds on a running server; the extension branch reads sidecarPort from the extension's own config, and an explicit `LAYA_SIDECAR_URL` outranks auto-discovery.
@@ -67,9 +68,9 @@ Three threads: every actionable finding from a full pre-push review (3 high, 20 
 - `extension build` captures cargo output: the failure error embeds the labeled compiler stderr/stdout tails (color-free, bounded) and success surfaces warnings — the compile-error self-correction loop agents need (diagnostics previously leaked unlabeled via inherited stderr, or not at all to the error message).
 - The scaffold's SDK pin is single-sourced from the SDK crate (a hardcoded "0.6.3" had drifted while the SDK reached 0.7.1, and ^0.6 semver locked fresh scaffolds to the stale line); the skill's project template is standalone-safe (registry dep + `[workspace]` detach — the in-repo path form without the detach fails cargo with "not in workspace members").
 
-### Fixed — decision model (injections)
-- Decision-layer addons (guidance/prefill) are LLM-ONLY: the user message is never modified — the appended router hint previously leaked into the user's chat bubble and stored session history. The addon rides the round-1 LLM request only.
-- One router decision per turn, shared by shadow log, short-circuit and prefill (the shadow+prefill pair raced two identical sidecar calls, both cache misses, duplicate audit rows).
+### Removed — decision model's LLM-injection modes (prefill/guidance)
+- Rendering the decision model's output as natural-language hints injected into the LLM's first round is gone, together with everything that carried it: the `ChatHookOutcome::Addon` variant and first-round-addon plumbing, the guidance question set (workflow/skill/clarify/memory/scope heads), the prefill router-hint formatter, both action-mode switches, their env vars, config fields and settings toggles. Two field incidents presaged it — the router hint once leaked into the user's chat bubble and stored history, and the v22 calibration shift pushed mid-conversation confidences over the guidance gates, sending small executor models into read-only loops — and the decisive argument is the usage contract of the reference System-One model (Jev/TypeSafe): decisions are consumed by CODE (routing, gating, thresholds in application code), never read by the LLM as prose advice. Live A/B agreed: small models ignore hedged hints, strong models don't need them.
+- What remains is the conforming surface: the Jev-compatible `/v1/systemone` protocol, the shadow audit, the short-circuit answerer (code acts directly — read-only whitelist, double confidence gates), and the generic `/api/decisions/ask`. One router decision per turn is still resolved once and shared by the shadow log and short-circuit (the pair previously raced two identical sidecar calls, both cache misses, duplicate audit rows). A future model-routing or command-guarding consumer would be new code in that shape.
 - The Web UI file-mode install path now activates the decision layer (same refresh as the CLI route).
 
 ### Fixed — decision model
@@ -83,7 +84,8 @@ Three threads: every actionable finding from a full pre-push review (3 high, 20 
 - The terminal chat stream handles `SystemNote` events (labeled `[system]` line).
 
 ### Test
-- Ownership/gates/dedup/FIFO-rotation behaviors gained positive tests; the addon-leak regression pins "round-1 LLM request carries the addon, memory never does" with a streaming-capture mock; suites: cargo workspace 2216 green, web 291, i18n parity, skill checker 520 commands + type-semantics mode clean.
+- Ownership/gates/dedup/FIFO-rotation behaviors gained positive tests; the deleted addon path took its leak-regression test with it (the injection channel no longer exists to leak); suites: cargo workspace 3490 green (canonical `--features neomind-agent/test-utils` gate), web 291 green, i18n parity, skill checker 520 commands + type-semantics mode clean.
+- Two stale assertions that had gone red on main were fixed with the removal: `file_edit`'s empty-`old_string` test now pins the shipped v2 append semantics (with the inserted line separator), the not-found test matches the v2 "First lines" wording, and the builtin-LLM bootstrap suite reads `default_ctx` from the registry instead of the hardcoded 32K that 2ac3ba5a's 128K bump had silently outpaced.
 
 ---
 

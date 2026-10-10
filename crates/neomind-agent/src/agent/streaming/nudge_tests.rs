@@ -101,49 +101,6 @@ fn joined_content(events: &[AgentEvent]) -> String {
         .collect()
 }
 
-/// The decision-layer addon (guidance/prefill) is LLM-ONLY: the user
-/// message in memory — the thing that gets persisted and echoed back —
-/// must stay the ORIGINAL text (live 2026-10-10: the appended router hint
-/// leaked into the user's chat bubble via session history).
-#[tokio::test]
-async fn first_round_addon_never_pollutes_the_user_message() {
-    let rt = MockLlmRuntime::new(vec![MockResponse::text("done")]);
-    let (iface, state, registry) = harness(&rt);
-
-    let stream = crate::agent::streaming::process_stream_events_with_safeguards(
-        iface,
-        state.clone(),
-        registry,
-        "开发一个番茄时钟组件并添加到温湿度仪表盘中展示",
-        super::StreamSafeguards::default(),
-        None,
-        None,
-        Some("Router hint (a fast assistant's guess — verify, use only if right): tool=shell (conf 0.98)"),
-    )
-    .await
-    .expect("stream");
-    let _ = collect(stream).await;
-
-    // (a) The LLM's round-1 request DID carry the addon — the injection
-    //     still works for the model.
-    let captured = rt.captured_messages();
-    let flattened = format!("{captured:?}");
-    assert!(
-        flattened.contains("Router hint"),
-        "round-1 LLM request must carry the addon"
-    );
-    // (b) Memory (the persistence/UI source) NEVER sees it — the user
-    //     message is pushed by the Agent layer with the ORIGINAL text;
-    //     this free-fn level must not add any addon-bearing message.
-    let history = state.read().await.memory.clone();
-    assert!(
-        !history
-            .iter()
-            .any(|m| m.content.as_ref().contains("Router hint")),
-        "addon must not appear anywhere in stored messages"
-    );
-}
-
 /// Text chat path: narration round → nudge → recovered tool call → final
 /// answer. The narration must NOT be the turn's last word.
 #[tokio::test]
@@ -161,7 +118,6 @@ async fn text_path_narration_nudge_recovers_tool_call() {
         registry,
         "帮我处理",
         super::StreamSafeguards::default(),
-        None,
         None,
         None,
     )
@@ -285,7 +241,6 @@ async fn identical_reusable_tool_call_is_served_from_turn_cache() {
         registry,
         "给图片加水印",
         super::StreamSafeguards::default(),
-        None,
         None,
         None,
     )

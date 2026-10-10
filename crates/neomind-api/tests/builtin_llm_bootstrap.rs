@@ -243,9 +243,18 @@ async fn bootstrap_full_chain_spawns_registers_activates() {
     );
     assert!(inst.is_builtin);
     assert_eq!(inst.model, "minicpm5-2b");
+    // Registry default_ctx must land on the instance. Read it from the
+    // registry rather than hardcoding (2ac3ba5a raised it 32K → 128K and
+    // this assertion went stale the same day). Precondition: the machine
+    // funds the default — the spawn-time RAM guard only ever CAPS, so on a
+    // constrained device this equality is expected to fail loudly here,
+    // not silently pass with a shrunken window.
+    let def = neomind_core::builtin_llm::manifest::model_def("minicpm5-2b")
+        .expect("registry entry for the seeded model");
     assert_eq!(
-        inst.capabilities.max_context, 32768,
-        "registry default_ctx (32K) must land on the instance"
+        inst.capabilities.max_context, def.default_ctx as usize,
+        "registry default_ctx ({}) must land on the instance",
+        def.default_ctx
     );
     assert!(
         fx.manager.get_active_instance().is_some(),

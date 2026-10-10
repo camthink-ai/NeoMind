@@ -247,12 +247,6 @@ pub enum ChatHookOutcome {
     /// The decision layer answered the turn outright — stream this text and
     /// skip the LLM (short-circuit).
     Answered(String),
-    /// Hooks produced an LLM-ONLY first-round addon (guidance/prefill).
-    /// The user message itself is NEVER modified: memory, persistence, UI
-    /// echo and the guards all keep the original text (live 2026-10-10:
-    /// appending the hint to the message leaked it into the user's chat
-    /// bubble and the stored session history).
-    Addon(String),
     /// No hook fired — proceed unchanged.
     Passthrough,
 }
@@ -1729,22 +1723,16 @@ Assistant: {ar}\n"
         *self.decision_hook.write().await = hook;
     }
 
-    /// Run the injected decision hook. Returns (answered-stream, llm-addon):
-    /// an answered stream short-circuits the LLM turn entirely; the addon is
-    /// an LLM-only first-round injection — the caller's `message` stays the
-    /// ORIGINAL user text end to end.
+    /// Run the injected decision hook. Returns an answered stream when the
+    /// decision layer short-circuits the turn entirely; `None` means
+    /// proceed with the normal LLM path.
     async fn apply_decision_hook(
         &self,
         message: &str,
         allow_shortcircuit: bool,
-    ) -> (
-        Option<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>>,
-        Option<String>,
-    ) {
+    ) -> Option<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
         let hook = self.decision_hook.read().await.clone();
-        let Some(hook) = hook else {
-            return (None, None);
-        };
+        let hook = hook?;
         match hook.on_message(message, allow_shortcircuit).await {
             ChatHookOutcome::Answered(text) => {
                 let stream = futures::stream::iter(vec![
@@ -1755,10 +1743,9 @@ Assistant: {ar}\n"
                         tool_tokens: None,
                     },
                 ]);
-                (Some(Box::pin(stream)), None)
+                Some(Box::pin(stream))
             }
-            ChatHookOutcome::Addon(addon) => (None, Some(addon)),
-            ChatHookOutcome::Passthrough => (None, None),
+            ChatHookOutcome::Passthrough => None,
         }
     }
 
@@ -1767,8 +1754,7 @@ Assistant: {ar}\n"
         session_id: &str,
         message: &str,
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
-        let (answered, llm_addon) = self.apply_decision_hook(message, true).await;
-        if let Some(stream) = answered {
+        if let Some(stream) = self.apply_decision_hook(message, true).await {
             return Ok(stream);
         }
         let agent = self.get_session(session_id).await?;
@@ -1802,7 +1788,6 @@ Assistant: {ar}\n"
                 conversation_summary,
                 summary_up_to_index,
                 safeguards,
-                llm_addon,
             )
             .await?;
 
@@ -1902,16 +1887,12 @@ Assistant: {ar}\n"
             "SessionManager::process_message_multimodal"
         );
         // Multimodal: short-circuit does not apply (attached media implies
-        // vision intent text routing can't judge). The LLM-only addon is
-        // dropped on this non-streaming path — injecting it would mean
-        // rewriting the user message, which is exactly the leak this
-        // design removed (see ChatHookOutcome::Addon).
-        let (answered, addon) = self.apply_decision_hook(message, false).await;
+        // vision intent text routing can't judge), so with
+        // allow_shortcircuit=false the hook can only answer via a future
+        // media-aware action mode — today it is a clean passthrough.
+        let answered = self.apply_decision_hook(message, false).await;
         if answered.is_some() {
             tracing::debug!("multimodal non-streaming: decision layer answered");
-        }
-        if addon.is_some() {
-            tracing::debug!("multimodal non-streaming: dropping LLM addon (no injection channel)");
         }
         let agent = self.get_session(session_id).await?;
         let response = agent.process_multimodal(message, images).await?;
@@ -2004,15 +1985,11 @@ Assistant: {ar}\n"
         message: &str,
         images: Vec<String>,
     ) -> Result<Pin<Box<dyn Stream<Item = super::agent::AgentEvent> + Send>>> {
-        let (answered, addon) = self.apply_decision_hook(message, false).await;
-        if let Some(stream) = answered {
+        // Multimodal: short-circuit does not apply (attached media implies
+        // vision intent text routing can't judge) — the hook is a clean
+        // passthrough here today.
+        if let Some(stream) = self.apply_decision_hook(message, false).await {
             return Ok(stream);
-        }
-        if addon.is_some() {
-            // Same rationale as the non-streaming multimodal path above:
-            // no first-round injection channel without rewriting the user
-            // message; vision intent makes the router hint marginal.
-            tracing::debug!("multimodal streaming: dropping LLM addon (no injection channel)");
         }
         // Check if images are provided and model supports vision
         if !images.is_empty() {

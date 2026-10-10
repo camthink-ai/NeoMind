@@ -14,8 +14,7 @@ export interface DecisionGates {
 }
 
 export interface DecisionBudgets {
-  prefill_ms: number
-  guidance_ms: number
+  shortcircuit_ms: number
   ask_ms: number
   sidecar_ms: number
 }
@@ -26,8 +25,6 @@ export interface DecisionConfig {
    *  The status card shows "Not enabled" in that state instead of a
    *  misleading posture badge. */
   shadow: boolean | null
-  prefill: boolean
-  guidance: boolean
   shortcircuit: boolean
   gates: DecisionGates
   budgets: DecisionBudgets
@@ -42,13 +39,10 @@ export interface DecisionConfig {
 
 export interface DecisionConfigUpdate {
   shadow?: boolean
-  prefill?: boolean
-  guidance?: boolean
   shortcircuit?: boolean
   gates?: { domain?: number; other?: number }
   budgets?: {
-    prefill_ms?: number
-    guidance_ms?: number
+    shortcircuit_ms?: number
     ask_ms?: number
     sidecar_ms?: number
   }
