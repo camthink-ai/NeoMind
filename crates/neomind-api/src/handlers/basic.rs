@@ -276,10 +276,7 @@ fn get_wifi_ssid() -> Option<String> {
 pub async fn metrics_handler(
     State(state): State<ServerState>,
 ) -> axum::http::Response<axum::body::Body> {
-    let mut body = crate::metrics::render_prometheus(state.core.event_bus.as_deref());
-    if let Some(decision) = state.decision_snapshot() {
-        body.push_str(&decision.prometheus_metrics());
-    }
+    let body = crate::metrics::render_prometheus(state.core.event_bus.as_deref());
     axum::http::Response::builder()
         .status(axum::http::StatusCode::OK)
         .header(

@@ -206,20 +206,6 @@ pub struct ServerState {
     /// Rate limiter for API request throttling.
     pub rate_limiter: Arc<RateLimiter>,
 
-    /// Typed decision layer (System-1, laya sidecar). Behind a RwLock so
-    /// extension install/uninstall can (re)build it WITHOUT a server
-    /// restart — "installing the laya-decision extension IS the deployment"
-    /// only holds if the effect is immediate. None = "behave exactly as
-    /// before this module existed". Consumers snapshot the Arc out of the
-    /// lock (guards must not live across awaits) via
-    /// [`ServerState::decision_snapshot`].
-    pub decision: Arc<std::sync::RwLock<Option<Arc<neomind_core::DecisionService>>>>,
-
-    /// Hot-reloadable decision action-mode switches (see
-    /// handlers::decisions::DecisionRuntimeFlags) — shared with the chat
-    /// pipeline so a config PUT is live on the next message.
-    pub decision_flags: Arc<crate::handlers::decisions::DecisionRuntimeFlags>,
-
     /// Data directory for persistent storage (e.g. skills, extensions).
     pub data_dir: std::path::PathBuf,
 
@@ -696,187 +682,7 @@ impl ServerState {
     }
 }
 
-/// Build the decision layer from the environment. No `LAYA_SIDECAR_URL` =
-/// None: the decision layer stays completely inert.
-fn build_decision_service() -> Option<Arc<neomind_core::DecisionService>> {
-    use neomind_core::decision::JsonlAudit;
-
-    // Engine knob re-seed on EVERY build (boot and refresh): the engine load
-    // path (native + the extension sidecar) reads LAYA_NATIVE_INT8 at engine
-    // load time, so a PUT-configured int8 must reach the env before the
-    // engine is (re)constructed. Both writers run on this construction path;
-    // the theoretical set_var race is accepted and documented.
-    {
-        let int8 = crate::handlers::decisions::load_decision_settings()
-            .engine
-            .int8;
-        std::env::set_var("LAYA_NATIVE_INT8", if int8 { "1" } else { "0" });
-    }
-
-    // Shadow is the default posture: record decisions on real traffic before
-    // anything acts on them. Set NEOMIND_DECISION_SHADOW=0 to disable.
-    // Precedence: operator-saved config (PUT /api/decisions/config) > env
-    // > default shadow. A UI-set value must survive restarts even when the
-    // env seed says otherwise.
-    let shadow = crate::handlers::decisions::load_decision_shadow().unwrap_or_else(|| {
-        std::env::var("NEOMIND_DECISION_SHADOW")
-            .map(|v| v != "0")
-            .unwrap_or(true)
-    });
-    let finish = |primary: std::sync::Arc<dyn neomind_core::decision::DecisionRuntime>,
-                  label: &str|
-     -> Option<Arc<neomind_core::DecisionService>> {
-        let service = neomind_core::DecisionService::new(primary)
-            .with_audit(Arc::new(JsonlAudit::default_path()));
-        service.set_shadow(shadow);
-        tracing::info!(target: "neomind::decision", shadow, backend = %label,
-            "decision layer enabled");
-        Some(Arc::new(service))
-    };
-
-    // Backend selection (first match wins):
-    //   1. native ONNX (feature `decision-native`): LAYA_NATIVE_DIR, or the
-    //      zero-config convention <data_dir>/models/decision/ holding
-    //      model.onnx | model_int8.onnx | tokenizer/ | remap.json |
-    //      rl_agent_config.json — no Python sidecar process.
-    //   2. Explicit LAYA_SIDECAR_URL — an operator-pinned endpoint. Checked
-    //      BEFORE the extension branch on purpose: an explicit env override
-    //      must win over auto-discovery, or the operator's URL silently
-    //      no-ops whenever the extension happens to be installed.
-    //   3. Extension-hosted runtime (laya-decision installed).
-    #[cfg(feature = "decision-native")]
-    {
-        let default_dir = neomind_core::paths::data_dir()
-            .join("models")
-            .join("decision");
-        let native_dir: Option<std::path::PathBuf> = std::env::var("LAYA_NATIVE_DIR")
-            .ok()
-            .filter(|d| !d.is_empty())
-            .map(std::path::PathBuf::from)
-            .or_else(|| default_dir.exists().then_some(default_dir));
-        if let Some(dir) = native_dir {
-            match neomind_core::decision::native_runtime(&dir) {
-                Ok(rt) => return finish(rt, &format!("native-onnx:{}", dir.display())),
-                Err(e) => tracing::error!(
-                    target: "neomind::decision", error = %e, dir = %dir.display(),
-                    "native backend failed to load — falling back to sidecar"
-                ),
-            }
-        }
-    }
-    #[cfg(not(feature = "decision-native"))]
-    if std::env::var("LAYA_NATIVE_DIR").is_ok() {
-        tracing::warn!(target: "neomind::decision",
-            "LAYA_NATIVE_DIR set but this build lacks the `decision-native` feature — ignoring it");
-    }
-
-    if let Some(url) = std::env::var("LAYA_SIDECAR_URL")
-        .ok()
-        .filter(|u| !u.trim().is_empty())
-    {
-        let mut sidecar = neomind_core::LayaSidecar::new(url);
-        if let Ok(model) = std::env::var("LAYA_MODEL") {
-            sidecar = sidecar.with_model(model);
-        }
-        if let Some(ms) = std::env::var("LAYA_TIMEOUT_MS")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-        {
-            sidecar = sidecar.with_timeout(std::time::Duration::from_millis(ms));
-        }
-        return finish(Arc::new(sidecar), "laya-sidecar-env");
-    }
-
-    // Extension-hosted runtime: the laya-decision EXTENSION runs the same
-    // ONNX engine in its own process and serves the sidecar protocol on
-    // loopback. Any build (default, tauri desktop) gets the decision layer
-    // by installing the extension — no feature rebuild, no artifacts in the
-    // main binary. Discovered by the persisted install record, so this
-    // branch is completely inert when the extension is not installed.
-    // The extension loads seconds AFTER this point (extension storage loads
-    // later in startup) — LayaSidecar is a per-request HTTP client, so the
-    // first decisions during that window simply fail over to no-decision
-    // until the sidecar answers /health.
-    {
-        let ext_store_path = neomind_core::paths::data_dir().join("extensions.redb");
-        let record = std::fs::metadata(&ext_store_path)
-            .is_ok()
-            .then(|| {
-                neomind_storage::extensions::ExtensionStore::open(&ext_store_path)
-                    .ok()
-                    .and_then(|store| {
-                        store
-                            .load("laya-decision")
-                            .ok()
-                            .flatten()
-                            .filter(|_| !store.is_uninstalled("laya-decision").unwrap_or(false))
-                    })
-            })
-            .flatten();
-        if let Some(record) = record {
-            // Port handshake: the EXTENSION's persisted config is the single
-            // source of truth (it's what the UI's sidecarPort field writes);
-            // env LAYA_SIDECAR_PORT remains an operator override, then the
-            // extension default. Reading the same config the engine binds to
-            // is what keeps the two sides from drifting apart silently.
-            let port = std::env::var("LAYA_SIDECAR_PORT")
-                .ok()
-                .and_then(|v| v.parse::<u16>().ok())
-                .or_else(|| {
-                    record
-                        .config
-                        .as_ref()
-                        .and_then(|c| c.get("sidecarPort"))
-                        .and_then(|v| v.as_u64())
-                        .and_then(|v| u16::try_from(v).ok())
-                })
-                .unwrap_or(8123);
-            let url = format!("http://127.0.0.1:{port}");
-            tracing::info!(target: "neomind::decision", url = %url,
-                "laya-decision extension installed — decision layer via extension sidecar");
-            let timeout_ms = crate::handlers::decisions::decision_sidecar_timeout_ms();
-            let mut sidecar = neomind_core::LayaSidecar::new(url)
-                .with_timeout(std::time::Duration::from_millis(timeout_ms));
-            if let Ok(model) = std::env::var("LAYA_MODEL") {
-                sidecar = sidecar.with_model(model);
-            }
-            return finish(Arc::new(sidecar), "laya-extension-sidecar");
-        }
-    }
-
-    // No native artifacts, no env URL, no installed extension — the decision
-    // layer stays completely inert.
-    None
-}
-
 impl ServerState {
-    /// Current decision service (cloned Arc, lock released immediately —
-    /// guards must not live across awaits).
-    pub fn decision_snapshot(&self) -> Option<Arc<neomind_core::DecisionService>> {
-        self.decision.read().unwrap().clone()
-    }
-
-    /// Rebuild the decision layer from the CURRENT environment + extension
-    /// install state and swap it in. Called after extension lifecycle
-    /// changes — "installing the laya-decision extension IS the deployment"
-    /// requires the effect to be live without a server restart. Cheap when
-    /// nothing relevant changed (one redb probe at most).
-    pub fn refresh_decision_layer(&self) {
-        let next = build_decision_service();
-        let mut slot = self.decision.write().unwrap();
-        let label = |s: &Option<Arc<neomind_core::DecisionService>>| {
-            s.as_ref()
-                .map(|ds| ds.primary_backend_id().to_string())
-                .unwrap_or_else(|| "none".to_string())
-        };
-        let (was, now) = (label(&slot), label(&next));
-        if was != now {
-            tracing::info!(target: "neomind::decision", before = %was, after = %now,
-                "decision layer re-resolved (extension lifecycle change)");
-        }
-        *slot = next;
-    }
-
     /// Create a new server state.
     /// This is now async to support persistent device registry initialization.
     pub async fn new() -> Self {
@@ -1486,13 +1292,6 @@ impl ServerState {
             });
         }
 
-        // Decision-layer service (no chat consumer — the layer serves the
-        // /api/decisions endpoints and awaits its intended home bracketing
-        // ai_agent runs). The SHARED RwLock slot means extension
-        // install/uninstall refreshes propagate without a restart.
-        let decision = Arc::new(std::sync::RwLock::new(build_decision_service()));
-        let decision_flags = Arc::new(crate::handlers::decisions::load_decision_flags());
-
         Self {
             core,
             devices,
@@ -1500,8 +1299,6 @@ impl ServerState {
             automation,
             agents,
             auth,
-            decision,
-            decision_flags,
             response_cache,
             rate_limiter,
             auto_onboard_manager,
@@ -1738,10 +1535,6 @@ impl ServerState {
             automation,
             agents,
             auth,
-            decision: Arc::new(std::sync::RwLock::new(None)), // tests: decision layer off unless explicitly built
-            decision_flags: Arc::new(
-                crate::handlers::decisions::DecisionRuntimeFlags::default_for_tests(),
-            ),
             response_cache,
             rate_limiter,
             auto_onboard_manager,
@@ -1844,13 +1637,6 @@ impl ServerState {
                         loaded = count,
                         "Loaded extensions from storage"
                     );
-                    // The decision layer was built BEFORE extensions loaded
-                    // (it probes the extension store at ServerState::new; a
-                    // boot-time store failure or a first-install auto-discovery
-                    // left it inert). Loading changed the install surface —
-                    // re-resolve so laya-decision takes effect without a
-                    // restart. Same hook the marketplace install path uses.
-                    self.refresh_decision_layer();
                 }
             }
             Err(e) => {

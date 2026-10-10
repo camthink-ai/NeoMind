@@ -203,7 +203,6 @@ pub async fn update_extension_config_handler(
     // laya-decision's sidecarPort lives in this config — the decision
     // client must re-resolve it or the platform keeps dialing the old port
     // until restart.
-    state.refresh_decision_layer();
 
     ok(json!({
         "extension_id": id,

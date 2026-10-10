@@ -10,7 +10,6 @@ pub mod cron;
 pub mod crypto;
 pub mod dashboard;
 pub mod datasource;
-pub mod decision;
 pub mod error;
 pub mod event;
 pub mod eventbus;
@@ -36,9 +35,3 @@ pub use event::{MetricValue, NeoMindEvent};
 
 // Event bus exports
 pub use eventbus::EventBus;
-
-// Decision layer exports (typed System-1 decisions beside the LLM)
-pub use decision::{
-    DecisionAnswer, DecisionError, DecisionOutcome, DecisionQuestion, DecisionRequest,
-    DecisionRuntime, DecisionService, GatePolicy, LayaSidecar,
-};

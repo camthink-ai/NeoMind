@@ -118,7 +118,6 @@ pub async fn upload_extension_package_handler(
     // install (Web UI file mode uses THIS route) activates the decision
     // model immediately, same as marketplace install. Missing hook left the
     // extension Running but the platform backend None (live).
-    state.refresh_decision_layer();
 
     // Build response
     ok(serde_json::json!({
@@ -291,7 +290,6 @@ pub async fn uninstall_extension_handler(
 
     // If this was laya-decision, the decision layer must go inert NOW
     // (uninstall is the undeployment, same as install is the deployment).
-    state.refresh_decision_layer();
 
     ok(serde_json::json!({
         "message": "Extension uninstalled completely",
@@ -503,7 +501,6 @@ pub async fn upload_extension_file_handler(
     // install (Web UI file mode uses THIS route) activates the decision
     // model immediately, same as marketplace install. Missing hook left the
     // extension Running but the platform backend None (live).
-    state.refresh_decision_layer();
 
     // Build response
     ok(serde_json::json!({

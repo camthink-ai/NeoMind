@@ -323,7 +323,6 @@ pub async fn unregister_extension_handler(
     // re-resolve so uninstalling goes inert immediately. (The uninstall
     // endpoint in packages.rs has the same hook; this DELETE /:id route is
     // the one the web UI actually calls.)
-    state.refresh_decision_layer();
 
     ok(serde_json::json!({
         "message": "Extension unregistered",

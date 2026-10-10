@@ -25,7 +25,7 @@ pub async fn create_router() -> Router {
 pub fn create_router_with_state(state: ServerState) -> Router {
     use crate::handlers::{
         agents, auth as auth_handlers, auth_users, automations, basic, capabilities, config,
-        dashboards, data, data_push, decisions, devices, events, extension_stream, extensions,
+        dashboards, data, data_push, devices, events, extension_stream, extensions,
         frontend_components, im_bridges, images, instances, llm_backends, logs, memory,
         message_channels, messages, mqtt, onboarding, rules, sessions, settings, setup, skills,
         stats, suggestions, system, tools,
@@ -750,13 +750,6 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         // LLM Generation API (one-shot, no session)
         .route("/api/llm/generate", post(settings::llm_generate_handler))
         // Global Timezone Settings API
-        .route("/api/decisions", post(decisions::decide))
-        .route("/api/decisions/ask", post(decisions::ask))
-        .route("/api/decisions/status", get(decisions::status))
-        .route(
-            "/api/decisions/config",
-            get(decisions::get_config).put(decisions::put_config),
-        )
         .route("/api/settings/timezone", get(settings::get_timezone))
         .route("/api/settings/timezone", put(settings::update_timezone))
         .route("/api/settings/timezones", get(settings::list_timezones))

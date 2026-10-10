@@ -1035,31 +1035,6 @@ pub static ROUTES: &[RouteDoc] = &[
         auth: "jwt-or-api-key",
     },
     RouteDoc {
-        method: "POST",
-        path: "/api/decisions",
-        auth: "jwt-or-api-key",
-    },
-    RouteDoc {
-        method: "GET",
-        path: "/api/decisions/status",
-        auth: "jwt-or-api-key",
-    },
-    RouteDoc {
-        method: "GET",
-        path: "/api/decisions/config",
-        auth: "jwt-or-api-key",
-    },
-    RouteDoc {
-        method: "PUT",
-        path: "/api/decisions/config",
-        auth: "jwt-or-api-key",
-    },
-    RouteDoc {
-        method: "POST",
-        path: "/api/decisions/ask",
-        auth: "jwt-or-api-key",
-    },
-    RouteDoc {
         method: "GET",
         path: "/api/settings/timezone",
         auth: "jwt-or-api-key",

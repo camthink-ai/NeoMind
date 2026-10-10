@@ -1482,7 +1482,6 @@ pub async fn install_marketplace_extension_handler(
 
                 // The laya-decision extension IS a decision-layer deployment
                 // — re-resolve it now so the effect is live without restart.
-                state.refresh_decision_layer();
 
                 ok(MarketplaceInstallResponse {
                     success: true,
