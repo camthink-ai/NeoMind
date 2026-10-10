@@ -667,6 +667,68 @@ pub async fn install_component_from_path_handler(
 /// Shared install tail for every manual install entry point (multipart
 /// upload, server path): parse + validate the manifest, persist via the
 /// store, publish the lifecycle event.
+/// Static bundle/manifest coherence check at install time.
+///
+/// Neither install nor `dashboard add-components` executes JavaScript, so a
+/// malformed IIFE sailed through every gate and only exploded in the
+/// browser as "component unavailable" (live rounds 9-11: a bundle whose
+/// IIFE took `(function(global){...})` but was invoked WITHOUT `(window)`
+/// and only `return`ed its exports — the return value is discarded and
+/// the manifest's global never exists; another manifest carried a
+/// display title `"Tomato Clock"` as `global_name` — a space is not a
+/// legal JS identifier). The check is textual and conservative: it
+/// verifies the global NAME is a legal identifier and that the bundle
+/// ASSIGNS it somewhere (any of the documented formats count).
+fn validate_component_bundle(
+    manifest: &ComponentManifest,
+    bundle_bytes: &[u8],
+) -> Result<(), ErrorResponse> {
+    let name = manifest.global_name.trim();
+    let legal = !name.is_empty()
+        && name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$');
+    if !legal {
+        return Err(ErrorResponse::bad_request(format!(
+            "manifest global_name {:?} is not a legal JavaScript identifier — it is the \
+             VARIABLE the bundle registers on window, not a display title (no spaces; \
+             e.g. \"TomatoClock\")",
+            manifest.global_name
+        ))
+        .with_hint("Fix manifest.json's global_name to match the variable the bundle assigns."));
+    }
+
+    let bundle = String::from_utf8_lossy(bundle_bytes);
+    let exposes = [
+        format!("global['{name}']"),
+        format!("global[\"{name}\"]"),
+        format!("global.{name}"),
+        format!("window['{name}']"),
+        format!("window[\"{name}\"]"),
+        format!("window.{name}"),
+        format!("var {name}"),
+        format!("let {name}"),
+        format!("const {name}"),
+    ];
+    if !exposes.iter().any(|p| bundle.contains(p.as_str())) {
+        return Err(ErrorResponse::bad_request(format!(
+            "bundle.js never assigns the manifest's global_name '{name}' — after the script \
+             loads, window.{name} must exist. A bare `return` from the IIFE is DISCARDED. Use \
+             Format A: `var {name} = (function() {{ ...; return {{ default: Component }}; }})();` \
+             or Format B: `(function(global) {{ ...; global['{name}'] = {{ default: Component }}; }})(window);` \
+             — note the (window) argument and the global assignment.",
+        ))
+        .with_hint(
+            "Assign the global; do not just return exports from an anonymous IIFE.",
+        ));
+    }
+    Ok(())
+}
+
 async fn install_from_parts(
     state: &ServerState,
     manifest_text: String,
@@ -678,6 +740,7 @@ async fn install_from_parts(
         .map_err(|e| ErrorResponse::bad_request(format!("Invalid manifest JSON: {}", e)))?;
 
     validate_component_id(&manifest.id)?;
+    validate_component_bundle(&manifest, &bundle_bytes)?;
 
     // Set install timestamp
     manifest.installed_at = chrono::Utc::now().timestamp();
@@ -1699,4 +1762,53 @@ pub async fn uninstall_component_handler(
         "component_id": id_for_event,
         "state": "uninstalled"
     }))
+}
+
+#[cfg(test)]
+mod bundle_validation_tests {
+    use super::*;
+
+    fn manifest(global_name: &str) -> ComponentManifest {
+        serde_json::from_str(&format!(
+            r#"{{"id":"w","name":"W","description":"w","global_name":"{global_name}"}}"#
+        ))
+        .expect("minimal manifest parses")
+    }
+
+    /// The live round-9/11 failure shapes must be REJECTED at install:
+    /// a space in global_name, and a bundle whose IIFE only `return`s
+    /// (discarded) without assigning the manifest's global.
+    #[test]
+    fn rejects_illegal_global_name() {
+        let err = validate_component_bundle(&manifest("Tomato Clock"), b"var x = 1;")
+            .expect_err("space is not a legal identifier");
+        assert!(
+            err.message.contains("legal JavaScript identifier"),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_discarded_return_bundle() {
+        // Round-11 shape: (function(global){ ... return {...}; })() — the
+        // return value is discarded and (window) was never passed.
+        let bundle = b"(function(global) { return { default: X }; })();";
+        let err = validate_component_bundle(&manifest("NeoMindChart"), bundle)
+            .expect_err("no global assignment");
+        assert!(err.message.contains("never assigns"), "{err:?}");
+        assert!(err.message.contains("DISCARDED"), "{err:?}");
+    }
+
+    #[test]
+    fn accepts_both_documented_formats() {
+        // Format A: top-level var (becomes window.Name in a classic script).
+        let a = b"var TomatoClock = (function() { return { default: F }; })();";
+        assert!(validate_component_bundle(&manifest("TomatoClock"), a).is_ok());
+        // Format B: global['Name'] assignment with (window) passed.
+        let b = b"(function(global) { global['NeoMindChart'] = { default: F }; })(window);";
+        assert!(validate_component_bundle(&manifest("NeoMindChart"), b).is_ok());
+        // window.Name direct assignment also counts.
+        let c = b"window.Custom = { default: F };";
+        assert!(validate_component_bundle(&manifest("Custom"), c).is_ok());
+    }
 }
