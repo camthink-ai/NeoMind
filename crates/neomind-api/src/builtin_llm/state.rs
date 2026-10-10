@@ -193,7 +193,7 @@ pub async fn bootstrap(
                 // silently rewrite a raised ctx back down (and the agent's
                 // history budget shrank to match the phantom smaller window).
                 updated.capabilities.max_context =
-                    super::handlers::guarded_ctx(cfg, def.default_ctx, Some(&def));
+                    super::handlers::guarded_ctx(cfg, def.default_ctx, Some(def));
                 let _ = manager.upsert_instance(updated).await;
             }
         }

@@ -223,7 +223,7 @@ pub(crate) fn guarded_ctx(
     let (total_mb, _) = memory_snapshot_mb();
     let capped = super::server::cap_ctx_by_ram(
         requested,
-        u64::from(total_mb) * 1_048_576,
+        total_mb * 1_048_576,
         d.size_bytes,
         kv_per_token,
         d.kv_const_bytes.unwrap_or(0),
