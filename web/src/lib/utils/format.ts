@@ -176,6 +176,27 @@ export function formatDuration(seconds: number): string {
 }
 
 /**
+ * Format an elapsed/generation time (ms) with adaptive units — chat reply
+ * stats, tool durations. Unit-styled and locale-independent (unlike
+ * formatDuration's Chinese prose): 850ms, 12.3s, 2m 05s, 1h 30m.
+ */
+export function formatElapsedMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return '-'
+  if (ms < 1000) return `${Math.round(ms)}ms`
+  const secs = ms / 1000
+  // 59.95s boundary: toFixed(1) would otherwise print "60.0s"
+  if (secs < 59.95) return `${secs.toFixed(1)}s`
+  const totalSecs = Math.round(secs)
+  if (totalSecs < 3600) {
+    const mins = Math.floor(totalSecs / 60)
+    return `${mins}m ${String(totalSecs % 60).padStart(2, '0')}s`
+  }
+  const hours = Math.floor(totalSecs / 3600)
+  const mins = Math.floor((totalSecs % 3600) / 60)
+  return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`
+}
+
+/**
  * Format uptime to human readable string
  * @param seconds - Uptime in seconds
  * @returns Formatted uptime string

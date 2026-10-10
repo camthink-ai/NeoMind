@@ -29,12 +29,6 @@ function getToolStatus(hasResult: boolean, isStreaming: boolean): ToolStatus {
   return "pending"
 }
 
-function _formatDuration(ms?: number): string {
-  if (!ms) return ""
-  if (ms < 1000) return `${ms}ms`
-  return `${(ms / 1000).toFixed(1)}s`
-}
-
 /** "device list --yes" → "device list" */
 function getToolDisplayName(name: string, args?: unknown): string {
   if (!args || typeof args !== 'object') return name

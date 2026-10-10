@@ -16,7 +16,7 @@ import { ChevronDown, Loader2, Sparkles } from "lucide-react"
 import type { ChatImage, Message, UserInfo } from "@/types"
 import { cn } from "@/lib/utils"
 import { textMini, textNano } from "@/design-system/tokens/typography"
-import { formatTimestamp } from "@/lib/utils/format"
+import { formatTimestamp, formatElapsedMs } from "@/lib/utils/format"
 import { cleanToolCallJson, mergeMessagesForDisplay, dropInFlightTurn } from "@/lib/messageUtils"
 import { getServerOrigin } from "@/lib/api"
 import { isThinkingDuplicate } from "./toolCallUtils"
@@ -342,11 +342,13 @@ export function ChatMessages({
                 {message.role === 'assistant' && !isCurrentlyStreaming && message.generationMs != null && message.generationMs > 0 && (
                   <>
                     <span className="text-xs text-muted-foreground/80 tabular-nums">
-                      {(message.generationMs / 1000).toFixed(1)}s
+                      {formatElapsedMs(message.generationMs)}
                     </span>
-                    <span className="text-xs text-muted-foreground/80 tabular-nums">
-                      {Math.round(message.content.length / (message.generationMs / 1000))} chars/s
-                    </span>
+                    {message.content.length > 0 && (
+                      <span className="text-xs text-muted-foreground/80 tabular-nums">
+                        {Math.round(message.content.length / (message.generationMs / 1000)).toLocaleString()} chars/s
+                      </span>
+                    )}
                   </>
                 )}
                 {!isCurrentlyStreaming && (

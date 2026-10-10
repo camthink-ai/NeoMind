@@ -13,6 +13,7 @@ import {
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import type { AnalystMessage } from './types'
 import { cn } from "@/lib/utils"
+import { formatElapsedMs } from "@/lib/utils/format"
 import { textNano } from "@/design-system/tokens/typography"
 
 interface AnalystMessageBubbleProps {
@@ -31,9 +32,6 @@ export function AnalystMessageBubble({ message, streamingContent }: AnalystMessa
 
   const formatTime = (ts: number) =>
     new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-
-  const formatDuration = (ms: number) =>
-    ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
 
   const hasImages = message.images && message.images.length > 0
 
@@ -165,7 +163,7 @@ export function AnalystMessageBubble({ message, streamingContent }: AnalystMessa
             ) : (
               <span className={cn(textNano, "text-muted-foreground flex items-center gap-1")}>
                 <Clock className="h-2.5 w-2.5" />
-                {message.duration ? formatDuration(message.duration) : formatTime(message.timestamp)}
+                {message.duration ? formatElapsedMs(message.duration) : formatTime(message.timestamp)}
               </span>
             )}
           </div>
