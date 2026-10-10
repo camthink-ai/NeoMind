@@ -335,6 +335,14 @@ pub mod mock_llm {
             input: LlmInput,
         ) -> Result<Pin<Box<dyn Stream<Item = StreamChunk> + Send>>, LlmError> {
             let msg_count = input.messages.len();
+            {
+                // Same capture as `generate` — the streaming path is the
+                // chat default, and without it captured_messages() only
+                // saw non-streaming calls.
+                let mut st = self.state.lock().unwrap();
+                st.captured_messages
+                    .push(serde_json::to_value(&input.messages).unwrap_or_default());
+            }
             let resp = self.next_response(msg_count);
             if let Some(msg) = resp.error_msg {
                 return Err(LlmError::Network(msg));

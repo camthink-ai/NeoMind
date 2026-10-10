@@ -880,7 +880,7 @@ impl neomind_agent::ChatDecisionHook for ChatDecisionPipeline {
         message: &str,
         allow_shortcircuit: bool,
     ) -> neomind_agent::ChatHookOutcome {
-        use neomind_agent::ChatHookOutcome::{Answered, Passthrough, Rewritten};
+        use neomind_agent::ChatHookOutcome::{Addon, Answered, Passthrough};
         // One snapshot for the whole turn — consistent decisions even if a
         // refresh swaps the backend mid-turn.
         let decision = self.current();
@@ -946,7 +946,10 @@ impl neomind_agent::ChatDecisionHook for ChatDecisionPipeline {
             }
         }
 
-        let mut m = message.to_string();
+        // Addons are LLM-ONLY first-round injections — the user message is
+        // never modified (live 2026-10-10: appending to it leaked the hint
+        // into the user's chat bubble and the stored history).
+        let mut addons: Vec<String> = Vec::new();
         if self.flags.guidance.load(Ordering::Relaxed) {
             if let Some(directive) = guidance_hint(
                 &decision,
@@ -958,19 +961,19 @@ impl neomind_agent::ChatDecisionHook for ChatDecisionPipeline {
             .await
             {
                 tracing::info!(target: "neomind::decision", directive = %directive, "guidance injected");
-                m = format!("{m}\n\n{directive}");
+                addons.push(directive);
             }
         }
         if prefill_on {
             if let Some(hint) = router.as_ref().and_then(hint_from_decision) {
                 tracing::info!(target: "neomind::decision", hint = %hint, "prefill hint injected");
-                m = format!("{m}\n\n{hint}");
+                addons.push(hint);
             }
         }
-        if m != message {
-            Rewritten(m)
-        } else {
+        if addons.is_empty() {
             Passthrough
+        } else {
+            Addon(addons.join("\n\n"))
         }
     }
 }
