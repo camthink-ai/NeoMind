@@ -319,11 +319,6 @@ pub async fn unregister_extension_handler(
     // Extension metrics are stored with source_part = "extension:{extension_id}"
     cleanup_extension_metrics(&state, &id).await;
 
-    // The laya-decision extension IS a decision-layer deployment —
-    // re-resolve so uninstalling goes inert immediately. (The uninstall
-    // endpoint in packages.rs has the same hook; this DELETE /:id route is
-    // the one the web UI actually calls.)
-
     ok(serde_json::json!({
         "message": "Extension unregistered",
         "extension_id": id

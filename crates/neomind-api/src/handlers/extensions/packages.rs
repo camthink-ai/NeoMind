@@ -114,11 +114,6 @@ pub async fn upload_extension_package_handler(
     // Rebuild tool registry so the new extension's tools are visible to the LLM
     state.refresh_extension_tools().await;
 
-    // laya-decision IS a decision-layer deployment — re-resolve so a normal
-    // install (Web UI file mode uses THIS route) activates the decision
-    // model immediately, same as marketplace install. Missing hook left the
-    // extension Running but the platform backend None (live).
-
     // Build response
     ok(serde_json::json!({
         "message": "Extension package installed successfully",
@@ -287,9 +282,6 @@ pub async fn uninstall_extension_handler(
 
     // Rebuild tool registry to remove the uninstalled extension's tools
     state.refresh_extension_tools().await;
-
-    // If this was laya-decision, the decision layer must go inert NOW
-    // (uninstall is the undeployment, same as install is the deployment).
 
     ok(serde_json::json!({
         "message": "Extension uninstalled completely",
@@ -496,11 +488,6 @@ pub async fn upload_extension_file_handler(
 
     // Rebuild tool registry so the new extension's tools are visible to the LLM
     state.refresh_extension_tools().await;
-
-    // laya-decision IS a decision-layer deployment — re-resolve so a normal
-    // install (Web UI file mode uses THIS route) activates the decision
-    // model immediately, same as marketplace install. Missing hook left the
-    // extension Running but the platform backend None (live).
 
     // Build response
     ok(serde_json::json!({
