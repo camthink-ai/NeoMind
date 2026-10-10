@@ -259,16 +259,23 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             hf_repo: "inclusionAI/Ling-3.0-tiny-GGUF",
             hf_file: "Ling-3.0-tiny-Q4_K_M.gguf",
             size_bytes: 4_823_894_880,
-            // 8K-only per the 2026-09 eval (62 → 48 at 16K — cliff);
-            // the 6 GB floor also steers small devices away. NOT raised to
-            // the registry-wide 128K default: the cliff is a model-quality
-            // property — a bigger window makes every session worse, not
-            // better. No KV cost model → RAM guard skipped (8K is small).
-            default_ctx: 8192,
+            // 128K default (2026-10-10 product decision, overriding the
+            // 2026-09 eval: scores cliff past 8K, 62→48 @16K — long
+            // sessions WILL degrade; the user accepted this after the
+            // other models went 128K). Arch: bailing_hybrid, 3:1 KDA/MLA
+            // blocks (config 24L → ~18 linear + 6 MLA), MoE 7.9B/1.3B
+            // active. KV guard cost = WORST-CASE uncompressed MLA (6L ×
+            // 16kv × 128hd × 2 × 2B = 49,152 B/token → 6.4 GB @128K);
+            // llama.cpp may store the compressed latent (≈0.9 GB) — the
+            // guard then over-derates small hosts, which is the safe
+            // direction. KDA recurrence state ~1 MB/layer → 16 MiB const.
+            // Official ceiling: 128K native, 256K via YaRN (needs
+            // --rope-scaling, which we don't pass → max_ctx stays native).
+            default_ctx: 131072,
             max_ctx: 131072,
-            kv_bytes_per_token: None,
-            kv_const_bytes: None,
-            notes: "高速 tiny MoE — 仅适合 8K 短会话(过 8K 滑坡),需 llama.cpp ≥ b10545",
+            kv_bytes_per_token: Some(49_152),
+            kv_const_bytes: Some(16_777_216),
+            notes: "高速 MoE(1.3B 激活) — 默认 128K;注意 2026-09 评测 16K+ 有质量滑坡,长会话需观察;需 llama.cpp ≥ b10545",
             recommended: false,
             default_thinking: true,
             thinking_is_integral: true,
