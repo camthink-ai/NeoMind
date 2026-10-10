@@ -743,14 +743,10 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                     let mut system_notes: Vec<String> = Vec::new();
                     if crate::agent::is_narration_without_action(&nudge_final) {
                         tracing::warn!("Multimodal turn ending on an action promise after nudge — appending progress note");
-                        // Single-language (matched to the user's message),
-                        // emitted as a SystemNote callout — never merged
-                        // into the reply text (user feedback 2026-10-10).
-                        let note = if super::intent::note_prefers_chinese(&user_message) {
-                            "本轮对话到此结束，以上内容是进度说明而非最终结果。发送「继续」可从断点恢复。".to_string()
-                        } else {
-                            "The turn ended here: the reply above is a progress report, not a completed result. Send \"continue\" to resume.".to_string()
-                        };
+                        // English only (decision 2026-10-10) — emitted as a
+                        // SystemNote callout, never merged into the reply
+                        // text.
+                        let note = "The turn ended here: the reply above is a progress report, not a completed result. Send \"continue\" to resume.".to_string();
                         yield AgentEvent::system_note(note.clone());
                         system_notes.push(note);
                     }

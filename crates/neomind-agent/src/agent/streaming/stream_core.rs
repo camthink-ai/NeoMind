@@ -1723,11 +1723,9 @@ pub async fn process_stream_events_with_safeguards(
                             nudges = narration_nudges,
                             "Turn ending on an action promise with guard budget spent — appending progress note"
                         );
-                        let note = if super::intent::note_prefers_chinese(&user_message) {
-                            "本轮对话到此结束（已达护栏预算），以上内容是进度说明而非最终结果——描述的后续步骤尚未执行。发送「继续」可从断点恢复。".to_string()
-                        } else {
-                            "The turn ended here (guard budget spent): the reply above is a progress report, not a completed result — the promised next step did NOT run. Send \"continue\" to resume from this point.".to_string()
-                        };
+                        // English only (decision 2026-10-10) — one fixed
+                        // language, locale-independent.
+                        let note = "The turn ended here (guard budget spent): the reply above is a progress report, not a completed result — the promised next step did NOT run. Send \"continue\" to resume from this point.".to_string();
                         yield AgentEvent::system_note(note.clone());
                         turn_system_notes.push(note);
                     } else if let Some(note) = {

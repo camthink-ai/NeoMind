@@ -244,27 +244,14 @@ pub(crate) fn build_incomplete_action_note(
             executed_commands.join("; ")
         )
     };
-    // User-facing guard notes are single-language, matched to the user's
-    // own message (user feedback 2026-10-10: bilingual blocks read as
-    // clutter), and carry no header markup — the frontend renders them as
-    // a distinct system callout, not as part of the reply text.
-    if note_prefers_chinese(user_message) {
-        Some(format!(
-            "用户要求的操作（{action_hint}）本轮未成功执行——要么没有发出动作命令，要么发出的命令全部失败（见上文错误）。以上内容是进度说明而非最终结果。发送「继续」可从断点恢复；重试前先按错误提示修正命令，标识取自 list/get 的真实输出。"
-        ))
-    } else {
-        Some(format!(
-            "The requested action ({action_hint}) was NOT successfully executed this turn ({done_summary}). The reply above is a progress report, not a result. Send \"continue\" to resume — fix the command per the reported error first, and take identifiers from list/get output."
-        ))
-    }
-}
-
-/// Note language follows the USER's message: any CJK char → Chinese, else
-/// English. One language per note (see build_incomplete_action_note).
-pub(crate) fn note_prefers_chinese(user_message: &str) -> bool {
-    user_message
-        .chars()
-        .any(|c| matches!(c as u32, 0x4E00..=0x9FFF))
+    // User-facing guard notes are English only (decision 2026-10-10: one
+    // fixed language beats per-message detection — locale-independent and
+    // matches the UI's English system-callout styling), with no header
+    // markup: the frontend renders them as a distinct system callout, not
+    // as part of the reply text.
+    Some(format!(
+        "The requested action ({action_hint}) was NOT successfully executed this turn ({done_summary}). The reply above is a progress report, not a result. Send \"continue\" to resume — fix the command per the reported error first, and take identifiers from list/get output."
+    ))
 }
 
 /// Extract the domain and expected action from the user message for the forced prompt.
@@ -767,9 +754,8 @@ mod tests {
     #[test]
     fn incomplete_action_note_fires_and_scopes() {
         // The live incident: "添加到dashboard", only --help/list shell calls.
-        // CJK user message → single-language CHINESE note (user feedback
-        // 2026-10-10: no bilingual blocks, no inline markdown headers —
-        // presentation is the frontend callout's job).
+        // Notes are English only regardless of the user's message language
+        // (decision 2026-10-10: one fixed, locale-independent language).
         let note = build_incomplete_action_note(
             "帮我开发一个前端画图组件 并且添加到dashboard",
             &[
@@ -779,10 +765,10 @@ mod tests {
             &[],
         )
         .expect("must flag the un-executed action");
-        assert!(note.contains("未成功执行"), "{note}");
+        assert!(note.contains("NOT successfully executed"), "{note}");
         assert!(note.contains("add"), "action hint carried: {note}");
-        assert!(!note.contains("System note"), "no bilingual block: {note}");
-        // English user message → English note.
+        assert!(!note.contains("系统提示"), "no Chinese header: {note}");
+        // English user message → the SAME fixed English note.
         let en = build_incomplete_action_note(
             "add it to my dashboard",
             &["neomind dashboard list"],
@@ -790,7 +776,7 @@ mod tests {
         )
         .expect("must flag");
         assert!(en.contains("NOT successfully executed"), "{en}");
-        assert!(!en.contains("未成功执行"), "single language: {en}");
+        assert!(!en.contains("未"), "fixed language, no CJK: {en}");
         // The REQUESTED mutation SUCCEEDED → delivered; no note.
         assert!(build_incomplete_action_note(
             "帮我加到dashboard",
@@ -809,7 +795,7 @@ mod tests {
         // exactly this live case).
         let no_shell = build_incomplete_action_note("帮我创建规则", &[], &[])
             .expect("action requested with zero successful mutations must be flagged");
-        assert!(no_shell.contains("未成功执行"), "{no_shell}");
+        assert!(no_shell.contains("no commands ran"), "{no_shell}");
     }
 
     /// Live incident (2026-10-09 round 7): a timer SPEC mentioning 停止 —
