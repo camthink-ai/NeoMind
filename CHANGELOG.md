@@ -7,9 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.2.0] - 2026-10-09 — review-hardening wave + the decision layer becomes operable
+## [1.2.0] - 2026-10-10 — review-hardening wave + the decision layer becomes operable
 
-Three threads: every actionable finding from a full pre-push review (3 high, 20 medium, the low-severity backlog) is fixed with gates green; the decision model becomes fully operable — runtime config API + settings UI, a generic ask endpoint, hot effect on install/uninstall, honest int8; and the file tools + small-model guardrails are rebuilt from five live widget-task diagnostic runs.
+Three threads: every actionable finding from a full pre-push review (3 high, 20 medium, the low-severity backlog) is fixed with gates green; the decision model becomes fully operable — runtime config API + settings UI, a generic ask endpoint, hot effect on install/uninstall, honest int8; and the file tools + small-model guardrails are rebuilt from five live widget-task diagnostic runs. A sixth-through-eleventh live-run wave followed: guardrails rebuilt from eleven recorded widget/extension task runs across four model tiers (2B→DeepSeek), the widget pipeline closed end-to-end, and decision-layer injections made LLM-only.
 
 ### Upgrade notes (1.1.2 →)
 - Session-scoped REST endpoints (history/pending/delete/clear, `__CANCEL__`) enforce the same first-claim ownership as the WS attach path — a foreign authenticated principal now gets 403 instead of reading/wiping another user's session.
@@ -23,6 +23,10 @@ Three threads: every actionable finding from a full pre-push review (3 high, 20 
 - `POST /api/decisions/ask` — generic question decision (choice/noul/score over plain options, ranked distribution back); the laya-decision extension gains a matching `decide` command with the same shorthand.
 - File tools v2 (industry-pattern upgrade): `file_edit` batch edits (validate-all-then-apply atomicity), append mode, whitespace-tolerant fallback, JSON/TOML syntax gates that never let invalid content reach disk, ±5-line context echo (verify without a re-read round); `file_write` idempotency (identical content is a confirmed no-op); new `file_read` (line numbers, windowed reads, binary rejection) and an opt-in freshness guard (`state`/`expected`) across the family.
 - Installing/uninstalling/configuring the laya-decision extension takes effect immediately (`refresh_decision_layer`) — "install IS the deployment" now holds on a running server; the extension branch reads sidecarPort from the extension's own config, and an explicit `LAYA_SIDECAR_URL` outranks auto-discovery.
+
+- Terminal output format: a global `--format json|text` (maps onto NEOMIND_JSON; the in-process agent path was already JSON). Accepted everywhere — `--format json` is a generic CLI convention every model reaches for, and rejecting it burned live rounds.
+- Guard notes as system callouts: runtime notes (incomplete action, guard-budget promise backstop) stream as `SystemNote` events rendered as a dashed callout below the reply — never merged into the message text — and persist on the message (`system_notes`) so restored sessions keep the labeling. English only, fixed.
+- Built-in LLM defaults: 128K default context with a spawn-time RAM guard (KV cost model; ling30-tiny raised 8K → 128K) — the default no longer silently shrinks a raised ctx.
 
 ### Fixed — desktop CLI
 - Every successful desktop command printed twice (format_output printed AND returned); `neomind api-key/user` exited 0 with no output via the GUI_OWNED trap; Windows GUI-subsystem builds attach the parent console before dispatching; backslash paths no longer misparse as subcommands.
@@ -47,15 +51,39 @@ Three threads: every actionable finding from a full pre-push review (3 high, 20 
 - `--help` answered exit 2 as a parse error (in-process dispatch); a turn ending on an action promise is labeled a progress report; a turn ending with the requested action never successfully executed is flagged with how to resume; `--schedule-config` silently dropped non-numeric values instead of erroring.
 - Bypass-family hardening across all 12 CLI domains: update-component reports ignored_keys instead of silently stripping id/type; device connection_config errors warn that typo'd fields are stored as metadata; data-push target errors list valid types.
 
+### Fixed — widget/component pipeline (closed end-to-end across eleven live runs)
+- `widget install` resolves data-relative paths AND bare widget ids into the store directory (via the full data-dir resolver, so standalone terminal runs match in-process behavior); `widget create`'s success message carries the edit→install→add-components pipeline with the `--install` shortcut and the TEMPLATE-not-deliverable warning; `widget get` reports registered/builtin/scaffold provenance instead of letting "get ok" read as "installed".
+- Install-time bundle validation: `global_name` must be a legal JavaScript identifier (a display title with a space is rejected) and the bundle must actually assign that global (a bare IIFE `return` is discarded — two live installs shipped exactly that and rendered as "component unavailable").
+- `widget-development.md` taught the always-rejected `"type": "custom"` add-components shape (the manifest category word, not a type); the skill checker now validates add-components `type` values semantically (builtin ∪ whitelisted example ids), so the class cannot re-enter.
+- Data-relative `widget install` paths (skill docs aligned) sidestep the macOS space-path trap at the source; clap parse errors name the quote fix.
+
+### Fixed — small-model agentic loops (sixth-to-eleventh live runs)
+- Intent hints name REAL subcommands: verb candidates are checked against the live clap tree per domain (a timer spec's 停止 can no longer hijack 添加 into the nonexistent "neomind dashboard disable/stop"), and the hint resolves to the delivering subcommand (`add-components`, `channel-create`), never a class label that reads like a command.
+- Turn-end completeness demands the REQUESTED mutation: successful mutations are tracked per command and must deliver the hinted (domain, action) — a `widget create` success no longer silences the note for an unfulfilled add-to-dashboard; compound commands judge per-segment; noise segments deliver nothing.
+- Stated-intent mismatch guard: the same `neomind <domain> <sub>` promised in 2+ consecutive narration rounds without execution (while other tools run) triggers a pointed, once-per-turn directive to run the exact stated command — the round-8 "Let me use add-components" ×10 shape every other guard passed.
+- Mutation-pattern audit against the full live CLI surface: 14 previously-untracked state-changing subcommands (market-install, push start/stop, llm activate, connector subscribe/unsubscribe, agent invoke/clear-memory, device drafts approve/reject, extension reload/build/config --set, settings set-retention) now count as mutations; the read-only detector's drifted near-copy of the pattern table is merged into the shared one (the bare " push" shell pattern had disabled dead-end detection for the whole push domain); DOMAIN_ACTIONS is locked to the live tree by a sync test (first run caught `device latest` and `push start/stop` missing).
+
+### Fixed — extensions (agent-driven Rust development)
+- `extension build` captures cargo output: the failure error embeds the labeled compiler stderr/stdout tails (color-free, bounded) and success surfaces warnings — the compile-error self-correction loop agents need (diagnostics previously leaked unlabeled via inherited stderr, or not at all to the error message).
+- The scaffold's SDK pin is single-sourced from the SDK crate (a hardcoded "0.6.3" had drifted while the SDK reached 0.7.1, and ^0.6 semver locked fresh scaffolds to the stale line); the skill's project template is standalone-safe (registry dep + `[workspace]` detach — the in-repo path form without the detach fails cargo with "not in workspace members").
+
+### Fixed — decision model (injections)
+- Decision-layer addons (guidance/prefill) are LLM-ONLY: the user message is never modified — the appended router hint previously leaked into the user's chat bubble and stored session history. The addon rides the round-1 LLM request only.
+- One router decision per turn, shared by shadow log, short-circuit and prefill (the shadow+prefill pair raced two identical sidecar calls, both cache misses, duplicate audit rows).
+- The Web UI file-mode install path now activates the decision layer (same refresh as the CLI route).
+
 ### Fixed — decision model
 - Config surface merge-on-write (an unrelated PUT can never reset sidecar_ms/int8), PUT responses carry the full GET shape (the settings tab crashed on first toggle), gates restore into the service on every build, persist-first transactional PUT, engine.int8 now actually reaches the extension engine (auto-reload on change), uninstall via the UI route deactivates the layer immediately, and an inert layer reports "not enabled" instead of a fake shadow badge.
 - Shadow config persistence verified intact (settings.redb held the operator's value); the loader no longer silently falls back to env seeds on a transient store-open failure.
 
 ### Fixed — web
 - Assistant thinking/tool cards stop resizing mid-stream (full-column width); mobile welcome chips are a curated static 2-row set; DecisionTab restyled to the Preferences conventions.
+- First-run wizard model cards clamp the description to a fixed 2-line height (capped and floored — cards in a grid row are exactly equal regardless of notes length).
+- Reply stats use a shared adaptive elapsed formatter (850ms / 12.3s / 2m 05s / 1h 30m) and chars/s no longer divides on empty replies (the 0-chars/s footnote).
+- The terminal chat stream handles `SystemNote` events (labeled `[system]` line).
 
 ### Test
-- Ownership/gates/dedup/FIFO-rotation behaviors gained positive tests; suites: cargo workspace green, web 285, i18n parity.
+- Ownership/gates/dedup/FIFO-rotation behaviors gained positive tests; the addon-leak regression pins "round-1 LLM request carries the addon, memory never does" with a streaming-capture mock; suites: cargo workspace 2216 green, web 291, i18n parity, skill checker 520 commands + type-semantics mode clean.
 
 ---
 
