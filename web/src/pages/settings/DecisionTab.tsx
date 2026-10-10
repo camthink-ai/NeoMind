@@ -20,42 +20,6 @@ import { toast } from "@/hooks/use-toast"
 import { SettingsRow } from "./SettingsRow"
 import { decisionApi, DecisionConfig, DecisionStatus } from "@/lib/api/decisions"
 
-function PercentInput({
-  value,
-  disabled,
-  onCommit,
-}: {
-  value: number
-  disabled?: boolean
-  onCommit: (v: number) => void
-}) {
-  const [draft, setDraft] = useState(String(Math.round(value * 100)))
-  useEffect(() => setDraft(String(Math.round(value * 100))), [value])
-  return (
-    <div className="flex items-center gap-1 w-[110px]">
-      <Input
-        type="number"
-        min={0}
-        max={100}
-        step={5}
-        className="text-right tabular-nums"
-        value={draft}
-        disabled={disabled}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={() => {
-          const n = Number(draft)
-          if (Number.isFinite(n) && n / 100 !== value) {
-            onCommit(Math.min(100, Math.max(0, Math.round(n))) / 100)
-          } else {
-            setDraft(String(Math.round(value * 100)))
-          }
-        }}
-      />
-      <span className="text-xs text-muted-foreground">%</span>
-    </div>
-  )
-}
-
 function MsInput({
   value,
   disabled,
@@ -210,46 +174,16 @@ export function DecisionTab() {
               onCheckedChange={(v) => apply({ shadow: v })}
             />
           </SettingsRow>
-          <SettingsRow label={t("decision.shortcircuit")} description={t("decision.shortcircuitHint")}>
-            <Switch
-              checked={config.shortcircuit}
-              disabled={busy || config.shadow !== false || !config.backend}
-              onCheckedChange={(v) => apply({ shortcircuit: v })}
-            />
-          </SettingsRow>
-          {config.shadow !== false && !!config.backend && (
-            <p className="text-xs text-muted-foreground">{t("decision.modesLockedHint")}</p>
-          )}
+          <p className="text-xs text-muted-foreground">{t("decision.consumerHint")}</p>
         </div>
       </section>
 
-      {/* Advanced: gates / budgets / engine */}
+      {/* Advanced: budgets / engine */}
       <section>
         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
           {t("decision.advanced")}
         </h3>
         <div className="rounded-lg bg-card border border-border p-5 space-y-4">
-          <SettingsRow label={t("decision.gateDomain")} description={t("decision.gateDomainDesc")}>
-            <PercentInput
-              value={config.gates.domain}
-              disabled={busy}
-              onCommit={(v) => apply({ gates: { domain: v } })}
-            />
-          </SettingsRow>
-          <SettingsRow label={t("decision.gateOther")} description={t("decision.gateOtherDesc")}>
-            <PercentInput
-              value={config.gates.other}
-              disabled={busy}
-              onCommit={(v) => apply({ gates: { other: v } })}
-            />
-          </SettingsRow>
-          <SettingsRow label={t("decision.budgetShortcircuit")} description={t("decision.budgetDesc")}>
-            <MsInput
-              value={config.budgets.shortcircuit_ms}
-              disabled={busy}
-              onCommit={(v) => apply({ budgets: { shortcircuit_ms: v } })}
-            />
-          </SettingsRow>
           <SettingsRow label={t("decision.budgetAsk")} description={t("decision.budgetDesc")}>
             <MsInput
               value={config.budgets.ask_ms}

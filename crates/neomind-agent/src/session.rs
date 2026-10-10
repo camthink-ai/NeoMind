@@ -240,29 +240,6 @@ impl Drop for CancelSenderGuard {
     }
 }
 
-/// Session manager for managing multiple agent sessions with persistence.
-/// Outcome of the decision-layer chat hook for one inbound message.
-#[derive(Debug, Clone)]
-pub enum ChatHookOutcome {
-    /// The decision layer answered the turn outright — stream this text and
-    /// skip the LLM (short-circuit).
-    Answered(String),
-    /// No hook fired — proceed unchanged.
-    Passthrough,
-}
-
-/// Fast-decision hook (the laya/System-1 cascade), implemented by the API
-/// layer (handlers/decisions.rs) and injected into SessionManager so that
-/// EVERY user-NL entry point — WS text, WS multimodal, REST chat, IM bridge,
-/// extension chat capability — gets identical decision coverage at the
-/// chokepoint instead of per-handler wiring that drifts.
-#[async_trait::async_trait]
-pub trait ChatDecisionHook: Send + Sync {
-    /// `allow_shortcircuit` is false for multimodal turns: attached media
-    /// usually implies vision intent that pure-text routing cannot judge.
-    async fn on_message(&self, message: &str, allow_shortcircuit: bool) -> ChatHookOutcome;
-}
-
 /// Serializes first-claim ownership stamping (see
 /// [`SessionManager::claim_session_owner`]): the read-check-write must be
 /// atomic within this process. Process-wide rather than a manager field —
@@ -304,8 +281,6 @@ pub struct SessionManager {
     /// path. Memory-tool writes intentionally do NOT invalidate this — the
     /// snapshot stays frozen for the session and is re-read on the next one.
     memory_snapshots: Arc<RwLock<HashMap<String, crate::memory::MemorySnapshot>>>,
-    /// Injected fast-decision hook (see ChatDecisionHook). None = passthrough.
-    decision_hook: Arc<RwLock<Option<Arc<dyn ChatDecisionHook>>>>,
 }
 
 impl SessionManager {
@@ -338,7 +313,6 @@ impl SessionManager {
             cancel_senders: Arc::new(RwLock::new(HashMap::new())),
             event_subscribers: Arc::new(RwLock::new(HashMap::new())),
             memory_snapshots: Arc::new(RwLock::new(HashMap::new())),
-            decision_hook: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -360,7 +334,6 @@ impl SessionManager {
             cancel_senders: Arc::new(RwLock::new(HashMap::new())),
             event_subscribers: Arc::new(RwLock::new(HashMap::new())),
             memory_snapshots: Arc::new(RwLock::new(HashMap::new())),
-            decision_hook: Arc::new(RwLock::new(None)),
         };
 
         // Restore sessions from database on startup
@@ -1715,48 +1688,11 @@ Assistant: {ar}\n"
         self.process_message(session_id, message).await
     }
 
-    /// Process a message in a session with event streaming (rich response).
-    /// Inject (or clear) the fast-decision hook. Applied uniformly at the
-    /// message chokepoints below; a slow or dead hook must never block a
-    /// turn, so implementors bound themselves internally.
-    pub async fn set_decision_hook(&self, hook: Option<Arc<dyn ChatDecisionHook>>) {
-        *self.decision_hook.write().await = hook;
-    }
-
-    /// Run the injected decision hook. Returns an answered stream when the
-    /// decision layer short-circuits the turn entirely; `None` means
-    /// proceed with the normal LLM path.
-    async fn apply_decision_hook(
-        &self,
-        message: &str,
-        allow_shortcircuit: bool,
-    ) -> Option<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
-        let hook = self.decision_hook.read().await.clone();
-        let hook = hook?;
-        match hook.on_message(message, allow_shortcircuit).await {
-            ChatHookOutcome::Answered(text) => {
-                let stream = futures::stream::iter(vec![
-                    AgentEvent::Content { content: text },
-                    AgentEvent::End {
-                        prompt_tokens: None,
-                        system_prompt_tokens: None,
-                        tool_tokens: None,
-                    },
-                ]);
-                Some(Box::pin(stream))
-            }
-            ChatHookOutcome::Passthrough => None,
-        }
-    }
-
     pub async fn process_message_events(
         &self,
         session_id: &str,
         message: &str,
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
-        if let Some(stream) = self.apply_decision_hook(message, true).await {
-            return Ok(stream);
-        }
         let agent = self.get_session(session_id).await?;
 
         // Load memory snapshot if enabled and not yet loaded
@@ -1886,14 +1822,6 @@ Assistant: {ar}\n"
             image_count = images.len(),
             "SessionManager::process_message_multimodal"
         );
-        // Multimodal: short-circuit does not apply (attached media implies
-        // vision intent text routing can't judge), so with
-        // allow_shortcircuit=false the hook can only answer via a future
-        // media-aware action mode — today it is a clean passthrough.
-        let answered = self.apply_decision_hook(message, false).await;
-        if answered.is_some() {
-            tracing::debug!("multimodal non-streaming: decision layer answered");
-        }
         let agent = self.get_session(session_id).await?;
         let response = agent.process_multimodal(message, images).await?;
 
@@ -1985,12 +1913,6 @@ Assistant: {ar}\n"
         message: &str,
         images: Vec<String>,
     ) -> Result<Pin<Box<dyn Stream<Item = super::agent::AgentEvent> + Send>>> {
-        // Multimodal: short-circuit does not apply (attached media implies
-        // vision intent text routing can't judge) — the hook is a clean
-        // passthrough here today.
-        if let Some(stream) = self.apply_decision_hook(message, false).await {
-            return Ok(stream);
-        }
         // Check if images are provided and model supports vision
         if !images.is_empty() {
             let agent = self.get_session(session_id).await?;
@@ -2311,7 +2233,6 @@ impl Default for SessionManager {
                 cancel_senders: Arc::new(RwLock::new(HashMap::new())),
                 event_subscribers: Arc::new(RwLock::new(HashMap::new())),
                 memory_snapshots: Arc::new(RwLock::new(HashMap::new())),
-                decision_hook: Arc::new(RwLock::new(None)),
             }
         })
     }

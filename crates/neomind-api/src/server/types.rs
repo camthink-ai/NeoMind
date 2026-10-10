@@ -729,13 +729,6 @@ fn build_decision_service() -> Option<Arc<neomind_core::DecisionService>> {
         let service = neomind_core::DecisionService::new(primary)
             .with_audit(Arc::new(JsonlAudit::default_path()));
         service.set_shadow(shadow);
-        // Restore the PERSISTED gate too: GatePolicy::default() is 0.7, and
-        // without this a restart/refresh silently reverted a configured
-        // gates.other while GET kept reporting the persisted value.
-        let settings = crate::handlers::decisions::load_decision_settings();
-        service.set_gate(neomind_core::decision::GatePolicy {
-            min_confidence: settings.gates.other,
-        });
         tracing::info!(target: "neomind::decision", shadow, backend = %label,
             "decision layer enabled");
         Some(Arc::new(service))
@@ -1493,25 +1486,12 @@ impl ServerState {
             });
         }
 
-        // Decision-layer cascade: build the service, then inject the chat
-        // pipeline into SessionManager's chokepoint so EVERY user-NL entry
-        // point (WS text/multimodal, REST chat, IM bridge, extension chat
-        // capability) gets identical shadow/short-circuit coverage
-        // (audit D1 — was: only the WS text branch was wired).
-        // The pipeline SHARES the RwLock slot (no snapshot) so extension
+        // Decision-layer service (no chat consumer — the layer serves the
+        // /api/decisions endpoints and awaits its intended home bracketing
+        // ai_agent runs). The SHARED RwLock slot means extension
         // install/uninstall refreshes propagate without a restart.
         let decision = Arc::new(std::sync::RwLock::new(build_decision_service()));
         let decision_flags = Arc::new(crate::handlers::decisions::load_decision_flags());
-        {
-            let pipeline = crate::handlers::decisions::ChatDecisionPipeline::new(
-                decision.clone(),
-                decision_flags.clone(),
-            );
-            agents
-                .session_manager
-                .set_decision_hook(Some(std::sync::Arc::new(pipeline)))
-                .await;
-        }
 
         Self {
             core,

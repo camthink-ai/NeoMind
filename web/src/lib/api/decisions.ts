@@ -8,13 +8,7 @@
 
 import { fetchAPI } from "./client"
 
-export interface DecisionGates {
-  domain: number
-  other: number
-}
-
 export interface DecisionBudgets {
-  shortcircuit_ms: number
   ask_ms: number
   sidecar_ms: number
 }
@@ -25,8 +19,6 @@ export interface DecisionConfig {
    *  The status card shows "Not enabled" in that state instead of a
    *  misleading posture badge. */
   shadow: boolean | null
-  shortcircuit: boolean
-  gates: DecisionGates
   budgets: DecisionBudgets
   engine: { int8: boolean }
   backend: string | null
@@ -39,10 +31,7 @@ export interface DecisionConfig {
 
 export interface DecisionConfigUpdate {
   shadow?: boolean
-  shortcircuit?: boolean
-  gates?: { domain?: number; other?: number }
   budgets?: {
-    shortcircuit_ms?: number
     ask_ms?: number
     sidecar_ms?: number
   }

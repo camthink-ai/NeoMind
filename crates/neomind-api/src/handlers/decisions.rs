@@ -6,306 +6,52 @@
 //!   in one batched pass. Wire shape mirrors the Jev-compatible
 //!   `/v1/systemone` protocol, so external clients can use either.
 //!
-//! Plus the chat shadow hook (`spawn_shadow`): while a normal LLM turn runs,
-//! the decision layer answers the router questions on the same message and
-//! records them — production traffic becomes training data before anything
-//! acts on it. Shadow decisions never influence the turn.
+//! The layer's intended consumers are CODE paths that bracket LLM work (the
+//! ai_agent executor's pre-run screening / conclusion triage are the natural
+//! future integrations), never prompt injection — see the Removed note in
+//! CHANGELOG 1.2.0. Shadow posture (record-only) stays as the master
+//! activation switch for any future consumer.
 
 use axum::{extract::State, response::IntoResponse, Json};
 use serde::Deserialize;
 use serde_json::json;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use super::{
     common::{ok, HandlerResult},
     ServerState,
 };
 use crate::models::{ApiResponse, ErrorResponse};
-use neomind_core::{DecisionOutcome, DecisionQuestion, DecisionRequest, DecisionService};
+use neomind_core::{DecisionQuestion, DecisionRequest};
 
-// ---------------------------------------------------------------------------
-// Canonical router questions — the EXACT wording the fine-tuned heads were
-// trained against (sandbox: laya-eval/training/bank_v6.py TOOL_Q and
-// build_items_v2.py SIMPLE_Q / DOMAIN_CRITERIA). Rewording a single string
-// here silently changes the task for the trained model; treat these as a
-// contract shared with training, not as free-text prompts.
-// ---------------------------------------------------------------------------
-
-pub const TOOL_INSTRUCTIONS: &str = "Which tool should serve this user request?";
-
-pub const TOOL_CRITERIA: &[(&str, &str)] = &[
-    ("shell", "ALL neomind CLI platform operations, INCLUDING device control commands (reboot a device, send downlink), rules, agents config, dashboards, transforms, messages, extensions, purge/export/import"),
-    ("query_conclusion", "read an AI agent's most recent conclusion — instant and free ('is X ok', 'what did the inspection say')"),
-    ("run_now", "trigger a FRESH run of an AI AGENT right now — only for agents; device commands (e.g. reboot a sensor) are shell, not this"),
-    ("skill", "load a step-by-step workflow guide for a complex or unfamiliar domain (onboarding, development guides)"),
-    ("memory", "persist or recall cross-conversation facts and preferences ('remember…', 'forget…', 'what do you know about me')"),
-    ("vision", "understand, read or describe the CONTENT of an image — what is in it, gauge readings, text, anomalies; no pixel changes"),
-    ("image_edit", "modify image pixels: crop, draw, blur, annotate, highlight — changes the picture, does not interpret it"),
-    ("web_fetch", "fetch the content of an external URL"),
-    ("file_write", "create or overwrite a WHOLE file with new content"),
-    ("file_edit", "surgically replace an exact existing string inside an existing file, keeping the rest untouched"),
-    ("none", "pure conversation — greeting, identity, thanks, chat with no platform entity"),
-];
-
-pub const SIMPLE_INSTRUCTIONS: &str = "Can this request be completed with a single direct command or lookup, without multi-step reasoning, correlation or drafting?";
-
-pub const DOMAIN_INSTRUCTIONS: &str =
-    "Which NeoMind CLI domain (or special path) should handle the user request?";
-
-pub const DOMAIN_CRITERIA: &[(&str, &str)] = &[
-    (
-        "device",
-        "inspect, onboard, control or configure devices and read their metrics",
-    ),
-    (
-        "rule",
-        "create, inspect or manage automation rules (threshold alerts, event triggers)",
-    ),
-    (
-        "message",
-        "send notifications or manage notification channels and alert history",
-    ),
-    (
-        "extension",
-        "install, configure or invoke extension capabilities (vision AI, bridges)",
-    ),
-    ("agent", "create, run or manage scheduled AI agents"),
-    (
-        "dashboard",
-        "create or edit dashboards and bind data sources to cards/widgets",
-    ),
-    (
-        "transform",
-        "create or test data transforms (computed/virtual metrics)",
-    ),
-    ("widget", "develop or manage community dashboard widgets"),
-    (
-        "connector",
-        "manage protocol connectors (Modbus, OPC-UA, BACnet, LoRaWAN)",
-    ),
-    (
-        "push",
-        "configure forwarding telemetry to external systems (data push)",
-    ),
-    ("llm", "configure or switch LLM backends"),
-    (
-        "settings",
-        "platform settings (retention, language, system configuration)",
-    ),
-    ("system", "system diagnostics, health, logs, version info"),
-    ("image_edit", "edit or annotate an image (crop, draw, blur)"),
-    (
-        "converse",
-        "plain conversation, greeting, opinion or summary needing no platform tool",
-    ),
-];
-
-/// Build the canonical router question batch (tool + simple + domain).
-pub fn router_questions() -> Vec<(String, DecisionQuestion)> {
-    vec![
-        (
-            "tool".into(),
-            DecisionQuestion::choice(
-                TOOL_INSTRUCTIONS,
-                TOOL_CRITERIA
-                    .iter()
-                    .map(|&(l, d)| (l.to_string(), d.to_string()))
-                    .collect(),
-            ),
-        ),
-        ("simple".into(), DecisionQuestion::noul(SIMPLE_INSTRUCTIONS)),
-        (
-            "domain".into(),
-            DecisionQuestion::choice(
-                DOMAIN_INSTRUCTIONS,
-                DOMAIN_CRITERIA
-                    .iter()
-                    .map(|&(l, d)| (l.to_string(), d.to_string()))
-                    .collect(),
-            ),
-        ),
-    ]
-}
-
-/// While an LLM turn runs, answer the router questions on the same message
-/// and record the result. Fire-and-forget by design: a slow or dead decision
-/// backend must never delay a chat turn. When the turn already resolved its
-/// router decision inline (an action mode was on), `on_message` logs that
-/// outcome instead — one backend call, one audit row, per message.
-pub fn spawn_shadow(decision: &Option<std::sync::Arc<DecisionService>>, message: &str) {
-    let Some(ds) = decision else { return };
-    let ds = ds.clone();
-    let req = {
-        let mut r = DecisionRequest::new(format!("User request: {message}"));
-        for (id, q) in router_questions() {
-            r = r.with_question(id, q);
-        }
-        r
-    };
-    tokio::spawn(async move {
-        match ds.decide(&req).await {
-            Ok(out) => log_shadow_outcome(&out),
-            Err(e) => {
-                tracing::debug!(target: "neomind::decision", error = %e, "decision shadow failed")
-            }
-        }
-    });
-}
-
-/// The shadow-recorder log line for a router outcome (the decide call itself
-/// writes the audit row).
-fn log_shadow_outcome(out: &DecisionOutcome) {
-    tracing::info!(
-        target: "neomind::decision",
-        shadow = out.shadow,
-        backend = %out.backend,
-        latency_ms = out.latency_ms,
-        tool = out.get("tool").and_then(|a| a.picked().map(str::to_string)).as_deref().unwrap_or("?"),
-        simple_conf = out.get("simple").and_then(|a| a.answer_confidence).map(|c| c.to_string()).as_deref().unwrap_or("?"),
-        domain = out.get("domain").and_then(|a| a.picked().map(str::to_string)).as_deref().unwrap_or("?"),
-        "decision shadow"
-    );
-}
-
-/// The turn's ROUTER decision (router_questions over the message), bounded
-/// by `budget`. Resolved ONCE per turn in `on_message` and shared by every
-/// router consumer (shadow log, short-circuit) — the pair
-/// used to race identical backend requests for one message (live
-/// 2026-10-09: shadow + prefill decided concurrently, both cache misses,
-/// duplicate audit rows). A failure here degrades all router consumers for
-/// the turn exactly as each one's own timeout used to.
-async fn resolve_router(
-    decision: &Option<std::sync::Arc<DecisionService>>,
-    message: &str,
-    budget: std::time::Duration,
-) -> Option<DecisionOutcome> {
-    let ds = decision.as_ref()?;
-    let mut req = DecisionRequest::new(format!("User request: {message}"));
-    for (id, q) in router_questions() {
-        req = req.with_question(id, q);
-    }
-    tokio::time::timeout(budget, ds.decide(&req))
-        .await
-        .ok()?
-        .ok()
-}
-
-/// Action-mode posture gate: an action mode's env/config flag left on while
-/// the service runs shadow must never silently act. Callers wanting
-/// short-circuit to take effect must explicitly leave shadow mode
-/// (NEOMIND_DECISION_SHADOW=0).
-fn guard_shadow(ds: &std::sync::Arc<DecisionService>, mode: &str) -> bool {
-    if ds.shadow() {
-        tracing::warn!(
-            target: "neomind::decision",
-            mode,
-            "action mode ignored: service is in shadow posture (set NEOMIND_DECISION_SHADOW=0 to act)"
-        );
-        return false;
-    }
-    true
-}
-
-// ---------------------------------------------------------------------------
-// The chat decision pipeline — injected as SessionManager's ChatDecisionHook
-// so every user-NL entry point (WS text/multimodal, REST chat, IM bridge,
-// extension chat capability) gets identical coverage at the chokepoint.
-// ---------------------------------------------------------------------------
-
-/// The full cascade for one inbound chat message: router decision (resolved
-/// ONCE when short-circuit is on — see `resolve_router`) → shadow record
-/// (reuses that outcome, else fire-and-forget) → short-circuit (gated,
-/// text-only turns). Any failure or timeout degrades to Passthrough — the
-/// turn must never be delayed or blocked by the decision layer.
-///
-/// The decision layer only ever ANSWERS directly (short-circuit) or records;
-/// it never injects advice into the LLM's prompt. Rendering classifier
-/// output as natural-language hints for the model was tried (prefill/guidance,
-/// removed 2026-10-10): small models ignore hedged hints, strong models don't
-/// need them, and mis-calibrated ones actively misleaded — the Jev-style
-/// contract expects decisions to be consumed by CODE (routing, gating), not
-/// read by the LLM.
-pub struct ChatDecisionPipeline {
-    /// SHARED slot with ServerState — a refresh (extension installed /
-    /// uninstalled) swaps the service and every subsequent turn sees it,
-    /// no restart, no pipeline rebuild.
-    decision: Arc<std::sync::RwLock<Option<Arc<DecisionService>>>>,
-    /// SHARED action-mode switches — a config PUT flips these live; the
-    /// env_flag reads (per-turn getenv) are gone.
-    flags: Arc<DecisionRuntimeFlags>,
-}
-
-impl ChatDecisionPipeline {
-    pub fn new(
-        decision: Arc<std::sync::RwLock<Option<Arc<DecisionService>>>>,
-        flags: Arc<DecisionRuntimeFlags>,
-    ) -> Self {
-        Self { decision, flags }
-    }
-
-    /// Snapshot the decision service out of the shared slot (guard dropped
-    /// before any await — RwLock guards are !Send).
-    fn current(&self) -> Option<Arc<DecisionService>> {
-        self.decision.read().unwrap().clone()
-    }
-}
-
-/// Hot-reloadable action-mode switches, SHARED between ServerState and the
-/// chat pipeline. Persisted in settings.redb (`decision.config`), seeded
+/// Hot-reloadable runtime knobs, SHARED between ServerState and the
+/// endpoints. Persisted in settings.redb (`decision.config`), seeded
 /// from env on first boot, editable at runtime via
 /// `PUT /api/decisions/config` — no restart, no env vars, which desktop
 /// deployments cannot set at all.
 #[derive(Debug)]
 pub struct DecisionRuntimeFlags {
-    pub shortcircuit: AtomicBool,
-    /// f32 confidence gates, stored as to_bits (lock-free hot path).
-    pub gate_domain: AtomicU32,
-    pub gate_other: AtomicU32,
-    /// Latency budgets (ms).
-    pub budget_shortcircuit_ms: AtomicU32,
+    /// Latency budget (ms) for the ask endpoint.
     pub budget_ask_ms: AtomicU32,
 }
 
 /// Persistence shape (see [`load_decision_flags`]).
 #[derive(serde::Serialize, serde::Deserialize, Default, Clone, Copy)]
 pub struct DecisionFlagsPersist {
-    #[serde(default)]
-    pub shortcircuit: bool,
     /// None = never configured via API (env/default decides); Some = the
     /// operator's persisted choice, which beats the env seed.
     #[serde(default)]
     pub shadow: Option<bool>,
-    #[serde(default = "default_gates")]
-    pub gates: GatesPersist,
     #[serde(default = "default_budgets")]
     pub budgets: BudgetsPersist,
     #[serde(default)]
     pub engine: EnginePersist,
 }
 
-/// Confidence gates: `domain` is the stricter family (routing hints the
-/// executor acts on), `other` maps to the service-wide GatePolicy.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Copy)]
-pub struct GatesPersist {
-    #[serde(default = "default_gate_domain")]
-    pub domain: f32,
-    #[serde(default = "default_gate_other")]
-    pub other: f32,
-}
-
-impl Default for GatesPersist {
-    fn default() -> Self {
-        default_gates()
-    }
-}
-
 /// Latency budgets (ms) for the decision calls. `sidecar_ms` applies to the
 /// HTTP client at the next decision-layer refresh.
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy)]
 pub struct BudgetsPersist {
-    #[serde(default = "default_shortcircuit_ms")]
-    pub shortcircuit_ms: u32,
     #[serde(default = "default_ask_ms")]
     pub ask_ms: u32,
     #[serde(default = "default_sidecar_ms")]
@@ -328,21 +74,6 @@ pub struct EnginePersist {
     pub int8: bool,
 }
 
-fn default_gate_domain() -> f32 {
-    0.8
-}
-fn default_gate_other() -> f32 {
-    0.7
-}
-pub fn default_gates() -> GatesPersist {
-    GatesPersist {
-        domain: default_gate_domain(),
-        other: default_gate_other(),
-    }
-}
-fn default_shortcircuit_ms() -> u32 {
-    600
-}
 fn default_ask_ms() -> u32 {
     1500
 }
@@ -351,7 +82,6 @@ fn default_sidecar_ms() -> u32 {
 }
 pub fn default_budgets() -> BudgetsPersist {
     BudgetsPersist {
-        shortcircuit_ms: default_shortcircuit_ms(),
         ask_ms: default_ask_ms(),
         sidecar_ms: default_sidecar_ms(),
     }
@@ -369,25 +99,8 @@ impl DecisionRuntimeFlags {
 
     fn from_persist(p: &DecisionFlagsPersist) -> Self {
         Self {
-            shortcircuit: AtomicBool::new(p.shortcircuit),
-            gate_domain: AtomicU32::new(p.gates.domain.to_bits()),
-            gate_other: AtomicU32::new(p.gates.other.to_bits()),
-            budget_shortcircuit_ms: AtomicU32::new(p.budgets.shortcircuit_ms),
             budget_ask_ms: AtomicU32::new(p.budgets.ask_ms),
         }
-    }
-
-    /// Live gate values for consumers (short-circuit's inline comparisons).
-    pub fn gate_domain(&self) -> f32 {
-        f32::from_bits(self.gate_domain.load(Ordering::Relaxed))
-    }
-
-    pub fn gate_other(&self) -> f32 {
-        f32::from_bits(self.gate_other.load(Ordering::Relaxed))
-    }
-
-    pub fn budget_shortcircuit(&self) -> std::time::Duration {
-        std::time::Duration::from_millis(self.budget_shortcircuit_ms.load(Ordering::Relaxed) as u64)
     }
 
     pub fn budget_ask(&self) -> std::time::Duration {
@@ -438,13 +151,9 @@ pub fn load_decision_settings() -> DecisionFlagsPersist {
         ),
     }
     let seeded = || DecisionFlagsPersist {
-        shortcircuit: std::env::var("NEOMIND_DECISION_SHORTCIRCUIT")
-            .map(|v| v == "1")
-            .unwrap_or(false),
         shadow: std::env::var("NEOMIND_DECISION_SHADOW")
             .map(|v| Some(v != "0"))
             .unwrap_or(None),
-        gates: default_gates(),
         budgets: default_budgets(),
         engine: EnginePersist {
             int8: std::env::var("LAYA_NATIVE_INT8")
@@ -474,24 +183,10 @@ pub fn decision_sidecar_timeout_ms() -> u64 {
 /// Field-by-field None = keep — an unrelated PUT can never reset sidecar_ms
 /// or engine.int8 through placeholder values again.
 fn apply_config_update(doc: &mut DecisionFlagsPersist, req: &DecisionConfigUpdate) {
-    if let Some(v) = req.shortcircuit {
-        doc.shortcircuit = v;
-    }
     if let Some(v) = req.shadow {
         doc.shadow = Some(v);
     }
-    if let Some(g) = &req.gates {
-        if let Some(v) = g.domain {
-            doc.gates.domain = v;
-        }
-        if let Some(v) = g.other {
-            doc.gates.other = v;
-        }
-    }
     if let Some(b) = &req.budgets {
-        if let Some(v) = b.shortcircuit_ms {
-            doc.budgets.shortcircuit_ms = v;
-        }
         if let Some(v) = b.ask_ms {
             doc.budgets.ask_ms = v;
         }
@@ -512,11 +207,7 @@ pub fn load_decision_flags() -> DecisionRuntimeFlags {
         .and_then(|store| store.load(DECISION_SETTINGS_KEY).ok().flatten())
         .and_then(|raw| serde_json::from_str::<DecisionFlagsPersist>(&raw).ok())
         .unwrap_or_else(|| DecisionFlagsPersist {
-            shortcircuit: std::env::var("NEOMIND_DECISION_SHORTCIRCUIT")
-                .map(|v| v == "1")
-                .unwrap_or(false),
             shadow: None,
-            gates: default_gates(),
             budgets: default_budgets(),
             engine: EnginePersist {
                 // env stays the seed for the engine knob
@@ -526,589 +217,6 @@ pub fn load_decision_flags() -> DecisionRuntimeFlags {
             },
         });
     DecisionRuntimeFlags::from_persist(&persist)
-}
-
-#[async_trait::async_trait]
-impl neomind_agent::ChatDecisionHook for ChatDecisionPipeline {
-    async fn on_message(
-        &self,
-        message: &str,
-        allow_shortcircuit: bool,
-    ) -> neomind_agent::ChatHookOutcome {
-        use neomind_agent::ChatHookOutcome::{Answered, Passthrough};
-        // One snapshot for the whole turn — consistent decisions even if a
-        // refresh swaps the backend mid-turn.
-        let decision = self.current();
-        let shortcircuit_on = allow_shortcircuit && self.flags.shortcircuit.load(Ordering::Relaxed);
-
-        // Resolve the ROUTER decision ONCE for the whole turn when
-        // short-circuit is on, and let the shadow recorder reuse it. The
-        // pair used to race identical backend requests for one message
-        // (live 2026-10-09: shadow + prefill decided concurrently, both
-        // cache misses, duplicate audit rows). In shadow posture nothing
-        // may consume the decision inline: record-only, off the critical
-        // path.
-        let act_allowed = decision.as_ref().map(|ds| !ds.shadow()).unwrap_or(false);
-        if !act_allowed && shortcircuit_on {
-            if let Some(ds) = decision.as_ref() {
-                guard_shadow(ds, "router");
-            }
-        }
-        let router = if act_allowed && shortcircuit_on {
-            resolve_router(&decision, message, self.flags.budget_shortcircuit()).await
-        } else {
-            None
-        };
-
-        if let Some(out) = &router {
-            log_shadow_outcome(out);
-        } else {
-            spawn_shadow(&decision, message);
-        }
-
-        if shortcircuit_on {
-            if let Some(plan) = try_shortcircuit(
-                &decision,
-                message,
-                self.flags.budget_shortcircuit(),
-                self.flags.gate_domain(),
-                router.clone(),
-            )
-            .await
-            {
-                match execute_shortcircuit(&plan).await {
-                    Ok(text) => {
-                        tracing::info!(
-                            target: "neomind::decision",
-                            domain = %plan.domain,
-                            action = %plan.action,
-                            "short-circuit answered"
-                        );
-                        return Answered(text);
-                    }
-                    Err(e) => {
-                        tracing::warn!(target: "neomind::decision", error = %e, "short-circuit fell back to LLM");
-                    }
-                }
-            }
-        }
-
-        Passthrough
-    }
-}
-
-// ---------------------------------------------------------------------------
-// P2 short-circuit (v1: arg-less, read-only whitelist)
-// ---------------------------------------------------------------------------
-
-/// The v1 short-circuit surface: single-word, argument-free, read-only
-/// commands only. Entity-bearing lookups (`get <id>`, `history`) are
-/// deliberately v2 — v1 must be unable to touch state and unable to
-/// mis-target an entity.
-const SC_WHITELIST: &[(&str, &str)] = &[
-    ("device", "list"),
-    ("device", "types"),
-    ("rule", "list"),
-    ("agent", "list"),
-    ("message", "list"),
-    ("message", "channel-list"),
-    ("message", "channel-types"),
-    ("transform", "list"),
-    ("transform", "metrics"),
-    ("transform", "data-sources"),
-    ("dashboard", "list"),
-    ("extension", "list"),
-    ("extension", "market-list"),
-    ("widget", "list"),
-    ("widget", "market-list"),
-    ("connector", "list"),
-    ("push", "list"),
-    ("llm", "list"),
-    // NOTE: no ("data", "list") here — the domain head's criteria have no
-    // `data` option, so the model can never predict it; the entry was dead.
-    // Re-add together with the `data` domain when it joins DOMAIN_CRITERIA.
-    ("system", "info"),
-];
-
-/// Actions per CLI domain, for the scoped action question (mirrors the live
-/// binary surface; keep in sync via `audit_cli_alignment.py` in the sandbox).
-const DOMAIN_ACTIONS: &[(&str, &[&str])] = &[
-    (
-        "device",
-        &[
-            "control",
-            "create",
-            "delete",
-            "drafts",
-            "get",
-            "history",
-            // `latest` was missing until the clap-tree sync test caught it
-            // (first run): the short-circuit action question could never
-            // offer it.
-            "latest",
-            "list",
-            "types",
-            "update",
-            "webhook-url",
-            "write-metric",
-        ],
-    ),
-    (
-        "rule",
-        &[
-            "create", "delete", "disable", "enable", "get", "history", "list", "test", "update",
-        ],
-    ),
-    (
-        "agent",
-        &[
-            "clear-memory",
-            "conversation",
-            "control",
-            "create",
-            "delete",
-            "executions",
-            "get",
-            "invoke",
-            "latest-execution",
-            "list",
-            "memory",
-            "send-message",
-            "update",
-        ],
-    ),
-    (
-        "message",
-        &[
-            "channel-create",
-            "channel-delete",
-            "channel-get",
-            "channel-list",
-            "channel-test",
-            "channel-type-schema",
-            "channel-types",
-            "channel-update",
-            "delete",
-            "get",
-            "list",
-            "read",
-            "send",
-        ],
-    ),
-    (
-        "transform",
-        &[
-            "create",
-            "data-sources",
-            "delete",
-            "disable",
-            "enable",
-            "executions",
-            "get",
-            "list",
-            "metrics",
-            "test-code",
-            "update",
-        ],
-    ),
-    (
-        "dashboard",
-        &[
-            "add-components",
-            "create",
-            "delete",
-            "get",
-            "list",
-            "remove-components",
-            "share",
-            "update",
-            "update-component",
-        ],
-    ),
-    (
-        "extension",
-        &[
-            "build",
-            "config",
-            "create",
-            "get",
-            "install",
-            "list",
-            "logs",
-            "market-install",
-            "market-list",
-            "reload",
-            "status",
-            "uninstall",
-            "validate",
-        ],
-    ),
-    (
-        "connector",
-        &[
-            "create",
-            "delete",
-            "disable",
-            "enable",
-            "get",
-            "list",
-            "subscribe",
-            "subscriptions",
-            "test",
-            "unsubscribe",
-            "update",
-        ],
-    ),
-    (
-        "push",
-        &[
-            // `start`/`stop` were missing until the clap-tree sync test
-            // caught them (first run).
-            "create", "delete", "disable", "enable", "get", "list", "logs", "start", "stats",
-            "stop", "test", "update",
-        ],
-    ),
-    (
-        "llm",
-        &[
-            "activate", "create", "delete", "get", "list", "models", "test", "update",
-        ],
-    ),
-    (
-        "widget",
-        &[
-            "bundle",
-            "create",
-            "get",
-            "install",
-            "list",
-            "market-install",
-            "market-list",
-            "uninstall",
-        ],
-    ),
-    ("system", &["info"]),
-    ("data", &["list"]),
-    (
-        "settings",
-        &[
-            "cleanup",
-            "retention",
-            "set-retention",
-            "set-timezone",
-            "timezones",
-            "timezone",
-        ],
-    ),
-];
-
-/// A resolved, whitelisted short-circuit plan.
-pub struct ShortCircuitPlan {
-    pub argv: Vec<String>,
-    pub domain: String,
-    pub action: String,
-}
-
-/// Decide whether a message may be answered WITHOUT the LLM: simple + shell +
-/// double confidence gate + scoped action on the read-only whitelist.
-///
-/// Returns `None` on ANY doubt — missing backend, timeout, low confidence,
-/// non-whitelisted action. The caller must then run the normal LLM turn.
-pub async fn try_shortcircuit(
-    decision: &Option<std::sync::Arc<DecisionService>>,
-    message: &str,
-    budget: std::time::Duration,
-    domain_gate: f32,
-    router: Option<DecisionOutcome>,
-) -> Option<ShortCircuitPlan> {
-    let ds = decision.as_ref()?;
-    if !guard_shadow(ds, "short-circuit") {
-        return None;
-    }
-    // The turn's router decision, resolved ONCE by `on_message` and shared
-    // with the shadow recorder — a resolution failure degrades
-    // all router consumers for the turn (one message, one backend call).
-    let out = router?;
-
-    let simple = out.get("simple")?;
-    if simple.noul_bool() != Some(true) {
-        return None;
-    }
-    let tool = out.get("tool")?;
-    if tool.picked() != Some("shell") || !tool.passes_gate(domain_gate) {
-        return None;
-    }
-    let domain = out.get("domain")?;
-    let dom = domain.picked()?;
-    if !domain.passes_gate(domain_gate) {
-        return None;
-    }
-
-    // Scoped action question over the predicted domain's real subcommands.
-    let acts = DOMAIN_ACTIONS
-        .iter()
-        .find(|(d, _)| *d == dom)
-        .map(|(_, a)| *a)?;
-    let action_q = DecisionQuestion::choice(
-        format!("Which `{dom}` subcommand does the user need?"),
-        acts.iter()
-            .map(|&a| (a.to_string(), a.to_string()))
-            .collect(),
-    );
-    let areq =
-        DecisionRequest::new(format!("User request: {message}")).with_question("action", action_q);
-    let aout = tokio::time::timeout(budget, ds.decide(&areq))
-        .await
-        .ok()?
-        .ok()?;
-    let action = aout.get("action")?.picked()?.to_string();
-    if !aout.get("action")?.passes_gate(0.7) {
-        return None;
-    }
-    if !SC_WHITELIST.contains(&(dom, action.as_str())) {
-        return None;
-    }
-
-    Some(ShortCircuitPlan {
-        argv: vec!["neomind".into(), dom.to_string(), action.clone()],
-        domain: dom.to_string(),
-        action,
-    })
-}
-
-/// Run a whitelisted plan in-process. Errors (including auth or dispatch
-/// refusing in-process) mean "fall back to the LLM", never a user-facing
-/// failure of the short-circuit itself.
-pub async fn execute_shortcircuit(plan: &ShortCircuitPlan) -> Result<String, String> {
-    let argv: Vec<String> = plan.argv.clone();
-    match tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        neomind_cli_ops::dispatch::dispatch(&argv),
-    )
-    .await
-    {
-        Err(_) => Err("short-circuit dispatch timed out".into()),
-        Ok(Err(e)) => Err(format!("dispatch unavailable: {e}")),
-        Ok(Ok(resp)) => {
-            let val = serde_json::to_value(&resp).map_err(|e| e.to_string())?;
-            if !val
-                .get("success")
-                .and_then(|s| s.as_bool())
-                .unwrap_or(false)
-            {
-                return Err(format!("command reported failure: {}", val));
-            }
-            Ok(format_sc_reply(&val, &plan.domain, &plan.action))
-        }
-    }
-}
-
-/// Compact, language-aware rendering of a list-style CliResponse. The LLM is
-/// not involved, so this must stay simple and honest: count + names, capped.
-fn format_sc_reply(val: &serde_json::Value, domain: &str, action: &str) -> String {
-    // CliResponse JSON: {"success":true,"data":...} — data may be array, object or scalar.
-    let data = val.get("data").cloned().unwrap_or(serde_json::Value::Null);
-    let items = data.as_array();
-    let header = match (domain, action) {
-        ("system", "info") => "System info:".to_string(),
-        (d, "list")
-        | (d, "types")
-        | (d, "market-list")
-        | (d, "channel-list")
-        | (d, "channel-types")
-        | (d, "metrics")
-        | (d, "data-sources") => {
-            if let Some(items) = items {
-                format!("{d} {} — {} total", action, items.len())
-            } else {
-                format!("{d} {action}")
-            }
-        }
-        (d, a) => format!("{d} {a}"),
-    };
-    let mut out = header;
-    if let Some(items) = items {
-        out.push_str(":\n");
-        for (i, it) in items.iter().take(15).enumerate() {
-            let name = it
-                .get("name")
-                .or_else(|| it.get("id"))
-                .or_else(|| it.get("device_id"))
-                .or_else(|| it.get("device_type"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("—");
-            if let Some(extra) = it.get("status").and_then(|v| v.as_str()) {
-                out.push_str(&format!("{}. {} ({})\n", i + 1, name, extra));
-            } else {
-                out.push_str(&format!("{}. {}\n", i + 1, name));
-            }
-        }
-        if items.len() > 15 {
-            out.push_str(&format!("… and {} more\n", items.len() - 15));
-        }
-    } else if !data.is_null() {
-        let s = serde_json::to_string_pretty(&data).unwrap_or_default();
-        let s = if s.len() > 1200 {
-            format!("{}…", s.chars().take(1200).collect::<String>())
-        } else {
-            s
-        };
-        out.push_str(&format!(":\n{s}"));
-    }
-    out.push_str("\n(answered by the local decision layer, no LLM turn)");
-    out
-}
-
-#[cfg(test)]
-mod sc_tests {
-    use super::*;
-
-    /// The config round-trip invariants the settings UI depends on. These
-    /// are PURE (no store): apply_config_update is the merge under test.
-    /// Save → load roundtrip through a REAL SettingsStore (the live bug was
-    /// in this ring, not the pure merge): the stored doc must parse back
-    /// with the configured values intact.
-    #[test]
-    fn settings_store_roundtrip_preserves_config() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = neomind_storage::SettingsStore::open(dir.path().join("settings.redb")).unwrap();
-        let mut doc = DecisionFlagsPersist::default();
-        apply_config_update(
-            &mut doc,
-            &DecisionConfigUpdate {
-                budgets: Some(BudgetsUpdate {
-                    sidecar_ms: Some(5000),
-                    ..Default::default()
-                }),
-                engine: Some(EngineUpdate { int8: Some(true) }),
-                ..Default::default()
-            },
-        );
-        let raw = serde_json::to_string(&doc).unwrap();
-        store.save(DECISION_SETTINGS_KEY, &raw).unwrap();
-        let back = store.load(DECISION_SETTINGS_KEY).unwrap().unwrap();
-        let parsed: DecisionFlagsPersist = serde_json::from_str(&back).unwrap();
-        assert_eq!(
-            parsed.budgets.sidecar_ms, 5000,
-            "stored sidecar_ms must parse back"
-        );
-        assert!(parsed.engine.int8, "stored int8 must parse back");
-    }
-
-    #[test]
-    fn unrelated_put_never_resets_sidecar_or_int8() {
-        let mut doc = DecisionFlagsPersist {
-            budgets: BudgetsPersist {
-                sidecar_ms: 5000,
-                ..default_budgets()
-            },
-            engine: EnginePersist { int8: true },
-            ..DecisionFlagsPersist::default()
-        };
-        apply_config_update(
-            &mut doc,
-            &DecisionConfigUpdate {
-                shortcircuit: Some(true),
-                ..Default::default()
-            },
-        );
-        assert_eq!(
-            doc.budgets.sidecar_ms, 5000,
-            "sidecar_ms must survive an unrelated PUT"
-        );
-        assert!(doc.engine.int8, "int8 must survive an unrelated PUT");
-    }
-
-    #[test]
-    fn explicit_put_overrides_and_keeps_siblings() {
-        let mut doc = DecisionFlagsPersist::default();
-        apply_config_update(
-            &mut doc,
-            &DecisionConfigUpdate {
-                gates: Some(GatesUpdate {
-                    domain: Some(0.85),
-                    ..Default::default()
-                }),
-                budgets: Some(BudgetsUpdate {
-                    ask_ms: Some(2000),
-                    ..Default::default()
-                }),
-                engine: Some(EngineUpdate { int8: Some(true) }),
-                ..Default::default()
-            },
-        );
-        assert!((doc.gates.domain - 0.85).abs() < 1e-6);
-        assert_eq!(doc.budgets.ask_ms, 2000);
-        assert!(doc.engine.int8);
-        assert_eq!(doc.gates.other, default_gates().other);
-        assert_eq!(doc.budgets.sidecar_ms, default_budgets().sidecar_ms);
-    }
-
-    #[test]
-    fn shadow_none_stays_none_until_explicitly_put() {
-        let mut doc = DecisionFlagsPersist::default();
-        assert!(doc.shadow.is_none(), "unseeded doc has no forced shadow");
-        apply_config_update(&mut doc, &DecisionConfigUpdate::default());
-        assert!(
-            doc.shadow.is_none(),
-            "empty PUT must not stamp a shadow choice"
-        );
-        apply_config_update(
-            &mut doc,
-            &DecisionConfigUpdate {
-                shadow: Some(false),
-                ..Default::default()
-            },
-        );
-        assert_eq!(doc.shadow, Some(false));
-    }
-
-    #[test]
-    fn whitelist_is_read_only_and_argless() {
-        for (d, a) in SC_WHITELIST {
-            // A whitelist entry whose domain the head can never predict is a
-            // dead entry (this exact bug shipped with ("data","list")).
-            assert!(
-                DOMAIN_CRITERIA.iter().any(|(dd, _)| dd == d),
-                "{d} {a}: domain is not a DOMAIN_CRITERIA option — dead entry"
-            );
-            let acts = DOMAIN_ACTIONS
-                .iter()
-                .find(|(dd, _)| dd == d)
-                .map(|(_, aa)| *aa)
-                .unwrap_or(&[]);
-            assert!(acts.contains(a), "{d} {a} must exist in DOMAIN_ACTIONS");
-            assert!(
-                matches!(
-                    *a,
-                    "list"
-                        | "types"
-                        | "market-list"
-                        | "channel-list"
-                        | "channel-types"
-                        | "metrics"
-                        | "data-sources"
-                        | "info"
-                ),
-                "{d} {a} is not a read-only list-style action"
-            );
-        }
-    }
-
-    #[test]
-    fn formatter_renders_array_data_with_count() {
-        let val = serde_json::json!({
-            "success": true,
-            "data": [
-                {"id": "sensor-001", "status": "online"},
-                {"id": "sensor-002"}
-            ]
-        });
-        let out = format_sc_reply(&val, "device", "list");
-        assert!(out.contains("2 total"), "count header: {out}");
-        assert!(out.contains("sensor-001 (online)"));
-        assert!(out.contains("no LLM turn"));
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1352,8 +460,6 @@ fn decision_config_payload(state: &ServerState) -> serde_json::Value {
     // while it actually sat intact on disk. null = "no posture at all".
     json!({
         "shadow": ds.as_ref().map(|d| d.shadow()),
-        "shortcircuit": doc.shortcircuit,
-        "gates": doc.gates,
         "budgets": doc.budgets,
         "engine": doc.engine,
         "backend": ds.as_ref().map(|d| d.primary_backend_id().to_string()),
@@ -1401,21 +507,12 @@ fn available_backends() -> serde_json::Value {
 pub struct DecisionConfigUpdate {
     /// Record-only posture (true) or act (false).
     pub shadow: Option<bool>,
-    pub shortcircuit: Option<bool>,
-    pub gates: Option<GatesUpdate>,
     pub budgets: Option<BudgetsUpdate>,
     pub engine: Option<EngineUpdate>,
 }
 
 #[derive(Debug, Deserialize, Default)]
-pub struct GatesUpdate {
-    pub domain: Option<f32>,
-    pub other: Option<f32>,
-}
-
-#[derive(Debug, Deserialize, Default)]
 pub struct BudgetsUpdate {
-    pub shortcircuit_ms: Option<u32>,
     pub ask_ms: Option<u32>,
     pub sidecar_ms: Option<u32>,
 }
@@ -1425,16 +522,6 @@ pub struct EngineUpdate {
     /// Engine-level: applies at the next decision-layer refresh (native) —
     /// the extension sidecar reads its own env until it grows a config.
     pub int8: Option<bool>,
-}
-
-fn validate_gate(v: f32) -> Result<(), ErrorResponse> {
-    if (0.0..=1.0).contains(&v) {
-        Ok(())
-    } else {
-        Err(ErrorResponse::bad_request(format!(
-            "gate values must be within [0,1], got {v}"
-        )))
-    }
 }
 
 fn validate_budget(name: &str, v: u32) -> Result<(), ErrorResponse> {
@@ -1465,20 +552,8 @@ pub async fn put_config(
     Json(req): Json<DecisionConfigUpdate>,
 ) -> HandlerResult<serde_json::Value> {
     // Validate BEFORE touching anything — a rejected PUT leaves state intact.
-    if let Some(g) = &req.gates {
-        if let Some(v) = g.domain {
-            validate_gate(v)?;
-        }
-        if let Some(v) = g.other {
-            validate_gate(v)?;
-        }
-    }
     if let Some(b) = &req.budgets {
-        for (name, v) in [
-            ("shortcircuit_ms", b.shortcircuit_ms),
-            ("ask_ms", b.ask_ms),
-            ("sidecar_ms", b.sidecar_ms),
-        ] {
+        for (name, v) in [("ask_ms", b.ask_ms), ("sidecar_ms", b.sidecar_ms)] {
             if let Some(v) = v {
                 validate_budget(name, v)?;
             }
@@ -1515,29 +590,12 @@ pub async fn put_config(
     // Apply live (the persisted doc above is already durable). Hot knobs
     // first (flags atomics + service), then the knobs that live in the
     // CONSTRUCTED client/engine — those re-derive on the refresh below.
-    {
-        let flags = &state.decision_flags;
-        if let Some(v) = req.shortcircuit {
-            flags.shortcircuit.store(v, Ordering::Relaxed);
-        }
-        if let Some(g) = &req.gates {
-            if let Some(v) = g.domain {
-                flags.gate_domain.store(v.to_bits(), Ordering::Relaxed);
-            }
-            if let Some(v) = g.other {
-                flags.gate_other.store(v.to_bits(), Ordering::Relaxed);
-                if let Some(ds) = state.decision_snapshot() {
-                    ds.set_gate(neomind_core::decision::GatePolicy { min_confidence: v });
-                }
-            }
-        }
-        if let Some(b) = &req.budgets {
-            if let Some(v) = b.shortcircuit_ms {
-                flags.budget_shortcircuit_ms.store(v, Ordering::Relaxed);
-            }
-            if let Some(v) = b.ask_ms {
-                flags.budget_ask_ms.store(v, Ordering::Relaxed);
-            }
+    if let Some(b) = &req.budgets {
+        if let Some(v) = b.ask_ms {
+            state
+                .decision_flags
+                .budget_ask_ms
+                .store(v, Ordering::Relaxed);
         }
     }
     if let Some(shadow) = req.shadow {
@@ -1576,7 +634,6 @@ pub async fn put_config(
     tracing::info!(
         target: "neomind::decision",
         shadow = ?doc.shadow,
-        shortcircuit = doc.shortcircuit,
         "decision config updated (live)"
     );
     // Full GET shape (backend/backends included) — a bare doc here crashed
@@ -1742,32 +799,112 @@ pub async fn decide(
 mod tests {
     use super::*;
 
-    /// DOMAIN_ACTIONS is a HAND-MIRRORED table feeding the short-circuit
-    /// "which subcommand" question — a stale row makes the router pick a
-    /// subcommand that no longer exists (or never learn one that does;
-    /// first run caught `device latest` missing). Lock it to the live clap
-    /// tree so drift fails the suite, the same pattern as the agent
-    /// crate's domain-index check. TOP-LEVEL subcommands only: the table
-    /// offers two-token `neomind <domain> <sub>` choices, so nested groups
-    /// (e.g. `device drafts <sub>`) are deliberately out of scope.
+    /// The config round-trip invariants the settings UI depends on. These
+    /// are PURE (no store): apply_config_update is the merge under test.
+    /// Save → load roundtrip through a REAL SettingsStore (the live bug was
+    /// in this ring, not the pure merge): the stored doc must parse back
+    /// with the configured values intact.
     #[test]
-    fn domain_actions_mirror_the_live_cli_tree() {
-        use clap::CommandFactory;
-        let root = neomind_cli_ops::dispatch::commands::Args::command();
-        for (domain, actions) in DOMAIN_ACTIONS {
-            let Some(cmd) = root.get_subcommands().find(|c| c.get_name() == *domain) else {
-                panic!("DOMAIN_ACTIONS lists `{domain}` but the CLI has no such domain");
-            };
-            let live: std::collections::BTreeSet<&str> = cmd
-                .get_subcommands()
-                .map(|c| c.get_name())
-                .filter(|n| *n != "help")
-                .collect();
-            let mirrored: std::collections::BTreeSet<&str> = actions.iter().copied().collect();
-            assert_eq!(
-                live, mirrored,
-                "DOMAIN_ACTIONS[{domain}] drifted from the live CLI tree"
-            );
-        }
+    fn settings_store_roundtrip_preserves_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = neomind_storage::SettingsStore::open(dir.path().join("settings.redb")).unwrap();
+        let mut doc = DecisionFlagsPersist::default();
+        apply_config_update(
+            &mut doc,
+            &DecisionConfigUpdate {
+                budgets: Some(BudgetsUpdate {
+                    sidecar_ms: Some(5000),
+                    ..Default::default()
+                }),
+                engine: Some(EngineUpdate { int8: Some(true) }),
+                ..Default::default()
+            },
+        );
+        let raw = serde_json::to_string(&doc).unwrap();
+        store.save(DECISION_SETTINGS_KEY, &raw).unwrap();
+        let back = store.load(DECISION_SETTINGS_KEY).unwrap().unwrap();
+        let parsed: DecisionFlagsPersist = serde_json::from_str(&back).unwrap();
+        assert_eq!(
+            parsed.budgets.sidecar_ms, 5000,
+            "stored sidecar_ms must parse back"
+        );
+        assert!(parsed.engine.int8, "stored int8 must parse back");
+    }
+
+    #[test]
+    fn unrelated_put_never_resets_sidecar_or_int8() {
+        let mut doc = DecisionFlagsPersist {
+            budgets: BudgetsPersist {
+                sidecar_ms: 5000,
+                ..default_budgets()
+            },
+            engine: EnginePersist { int8: true },
+            ..DecisionFlagsPersist::default()
+        };
+        apply_config_update(
+            &mut doc,
+            &DecisionConfigUpdate {
+                budgets: Some(BudgetsUpdate {
+                    ask_ms: Some(2000),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            doc.budgets.sidecar_ms, 5000,
+            "sidecar_ms must survive an unrelated PUT"
+        );
+        assert!(doc.engine.int8, "int8 must survive an unrelated PUT");
+    }
+
+    #[test]
+    fn explicit_put_overrides_and_keeps_siblings() {
+        let mut doc = DecisionFlagsPersist::default();
+        apply_config_update(
+            &mut doc,
+            &DecisionConfigUpdate {
+                budgets: Some(BudgetsUpdate {
+                    ask_ms: Some(2000),
+                    ..Default::default()
+                }),
+                engine: Some(EngineUpdate { int8: Some(true) }),
+                ..Default::default()
+            },
+        );
+        assert_eq!(doc.budgets.ask_ms, 2000);
+        assert!(doc.engine.int8);
+        assert_eq!(doc.budgets.sidecar_ms, default_budgets().sidecar_ms);
+    }
+
+    #[test]
+    fn shadow_none_stays_none_until_explicitly_put() {
+        let mut doc = DecisionFlagsPersist::default();
+        assert!(doc.shadow.is_none(), "unseeded doc has no forced shadow");
+        apply_config_update(&mut doc, &DecisionConfigUpdate::default());
+        assert!(
+            doc.shadow.is_none(),
+            "empty PUT must not stamp a shadow choice"
+        );
+        apply_config_update(
+            &mut doc,
+            &DecisionConfigUpdate {
+                shadow: Some(false),
+                ..Default::default()
+            },
+        );
+        assert_eq!(doc.shadow, Some(false));
+    }
+
+    /// A doc persisted by the previous config generation (with the removed
+    /// shortcircuit/gates fields) must parse and drop them silently —
+    /// desktop deployments carry the old settings.redb forward.
+    #[test]
+    fn legacy_persisted_doc_parses_without_removed_fields() {
+        let raw = r#"{"shortcircuit":true,"guidance":true,"shadow":true,"gates":{"domain":0.8,"other":0.7},"budgets":{"shortcircuit_ms":600,"ask_ms":1500,"sidecar_ms":1500},"engine":{"int8":false}}"#;
+        let doc: DecisionFlagsPersist = serde_json::from_str(raw).unwrap();
+        assert_eq!(doc.shadow, Some(true), "shadow survives the field removals");
+        assert_eq!(doc.budgets.ask_ms, 1500);
+        assert_eq!(doc.budgets.sidecar_ms, 1500);
     }
 }
