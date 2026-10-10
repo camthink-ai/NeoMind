@@ -420,6 +420,12 @@ pub async fn process_stream_events_with_safeguards(
             let mut promise_directive_sent = false;
             let mut promise_directive_pending: Option<String> = None;
 
+            // User-facing guard notes for THIS turn (incomplete action,
+            // guard budget spent): emitted as SystemNote events and
+            // attached to the final assistant message — never merged into
+            // the reply text (user feedback 2026-10-10).
+            let mut turn_system_notes: Vec<String> = Vec::new();
+
             // === INTENT & PLAN VISUALIZATION ===
             // Send intent and plan events first to show user what's happening
             yield intent_event;
@@ -1708,17 +1714,22 @@ pub async fn process_stream_events_with_safeguards(
                     // STILL ends on an action promise. Accept it — but LABEL it:
                     // a bare "Let me proceed with the installation:" as the last
                     // message reads to the user like the task finished silently.
-                    // Append an explicit progress-report note (live via content
-                    // event + persisted with the message).
+                    // Emitted as a SystemNote event (rendered as a callout,
+                    // persisted on the message) — NOT merged into the reply
+                    // text (user feedback 2026-10-10).
                     if crate::agent::is_narration_without_action(&raw_response) {
                         tracing::warn!(
                             round = tool_iteration_count + 1,
                             nudges = narration_nudges,
                             "Turn ending on an action promise with guard budget spent — appending progress note"
                         );
-                        const NOTE: &str = "\n\n---\nℹ️ **[系统提示 / System note]** 本轮对话到此结束（已达护栏预算），以上内容是**进度说明而非最终结果**——描述的后续步骤尚未执行。发送“继续”可从断点恢复。\nThe turn ended here (guard budget spent): the reply above is a progress report, not a completed result — the promised next step did NOT run. Send \"继续 / continue\" to resume from this point.";
-                        yield AgentEvent::content(NOTE);
-                        raw_response.push_str(NOTE);
+                        let note = if super::intent::note_prefers_chinese(&user_message) {
+                            "本轮对话到此结束（已达护栏预算），以上内容是进度说明而非最终结果——描述的后续步骤尚未执行。发送「继续」可从断点恢复。".to_string()
+                        } else {
+                            "The turn ended here (guard budget spent): the reply above is a progress report, not a completed result — the promised next step did NOT run. Send \"continue\" to resume from this point.".to_string()
+                        };
+                        yield AgentEvent::system_note(note.clone());
+                        turn_system_notes.push(note);
                     } else if let Some(note) = {
                         // === TURN-END ACTION-COMPLETENESS NOTE ===
                         // Live incident: a 400s turn ended with the requested
@@ -1743,8 +1754,8 @@ pub async fn process_stream_events_with_safeguards(
                         tracing::warn!(
                             "Turn ending with the requested ACTION never executed — appending completeness note"
                         );
-                        yield AgentEvent::content(note.clone());
-                        raw_response.push_str(&note);
+                        yield AgentEvent::system_note(note.clone());
+                        turn_system_notes.push(note);
                     }
 
                     // `buffer` holds *every* streamed chunk for this round and is the
@@ -1943,12 +1954,15 @@ pub async fn process_stream_events_with_safeguards(
                     // Clean any embedded tool call JSON from response
                     let response_to_save = remove_tool_calls_from_response(&raw_response);
 
-                    let initial_msg = if !thinking_content.is_empty() {
+                    let mut initial_msg = if !thinking_content.is_empty() {
                         let cleaned_thinking = cleanup_thinking_content(&thinking_content);
                         AgentMessage::assistant_with_thinking(&response_to_save, &cleaned_thinking)
                     } else {
                         AgentMessage::assistant(&response_to_save)
                     };
+                    if !turn_system_notes.is_empty() {
+                        initial_msg.system_notes = Some(turn_system_notes.clone());
+                    }
                     {
                         let mut state = internal_state.write().await;
                         // Register response for cross-turn repetition detection

@@ -323,6 +323,13 @@ async fn process_stream_to_channel(
                         }
                         end_json
                     }
+                    AgentEvent::SystemNote { note } => {
+                        json!({
+                            "type": "SystemNote",
+                            "note": note,
+                            "sessionId": session_id,
+                        })
+                    }
                     AgentEvent::Progress {
                         message,
                         stage,
@@ -1488,6 +1495,12 @@ async fn send_session_history(
                     if let Some(ref rt) = msg.round_thinking {
                         if let Some(obj) = history_json.as_object_mut() {
                             obj.insert("round_thinking".to_string(), rt.clone());
+                        }
+                    }
+                    // Include system_notes if present (guard callouts)
+                    if let Some(ref sn) = msg.system_notes {
+                        if let Some(obj) = history_json.as_object_mut() {
+                            obj.insert("system_notes".to_string(), serde_json::json!(sn));
                         }
                     }
                     let history_msg = history_json.to_string();

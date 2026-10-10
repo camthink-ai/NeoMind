@@ -739,16 +739,27 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                     // row): label it as a progress report rather than letting
                     // the promise impersonate a finished answer (see the
                     // stream_core backstop for the rationale).
-                    let mut nudge_final = nudge_buffer.clone();
+                    let nudge_final = nudge_buffer.clone();
+                    let mut system_notes: Vec<String> = Vec::new();
                     if crate::agent::is_narration_without_action(&nudge_final) {
                         tracing::warn!("Multimodal turn ending on an action promise after nudge — appending progress note");
-                        const NOTE: &str = "\n\n---\nℹ️ **[系统提示 / System note]** 本轮对话到此结束，以上内容是**进度说明而非最终结果**。发送“继续”可从断点恢复。\nThe turn ended here: the reply above is a progress report, not a completed result. Send \"继续 / continue\" to resume.";
-                        yield AgentEvent::content(NOTE);
-                        nudge_final.push_str(NOTE);
+                        // Single-language (matched to the user's message),
+                        // emitted as a SystemNote callout — never merged
+                        // into the reply text (user feedback 2026-10-10).
+                        let note = if super::intent::note_prefers_chinese(&user_message) {
+                            "本轮对话到此结束，以上内容是进度说明而非最终结果。发送「继续」可从断点恢复。".to_string()
+                        } else {
+                            "The turn ended here: the reply above is a progress report, not a completed result. Send \"continue\" to resume.".to_string()
+                        };
+                        yield AgentEvent::system_note(note.clone());
+                        system_notes.push(note);
                     }
                     yield AgentEvent::content(nudge_final.clone());
                     let final_text = remove_tool_calls_from_response(&nudge_final);
-                    let final_msg = AgentMessage::assistant(&final_text);
+                    let mut final_msg = AgentMessage::assistant(&final_text);
+                    if !system_notes.is_empty() {
+                        final_msg.system_notes = Some(system_notes);
+                    }
                     internal_state.write().await.push_message(final_msg);
                     handled_by_nudge = true;
                 } else {

@@ -66,6 +66,9 @@ export interface StreamEndResult {
   /** Intermediate rounds only — the final round's content is `content`. */
   roundContents?: Record<number, string>
   roundThinking?: Record<number, string>
+  /** Runtime guard notes (incomplete action, budget spent) — rendered as
+   *  system callouts, never part of `content`. */
+  systemNotes?: string[]
   /** Wall time from the first streamed event to end, ms. */
   generationMs?: number
   /** True when the accumulator was reset mid-turn (session switch away and
@@ -121,6 +124,7 @@ export function useChatStream(options: UseChatStreamOptions) {
   const roundContentsAccRef = useRef<Record<number, string>>({})
   const thinkingAccRef = useRef("")
   const roundThinkingAccRef = useRef<Record<number, string>>({})
+  const systemNotesAccRef = useRef<string[]>([])
   const streamStartRef = useRef<number | null>(null)
   const streamingMessageIdRef = useRef<string | null>(null)
   const isStreamingRef = useRef(false)
@@ -164,6 +168,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     roundContentsAccRef.current = {}
     thinkingAccRef.current = ""
     roundThinkingAccRef.current = {}
+    systemNotesAccRef.current = []
     streamStartRef.current = null
     streamingMessageIdRef.current = null
     isStreamingRef.current = false
@@ -379,6 +384,9 @@ export function useChatStream(options: UseChatStreamOptions) {
         const content = accRef.current.content
         const hasRoundContents = Object.keys(roundContentsAccRef.current).length > 0
         const hasRoundThinking = Object.keys(roundThinkingAccRef.current).length > 0
+        const systemNotes = systemNotesAccRef.current.length > 0
+          ? [...systemNotesAccRef.current]
+          : undefined
         const generationMs = streamStartRef.current !== null
           ? Date.now() - streamStartRef.current
           : undefined
@@ -389,6 +397,7 @@ export function useChatStream(options: UseChatStreamOptions) {
           toolCalls,
           roundContents: hasRoundContents ? { ...roundContentsAccRef.current } : undefined,
           roundThinking: hasRoundThinking ? { ...roundThinkingAccRef.current } : undefined,
+          systemNotes,
           generationMs,
           interrupted: interruptedRef.current || undefined,
         }
@@ -416,6 +425,13 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case "Warning":
         optionsRef.current.onWarning?.(data.message || "Warning")
+        break
+
+      case "SystemNote":
+        // Guard note for the user — carried on the finished message (the
+        // callout renders with the final bubble), not streamed as content.
+        markStreamStart()
+        systemNotesAccRef.current.push(data.note || "")
         break
 
       default:

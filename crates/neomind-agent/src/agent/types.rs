@@ -106,6 +106,16 @@ pub enum AgentEvent {
         #[serde(rename = "elapsedMs", skip_serializing_if = "Option::is_none")]
         elapsed_ms: Option<u64>,
     },
+    /// System note for the USER — runtime guard output (incomplete action,
+    /// guard budget spent, …). NOT part of the assistant's message text:
+    /// the frontend renders it as a distinct callout below the message, and
+    /// the note is persisted on the message as `system_notes` so restored
+    /// sessions keep the labeling. Single-language (matched to the user's
+    /// message language by the emitter).
+    SystemNote {
+        /// Note body (no header/footer markup — presentation is the UI's job)
+        note: String,
+    },
 }
 
 impl AgentEvent {
@@ -238,6 +248,12 @@ impl AgentEvent {
     }
 
     /// Create a progress event.
+    /// Create a user-facing system note event (guard output rendered as a
+    /// callout by the frontend, never part of the reply text).
+    pub fn system_note(note: impl Into<String>) -> Self {
+        Self::SystemNote { note: note.into() }
+    }
+
     pub fn progress(message: impl Into<String>, stage: impl Into<String>, elapsed: u64) -> Self {
         Self::Progress {
             message: message.into(),
@@ -371,6 +387,10 @@ pub struct AgentMessage {
     /// Per-round thinking content for grouped rendering
     #[serde(skip_serializing_if = "Option::is_none")]
     pub round_thinking: Option<Value>,
+    /// Runtime guard notes for the user (incomplete action, guard budget
+    /// spent, …) — rendered as callouts, never merged into `content`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_notes: Option<Vec<String>>,
     /// Timestamp
     pub timestamp: i64,
 }
@@ -441,6 +461,7 @@ impl AgentMessage {
             images: None,
             round_contents: None,
             round_thinking: None,
+            system_notes: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -457,6 +478,7 @@ impl AgentMessage {
             images: Some(images),
             round_contents: None,
             round_thinking: None,
+            system_notes: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -473,6 +495,7 @@ impl AgentMessage {
             images: None,
             round_contents: None,
             round_thinking: None,
+            system_notes: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -492,6 +515,7 @@ impl AgentMessage {
             images: None,
             round_contents: None,
             round_thinking: None,
+            system_notes: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -508,6 +532,7 @@ impl AgentMessage {
             images: None,
             round_contents: None,
             round_thinking: None,
+            system_notes: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -524,6 +549,7 @@ impl AgentMessage {
             images: None,
             round_contents: None,
             round_thinking: None,
+            system_notes: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -540,6 +566,7 @@ impl AgentMessage {
             images: None,
             round_contents: None,
             round_thinking: None,
+            system_notes: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -560,6 +587,7 @@ impl AgentMessage {
             images: None,
             round_contents: None,
             round_thinking: None,
+            system_notes: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -707,6 +735,7 @@ impl AgentMessage {
             images: None,
             round_contents: None,
             round_thinking: None,
+            system_notes: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }

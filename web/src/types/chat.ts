@@ -16,6 +16,10 @@ export interface Message {
   round_contents?: Record<number, string>
   // Per-round thinking content for grouped rendering
   round_thinking?: Record<number, string>
+  // Runtime guard notes for the user (incomplete action, guard budget
+  // spent, …) — rendered as a system callout below the content, never
+  // merged into it.
+  systemNotes?: string[]
 }
 
 /**
@@ -96,6 +100,9 @@ export type ServerMessage =
   | { type: 'Progress'; elapsed: number; stage?: string; message?: string; remainingTime?: number; sessionId: string }
   // Warning event when approaching timeout
   | { type: 'Warning'; message: string; elapsed?: number; remainingTime?: number; sessionId: string }
+  // Runtime guard note for the user (incomplete action, guard budget
+  // spent) — rendered as a callout, never part of the content stream.
+  | { type: 'SystemNote'; note: string; sessionId: string }
   // Execution plan step (informational, not displayed in current UI)
   | { type: 'Plan'; step: string; stage: string; sessionId: string }
   // Heartbeat to keep connection alive (not displayed)

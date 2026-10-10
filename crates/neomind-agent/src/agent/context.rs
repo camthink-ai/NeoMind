@@ -103,6 +103,7 @@ pub fn compact_tool_results(messages: &[AgentMessage], keep_recent: usize) -> Ve
                     images: None,
                     round_contents: None,
                     round_thinking: None,
+                    system_notes: None,
                     timestamp: msg.timestamp,
                 });
             }
@@ -439,6 +440,7 @@ pub fn compact_conversation(
             images: None,
             round_contents: None,
             round_thinking: None,
+            system_notes: None,
             timestamp,
         });
     }

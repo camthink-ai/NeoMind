@@ -1947,6 +1947,7 @@ fn agent_event_to_json(event: &AgentEvent) -> Value {
             }
             v
         }
+        AgentEvent::SystemNote { note } => json!({ "type": "SystemNote", "note": note }),
         AgentEvent::Progress {
             message,
             stage,

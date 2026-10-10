@@ -59,6 +59,7 @@ export function mergeMessagesForDisplay(messages: Message[]): Message[] {
     let allToolCalls: any[] = []
     let roundContents: Record<number, string> = {}
     let roundThinking: Record<number, string> = {}
+    let systemNotes: string[] = []
     let roundCounter = 1
     let finalContent = ''
     let thinking: string | undefined
@@ -91,6 +92,15 @@ export function mergeMessagesForDisplay(messages: Message[]): Message[] {
       if (cur.round_thinking) {
         roundThinking = { ...roundThinking, ...cur.round_thinking }
       }
+      // Raw API messages carry the backend's snake_case field (Message's
+      // other history fields keep snake_case; systemNotes is the camelCase
+      // UI field).
+      {
+        const rawNotes = (cur as Message & { system_notes?: string[] }).system_notes
+        if (rawNotes) {
+          systemNotes = [...systemNotes, ...rawNotes]
+        }
+      }
 
       if (hasTools) {
         const roundNum = cur.tool_calls![0]?.round ?? roundCounter
@@ -116,6 +126,7 @@ export function mergeMessagesForDisplay(messages: Message[]): Message[] {
     merged.tool_calls = allToolCalls.length > 0 ? allToolCalls : undefined
     merged.round_contents = Object.keys(roundContents).length > 0 ? roundContents : undefined
     merged.round_thinking = Object.keys(roundThinking).length > 0 ? roundThinking : undefined
+    merged.systemNotes = systemNotes.length > 0 ? systemNotes : undefined
 
     if (merged.content || merged.thinking || merged.tool_calls) {
       result.push(merged)

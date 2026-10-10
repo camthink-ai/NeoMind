@@ -98,6 +98,11 @@ pub struct SessionMessage {
     /// Per-round thinking content for grouped rendering (round number → thinking text).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub round_thinking: Option<serde_json::Value>,
+    /// Runtime guard notes for the user (incomplete action, guard budget
+    /// spent, …) — rendered as callouts by the frontend, never part of
+    /// `content`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_notes: Option<Vec<String>>,
     /// Message timestamp.
     pub timestamp: i64,
 }
@@ -125,6 +130,7 @@ impl SessionMessage {
             images: None,
             round_contents: None,
             round_thinking: None,
+            system_notes: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -141,6 +147,7 @@ impl SessionMessage {
             images: Some(images),
             round_contents: None,
             round_thinking: None,
+            system_notes: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -157,6 +164,7 @@ impl SessionMessage {
             images: None,
             round_contents: None,
             round_thinking: None,
+            system_notes: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -173,6 +181,7 @@ impl SessionMessage {
             images: None,
             round_contents: None,
             round_thinking: None,
+            system_notes: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -189,6 +198,7 @@ impl SessionMessage {
             images: None,
             round_contents: None,
             round_thinking: None,
+            system_notes: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -1175,6 +1185,7 @@ mod tests {
             images: None,
             round_contents: None,
             round_thinking: None,
+            system_notes: None,
             timestamp: chrono::Utc::now().timestamp(),
         };
         let msg2 = SessionMessage {
@@ -1187,6 +1198,7 @@ mod tests {
             images: None,
             round_contents: None,
             round_thinking: None,
+            system_notes: None,
             timestamp: chrono::Utc::now().timestamp(),
         };
         let messages = vec![msg1, msg2];
@@ -1277,6 +1289,7 @@ mod tests {
             images: None,
             round_contents: None,
             round_thinking: None,
+            system_notes: None,
             timestamp: 12345,
         };
 

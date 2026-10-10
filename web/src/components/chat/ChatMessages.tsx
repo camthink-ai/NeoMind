@@ -316,6 +316,22 @@ export function ChatMessages({
                       </>
                     )
                   })()}
+                  {/* Runtime guard notes (incomplete action, guard budget
+                      spent): system callouts, clearly not model speech —
+                      single-language, styled apart from the content. */}
+                  {message.role === 'assistant' && message.systemNotes && message.systemNotes.length > 0 && (
+                    <div className="mt-2 px-3 flex flex-col gap-1.5">
+                      {message.systemNotes.map((note, i) => (
+                        <div
+                          key={i}
+                          className="flex items-start gap-2 rounded-md border border-dashed border-border bg-muted/40 px-3 py-2 text-xs leading-relaxed text-muted-foreground"
+                        >
+                          <span className="mt-px shrink-0">ℹ️</span>
+                          <span>{note}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
 

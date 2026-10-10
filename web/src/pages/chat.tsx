@@ -222,6 +222,7 @@ export function ChatPage() {
         tool_calls: result.toolCalls.length > 0 ? result.toolCalls : undefined,
         round_contents: result.roundContents,
         round_thinking: result.roundThinking,
+        systemNotes: result.systemNotes,
       }
       addMessage(completeMessage)
       setLastAssistantMessageId(result.id)

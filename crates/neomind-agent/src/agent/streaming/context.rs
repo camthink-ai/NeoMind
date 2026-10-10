@@ -294,6 +294,7 @@ fn compact_tool_results_stream_with_config(
                     images: None,
                     round_contents: None,
                     round_thinking: None,
+                    system_notes: None,
                     timestamp: msg.timestamp,
                 };
                 result.push(summary_msg);

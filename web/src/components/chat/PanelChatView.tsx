@@ -143,6 +143,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
         thinking: result.thinking,
         tool_calls: result.toolCalls.length > 0 ? result.toolCalls : undefined,
         round_contents: result.roundContents,
+        systemNotes: result.systemNotes,
         round_thinking: result.roundThinking,
       })
       // Reconcile with the server's canonical history. The live assembly
