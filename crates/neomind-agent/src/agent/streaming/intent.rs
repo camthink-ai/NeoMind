@@ -71,48 +71,20 @@ pub(crate) fn all_tools_were_read_only(
     executed_commands: &[&str],
     _all_results: &[(String, String)],
 ) -> bool {
-    // Mutation command patterns — if ANY of these appear, it's NOT read-only
-    const MUTATION_COMMANDS: &[&str] = &[
-        " create",
-        " delete",
-        " update",
-        " control",
-        " enable",
-        " disable",
-        " write-metric",
-        " send-message",
-        " share",
-        " install ",
-        " uninstall ",
-        " control ",
-        " send ",
-        " channel-create",
-        " channel-update",
-        " channel-delete",
-        // Component-level mutations (dashboard widget edits) — without these,
-        // an add-components/remove-components pair (a REAL mutation) reads as
-        // "list/query only" and the forced continuation keeps firing after
-        // the user's change is already applied.
-        " add-component",
-        " remove-component",
-        " update-component",
-        // Misc mutations
-        " publish",
-        " push",
-        " register",
-        " import",
-    ];
-
+    // Single source: the shared MUTATION_COMMAND_PATTERNS. This function
+    // used to carry its OWN near-copy of the list, and the two drifted —
+    // the read-only detector kept the buggy bare " push" (every `neomind
+    // push list` read as a mutation, dead-ending dead-end detection for
+    // the push domain) and never learned market-install/start/stop/…,
+    // so list-only continuations fired after real mutations ran.
+    //
     // If no commands were executed, we can't determine — assume not read-only
     if executed_commands.is_empty() {
         return false;
     }
 
     for cmd in executed_commands {
-        let cmd_lower = cmd.to_lowercase();
-        // Check if this command is a mutation
-        let is_mutation = MUTATION_COMMANDS.iter().any(|m| cmd_lower.contains(m));
-        if is_mutation {
+        if is_mutation_command(&cmd.to_lowercase()) {
             return false;
         }
     }
@@ -457,7 +429,12 @@ pub(crate) fn extract_action_parts(msg: &str) -> (&'static str, &'static str) {
 
 /// Mutation command patterns (shared): a shell command containing any of
 /// these mutates platform state. Used by the read-only detector AND the
-/// turn-end "did any mutation SUCCEED" tracker.
+/// turn-end "did any mutation SUCCEED" tracker. Audited against the full
+/// live CLI surface: every state-changing subcommand must appear here or
+/// its successes go untracked (market-install, push start/stop, llm
+/// activate, draft approve/reject, …) — and read-only ones must NOT
+/// (`push list` used to match the bare " push" shell pattern, killing
+/// dead-end detection for the whole push domain).
 pub(crate) const MUTATION_COMMAND_PATTERNS: &[&str] = &[
     " create",
     " delete",
@@ -478,8 +455,31 @@ pub(crate) const MUTATION_COMMAND_PATTERNS: &[&str] = &[
     " add-component",
     " remove-component",
     " update-component",
+    // Market installs register a component — bare " install " misses them
+    // (hyphen prefix). Bounded: market-install takes a required id.
+    " market-install ",
+    // Lifecycle switches; bounded with a trailing space so filter values
+    // ("--status starting", "--filter activated") don't match.
+    " start ",
+    " stop ",
+    " activate ",
+    // State changes with no action class of their own (generic): broker
+    // subscriptions, agent runs, memory wipes, onboarding draft decisions,
+    // extension lifecycle, config setters, retention.
+    " subscribe ",
+    " unsubscribe ",
+    " invoke ",
+    " clear-memory ",
+    " approve ",
+    " reject ",
+    " reload ",
+    " build ",
+    " --set",
+    " set-retention",
+    // Generic shell-side mutations. NOTE "git push", not " push": the bare
+    // form matched the read-only `neomind push list` domain commands.
     " publish",
-    " push",
+    "git push",
     " register",
     " import",
 ];
@@ -862,6 +862,62 @@ mod tests {
         assert!(all_tools_were_read_only(
             &["neomind dashboard get d1", "neomind widget list"],
             &[]
+        ));
+    }
+
+    /// The mutation-pattern audit (against the full live CLI surface):
+    /// every state-changing subcommand must register as a mutation, and
+    /// read-only commands must not — the bare " push" shell pattern used
+    /// to match `neomind push list`, killing dead-end detection for the
+    /// whole push domain, while market-install / push start / llm
+    /// activate / draft approve successes went entirely untracked.
+    #[test]
+    fn mutation_patterns_cover_the_live_surface() {
+        // Mutations the old table missed.
+        for cmd in [
+            "neomind widget market-install gauge-chart",
+            "neomind extension market-install laya-decision",
+            "neomind push start webhook-1",
+            "neomind push stop webhook-1",
+            "neomind llm activate ollama-local",
+            "neomind connector subscribe device/+/status",
+            "neomind connector unsubscribe device/+/status",
+            "neomind agent invoke inspect-agent",
+            "neomind agent clear-memory demo-agent",
+            "neomind device drafts approve ne101-001",
+            "neomind device drafts reject ne101-001",
+            "neomind extension reload laya-decision",
+            "neomind extension build ./my-ext/",
+            "neomind extension config laya-decision --set '{\"k\":1}'",
+            "neomind settings set-retention --enabled true --days 30",
+        ] {
+            assert!(is_mutation_command(cmd), "must be a mutation: {cmd}");
+            assert!(!all_tools_were_read_only(&[cmd], &[]), "{cmd}");
+        }
+        // Read-only shapes that must NOT match (bounded/substring traps).
+        for cmd in [
+            "neomind push list",
+            "neomind push get webhook-1",
+            "neomind push stats",
+            "neomind connector subscriptions",
+            "neomind agent list --status starting",
+            "neomind llm list",
+            "neomind device drafts list",
+        ] {
+            assert!(!is_mutation_command(cmd), "false mutation: {cmd}");
+            assert!(all_tools_were_read_only(&[cmd], &[]), "{cmd}");
+        }
+        // New lifecycle patterns classify into the right action classes so
+        // delivery matching works (push start delivers an enable/start).
+        assert!(mutation_satisfies_action(
+            "neomind push start webhook-1",
+            "",
+            "enable/start"
+        ));
+        assert!(mutation_satisfies_action(
+            "neomind widget market-install gauge-chart",
+            "widget",
+            "install"
         ));
     }
 }

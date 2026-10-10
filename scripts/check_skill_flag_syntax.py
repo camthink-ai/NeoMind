@@ -3,8 +3,11 @@
 
 Catches the write-metric class of bug: doc shows positional args where the
 CLI requires --flags (or vice versa), unknown flags, unknown commands,
-missing required flags, too many positionals.
+missing required flags, too many positionals. Also validates add-components
+`type` VALUES semantically (builtin ∪ example ids) — the flag syntax can be
+perfect while the command is still always-rejected ("type": "custom").
 """
+import json
 import re
 import sys
 from pathlib import Path
@@ -12,6 +15,15 @@ from pathlib import Path
 ROOT = Path("/Users/shenmingming/CamThink Project/NeoMind")
 CMDS = ROOT / "crates/neomind-cli-ops/src/dispatch/commands.rs"
 SKILLS = ROOT / "crates/neomind-agent/src/skills/builtins"
+DASHBOARD_CORE = ROOT / "crates/neomind-core/src/dashboard.rs"
+
+# Community widgets use their widget ID as `type`, so doc examples need
+# example ids. Every entry must be an id a reader could plausibly install
+# or an obvious placeholder — never a category word like "custom".
+DOC_EXAMPLE_COMPONENT_TYPES = {
+    "drawing-component",
+    "device-info-widget",
+}
 
 # ---------------------------------------------------------------- CLI parse
 
@@ -399,6 +411,80 @@ def documented_paths(trees):
                 doc.add(tuple(path))
     return doc
 
+def builtin_widget_types():
+    """Component types the server accepts as builtin (parsed from
+    neomind-core's BUILTIN_WIDGET_TYPES — the same list the API serves)."""
+    src = DASHBOARD_CORE.read_text()
+    m = re.search(r'BUILTIN_WIDGET_TYPES[^=]*=\s*&?\[', src)
+    if not m:
+        raise SystemExit(f'cannot locate BUILTIN_WIDGET_TYPES in {DASHBOARD_CORE}')
+    body = src[m.end():src.index('];', m.end())]
+    return set(re.findall(r'type_id:\s*"([^"]+)"', body))
+
+
+def extract_components_arrays(text):
+    """Yield each bracket-balanced JSON array following a `--components`."""
+    for m in re.finditer(r'--components', text):
+        start = text.find('[', m.end())
+        if start == -1:
+            continue
+        depth, in_str, esc, i = 0, False, False, start
+        while i < len(text):
+            c = text[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif c == '\\':
+                    esc = True
+                elif c == '"':
+                    in_str = False
+            elif c == '"':
+                in_str = True
+            elif c == '[':
+                depth += 1
+            elif c == ']':
+                depth -= 1
+                if depth == 0:
+                    yield text[start:i + 1]
+                    break
+            i += 1
+
+
+def check_component_types(text, builtins):
+    """add-components `type` VALUES must be real component types.
+
+    The server rejects anything outside builtin ∪ installed community ∪
+    extension-bundled; widget-development.md taught the ALWAYS-REJECTED
+    "type": "custom" (the manifest category word) for a long time — flag
+    syntax was perfect, the command still failed every run. Nested
+    data_source "type" values are ignored by parsing only the array's
+    top-level component objects.
+    """
+    problems = []
+    for arr in extract_components_arrays(text):
+        try:
+            comps = json.loads(arr)
+        except json.JSONDecodeError:
+            # Prose/shell-escaped fragments — syntax mode's territory.
+            continue
+        for c in comps if isinstance(comps, list) else []:
+            if not isinstance(c, dict):
+                continue
+            t = c.get('type')
+            if not isinstance(t, str):
+                continue
+            if t in builtins or t in DOC_EXAMPLE_COMPONENT_TYPES:
+                continue
+            if '<' in t or '{' in t:
+                continue  # placeholder, e.g. "<widget-id>"
+            problems.append(
+                f'add-components type "{t}" is not a builtin component type — '
+                f'community widgets use their WIDGET ID as type ("custom" is '
+                f'the manifest category and the server rejects it); if this is '
+                f'a doc example id, whitelist it in DOC_EXAMPLE_COMPONENT_TYPES')
+    return problems
+
+
 def coverage_report(trees):
     """Reverse coverage: CLI commands that no skill doc mentions.
 
@@ -424,6 +510,7 @@ def coverage_report(trees):
 
 def main():
     cli, trees = load_cli()
+    builtins = builtin_widget_types()
     print(f'CLI leaf commands: {len(leaf_paths(trees))}')
     total_cmds, issues = 0, 0
     for md in sorted(SKILLS.glob('*.md')):
@@ -436,6 +523,9 @@ def main():
             for p in problems:
                 issues += 1
                 print(f'{md.name}:{lineno}  {cmd}\n    -> {p}')
+        for p in check_component_types(text, builtins):
+            issues += 1
+            print(f'{md.name}  [component-type semantics]\n    -> {p}')
     print(f'\nchecked {total_cmds} concrete commands, {issues} problems')
 
 def smoke_help(trees):
