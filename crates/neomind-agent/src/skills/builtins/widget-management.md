@@ -33,11 +33,11 @@ Manage dashboard widgets and the widget marketplace. (For *developing* a widget 
 | `neomind widget list` | List installed widgets |
 | `neomind widget get <id>` | Show widget details |
 | `neomind widget bundle <id>` | Get a widget's bundle (JS/CSS) |
-| `neomind widget install <path>` | Install from a scaffolded dir or `.zip`. Use DATA-RELATIVE paths (`frontend-components/<id>`) — absolute macOS paths contain a space ("Application Support") and must be quoted; relative sidesteps it |
+| `neomind widget install <path>` | Install from a scaffolded dir or `.zip`. Use DATA-RELATIVE paths (`frontend-components/<id>`) — absolute macOS paths contain a space ("Application Support") and must be quoted; relative sidesteps it. A BARE widget id (`widget install gauge-3832`) also resolves into the store dir |
 | `neomind widget uninstall <id>` | Uninstall a widget |
 | `neomind widget market-list` | List widgets available in the marketplace |
 | `neomind widget market-install <id>` | Install a widget from the marketplace |
-| `neomind widget create` | Scaffold a NEW widget (dev — see `widget-development` skill) |
+| `neomind widget create` | Scaffold a NEW widget (dev — see `widget-development` skill; add `--install` to scaffold+register in one step) |
 
 ### Examples
 

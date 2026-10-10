@@ -22,9 +22,12 @@ Custom widgets are React components for NeoMind dashboards. No build tools — j
 ## CRITICAL: Widget Development Workflow
 
 ```bash
-# Step 1: Scaffold
+# Step 1: Scaffold (TEMPLATE code — the generated bundle.js is a generic
+# placeholder for the chosen type, NOT your component yet)
 neomind widget create "My Widget" --widget-type chart
 # Creates: data/frontend-components/<widget-id>/manifest.json + bundle.js
+# (--install scaffolds AND registers in one step — but you still MUST edit
+# bundle.js afterwards and re-install to apply your code)
 
 # Step 2: Edit both files — use file_write or file_edit tools (preferred over shell commands)
 # NOTE: file_write/file_read paths are relative to the server data dir — write
@@ -45,14 +48,18 @@ file_edit(path="frontend-components/<widget-id>/bundle.js", old_string="Hello", 
 ```
 
 ```bash
-# Step 3: Install (re-run after each edit to apply changes)
+# Step 3: Install (re-run after each edit to apply changes; the bare
+# widget-id from `widget create`/`widget list` output also works)
 neomind widget install frontend-components/<widget-id>
   (data-relative — NEVER paste the absolute ~/Library/Application Support/... path: it contains a space and an unquoted space splits the command; relative is the canonical form)
 
-# Step 4: Use in dashboard
+# Step 4: Use in dashboard — ⚠️ for a CUSTOM widget, `type` IS the widget's
+# ID (what `widget create` returned / `widget list` shows), NEVER "custom":
+# "custom" is the manifest's CATEGORY field and the server rejects it as an
+# unknown type
 neomind dashboard add-components <DASHBOARD_ID> --components '[{
   "id": "my-widget-1",
-  "type": "custom",
+  "type": "<widget-id>",
   "title": "My Widget",
   "position": {"x": 0, "y": 0, "w": 6, "h": 4},
   "data_source": {"type": "telemetry","source":"device","id":"DEVICE_ID","field":"temperature","mode":"latest","sourceId":"DEVICE_ID","metricId":"temperature","timeRange":1,"limit":50}
