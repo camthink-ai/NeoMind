@@ -48,7 +48,7 @@ function categoryIcon(id: string, name: string): LucideIcon {
     [/transcri|speech|voice|asr|tts/, Brain],
     [/scan|text|ocr/, ScanText],
     [/ident|recogn/, UserCheck],
-    [/wasm|demo|core|runtime/, Cpu],
+    [/demo|core|runtime/, Cpu],
     [/industrial|scada|plc/, Factory],
     [/wifi|sensor|iot/, Wifi],
     [/push|export|telemetry|notif/, Database],
