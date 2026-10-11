@@ -936,27 +936,13 @@ pub struct CExtensionMetadata {
 // ============================================================================
 
 /// Get current timestamp in milliseconds.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn current_timestamp_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
-/// Get current timestamp in milliseconds (WASM stub).
-#[cfg(target_arch = "wasm32")]
-pub fn current_timestamp_ms() -> i64 {
-    0
-}
-
 /// Get current timestamp in seconds.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn current_timestamp_secs() -> i64 {
     chrono::Utc::now().timestamp()
-}
-
-/// Get current timestamp in seconds (WASM stub).
-#[cfg(target_arch = "wasm32")]
-pub fn current_timestamp_secs() -> i64 {
-    0
 }
 
 // ============================================================================
@@ -1239,9 +1225,9 @@ pub enum IpcMessage {
     },
 
     // =========================================================================
-    // Capability Invocation (for WASM extensions)
+    // Capability Invocation (host round-trip from the runner)
     // =========================================================================
-    /// Invoke a capability from WASM extension
+    /// Invoke a host capability from the runner process
     InvokeCapability {
         /// Request ID for tracking
         request_id: u64,
@@ -1251,7 +1237,7 @@ pub enum IpcMessage {
         params: serde_json::Value,
     },
 
-    /// Subscribe to events from WASM extension
+    /// Subscribe to extension events
     SubscribeEvents {
         /// Request ID for tracking
         request_id: u64,
@@ -1551,7 +1537,7 @@ pub enum IpcResponse {
     },
 
     // =========================================================================
-    // Capability Invocation Responses (for WASM extensions)
+    // Capability Invocation Responses
     // =========================================================================
     /// Capability invocation result
     CapabilityResult {

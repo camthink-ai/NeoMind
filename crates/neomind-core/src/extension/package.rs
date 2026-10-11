@@ -116,7 +116,7 @@ pub struct ExtensionPackageManifest {
     #[serde(default)]
     pub permissions: Vec<String>,
 
-    /// Extension type (native, wasm, frontend-only)
+    /// Extension type (native, frontend-only)
     #[serde(default = "default_extension_type")]
     #[serde(rename = "type")]
     pub extension_type: String,
