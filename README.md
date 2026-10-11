@@ -102,7 +102,7 @@ NeoMind is an **edge-deployed AI platform** that brings intelligence to IoT. It 
 
 ### Platform
 - **Desktop apps** (macOS/Windows/Linux) + **mobile-friendly web**, EN/中文
-- **Process-isolated extensions** (native + WASM) with capability permissions
+- **Process-isolated extensions** (native cdylib) with capability permissions
 - **Multi-instance management, full CLI, API-key access**
 
 ## Ecosystem
@@ -239,7 +239,7 @@ cd web && npm run tauri:build
    │ Devices  │  │Automation│  │ AI Agent │  │   Extensions     │
    │          │  │          │  │          │  │                  │
    │ MQTT     │  │ Rules    │  │ Chat     │  │ Process Isolated │
-   │ BLE      │  │ Transform│  │ Tools    │  │ Native + WASM    │
+   │ BLE      │  │ Transform│  │ Tools    │  │ Native cdylib    │
    │ Webhook  │  │ Agents   │  │ Memory   │  │ Capabilities     │
    └──────────┘  └──────────┘  └──────────┘  └──────────────────┘
           │              │              │                │
@@ -294,7 +294,7 @@ NeoMind/
 | **Desktop** | Tauri 2.x |
 | **AI/LLM** | llama.cpp, OpenAI, Anthropic, and 6+ more backends |
 | **IoT** | MQTT (embedded broker), BLE, HTTP/Webhook |
-| **Extensions** | Native (.so/.dylib/.dll), WASM, process isolation |
+| **Extensions** | Native (.so/.dylib/.dll), process isolation |
 
 ## Community
 

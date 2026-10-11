@@ -1239,7 +1239,7 @@ pub async fn install_marketplace_extension_handler(
         }
     } else {
         // Fall back to platform-specific binary download with variant fallback.
-        // Variant chain (via accel): e.g. Jetson → linux-aarch64-jetson → linux-aarch64 → wasm.
+        // Variant chain (via accel): e.g. Jetson → linux-aarch64-jetson → linux-aarch64.
         let variant = neomind_core::extension::accel::detect_variant();
 
         if platform == "unknown" {
@@ -1264,7 +1264,7 @@ pub async fn install_marketplace_extension_handler(
             ))
         })?;
 
-        // Get build info for the selected platform/variant/WASM.
+        // Get build info for the selected platform/variant.
         // SAFE: select_build_key only returns a key present in `available_keys`,
         // which we built from metadata.builds.keys() — so .get() is guaranteed Some.
         // (If select_build_key is ever refactored to emit keys NOT derived from

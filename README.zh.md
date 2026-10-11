@@ -98,7 +98,7 @@ NeoMind 是一个**边缘部署的 AI 平台**,为物联网注入智能:LLM 智�
 
 ### 平台
 - **桌面应用**(macOS/Windows/Linux)+ **移动友好 Web**,中英双语
-- **进程隔离扩展**(Native + WASM),能力级权限
+- **进程隔离扩展**(Native cdylib),能力级权限
 - **多实例管理、完整 CLI、API Key 接入**
 
 ## 生态
@@ -224,7 +224,7 @@ cd web && npm run tauri:build
    ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────┐
    │  设备     │  │ 自动化    │  │ AI 智能体 │  │     扩展          │
    │  MQTT    │  │ 规则      │  │ 对话      │  │  进程隔离          │
-   │  BLE     │  │ 变换      │  │ 工具      │  │  Native + WASM   │
+   │  BLE     │  │ 变换      │  │ 工具      │  │  Native cdylib   │
    │  Webhook │  │ 智能体    │  │ 记忆      │  │  能力权限          │
    └──────────┘  └──────────┘  └──────────┘  └──────────────────┘
           │              │              │                │
@@ -277,7 +277,7 @@ NeoMind/
 | **桌面** | Tauri 2.x |
 | **AI/LLM** | llama.cpp、OpenAI、Anthropic 等 6+ 后端 |
 | **IoT** | MQTT(内嵌 broker)、BLE、HTTP/Webhook |
-| **扩展** | Native(.so/.dylib/.dll)、WASM、进程隔离 |
+| **扩展** | Native(.so/.dylib/.dll)、进程隔离 |
 
 ## 社区
 
