@@ -41,7 +41,7 @@ impl Runner {
             .unwrap_or(false);
         if is_wasm {
             return Err(
-                "WASM extensions are no longer supported — build a native cdylib extension                  (`neomind extension create`)"
+                "WASM extensions are no longer supported — build a native cdylib extension (`neomind extension create`)"
                     .to_string(),
             );
         }

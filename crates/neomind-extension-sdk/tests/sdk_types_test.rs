@@ -50,7 +50,7 @@ fn test_sdk_metadata_with_author() {
 fn test_sdk_metadata_with_type() {
     let meta = SdkExtensionMetadata::new("test.extension", "Test", "1.0.0").with_type("native");
 
-    assert_eq!(meta.extension_type, "wasm");
+    assert_eq!(meta.extension_type, "native");
 }
 
 #[test]
