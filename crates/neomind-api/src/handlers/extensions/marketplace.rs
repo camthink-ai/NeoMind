@@ -192,7 +192,7 @@ pub struct MarketplaceExtensionMetadata {
     #[serde(default)]
     pub readme_url: Option<String>,
 
-    /// Extension type: native, wasm, frontend-only
+    /// Extension type: native, frontend-only
     #[serde(default = "default_extension_type")]
     #[serde(rename = "type")]
     pub extension_type: String,
@@ -390,12 +390,6 @@ pub struct ExtensionBuild {
     pub sha256: String,
     #[serde(default)]
     pub size: usize,
-    /// For WASM: URL to the JSON metadata sidecar file
-    #[serde(default)]
-    pub json_url: Option<String>,
-    /// For WASM: SHA256 of the JSON file
-    #[serde(default)]
-    pub json_sha256: Option<String>,
 }
 
 /// Extension requirements
@@ -692,7 +686,7 @@ pub(crate) fn detect_platform() -> &'static str {
 
 /// Select the best marketplace `builds` key for the current platform + variant.
 ///
-/// Candidate order: variant-specific key(s) → base platform → `wasm` (universal).
+/// Candidate order: variant-specific key(s) → base platform.
 /// Returns the first key present in `available_keys`, or `None` if nothing matches.
 ///
 /// Pure function (no I/O) so it can be unit-tested without network/state.

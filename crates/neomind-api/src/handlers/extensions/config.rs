@@ -211,7 +211,7 @@ pub async fn update_extension_config_handler(
 /// POST /api/extensions/:id/reload
 ///
 /// Reload an extension with its current configuration.
-/// Uses the unified extension service which handles both native and WASM extensions
+/// Uses the unified extension service (native cdylib extensions)
 /// via process isolation.
 #[axum::debug_handler]
 #[utoipa::path(
@@ -258,7 +258,7 @@ pub async fn reload_extension_handler(
     // Re-load from file if we have the path
     let mut config_applied = false;
     if let Some(ref path) = file_path {
-        // Load via unified service (handles both native and WASM)
+        // Load via unified service
         match runtime.load(path).await {
             Ok(metadata) => {
                 // Clear error status on successful reload

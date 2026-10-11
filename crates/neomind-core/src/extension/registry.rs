@@ -313,13 +313,10 @@ impl ExtensionRegistry {
                         .to_string(),
                 ))
             }
-            Some("wasm") => {
-                // WASM extensions should be loaded via extension-runner
-                // Return an error pointing users to the isolated extension path
-                Err(ExtensionError::InvalidFormat(
-                    "WASM extensions must be loaded via ExtensionRuntime for process isolation".to_string()
-                ))
-            }
+            Some("wasm") => Err(ExtensionError::InvalidFormat(
+                "WASM extension support was removed (NeoMind 1.2.0) — build a native cdylib extension"
+                    .to_string(),
+            )),
             _ => Err(ExtensionError::InvalidFormat(format!(
                 "Unsupported extension format: {:?}",
                 path

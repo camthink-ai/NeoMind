@@ -22,15 +22,6 @@
 | `NEOMIND_MQTT_BIND` | 未设置 | 覆盖内嵌 MQTT broker 的监听地址(桌面应用使用)。 |
 | `NEOMIND_WEB_DIR` | `/var/www/neomind` | 前端静态文件目录;目录内有文件时由服务直接托管。 |
 
-## WASM 扩展沙箱
-
-每个扩展实例三层资源上限:
-
-| 变量 | 默认 | 说明 |
-| --- | --- | --- |
-| `NEOMIND_WASM_MEMORY_MB` | `256` | 线性内存硬上限(MB)。超限的 `memory.grow` 返回失败而非拖垮宿主进程。 |
-| `NEOMIND_WASM_FUEL` | `1000000` | wasmtime fuel 配额(CPU 上限)。 |
-| `NEOMIND_WASM_MAX_SIZE_MB` | `50` | 单个 `.wasm` 模块文件大小上限(MB)。 |
 
 ## 存储与备份
 

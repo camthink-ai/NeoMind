@@ -562,7 +562,7 @@ impl EventCapabilityProvider {
 
             // Register the subscription with the dispatcher
             // Note: For in-process extensions, they should use event_subscriptions() method
-            // This dynamic subscription is mainly for isolated/WASM extensions
+            // This dynamic subscription is mainly for isolated extensions
             dispatcher.register_isolated_extension(
                 format!("dynamic:{}", subscription_id),
                 event_types.clone(),

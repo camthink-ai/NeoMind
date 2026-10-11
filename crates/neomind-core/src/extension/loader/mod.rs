@@ -1,8 +1,7 @@
 //! Extension loaders for native and isolated extensions.
 //!
-//! WASM extensions are now handled by the extension-runner process,
-//! which uses wasmtime directly for execution. Native binaries are
-//! discovered via metadata only and executed through the runner.
+//! Extensions are native cdylib binaries discovered via metadata and
+//! executed through the isolated extension-runner process.
 
 pub mod isolated;
 pub mod native;

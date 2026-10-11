@@ -41,7 +41,7 @@ ZIP archive, parsed by `crates/neomind-core/src/extension/package.rs`. Install: 
 ```
 {extension-id}-{version}.nep
 ├── manifest.json                # format = "neomind-extension-package"
-├── binaries/{darwin_aarch64,darwin_x86_64,linux_amd64,windows_amd64,wasm}/...
+├── binaries/{darwin_aarch64,darwin_x86_64,linux_amd64,windows_amd64}/...
 └── frontend/dist/{bundle.js, bundle.css}   # optional dashboard components
 ```
 
@@ -50,7 +50,7 @@ ZIP archive, parsed by `crates/neomind-core/src/extension/package.rs`. Install: 
 - **`frontend` field is polymorphic**: string (`"frontend/"`, legacy) OR struct (`{ components: [...] }`). `FrontendField` handles both — don't break either.
 - **Extensions can bundle dashboard components** via `FrontendConfig.components: Vec<DashboardComponentDef>` — distinct from community widgets (next section).
 - **Runtime**: process-isolated child process via `neomind-extension-runner`. Crash-loop detection auto-disables misbehaving extensions. Metrics → DataSources (`extension:<id>:<metric>`).
-- **Hardware variant keys (CUDA/Jetson)**: variant discrimination lives **only** in marketplace `metadata.json` `builds` keys and release filenames — the `.nep` internal `manifest.binaries` key is always the plain OS+arch (e.g. `linux_arm64`), identical for CPU and Jetson builds. Download-side selection (`accel.rs::detect_variant` + `select_build_key`) resolves `linux-aarch64-jetson` → `linux-aarch64` → `wasm`. Detection: `/etc/nv_tegra_release` (Jetson, checked first) > `nvidia-smi` (CUDA) > CPU. Override with `NEOMIND_EXTENSION_VARIANT=cpu|cuda|jetson`. Adding a jetson build = upload `xxx-linux_arm64-jetson.nep` (standard internal structure) + add `linux-aarch64-jetson` entry to `metadata.json` `builds`. Do NOT add variant suffixes inside `.nep` `binaries/`.
+- **Hardware variant keys (CUDA/Jetson)**: variant discrimination lives **only** in marketplace `metadata.json` `builds` keys and release filenames — the `.nep` internal `manifest.binaries` key is always the plain OS+arch (e.g. `linux_arm64`), identical for CPU and Jetson builds. Download-side selection (`accel.rs::detect_variant` + `select_build_key`) resolves `linux-aarch64-jetson` → `linux-aarch64`. Detection: `/etc/nv_tegra_release` (Jetson, checked first) > `nvidia-smi` (CUDA) > CPU. Override with `NEOMIND_EXTENSION_VARIANT=cpu|cuda|jetson`. Adding a jetson build = upload `xxx-linux_arm64-jetson.nep` (standard internal structure) + add `linux-aarch64-jetson` entry to `metadata.json` `builds`. Do NOT add variant suffixes inside `.nep` `binaries/`.
 
 ### Device type template contract (JSON)
 Maps to `DeviceTypeTemplate` (`crates/neomind-devices/src/registry.rs:159`). Required: `device_type` (unique id), `name`. Optional: `categories`, `mode` (`Simple` default), `metrics`, `commands`, `uplink_samples`, `default_offline_timeout_secs`.
