@@ -27,7 +27,6 @@
 //! │                  Extension Runner Process                    │
 //! │  - Your extension runs here in isolation                    │
 //! │  - Native: loaded via FFI                                   │
-//! │  - WASM: executed via wasmtime                              │
 //! │  - Crashes don't affect main process                        │
 //! └─────────────────────────────────────────────────────────────┘
 //! ```
@@ -230,8 +229,6 @@ pub use host::{
     StreamSession,
 };
 
-// CapabilityContext requires tokio (not available on wasm32)
-#[cfg(not(target_arch = "wasm32"))]
 pub use host::CapabilityContext;
 
 /// Capability name constants - re-exported from host module
@@ -239,76 +236,8 @@ pub mod capability_constants {
     pub use crate::host::capabilities::*;
 }
 
-// Native-only FFI types
-#[cfg(not(target_arch = "wasm32"))]
+// FFI types
 pub use host::{NativeCapabilityFreeFn, NativeCapabilityInvokeFn};
-
-// ============================================================================
-// WASM-specific Types and Extension Trait
-// ============================================================================
-
-#[cfg(target_arch = "wasm32")]
-mod wasm_types {
-    pub use crate::extension::{
-        SdkCommandDefinition as ExtensionCommand, SdkExtensionError as ExtensionError,
-        SdkExtensionMetadata as ExtensionMetadata, SdkExtensionMetricValue as ExtensionMetricValue,
-        SdkMetricDataType as MetricDataType, SdkMetricDefinition as MetricDescriptor,
-        SdkMetricValue as ParamMetricValue, SdkParameterDefinition as ParameterDefinition,
-        SdkParameterGroup as ParameterGroup,
-    };
-
-    pub type Result<T> = std::result::Result<T, crate::extension::SdkExtensionError>;
-    pub const ABI_VERSION: u32 = 3;
-
-    /// Simplified StreamCapability for WASM
-    #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-    pub struct StreamCapability {
-        pub direction: StreamDirection,
-        pub mode: StreamMode,
-        pub max_chunk_size: usize,
-        pub preferred_chunk_size: usize,
-        pub max_concurrent_sessions: usize,
-    }
-
-    impl Default for StreamCapability {
-        fn default() -> Self {
-            Self {
-                direction: StreamDirection::None,
-                mode: StreamMode::Push,
-                max_chunk_size: 0,
-                preferred_chunk_size: 0,
-                max_concurrent_sessions: 0,
-            }
-        }
-    }
-
-    /// Stream direction (WASM version)
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-    #[serde(rename_all = "lowercase")]
-    pub enum StreamDirection {
-        None,
-        Input,
-        Output,
-        Duplex,
-    }
-
-    /// Stream mode (WASM version)
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-    #[serde(rename_all = "lowercase")]
-    pub enum StreamMode {
-        Stateless,
-        Stateful,
-        Push,
-        Pull,
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-pub use wasm_types::*;
-
-// Re-export pollster for WASM target (used by macros)
-#[cfg(target_arch = "wasm32")]
-pub use pollster;
 
 // ============================================================================
 // Utility Re-exports
@@ -336,11 +265,7 @@ pub use extension::{
 mod macros;
 pub mod prelude;
 
-#[cfg(not(target_arch = "wasm32"))]
 pub mod native;
-
-#[cfg(target_arch = "wasm32")]
-pub mod wasm;
 
 pub mod capabilities;
 pub mod utils;

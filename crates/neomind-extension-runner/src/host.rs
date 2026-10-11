@@ -1,30 +1,14 @@
-//! Host-side state for WASM execution: `HostState` (per-store WASI ctx +
-//! memory + IPC client + resource limits), the synchronous IPC client, and
-//! the per-store linear-memory cap. Split from main.rs 2026-09 — the runner
-//! binary was a 3900-line monolith.
+//! The synchronous IPC client for capability invocation, shared by the
+//! runner's native bridge. Split from main.rs 2026-09 — the runner binary
+//! was a 3900-line monolith.
 
 use neomind_extension_sdk::{IpcFrame, IpcResponse};
 use serde_json::json;
 use std::io::Write;
-use std::sync::Arc;
 use tracing::{debug, error, warn};
-use wasmtime::{Memory, StoreLimits, StoreLimitsBuilder};
-use wasmtime_wasi::preview1::WasiP1Ctx;
 
 use crate::ipc_routing::{get_pending_requests, register_pending_request};
 use crate::STDOUT_WRITE_MUTEX;
-
-/// Host state for WASM execution
-pub(crate) struct HostState {
-    pub(crate) wasi: WasiP1Ctx,
-    pub(crate) memory: Option<Memory>,
-    /// IPC client for capability invocation (communicates with main process)
-    /// Uses sync channels for synchronous WASM host function calls
-    pub(crate) ipc_client: Option<Arc<SyncIpcClient>>,
-    /// Per-store resource limits — true cap on WASM linear-memory growth,
-    /// enforced via `store.limiter()` at every `Store::new` site
-    pub(crate) limits: StoreLimits,
-}
 
 /// Synchronous IPC client for capability invocation
 ///
@@ -138,41 +122,6 @@ impl SyncIpcClient {
                 get_pending_requests().remove(&request_id);
                 json!({"success": false, "error": "Response channel disconnected"})
             }
-        }
-    }
-}
-
-/// Per-store WASM resource limits: a hard cap on linear-memory growth
-/// (`memory.grow` beyond it fails), default 256 MB per store, override via
-/// `NEOMIND_WASM_MEMORY_MB` (same name and default as the pre-wasmtime-36 code).
-pub(crate) fn wasm_store_limits() -> StoreLimits {
-    let max_mb = std::env::var("NEOMIND_WASM_MEMORY_MB")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(256);
-    StoreLimitsBuilder::new()
-        .memory_size(max_mb as usize * 1024 * 1024)
-        .build()
-}
-
-impl HostState {
-    /// Create a new host state with WASI context
-    pub(crate) fn new(wasi: WasiP1Ctx) -> Self {
-        Self {
-            wasi,
-            memory: None,
-            ipc_client: None,
-            limits: wasm_store_limits(),
-        }
-    }
-
-    /// Create host state with IPC capability client
-    pub(crate) fn with_ipc(wasi: WasiP1Ctx, ipc_client: Option<Arc<SyncIpcClient>>) -> Self {
-        Self {
-            wasi,
-            memory: None,
-            ipc_client,
-            limits: wasm_store_limits(),
         }
     }
 }

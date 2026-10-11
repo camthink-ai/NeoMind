@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 
 use std::io::{Read, Write};
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use std::sync::Arc;
 
@@ -15,14 +15,12 @@ use serde_json::json;
 use tracing::{debug, error, info, trace, warn};
 
 use neomind_extension_sdk::{
-    BatchCommand, BatchResult, ErrorKind, ExtensionDescriptor, ExtensionMetadata,
-    ExtensionMetricValue, ExtensionStats, IpcFrame, IpcMessage, IpcResponse, SessionStats,
-    StreamCapability, StreamDataChunk, StreamResult,
+    BatchCommand, BatchResult, ErrorKind, ExtensionDescriptor, ExtensionMetricValue,
+    ExtensionStats, IpcFrame, IpcMessage, IpcResponse, SessionStats, StreamCapability,
+    StreamDataChunk, StreamResult,
 };
 
 use dylib_validation::validate_library;
-
-use event_handler::get_global_event_state;
 
 use ipc_routing::{
     complete_pending_request, create_event_channel, start_stdin_reader, STDOUT_WRITE_MUTEX,
@@ -30,26 +28,24 @@ use ipc_routing::{
 
 impl Runner {
     /// Load extension and create runner
-    pub(crate) async fn load(extension_path: &PathBuf) -> Result<Self, String> {
+    pub(crate) async fn load(extension_path: &Path) -> Result<Self, String> {
         debug!("Runner::load called");
-        let extension_type = ExtensionType::from_path(extension_path);
-        debug!(
-            path = %extension_path.display(),
-            extension_type = ?extension_type,
-            "Loading extension"
-        );
-
-        // Load the extension based on type
-        let (extension, wasm_runtime, descriptor) = match extension_type {
-            ExtensionType::Native => {
-                let (ext, desc) = Self::load_native(extension_path).await?;
-                (Some(ext), None, desc)
-            }
-            ExtensionType::Wasm => {
-                let (runtime, descriptor) = Self::load_wasm(extension_path).await?;
-                (None, Some(runtime), descriptor)
-            }
-        };
+        // WASM extensions were removed 2026-10 (zero usage across every
+        // deployment, 37-package wasmtime dependency, recurring audit
+        // breakage) — reject the artifact loudly instead of failing later
+        // in the loader.
+        let is_wasm = extension_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("wasm"))
+            .unwrap_or(false);
+        if is_wasm {
+            return Err(
+                "WASM extensions are no longer supported — build a native cdylib extension                  (`neomind extension create`)"
+                    .to_string(),
+            );
+        }
+        let (extension, descriptor) = Self::load_native(extension_path).await?;
 
         debug!(
             commands_count = descriptor.commands.len(),
@@ -60,33 +56,20 @@ impl Runner {
             extension_id = %descriptor.metadata.id,
             name = %descriptor.metadata.name,
             version = %descriptor.metadata.version,
-            extension_type = ?extension_type,
             commands_count = descriptor.commands.len(),
             metrics_count = descriptor.metrics.len(),
             "Extension loaded successfully"
         );
 
-        let runtime_handle = tokio::runtime::Handle::try_current()
-            .map_err(|e| format!("Failed to get current runtime handle: {}", e))?;
-
-        // Create IPC client for capability forwarding (both Native and WASM)
-        let ipc_client = {
-            let client = SyncIpcClient::new();
-            Some(Arc::new(client))
-        };
-
-        if let (Some(extension), Some(ipc_client)) = (extension.as_ref(), ipc_client.as_ref()) {
-            extension.install_capability_bridge(ipc_client.clone());
-        }
+        // Install the capability bridge: the native bridge forwards host
+        // capability calls over the shared sync IPC client.
+        let ipc_client = Arc::new(SyncIpcClient::new());
+        extension.install_capability_bridge(ipc_client);
 
         Ok(Self {
-            extension,
-            wasm_runtime,
+            extension: Some(extension),
             descriptor,
-            extension_type,
-            runtime: runtime_handle,
             running: true,
-            ipc_client,
         })
     }
 
@@ -154,115 +137,6 @@ impl Runner {
                 ))
             }
         }
-    }
-
-    /// Load a WASM extension with full descriptor support
-    pub(crate) async fn load_wasm(
-        extension_path: &PathBuf,
-    ) -> Result<(WasmRuntime, ExtensionDescriptor), String> {
-        // First, create the runtime
-        let module_name = extension_path
-            .file_stem()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown")
-            .to_string();
-
-        let runtime = WasmRuntime::new(extension_path, module_name)?;
-
-        // Try to get descriptor from WASM module itself
-        match runtime.get_descriptor_blocking() {
-            Ok(descriptor) => {
-                debug!(
-                    extension_id = %descriptor.metadata.id,
-                    name = %descriptor.metadata.name,
-                    version = %descriptor.metadata.version,
-                    commands_count = descriptor.commands.len(),
-                    metrics_count = descriptor.metrics.len(),
-                    "Got descriptor from WASM module"
-                );
-                Ok((runtime, descriptor))
-            }
-            Err(e) => {
-                debug!(error = %e, "Failed to get descriptor from WASM, trying sidecar files");
-
-                // Fallback to sidecar JSON files
-                let metadata = Self::load_wasm_metadata(extension_path)?;
-                let descriptor = ExtensionDescriptor::new(metadata);
-                Ok((runtime, descriptor))
-            }
-        }
-    }
-
-    /// Load WASM metadata (fallback from sidecar files)
-    pub(crate) fn load_wasm_metadata(extension_path: &Path) -> Result<ExtensionMetadata, String> {
-        // Try sidecar JSON
-        let json_path = extension_path.with_extension("json");
-        if json_path.exists() {
-            if let Ok(meta) = Self::parse_metadata_json(&json_path) {
-                return Ok(meta);
-            }
-        }
-
-        // Try .nep manifest
-        if let Some(manifest_path) = Self::find_nep_manifest(extension_path) {
-            if manifest_path.exists() {
-                if let Ok(meta) = Self::parse_metadata_json(&manifest_path) {
-                    return Ok(meta);
-                }
-            }
-        }
-
-        // Fallback to filename
-        let file_name = extension_path
-            .file_stem()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown");
-
-        Ok(ExtensionMetadata::new(
-            file_name.to_string(),
-            format!("{} WASM Extension", file_name),
-            "1.0.0",
-        ))
-    }
-
-    pub(crate) fn parse_metadata_json(path: &PathBuf) -> Result<ExtensionMetadata, String> {
-        let content =
-            std::fs::read_to_string(path).map_err(|e| format!("Failed to read JSON: {}", e))?;
-
-        #[derive(serde::Deserialize)]
-        struct MetaJson {
-            id: String,
-            name: String,
-            version: String,
-            #[serde(default)]
-            description: Option<String>,
-            #[serde(default)]
-            author: Option<String>,
-        }
-
-        let json: MetaJson =
-            serde_json::from_str(&content).map_err(|e| format!("Failed to parse JSON: {}", e))?;
-
-        let version =
-            semver::Version::parse(&json.version).unwrap_or(semver::Version::new(1, 0, 0));
-
-        let mut meta = ExtensionMetadata::new(json.id, json.name, version.to_string());
-        meta.description = json.description;
-        meta.author = json.author;
-
-        Ok(meta)
-    }
-
-    pub(crate) fn find_nep_manifest(wasm_path: &Path) -> Option<PathBuf> {
-        let binaries_dir = wasm_path.parent()?;
-        let wasm_dir = binaries_dir.parent()?;
-        let extension_folder = wasm_dir.parent()?;
-
-        let manifest = extension_folder.join("manifest.json");
-        if manifest.exists() {
-            return Some(manifest);
-        }
-        None
     }
 
     /// Run the main loop
@@ -768,11 +642,6 @@ impl Runner {
                         &payload,
                     );
                 }
-
-                // For WASM extensions, push events to global subscription queues
-                if self.extension_type == ExtensionType::Wasm {
-                    get_global_event_state().push_event(&event_type, payload);
-                }
             }
 
             IpcMessage::CapabilityResult {
@@ -806,10 +675,7 @@ impl Runner {
     ) {
         debug!(command = %command, request_id, "Executing command");
 
-        let result = match self.extension_type {
-            ExtensionType::Native => self.execute_native_command(&command, &args).await,
-            ExtensionType::Wasm => self.execute_wasm_command(&command, &args),
-        };
+        let result = self.execute_native_command(&command, &args).await;
 
         match result {
             Ok(value) => {
@@ -829,16 +695,11 @@ impl Runner {
     }
 
     pub(crate) async fn handle_init(&mut self, config: serde_json::Value) -> Result<(), String> {
-        match self.extension_type {
-            ExtensionType::Native => {
-                let ext = self
-                    .extension
-                    .as_ref()
-                    .ok_or("No native extension loaded")?;
-                ext.configure(&config)
-            }
-            ExtensionType::Wasm => Ok(()),
-        }
+        let ext = self
+            .extension
+            .as_ref()
+            .ok_or("No native extension loaded")?;
+        ext.configure(&config)
     }
 
     pub(crate) async fn handle_execute_batch(
@@ -858,10 +719,7 @@ impl Runner {
         for cmd in &commands {
             let cmd_start = std::time::Instant::now();
 
-            let result = match self.extension_type {
-                ExtensionType::Native => self.execute_native_command(&cmd.command, &cmd.args).await,
-                ExtensionType::Wasm => self.execute_wasm_command(&cmd.command, &cmd.args),
-            };
+            let result = self.execute_native_command(&cmd.command, &cmd.args).await;
 
             results.push(BatchResult {
                 command: cmd.command.clone(),
@@ -891,55 +749,10 @@ impl Runner {
         ext.execute_command(command, args)
     }
 
-    pub(crate) fn execute_wasm_command(
-        &self,
-        command: &str,
-        args: &serde_json::Value,
-    ) -> Result<serde_json::Value, String> {
-        let runtime = self.wasm_runtime.as_ref().ok_or("No WASM runtime loaded")?;
-
-        let ipc_client = self.ipc_client.clone();
-
-        let runtime_handle = self.runtime.clone();
-        tokio::task::block_in_place(|| {
-            runtime_handle.block_on(async {
-                // Try new execute_command API first
-                match runtime
-                    .execute_command(command, args, ipc_client.clone())
-                    .await
-                {
-                    Ok(result) => {
-                        // Extract the actual result from the response
-                        if result
-                            .get("success")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false)
-                        {
-                            Ok(result.get("result").cloned().unwrap_or(result))
-                        } else {
-                            Err(result
-                                .get("error")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("Unknown error")
-                                .to_string())
-                        }
-                    }
-                    Err(_) => {
-                        // Fallback to legacy execute function
-                        runtime.execute(command, args, ipc_client.clone()).await
-                    }
-                }
-            })
-        })
-    }
-
     pub(crate) async fn handle_produce_metrics(&mut self, request_id: u64) {
         debug!(request_id, "Producing metrics");
 
-        let result = match self.extension_type {
-            ExtensionType::Native => self.produce_native_metrics().await,
-            ExtensionType::Wasm => self.produce_wasm_metrics(),
-        };
+        let result = self.produce_native_metrics().await;
 
         match result {
             Ok(metrics) => {
@@ -966,29 +779,15 @@ impl Runner {
         ext.produce_metrics()
     }
 
-    pub(crate) fn produce_wasm_metrics(&self) -> Result<Vec<ExtensionMetricValue>, String> {
-        let runtime = self.wasm_runtime.as_ref().ok_or("No WASM runtime loaded")?;
-        runtime.produce_metrics()
-    }
-
-    /// Build a fresh descriptor by asking the extension (native FFI or WASM)
-    /// to regenerate metadata/commands/metrics. The returned descriptor
-    /// reflects the extension's current runtime state, enabling dynamic
-    /// metrics discovery.
+    /// Build a fresh descriptor by asking the extension to regenerate
+    /// metadata/commands/metrics. The returned descriptor reflects the
+    /// extension's current runtime state, enabling dynamic metrics discovery.
     pub(crate) fn build_descriptor_fresh(&self) -> Result<ExtensionDescriptor, String> {
-        match self.extension_type {
-            ExtensionType::Native => {
-                let ext = self
-                    .extension
-                    .as_ref()
-                    .ok_or("No native extension loaded")?;
-                ext.get_descriptor_fresh()
-            }
-            ExtensionType::Wasm => {
-                let runtime = self.wasm_runtime.as_ref().ok_or("No WASM runtime loaded")?;
-                runtime.get_descriptor_blocking()
-            }
-        }
+        let ext = self
+            .extension
+            .as_ref()
+            .ok_or("No native extension loaded")?;
+        ext.get_descriptor_fresh()
     }
 
     /// Handler for `IpcMessage::GetDescriptor`. Rebuilds the descriptor and
@@ -1024,10 +823,7 @@ impl Runner {
     pub(crate) fn handle_health_check(&mut self, request_id: u64) {
         debug!(request_id, "Health check");
 
-        let healthy = match self.extension_type {
-            ExtensionType::Native => self.native_health_check(),
-            ExtensionType::Wasm => self.wasm_health_check(),
-        };
+        let healthy = self.native_health_check();
 
         self.send_response(IpcResponse::Health {
             request_id,
@@ -1070,21 +866,6 @@ impl Runner {
         ext.health_check()
     }
 
-    pub(crate) fn wasm_health_check(&self) -> bool {
-        let runtime = match &self.wasm_runtime {
-            Some(r) => r,
-            None => return false,
-        };
-
-        let runtime_handle = match tokio::runtime::Handle::try_current() {
-            Ok(h) => h,
-            Err(_) => return false,
-        };
-        tokio::task::block_in_place(|| {
-            runtime_handle.block_on(async { runtime.health_check().await })
-        })
-    }
-
     // =========================================================================
     // Statistics Support
     // =========================================================================
@@ -1092,14 +873,7 @@ impl Runner {
     pub(crate) fn handle_get_stats(&mut self, request_id: u64) {
         debug!(request_id, "Getting extension statistics");
 
-        let stats = match self.extension_type {
-            ExtensionType::Native => self.get_native_stats(),
-            ExtensionType::Wasm => {
-                // WASM extensions don't support stats yet
-                // Return default stats
-                ExtensionStats::default()
-            }
-        };
+        let stats = self.get_native_stats();
 
         debug!(
             request_id,
@@ -1146,12 +920,7 @@ impl Runner {
     pub(crate) async fn handle_get_stream_capability(&mut self, request_id: u64) {
         debug!(request_id, "Getting stream capability");
 
-        let capability = match self.extension_type {
-            ExtensionType::Native => self.get_native_stream_capability().await,
-            ExtensionType::Wasm => {
-                Ok(None) // WASM doesn't support streaming yet
-            }
-        };
+        let capability = self.get_native_stream_capability().await;
 
         match capability {
             Ok(cap) => {
@@ -1188,10 +957,7 @@ impl Runner {
     ) {
         debug!(session_id = %session_id, request_id, "Initializing stream session");
 
-        let result = match self.extension_type {
-            ExtensionType::Native => self.init_native_stream_session(&session_id, config).await,
-            ExtensionType::Wasm => Err("WASM streaming not supported".to_string()),
-        };
+        let result = self.init_native_stream_session(&session_id, config).await;
 
         match result {
             Ok(_) => {
@@ -1231,10 +997,7 @@ impl Runner {
     ) {
         debug!(session_id = %session_id, sequence = chunk.sequence, request_id, "Processing stream chunk");
 
-        let result = match self.extension_type {
-            ExtensionType::Native => self.process_native_stream_chunk(&session_id, chunk),
-            ExtensionType::Wasm => Err("WASM streaming not supported".to_string()),
-        };
+        let result = self.process_native_stream_chunk(&session_id, chunk);
 
         match result {
             Ok(stream_result) => {
@@ -1273,10 +1036,7 @@ impl Runner {
     pub(crate) fn handle_close_stream_session(&mut self, request_id: u64, session_id: String) {
         debug!(session_id = %session_id, request_id, "Closing stream session");
 
-        let result = match self.extension_type {
-            ExtensionType::Native => self.close_native_stream_session(&session_id),
-            ExtensionType::Wasm => Ok(SessionStats::default()),
-        };
+        let result = self.close_native_stream_session(&session_id);
 
         match result {
             Ok(stats) => {
@@ -1319,12 +1079,7 @@ impl Runner {
             "Processing stateless chunk"
         );
 
-        let result = match self.extension_type {
-            ExtensionType::Native => self.process_native_chunk(chunk),
-            ExtensionType::Wasm => {
-                Err("Stateless chunk processing not supported for WASM".to_string())
-            }
-        };
+        let result = self.process_native_chunk(chunk);
 
         match result {
             Ok(stream_result) => {
@@ -1370,10 +1125,7 @@ impl Runner {
             "Starting push mode"
         );
 
-        let result = match self.extension_type {
-            ExtensionType::Native => self.start_native_push(&session_id),
-            ExtensionType::Wasm => Err("Push mode not supported for WASM".to_string()),
-        };
+        let result = self.start_native_push(&session_id);
 
         match result {
             Ok(_) => {
@@ -1410,12 +1162,7 @@ impl Runner {
             "Stopping push mode"
         );
 
-        let result = match self.extension_type {
-            ExtensionType::Native => self.stop_native_push(&session_id),
-            ExtensionType::Wasm => {
-                Ok(()) // WASM doesn't support push, just return success
-            }
-        };
+        let result = self.stop_native_push(&session_id);
 
         match result {
             Ok(_) => {

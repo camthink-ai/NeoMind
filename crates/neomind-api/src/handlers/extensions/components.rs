@@ -278,8 +278,8 @@ pub(crate) fn load_extension_components(
     );
 
     // Get the extension directory
-    // For legacy format: file_path = extensions/xxx.wasm -> ext_dir = extensions/
-    // For .nep format: file_path = extensions/xxx/binaries/wasm/extension.wasm -> ext_dir should be extensions/xxx/
+    // For legacy format: file_path = extensions/xxx.<binary> -> ext_dir = extensions/
+    // For .nep format: file_path = extensions/xxx/binaries/<platform>/lib.ext -> ext_dir should be extensions/xxx/
     // Determine the extension directory
     // If file_path is a directory, use it directly
     // If file_path is a file, use its parent directory

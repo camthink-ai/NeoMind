@@ -1,6 +1,6 @@
 //! Extension API handlers.
 //!
-//! Handlers for managing dynamically loaded extensions (.so/.dylib/.dll/.wasm).
+//! Handlers for managing dynamically loaded extensions (.so/.dylib/.dll).
 //! Extensions are distinct from user configurations like LLM backends or device connections.
 //!
 //! V2 Extension System:

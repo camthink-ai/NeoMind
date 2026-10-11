@@ -451,14 +451,7 @@ pub async fn upload_extension_file_handler(
         .await
         .map_err(|e| ErrorResponse::internal(format!("Failed to load extension binary: {}", e)))?;
 
-    // Determine extension type from binary path
-    let extension_type = install_result
-        .binary_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| if e == "wasm" { "wasm" } else { "native" })
-        .unwrap_or("native")
-        .to_string();
+    let extension_type = "native".to_string();
 
     // Save to storage
     let store = state.extensions.store.clone();
@@ -542,13 +535,7 @@ pub(crate) async fn register_installed_package(
         .await
         .map_err(|e| format!("failed to load extension: {e}"))?;
 
-    let extension_type = pkg
-        .binary_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| if e == "wasm" { "wasm" } else { "native" })
-        .unwrap_or("native")
-        .to_string();
+    let extension_type = "native".to_string();
 
     let store = state.extensions.store.clone();
     let preserved_config = store

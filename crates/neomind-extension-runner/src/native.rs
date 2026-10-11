@@ -1,6 +1,7 @@
 //! `native` — split from the former main.rs monolith.
 
 use super::*;
+use std::collections::HashMap;
 
 use std::ffi::CStr;
 
@@ -150,7 +151,7 @@ impl NativeExtensionBridge {
             return Err(Self::extract_error(&descriptor_response));
         };
 
-        let descriptor = WasmRuntime::parse_descriptor_json(&descriptor_json)?;
+        let descriptor = parse_descriptor_json(&descriptor_json)?;
         Ok((bridge, descriptor))
     }
 
@@ -233,7 +234,7 @@ impl NativeExtensionBridge {
         } else {
             return Err(Self::extract_error(&descriptor_response));
         };
-        WasmRuntime::parse_descriptor_json(&descriptor_json)
+        parse_descriptor_json(&descriptor_json)
     }
 
     pub(crate) fn configure(&self, config: &serde_json::Value) -> Result<(), String> {
@@ -515,4 +516,197 @@ impl NativeExtensionBridge {
         let symbol: libloading::Symbol<T> = unsafe { library.get(name).ok()? };
         Some(*symbol)
     }
+}
+
+// Descriptor JSON parsing (moved from the removed wasm module — the native
+// bridge shares the wire format).
+pub(crate) fn parse_descriptor_json(
+    json: &serde_json::Value,
+) -> Result<ExtensionDescriptor, String> {
+    use neomind_extension_sdk::{
+        ExtensionCommand, ExtensionMetadata, MetricDataType, MetricDescriptor, ParameterDefinition,
+    };
+
+    let metadata_json = json
+        .get("metadata")
+        .ok_or("Missing 'metadata' in descriptor")?;
+
+    // Parse metadata
+    let id = metadata_json
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing 'id' in metadata")?
+        .to_string();
+    let name = metadata_json
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing 'name' in metadata")?
+        .to_string();
+    let version_str = metadata_json
+        .get("version")
+        .and_then(|v| v.as_str())
+        .unwrap_or("1.0.0");
+    let version = semver::Version::parse(version_str).unwrap_or(semver::Version::new(1, 0, 0));
+    let description = metadata_json
+        .get("description")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let author = metadata_json
+        .get("author")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let mut metadata = ExtensionMetadata::new(id, name, version.to_string());
+    metadata.description = description;
+    metadata.author = author;
+
+    // Parse config_parameters from metadata JSON
+    if let Some(config_params_json) = metadata_json.get("config_parameters") {
+        if let Ok(config_params) =
+            serde_json::from_value::<Vec<ParameterDefinition>>(config_params_json.clone())
+        {
+            metadata.config_parameters = Some(config_params);
+        }
+    }
+
+    // Parse metrics
+    let metrics: Vec<MetricDescriptor> = json
+        .get("metrics")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| {
+                    let name = m.get("name")?.as_str()?.to_string();
+                    let display_name = m
+                        .get("display_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(&name)
+                        .to_string();
+                    let data_type_str = m
+                        .get("data_type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("string");
+                    let data_type = match data_type_str {
+                        "float" => MetricDataType::Float,
+                        "integer" => MetricDataType::Integer,
+                        "boolean" => MetricDataType::Boolean,
+                        "binary" => MetricDataType::Binary,
+                        _ => MetricDataType::String,
+                    };
+                    let unit = m
+                        .get("unit")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let min = m.get("min").and_then(|v| v.as_f64());
+                    let max = m.get("max").and_then(|v| v.as_f64());
+                    let required = m.get("required").and_then(|v| v.as_bool()).unwrap_or(false);
+
+                    Some(MetricDescriptor {
+                        name,
+                        display_name,
+                        data_type,
+                        unit,
+                        min,
+                        max,
+                        required,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Parse commands
+    let commands: Vec<ExtensionCommand> = json
+        .get("commands")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|c| {
+                    let name = c.get("name")?.as_str()?.to_string();
+                    let display_name = c
+                        .get("display_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(&name)
+                        .to_string();
+                    let description = c
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+
+                    // Parse parameters
+                    let parameters: Vec<ParameterDefinition> = c
+                        .get("parameters")
+                        .and_then(|v| v.as_array())
+                        .map(|params| {
+                            params
+                                .iter()
+                                .filter_map(|p| {
+                                    let param_name = p.get("name")?.as_str()?.to_string();
+                                    let param_display_name = p
+                                        .get("display_name")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or(&param_name)
+                                        .to_string();
+                                    let param_desc = p
+                                        .get("description")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+                                    let param_type_str = p
+                                        .get("param_type")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("string");
+                                    let param_type = match param_type_str {
+                                        "float" => MetricDataType::Float,
+                                        "integer" => MetricDataType::Integer,
+                                        "boolean" => MetricDataType::Boolean,
+                                        "binary" => MetricDataType::Binary,
+                                        _ => MetricDataType::String,
+                                    };
+                                    let required =
+                                        p.get("required").and_then(|v| v.as_bool()).unwrap_or(true);
+
+                                    Some(ParameterDefinition {
+                                        name: param_name,
+                                        display_name: param_display_name,
+                                        description: param_desc,
+                                        param_type,
+                                        required,
+                                        default_value: None,
+                                        min: None,
+                                        max: None,
+                                        options: Vec::new(),
+                                    })
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+
+                    // Parse samples
+                    let samples: Vec<serde_json::Value> = c
+                        .get("samples")
+                        .and_then(|v| v.as_array())
+                        .cloned()
+                        .unwrap_or_default();
+
+                    Some(ExtensionCommand {
+                        name,
+                        display_name,
+                        description,
+                        payload_template: String::new(),
+                        parameters,
+                        fixed_values: HashMap::new(),
+                        samples,
+                        parameter_groups: Vec::new(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(ExtensionDescriptor::with_capabilities(
+        metadata, commands, metrics,
+    ))
 }

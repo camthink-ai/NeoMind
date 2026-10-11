@@ -27,11 +27,6 @@ chrono = { workspace = true }
 semver = { workspace = true }
 libloading = "0.8"
 base64 = "0.22"
-# WASM runtime (direct dependency)
-# `component-model` feature dropped: code uses core `Module`/WASI preview1 only,
-# never `wasmtime::component::*` (verified — reduces the 26→target port surface).
-wasmtime = { version = "36", features = ["async"] }
-wasmtime-wasi = { version = "36" }
 thiserror = { workspace = true }
 libc = "0.2"
 [target.'cfg(windows)'.dependencies]

@@ -10,7 +10,7 @@ repository = "https://github.com/neomind-ai/neomind"
 homepage = "https://github.com/neomind-ai/neomind"
 documentation = "https://docs.rs/neomind-extension-sdk"
 keywords = ["extension", "sdk", "edge-ai", "iot", "neomind"]
-categories = ["api-bindings", "development-tools::ffi", "embedded", "wasm"]
+categories = ["api-bindings", "development-tools::ffi", "embedded"]
 rust-version = "1.75"
 
 [lib]
@@ -42,11 +42,6 @@ tracing = "0.1"
 num_cpus = { version = "1", optional = true }
 parking_lot = { version = "0.12", optional = true }
 
-# WASM-only dependencies
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-# Use pollster for WASM-compatible block_on - it's lightweight and works on wasm32-unknown-unknown
-pollster = "0.4"
-
 [features]
 default = []
 # Protocol-level test kit: in-process mock runner, capability recorder,
@@ -60,4 +55,4 @@ tokio-test = "0.4"
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
-targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
+targets = ["x86_64-unknown-linux-gnu"]

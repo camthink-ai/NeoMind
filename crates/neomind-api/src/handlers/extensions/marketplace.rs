@@ -703,8 +703,7 @@ fn select_build_key(
     base_platform: &str,
     variant: neomind_core::extension::accel::Variant,
 ) -> Option<String> {
-    let mut candidates = neomind_core::extension::accel::fallback_keys(base_platform, variant);
-    candidates.push("wasm".to_string());
+    let candidates = neomind_core::extension::accel::fallback_keys(base_platform, variant);
     candidates
         .into_iter()
         .find(|k| available_keys.contains(k.as_str()))
@@ -787,13 +786,6 @@ fn tmp_counter() -> u64 {
     use std::sync::atomic::{AtomicU64, Ordering};
     static C: AtomicU64 = AtomicU64::new(0);
     C.fetch_add(1, Ordering::SeqCst)
-}
-
-fn compute_sha256(data: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    format!("{:x}", hasher.finalize())
 }
 
 /// Stream-hash a file's contents for SHA256 verification without buffering
@@ -1154,13 +1146,7 @@ pub async fn install_marketplace_extension_handler(
                 match runtime.load(&result.binary_path).await {
                     Ok(ext_metadata) => {
                         // Determine extension type from binary path
-                        let extension_type = result
-                            .binary_path
-                            .extension()
-                            .and_then(|e| e.to_str())
-                            .map(|e| if e == "wasm" { "wasm" } else { "native" })
-                            .unwrap_or("native")
-                            .to_string();
+                        let extension_type = "native".to_string();
 
                         // Save to storage. An upgrade/reinstall overwrites the
                         // whole row — carry the previous user config (YOLO
@@ -1262,8 +1248,7 @@ pub async fn install_marketplace_extension_handler(
         // Variant chain (via accel): e.g. Jetson → linux-aarch64-jetson → linux-aarch64 → wasm.
         let variant = neomind_core::extension::accel::detect_variant();
 
-        // "unknown" platform is only acceptable for pure-WASM extensions.
-        if platform == "unknown" && !metadata.builds.contains_key("wasm") {
+        if platform == "unknown" {
             return ok(MarketplaceInstallResponse {
                 success: false,
                 extension_id: req.id,
@@ -1294,9 +1279,6 @@ pub async fn install_marketplace_extension_handler(
             .builds
             .get(build_key.as_str())
             .expect("select_build_key invariant: returned key must exist in metadata.builds");
-
-        // Determine if this is a WASM build for file extension logic (used later)
-        let is_wasm = build_key == "wasm";
 
         // Download the extension binary
         tracing::info!("Downloading extension {} from {}", req.id, build.url);
@@ -1346,21 +1328,15 @@ pub async fn install_marketplace_extension_handler(
             }
         }
 
-        // Determine file extension and naming based on type
-        let (ext, wasm_filename, json_filename) = if is_wasm {
-            (
-                ".wasm",
-                format!("{}.wasm", req.id.replace("-", "_")),
-                format!("{}.json", req.id.replace("-", "_")),
-            )
-        } else if platform.starts_with("darwin") {
-            (".dylib", String::new(), String::new())
+        // Determine file extension based on platform
+        let ext = if platform.starts_with("darwin") {
+            ".dylib"
         } else if platform.starts_with("linux") {
-            (".so", String::new(), String::new())
+            ".so"
         } else if platform.starts_with("windows") {
-            (".dll", String::new(), String::new())
+            ".dll"
         } else {
-            ("", String::new(), String::new())
+            ""
         };
 
         // Create extensions directory using NEOMIND_DATA_DIR for consistency
@@ -1378,81 +1354,15 @@ pub async fn install_marketplace_extension_handler(
             "Installing extension from legacy binary format"
         );
 
-        // Write the extension file(s)
-        let (file_path, json_path) = if is_wasm {
-            // WASM: write both .wasm and .json files
-            let wasm_path = extensions_dir.join(&wasm_filename);
+        // Write the extension binary
+        let filename = format!("libneomind_extension_{}{}", req.id, ext);
+        let file_path = extensions_dir.join(&filename);
 
-            std::fs::copy(&tmp_path, &wasm_path)
-                .map_err(|e| ErrorResponse::internal(format!("Failed to copy WASM file: {}", e)))?;
+        std::fs::copy(&tmp_path, &file_path).map_err(|e| {
+            ErrorResponse::internal(format!("Failed to copy extension file: {}", e))
+        })?;
 
-            // Download and write JSON sidecar
-            let json_path = extensions_dir.join(&json_filename);
-
-            if let Some(json_url) = &build.json_url {
-                let json_response =
-                    client.get(json_url).send().await.map_err(|e| {
-                        ErrorResponse::internal(format!("JSON download failed: {}", e))
-                    })?;
-
-                if json_response.status().is_success() {
-                    let json_bytes = json_response.bytes().await.map_err(|e| {
-                        ErrorResponse::internal(format!("Failed to read JSON: {}", e))
-                    })?;
-
-                    // Verify JSON SHA256 if provided
-                    if let Some(ref expected_sha) = build.json_sha256 {
-                        if !expected_sha.is_empty() {
-                            let json_checksum = compute_sha256(&json_bytes);
-                            if json_checksum != *expected_sha {
-                                // Clean up on verification failure
-                                let _ = std::fs::remove_file(&wasm_path);
-                                return ok(MarketplaceInstallResponse {
-                                    success: false,
-                                    extension_id: req.id,
-                                    downloaded: true,
-                                    installed: false,
-                                    path: None,
-                                    error: Some("JSON checksum verification failed".to_string()),
-                                });
-                            }
-                        }
-                    }
-
-                    std::fs::write(&json_path, &json_bytes).map_err(|e| {
-                        ErrorResponse::internal(format!("Failed to write JSON file: {}", e))
-                    })?;
-                } else {
-                    // Copy local JSON if download fails (fallback)
-                    let local_json = format!(
-                        "extensions/{}/{}.json",
-                        req.id.replace("-", "_"),
-                        req.id.replace("-", "_")
-                    );
-                    if PathBuf::from(&local_json).exists() {
-                        let _ = std::fs::copy(&local_json, &json_path);
-                    }
-                }
-            }
-
-            tracing::info!(
-                "WASM extension downloaded to: {:?} + {:?}",
-                wasm_path,
-                json_path
-            );
-            (wasm_path, Some(json_path))
-        } else {
-            // Native: write single binary file
-            let filename = format!("libneomind_extension_{}{}", req.id, ext);
-            let file_path = extensions_dir.join(&filename);
-
-            std::fs::copy(&tmp_path, &file_path).map_err(|e| {
-                ErrorResponse::internal(format!("Failed to copy extension file: {}", e))
-            })?;
-
-            tracing::info!("Extension downloaded to: {:?}", file_path);
-            (file_path, None)
-        };
+        tracing::info!("Extension downloaded to: {:?}", file_path);
 
         match runtime.load(&file_path).await {
             Ok(_) => {
@@ -1490,11 +1400,8 @@ pub async fn install_marketplace_extension_handler(
                 })
             }
             Err(e) => {
-                // Clean up the downloaded file(s) on failure
+                // Clean up the downloaded file on failure
                 let _ = std::fs::remove_file(&file_path);
-                if let Some(ref jp) = json_path {
-                    let _ = std::fs::remove_file(jp);
-                }
 
                 ok(MarketplaceInstallResponse {
                     success: false,
@@ -1636,11 +1543,13 @@ mod select_build_key_tests {
     }
 
     #[test]
-    fn wasm_picked_for_pure_wasm_extension() {
+    fn pure_wasm_extension_has_no_compatible_build() {
+        // WASM support was removed (2026-10): a marketplace entry that only
+        // ships wasm builds must refuse to install rather than fall through.
         let avail = keys(&["wasm"]);
         assert_eq!(
             select_build_key(&avail, "linux-aarch64", Variant::Cpu),
-            Some("wasm".to_string())
+            None
         );
     }
 
