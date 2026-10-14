@@ -7,8 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.2.0] - 2026-10-10 — review-hardening wave, small-model guardrails, and the decision layer moves out
+## [1.2.1] - 2026-10-14 — live-Jetson fault chain: rebuilt runtime, extension metrics self-heal, and the chat-backend contention fixes
 
+A full live run on an NG4520 (Orin, 7.4 GB) took the platform from "logs look odd" to a diagnosed fault chain: the first CI-built llama.cpp runtime SIGILL'd on every Orin (Neoverse build host compiled SVE into libggml-cpu; A78AE has none), the llama-server stderr went to /dev/null so the death was invisible, an 8K effective window (4-slot KV split) overflowed agent history into the compact-retry ladder where the 2B model wedged, and background memory extraction raced the next turn on the same shared llama-server. Everything below was diagnosed on-device, fixed, and re-verified end-to-end on that box (chat, tools, extension metrics, and the full download→SHA-verify→spawn chain against the republished asset).
+
+### Upgrade notes (1.2.0 →)
+- llama-server now spawns with `--parallel 1`: the `-c` KV budget is one slot's window instead of being split N ways. Concurrent LLM requests queue on the single slot — the correct behavior for a shared decode budget on an edge box (background work already defers, see below).
+- **Jetson runtime asset replaced**: the `runtime-b11609` `linux-aarch64-jetson` tarball was rebuilt natively on Orin (CPU backend pinned to armv8.2-a) and the `JETSON_RUNTIME_SHA256` pin moved to it. Devices that already cached the broken b11609 must BOTH upgrade to this version (old binaries pin the old SHA and would reject the fixed asset) AND clear `data/llama-server/b11609-jetson/`.
+- The spawn-time RAM guard now budgets from `min(total×70%, available−256 MB)` — on a busy box the effective window can be smaller than 1.2.0's total-only budget; `NEOMIND_BUILTIN_LLM_CTX` still overrides.
+- Memory extraction may now start up to ~2 minutes later than the turn it belongs to (deferral window while foreground chat streams are active).
+
+### Fixed — builtin LLM runtime (llama.cpp b10545 → b11609 wave)
+- Runtime variant system with an nvidia-smi probe (Jetson / linux-x64 CUDA / CPU; Jetson keeps our self-hosted CUDA build, CUDA picks official Windows or our gcc-11 linux build, driverless hosts degrade to CPU instead of failing boot).
+- `/props` context is reported verbatim as the server's per-request truth; our builtin spawn additionally budgets per-slot (`-c` divided by reported slots) — a full-history prompt budgeted against the whole pool while N concurrent requests share it promised up to N× the real capacity.
+- `neomind extension get` printed nothing and exited 0 on an installed extension (the `format_output` return value was dropped after the pure-render refactor) — the CLI path the agent's "look at the router extension" turn died on.
+- Deleting the builtin model no longer leaves an orphaned, still-selectable backend instance (`force_remove_instance` clears the active pointer first; the previously swallowed failure is loud before files go).
+- The install wizard skips the fake "downloading 0%" ceremony when the model is already installed (re-download stays delete-model + download).
+- llama-server stderr now lands in `server.log` beside the binary (truncated per spawn) instead of `/dev/null` — the SIGILL above was only diagnosable by running the binary by hand; `wait_healthy` failures now distinguish "exited during startup: <status> (see server.log)" from a genuine timeout.
+
+### Fixed — chat backend contention & small-model wedges
+- Background memory extraction no longer races the next turn on a shared llama-server: a process-wide foreground-chat counter (all four LLM entry points instrumented) gates the extraction call, which also waits 15 s before checking and gives up waiting at 120 s. On the incident box a 34 s extraction overlapped the next turn's generation and the turns after returned empty content after retry.
+- Empty-content failures log a root-cause split (`thinking_chars >> 0` = thinking-loop wedge against the token budget; all-zero = backend stalled/rejected the request shape) instead of a single misleading warn that claimed "only tool calls".
+- Stored backend capabilities vs live probe (/props, /api/show) disagreement now logs a WARN with both values and the arbitration rule (stored wins — it may encode a user override; the probe's thinking detection is name-heuristic based). Previously minicpm5-2b logged `supports_thinking=false` then `thinking=true` in the same millisecond with no explanation.
+
+### Fixed — extension metrics & self-heal
+- Extensions that declare metrics but stop producing values (stale registration / crashed runner) now self-heal: 3 consecutive empty cycles reload the extension (unload → load → re-apply saved config, mirroring the manual reload handler); after 3 ineffective reloads the collector gives up with a one-time ERROR (a reload cannot fix an extension-side bug) instead of warning forever.
+- Extensions that have NEVER produced a value (metrics declared, `produce_metrics` unimplemented — the SDK default) are debug-silent instead of feeding the broken-IPC detector; only produced-then-zero counts as a regression.
+- Memory-extraction output quality gate: tag-separator stripping is now iterative (the old single pass wrote literal "- : 平台名称：" entries), facts under 6 chars are rejected, and assistant-self-referential "knowledge" ("the assistant mentions…") is filtered at the parser and discouraged in the prompt. The merged-facts log reports post-dedup counts (`fresh_*_facts`), not pre-dedup parse counts.
+
+### Fixed — build & release
+- The b11609 `linux-aarch64-jetson` runtime asset was rebuilt natively on an NG4520 (CUDA 12.6, `-DGGML_NATIVE=OFF -DGGML_CPU_ARM_ARCH=armv8.2-a`) and republished over the SIGILL-ing CI build; `build-llama-server.sh` pins the same baseline, and the Runtimes CI workflow carries the fix (NeoMind-Runtimes 26c9b92) with the incident documented. The install-time exec check (already present) is what catches this class at download, not at first spawn.
+
+
+---
+
+## [1.2.0] - 2026-10-10 — review-hardening wave, small-model guardrails, and the decision layer moves out
 Three threads: every actionable finding from a full pre-push review (3 high, 20 medium, the low-severity backlog) is fixed with gates green; the decision layer's full arc plays out pre-release — operable (config API, settings UI, ask endpoint), then benchmarked against the Jev/System-One usage contract and moved OUT of the platform entirely (the laya-decision extension owns it end-to-end); and the file tools + small-model guardrails are rebuilt from five live widget-task diagnostic runs. A sixth-through-eleventh live-run wave followed: guardrails rebuilt from eleven recorded widget/extension task runs across four model tiers (2B→DeepSeek), the widget pipeline closed end-to-end, and the decision layer's LLM-injection modes (prefill/guidance) removed after checking them against the Jev/System-One usage contract.
 
 ### Upgrade notes (1.1.2 →)
