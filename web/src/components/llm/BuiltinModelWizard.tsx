@@ -171,6 +171,13 @@ export function BuiltinModelWizard({
   // would otherwise yank an installed model's user straight back to 'ready'
   // before they can pick another one.
   const browsingPickerRef = useRef(false)
+  // Monotonic download-session counter. Incremented on every download click;
+  // in-flight status polls stamp the session they started under and their
+  // responses are dropped when a NEWER session exists. Without this, a poll
+  // that left before the click can land right after it and render the stale
+  // pre-download snapshot — e.g. installed models report downloaded=total
+  // (100%), which used to flash the bar 100% → 0% at re-download.
+  const downloadSessionRef = useRef(0)
 
   const failWith = (action: RetryAction, error: unknown) => {
     setRetryAction(action)
@@ -265,9 +272,13 @@ export function BuiltinModelWizard({
     if (!open) return
     let cancelled = false
     const poll = async () => {
+      // Stamp the session this request belongs to; a response that lands
+      // after a newer download click is a stale pre-click snapshot — apply
+      // it and the wizard renders the old state (100% flash / ready bounce).
+      const session = downloadSessionRef.current
       try {
         const s = await api.getBuiltinLlmStatus()
-        if (!cancelled) setStatus(s)
+        if (!cancelled && session === downloadSessionRef.current) setStatus(s)
       } catch {
         // Transient poll failure: keep the last good status rather than
         // flipping the wizard into error (a download may be mid-flight).
@@ -381,10 +392,23 @@ export function BuiltinModelWizard({
     downloadFailedRef.current = false
     browsingPickerRef.current = false
     try {
-      await api.downloadBuiltinLlm(modelId)
-      // Optimistically switch to the downloading phase; live WS events supply
-      // real progress numbers (and the poll confirms/resumes if the socket is
-      // not delivering).
+      const res = await api.downloadBuiltinLlm(modelId)
+      // Already-installed model: the server declines to re-run the download
+      // (which used to cycle a fake "downloading 0%" ceremony). Jump straight
+      // to ready — a true re-download is delete-model + download. Fetch
+      // status directly so the ready transition is immediate, not poll-lagged.
+      if (res.already_installed) {
+        sawDownloadingRef.current = false
+        setStatus(await api.getBuiltinLlmStatus())
+        return
+      }
+      // New/resumed download: bump the session (in-flight polls from before
+      // the click are dropped as stale), clear the previous session's
+      // progress, and optimistically switch to the downloading phase; live
+      // WS events supply real progress numbers (and the poll confirms/resumes
+      // if the socket is not delivering).
+      downloadSessionRef.current += 1
+      setProgress({ percent: null, downloadedBytes: 0, totalBytes: null })
       sawDownloadingRef.current = true
       setPhase('downloading')
     } catch (error) {

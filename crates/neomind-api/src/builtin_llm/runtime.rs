@@ -8,8 +8,8 @@ use std::sync::{Arc, OnceLock};
 use neomind_core::builtin_llm::find::find_llama_server;
 use neomind_core::builtin_llm::runtime::{
     llama_asset_is_zip, llama_asset_name, llama_cudart_marker, llama_cudart_url,
-    llama_server_bin_name, llama_server_cache_dir, llama_server_url_for, RuntimeVariant,
-    JETSON_RUNTIME_SHA256, LLAMA_CPP_VERSION,
+    llama_runtime_expected_sha, llama_server_bin_name, llama_server_cache_dir,
+    llama_server_url_for, RuntimeVariant, LLAMA_CPP_VERSION,
 };
 
 /// Single-flight gate so concurrent ensure_llama_server calls don't download
@@ -26,13 +26,19 @@ fn runtime_lock() -> Arc<tokio::sync::Mutex<()>> {
 /// Resolve a runnable `neomind-llama-server`:
 /// 1. bundled binary (next to the executable, or PATH) — always wins;
 /// 2. previously downloaded cache (`data/llama-server/<version>[-cuda]/`);
-/// 3. download the official prebuilt for this platform (and variant), extract
-///    `llama-server`, cache it, and return it.
+/// 3. download the runtime for this platform (and variant) — the official
+///    llama.cpp prebuilt, or OUR self-hosted build where llama.cpp ships
+///    none (Jetson, linux-x64 CUDA) — extract `llama-server`, cache it, and
+///    return it.
 ///
-/// With `NEOMIND_BUILTIN_RUNTIME_VARIANT=cuda` on Windows x64 the CUDA build
-/// is fetched plus the cudart DLL bundle (driver-only hosts). Platforms with
-/// no official CUDA prebuilt (Linux/Jetson) surface a clear error naming the
-/// env to unset and the source-build script.
+/// Variant selection auto-detects: Jetson via `/etc/nv_tegra_release`, and
+/// Linux x64 with a qualifying NVIDIA GPU (`nvidia-smi` probe: compute cap
+/// 7.5–8.9, driver ≥525) gets OUR self-hosted CUDA build (CUDA runtime libs
+/// bundled in the tarball — driver-only hosts). Windows x64 needs the env
+/// opt-in (`NEOMIND_BUILTIN_RUNTIME_VARIANT=cuda`) for the official CUDA
+/// build + cudart DLL bundle. Unsupported GPUs / platforms without a CUDA
+/// asset stay on the CPU build; a CUDA download or exec failure falls back
+/// to CPU, so auto-detection can never break boot.
 pub async fn ensure_llama_server(data_dir: &Path) -> Result<PathBuf, String> {
     // Fast path — bundled binary, no network.
     if let Ok(b) = find_llama_server() {
@@ -58,18 +64,20 @@ pub async fn ensure_llama_server(data_dir: &Path) -> Result<PathBuf, String> {
     let mut variant = RuntimeVariant::detect();
     match ensure_runtime_variant(data_dir, variant).await {
         Ok(bin) => Ok(bin),
-        Err(err) if variant == RuntimeVariant::Cuda => {
-            // CUDA is opt-in, but a dead backend helps nobody — degrade to
-            // the CPU build (always available) instead of failing the boot.
-            // Sticky via env so a restart doesn't re-download CUDA and hit
-            // the same wall (same override pattern as port/ctx).
+        // CUDA/Vulkan are opt-in, but a dead backend helps nobody — degrade
+        // to the CPU build (always available) instead of failing the boot.
+        // Sticky via env so a restart doesn't re-download and hit the same
+        // wall (same override pattern as port/ctx).
+        Err(err)
+            if matches!(variant, RuntimeVariant::Cuda | RuntimeVariant::Vulkan) =>
+        {
             tracing::warn!(
                 error = %err,
-                "builtin llm: CUDA runtime unusable ({}) — falling back to the CPU build for this process; unset NEOMIND_BUILTIN_RUNTIME_VARIANT or fix the driver to retry CUDA",
+                "builtin llm: {} runtime unusable — falling back to the CPU build for this process; unset NEOMIND_BUILTIN_RUNTIME_VARIANT or fix the driver/loader to retry",
                 if llama_asset_name(std::env::consts::OS, std::env::consts::ARCH, variant).is_some() {
                     "download or exec failed"
                 } else {
-                    "no official prebuilt for this platform"
+                    "no prebuilt for this platform"
                 }
             );
             std::env::set_var("NEOMIND_BUILTIN_RUNTIME_VARIANT", "cpu");
@@ -88,11 +96,15 @@ async fn ensure_runtime_variant(
 ) -> Result<PathBuf, String> {
     let cache_dir = llama_server_cache_dir(data_dir, variant);
     // A CUDA cache is only complete with its cudart DLLs — a partial one
-    // (crashed between the two downloads) must not short-circuit.
+    // (crashed between the two downloads) must not short-circuit. (Our
+    // linux-x64 CUDA tarball bundles the libs, but the marker is written
+    // after the exec check all the same.) Vulkan needs no extra bundle.
     let cache_complete = |dir: &Path| {
         find_runtime_binary(dir).is_some()
-            && (matches!(variant, RuntimeVariant::Cpu | RuntimeVariant::Jetson)
-                || dir.join(llama_cudart_marker()).exists())
+            && (matches!(
+                variant,
+                RuntimeVariant::Cpu | RuntimeVariant::Vulkan | RuntimeVariant::Jetson
+            ) || dir.join(llama_cudart_marker()).exists())
     };
     if cache_complete(&cache_dir) {
         return Ok(find_runtime_binary(&cache_dir).expect("checked above"));
@@ -125,9 +137,11 @@ async fn ensure_runtime_variant(
             }
         })?;
     let url = llama_server_url_for(std::env::consts::OS, std::env::consts::ARCH, variant);
-    // Executable download — our own Jetson asset is hard SHA-pinned; official
-    // llama.cpp assets move only when our pin (LLAMA_CPP_VERSION) moves.
-    let expected_sha = (variant == RuntimeVariant::Jetson).then_some(JETSON_RUNTIME_SHA256);
+    // Executable download — our self-hosted assets (Jetson, linux-x64 CUDA)
+    // are hard SHA-pinned; official llama.cpp assets move only when our pin
+    // (LLAMA_CPP_VERSION) moves.
+    let expected_sha =
+        llama_runtime_expected_sha(std::env::consts::OS, std::env::consts::ARCH, variant);
     tracing::info!(url = %url, variant = ?variant, "builtin llm: downloading llama-server runtime");
 
     RUNTIME_DL_ACTIVE.store(true, Ordering::SeqCst);
@@ -165,7 +179,7 @@ async fn ensure_runtime_variant(
                 }
             }
             None => {
-                // Our own Jetson build deserves the same exec sanity gate as
+                // Our Jetson build deserves the same exec sanity gate as
                 // CUDA — catch a broken download at install time, not spawn.
                 if variant == RuntimeVariant::Jetson {
                     exec_check(&bin).await.map(|_| bin.clone()).map_err(|e| {
@@ -173,6 +187,22 @@ async fn ensure_runtime_variant(
                             "Jetson runtime exec check failed (SHA matched but the binary \
                                  does not run — build/runtime mismatch): {e}"
                         )
+                    })
+                } else if variant == RuntimeVariant::Cuda {
+                    // Our linux-x64 CUDA tarball bundles the CUDA runtime
+                    // libs, so there is no cudart bundle to download — but
+                    // `cache_complete` requires the marker for the Cuda
+                    // variant, so exec-check (broken download / immediate
+                    // loader failure) and stamp it. A driverless host can
+                    // still pass --version (CUDA inits lazily); that failure
+                    // surfaces at first spawn and degrades to CPU via the
+                    // caller's fallback.
+                    exec_check(&bin).await.map(|_| {
+                        let _ =
+                            std::fs::write(cache_dir.join(llama_cudart_marker()), b"ok");
+                        bin.clone()
+                    }).map_err(|e| {
+                        format!("CUDA runtime exec check failed: {e}")
                     })
                 } else {
                     Ok(bin)

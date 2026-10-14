@@ -163,6 +163,21 @@ pub struct LlamaCppCapabilities {
     pub supports_thinking: bool,
     pub supports_tools: bool,
     pub max_context: usize,
+    /// Server slot count from /props. `max_context` above is the server's
+    /// per-request truth (`slot_n_ctx`); OUR builtin spawn (auto slots +
+    /// unified KV) additionally divides by this for a concurrency-safe
+    /// budget — see `per_slot_context` callers.
+    pub total_slots: Option<usize>,
+}
+
+/// Per-slot context a single request can claim: `-c` is the TOTAL KV pool
+/// shared by all slots (unified KV / `--parallel`), so a per-request budget
+/// must divide by the slot count — reporting the full pool made consumers
+/// budget `0.7 × n_ctx` per request while N concurrent requests share one
+/// pool, promising up to `N × 0.7` × the real capacity. Servers that don't
+/// report `total_slots` (older builds) are treated as single-slot.
+pub fn per_slot_context(n_ctx: usize, total_slots: Option<usize>) -> usize {
+    n_ctx / total_slots.unwrap_or(1).max(1)
 }
 
 /// llama.cpp runtime backend.
@@ -215,6 +230,7 @@ impl LlamaCppRuntime {
             supports_thinking,
             supports_tools,
             max_context,
+            total_slots: None,
         });
         self
     }
@@ -246,6 +262,16 @@ impl LlamaCppRuntime {
             .and_then(|s| s.n_ctx)
             .unwrap_or(128000);
 
+        // `/props` n_ctx is `slot_n_ctx` — what ONE request can claim:
+        // per-slot quota on `--parallel` (partitioned) servers, the full
+        // unified pool on auto-slotted ones. It is the server's own
+        // per-request truth, so report it verbatim; the conservative
+        // divide-by-slots budgeting applies ONLY to our builtin spawn
+        // (see `per_slot_context` users in neomind-api), where we know the
+        // server runs auto slots + unified KV and N concurrent requests
+        // share that pool.
+        let total_slots = props.total_slots;
+
         let supports_multimodal = props.modalities.as_ref().map(|m| m.vision).unwrap_or(false);
 
         let supports_tools = props
@@ -270,6 +296,7 @@ impl LlamaCppRuntime {
         tracing::info!(
             model = model_name,
             n_ctx,
+            total_slots,
             supports_multimodal,
             supports_tools,
             supports_thinking,
@@ -281,6 +308,7 @@ impl LlamaCppRuntime {
             supports_thinking,
             supports_tools,
             max_context: n_ctx,
+            total_slots: props.total_slots,
         })
     }
 
@@ -1378,8 +1406,19 @@ mod tests {
     }
 
     #[test]
-    fn test_llamacpp_capabilities() {
-        let config = LlamaCppConfig::default();
+    fn per_slot_context_divides_total_kv_pool() {
+        // Auto-slotted server: 128K total pool, 4 slots → 32K per request.
+        assert_eq!(per_slot_context(131_072, Some(4)), 32_768);
+        assert_eq!(per_slot_context(65_536, Some(2)), 32_768);
+        // Odd division floors; a degenerate 0-slot report is clamped to 1.
+        assert_eq!(per_slot_context(8_192, Some(3)), 2_730);
+        assert_eq!(per_slot_context(8_192, Some(0)), 8_192);
+        // Older servers without total_slots report: single-slot, full pool.
+        assert_eq!(per_slot_context(131_072, None), 131_072);
+    }
+
+    #[test]
+    fn test_llamacpp_capabilities() {        let config = LlamaCppConfig::default();
         let runtime = LlamaCppRuntime::new(config).unwrap();
         let caps = runtime.capabilities();
         assert!(caps.streaming);

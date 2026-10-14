@@ -207,6 +207,16 @@ pub async fn bootstrap(
     let mdir = models_dir(data_dir);
     let Some((def, manifest)): Option<(BuiltinModelDef, ModelManifest)> = installed_model(&mdir)
     else {
+        // Self-heal: model files gone but a builtin instance still on record
+        // is an orphan (a delete that failed while the instance was active
+        // leaves exactly this). It would keep appearing in the chat picker
+        // and could be activated against a dead server — drop it, active or
+        // not, so already-affected installs recover on restart.
+        if manager.get_instance(BUILTIN_INSTANCE_ID).is_some() {
+            if let Err(e) = manager.force_remove_instance(BUILTIN_INSTANCE_ID).await {
+                tracing::warn!(error = %e, "builtin llm: failed to clean up orphan instance");
+            }
+        }
         return BootstrapOutcome::ModelMissing;
     };
 
@@ -295,11 +305,14 @@ pub async fn bootstrap(
     instance.endpoint = Some(endpoint.clone());
     instance.model = def.manifest.id.clone();
     // Same as handlers::spawn_builtin_server — the capability refresh loop
-    // predates this instance; set the real ctx so chat shows 128K/32K.
+    // predates this instance; set the real per-slot ctx. effective_ctx is
+    // the TOTAL KV pool; the now-healthy server's /props reports the auto
+    // slot count to divide by.
     instance.capabilities.supports_streaming = true;
     instance.capabilities.supports_tools = true;
     instance.capabilities.supports_thinking = def.default_thinking;
-    instance.capabilities.max_context = effective_ctx;
+    instance.capabilities.max_context =
+        super::handlers::effective_per_slot_ctx(cfg.port, effective_ctx).await;
     let _ = manager.upsert_instance(instance).await;
 
     // 活跃策略:仅当没有任何活跃后端时设为活跃(「有后端不抢」)。

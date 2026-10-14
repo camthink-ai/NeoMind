@@ -470,6 +470,12 @@ export function UnifiedLLMBackendsTab({
       // and the builtin status after each action.
       await loadData()
       await refreshBuiltinStatus()
+      // The chat model picker reads the STORE's llmBackends (10s fetchCache
+      // guarded) — after delete/activate the global list/activeId must be
+      // invalidated + reloaded too, or the removed model stays selectable.
+      const { fetchCache } = await import('@/lib/utils/async')
+      fetchCache.invalidate('llmBackends')
+      await useStore.getState().loadBackends()
     } catch (error) {
       handleError(error, { operation: 'Builtin LLM action' })
     } finally {

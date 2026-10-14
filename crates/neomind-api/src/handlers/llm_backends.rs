@@ -2019,11 +2019,13 @@ pub async fn list_llamacpp_server_info_handler(
                         // n_ctx from runtime settings
                         server_details.n_ctx = props.n_ctx();
 
-                        // Use runtime n_ctx as fallback if no n_ctx_train
-                        if capabilities.max_context == 4096 {
-                            if let Some(n_ctx) = server_details.n_ctx {
-                                capabilities.max_context = n_ctx;
-                            }
+                        // The runtime n_ctx from /props is the server's own
+                        // per-request truth (`slot_n_ctx`: per-slot quota on
+                        // partitioned servers, full pool on auto-slotted
+                        // ones) — more accurate than the model-name guess
+                        // from /v1/models above, so it wins when present.
+                        if let Some(n_ctx) = server_details.n_ctx {
+                            capabilities.max_context = n_ctx;
                         }
 
                         server_details.total_slots = props.total_slots;

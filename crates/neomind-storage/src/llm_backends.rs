@@ -725,6 +725,18 @@ impl LlmBackendStore {
         Ok(())
     }
 
+    /// Clear the active backend pointer (leaves the system with no active
+    /// backend; callers do this when the active backend is being torn down)
+    pub fn clear_active_backend(&self) -> Result<(), Error> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(ACTIVE_BACKEND_TABLE)?;
+            table.remove("active_backend")?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
     /// Get the active backend instance
     pub fn get_active_backend(&self) -> Result<Option<LlmBackendInstance>, Error> {
         if let Some(id) = self.get_active_backend_id()? {

@@ -14,7 +14,7 @@ use neomind_storage::{ConnectionTestResult, LlmBackendInstance, LlmBackendStore,
 
 use super::backends::create_backend;
 #[cfg(feature = "llamacpp")]
-use super::backends::llamacpp::{LlamaCppConfig, LlamaCppRuntime};
+use super::backends::llamacpp::{per_slot_context, LlamaCppConfig, LlamaCppRuntime};
 use super::backends::ollama::{detect_model_context, OllamaConfig, OllamaRuntime};
 
 /// Ensure an instance has correct capabilities.
@@ -612,6 +612,28 @@ impl LlmBackendInstanceManager {
         Ok(())
     }
 
+    /// Clear the active backend pointer (no backend active afterwards).
+    ///
+    /// Used when the active backend is being torn down — e.g. the builtin
+    /// model's files are deleted, so "active" would point at a dead server.
+    pub async fn clear_active(&self) -> Result<(), LlmError> {
+        // Clear runtime cache when switching
+        self.runtime_cache.clear();
+
+        // Update storage
+        self.storage
+            .clear_active_backend()
+            .map_err(|e| LlmError::InvalidInput(e.to_string()))?;
+
+        // Update in-memory state
+        let mut active_id = self.active_id.write().map_err(|_| {
+            LlmError::InvalidInput("Failed to acquire active_id write lock".to_string())
+        })?;
+        *active_id = None;
+
+        Ok(())
+    }
+
     /// Add or update an instance
     pub async fn upsert_instance(&self, instance: LlmBackendInstance) -> Result<(), LlmError> {
         // Validate
@@ -662,6 +684,24 @@ impl LlmBackendInstanceManager {
         self.health_cache.remove(id);
 
         Ok(())
+    }
+
+    /// Remove an instance even when it is the ACTIVE backend (clearing the
+    /// active pointer first). For teardown paths where the backing model is
+    /// going away — `remove_instance` refuses to delete the active backend,
+    /// which used to leave an orphaned builtin instance (still listed and
+    /// selectable in the chat picker) after the model files were deleted.
+    pub async fn force_remove_instance(&self, id: &str) -> Result<(), LlmError> {
+        let is_active = {
+            let active_id = self.active_id.read().map_err(|_| {
+                LlmError::InvalidInput("Failed to acquire active_id read lock".to_string())
+            })?;
+            active_id.as_ref().map(|a| a == id).unwrap_or(false)
+        };
+        if is_active {
+            self.clear_active().await?;
+        }
+        self.remove_instance(id).await
     }
 
     /// List all instances
@@ -779,8 +819,19 @@ impl LlmBackendInstanceManager {
             };
 
             if let Some(caps) = runtime.detect_capabilities().await {
+                // Our builtin spawn runs auto slots + unified KV, where the
+                // /props n_ctx is the full pool shared by all slots — keep
+                // the concurrency-safe per-slot budget the spawn stamped.
+                // Custom backends report their own per-request truth
+                // (`slot_n_ctx`: per-slot quota when partitioned, full pool
+                // when auto-slotted) verbatim.
+                let effective_ctx = if instance.is_builtin {
+                    per_slot_context(caps.max_context, caps.total_slots)
+                } else {
+                    caps.max_context
+                };
                 let changed = instance.capabilities.supports_multimodal != caps.supports_multimodal
-                    || instance.capabilities.max_context != caps.max_context
+                    || instance.capabilities.max_context != effective_ctx
                     || instance.capabilities.supports_tools != caps.supports_tools;
                 if changed {
                     tracing::info!(
@@ -789,14 +840,14 @@ impl LlmBackendInstanceManager {
                         old_multimodal = instance.capabilities.supports_multimodal,
                         new_multimodal = caps.supports_multimodal,
                         old_ctx = instance.capabilities.max_context,
-                        new_ctx = caps.max_context,
+                        new_ctx = effective_ctx,
                         "Startup: updated llama.cpp capabilities from /props"
                     );
                     let mut updated = instance.clone();
                     updated.capabilities.supports_multimodal = caps.supports_multimodal;
                     updated.capabilities.supports_thinking = caps.supports_thinking;
                     updated.capabilities.supports_tools = caps.supports_tools;
-                    updated.capabilities.max_context = caps.max_context;
+                    updated.capabilities.max_context = effective_ctx;
                     if let Err(e) = self.storage.save_instance(&updated) {
                         tracing::warn!(
                             error = %e,
@@ -1592,7 +1643,6 @@ mod tests {
     /// Open a throwaway store at a unique temp path. The store layer keeps a
     /// process-global singleton keyed by path, so distinct paths yield isolated
     /// databases — ":memory:" would be shared across tests and leak instances.
-    #[cfg(feature = "llamacpp")]
     fn test_store(tag: &str) -> Arc<LlmBackendStore> {
         crate::prune_stale_temp_entries("neomind-test-", std::time::Duration::from_secs(3600));
         let path =
@@ -1712,6 +1762,62 @@ mod tests {
         assert!(
             manager.get_active_instance().is_some(),
             "no active backend → auto-registered instance must be active"
+        );
+    }
+
+    // ==== force_remove_instance ====
+
+    #[tokio::test]
+    async fn test_remove_instance_refuses_active_backend() {
+        let manager = LlmBackendInstanceManager::new(test_store("rm-active-refused"));
+        manager
+            .upsert_instance(LlmBackendInstance::new(
+                "builtin-x".into(),
+                "Builtin".into(),
+                LlmBackendType::LlamaCpp,
+            ))
+            .await
+            .unwrap();
+        manager.set_active("builtin-x").await.unwrap();
+
+        let err = manager
+            .remove_instance("builtin-x")
+            .await
+            .expect_err("plain remove must refuse the active backend");
+        assert!(err.to_string().contains("active"));
+
+        assert!(
+            manager.get_instance("builtin-x").is_some(),
+            "refused remove must leave the instance in place"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_force_remove_instance_removes_active_backend() {
+        // Regression for the orphaned-builtin bug: deleting the builtin model
+        // while it was the active backend left the instance listed (and
+        // selectable in the chat picker) forever, because remove_instance's
+        // active-protection failure was swallowed by the delete handler.
+        let manager = LlmBackendInstanceManager::new(test_store("force-rm-active"));
+        manager
+            .upsert_instance(LlmBackendInstance::new(
+                "builtin-x".into(),
+                "Builtin".into(),
+                LlmBackendType::LlamaCpp,
+            ))
+            .await
+            .unwrap();
+        manager.set_active("builtin-x").await.unwrap();
+
+        manager.force_remove_instance("builtin-x").await.unwrap();
+
+        assert!(
+            manager.get_instance("builtin-x").is_none(),
+            "force remove must delete the instance even when active"
+        );
+        assert!(
+            manager.get_active_instance().is_none(),
+            "force remove must clear the active pointer"
         );
     }
 }

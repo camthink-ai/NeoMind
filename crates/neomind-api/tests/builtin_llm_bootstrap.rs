@@ -61,7 +61,9 @@ class H(http.server.BaseHTTPRequestHandler):
         if self.path == "/health":
             body = b"ok"
         elif self.path == "/props":
-            body = json.dumps({{"model_path": "{model}", "n_ctx": 32768}}).encode()
+            # slot_n_ctx + slot count: the instance stamps the PER-SLOT
+            # share (32768 / 2 = 16384), not the raw server n_ctx.
+            body = json.dumps({{"model_path": "{model}", "n_ctx": 32768, "total_slots": 2}}).encode()
         else:
             self.send_error(404); return
         self.send_response(200)
@@ -243,18 +245,17 @@ async fn bootstrap_full_chain_spawns_registers_activates() {
     );
     assert!(inst.is_builtin);
     assert_eq!(inst.model, "minicpm5-2b");
-    // Registry default_ctx must land on the instance. Read it from the
-    // registry rather than hardcoding (2ac3ba5a raised it 32K → 128K and
-    // this assertion went stale the same day). Precondition: the machine
-    // funds the default — the spawn-time RAM guard only ever CAPS, so on a
-    // constrained device this equality is expected to fail loudly here,
-    // not silently pass with a shrunken window.
+    // The instance stamps the PER-SLOT context from the healthy server's
+    // /props: the fake below reports n_ctx=32768 with total_slots=2, so
+    // 16384 — the concurrency-safe share of the shared KV pool (the raw
+    // registry default_ctx is the TOTAL pool, never a per-request budget).
     let def = neomind_core::builtin_llm::manifest::model_def("minicpm5-2b")
         .expect("registry entry for the seeded model");
     assert_eq!(
-        inst.capabilities.max_context, def.default_ctx as usize,
-        "registry default_ctx ({}) must land on the instance",
-        def.default_ctx
+        inst.capabilities.max_context, 16384,
+        "per-slot share of the server's KV pool must land on the instance \
+         (server n_ctx {} / slots 2; registry default_ctx {} is the pool)",
+        32768, def.default_ctx
     );
     assert!(
         fx.manager.get_active_instance().is_some(),
