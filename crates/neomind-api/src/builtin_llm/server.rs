@@ -28,10 +28,13 @@ pub struct LlamaServerConfig {
 }
 
 /// Largest context window the device RAM can fund for a given model.
-/// 70% of total RAM is the llama.cpp budget (OS + this process live in the
-/// rest); a further 512 MB covers llama.cpp compute/activation buffers.
-/// Returns min(requested, cap), floored at 8192 — the guard shrinks the
-/// window, it never disables the model.
+/// The budget takes the MIN of two views: 70% of total RAM (provisioning —
+/// don't let llama eat the whole box) and available-at-spawn minus a margin
+/// (reality — this process plus extensions may already consume most of RAM;
+/// a total-only budget funded 3.4 GB of KV into a 3.0 GB-free NG4520 on
+/// 2026-10-14 and the server OOM-died). A further 512 MB covers llama.cpp
+/// compute/activation buffers. Returns min(requested, cap), floored at 8192
+/// — the guard shrinks the window, it never disables the model.
 ///
 /// Callers supply the per-model KV cost (bytes/token over full-attention
 /// layers + context-independent state) from the registry; models without a
@@ -39,12 +42,17 @@ pub struct LlamaServerConfig {
 pub fn cap_ctx_by_ram(
     requested: usize,
     total_ram_bytes: u64,
+    available_ram_bytes: u64,
     size_bytes: u64,
     kv_bytes_per_token: u32,
     kv_const_bytes: u64,
 ) -> usize {
     const RUNTIME_HEADROOM: u64 = 512 * 1024 * 1024;
-    let budget = total_ram_bytes * 70 / 100;
+    // MemAvailable includes evictable file cache, so its margin is smaller
+    // than RUNTIME_HEADROOM (which is subtracted from the budget below).
+    const AVAILABLE_MARGIN: u64 = 256 * 1024 * 1024;
+    let budget = (total_ram_bytes * 70 / 100)
+        .min(available_ram_bytes.saturating_sub(AVAILABLE_MARGIN));
     let avail = budget.saturating_sub(size_bytes + kv_const_bytes + RUNTIME_HEADROOM);
     let cap = (avail / u64::from(kv_bytes_per_token)) as usize;
     requested.min(cap).max(8192)
@@ -145,6 +153,33 @@ async fn wait_healthy_loop_checking_child(
     false
 }
 
+/// stderr sink for the spawned llama-server: a truncate-on-each-spawn
+/// `server.log` beside the binary, falling back to null only if the file
+/// can't be opened (read-only FS). One spawn's log — the current boot's
+/// crash cause — is what matters; rotation is not worth the complexity.
+fn server_stderr_stdio(binary: &std::path::Path) -> std::process::Stdio {
+    let log_path = binary
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("server.log");
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&log_path)
+    {
+        Ok(f) => f.into(),
+        Err(e) => {
+            tracing::warn!(
+                log = %log_path.display(),
+                error = %e,
+                "llama-server stderr log unavailable — falling back to /dev/null"
+            );
+            std::process::Stdio::null()
+        }
+    }
+}
+
 impl LlamaServerProcess {
     pub fn spawn(cfg: &LlamaServerConfig) -> anyhow::Result<Self> {
         let mut cmd = tokio::process::Command::new(&cfg.binary);
@@ -152,14 +187,30 @@ impl LlamaServerProcess {
             .arg(&cfg.model)
             .arg("-c")
             .arg(cfg.ctx.to_string())
+            // Single slot on purpose: this is a single-user edge assistant,
+            // and llama.cpp multi-slot mode splits the `-c` KV budget across
+            // slots (32768/4 → 8192 usable), which overflows agent history
+            // into the compact-retry ladder (observed 2026-10-14 on NG4520:
+            // 8K window → minimal-retry → off-script tool calls → wedged
+            // stream). Background LLM work already defers to foreground
+            // streams (memory extraction waits for silence), so concurrency
+            // here is rare — when it happens, requests queue on the single
+            // slot, which is the correct behavior for a shared decode
+            // budget.
+            .arg("--parallel")
+            .arg("1")
             .arg("--port")
             .arg(cfg.port.to_string())
             .arg("--host")
             .arg("127.0.0.1")
             // `--no-webui`(非旧名 `--nobrowser`,当前 llama.cpp 已改名,旧参数报 invalid argument)
             .arg("--no-webui")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
+            // stderr → truncate-on-spawn log next to the binary. /dev/null
+            // made every startup death indistinguishable — the b11609 SIGILL
+            // on NG4520 (2026-10-14) was only diagnosable by running the
+            // binary by hand; the log makes the next one visible in place.
+            .stderr(server_stderr_stdio(&cfg.binary))
+            .stdout(std::process::Stdio::null());
         if let Some(n) = cfg.ngl {
             cmd.arg("-ngl").arg(n.to_string());
         }
@@ -205,19 +256,30 @@ impl LlamaServerProcess {
     }
 
     pub async fn wait_healthy(&mut self, timeout: Duration) -> anyhow::Result<()> {
-        let mut child = match self.child.try_lock() {
-            Ok(c) => c,
-            Err(_) => anyhow::bail!("llama-server handle is being stopped concurrently"),
+        let healthy = {
+            let mut child = match self.child.try_lock() {
+                Ok(c) => c,
+                Err(_) => anyhow::bail!("llama-server handle is being stopped concurrently"),
+            };
+            wait_healthy_loop_checking_child(self.port, timeout, &mut child).await
         };
-        if wait_healthy_loop_checking_child(self.port, timeout, &mut child).await {
-            Ok(())
-        } else {
-            anyhow::bail!(
-                "llama-server on :{} did not become healthy in {:?}",
-                self.port,
-                timeout
-            )
+        if healthy {
+            return Ok(());
         }
+        // Distinguish a dead child (crash / SIGILL / bind failure — the loop
+        // returns within ~300ms of exit) from a genuine timeout. The old
+        // message always blamed the timeout, which sent the b11609 SIGILL
+        // investigation down the wrong path ("slow to load").
+        let mut why = format!("did not become healthy in {:?}", timeout);
+        if let Ok(mut child) = self.child.try_lock() {
+            if let Ok(Some(status)) = child.try_wait() {
+                why = format!(
+                    "exited during startup: {} (see server.log beside the binary)",
+                    status
+                );
+            }
+        }
+        anyhow::bail!("llama-server on :{} {}", self.port, why)
     }
 
     /// Whether the spawned child process is still alive.
@@ -261,27 +323,38 @@ mod tests {
     #[test]
     fn eight_gb_jetson_caps_minicpm_below_default() {
         // MiniCPM5-2B on an Orin Nano 8GB: 5.5 GB of KV at 128K cannot fit.
-        let ctx = cap_ctx_by_ram(131_072, 8 * GB, 1_561_318_368, 43_008, 0);
+        // Available ~= total on a freshly-booted box.
+        let ctx = cap_ctx_by_ram(131_072, 8 * GB, 7 * GB, 1_561_318_368, 43_008, 0);
         assert!(ctx < 131_072, "must cap on 8GB, got {ctx}");
         assert!(ctx > 32_768, "cap should still buy headroom, got {ctx}");
     }
 
     #[test]
+    fn busy_box_caps_by_available_not_total() {
+        // The NG4520 case (2026-10-14): 7.4 GB total but only ~3 GB free at
+        // spawn — a total-only budget funded 3.4 GB of KV and OOM-killed the
+        // server. The available view must clamp below the total view.
+        let total_only = cap_ctx_by_ram(131_072, 8 * GB, 8 * GB, 1_561_318_368, 43_008, 0);
+        let busy = cap_ctx_by_ram(131_072, 8 * GB, 3 * GB, 1_561_318_368, 43_008, 0);
+        assert!(busy < total_only, "available must clamp: {busy} vs {total_only}");
+    }
+
+    #[test]
     fn ram_rich_host_keeps_full_default() {
         // 32 GB host: budget 22.4 GB − weights − headroom ≫ 128K needs.
-        let ctx = cap_ctx_by_ram(131_072, 32 * GB, 1_561_318_368, 43_008, 0);
+        let ctx = cap_ctx_by_ram(131_072, 32 * GB, 30 * GB, 1_561_318_368, 43_008, 0);
         assert_eq!(ctx, 131_072);
     }
 
     #[test]
     fn floor_is_8192_even_on_ridiculously_small_ram() {
-        let ctx = cap_ctx_by_ram(131_072, 2 * GB, 1_561_318_368, 43_008, 0);
+        let ctx = cap_ctx_by_ram(131_072, 2 * GB, 1 * GB, 1_561_318_368, 43_008, 0);
         assert_eq!(ctx, 8192);
     }
 
     #[test]
     fn small_request_below_cap_untouched() {
-        let ctx = cap_ctx_by_ram(8_192, 8 * GB, 1_561_318_368, 43_008, 0);
+        let ctx = cap_ctx_by_ram(8_192, 8 * GB, 7 * GB, 1_561_318_368, 43_008, 0);
         assert_eq!(ctx, 8_192);
     }
 
@@ -289,8 +362,8 @@ mod tests {
     fn qwen_linear_state_const_counts_against_budget() {
         // Qwen3.5-4B on 8GB: 8 full-attn layers (32,768 B/token) + 201 MB
         // linear-attention state — the const must reduce the cap.
-        let with_const = cap_ctx_by_ram(131_072, 8 * GB, 2_740_000_000, 32_768, 201_326_592);
-        let without = cap_ctx_by_ram(131_072, 8 * GB, 2_740_000_000, 32_768, 0);
+        let with_const = cap_ctx_by_ram(131_072, 8 * GB, 7 * GB, 2_740_000_000, 32_768, 201_326_592);
+        let without = cap_ctx_by_ram(131_072, 8 * GB, 7 * GB, 2_740_000_000, 32_768, 0);
         assert!(with_const < without);
     }
 

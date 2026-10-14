@@ -220,10 +220,11 @@ pub(crate) fn guarded_ctx(
     let Some(kv_per_token) = d.kv_bytes_per_token else {
         return requested;
     };
-    let (total_mb, _) = memory_snapshot_mb();
+    let (total_mb, available_mb) = memory_snapshot_mb();
     let capped = super::server::cap_ctx_by_ram(
         requested,
         total_mb * 1_048_576,
+        available_mb * 1_048_576,
         d.size_bytes,
         kv_per_token,
         d.kv_const_bytes.unwrap_or(0),
@@ -1099,7 +1100,27 @@ pub async fn download_handler(
     let _ = super::catalog::fetch_catalog().await;
     let def = resolve_model(model_id.as_deref())?;
     let (url, sha, file_name) = resolve_source(&cfg, &def);
-    let dest = models_dir(&state.data_dir).join(&def.id).join(&file_name);
+    let mdir = models_dir(&state.data_dir);
+    let dest = mdir.join(&def.id).join(&file_name);
+
+    // Re-downloading the already-installed model is a no-op deeper down
+    // (download_with_resume returns immediately when dest exists) — but it
+    // used to still flip DL_ACTIVE, kill + respawn the server, and cycle
+    // the wizard through a fake "downloading 0%" ceremony before landing on
+    // ready. Decline up front: the wizard jumps straight to ready, and a
+    // true re-download stays delete-model + download. Gate on manifest AND
+    // file so a tampered/missing file still takes the (self-healing) path.
+    let already_installed = installed_model(&mdir)
+        .map(|(_, m)| m.id == def.id)
+        .unwrap_or(false)
+        && dest.exists();
+    if already_installed {
+        return ok(json!({
+            "started": false,
+            "already_running": false,
+            "already_installed": true
+        }));
+    }
 
     tracing::info!(
         model = %def.id,
@@ -1412,12 +1433,13 @@ async fn spawn_builtin_server(
     instance.model = installed.manifest.id.clone();
     // Capabilities must be set here — the startup capability-refresh loop ran
     // before this instance existed, so a default (max_context=4096) would
-    // surface as a tiny chat context window. Report the ctx we actually
-    // spawned with (LFM 128K / Qwen/Gemma 32K).
+    // surface as a tiny chat context window. The ctx we spawned with is the
+    // TOTAL KV pool; the server is now healthy, so report the per-slot
+    // share (auto slot count divides it at runtime).
     instance.capabilities.supports_streaming = true;
     instance.capabilities.supports_tools = true;
     instance.capabilities.supports_thinking = installed.default_thinking;
-    instance.capabilities.max_context = ctx;
+    instance.capabilities.max_context = effective_per_slot_ctx(cfg.port, ctx).await;
     // Per-model sampling: applies both as server-side defaults (above) and
     // on the request side (the instance fields are what chat sends).
     if let Some(t) = installed.temperature {
@@ -1498,9 +1520,19 @@ pub async fn delete_model_handler(
     // Drop the manager instance so state stays consistent (a stale builtin
     // instance pointing at a deleted model would break the next download's
     // bootstrap bring-up, and activate would reference a dead model).
+    // force_remove: the builtin is usually the ACTIVE backend, which plain
+    // remove_instance refuses to delete — the previously swallowed failure
+    // left an orphan instance listed (and selectable) in the chat picker
+    // forever. Fail loudly BEFORE the files go: files deleted + instance
+    // stuck is exactly the inconsistent state this prevents.
     if let Ok(manager) = get_instance_manager() {
         if manager.get_instance(BUILTIN_INSTANCE_ID).is_some() {
-            let _ = manager.remove_instance(BUILTIN_INSTANCE_ID).await;
+            if let Err(e) = manager.force_remove_instance(BUILTIN_INSTANCE_ID).await {
+                tracing::error!(error = %e, "builtin llm: failed to remove backend instance");
+                return Err(ErrorResponse::internal(format!(
+                    "Failed to remove builtin backend instance: {e}"
+                )));
+            }
         }
     }
 
@@ -1741,6 +1773,41 @@ async fn query_server_n_ctx(port: u16) -> Option<usize> {
         .and_then(|n| n.as_u64())
         .map(|n| n as usize)
         .or_else(|| v.get("n_ctx").and_then(|n| n.as_u64()).map(|n| n as usize))
+}
+
+/// Per-slot context a single request can claim from the running builtin
+/// llama-server. `-c` is the TOTAL KV pool shared by all slots (unified KV),
+/// and the auto slot count is only known once the server is up — so ask
+/// /props and divide (see `per_slot_context`). Falls back to the requested
+/// ctx when the server can't be queried (older builds report no
+/// total_slots → treated as single-slot → undivided).
+pub(super) async fn effective_per_slot_ctx(port: u16, requested_ctx: usize) -> usize {
+    let url = format!("http://127.0.0.1:{}/props", port);
+    let props: Option<serde_json::Value> = async {
+        let resp = reqwest::Client::new()
+            .get(&url)
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await
+            .ok()?;
+        resp.json().await.ok()
+    }
+    .await;
+    let Some(v) = props else {
+        return requested_ctx;
+    };
+    let n_ctx = v
+        .get("default_generation_settings")
+        .and_then(|g| g.get("n_ctx"))
+        .and_then(|n| n.as_u64())
+        .map(|n| n as usize)
+        .or_else(|| v.get("n_ctx").and_then(|n| n.as_u64()).map(|n| n as usize))
+        .unwrap_or(requested_ctx);
+    let total_slots = v
+        .get("total_slots")
+        .and_then(|n| n.as_u64())
+        .map(|n| n as usize);
+    neomind_agent::llm_backends::backends::llamacpp::per_slot_context(n_ctx, total_slots)
 }
 
 /// Convert storage `BackendCapabilities` to core `BackendCapabilities`
