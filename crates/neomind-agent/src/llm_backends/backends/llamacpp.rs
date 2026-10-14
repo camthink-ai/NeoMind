@@ -1440,3 +1440,32 @@ mod tests {
         assert_eq!(caps.max_context, Some(32768));
     }
 }
+
+#[cfg(test)]
+mod per_slot_context_boundary_tests {
+    use super::per_slot_context;
+
+    #[test]
+    fn missing_slot_report_is_single_slot() {
+        // Older llama-server builds don't report total_slots → full window.
+        assert_eq!(per_slot_context(32_768, None), 32_768);
+    }
+
+    #[test]
+    fn zero_slot_report_degenerates_to_single_slot() {
+        // A bogus 0 must not divide by zero — max(1) clamps it.
+        assert_eq!(per_slot_context(32_768, Some(0)), 32_768);
+    }
+
+    #[test]
+    fn four_slots_divide_the_pool() {
+        assert_eq!(per_slot_context(32_768, Some(4)), 8_192);
+        assert_eq!(per_slot_context(131_072, Some(4)), 32_768);
+    }
+
+    #[test]
+    fn non_dividing_pool_floors() {
+        // Integer division floors — 32769/2 = 16384 (conservative, never over).
+        assert_eq!(per_slot_context(32_769, Some(2)), 16_384);
+    }
+}

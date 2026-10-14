@@ -283,6 +283,93 @@ pub struct SessionManager {
     memory_snapshots: Arc<RwLock<HashMap<String, crate::memory::MemorySnapshot>>>,
 }
 
+// ---------------------------------------------------------------------------
+// Memory-extraction output parsing (pure — unit-tested without an LLM)
+// ---------------------------------------------------------------------------
+
+/// Strip one round of tag-separator junk from the front of a fact.
+///
+/// Separators `:` `：` `-` strip freely (no word boundary); the template word
+/// `fact` strips ONLY as a standalone word — followed by whitespace, a
+/// colon, or end (a bare `strip_prefix("fact")` mangled real facts
+/// ("factory line 3" → "ory line 3"), and treating a following `-` as a
+/// separator ate the word "fact-checking"). Both caught in review,
+/// 2026-10-14.
+fn strip_leading_separators(f: &str) -> String {
+    let mut s = f.trim().to_string();
+    loop {
+        let before = s.clone();
+        for sep in [":", "：", "-"] {
+            if let Some(stripped) = s.strip_prefix(sep) {
+                s = stripped.to_string();
+            }
+        }
+        if let Some(rest) = s.strip_prefix("fact") {
+            let standalone = rest.is_empty()
+                || rest.starts_with(|c: char| c.is_whitespace() || c == ':' || c == '：');
+            if standalone {
+                s = rest.to_string();
+            }
+        }
+        s = s.trim().to_string();
+        if s == before {
+            break;
+        }
+    }
+    s
+}
+
+/// Case-insensitive tagged-bullet match: accepts `- [user]: x`,
+/// `- [User] x`, `- [USER] fact x`. `rest` is one trimmed output line.
+fn strip_tag(line: &str, tag: &str) -> Option<String> {
+    let raw = line.strip_prefix("- ").or_else(|| line.strip_prefix("• "))?;
+    if raw.len() < tag.len() || !raw[..tag.len()].eq_ignore_ascii_case(tag) {
+        return None;
+    }
+    Some(strip_leading_separators(&raw[tag.len()..]))
+}
+
+/// Quality gate: 2B-class models pad extraction output with meta chatter
+/// about the ASSISTANT itself and degenerate fragments — neither is a
+/// durable fact, and both pollute KNOWLEDGE.md semantically (exact-text
+/// dedup cannot catch reworded repeats of the same observation).
+fn is_junk_fact(f: &str) -> bool {
+    const META_OPENERS: [&str; 9] = [
+        "the assistant",
+        "assistant can",
+        "assistant mentions",
+        "assistant provides",
+        "assistant includes",
+        "assistant needs",
+        "assistant offers",
+        "the model",
+        "the ai",
+    ];
+    let lowered = f.to_lowercase();
+    f.chars().count() < 6 || META_OPENERS.iter().any(|p| lowered.starts_with(p))
+}
+
+/// Parse extraction LLM output into (user, knowledge) fact lists. Lines that
+/// are not tagged bullets, or whose content fails the quality gate, are
+/// dropped.
+fn parse_extracted_facts(text: &str) -> (Vec<String>, Vec<String>) {
+    let mut user = Vec::new();
+    let mut knowledge = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(f) = strip_tag(line, "[user]") {
+            if !is_junk_fact(&f) {
+                user.push(f);
+            }
+        } else if let Some(f) = strip_tag(line, "[knowledge]") {
+            if !is_junk_fact(&f) {
+                knowledge.push(f);
+            }
+        }
+    }
+    (user, knowledge)
+}
+
 impl SessionManager {
     /// Create a new session manager with persistent storage.
     pub fn new() -> Result<Self> {
@@ -1331,64 +1418,9 @@ Assistant: {ar}\n"
                 "memory extraction: LLM responded"
             );
 
-            // Parse tagged bullets: `- [user] ...` / `- [knowledge] ...`
-            let mut new_user: Vec<String> = Vec::new();
-            let mut new_knowledge: Vec<String> = Vec::new();
-            for line in out.text.lines() {
-                let line = line.trim();
-                let rest = line.strip_prefix("- ").or_else(|| line.strip_prefix("• "));
-                let Some(rest) = rest else { continue };
-                let strip_tag = |tag: &str| -> Option<String> {
-                    // Accept both "- [user] fact …" and "- [user]: fact …" —
-                    // the model varies the tag separator between runs. Strip
-                    // REPEATEDLY: small models often double up
-                    // ("[user]: : fact"), and the old single-pass strip left
-                    // a leading ":" that was written verbatim ("- : 平台名称："
-                    // in KNOWLEDGE.md, 2026-10-14).
-                    let mut f = rest.strip_prefix(tag)?.trim().to_string();
-                    loop {
-                        let before = f.clone();
-                        for sep in [":", "fact", "-", "："] {
-                            if let Some(stripped) = f.strip_prefix(sep) {
-                                f = stripped.trim_start().to_string();
-                            }
-                        }
-                        if f == before {
-                            break;
-                        }
-                    }
-                    Some(f.trim().to_string())
-                };
-                // Quality gate: 2B-class models pad the output with meta
-                // chatter about the ASSISTANT itself and degenerate
-                // fragments — neither is a durable fact, and both pollute
-                // KNOWLEDGE.md semantically (exact-text dedup cannot catch
-                // reworded repeats of the same observation).
-                let is_junk = |f: &str| -> bool {
-                    const META_OPENERS: [&str; 9] = [
-                        "the assistant",
-                        "assistant can",
-                        "assistant mentions",
-                        "assistant provides",
-                        "assistant includes",
-                        "assistant needs",
-                        "assistant offers",
-                        "the model",
-                        "the ai",
-                    ];
-                    let lowered = f.to_lowercase();
-                    f.chars().count() < 6 || META_OPENERS.iter().any(|p| lowered.starts_with(p))
-                };
-                if let Some(f) = strip_tag("[user]") {
-                    if !is_junk(&f) {
-                        new_user.push(f);
-                    }
-                } else if let Some(f) = strip_tag("[knowledge]") {
-                    if !is_junk(&f) {
-                        new_knowledge.push(f);
-                    }
-                }
-            }
+            // Parse tagged bullets (pure fn above — see its unit tests for
+            // the separator/quality edge cases).
+            let (new_user, new_knowledge) = parse_extracted_facts(&out.text);
             if new_user.is_empty() && new_knowledge.is_empty() {
                 tracing::info!(session_id, "memory extraction: no tagged facts in output");
                 return;
@@ -2820,5 +2852,82 @@ mod tests {
                 .contains_key("clean-session"),
             "mark_cleaned_up should suppress the Drop-spawned removal"
         );
+    }
+}
+
+#[cfg(test)]
+mod extraction_parse_tests {
+    use super::*;
+
+    #[test]
+    fn parses_standard_tagged_bullets() {
+        let (u, k) = parse_extracted_facts(
+            "- [user] prefers concise answers\n- [knowledge] MQTT broker runs on port 1883",
+        );
+        assert_eq!(u, vec!["prefers concise answers"]);
+        assert_eq!(k, vec!["MQTT broker runs on port 1883"]);
+    }
+
+    #[test]
+    fn strips_doubled_and_fullwidth_separators() {
+        // The incident entry (2026-10-14): model doubled the separator and a
+        // literal "- : 平台名称：" landed in KNOWLEDGE.md.
+        let (_, k) = parse_extracted_facts("- [knowledge]: : 平台名称是 NeoMind 边缘平台");
+        assert_eq!(k, vec!["平台名称是 NeoMind 边缘平台"]);
+        let (u, _) = parse_extracted_facts("- [user]：喜欢深色主题");
+        assert_eq!(u, vec!["喜欢深色主题"]);
+    }
+
+    #[test]
+    fn template_word_fact_strips_only_standalone() {
+        // The prompt's format table shows "[user] fact" — models copy it.
+        let (u, _) = parse_extracted_facts("- [user] fact 用户偏好中文交流");
+        assert_eq!(u, vec!["用户偏好中文交流"]);
+        // ... but real words starting with "fact" must survive intact
+        // (strip_prefix("fact") mangled "factory" → "ory").
+        let (_, k) = parse_extracted_facts("- [knowledge] factory floor has 3 production lines");
+        assert_eq!(k, vec!["factory floor has 3 production lines"]);
+        let (_, k2) = parse_extracted_facts("- [knowledge] fact-checking workflow is manual");
+        assert_eq!(k2, vec!["fact-checking workflow is manual"]);
+    }
+
+    #[test]
+    fn tags_match_case_insensitively() {
+        let (u, _) = parse_extracted_facts("- [USER] prefers dark mode\n- [Knowledge] uses MQTT");
+        assert_eq!(u, vec!["prefers dark mode"]);
+        let (_, k) = parse_extracted_facts("- [Knowledge] uses MQTT");
+        assert_eq!(k, vec!["uses MQTT"]);
+    }
+
+    #[test]
+    fn rejects_short_and_meta_facts() {
+        let (u, k) = parse_extracted_facts(
+            "- [user] 好\n\
+             - [user] The assistant mentions weather forecasts\n\
+             - [knowledge] assistant can help with dashboards\n\
+             - [knowledge] The model uses MiniCPM\n\
+             - [knowledge] devices report over MQTT every 20 seconds",
+        );
+        assert!(u.is_empty(), "short + meta user facts must be dropped");
+        assert_eq!(
+            k,
+            vec!["devices report over MQTT every 20 seconds"],
+            "only the real fact survives"
+        );
+    }
+
+    #[test]
+    fn ignores_untagged_and_empty_lines() {
+        let (u, k) = parse_extracted_facts(
+            "Here are the facts:\n- untagged bullet\n- [user]\nrandom prose\n\n",
+        );
+        assert!(u.is_empty());
+        assert!(k.is_empty());
+    }
+
+    #[test]
+    fn bullet_dot_variant_accepted() {
+        let (u, _) = parse_extracted_facts("• [user] likes sailing on weekends");
+        assert_eq!(u, vec!["likes sailing on weekends"]);
     }
 }

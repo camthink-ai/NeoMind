@@ -43,6 +43,33 @@ struct ExtensionCollectionState {
     ever_produced: bool,
 }
 
+/// What to do about an extension that DECLARED metrics but produced zero
+/// values this cycle. Pure — the boundary table is unit-tested.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum HealAction {
+    /// Below the streak threshold — keep watching.
+    Watch,
+    /// Threshold reached, reloads remain — reload (increments failed_heals).
+    Reload,
+    /// Max ineffective reloads reached for the first time — escalate ONCE
+    /// (increments failed_heals past the cap).
+    Escalate,
+    /// Already escalated — silent until a healthy collection resets state.
+    Silent,
+}
+
+fn heal_action(streak: u32, threshold: u32, failed_heals: u32, max_heals: u32) -> HealAction {
+    if streak < threshold {
+        HealAction::Watch
+    } else if failed_heals < max_heals {
+        HealAction::Reload
+    } else if failed_heals == max_heals {
+        HealAction::Escalate
+    } else {
+        HealAction::Silent
+    }
+}
+
 /// Extension metrics collector - periodically collects and stores extension metrics.
 pub struct ExtensionMetricsCollector {
     /// Single-path extension runtime for isolated extensions.
@@ -523,33 +550,13 @@ impl ExtensionMetricsCollector {
                         state.consecutive_empty = state.consecutive_empty.saturating_add(1);
                         (state.consecutive_empty, state.failed_heals)
                     };
-                    if streak >= self.selfheal_threshold {
-                        if failed_heals >= MAX_HEALS {
-                            // Reset the streak (no reload) and escalate ONCE —
-                            // the == check fires exactly one cycle, then stays
-                            // silent until a successful collection resets.
-                            let mut states = self
-                                .extension_states
-                                .write()
-                                .unwrap_or_else(|e| e.into_inner());
-                            if let Some(state) = states.get_mut(&extension_id) {
-                                state.consecutive_empty = 0;
-                                if state.failed_heals == MAX_HEALS {
-                                    state.failed_heals += 1;
-                                    drop(states);
-                                    error!(
-                                        category = "extensions",
-                                        extension_id = %extension_id,
-                                        "self-heal gave up: {} reloads did not restore metric \
-                                         flow — the failure is not process-level (likely an \
-                                         extension-side metrics bug); manual intervention needed",
-                                        MAX_HEALS
-                                    );
-                                }
-                            }
-                        } else {
-                            // Reset BEFORE attempting: a failed reload must not
-                            // re-arm every cycle and turn into a reload storm.
+                    match heal_action(streak, self.selfheal_threshold, failed_heals, MAX_HEALS) {
+                        HealAction::Watch => {}
+                        HealAction::Reload | HealAction::Escalate => {
+                            // Reset the streak and count the attempt BEFORE
+                            // acting, so a failed attempt cannot re-arm every
+                            // cycle (reload storm) and the escalation fires
+                            // exactly once (failed_heals moves past the cap).
                             {
                                 let mut states = self
                                     .extension_states
@@ -560,7 +567,29 @@ impl ExtensionMetricsCollector {
                                     state.failed_heals += 1;
                                 }
                             }
-                            self.heal_extension(&extension_id, &info).await;
+                            if failed_heals < MAX_HEALS {
+                                self.heal_extension(&extension_id, &info).await;
+                            } else {
+                                error!(
+                                    category = "extensions",
+                                    extension_id = %extension_id,
+                                    "self-heal gave up: {} reloads did not restore metric \
+                                     flow — the failure is not process-level (likely an \
+                                     extension-side metrics bug); manual intervention needed",
+                                    MAX_HEALS
+                                );
+                            }
+                        }
+                        HealAction::Silent => {
+                            // Already escalated: consume the streak, stay quiet
+                            // until a healthy collection resets everything.
+                            let mut states = self
+                                .extension_states
+                                .write()
+                                .unwrap_or_else(|e| e.into_inner());
+                            if let Some(state) = states.get_mut(&extension_id) {
+                                state.consecutive_empty = 0;
+                            }
                         }
                     }
                 } else {
@@ -711,4 +740,57 @@ pub fn spawn_extension_metrics_collector(
     tokio::spawn(async move {
         collector.run().await;
     })
+}
+
+#[cfg(test)]
+mod heal_action_tests {
+    use super::*;
+
+    const THRESHOLD: u32 = 3;
+    const MAX_HEALS: u32 = 3;
+
+    #[test]
+    fn below_threshold_watches() {
+        assert_eq!(heal_action(0, THRESHOLD, 0, MAX_HEALS), HealAction::Watch);
+        assert_eq!(heal_action(2, THRESHOLD, 0, MAX_HEALS), HealAction::Watch);
+        // Even an already-given-up extension stays quiet below the streak
+        assert_eq!(heal_action(1, THRESHOLD, 4, MAX_HEALS), HealAction::Watch);
+    }
+
+    #[test]
+    fn threshold_boundary_reloads_while_budget_remains() {
+        assert_eq!(heal_action(3, THRESHOLD, 0, MAX_HEALS), HealAction::Reload);
+        assert_eq!(heal_action(9, THRESHOLD, 2, MAX_HEALS), HealAction::Reload);
+    }
+
+    #[test]
+    fn exactly_max_heals_escalates_once() {
+        assert_eq!(heal_action(3, THRESHOLD, 3, MAX_HEALS), HealAction::Escalate);
+    }
+
+    #[test]
+    fn past_max_heals_stays_silent() {
+        assert_eq!(heal_action(3, THRESHOLD, 4, MAX_HEALS), HealAction::Silent);
+        assert_eq!(heal_action(99, THRESHOLD, 100, MAX_HEALS), HealAction::Silent);
+    }
+
+    #[test]
+    fn full_cycle_walkthrough() {
+        // Cycles 1-2 watch, 3 reloads; ×3; then one escalation; then silent.
+        let mut failed = 0;
+        for cycle in 1..=3 {
+            let streak = (cycle % 3) + 1; // 2,3,1 → streaks 2,3,1
+            let action = heal_action(streak, THRESHOLD, failed, MAX_HEALS);
+            if streak == 3 {
+                assert_eq!(action, HealAction::Reload);
+                failed += 1;
+            } else {
+                assert_eq!(action, HealAction::Watch);
+            }
+        }
+        // three ineffective reloads later:
+        assert_eq!(heal_action(3, THRESHOLD, 3, MAX_HEALS), HealAction::Escalate);
+        assert_eq!(heal_action(3, THRESHOLD, 4, MAX_HEALS), HealAction::Silent);
+        assert_eq!(heal_action(3, THRESHOLD, 5, MAX_HEALS), HealAction::Silent);
+    }
 }
