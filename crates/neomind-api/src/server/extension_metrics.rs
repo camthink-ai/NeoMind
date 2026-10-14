@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use neomind_core::datasource::DataSourceId;
 
@@ -28,6 +28,19 @@ struct ExtensionCollectionState {
     last_collection: i64,
     /// Configured collection interval in seconds (0 = disabled, None = use default)
     collect_interval: Option<u64>,
+    /// Consecutive cycles where the extension DECLARED metrics but produced
+    /// zero values — drives the self-heal reload below.
+    consecutive_empty: u32,
+    /// Self-heal reloads that did NOT restore metric flow. Some failures are
+    /// not process-level (a reload can't fix them) — after MAX_HEALS the
+    /// collector stops reloading and escalates instead of looping forever.
+    failed_heals: u32,
+    /// Whether this extension has EVER produced a value in this process.
+    /// "Ok(empty) forever" is the SDK's default `produce_metrics` (declared
+    /// metrics, unimplemented producer — paddle-ocr-v6 shipped like this);
+    /// "Ok(empty) after a history of values" is a real regression. Only the
+    /// latter deserves the broken-IPC warn and self-heal reloads.
+    ever_produced: bool,
 }
 
 /// Extension metrics collector - periodically collects and stores extension metrics.
@@ -55,6 +68,11 @@ pub struct ExtensionMetricsCollector {
     descriptor_refresh_timeout: Duration,
     /// Event bus for publishing ExtensionOutput events (triggers event-driven agents)
     event_bus: Option<Arc<neomind_core::EventBus>>,
+    /// Persistent extension store — used by the self-heal reload to re-apply
+    /// the extension's saved config (a bare load() would reset it to defaults).
+    config_store: Option<Arc<neomind_storage::extensions::ExtensionStore>>,
+    /// Consecutive zero-value cycles before a self-heal reload fires.
+    selfheal_threshold: u32,
 }
 
 impl ExtensionMetricsCollector {
@@ -72,6 +90,8 @@ impl ExtensionMetricsCollector {
             descriptor_ttl: Duration::from_secs(60),
             descriptor_refresh_timeout: Duration::from_secs(10),
             event_bus: None,
+            config_store: None,
+            selfheal_threshold: 3,
         }
     }
 
@@ -84,6 +104,16 @@ impl ExtensionMetricsCollector {
     /// Set the event bus for publishing ExtensionOutput events.
     pub fn with_event_bus(mut self, event_bus: Arc<neomind_core::EventBus>) -> Self {
         self.event_bus = Some(event_bus);
+        self
+    }
+
+    /// Set the persistent extension store used by the self-heal reload to
+    /// re-apply an extension's saved config after a load().
+    pub fn with_config_store(
+        mut self,
+        store: Arc<neomind_storage::extensions::ExtensionStore>,
+    ) -> Self {
+        self.config_store = Some(store);
         self
     }
 
@@ -127,6 +157,73 @@ impl ExtensionMetricsCollector {
             }
         }
         None
+    }
+
+    /// Reload an extension whose metrics IPC has been unresponsive, mirroring
+    /// the manual `/extensions/{id}/reload` handler: unload → load from the
+    /// on-disk binary → re-apply the saved config (a bare load() would reset
+    /// the extension to defaults and silently change its behavior).
+    async fn heal_extension(
+        &self,
+        extension_id: &str,
+        info: &neomind_core::extension::ExtensionRuntimeInfo,
+    ) {
+        let Some(path) = info.path.clone() else {
+            warn!(
+                category = "extensions",
+                extension_id = %extension_id,
+                "self-heal: extension has no binary path recorded — cannot reload automatically"
+            );
+            return;
+        };
+        warn!(
+            category = "extensions",
+            extension_id = %extension_id,
+            path = %path.display(),
+            "self-heal: metrics IPC unresponsive for {} consecutive cycles — reloading extension",
+            self.selfheal_threshold
+        );
+        if let Err(e) = self.runtime.unload(extension_id).await {
+            warn!(
+                category = "extensions",
+                extension_id = %extension_id,
+                error = %e,
+                "self-heal: unload failed — trying load() anyway"
+            );
+        }
+        match self.runtime.load(&path).await {
+            Ok(metadata) => {
+                if let Some(store) = &self.config_store {
+                    if let Ok(Some(record)) = store.load(extension_id) {
+                        if let Some(ref cfg) = record.config {
+                            if let Err(e) =
+                                self.runtime.send_config_update(&metadata.id, cfg).await
+                            {
+                                warn!(
+                                    category = "extensions",
+                                    extension_id = %extension_id,
+                                    error = %e,
+                                    "self-heal: failed to re-apply saved config"
+                                );
+                            }
+                        }
+                    }
+                }
+                info!(
+                    category = "extensions",
+                    extension_id = %extension_id,
+                    "self-heal: extension reloaded"
+                );
+            }
+            Err(e) => {
+                error!(
+                    category = "extensions",
+                    extension_id = %extension_id,
+                    error = %e,
+                    "self-heal: reload FAILED — extension left unloaded, manual intervention needed"
+                );
+            }
+        }
     }
 
     /// Run the collector as a background task.
@@ -284,6 +381,9 @@ impl ExtensionMetricsCollector {
                     ExtensionCollectionState {
                         last_collection: 0,
                         collect_interval: interval,
+                        consecutive_empty: 0,
+                        failed_heals: 0,
+                        ever_produced: false,
                     }
                 });
 
@@ -363,13 +463,106 @@ impl ExtensionMetricsCollector {
                 // debug hides it until someone notices a flat chart.
                 // Warn with the declared count so it's actionable.
                 if !info.metrics.is_empty() {
+                    // "Ok(empty) since process start" is the SDK default
+                    // produce_metrics (metrics declared, producer never
+                    // implemented — paddle-ocr-v6 shipped like this). A
+                    // reload cannot fix that; warn + self-heal only when
+                    // values USED to flow (a real regression).
+                    let ever_produced = {
+                        let states = self
+                            .extension_states
+                            .read()
+                            .unwrap_or_else(|e| e.into_inner());
+                        states
+                            .get(&extension_id)
+                            .map(|s| s.ever_produced)
+                            .unwrap_or(false)
+                    };
+                    if !ever_produced {
+                        debug!(
+                            category = "extensions",
+                            extension_id = %extension_id,
+                            declared = info.metrics.len(),
+                            "Extension declares metrics but has never produced a value — \
+                             treating as unimplemented produce_metrics (not broken IPC)"
+                        );
+                        continue;
+                    }
                     warn!(
                         category = "extensions",
                         extension_id = %extension_id,
                         declared = info.metrics.len(),
-                        "Extension declares {} metrics but produced 0 values —                          IPC may be broken (stale registration or crashed runner);                          consider reloading the extension",
+                        "Extension declares {} metrics but produced 0 values — IPC may be broken (stale registration or crashed runner)",
                         info.metrics.len()
                     );
+
+                    // [self-heal] N consecutive zero-value cycles ⇒ the IPC
+                    // is dead, not flaky. Reload the extension (unload →
+                    // load → re-apply saved config) instead of warning
+                    // forever — the old behavior spammed this warn every
+                    // cycle for the rest of the process lifetime.
+                    // Bounded: a failure a reload cannot fix (extension-side
+                    // metrics bug) would otherwise reload every N cycles
+                    // forever — after MAX_HEALS consecutive ineffective
+                    // reloads, stop and escalate.
+                    const MAX_HEALS: u32 = 3;
+                    let (streak, failed_heals) = {
+                        let mut states = self
+                            .extension_states
+                            .write()
+                            .unwrap_or_else(|e| e.into_inner());
+                        let state = states
+                            .entry(extension_id.clone())
+                            .or_insert(ExtensionCollectionState {
+                                last_collection: 0,
+                                collect_interval: Self::get_collect_interval(&info),
+                                consecutive_empty: 0,
+                                failed_heals: 0,
+                                ever_produced: false,
+                            });
+                        state.consecutive_empty = state.consecutive_empty.saturating_add(1);
+                        (state.consecutive_empty, state.failed_heals)
+                    };
+                    if streak >= self.selfheal_threshold {
+                        if failed_heals >= MAX_HEALS {
+                            // Reset the streak (no reload) and escalate ONCE —
+                            // the == check fires exactly one cycle, then stays
+                            // silent until a successful collection resets.
+                            let mut states = self
+                                .extension_states
+                                .write()
+                                .unwrap_or_else(|e| e.into_inner());
+                            if let Some(state) = states.get_mut(&extension_id) {
+                                state.consecutive_empty = 0;
+                                if state.failed_heals == MAX_HEALS {
+                                    state.failed_heals += 1;
+                                    drop(states);
+                                    error!(
+                                        category = "extensions",
+                                        extension_id = %extension_id,
+                                        "self-heal gave up: {} reloads did not restore metric \
+                                         flow — the failure is not process-level (likely an \
+                                         extension-side metrics bug); manual intervention needed",
+                                        MAX_HEALS
+                                    );
+                                }
+                            }
+                        } else {
+                            // Reset BEFORE attempting: a failed reload must not
+                            // re-arm every cycle and turn into a reload storm.
+                            {
+                                let mut states = self
+                                    .extension_states
+                                    .write()
+                                    .unwrap_or_else(|e| e.into_inner());
+                                if let Some(state) = states.get_mut(&extension_id) {
+                                    state.consecutive_empty = 0;
+                                    state.failed_heals += 1;
+                                }
+                            }
+                            self.heal_extension(&extension_id, &info).await;
+                        }
+                    }
                 } else {
                     debug!(
                         category = "extensions",
@@ -378,6 +571,20 @@ impl ExtensionMetricsCollector {
                     );
                 }
                 continue;
+            }
+
+            // Healthy collection — clear the self-heal streak, the
+            // ineffective-reload counter, and latch ever_produced.
+            {
+                let mut states = self
+                    .extension_states
+                    .write()
+                    .unwrap_or_else(|e| e.into_inner());
+                if let Some(state) = states.get_mut(&extension_id) {
+                    state.consecutive_empty = 0;
+                    state.failed_heals = 0;
+                    state.ever_produced = true;
+                }
             }
 
             // Store each metric value

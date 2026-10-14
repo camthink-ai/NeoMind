@@ -274,13 +274,17 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
     // Initialize extension metrics collector (decoupled from device system)
     let runtime = state.extensions.runtime.clone();
     let metrics_storage = state.extensions.metrics_storage.clone();
+    // Saved extension configs so the collector's self-heal reload restores
+    // configuration instead of resetting the extension to defaults.
+    let extension_config_store = state.extensions.store.clone();
     let event_bus_for_metrics = state.core.event_bus.clone();
     tokio::spawn(async move {
         use crate::server::extension_metrics::ExtensionMetricsCollector;
         use std::time::Duration;
 
         let mut collector = ExtensionMetricsCollector::new(runtime, metrics_storage)
-            .with_interval(Duration::from_secs(60));
+            .with_interval(Duration::from_secs(60))
+            .with_config_store(extension_config_store);
 
         if let Some(bus) = event_bus_for_metrics {
             collector = collector.with_event_bus(bus);

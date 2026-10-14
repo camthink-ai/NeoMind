@@ -1206,7 +1206,9 @@ async fn show_extension_info(id_or_path: &str) -> Result<()> {
             } else {
                 OutputFormat::Human
             };
-            format_output(&response, output_format);
+            // format_output is PURE (returns the string) — a bare call here
+            // used to drop the whole report, printing nothing with exit 0.
+            print!("{}", format_output(&response, output_format));
             return Ok(());
         }
     }
