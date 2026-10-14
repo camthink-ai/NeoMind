@@ -354,11 +354,10 @@ impl Agent {
                 let mut runtime =
                     OllamaRuntime::new(config).map_err(|e| NeoMindError::llm(e.to_string()))?;
 
-                // [fresh runtime probe] The direct chat runtime built here is
-                // cached for the process lifetime and is NOT rebuilt when the
-                // instance manager later refreshes stored capabilities — so a
-                // creation-time registry default (max_context = 128000 for
-                // unknown models) would survive forever in the prompt budget
+                // [fresh runtime probe] configure_llm runs on the chat request
+                // path, so this probe fires once per user turn. That is
+                // intentional: a creation-time registry default (max_context
+                // = 128000 for unknown models) would drive the prompt budget
                 // while the server enforces its real window (measured
                 // 2026-08-17: every turn sent a full-history prompt that
                 // overflowed and got rescued by the compact-retry ladder).
@@ -377,6 +376,22 @@ impl Agent {
                             Some(c) => (c.multimodal, c.thinking_display),
                             None => (d.supports_multimodal, d.supports_thinking),
                         };
+                        if let Some(c) = stored {
+                            if c.thinking_display != d.supports_thinking
+                                || c.multimodal != d.supports_multimodal
+                            {
+                                tracing::warn!(
+                                    stored_thinking = c.thinking_display,
+                                    probed_thinking = d.supports_thinking,
+                                    stored_multimodal = c.multimodal,
+                                    probed_multimodal = d.supports_multimodal,
+                                    "Stored capabilities disagree with the live /api/show probe \
+                                     (probe thinking detection is name-heuristic based); stored \
+                                     wins because it may encode a user override — verify the \
+                                     model catalog entry if the thinking toggle misbehaves"
+                                );
+                            }
+                        }
                         tracing::info!(
                             multimodal,
                             thinking,
@@ -637,11 +652,10 @@ impl Agent {
                     crate::llm_backends::backends::llamacpp::LlamaCppRuntime::new(config)
                         .map_err(|e| NeoMindError::llm(e.to_string()))?;
 
-                // [fresh runtime probe] Same rationale as the Ollama arm: the
-                // direct chat runtime is cached for the process lifetime, so
-                // bake the REAL window in at creation instead of trusting the
-                // stored registry default (128000). /props is authoritative
-                // for a local llama-server; only a user override wins over it.
+                // [fresh runtime probe] configure_llm runs on the chat request
+                // path, so this probe fires once per user turn. Keep it: the
+                // live window from /props is authoritative for the prompt
+                // budget, and the probe is cheap on a local llama-server.
                 // Same authority split as the Ollama arm: probe wins for
                 // max_context/tools (no override channel); multimodal/thinking
                 // keep stored when present (stored may encode a user override
@@ -653,6 +667,22 @@ impl Agent {
                             Some(c) => (c.multimodal, c.thinking_display),
                             None => (d.supports_multimodal, d.supports_thinking),
                         };
+                        if let Some(c) = stored {
+                            if c.thinking_display != d.supports_thinking
+                                || c.multimodal != d.supports_multimodal
+                            {
+                                tracing::warn!(
+                                    stored_thinking = c.thinking_display,
+                                    probed_thinking = d.supports_thinking,
+                                    stored_multimodal = c.multimodal,
+                                    probed_multimodal = d.supports_multimodal,
+                                    "Stored capabilities disagree with the live /props probe \
+                                     (probe thinking detection is name-heuristic based); stored \
+                                     wins because it may encode a user override — verify the \
+                                     model catalog entry if the thinking toggle misbehaves"
+                                );
+                            }
+                        }
                         tracing::info!(
                             multimodal,
                             thinking,

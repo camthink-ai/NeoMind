@@ -1934,7 +1934,24 @@ pub async fn process_stream_events_with_safeguards(
                                         "Retry without thinking succeeded"
                                     );
                                 } else {
-                                    tracing::warn!("Retry produced only tool calls, using fallback");
+                                    // Diagnose WHICH empty-content failure this is:
+                                    // large thinking_chars → the model wedged in a
+                                    // thinking loop until the budget ran out (the
+                                    // known llama.cpp mid-stream wedge family);
+                                    // all-zero → the backend stalled/rejected the
+                                    // request outright. The old single warn said
+                                    // "only tool calls" even for plain-empty retries.
+                                    let retry_was_tool_calls = !retry_content.trim().is_empty();
+                                    tracing::warn!(
+                                        thinking_chars = thinking_content.chars().count(),
+                                        first_attempt_chars = orig_len,
+                                        retry_chars = retry_content.chars().count(),
+                                        retry_was_tool_calls,
+                                        "Stream and no-thinking retry both produced no usable \
+                                         content — root-cause hint: thinking_chars >> 0 means a \
+                                         thinking-loop wedge against the token budget; all zeros \
+                                         means the backend stalled or rejected the request shape"
+                                    );
                                     let fallback =
                                         "Sorry, the model could not produce a response. Please retry.\n[reason: the model returned empty content after retry — the backend may be slow, over its real context limit, or rejecting the request shape]"
                                             .to_string();

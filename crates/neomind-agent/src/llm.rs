@@ -181,6 +181,34 @@ impl Drop for ConcurrencyPermit {
     }
 }
 
+/// Process-wide count of in-flight FOREGROUND chat requests (any session,
+/// any LlmInterface instance). Background LLM work — memory extraction,
+/// summarization — consults this before firing on the SAME shared local
+/// backend: a background call landing mid-turn queues behind / steals decode
+/// from the user's stream on a small llama-server (observed 2026-10-14: a
+/// 34s extraction overlapped the next turn's generation and the following
+/// turns returned empty content after retry).
+pub static FOREGROUND_CHAT_INFLIGHT: AtomicUsize = AtomicUsize::new(0);
+
+/// RAII guard for [`FOREGROUND_CHAT_INFLIGHT`]. Acquire alongside the
+/// concurrency permit at every foreground entry point; the guard's lifetime
+/// must mirror the permit's (function scope for blocking chat, stream scope
+/// for streaming).
+struct ForegroundChatGuard;
+
+impl ForegroundChatGuard {
+    fn acquire() -> Self {
+        FOREGROUND_CHAT_INFLIGHT.fetch_add(1, Ordering::Relaxed);
+        ForegroundChatGuard
+    }
+}
+
+impl Drop for ForegroundChatGuard {
+    fn drop(&mut self) {
+        FOREGROUND_CHAT_INFLIGHT.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 /// Wrapper stream that holds a concurrency permit.
 ///
 /// This ensures the permit is held for the entire lifetime of the stream,
@@ -1238,6 +1266,7 @@ impl LlmInterface {
 
         // Acquire permit for concurrency limiting
         let _permit = self.limiter.acquire().await;
+        let _fg_guard = ForegroundChatGuard::acquire();
 
         let start = Instant::now();
 
@@ -1424,6 +1453,7 @@ impl LlmInterface {
 
         // Acquire permit for concurrency limiting
         let _permit = self.limiter.acquire().await;
+        let _fg_guard = ForegroundChatGuard::acquire();
 
         let start = Instant::now();
 
@@ -1856,11 +1886,13 @@ impl LlmInterface {
 
         // Acquire permit for concurrency limiting and wrap stream
         let permit = self.limiter.acquire().await;
+        let fg_guard = ForegroundChatGuard::acquire();
         let wrapped_stream = PermitStream::new(stream, permit);
         let token_tracker = self.last_prompt_tokens.clone();
 
         // Convert stream
         Ok(Box::pin(async_stream::stream! {
+            let _fg_guard = fg_guard; // counts as foreground until the stream ends
             let mut stream = wrapped_stream;
             while let Some(result) = futures::StreamExt::next(&mut stream).await {
                 match result {
@@ -2181,6 +2213,7 @@ impl LlmInterface {
 
         // Acquire permit for concurrency limiting and wrap stream
         let permit = self.limiter.acquire().await;
+        let fg_guard = ForegroundChatGuard::acquire();
         let wrapped_stream = PermitStream::new(stream, permit);
 
         // Prepare retry data for tiered context overflow retry
@@ -2190,6 +2223,7 @@ impl LlmInterface {
 
         // Convert stream with tiered context overflow retry
         Ok(Box::pin(async_stream::stream! {
+            let _fg_guard = fg_guard; // counts as foreground until the stream ends
             let mut stream = wrapped_stream;
             let mut retry_stage: u8 = 0; // 0=initial, 1=compact retry, 2=minimal retry
             while let Some(result) = futures::StreamExt::next(&mut stream).await {

@@ -1259,7 +1259,9 @@ facts that would help FUTURE conversations. Two kinds, tagged exactly:\n\
 [user] fact        — durable facts about the user (preferences, identity, context)\n\
 [knowledge] fact   — durable facts about the system/domain (device names, locations, conventions)\n\
 Output ONLY bullet lines starting with \"- \", one per fact, each tagged. \
-Skip transient or session-specific chatter. Empty output if nothing durable.\n\n\
+Skip transient or session-specific chatter. NEVER record facts about the \
+assistant itself (what it mentioned, can do, or did) — those are not knowledge. \
+Do not restate what a previous fact already covers. Empty output if nothing durable.\n\n\
 User: {um}\n\
 Assistant: {ar}\n"
             );
@@ -1280,6 +1282,42 @@ Assistant: {ar}\n"
                 stream: false,
                 tools: None,
             };
+            // [shared-backend contention] This extraction rides the same
+            // runtime as the user's chat. On a small local llama-server a
+            // background call landing mid-turn queues behind / steals decode
+            // from the foreground stream (observed 2026-10-14: a 34s
+            // extraction overlapped the next turn's generation, and the turns
+            // right after returned empty content after retry). Wait for
+            // foreground silence — bounded, because extraction must never
+            // starve forever.
+            // The initial delay covers the common rhythm where the user sends
+            // the next message within seconds of the previous End: without
+            // it, the extraction LLM call is already in flight when that
+            // turn starts (the wait below can only gate calls not yet sent,
+            // it cannot cancel one already running on the server).
+            tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(120);
+            let mut deferred = false;
+            while crate::llm::FOREGROUND_CHAT_INFLIGHT.load(std::sync::atomic::Ordering::Relaxed)
+                > 0
+            {
+                if !deferred {
+                    deferred = true;
+                    tracing::info!(
+                        session_id,
+                        "memory extraction: deferring — foreground chat stream active (shared backend)"
+                    );
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    tracing::warn!(
+                        session_id,
+                        "memory extraction: foreground chat still active after 120s — proceeding anyway"
+                    );
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+
             let out = match runtime.generate(input).await {
                 Ok(o) => o,
                 Err(e) => {
@@ -1302,23 +1340,53 @@ Assistant: {ar}\n"
                 let Some(rest) = rest else { continue };
                 let strip_tag = |tag: &str| -> Option<String> {
                     // Accept both "- [user] fact …" and "- [user]: fact …" —
-                    // the model varies the tag separator between runs.
+                    // the model varies the tag separator between runs. Strip
+                    // REPEATEDLY: small models often double up
+                    // ("[user]: : fact"), and the old single-pass strip left
+                    // a leading ":" that was written verbatim ("- : 平台名称："
+                    // in KNOWLEDGE.md, 2026-10-14).
                     let mut f = rest.strip_prefix(tag)?.trim().to_string();
-                    for sep in [":", "fact", "-"] {
-                        if let Some(stripped) = f.strip_prefix(sep) {
-                            f = stripped.trim_start().to_string();
+                    loop {
+                        let before = f.clone();
+                        for sep in [":", "fact", "-", "："] {
+                            if let Some(stripped) = f.strip_prefix(sep) {
+                                f = stripped.trim_start().to_string();
+                            }
+                        }
+                        if f == before {
+                            break;
                         }
                     }
-                    if f.is_empty() {
-                        None
-                    } else {
-                        Some(f)
-                    }
+                    Some(f.trim().to_string())
+                };
+                // Quality gate: 2B-class models pad the output with meta
+                // chatter about the ASSISTANT itself and degenerate
+                // fragments — neither is a durable fact, and both pollute
+                // KNOWLEDGE.md semantically (exact-text dedup cannot catch
+                // reworded repeats of the same observation).
+                let is_junk = |f: &str| -> bool {
+                    const META_OPENERS: [&str; 9] = [
+                        "the assistant",
+                        "assistant can",
+                        "assistant mentions",
+                        "assistant provides",
+                        "assistant includes",
+                        "assistant needs",
+                        "assistant offers",
+                        "the model",
+                        "the ai",
+                    ];
+                    let lowered = f.to_lowercase();
+                    f.chars().count() < 6 || META_OPENERS.iter().any(|p| lowered.starts_with(p))
                 };
                 if let Some(f) = strip_tag("[user]") {
-                    new_user.push(f);
+                    if !is_junk(&f) {
+                        new_user.push(f);
+                    }
                 } else if let Some(f) = strip_tag("[knowledge]") {
-                    new_knowledge.push(f);
+                    if !is_junk(&f) {
+                        new_knowledge.push(f);
+                    }
                 }
             }
             if new_user.is_empty() && new_knowledge.is_empty() {
@@ -1337,7 +1405,10 @@ Assistant: {ar}\n"
             // outrank recent chatter).
             let norm =
                 |s: &str| -> String { s.to_lowercase().split_whitespace().collect::<String>() };
-            let merged = |target: &str, additions: &[String]| -> Option<String> {
+            // Returns (new file content if anything fresh was added, count of
+            // NON-duplicate facts) so the merge log reports what was actually
+            // written, not the pre-dedup parse count.
+            let merged = |target: &str, additions: &[String]| -> (Option<String>, usize) {
                 let existing = store.read_file_sync(target);
                 let existing_norms: std::collections::HashSet<String> = existing
                     .lines()
@@ -1355,7 +1426,7 @@ Assistant: {ar}\n"
                     .filter(|f| !existing_norms.contains(&norm(f)))
                     .collect();
                 if fresh.is_empty() {
-                    return None;
+                    return (None, 0);
                 }
                 let mut merged = existing.trim_end().to_string();
                 for f in &fresh {
@@ -1384,7 +1455,7 @@ Assistant: {ar}\n"
                     merged = kept;
                     merged.push('\n');
                 }
-                Some(merged)
+                (Some(merged), fresh.len())
             };
 
             // Serialize the read-modify-write: two concurrent extractions
@@ -1394,7 +1465,8 @@ Assistant: {ar}\n"
             let _guard = MEMORY_EXTRACT_LOCK.lock().await;
 
             let mut wrote_any = false;
-            if let Some(content) = merged("user", &new_user) {
+            let (user_write, fresh_user) = merged("user", &new_user);
+            if let Some(content) = user_write {
                 match store.write_file("user", &content).await {
                     Ok(()) => wrote_any = true,
                     Err(e) => tracing::warn!(
@@ -1405,7 +1477,8 @@ Assistant: {ar}\n"
                     ),
                 }
             }
-            if let Some(content) = merged("knowledge", &new_knowledge) {
+            let (knowledge_write, fresh_knowledge) = merged("knowledge", &new_knowledge);
+            if let Some(content) = knowledge_write {
                 match store.write_file("knowledge", &content).await {
                     Ok(()) => wrote_any = true,
                     Err(e) => tracing::warn!(
@@ -1422,8 +1495,8 @@ Assistant: {ar}\n"
                 snapshots.write().await.remove(&session_id);
                 tracing::info!(
                     session_id,
-                    user_facts = new_user.len(),
-                    knowledge_facts = new_knowledge.len(),
+                    fresh_user_facts = fresh_user,
+                    fresh_knowledge_facts = fresh_knowledge,
                     "chat memory extraction: merged durable facts"
                 );
             }
