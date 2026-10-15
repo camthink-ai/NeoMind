@@ -118,8 +118,20 @@ impl RuleStore {
     /// Genuinely in memory. It used to create a temp file and rely on `Drop`
     /// to remove it, which a killed process never runs — so the temp directory
     /// accumulated their corpses.
+    ///
+    /// Isolated by construction: deliberately NOT routed through `open()`,
+    /// whose path-keyed singleton hands every `:memory:` caller the SAME
+    /// database. Tests run in parallel threads, so one shared store made
+    /// `list_all()` count other tests' rows (flaky 1-vs-2 in CI). Production
+    /// never opens `:memory:`; a fresh backend per call is what an in-memory
+    /// store means for its callers.
     pub fn memory() -> Result<Arc<Self>> {
-        Self::open(":memory:")
+        let (db, temp_path) = Self::open_db(":memory:")?;
+        Ok(Arc::new(RuleStore {
+            db: Arc::new(db),
+            path: ":memory:".to_string(),
+            temp_path,
+        }))
     }
 
     fn open_db(path_str: &str) -> Result<(Database, Option<PathBuf>)> {
