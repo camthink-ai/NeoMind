@@ -413,12 +413,13 @@ mod tests {
         // Regression (model-switch stale name): the refresh path must restamp
         // the display name — the STABLE instance id otherwise keeps whatever
         // name the first model stamped, and the chat picker showed the OLD
-        // model after a switch. Model "" resolves to the default def
-        // (MiniCPM5-2B).
+        // model after a switch. Model "" resolves to the registry default
+        // (resolve via default_model_def so future default flips don't
+        // stale-proof this assertion).
         let refreshed = manager
             .get_instance(BUILTIN_INSTANCE_ID)
             .expect("instance survived refresh");
-        assert_eq!(refreshed.name, "MiniCPM5-2B");
+        assert_eq!(refreshed.name, neomind_core::builtin_llm::manifest::default_model_def().display_name);
     }
 }
 

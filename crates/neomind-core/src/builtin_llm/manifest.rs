@@ -3,7 +3,12 @@ use std::sync::LazyLock;
 
 /// Default builtin model. `BUILTIN_MODELS` (below) is the full registry; the
 /// user picks which one to install, this is the default/recommended entry.
-pub const BUILTIN_MODEL_ID: &str = "minicpm5-2b";
+/// LFM2.5-2.6B per the user's production testing (2026-10-10): LFM and
+/// Qwen3.5-4B are the two best performers in real agent sessions, LFM takes
+/// the default. Note this CONTRADICTS the 2026-09 harness eval (which
+/// preferred MiniCPM at 81% tool accuracy) — the recorded call is
+/// real-world usage over the harness.
+pub const BUILTIN_MODEL_ID: &str = "lfm25-2.6b";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ModelManifest {
@@ -76,11 +81,12 @@ pub struct BuiltinModelDef {
     pub min_ram_mb: u64,
 }
 
-/// The builtin model registry. MiniCPM5-2B is the default (2026-09
-/// corrected-harness eval: 81% tool accuracy @8K, most robust across
-/// context windows, Apache-2.0); Qwen3.5-4B is the strongest agent when
-/// given 16K; Gemma4-E2B adds a QAT + vision-friendly option; LFM2.5 keeps
-/// the native-128K niche.
+/// The builtin model registry. LFM2.5-2.6B is the default (2026-10-10,
+/// user's production testing — LFM/Qwen3.5-4B were the two best real-world
+/// performers; the 2026-09 harness eval preferred MiniCPM and that data
+/// stays on record in the notes); Qwen3.5-4B is the strongest alternative;
+/// MiniCPM5-2B remains the harness-eval pick; Gemma4-E2B adds a QAT +
+/// vision-friendly option.
 pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
     vec![
         BuiltinModelDef {
@@ -129,8 +135,10 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             max_ctx: 131072,
             kv_bytes_per_token: Some(43_008),
             kv_const_bytes: Some(0),
+            // Default-flipped out 2026-10-10 in favor of LFM (user's
+            // production testing); the harness-eval pick on record.
             notes: "2026-09 评测首选 — 工具命中 81%、全窗口最稳、Apache-2.0 可分发",
-            recommended: true,
+            recommended: false,
             default_thinking: true,
             thinking_is_integral: false,
             min_ram_mb: 3_072,
@@ -165,8 +173,8 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             // 20 conv layers hold fixed recurrence state (~1 MB, ignored).
             kv_bytes_per_token: Some(20_480),
             kv_const_bytes: Some(0),
-            notes: "原生 128K 上下文(hybrid KV 很省)— 长会话细分场景;默认首选已让位 MiniCPM5-2B",
-            recommended: false,
+            notes: "默认模型(2026-10 实测首选) — 原生 128K 上下文(hybrid KV 很省),thinking 常开;2026-09 评测 67% 工具命中",
+            recommended: true,
             default_thinking: true,
             thinking_is_integral: true,
             min_ram_mb: 3_072,
