@@ -13,6 +13,7 @@ pub mod datasource;
 pub mod error;
 pub mod event;
 pub mod eventbus;
+pub mod host;
 pub mod extension;
 pub mod llm;
 pub mod message;

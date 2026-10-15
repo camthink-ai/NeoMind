@@ -17,6 +17,8 @@ anti_triggers:
 
 # System Information & Infrastructure
 
+`neomind system info` now includes a `host` section (OS, kernel, arch, hostname, CPU, RAM, uptime, LAN IP) — for "what device/system is this running on" questions, read that; do not guess.
+
 `neomind system info` returns the NeoMind system/infrastructure details a user needs when connecting devices or asking for broker/network/server info.
 
 ## CRITICAL Rules

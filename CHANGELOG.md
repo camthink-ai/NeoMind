@@ -54,6 +54,12 @@ Two days of live runs on an NG4520 (Orin, 7.4 GB) took the platform from "logs l
 - `POST /api/builtin-llm/restart?model=<id>` switches to a downloaded model (unknown/undownloaded → 400 naming what's installed). Downloading an on-disk model is now a switch too (`already_installed: true, switched: true`) — the wizard's pick-and-click works unchanged.
 - Import and delete follow the pointer: import sets it instead of purging other models; deleting the active model clears it (the scan picks any survivor on next bootstrap).
 
+### Added — the model knows its host: prompt-injected facts + `system info` host section
+- Asked "你知道你在什么设备上运行吗 / 你不是运行在ubuntu上吗", the model burned two tool rounds against `neomind system info` — which carried only platform services (MQTT/webhook; its `server_ip` is a BIND address) — and still answered 我不确定: there was no data source about the host anywhere. Fixes:
+  - `neomind_core::host` (pure /proc reads, no new deps): OS, kernel, arch, hostname, CPU model/cores, RAM, uptime, and the real LAN IP (UDP-connect route trick, no packets sent). Unit-tested.
+  - The slim system prompt now carries a one-line Host Environment summary (cached) — "what are you running on" answers in one turn with ZERO tool calls (verified on-device: 17 s, precise Ubuntu 22.04.5 / tegra kernel / aarch64 / 7.4 GB / LAN IP answer, `toolsUsed: []`).
+  - `neomind system info` gains a full `host` section for on-demand detail; the system-info skill points at it.
+
 ### Fixed — chat-driven extension installs
 - `neomind extension market-install` sent `extension_id` while the API's `MarketplaceInstallRequest` deserializes `id` — every CLI marketplace install failed with "missing field `id`" before reaching any install logic (silent exit 1). The command had never worked; found while verifying the chat-driven install path end-to-end (a user asked chat to install the weather extension and the agent burned 8 minutes against this wall).
 - `market-list` is compact and filterable: the raw registry dump (~48 KB for 26 extensions) drowned small models' context — observed pulled twice in one 8-minute turn. Default output is id/name/version/one-line description (**318 bytes** for `market-list weather`); `-v` restores the full dump. The projection is a pure, unit-tested function.

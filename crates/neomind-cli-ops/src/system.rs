@@ -171,5 +171,11 @@ pub async fn system_info(client: &ApiClient) -> Result<CliResponse> {
         info["url_hint"] = json!(hint);
     }
 
+    // Host facts (OS/kernel/arch/CPU/RAM/LAN IP) — the platform-services
+    // view above told the model nothing about WHERE it runs, and its
+    // server_ip is a bind address: asked "你不是运行在ubuntu上吗" the model
+    // had no data source and said 我不确定 (2026-10-15).
+    info["host"] = neomind_core::host::host_facts();
+
     Ok(CliResponse::success(info, "System info retrieved"))
 }

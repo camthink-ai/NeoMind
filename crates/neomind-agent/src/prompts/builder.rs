@@ -74,6 +74,11 @@ impl PromptBuilder {
         } else {
             prompt = strip_block(&prompt, THINKING_BEGIN, THINKING_END);
         }
+        // Host facts (OS/kernel/arch/CPU/RAM/LAN IP) — cached summary line
+        // from neomind-core; answers "what are you running on" without a
+        // tool round-trip (2026-10-15: the model had NO environment source
+        // and answered 我不确定 to "你不是运行在ubuntu上吗").
+        prompt = prompt.replace("{{HOST_FACTS}}", &neomind_core::host::host_summary());
         prompt
     }
 
