@@ -1551,8 +1551,16 @@ fn session_attach_allowed(
 /// Principal for a REST caller — same grammar as the WS path: JWT →
 /// `user:<name>`, API-key auth → the shared "apikey" bucket.
 fn rest_principal(user: Option<&crate::auth_users::SessionInfo>) -> String {
-    user.map(|u| format!("user:{}", u.username))
-        .unwrap_or_else(|| "apikey".to_string())
+    match user {
+        // The auth middleware inserts a service-account SessionInfo
+        // (user_id "apikey:<id>", username = key name) for API-key callers;
+        // without this arm they'd land in `user:<key-name>` while the WS
+        // path stamps the same caller "apikey" — a REST history read would
+        // claim the session for a principal the socket can never match.
+        Some(u) if u.user_id.starts_with("apikey:") => "apikey".to_string(),
+        Some(u) => format!("user:{}", u.username),
+        None => "apikey".to_string(),
+    }
 }
 
 /// Ownership guard for session-scoped REST endpoints (history / pending /
