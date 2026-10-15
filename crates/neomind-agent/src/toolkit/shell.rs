@@ -86,7 +86,7 @@ static INDEX_INJECTED: std::sync::atomic::AtomicBool = std::sync::atomic::Atomic
 const DOMAIN_INDEX: &str = r#"
 
 [neomind CLI domain index — the exact subcommands that exist (one line per domain; `neomind <domain> --help` for flags)]
-- device: list get create update delete history latest control <ID> <CMD> types write-metric webhook-url drafts
+- device: list get create update delete history latest control <ID> <CMD> types write-metric webhook-url drafts (write-metric writes/simulates a data point — the way to feed a virtual-device test report; no broker or connection involved)
 - agent: list get create update delete control <ID> <active|paused> invoke memory clear-memory executions <ID> latest-execution conversation <ID> send-message <ID> (talking to an agent, NOT `message`)
 - rule: list get create update delete enable disable test history
 - dashboard: list get create update delete add-components update-component remove-components share (ADD widgets → add-components (append); TWEAK one widget → update-component; `update --components` replaces ALL and needs --replace-all — almost never what you want; `dashboard get <ID>` first to see layout/ids)

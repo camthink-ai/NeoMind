@@ -1,7 +1,7 @@
 ---
 id: device-onboarding
 name: Device Onboarding & Connection Guide
-description: Use when the user wants to onboard, connect, or configure an IoT device, OR send a control command to a device (stop, start, set speed, alarm, reboot). Covers device provisioning, MQTT/Webhook/BLE connection, getting broker addresses, and controlling devices — even if they don't explicitly say "device" or "control" (e.g. "shut down the pump", "把泵停掉", "set the fan speed", "停下来"). Also covers virtual/simulated devices — create a device and feed it data via its webhook URL with curl ('建个虚拟设备', 'create a virtual device', '模拟数据'). Includes 设备接入/连接/配置/控制/停机/调速/命令下发.
+description: Use when the user wants to onboard, connect, or configure an IoT device, OR send a control command to a device (stop, start, set speed, alarm, reboot). Covers device provisioning, MQTT/Webhook/BLE connection, getting broker addresses, and controlling devices — even if they don't explicitly say "device" or "control" (e.g. "shut down the pump", "把泵停掉", "set the fan speed", "停下来"). Also covers virtual/simulated devices — create a device then feed it data with `neomind device write-metric` (adapter-independent, the device goes online immediately) or via its webhook URL with curl ('建个虚拟设备', 'create a virtual device', '模拟数据'). Includes 设备接入/连接/配置/控制/停机/调速/命令下发.
 category: device
 origin: builtin
 priority: 90
@@ -35,7 +35,7 @@ Always RUN the command yourself and report the real output — don't narrate.
 | `neomind device history <id>` | Telemetry history |
 | `neomind device control <id> <COMMAND>` | Send a control command to a device |
 | `neomind device types list` | List device-type templates |
-| `neomind device write-metric <ID> --metric <METRIC> --value <VALUE> [--timestamp <ms_epoch>]` | Write a metric data point. ⚠️ `--metric`/`--value` are FLAGS (only `<ID>` is positional); value may be a number or "true"/"false" |
+| `neomind device write-metric <ID> --metric <METRIC> --value <VALUE> [--timestamp <ms_epoch>]` | Write a metric data point — THE tool for virtual-device simulation / test reporting (any metric name, device goes online). ⚠️ `--metric`/`--value` are FLAGS (only `<ID>` is positional); value may be a number or "true"/"false" |
 | `neomind device webhook-url <id>` | Get the webhook URL for a device |
 | `neomind device drafts` | Manage auto-discovery drafts |
 
@@ -343,6 +343,30 @@ Content-Type: application/json
 1. NeoMind supports connecting to external brokers.
 2. The external broker can be configured via the Web UI (Settings > MQTT).
 3. Once configured, NeoMind subscribes to the external broker and auto-discovers devices.
+
+---
+
+### Scenario E: Virtual / Simulated Device (test data source)
+
+**User wants a fake device that produces data** ('建个虚拟设备', '模拟数据源', 'create a virtual device', 'simulate reporting').
+
+1. **Pick a device type whose metrics match the data you will simulate** — run `neomind device types list` and choose accordingly. A temperature value written to a camera template still works but displays as a raw metric name. If no type matches, create one:
+```bash
+neomind device types create --name 'Weather Sensor' --metrics '[{"name":"temperature","display_name":"Temperature","data_type":"Float","unit":"°C"},{"name":"humidity","display_name":"Humidity","data_type":"Float","unit":"%"}]'
+```
+
+2. **Create the device** (adapter defaults to `mqtt`):
+```bash
+neomind device create --name "Virtual Weather" --device-type <TYPE>
+```
+
+3. **Feed it data with `write-metric` — THE tool for simulation.** No broker, no physical connection, no `control` command needed; each write lands in telemetry, fires rules/dashboards/data-push, and turns the device online:
+```bash
+neomind device write-metric <DEVICE_ID> --metric temperature --value 23.5
+```
+`write-metric` accepts ANY metric name (not limited to the type's template). Verify: `neomind device get <ID>` (status/last_seen) and `neomind device history <ID> --metric temperature`.
+
+> ⚠️ A virtual `mqtt`-adapter device has NO live transport. Bridge/adapter tools (e.g. `router-bridge send_frame`) are DOWNLINK to real bridge-attached hardware — they correctly refuse with "not connected" and are never the way to simulate reporting. For webhook-adapter devices the webhook flow also works (`curl -X POST .../api/devices/<ID>/webhook -d '{"data":{...}}'`); real MQTT hardware publishes to `device/{type}/{id}/uplink`.
 
 ---
 
