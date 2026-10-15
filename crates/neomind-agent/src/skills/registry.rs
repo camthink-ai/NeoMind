@@ -255,3 +255,34 @@ mod tests {
         assert_eq!(registry.get("to-update").unwrap().metadata.name, "Updated");
     }
 }
+
+#[cfg(test)]
+mod builtin_search_tests {
+    use super::*;
+
+    /// The 2026-10-15 spiral: a model asked to "install the weather
+    /// extension" searched skills with the ENGLISH query "weather forecast"
+    /// and scored zero — extension-management's keywords were Chinese-only,
+    /// so the model never found the install guide and scaffolded a Rust
+    /// project instead. English trigger terms must hit the skill corpus.
+    #[test]
+    fn english_weather_query_reaches_extension_management() {
+        let registry = SkillRegistry::load_all(None);
+        let skills = registry.list();
+        let corpus: Vec<String> = skills.iter().map(|s| crate::skills::matcher::searchable_text(s)).collect();
+        let index = crate::skills::bm25::Bm25Index::build(corpus);
+        let tokens = crate::skills::bm25::tokenize("weather forecast");
+        let mut scored: Vec<(f32, &str)> = skills
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (index.score(i, &tokens), s.metadata.id.as_str()))
+            .filter(|(sc, _)| *sc > 0.0)
+            .collect();
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+        assert!(
+            scored.iter().any(|(_, id)| *id == "extension-management"),
+            "English 'weather forecast' must reach extension-management, got: {:?}",
+            scored.iter().map(|(s, id)| (id, *s)).collect::<Vec<_>>()
+        );
+    }
+}

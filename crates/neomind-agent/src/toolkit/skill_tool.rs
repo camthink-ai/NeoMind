@@ -367,17 +367,28 @@ When to load: ONLY complex/unfamiliar workflows (multi-entity, unit conversion, 
                                     })
                                 })
                                 .collect();
+                            // Skill-vs-extension disambiguation rides on the
+                            // error: small models asked to "install the X
+                            // extension" routinely try skill(load, "X") here
+                            // (2026-10-15: a 7-round spiral on exactly this).
+                            // One sentence at the failure point redirects them
+                            // to the extension-management skill.
+                            let ext_hint = " NOTE: skills are how-to guides. If you meant to \
+                             install an EXTENSION (a capability like weather-forecast), load the \
+                             'extension-management' skill instead — it covers \
+                             market-install.";
                             let msg = if ids.is_empty() {
                                 format!(
                                     "Skill '{}' not found. No close match — use action='search' \
-                                     to find skills, or action='load' with an exact ID.",
-                                    id
+                                     to find skills, or action='load' with an exact ID.{}",
+                                    id, ext_hint
                                 )
                             } else {
                                 format!(
-                                    "Skill '{}' not found. Did you mean: {}?",
+                                    "Skill '{}' not found. Did you mean: {}?{}",
                                     id,
-                                    ids.join(", ")
+                                    ids.join(", "),
+                                    ext_hint
                                 )
                             };
                             Ok(ToolOutput::error_with_metadata(

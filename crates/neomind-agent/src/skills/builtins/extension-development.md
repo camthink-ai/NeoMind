@@ -17,6 +17,8 @@ anti_triggers:
 
 # Extension Development Guide
 
+Write/build extension SOURCE CODE. NOT for installing existing extensions from the marketplace — that is the `extension-management` skill (market-install). If the user said 安装/install and the extension exists in the market, you are in the wrong skill.
+
 NeoMind extensions are Rust programs running in isolated processes. They communicate with the platform via FFI (ABI version 3).
 
 ## Architecture
