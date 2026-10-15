@@ -584,7 +584,7 @@ impl ShellTool {
         // when nothing happened. Printing a tool-result-shaped payload via
         // echo/printf is never legitimate agent behavior: refuse it and
         // name the cure.
-        if let Some(real_cmd) = fabricated_tool_output(&command) {
+        if let Some(real_cmd) = fabricated_tool_output(command) {
             return Ok(CommandOutput {
                 exit_code: Some(126),
                 stdout: format!(

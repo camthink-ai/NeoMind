@@ -499,7 +499,7 @@ mod tests {
 
     #[test]
     fn floor_is_8192_even_on_ridiculously_small_ram() {
-        let ctx = cap_ctx_by_ram(131_072, 2 * GB, 1 * GB, 1_561_318_368, 43_008, 0);
+        let ctx = cap_ctx_by_ram(131_072, 2 * GB, GB, 1_561_318_368, 43_008, 0);
         assert_eq!(ctx, 8192);
     }
 

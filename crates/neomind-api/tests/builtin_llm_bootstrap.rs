@@ -245,17 +245,15 @@ async fn bootstrap_full_chain_spawns_registers_activates() {
     );
     assert!(inst.is_builtin);
     assert_eq!(inst.model, "minicpm5-2b");
-    // The instance stamps the PER-SLOT context from the healthy server's
-    // /props: the fake below reports n_ctx=32768 with total_slots=2, so
-    // 16384 — the concurrency-safe share of the shared KV pool (the raw
-    // registry default_ctx is the TOTAL pool, never a per-request budget).
-    let def = neomind_core::builtin_llm::manifest::model_def("minicpm5-2b")
-        .expect("registry entry for the seeded model");
+    // The instance stamps the healthy server's /props n_ctx VERBATIM: the
+    // fake reports n_ctx=32768 with total_slots=2, and that value IS the
+    // server's per-request truth. (1.2.1 removed the divide-by-slots
+    // budget — on an auto-slotted server it silently shrank the window 4x
+    // and, since /props n_ctx already reflects partitioning, it was wrong
+    // for unified-KV servers anyway.)
     assert_eq!(
-        inst.capabilities.max_context, 16384,
-        "per-slot share of the server's KV pool must land on the instance \
-         (server n_ctx {} / slots 2; registry default_ctx {} is the pool)",
-        32768, def.default_ctx
+        inst.capabilities.max_context, 32768,
+        "server /props n_ctx must land on the instance verbatim"
     );
     assert!(
         fx.manager.get_active_instance().is_some(),

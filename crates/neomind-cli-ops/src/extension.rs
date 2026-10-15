@@ -301,22 +301,10 @@ mod market_list_tests {
     #[test]
     fn filter_matches_case_insensitively_across_fields() {
         // By id fragment, by name word, by description word.
-        assert_eq!(
-            compact_market_list(&raw(), Some("weather".into()))["matched"],
-            1
-        );
-        assert_eq!(
-            compact_market_list(&raw(), Some("Forecast".into()))["matched"],
-            1
-        );
-        assert_eq!(
-            compact_market_list(&raw(), Some("detection".into()))["matched"],
-            1
-        );
-        assert_eq!(
-            compact_market_list(&raw(), Some("nomatch".into()))["matched"],
-            0
-        );
+        assert_eq!(compact_market_list(&raw(), Some("weather"))["matched"], 1);
+        assert_eq!(compact_market_list(&raw(), Some("Forecast"))["matched"], 1);
+        assert_eq!(compact_market_list(&raw(), Some("detection"))["matched"], 1);
+        assert_eq!(compact_market_list(&raw(), Some("nomatch"))["matched"], 0);
     }
 
     #[test]
