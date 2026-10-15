@@ -37,6 +37,7 @@ Two days of live runs on an NG4520 (Orin, 7.4 GB) diagnosed and closed a full fa
 - Memory-extraction parsing: iterative separator stripping (the old pass wrote literal "- : 平台名称：" entries), word-boundary `fact` stripping ("factory" no longer mangled), case-insensitive tags, junk gate (<6 chars, assistant-meta chatter); merged-facts logs report post-dedup counts.
 
 ### Fixed — frontend
+- The builtin-engine ctx dialog now offers a **16K preset** (`[16K, 32K, 64K, 128K]`, previously the smallest choice was 32K): 7-8 GB edge boxes had no selectable stable window — the NG4520 settled at 16K after repeated 32K OOM kills (see the OOM-resilience section). Presets are now a single shared constant.
 - A mid-turn WebSocket drop hands the display to the pending-stream poll immediately (frozen bubble → live snapshot → history on stall) instead of waiting for a manual refresh; chat stats like "497289h 3m" (server seconds vs local ms on the interrupted-turn path) are fixed by a `normalizeTimestampMs` helper on every history ingest.
 
 ### Investigated — MiniCPM5-2B eval scores

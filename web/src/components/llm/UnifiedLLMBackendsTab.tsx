@@ -314,6 +314,11 @@ function toPluginInstance(instance: LlmBackendInstance, activeId: string | null)
   }
 }
 
+// Builtin-engine ctx presets. 16K is the practical floor for 7-8 GB edge
+// boxes: the NG4520 incident box OOM-killed llama-server roughly every
+// 1-1.5 h at 32K (10 kills over two days) and settled stable at 16K.
+const BUILTIN_CTX_PRESETS = [16384, 32768, 65536, 131072]
+
 export function UnifiedLLMBackendsTab({
   onCreateBackend,
   onUpdateBackend,
@@ -689,7 +694,7 @@ export function UnifiedLLMBackendsTab({
                 onClick={() => {
                   // Snap to the nearest preset (the Select only offers presets).
                   const cur = builtinStatus.ctx_override ?? builtinStatus.ctx ?? builtinStatus.default_ctx ?? 32768
-                  const presets = [32768, 65536, 131072]
+                  const presets = BUILTIN_CTX_PRESETS
                   setCtxDialogInput(presets.reduce((a, b) => Math.abs(b - cur) < Math.abs(a - cur) ? b : a, presets[0]))
                   setCtxDialogOpen(true)
                 }}
@@ -1029,7 +1034,7 @@ export function UnifiedLLMBackendsTab({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {[32768, 65536, 131072].map((n) => {
+                  {BUILTIN_CTX_PRESETS.map((n) => {
                     const def = builtinStatus?.default_ctx ?? 32768
                     return (
                       <SelectItem key={n} value={String(n)}>
