@@ -83,7 +83,7 @@ impl Drop for DownloadActiveGuard {
     }
 }
 
-fn models_dir(data_dir: &Path) -> PathBuf {
+pub(crate) fn models_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("models")
 }
 
@@ -208,10 +208,36 @@ fn resolve_quant(
 /// window the UI shows is the window the server actually gets. Models
 /// without a KV cost model (Ling, catalog-only imports) pass through
 /// uncapped.
+///
+/// Every spawn REPLACES the single live llama-server, so the available-RAM
+/// clamp adds the live instance's RSS back (it frees on replacement) —
+/// without this, a status poll or respawn evaluated while the old server
+/// held ~1.2 GB floored the window to 8192 (2026-10-15 incident). Status
+/// polling uses [`guarded_ctx_quiet`] so the cap doesn't warn every poll.
 pub(crate) fn guarded_ctx(
     cfg: &BuiltinConfig,
     default_ctx: u32,
     def: Option<&BuiltinModelDef>,
+) -> usize {
+    guarded_ctx_ex(cfg, default_ctx, def, true)
+}
+
+/// [`guarded_ctx`] without the cap WARN — for status/display paths that
+/// compute a hypothetical spawn every UI poll (3s); the warn belongs to
+/// actual spawns only.
+pub(crate) fn guarded_ctx_quiet(
+    cfg: &BuiltinConfig,
+    default_ctx: u32,
+    def: Option<&BuiltinModelDef>,
+) -> usize {
+    guarded_ctx_ex(cfg, default_ctx, def, false)
+}
+
+fn guarded_ctx_ex(
+    cfg: &BuiltinConfig,
+    default_ctx: u32,
+    def: Option<&BuiltinModelDef>,
+    warn_on_cap: bool,
 ) -> usize {
     let requested = cfg.effective_ctx(default_ctx);
     let Some(d) = def else {
@@ -221,15 +247,18 @@ pub(crate) fn guarded_ctx(
         return requested;
     };
     let (total_mb, available_mb) = memory_snapshot_mb();
+    // Replacement semantics: the live server's RSS frees when the new spawn
+    // takes over, so count it as available for the budget.
+    let live_rss = super::server::live_llama_rss_bytes();
     let capped = super::server::cap_ctx_by_ram(
         requested,
         total_mb * 1_048_576,
-        available_mb * 1_048_576,
+        available_mb * 1_048_576 + live_rss,
         d.size_bytes,
         kv_per_token,
         d.kv_const_bytes.unwrap_or(0),
     );
-    if capped < requested {
+    if capped < requested && warn_on_cap {
         tracing::warn!(
             model = %d.manifest.id,
             requested,
@@ -882,12 +911,14 @@ pub async fn status_handler(
     };
 
     // Effective ctx: override (env / restart API) else per-model default —
-    // surfaced so the UI can show and edit it.
+    // surfaced so the UI can show and edit it. Quiet: this endpoint is
+    // polled every few seconds by the UI; the cap warn belongs to actual
+    // spawn paths.
     let model_def_ctx = installed_pair
         .as_ref()
         .map(|(d, _)| d.default_ctx)
         .unwrap_or(0);
-    let effective_ctx = guarded_ctx(&cfg, model_def_ctx, installed_pair.as_ref().map(|(d, _)| d));
+    let effective_ctx = guarded_ctx_quiet(&cfg, model_def_ctx, installed_pair.as_ref().map(|(d, _)| d));
     let (total_mb, available_mb) = memory_snapshot_mb();
     let min_ram_mb = installed_pair
         .as_ref()

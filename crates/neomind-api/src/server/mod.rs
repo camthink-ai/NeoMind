@@ -718,6 +718,75 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                             break;
                         }
                     }
+
+                    // [llama watchdog] OOM self-heal (2026-10-15 incident on
+                    // NG4520: llama-server maps ~47 GB of CUDA address space,
+                    // tops the oom_score ranking, and was killed 5× in 17 h;
+                    // each death left chat dead with connection-refused until
+                    // a MANUAL service restart). bootstrap() is already
+                    // idempotent with exactly the right semantics (healthy →
+                    // no-op; instance present but server dead → respawn), so
+                    // the watchdog just drives it on a slow cadence. The
+                    // health-first check keeps the common case one HTTP GET;
+                    // consecutive failures back off to cap log noise, and a
+                    // missing model never triggers respawn attempts.
+                    let mut poll = Duration::from_secs(30);
+                    let mut backoff = Duration::from_secs(30);
+                    loop {
+                        tokio::time::sleep(poll).await;
+                        if !cfg.enabled {
+                            continue;
+                        }
+                        if crate::builtin_llm::server::health_check(cfg.port).await {
+                            backoff = Duration::from_secs(30);
+                            continue;
+                        }
+                        // Port dead. Only an incident when a model is
+                        // actually installed — otherwise "stopped" is the
+                        // normal not-configured state.
+                        let mdir = crate::builtin_llm::handlers::models_dir(&data_dir);
+                        if crate::builtin_llm::handlers::installed_model(&mdir).is_none() {
+                            continue;
+                        }
+                        let Ok(manager) = neomind_agent::get_instance_manager() else {
+                            continue;
+                        };
+                        tracing::warn!(
+                            port = cfg.port,
+                            next_backoff_secs = backoff.as_secs(),
+                            "builtin llm watchdog: llama-server not answering — attempting respawn"
+                        );
+                        match crate::builtin_llm::state::bootstrap(&data_dir, &cfg, &manager)
+                            .await
+                        {
+                            crate::builtin_llm::state::BootstrapOutcome::ServerReady { endpoint } => {
+                                tracing::info!(
+                                    endpoint = %endpoint,
+                                    "builtin llm watchdog: llama-server revived"
+                                );
+                                backoff = Duration::from_secs(30);
+                            }
+                            crate::builtin_llm::state::BootstrapOutcome::ServerAlreadyRunning => {
+                                // Someone else (restart API / race) fixed it.
+                                backoff = Duration::from_secs(30);
+                            }
+                            crate::builtin_llm::state::BootstrapOutcome::Failed(e) => {
+                                tracing::warn!(
+                                    error = %e,
+                                    next_backoff_secs = backoff.as_secs(),
+                                    "builtin llm watchdog: respawn failed — backing off"
+                                );
+                                backoff = std::cmp::min(backoff * 2, Duration::from_secs(300));
+                            }
+                            // ModelMissing mid-loop: model was uninstalled —
+                            // stop attempting, the outer enabled/model checks
+                            // handle re-arming.
+                            _ => {
+                                backoff = Duration::from_secs(30);
+                            }
+                        }
+                        poll = backoff;
+                    }
                 });
             }
 

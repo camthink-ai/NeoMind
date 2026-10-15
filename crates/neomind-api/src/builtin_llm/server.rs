@@ -62,6 +62,9 @@ pub fn cap_ctx_by_ram(
 pub struct LlamaServerProcess {
     pub port: u16,
     child: std::sync::Arc<tokio::sync::Mutex<tokio::process::Child>>,
+    /// Child pid, captured at spawn (tokio Child::id() after wait() returns
+    /// None) — lets the RSS reader below work for the process lifetime.
+    pid: Option<u32>,
 }
 
 /// Live llama-server handles spawned by this process (for graceful stop).
@@ -79,6 +82,38 @@ pub fn stop_all_llama_servers() {
             let _ = child.start_kill();
         }
     }
+}
+
+/// Total resident memory of the LIVE llama-server(s). Exactly one server is
+/// ever intended (the builtin spawn is single-instance), and every spawn
+/// path REPLACES it — so a ctx budget computed "now" must add this back:
+/// the old instance's RSS frees on replacement. Without this, a status poll
+/// or respawn evaluated while the old server was alive saw an
+/// available-starved budget and floored the window to 8192 (2026-10-15
+/// incident: 3-second warn spam + a would-be respawn shrunk from 32768).
+pub fn live_llama_rss_bytes() -> u64 {
+    let guard = LLAMA_SERVERS.lock().unwrap_or_else(|e| e.into_inner());
+    guard.iter().map(|s| s.rss_bytes()).sum()
+}
+
+fn page_size_bytes() -> u64 {
+    static PAGE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *PAGE.get_or_init(|| {
+        // AT_PAGESZ (auxv entry type 6) — page size without a libc dep;
+        // entries are native-endian (u64 key, u64 value) pairs. Off-Linux
+        // or unparseable, assume 4K (macOS/Windows are not llama-spawn
+        // targets in practice, and the value only scales RSS estimates).
+        std::fs::read("/proc/self/auxv")
+            .ok()
+            .and_then(|raw| {
+                raw.chunks_exact(16).find_map(|c| {
+                    let key = u64::from_ne_bytes(c[0..8].try_into().ok()?);
+                    let val = u64::from_ne_bytes(c[8..16].try_into().ok()?);
+                    (key == 6 && val > 0).then_some(val)
+                })
+            })
+            .unwrap_or(4096)
+    })
 }
 
 pub async fn health_check(port: u16) -> bool {
@@ -241,9 +276,11 @@ impl LlamaServerProcess {
         // makes process exit alone sufficient — SIGKILL included.
         cmd.kill_on_drop(true);
         let child = cmd.spawn()?;
+        let pid = child.id();
         let proc = LlamaServerProcess {
             port: cfg.port,
             child: std::sync::Arc::new(tokio::sync::Mutex::new(child)),
+            pid,
         };
         // Register globally so a graceful shutdown can stop it explicitly
         // (faster and cleaner than waiting for process-exit reap) — see
@@ -300,7 +337,25 @@ impl LlamaServerProcess {
         LlamaServerProcess {
             port: self.port,
             child: self.child.clone(),
+            pid: self.pid,
         }
+    }
+
+    /// Resident memory of this llama-server, from /proc (0 if gone or
+    /// unreadable — callers treat that as "releases nothing").
+    fn rss_bytes(&self) -> u64 {
+        let Some(pid) = self.pid else { return 0 };
+        let Ok(statm) = std::fs::read_to_string(format!("/proc/{pid}/statm")) else {
+            return 0;
+        };
+        // statm: size resident shared text lib data dt — resident is field 2,
+        // in pages.
+        let resident_pages: u64 = statm
+            .split_whitespace()
+            .nth(1)
+            .and_then(|f| f.parse().ok())
+            .unwrap_or(0);
+        resident_pages.saturating_mul(page_size_bytes())
     }
 
     pub async fn stop(self) -> anyhow::Result<()> {
@@ -319,6 +374,7 @@ mod tests {
     use std::time::Duration;
 
     const GB: u64 = 1024 * 1024 * 1024;
+    const MB: u64 = 1024 * 1024;
 
     #[test]
     fn eight_gb_jetson_caps_minicpm_below_default() {
@@ -327,6 +383,34 @@ mod tests {
         let ctx = cap_ctx_by_ram(131_072, 8 * GB, 7 * GB, 1_561_318_368, 43_008, 0);
         assert!(ctx < 131_072, "must cap on 8GB, got {ctx}");
         assert!(ctx > 32_768, "cap should still buy headroom, got {ctx}");
+    }
+
+    #[test]
+    fn replacement_adds_old_server_rss_back() {
+        // The 2026-10-15 incident shape: 7.4GB box, 2.6GB free with the old
+        // llama-server holding 1.2GB RSS. A REPLACEMENT spawn frees that RSS
+        // (guarded_ctx adds live_llama_rss_bytes back), so the effective
+        // available is 3.8GB — the window must not floor. Callers that
+        // spawn WITHOUT replacing (none today — the builtin is
+        // single-instance) would use the raw available figure.
+        let without = cap_ctx_by_ram(32_768, 8 * GB, 2_600 * MB, 1_561_318_368, 43_008, 0);
+        let with = cap_ctx_by_ram(32_768, 8 * GB, 2_600 * MB + 1_200 * MB, 1_561_318_368, 43_008, 0);
+        assert!(with > without, "replacement must restore the window: {with} vs {without}");
+        assert_eq!(with, 32_768, "3.8GB effective available funds the full 32K window");
+    }
+
+    #[test]
+    fn page_size_is_sane() {
+        let ps = page_size_bytes();
+        assert!(ps.is_power_of_two(), "page size must be a power of two, got {ps}");
+        assert!(ps >= 4096);
+    }
+
+    #[test]
+    fn live_rss_is_zero_with_no_servers() {
+        // No llama-server registered in THIS test process — the reader must
+        // degrade to 0, never panic.
+        assert_eq!(live_llama_rss_bytes(), 0);
     }
 
     #[test]
