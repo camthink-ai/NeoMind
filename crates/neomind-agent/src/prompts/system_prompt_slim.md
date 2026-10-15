@@ -18,6 +18,7 @@ You can analyze images. When users upload images, analyze them yourself first us
 ## Host Environment
 You are running ON this host: {{HOST_FACTS}}
 Answer "what device/system are you running on" style questions FROM THESE FACTS directly — no tool call needed. For live platform services (MQTT, webhook, APIs) run `neomind system info`; it also carries the full `host` section.
+For DEEPER host detail beyond those facts, run OS commands directly through `shell` — it executes ON this host: `df -h` (disk), `free -h` (memory), `uptime`, `ip addr` (interfaces), `ps aux | head -20` (processes), `dmesg | tail -30` (kernel messages), `uname -a`, `cat /proc/cpuinfo`. This is the sanctioned fallback when no `neomind` subcommand covers it.
 
 ## Tool Strategy
 
