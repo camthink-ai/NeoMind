@@ -1415,7 +1415,8 @@ mod tests {
     }
 
     #[test]
-    fn test_llamacpp_capabilities() {        let config = LlamaCppConfig::default();
+    fn test_llamacpp_capabilities() {
+        let config = LlamaCppConfig::default();
         let runtime = LlamaCppRuntime::new(config).unwrap();
         let caps = runtime.capabilities();
         assert!(caps.streaming);

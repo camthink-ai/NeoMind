@@ -63,8 +63,8 @@ pub fn cap_ctx_by_ram(
     // MemAvailable includes evictable file cache, so its margin is smaller
     // than RUNTIME_HEADROOM (which is subtracted from the budget below).
     const AVAILABLE_MARGIN: u64 = 256 * 1024 * 1024;
-    let budget = (total_ram_bytes * 70 / 100)
-        .min(available_ram_bytes.saturating_sub(AVAILABLE_MARGIN));
+    let budget =
+        (total_ram_bytes * 70 / 100).min(available_ram_bytes.saturating_sub(AVAILABLE_MARGIN));
     let avail = budget.saturating_sub(size_bytes + kv_const_bytes + RUNTIME_HEADROOM);
     let raw_cap = (avail / u64::from(kv_bytes_per_token)) as usize;
     // Floor to a power-of-two bucket (8K/16K/32K/64K/128K): a raw 81244 is
@@ -442,15 +442,31 @@ mod tests {
         // spawn WITHOUT replacing (none today — the builtin is
         // single-instance) would use the raw available figure.
         let without = cap_ctx_by_ram(32_768, 8 * GB, 2_600 * MB, 1_561_318_368, 43_008, 0);
-        let with = cap_ctx_by_ram(32_768, 8 * GB, 2_600 * MB + 1_200 * MB, 1_561_318_368, 43_008, 0);
-        assert!(with > without, "replacement must restore the window: {with} vs {without}");
-        assert_eq!(with, 32_768, "3.8GB effective available funds the full 32K window");
+        let with = cap_ctx_by_ram(
+            32_768,
+            8 * GB,
+            2_600 * MB + 1_200 * MB,
+            1_561_318_368,
+            43_008,
+            0,
+        );
+        assert!(
+            with > without,
+            "replacement must restore the window: {with} vs {without}"
+        );
+        assert_eq!(
+            with, 32_768,
+            "3.8GB effective available funds the full 32K window"
+        );
     }
 
     #[test]
     fn page_size_is_sane() {
         let ps = page_size_bytes();
-        assert!(ps.is_power_of_two(), "page size must be a power of two, got {ps}");
+        assert!(
+            ps.is_power_of_two(),
+            "page size must be a power of two, got {ps}"
+        );
         assert!(ps >= 4096);
     }
 
@@ -468,7 +484,10 @@ mod tests {
         // server. The available view must clamp below the total view.
         let total_only = cap_ctx_by_ram(131_072, 8 * GB, 8 * GB, 1_561_318_368, 43_008, 0);
         let busy = cap_ctx_by_ram(131_072, 8 * GB, 3 * GB, 1_561_318_368, 43_008, 0);
-        assert!(busy < total_only, "available must clamp: {busy} vs {total_only}");
+        assert!(
+            busy < total_only,
+            "available must clamp: {busy} vs {total_only}"
+        );
     }
 
     #[test]
@@ -496,8 +515,14 @@ mod tests {
         // collapses sub-bucket differences (Qwen's real ~201 MB const lands
         // both caps in the 64K bucket), so use an exaggerated const to keep
         // the reduction crossing a bucket boundary and observable.
-        let with_const =
-            cap_ctx_by_ram(131_072, 8 * GB, 7 * GB, 2_740_000_000, 32_768, 1_500_000_000);
+        let with_const = cap_ctx_by_ram(
+            131_072,
+            8 * GB,
+            7 * GB,
+            2_740_000_000,
+            32_768,
+            1_500_000_000,
+        );
         let without = cap_ctx_by_ram(131_072, 8 * GB, 7 * GB, 2_740_000_000, 32_768, 0);
         assert!(with_const < without, "{with_const} vs {without}");
     }

@@ -269,7 +269,10 @@ mod builtin_search_tests {
     fn english_weather_query_reaches_extension_management() {
         let registry = SkillRegistry::load_all(None);
         let skills = registry.list();
-        let corpus: Vec<String> = skills.iter().map(|s| crate::skills::matcher::searchable_text(s)).collect();
+        let corpus: Vec<String> = skills
+            .iter()
+            .map(|s| crate::skills::matcher::searchable_text(s))
+            .collect();
         let index = crate::skills::bm25::Bm25Index::build(corpus);
         let tokens = crate::skills::bm25::tokenize("weather forecast");
         let mut scored: Vec<(f32, &str)> = skills
@@ -325,7 +328,10 @@ mod cross_domain_search_coverage {
             ("system information and network", "system-info"),
             ("磁盘空间还剩多少", "system-info"),
             ("convert units in telemetry", "transform-management"),
-            ("write extension source code from scratch", "extension-development"),
+            (
+                "write extension source code from scratch",
+                "extension-development",
+            ),
             ("build a custom widget", "widget-development"),
             ("create an ai agent", "agent-management"),
             ("connect an mqtt broker", "connector-management"),

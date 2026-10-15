@@ -223,8 +223,7 @@ impl ExtensionMetricsCollector {
                 if let Some(store) = &self.config_store {
                     if let Ok(Some(record)) = store.load(extension_id) {
                         if let Some(ref cfg) = record.config {
-                            if let Err(e) =
-                                self.runtime.send_config_update(&metadata.id, cfg).await
+                            if let Err(e) = self.runtime.send_config_update(&metadata.id, cfg).await
                             {
                                 warn!(
                                     category = "extensions",
@@ -538,15 +537,15 @@ impl ExtensionMetricsCollector {
                             .extension_states
                             .write()
                             .unwrap_or_else(|e| e.into_inner());
-                        let state = states
-                            .entry(extension_id.clone())
-                            .or_insert(ExtensionCollectionState {
+                        let state = states.entry(extension_id.clone()).or_insert(
+                            ExtensionCollectionState {
                                 last_collection: 0,
                                 collect_interval: Self::get_collect_interval(&info),
                                 consecutive_empty: 0,
                                 failed_heals: 0,
                                 ever_produced: false,
-                            });
+                            },
+                        );
                         state.consecutive_empty = state.consecutive_empty.saturating_add(1);
                         (state.consecutive_empty, state.failed_heals)
                     };
@@ -765,13 +764,19 @@ mod heal_action_tests {
 
     #[test]
     fn exactly_max_heals_escalates_once() {
-        assert_eq!(heal_action(3, THRESHOLD, 3, MAX_HEALS), HealAction::Escalate);
+        assert_eq!(
+            heal_action(3, THRESHOLD, 3, MAX_HEALS),
+            HealAction::Escalate
+        );
     }
 
     #[test]
     fn past_max_heals_stays_silent() {
         assert_eq!(heal_action(3, THRESHOLD, 4, MAX_HEALS), HealAction::Silent);
-        assert_eq!(heal_action(99, THRESHOLD, 100, MAX_HEALS), HealAction::Silent);
+        assert_eq!(
+            heal_action(99, THRESHOLD, 100, MAX_HEALS),
+            HealAction::Silent
+        );
     }
 
     #[test]
@@ -789,7 +794,10 @@ mod heal_action_tests {
             }
         }
         // three ineffective reloads later:
-        assert_eq!(heal_action(3, THRESHOLD, 3, MAX_HEALS), HealAction::Escalate);
+        assert_eq!(
+            heal_action(3, THRESHOLD, 3, MAX_HEALS),
+            HealAction::Escalate
+        );
         assert_eq!(heal_action(3, THRESHOLD, 4, MAX_HEALS), HealAction::Silent);
         assert_eq!(heal_action(3, THRESHOLD, 5, MAX_HEALS), HealAction::Silent);
     }

@@ -156,13 +156,20 @@ impl NvidiaGpuProbe {
                 .output();
             let _ = tx.send(out);
         });
-        let out = rx.recv_timeout(std::time::Duration::from_secs(5)).ok()?.ok()?;
+        let out = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .ok()?
+            .ok()?;
         if !out.status.success() {
             return None;
         }
         // "Tesla T4, 7.5, 575.64.03" (first GPU only — multi-GPU hosts take
         // the first; heterogenous mixes are vanishingly rare).
-        let line = String::from_utf8_lossy(&out.stdout).lines().next()?.trim().to_string();
+        let line = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .next()?
+            .trim()
+            .to_string();
         let mut parts = line.split(',').map(str::trim);
         let name = parts.next()?.to_string();
         let cc = parts.next()?;
@@ -458,17 +465,37 @@ mod tests {
             );
         }
         // Driver floor: 525 is the first CUDA 12 driver; 535/550 fine.
-        assert!(nvidia_probe_prefers_cuda(&p("Tesla T4", (7, 5), "525.60.13")));
+        assert!(nvidia_probe_prefers_cuda(&p(
+            "Tesla T4",
+            (7, 5),
+            "525.60.13"
+        )));
         assert!(nvidia_probe_prefers_cuda(&p("Tesla T4", (7, 5), "550.54")));
         // Pre-CUDA-12 driver → CPU (the bundled 12.4 libs won't load).
         assert!(!nvidia_probe_prefers_cuda(&p("Tesla T4", (7, 5), "470.63")));
         // GPUs outside sm_75..89 (no SASS in our build) → CPU.
-        assert!(!nvidia_probe_prefers_cuda(&p("Tesla V100", (7, 0), "575.64.03")));
-        assert!(!nvidia_probe_prefers_cuda(&p("Tesla P100", (6, 0), "575.64.03")));
+        assert!(!nvidia_probe_prefers_cuda(&p(
+            "Tesla V100",
+            (7, 0),
+            "575.64.03"
+        )));
+        assert!(!nvidia_probe_prefers_cuda(&p(
+            "Tesla P100",
+            (6, 0),
+            "575.64.03"
+        )));
         // Future arch (Blackwell) → CPU until the build covers it.
-        assert!(!nvidia_probe_prefers_cuda(&p("RTX 5090", (12, 0), "575.64.03")));
+        assert!(!nvidia_probe_prefers_cuda(&p(
+            "RTX 5090",
+            (12, 0),
+            "575.64.03"
+        )));
         // Garbage driver string → CPU, never a panic.
-        assert!(!nvidia_probe_prefers_cuda(&p("Tesla T4", (7, 5), "unknown")));
+        assert!(!nvidia_probe_prefers_cuda(&p(
+            "Tesla T4",
+            (7, 5),
+            "unknown"
+        )));
     }
 
     #[test]
@@ -502,7 +529,10 @@ mod tests {
         assert_eq!(llama_asset_name("macos", "arm64", vk), None);
         // Official domain — unlike our self-hosted CUDA/Jetson assets.
         let url = llama_server_url_for("linux", "x86_64", vk);
-        assert!(url.starts_with("https://github.com/ggml-org/llama.cpp/"), "{url}");
+        assert!(
+            url.starts_with("https://github.com/ggml-org/llama.cpp/"),
+            "{url}"
+        );
         assert!(url.ends_with("ubuntu-vulkan-x64.tar.gz"), "{url}");
         // No cudart bundle for Vulkan (driver-provided loader/ICD).
         assert_eq!(llama_cudart_url("ubuntu-vulkan-x64"), None);

@@ -1497,7 +1497,6 @@ Native host tools also available via `/bin/sh -c`: ping, curl, ps, df, grep, doc
     }
 }
 
-
 /// Detect `echo`/`printf` commands whose payload impersonates a tool
 /// result (JSON with `exit_code` + `command`/`stdout` keys). Returns the
 /// `neomind` command mentioned inside the payload, if any, for the cure

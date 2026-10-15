@@ -788,10 +788,11 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                             next_backoff_secs = backoff.as_secs(),
                             "builtin llm watchdog: llama-server not answering — attempting respawn"
                         );
-                        match crate::builtin_llm::state::bootstrap(&data_dir, &cfg, &manager)
-                            .await
+                        match crate::builtin_llm::state::bootstrap(&data_dir, &cfg, &manager).await
                         {
-                            crate::builtin_llm::state::BootstrapOutcome::ServerReady { endpoint } => {
+                            crate::builtin_llm::state::BootstrapOutcome::ServerReady {
+                                endpoint,
+                            } => {
                                 tracing::info!(
                                     endpoint = %endpoint,
                                     "builtin llm watchdog: llama-server revived"

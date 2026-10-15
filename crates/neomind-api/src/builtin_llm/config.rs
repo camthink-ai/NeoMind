@@ -148,11 +148,17 @@ mod tests {
         let _g = env_lock().lock().unwrap();
         for v in ["f16", "off", "0", "false", "F16"] {
             std::env::set_var("NEOMIND_BUILTIN_LLM_KV", v);
-            assert!(!BuiltinConfig::from_env().kv_quant, "value {v:?} must disable");
+            assert!(
+                !BuiltinConfig::from_env().kv_quant,
+                "value {v:?} must disable"
+            );
         }
         for v in ["q8_0", "on", "1", ""] {
             std::env::set_var("NEOMIND_BUILTIN_LLM_KV", v);
-            assert!(BuiltinConfig::from_env().kv_quant, "value {v:?} must keep the default");
+            assert!(
+                BuiltinConfig::from_env().kv_quant,
+                "value {v:?} must keep the default"
+            );
         }
         std::env::remove_var("NEOMIND_BUILTIN_LLM_KV");
     }
@@ -166,9 +172,17 @@ mod tests {
         std::env::set_var("NEOMIND_BUILTIN_LLM_PARALLEL", "4");
         assert_eq!(BuiltinConfig::from_env().parallel, Some(4));
         std::env::set_var("NEOMIND_BUILTIN_LLM_PARALLEL", "0");
-        assert_eq!(BuiltinConfig::from_env().parallel, None, "0 = omit flag (upstream default)");
+        assert_eq!(
+            BuiltinConfig::from_env().parallel,
+            None,
+            "0 = omit flag (upstream default)"
+        );
         std::env::set_var("NEOMIND_BUILTIN_LLM_PARALLEL", "99");
-        assert_eq!(BuiltinConfig::from_env().parallel, Some(1), "out of range ignored");
+        assert_eq!(
+            BuiltinConfig::from_env().parallel,
+            Some(1),
+            "out of range ignored"
+        );
         std::env::remove_var("NEOMIND_BUILTIN_LLM_PARALLEL");
     }
     #[serial_test::serial]

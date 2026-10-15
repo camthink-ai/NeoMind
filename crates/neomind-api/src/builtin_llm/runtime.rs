@@ -68,9 +68,7 @@ pub async fn ensure_llama_server(data_dir: &Path) -> Result<PathBuf, String> {
         // to the CPU build (always available) instead of failing the boot.
         // Sticky via env so a restart doesn't re-download and hit the same
         // wall (same override pattern as port/ctx).
-        Err(err)
-            if matches!(variant, RuntimeVariant::Cuda | RuntimeVariant::Vulkan) =>
-        {
+        Err(err) if matches!(variant, RuntimeVariant::Cuda | RuntimeVariant::Vulkan) => {
             tracing::warn!(
                 error = %err,
                 "builtin llm: {} runtime unusable — falling back to the CPU build for this process; unset NEOMIND_BUILTIN_RUNTIME_VARIANT or fix the driver/loader to retry",
@@ -197,13 +195,13 @@ async fn ensure_runtime_variant(
                     // still pass --version (CUDA inits lazily); that failure
                     // surfaces at first spawn and degrades to CPU via the
                     // caller's fallback.
-                    exec_check(&bin).await.map(|_| {
-                        let _ =
-                            std::fs::write(cache_dir.join(llama_cudart_marker()), b"ok");
-                        bin.clone()
-                    }).map_err(|e| {
-                        format!("CUDA runtime exec check failed: {e}")
-                    })
+                    exec_check(&bin)
+                        .await
+                        .map(|_| {
+                            let _ = std::fs::write(cache_dir.join(llama_cudart_marker()), b"ok");
+                            bin.clone()
+                        })
+                        .map_err(|e| format!("CUDA runtime exec check failed: {e}"))
                 } else {
                     Ok(bin)
                 }

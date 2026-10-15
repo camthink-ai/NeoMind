@@ -292,16 +292,31 @@ mod market_list_tests {
         let e = &out["extensions"][0];
         assert_eq!(e["id"], "weather-forecast");
         assert_eq!(e["version"], "2.14.0");
-        assert!(e.get("metadata_url").is_none(), "URLs and bulk must be dropped");
+        assert!(
+            e.get("metadata_url").is_none(),
+            "URLs and bulk must be dropped"
+        );
     }
 
     #[test]
     fn filter_matches_case_insensitively_across_fields() {
         // By id fragment, by name word, by description word.
-        assert_eq!(compact_market_list(&raw(), Some("weather".into()))["matched"], 1);
-        assert_eq!(compact_market_list(&raw(), Some("Forecast".into()))["matched"], 1);
-        assert_eq!(compact_market_list(&raw(), Some("detection".into()))["matched"], 1);
-        assert_eq!(compact_market_list(&raw(), Some("nomatch".into()))["matched"], 0);
+        assert_eq!(
+            compact_market_list(&raw(), Some("weather".into()))["matched"],
+            1
+        );
+        assert_eq!(
+            compact_market_list(&raw(), Some("Forecast".into()))["matched"],
+            1
+        );
+        assert_eq!(
+            compact_market_list(&raw(), Some("detection".into()))["matched"],
+            1
+        );
+        assert_eq!(
+            compact_market_list(&raw(), Some("nomatch".into()))["matched"],
+            0
+        );
     }
 
     #[test]
@@ -335,7 +350,11 @@ mod market_install_verdict_tests {
             }
         });
         let inner = body.get("data").unwrap_or(&body);
-        assert_eq!(inner["success"].as_bool(), Some(false), "inner verdict is the failure");
+        assert_eq!(
+            inner["success"].as_bool(),
+            Some(false),
+            "inner verdict is the failure"
+        );
         assert!(inner["error"].as_str().unwrap().contains("not found"));
     }
 }

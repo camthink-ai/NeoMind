@@ -322,7 +322,9 @@ fn strip_leading_separators(f: &str) -> String {
 /// Case-insensitive tagged-bullet match: accepts `- [user]: x`,
 /// `- [User] x`, `- [USER] fact x`. `rest` is one trimmed output line.
 fn strip_tag(line: &str, tag: &str) -> Option<String> {
-    let raw = line.strip_prefix("- ").or_else(|| line.strip_prefix("• "))?;
+    let raw = line
+        .strip_prefix("- ")
+        .or_else(|| line.strip_prefix("• "))?;
     if raw.len() < tag.len() || !raw[..tag.len()].eq_ignore_ascii_case(tag) {
         return None;
     }

@@ -14,7 +14,9 @@
 use serde_json::{json, Value};
 
 fn read_trimmed(path: &str) -> Option<String> {
-    std::fs::read_to_string(path).ok().map(|s| s.trim().to_string())
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|s| s.trim().to_string())
 }
 
 fn os_pretty_name() -> Option<String> {
@@ -125,8 +127,16 @@ mod tests {
     fn facts_shape_is_stable() {
         let f = host_facts();
         for key in [
-            "hostname", "os", "kernel", "arch", "cpu_model", "cpu_cores", "ram_total_mb",
-            "ram_available_mb", "uptime_secs", "lan_ip",
+            "hostname",
+            "os",
+            "kernel",
+            "arch",
+            "cpu_model",
+            "cpu_cores",
+            "ram_total_mb",
+            "ram_available_mb",
+            "uptime_secs",
+            "lan_ip",
         ] {
             assert!(f.get(key).is_some(), "missing key {key}");
         }
