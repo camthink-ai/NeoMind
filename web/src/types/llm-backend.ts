@@ -130,6 +130,10 @@ export interface BuiltinLlmStatus {
    * downloaded model is instant (restart?model=<id>) — never a re-download. */
   installed_models?: string[]
   active_model?: string | null
+  /** KV cache quantization of the current spawn. */
+  kv_cache?: 'q8_0' | 'f16'
+  /** Slot count of the current spawn; null = --parallel omitted (upstream default). */
+  parallel?: number | null
   /** Registry display name of the installed model (newer backends; the
    * frontend keeps an id→name fallback map for older ones). */
   model_name?: string | null

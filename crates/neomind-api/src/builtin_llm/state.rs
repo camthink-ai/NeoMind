@@ -307,14 +307,13 @@ pub async fn bootstrap(
     instance.endpoint = Some(endpoint.clone());
     instance.model = def.manifest.id.clone();
     // Same as handlers::spawn_builtin_server — the capability refresh loop
-    // predates this instance; set the real per-slot ctx. effective_ctx is
-    // the TOTAL KV pool; the now-healthy server's /props reports the auto
-    // slot count to divide by.
+    // predates this instance; set the ctx the server actually runs with
+    // (/props verbatim — no per-slot division; see effective_spawn_ctx).
     instance.capabilities.supports_streaming = true;
     instance.capabilities.supports_tools = true;
     instance.capabilities.supports_thinking = def.default_thinking;
     instance.capabilities.max_context =
-        super::handlers::effective_per_slot_ctx(cfg.port, effective_ctx).await;
+        super::handlers::effective_spawn_ctx(cfg.port, effective_ctx).await;
     let _ = manager.upsert_instance(instance).await;
 
     // 活跃策略:仅当没有任何活跃后端时设为活跃(「有后端不抢」)。

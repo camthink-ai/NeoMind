@@ -271,6 +271,15 @@ fn guarded_ctx_ex(
     let Some(kv_per_token) = d.kv_bytes_per_token else {
         return requested;
     };
+    // The registry cost is the f16 figure; the spawn default quantizes KV to
+    // q8_0 (≈half), so model what is actually allocated — otherwise the
+    // guard over-reserves ~675 MB at 32K and clamps spawns the box can fund
+    // (observed: a 32K request clamped to 16K on the NG4520 with q8 active).
+    let kv_per_token = if cfg.kv_quant {
+        kv_per_token / 2
+    } else {
+        kv_per_token
+    };
     // Replacement semantics: the live server's RSS frees when the new spawn
     // takes over, so count it as available for the budget.
     let live_rss = super::server::live_llama_rss_bytes();
@@ -1016,6 +1025,9 @@ pub async fn status_handler(
         "ctx_override": cfg.ctx,
         // KV cache quantization the current spawn uses (spawn-time env).
         "kv_cache": if cfg.kv_quant { "q8_0" } else { "f16" },
+        // Slot count the current spawn uses; null = flag omitted (upstream
+        // default, 4 slots on current builds).
+        "parallel": cfg.parallel,
         "default_ctx": model_def_ctx,
         "memory_ok": available_mb >= min_ram_mb,
         "min_ram_mb": min_ram_mb,
@@ -1577,7 +1589,7 @@ async fn spawn_builtin_server(
     instance.capabilities.supports_streaming = true;
     instance.capabilities.supports_tools = true;
     instance.capabilities.supports_thinking = installed.default_thinking;
-    instance.capabilities.max_context = effective_per_slot_ctx(cfg.port, ctx).await;
+    instance.capabilities.max_context = effective_spawn_ctx(cfg.port, ctx).await;
     // Per-model sampling: applies both as server-side defaults (above) and
     // on the request side (the instance fields are what chat sends).
     if let Some(t) = installed.temperature {
@@ -1787,13 +1799,60 @@ pub async fn restart_handler(
     // A healthy server is normally left alone — EXCEPT when a ctx override
     // was requested that differs from the running server's actual n_ctx:
     // applying a new context requires a respawn.
+    // Optional engine knobs (?parallel=N, ?kv=q8_0|f16): same env-backed
+    // persistence pattern as ?ctx (process env; survives until a service
+    // restart, where systemd env wins). parallel=0 omits `--parallel`
+    // entirely (upstream default: 4 slots, unified KV); kv=f16 disables
+    // the q8_0 KV + flash-attention default.
+    let mut engine_change_requested = false;
+    if let Some(p_str) = params.get("parallel") {
+        match p_str.trim().parse::<usize>() {
+            Ok(0) => {
+                engine_change_requested |= cfg.parallel.is_some();
+                std::env::set_var("NEOMIND_BUILTIN_LLM_PARALLEL", "0");
+                cfg.parallel = None;
+            }
+            Ok(n) if (1..=16).contains(&n) => {
+                engine_change_requested |= cfg.parallel != Some(n);
+                std::env::set_var("NEOMIND_BUILTIN_LLM_PARALLEL", n.to_string());
+                cfg.parallel = Some(n);
+            }
+            _ => {
+                return Err(ErrorResponse::bad_request(
+                    "invalid parallel (expected 0..=16; 0 = upstream default)",
+                ));
+            }
+        }
+    }
+    if let Some(kv_str) = params.get("kv") {
+        match kv_str.trim().to_ascii_lowercase().as_str() {
+            "q8_0" | "q8" => {
+                engine_change_requested |= !cfg.kv_quant;
+                std::env::remove_var("NEOMIND_BUILTIN_LLM_KV");
+                cfg.kv_quant = true;
+            }
+            "f16" | "off" => {
+                engine_change_requested |= cfg.kv_quant;
+                std::env::set_var("NEOMIND_BUILTIN_LLM_KV", "f16");
+                cfg.kv_quant = false;
+            }
+            _ => {
+                return Err(ErrorResponse::bad_request("invalid kv (expected q8_0|f16)"));
+            }
+        }
+    }
+
     let current_n_ctx = query_server_n_ctx(cfg.port).await;
     let ctx_change_requested = params
         .get("ctx")
         .and_then(|v| v.trim().parse::<usize>().ok())
         .map(|want| current_n_ctx.map(|cur| cur != want).unwrap_or(true))
         .unwrap_or(false);
-    if health_check(cfg.port).await && !ctx_change_requested && !model_change_requested {
+    if health_check(cfg.port).await
+        && !ctx_change_requested
+        && !model_change_requested
+        && !engine_change_requested
+    {
         return ok(json!({
             "restarted": true,
             "already_running": true,
@@ -1801,9 +1860,15 @@ pub async fn restart_handler(
         }));
     }
 
-    // Free a possibly-wedged port, then spawn fresh.
+    // Free a possibly-wedged port, then spawn fresh. Kill BOTH ways: the
+    // in-process registry catches servers still LOADING (not yet bound, so
+    // a port-only kill misses them — they then hang in CUDA init while the
+    // replacement binds, leaving an orphan that eats nvmap and confuses the
+    // next restart; observed 2026-10-15), and the port kill catches
+    // foreign/legacy listeners.
+    crate::builtin_llm::server::stop_all_llama_servers();
     kill_process_on_port(cfg.port);
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     let manager = get_manager()?;
     match spawn_builtin_server(&state.data_dir, &cfg, &manager, None).await {
@@ -1946,13 +2011,12 @@ async fn query_server_n_ctx(port: u16) -> Option<usize> {
         .or_else(|| v.get("n_ctx").and_then(|n| n.as_u64()).map(|n| n as usize))
 }
 
-/// Per-slot context a single request can claim from the running builtin
-/// llama-server. `-c` is the TOTAL KV pool shared by all slots (unified KV),
-/// and the auto slot count is only known once the server is up — so ask
-/// /props and divide (see `per_slot_context`). Falls back to the requested
-/// ctx when the server can't be queried (older builds report no
-/// total_slots → treated as single-slot → undivided).
-pub(super) async fn effective_per_slot_ctx(port: u16, requested_ctx: usize) -> usize {
+/// The context the running builtin llama-server actually serves: /props
+/// `n_ctx` verbatim — the server's own per-request truth. Falls back to
+/// the requested ctx when the server can't be queried. (An earlier version
+/// divided by the auto slot count, which silently shrank the window 4×
+/// once /props reported multiple slots — the 8K-wedge class.)
+pub(super) async fn effective_spawn_ctx(port: u16, requested_ctx: usize) -> usize {
     let url = format!("http://127.0.0.1:{}/props", port);
     let props: Option<serde_json::Value> = async {
         let resp = reqwest::Client::new()
@@ -1974,11 +2038,7 @@ pub(super) async fn effective_per_slot_ctx(port: u16, requested_ctx: usize) -> u
         .map(|n| n as usize)
         .or_else(|| v.get("n_ctx").and_then(|n| n.as_u64()).map(|n| n as usize))
         .unwrap_or(requested_ctx);
-    let total_slots = v
-        .get("total_slots")
-        .and_then(|n| n.as_u64())
-        .map(|n| n as usize);
-    neomind_agent::llm_backends::backends::llamacpp::per_slot_context(n_ctx, total_slots)
+    n_ctx
 }
 
 /// Convert storage `BackendCapabilities` to core `BackendCapabilities`

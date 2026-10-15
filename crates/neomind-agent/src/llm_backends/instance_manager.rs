@@ -14,7 +14,7 @@ use neomind_storage::{ConnectionTestResult, LlmBackendInstance, LlmBackendStore,
 
 use super::backends::create_backend;
 #[cfg(feature = "llamacpp")]
-use super::backends::llamacpp::{per_slot_context, LlamaCppConfig, LlamaCppRuntime};
+use super::backends::llamacpp::{LlamaCppConfig, LlamaCppRuntime};
 use super::backends::ollama::{detect_model_context, OllamaConfig, OllamaRuntime};
 
 /// Ensure an instance has correct capabilities.
@@ -819,17 +819,17 @@ impl LlmBackendInstanceManager {
             };
 
             if let Some(caps) = runtime.detect_capabilities().await {
-                // Our builtin spawn runs auto slots + unified KV, where the
-                // /props n_ctx is the full pool shared by all slots — keep
-                // the concurrency-safe per-slot budget the spawn stamped.
-                // Custom backends report their own per-request truth
-                // (`slot_n_ctx`: per-slot quota when partitioned, full pool
-                // when auto-slotted) verbatim.
-                let effective_ctx = if instance.is_builtin {
-                    per_slot_context(caps.max_context, caps.total_slots)
-                } else {
-                    caps.max_context
-                };
+                // /props n_ctx is the server's own per-request truth —
+                // report it VERBATIM for builtin and custom backends alike.
+                // The builtin spawn defaults to one slot, so this IS the
+                // window; when NEOMIND_BUILTIN_LLM_PARALLEL raises the slot
+                // count (or omits the flag for upstream's 4), concurrent
+                // requests share the unified pool and an over-commit
+                // degrades through the context-overflow retry ladder —
+                // platform turns are serialized anyway (one UI turn,
+                // extraction defers). A divide-by-slots budget here used to
+                // silently shrink the window 4× (the 8K-wedge class).
+                let effective_ctx = caps.max_context;
                 let changed = instance.capabilities.supports_multimodal != caps.supports_multimodal
                     || instance.capabilities.max_context != effective_ctx
                     || instance.capabilities.supports_tools != caps.supports_tools;

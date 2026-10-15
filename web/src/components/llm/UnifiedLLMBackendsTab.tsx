@@ -352,6 +352,9 @@ export function UnifiedLLMBackendsTab({
   // Builtin engine-settings dialog (ctx today; port and friends later).
   const [ctxDialogOpen, setCtxDialogOpen] = useState(false)
   const [ctxDialogInput, setCtxDialogInput] = useState<number | null>(null)
+  // Engine knobs exposed alongside ctx (1.2.1): slot count and KV quant.
+  const [parallelInput, setParallelInput] = useState<number | 'auto'>('auto')
+  const [kvInput, setKvInput] = useState<'q8_0' | 'f16'>('q8_0')
   const [ctxDialogSaving, setCtxDialogSaving] = useState(false)
   const [ctxDialogError, setCtxDialogError] = useState<string | null>(null)
   const [cloudAddOpen, setCloudAddOpen] = useState(false)
@@ -696,6 +699,8 @@ export function UnifiedLLMBackendsTab({
                   const cur = builtinStatus.ctx_override ?? builtinStatus.ctx ?? builtinStatus.default_ctx ?? 32768
                   const presets = BUILTIN_CTX_PRESETS
                   setCtxDialogInput(presets.reduce((a, b) => Math.abs(b - cur) < Math.abs(a - cur) ? b : a, presets[0]))
+                  setParallelInput(builtinStatus.parallel == null ? 'auto' : builtinStatus.parallel)
+                  setKvInput(builtinStatus.kv_cache === 'f16' ? 'f16' : 'q8_0')
                   setCtxDialogOpen(true)
                 }}
               >
@@ -1002,8 +1007,8 @@ export function UnifiedLLMBackendsTab({
             setCtxDialogSaving(true)
             setCtxDialogError(null)
             try {
-              await api.restartBuiltinLlm(v)
-              toast({ title: t('plugins:llm.builtinCtxApplied', { ctx: v.toLocaleString() }) })
+              await api.restartBuiltinLlm({ ctx: v, parallel: parallelInput, kv: kvInput })
+              toast({ title: t('plugins:llm.builtinEngineApplied') })
               setCtxDialogOpen(false)
               await refreshBuiltinStatus()
               await loadData(true)
@@ -1023,6 +1028,46 @@ export function UnifiedLLMBackendsTab({
           submitLabel={t('plugins:llm.builtinCtxApply')}
           submitDisabled={ctxDialogSaving}
           submitError={ctxDialogError ?? undefined}
+          footerPrefix={
+            // Reset lives in the footer, left of Apply (operator muscle
+            // memory); resets all three engine knobs to product defaults.
+            builtinStatus != null &&
+            (builtinStatus.ctx_override != null ||
+              builtinStatus.parallel == null ||
+              builtinStatus.parallel !== 1 ||
+              builtinStatus.kv_cache === 'f16') ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                type="button"
+                disabled={ctxDialogSaving}
+                onClick={async () => {
+                  setCtxDialogSaving(true)
+                  try {
+                    await api.restartBuiltinLlm({
+                      ctx: builtinStatus.default_ctx!,
+                      parallel: 1,
+                      kv: 'q8_0',
+                    })
+                    toast({ title: t('plugins:llm.builtinCtxReset') })
+                    setCtxDialogOpen(false)
+                    setCtxDialogInput(null)
+                    await refreshBuiltinStatus()
+                    await loadData(true)
+                    const { fetchCache } = await import('@/lib/utils/async')
+                    fetchCache.invalidate('llmBackends')
+                    await useStore.getState().loadBackends()
+                  } catch (e) {
+                    setCtxDialogError(e instanceof Error ? e.message : String(e))
+                  } finally {
+                    setCtxDialogSaving(false)
+                  }
+                }}
+              >
+                {t('plugins:llm.builtinCtxResetBtn')}
+              </Button>
+            ) : undefined
+          }
         >
           <div className="space-y-4">
             <FormField label={t('plugins:llm.builtinCtx')} helpText={t('plugins:llm.builtinCtxHelp')}>
@@ -1045,34 +1090,33 @@ export function UnifiedLLMBackendsTab({
                 </SelectContent>
               </Select>
             </FormField>
-            {builtinStatus?.ctx_override != null && (
-              <Button
-                size="sm"
-                variant="ghost"
-                type="button"
-                disabled={ctxDialogSaving}
-                onClick={async () => {
-                  setCtxDialogSaving(true)
-                  try {
-                    await api.restartBuiltinLlm(builtinStatus!.default_ctx!)
-                    toast({ title: t('plugins:llm.builtinCtxReset') })
-                    setCtxDialogOpen(false)
-                    setCtxDialogInput(null)
-                    await refreshBuiltinStatus()
-                    await loadData(true)
-                    const { fetchCache } = await import('@/lib/utils/async')
-                    fetchCache.invalidate('llmBackends')
-                    await useStore.getState().loadBackends()
-                  } catch (e) {
-                    setCtxDialogError(e instanceof Error ? e.message : String(e))
-                  } finally {
-                    setCtxDialogSaving(false)
-                  }
-                }}
+            <FormField label={t('plugins:llm.builtinParallel')} helpText={t('plugins:llm.builtinParallelHelp')}>
+              <Select
+                value={String(parallelInput)}
+                onValueChange={(v) => setParallelInput(v === 'auto' ? 'auto' : Number(v))}
               >
-                {t('plugins:llm.builtinCtxResetBtn')}
-              </Button>
-            )}
+                <SelectTrigger className="w-full font-mono">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">{t('plugins:llm.builtinParallelAuto')}</SelectItem>
+                  {[1, 2, 4].map((n) => (
+                    <SelectItem key={n} value={String(n)}>{String(n)}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FormField>
+            <FormField label={t('plugins:llm.builtinKv')} helpText={t('plugins:llm.builtinKvHelp')}>
+              <Select value={kvInput} onValueChange={(v) => setKvInput(v as 'q8_0' | 'f16')}>
+                <SelectTrigger className="w-full font-mono">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="q8_0">q8_0</SelectItem>
+                  <SelectItem value="f16">f16</SelectItem>
+                </SelectContent>
+              </Select>
+            </FormField>
           </div>
         </UnifiedFormDialog>
 

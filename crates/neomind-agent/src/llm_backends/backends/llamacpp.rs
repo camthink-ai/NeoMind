@@ -163,19 +163,19 @@ pub struct LlamaCppCapabilities {
     pub supports_thinking: bool,
     pub supports_tools: bool,
     pub max_context: usize,
-    /// Server slot count from /props. `max_context` above is the server's
-    /// per-request truth (`slot_n_ctx`); OUR builtin spawn (auto slots +
-    /// unified KV) additionally divides by this for a concurrency-safe
-    /// budget — see `per_slot_context` callers.
+    /// Server slot count from /props (concurrency capability info).
+    /// `max_context` above is the server's per-request truth (`slot_n_ctx`)
+    /// and is reported verbatim; the platform budgets from it directly.
     pub total_slots: Option<usize>,
 }
 
-/// Per-slot context a single request can claim: `-c` is the TOTAL KV pool
-/// shared by all slots (unified KV / `--parallel`), so a per-request budget
-/// must divide by the slot count — reporting the full pool made consumers
-/// budget `0.7 × n_ctx` per request while N concurrent requests share one
-/// pool, promising up to `N × 0.7` × the real capacity. Servers that don't
-/// report `total_slots` (older builds) are treated as single-slot.
+/// Per-slot context a single request can claim on a PARTITIONED server
+/// (each slot gets `-c / slots`). Kept for callers that reason about
+/// partitioned deployments — the builtin path no longer divides: its spawn
+/// is single-slot by default, and /props n_ctx is reported verbatim
+/// (dividing it silently shrank the window 4× when the server auto-slotted
+/// — the 8K-wedge class). Servers that don't report `total_slots` (older
+/// builds) are treated as single-slot.
 pub fn per_slot_context(n_ctx: usize, total_slots: Option<usize>) -> usize {
     n_ctx / total_slots.unwrap_or(1).max(1)
 }
@@ -265,11 +265,8 @@ impl LlamaCppRuntime {
         // `/props` n_ctx is `slot_n_ctx` — what ONE request can claim:
         // per-slot quota on `--parallel` (partitioned) servers, the full
         // unified pool on auto-slotted ones. It is the server's own
-        // per-request truth, so report it verbatim; the conservative
-        // divide-by-slots budgeting applies ONLY to our builtin spawn
-        // (see `per_slot_context` users in neomind-api), where we know the
-        // server runs auto slots + unified KV and N concurrent requests
-        // share that pool.
+        // per-request truth and is what the platform budgets from,
+        // verbatim.
         let total_slots = props.total_slots;
 
         let supports_multimodal = props.modalities.as_ref().map(|m| m.vision).unwrap_or(false);

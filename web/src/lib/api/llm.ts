@@ -172,11 +172,21 @@ export const llmApi = {
    * Ensure the bundled llama-server is running (starts it if stopped).
    * POST /api/builtin-llm/restart
    */
-  restartBuiltinLlm: (ctx?: number) =>
-    fetchAPI<{ restarted: boolean; already_running: boolean; endpoint?: string }>(
-      `/builtin-llm/restart${ctx ? `?ctx=${ctx}` : ''}`,
+  restartBuiltinLlm: (
+    opts?: number | { ctx?: number; parallel?: number | 'auto'; kv?: 'q8_0' | 'f16' },
+  ) => {
+    const o = typeof opts === 'number' ? { ctx: opts } : (opts ?? {})
+    const qs = new URLSearchParams()
+    if (o.ctx) qs.set('ctx', String(o.ctx))
+    // 'auto' = omit the flag; upstream picks (4 slots on current builds).
+    if (o.parallel !== undefined) qs.set('parallel', o.parallel === 'auto' ? '0' : String(o.parallel))
+    if (o.kv) qs.set('kv', o.kv)
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return fetchAPI<{ restarted: boolean; already_running: boolean; endpoint?: string }>(
+      `/builtin-llm/restart${suffix}`,
       { method: 'POST' }
-    ),
+    )
+  },
   /**
    * Activate the built-in backend as the active LLM backend.
    * POST /api/builtin-llm/activate

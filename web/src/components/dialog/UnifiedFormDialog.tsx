@@ -65,6 +65,9 @@ export interface UnifiedFormDialogProps {
   contentClassName?: string
   /** Custom footer content (replaces default buttons) */
   footer?: ReactNode
+  /** Extra content rendered in the DEFAULT footer, between Cancel and
+   *  Submit (ignored when a custom `footer` is provided). */
+  footerPrefix?: ReactNode
   /** Whether to hide the footer entirely */
   hideFooter?: boolean
   /** Whether to prevent closing during submission */
@@ -100,6 +103,7 @@ export function UnifiedFormDialog({
   className,
   contentClassName,
   footer,
+  footerPrefix,
   hideFooter = false,
   preventCloseOnSubmit = true,
 }: UnifiedFormDialogProps) {
@@ -210,6 +214,7 @@ export function UnifiedFormDialog({
           {cancelText}
         </Button>
       )}
+      {footerPrefix}
       {onSubmit && (
         <Button
           onClick={handleSubmit}
