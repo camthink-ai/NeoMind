@@ -25,6 +25,11 @@ Manage installed extensions and the marketplace. (For *developing/building* an e
 2. **Always `validate` a local `.nep` before `install`** — `neomind extension validate <path.nep>`.
 3. **RUN the command yourself and report the output** — don't just tell the user to run it.
 4. After install/reload, check health with `neomind extension status <id>`; debug with `neomind extension logs <id>`.
+5. **Marketplace install is ALWAYS exactly three commands, run each ONCE:**
+   1. `neomind extension market-list <用户要的东西>` — pick the exact `id`
+   2. `neomind extension market-install <id>`
+   3. `neomind extension list` — confirm it appears; report success to the user
+   Do NOT re-run `market-list` (the output is large), do NOT load this skill twice, and do NOT summarize the market listing — the user asked to INSTALL, so install.
 
 ## Command Cheat-Sheet
 
@@ -39,7 +44,7 @@ Manage installed extensions and the marketplace. (For *developing/building* an e
 | `neomind extension validate <path.nep>` | Validate a local `.nep` package before install |
 | `neomind extension install <path.nep>` | Install a local `.nep` package |
 | `neomind extension uninstall <id>` | Uninstall an extension |
-| `neomind extension market-list` | List extensions available in the marketplace |
+| `neomind extension market-list <关键词>` | Search the marketplace (compact: id/name/version). ALWAYS give a keyword — the unfiltered dump is huge. `-v` for full metadata |
 | `neomind extension market-install <id>` | Install an extension from the marketplace |
 | `neomind extension create` | Scaffold a NEW extension (dev — see `extension-development` skill) |
 | `neomind extension build` | Build extension from source (dev — see `extension-development` skill) |
@@ -48,8 +53,8 @@ Manage installed extensions and the marketplace. (For *developing/building* an e
 
 ```bash
 neomind extension list
-neomind extension market-list
-neomind extension market-install weather
+neomind extension market-list weather     # compact, filtered
+neomind extension market-install weather-forecast   # install the EXACT id shown
 neomind extension validate ./my-ext-1.0.0.nep
 neomind extension install ./my-ext-1.0.0.nep
 neomind extension status weather

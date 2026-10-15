@@ -62,7 +62,9 @@ pub async fn run_extension_cmd(cmd: ExtensionCommand) -> Result<(CliResponse, Ou
             crate::extension::install_extension_market(&client, &extension_id, version.as_deref())
                 .await?
         }
-        ExtensionCommand::MarketList => crate::extension::list_marketplace(&client).await?,
+        ExtensionCommand::MarketList { filter, verbose } => {
+            crate::extension::list_marketplace(&client, filter.as_deref(), verbose).await?
+        }
         ExtensionCommand::Reload { id } => crate::extension::reload_extension(&client, &id).await?,
         ExtensionCommand::Config { id, set } => match set {
             Some(json_str) => {

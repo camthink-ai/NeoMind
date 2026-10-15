@@ -49,6 +49,11 @@ A full live run on an NG4520 (Orin, 7.4 GB) took the platform from "logs look od
   - Watchdog liveness gate: a health-probe timeout alone no longer triggers a respawn — respawning while the old process was merely busy would double-spawn two ~47 GB mappings and OOM the box (near-miss). Respawn fires only when the process is actually gone; a live-but-unresponsive server gets a kill-then-respawn escalation after ~5 min, and the stale registry entry is cleared before the replacement lands.
   - Frontend: a mid-turn WebSocket drop now hands the display to the pending-stream poll IMMEDIATELY (server snapshot + 3 s updates + stall guard) instead of leaving the local bubble frozen; when the poll's stall guard trips (turn died server-side), the view also takes history so it settles to the real state instead of a vanished bubble.
 
+### Fixed — chat-driven extension installs (2026-10-15)
+- `neomind extension market-install` sent `extension_id` while the API's `MarketplaceInstallRequest` deserializes `id` — every CLI marketplace install failed with "missing field `id`" before reaching any install logic (silent exit 1). The command had never worked; found while verifying the chat-driven install path end-to-end.
+- `market-list` is compact and filterable: the raw registry dump (~48 KB for 26 extensions) drowned small models' context when the agent ran it — observed twice in one 8-minute turn. Default output is now id/name/version/one-line description (~5.5 KB full, **318 bytes** for `market-list weather`); `-v` restores the full dump.
+- The extension-management skill now prescribes the exact three-command install flow (`market-list <keyword>` → `market-install <exact id>` → `extension list` to confirm), forbids re-running the market dump or reloading the skill mid-install, and warns that install ids are exact (`weather-forecast`, not `weather`).
+
 ### Fixed — build & release
 - The b11609 `linux-aarch64-jetson` runtime asset was rebuilt natively on an NG4520 (CUDA 12.6, `-DGGML_NATIVE=OFF -DGGML_CPU_ARM_ARCH=armv8.2-a`) and republished over the SIGILL-ing CI build; `build-llama-server.sh` pins the same baseline, and the Runtimes CI workflow carries the fix (NeoMind-Runtimes 26c9b92) with the incident documented. The install-time exec check (already present) is what catches this class at download, not at first spawn.
 

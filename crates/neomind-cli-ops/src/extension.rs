@@ -164,9 +164,71 @@ pub async fn reload_extension(client: &ApiClient, id: &str) -> Result<CliRespons
 }
 
 /// List marketplace extensions
-pub async fn list_marketplace(client: &ApiClient) -> Result<CliResponse> {
+pub async fn list_marketplace(
+    client: &ApiClient,
+    filter: Option<&str>,
+    verbose: bool,
+) -> Result<CliResponse> {
     let data = client.get("/extensions/market/list").await?;
-    Ok(CliResponse::success(data, "Marketplace extensions listed"))
+    if verbose {
+        return Ok(CliResponse::success(data, "Marketplace extensions listed"));
+    }
+    // Compact by default: the raw registry is ~48 KB (26 extensions × full
+    // metadata + URLs) and drowned small models' context when the agent ran
+    // it — twice in one turn (2026-10-15). One line per extension is what
+    // both a human and a 2B model actually need to pick an id to install;
+    // `-v` keeps the full dump one flag away.
+    let compact = compact_market_list(&data, filter);
+    Ok(CliResponse::success(
+        compact,
+        "Marketplace extensions listed (compact; -v for full metadata)",
+    ))
+}
+
+/// Project the raw market registry into {total, matched, extensions:[{id,
+/// name, version, description}]}, optionally filtered by a case-insensitive
+/// substring over id/name/description. Pure — unit-tested.
+pub fn compact_market_list(raw: &serde_json::Value, filter: Option<&str>) -> serde_json::Value {
+    // The registry nests: {success, data:{extensions:[...]}} — unwrap both.
+    let list = raw
+        .pointer("/data/extensions")
+        .or_else(|| raw.pointer("/extensions"))
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let needle = filter.map(str::to_lowercase);
+    let mut out = Vec::new();
+    for e in &list {
+        let desc = e
+            .get("description")
+            .and_then(|d| d.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let entry = json!({
+            "id": e.get("id").cloned().unwrap_or(serde_json::Value::Null),
+            "name": e.get("name").cloned().unwrap_or(serde_json::Value::Null),
+            "version": e.get("version").cloned().unwrap_or(serde_json::Value::Null),
+            "description": desc,
+        });
+        if let Some(n) = &needle {
+            let hay = format!(
+                "{} {} {}",
+                entry["id"].as_str().unwrap_or_default(),
+                entry["name"].as_str().unwrap_or_default(),
+                entry["description"].as_str().unwrap_or_default(),
+            )
+            .to_lowercase();
+            if !hay.contains(n) {
+                continue;
+            }
+        }
+        out.push(entry);
+    }
+    json!({
+        "total": list.len(),
+        "matched": out.len(),
+        "extensions": out,
+    })
 }
 
 /// Get extension configuration
@@ -185,4 +247,50 @@ pub async fn update_extension_config(
         .put(&format!("/extensions/{}/config", id), &config)
         .await?;
     Ok(CliResponse::success(data, "Extension config updated"))
+}
+
+#[cfg(test)]
+mod market_list_tests {
+    use super::compact_market_list;
+    use serde_json::json;
+
+    fn raw() -> serde_json::Value {
+        json!({
+            "success": true,
+            "data": { "extensions": [
+                { "id": "weather-forecast", "name": "Weather Forecast", "version": "2.14.0",
+                  "description": "Real-time weather", "metadata_url": "https://long.url/..." },
+                { "id": "yolo-video", "name": "YOLO Video", "version": "2.0.0",
+                  "description": "Object detection", "metadata_url": "https://long.url/..." },
+            ]}
+        })
+    }
+
+    #[test]
+    fn compact_keeps_one_line_fields_only() {
+        let out = compact_market_list(&raw(), None);
+        assert_eq!(out["total"], 2);
+        assert_eq!(out["matched"], 2);
+        let e = &out["extensions"][0];
+        assert_eq!(e["id"], "weather-forecast");
+        assert_eq!(e["version"], "2.14.0");
+        assert!(e.get("metadata_url").is_none(), "URLs and bulk must be dropped");
+    }
+
+    #[test]
+    fn filter_matches_case_insensitively_across_fields() {
+        // By id fragment, by name word, by description word.
+        assert_eq!(compact_market_list(&raw(), Some("weather".into()))["matched"], 1);
+        assert_eq!(compact_market_list(&raw(), Some("Forecast".into()))["matched"], 1);
+        assert_eq!(compact_market_list(&raw(), Some("detection".into()))["matched"], 1);
+        assert_eq!(compact_market_list(&raw(), Some("nomatch".into()))["matched"], 0);
+    }
+
+    #[test]
+    fn tolerates_flat_shape_and_missing_fields() {
+        let flat = json!({ "extensions": [ { "id": "x" } ] });
+        let out = compact_market_list(&flat, None);
+        assert_eq!(out["total"], 1);
+        assert_eq!(out["extensions"][0]["id"], "x");
+    }
 }

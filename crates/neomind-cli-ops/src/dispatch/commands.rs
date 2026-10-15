@@ -603,11 +603,21 @@ pub enum ExtensionCommand {
         #[arg(long)]
         version: Option<String>,
     },
-    /// List marketplace extensions.
+    /// List marketplace extensions (compact by default).
     ///
-    /// Shows all extensions available in the marketplace registry.
-    /// Example: `neomind extension market-list`
-    MarketList,
+    /// Prints id/name/version/one-line description only — the full registry
+    /// dump is ~48 KB and drowned small models' context (2026-10-15: an
+    /// 8-minute turn with the dump loaded twice). Give a search term to
+    /// filter: `neomind extension market-list weather`. `-v` restores the
+    /// full metadata dump.
+    /// Example: `neomind extension market-list [search] [-v]`
+    MarketList {
+        /// Case-insensitive substring filter over id/name/description.
+        filter: Option<String>,
+        /// Full metadata dump instead of the compact table.
+        #[arg(short, long)]
+        verbose: bool,
+    },
     /// Reload an extension.
     ///
     /// Restarts the extension process from its installed files.
