@@ -125,8 +125,12 @@ pub async fn install_extension_market(
     extension_id: &str,
     version: Option<&str>,
 ) -> Result<CliResponse> {
+    // Field is `id` — the handler's MarketplaceInstallRequest. This sent
+    // `extension_id` since inception, so every CLI market-install failed
+    // with "missing field `id`" before the request reached any install
+    // logic (found 2026-10-15 verifying the chat-driven install path).
     let mut body = json!({
-        "extension_id": extension_id,
+        "id": extension_id,
     });
     if let Some(v) = version {
         body["version"] = json!(v);
