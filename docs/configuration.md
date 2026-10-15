@@ -45,7 +45,9 @@
 | --- | --- | --- |
 | `NEOMIND_BUILTIN_LLM` | 启用 | 设为 `off` 彻底关闭内置模型功能。 |
 | `NEOMIND_BUILTIN_LLM_PORT` | `29375` | 内置 llama-server 监听端口(loopback)。特意避开 llama.cpp 默认的 8080/8081。 |
-| `NEOMIND_BUILTIN_LLM_CTX` | 模型默认(128K) | 覆盖推理上下文长度;CPU 推理或内存紧张时建议降到 32768。注意:该值是**全部推理槽位共享的总 KV 预算**(llama-server 自动决定槽位数,常见 4),单请求可用上下文 = 总预算 ÷ 槽数,平台已按此上报并计算 prompt 预算——并发买的是吞吐量,不是上下文倍增。 |
+| `NEOMIND_BUILTIN_LLM_CTX` | 按内存档位自动 | 覆盖推理上下文长度。**未设置时按设备内存取档**:<8GB→16384、8-16GB→32768、16-32GB→65536、≥32GB→模型默认;之后仍会经可用内存护栏收紧,并把结果**取整到 2 的幂档**(8K/16K/32K/64K/128K),避免出现 81244 这类无法解释的数字。 |
+| `NEOMIND_BUILTIN_LLM_KV` | `q8_0` | KV 缓存量化 + flash attention 开关。默认 `q8_0`(`-fa on -ctk q8_0 -ctv q8_0`):近无损,KV 内存约减半(实测同模型 32K+q8 的设备内存低于 16K+f16)。设 `f16`/`off`/`0` 关闭(老 runtime 或 FA 不兼容的架构)。 |
+| `NEOMIND_BUILTIN_LLM_PARALLEL` | `1` | 内置引擎的 llama-server 槽位数。默认 1:单槽独占整个 KV 池,平台按整窗预算 prompt,并发请求排队——单用户边缘盒的最优解。多客户端场景可设 2-16。`0` = 不传该参数,交给上游默认(llama.cpp 默认 4 槽;此时平台按"总窗 ÷ 槽数"预算每请求,窗口会缩小)。 |
 | `NEOMIND_BUILTIN_MODEL_NGL` | 未设置 | 传给 llama-server 的 `--n-gpu-layers`(卸载到 GPU 的层数)。**显存充足时必设**(如 `99` 全量卸载);显存紧张时设小值可加速 prefill 但会拖慢解码(层间 PCIe 往返)。 |
 | `NEOMIND_BUILTIN_RUNTIME_VARIANT` | 自动检测 | `cuda`/`vulkan`/`cpu`/`jetson` 手动覆盖。默认自动检测:Jetson 自动选专用构建;Linux x64 检测到 NVIDIA GPU(算力 sm_75–89 且驱动 ≥525,经 `nvidia-smi` 探测)自动选我们自托管的 CUDA 构建(主机只需驱动,无需 CUDA 工具链);其余用 CPU 构建。**AMD/Intel GPU 用 `vulkan`**(官方 Vulkan 构建,需系统 Vulkan loader:桌面自带,无头服务器 `apt install libvulkan1`)。检测到不支持的显卡(如 V100/P100)时保持 CPU;CUDA/Vulkan 下载或执行失败也自动回退 CPU。 |
 | `NEOMIND_BUILTIN_MODEL_PATH` | 未设置 | 覆盖模型 GGUF 路径(指向本地已有文件,跳过下载)。 |

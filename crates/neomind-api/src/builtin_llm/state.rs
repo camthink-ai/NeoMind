@@ -260,6 +260,8 @@ pub async fn bootstrap(
         top_k: def.top_k,
         min_p: def.min_p,
         repeat_penalty: def.repeat_penalty,
+        kv_quant: cfg.kv_quant,
+        parallel: cfg.parallel,
     };
     let mut proc = match LlamaServerProcess::spawn(&server_cfg) {
         Ok(p) => p,

@@ -25,6 +25,18 @@ pub struct LlamaServerConfig {
     /// repeat_penalty: part of some official cards (LFM 1.1, MiniCPM 1.05
     /// for anti-repetition); llama.cpp's default is 1.0 (off).
     pub repeat_penalty: Option<f32>,
+    /// KV cache q8_0 + flash attention. On by default (upstream practice —
+    /// q8 KV is near-lossless and roughly halves KV memory; verified on an
+    /// NG4520: 32K window with q8 KV uses LESS device memory than 16K with
+    /// f16). Disable with NEOMIND_BUILTIN_LLM_KV=f16 for old runtimes or
+    /// architectures where FA/q8 KV misbehaves.
+    pub kv_quant: bool,
+    /// llama-server slot count. `Some(1)` (the default) keeps the
+    /// platform's prompt budget exact — a multi-slot server reports
+    /// `total_slots>1` and the platform budgets n_ctx ÷ slots, silently
+    /// shrinking the usable window. `None` omits the flag entirely
+    /// (upstream default: 4 slots, unified KV).
+    pub parallel: Option<usize>,
 }
 
 /// Largest context window the device RAM can fund for a given model.
@@ -54,8 +66,21 @@ pub fn cap_ctx_by_ram(
     let budget = (total_ram_bytes * 70 / 100)
         .min(available_ram_bytes.saturating_sub(AVAILABLE_MARGIN));
     let avail = budget.saturating_sub(size_bytes + kv_const_bytes + RUNTIME_HEADROOM);
-    let cap = (avail / u64::from(kv_bytes_per_token)) as usize;
+    let raw_cap = (avail / u64::from(kv_bytes_per_token)) as usize;
+    // Floor to a power-of-two bucket (8K/16K/32K/64K/128K): a raw 81244 is
+    // unexplainable in the UI/CLI, and every picker presents these buckets
+    // anyway. Never rounds up — the guard shrinks, it never over-promises.
+    let cap = floor_pow2_ctx(raw_cap.max(8192));
     requested.min(cap).max(8192)
+}
+
+/// Largest power of two ≤ n (n ≥ 1).
+fn floor_pow2_ctx(n: usize) -> usize {
+    if n.is_power_of_two() {
+        n
+    } else {
+        n.next_power_of_two() >> 1
+    }
 }
 
 #[derive(Clone)]
@@ -232,25 +257,37 @@ impl LlamaServerProcess {
         cmd.arg("-m")
             .arg(&cfg.model)
             .arg("-c")
-            .arg(cfg.ctx.to_string())
-            // Single slot on purpose: this is a single-user edge assistant,
-            // and llama.cpp multi-slot mode splits the `-c` KV budget across
-            // slots (32768/4 → 8192 usable), which overflows agent history
-            // into the compact-retry ladder (observed 2026-10-14 on NG4520:
-            // 8K window → minimal-retry → off-script tool calls → wedged
-            // stream). Background LLM work already defers to foreground
-            // streams (memory extraction waits for silence), so concurrency
-            // here is rare — when it happens, requests queue on the single
-            // slot, which is the correct behavior for a shared decode
-            // budget.
-            .arg("--parallel")
-            .arg("1")
-            .arg("--port")
+            .arg(cfg.ctx.to_string());
+        // Slot count, default 1. Why not leave it unspecified: upstream's
+        // own default is 4 slots (verified on b11609: n_slots=4,
+        // kv_unified=true) — and /props then reports total_slots>1, which
+        // the platform budgets as n_ctx ÷ slots, silently shrinking the
+        // usable window (the 8K-wedge class, observed 2026-10-14 on
+        // NG4520). With one slot the full window is the per-request truth;
+        // background LLM work already defers to foreground streams, so
+        // concurrency here is rare — requests queue, which is the correct
+        // behavior for a shared decode budget. NEOMIND_BUILTIN_LLM_PARALLEL:
+        // N for explicit slots, 0 to omit the flag (upstream default).
+        if let Some(p) = cfg.parallel {
+            cmd.arg("--parallel").arg(p.to_string());
+        }
+        cmd.arg("--port")
             .arg(cfg.port.to_string())
             .arg("--host")
             .arg("127.0.0.1")
             // `--no-webui`(非旧名 `--nobrowser`,当前 llama.cpp 已改名,旧参数报 invalid argument)
-            .arg("--no-webui")
+            .arg("--no-webui");
+        if cfg.kv_quant {
+            // -fa on is REQUIRED for V-cache quantization; q8_0 K+V roughly
+            // halves the KV pool (see the config field's doc).
+            cmd.arg("-fa")
+                .arg("on")
+                .arg("-ctk")
+                .arg("q8_0")
+                .arg("-ctv")
+                .arg("q8_0");
+        }
+        cmd
             // stderr → truncate-on-spawn log next to the binary. /dev/null
             // made every startup death indistinguishable — the b11609 SIGILL
             // on NG4520 (2026-10-14) was only diagnosable by running the
@@ -455,11 +492,30 @@ mod tests {
 
     #[test]
     fn qwen_linear_state_const_counts_against_budget() {
-        // Qwen3.5-4B on 8GB: 8 full-attn layers (32,768 B/token) + 201 MB
-        // linear-attention state — the const must reduce the cap.
-        let with_const = cap_ctx_by_ram(131_072, 8 * GB, 7 * GB, 2_740_000_000, 32_768, 201_326_592);
+        // The context-independent state must reduce the cap. Pow2 bucketing
+        // collapses sub-bucket differences (Qwen's real ~201 MB const lands
+        // both caps in the 64K bucket), so use an exaggerated const to keep
+        // the reduction crossing a bucket boundary and observable.
+        let with_const =
+            cap_ctx_by_ram(131_072, 8 * GB, 7 * GB, 2_740_000_000, 32_768, 1_500_000_000);
         let without = cap_ctx_by_ram(131_072, 8 * GB, 7 * GB, 2_740_000_000, 32_768, 0);
-        assert!(with_const < without);
+        assert!(with_const < without, "{with_const} vs {without}");
+    }
+
+    #[test]
+    fn capped_results_are_power_of_two_buckets() {
+        // 8GB/fresh: raw cap ~82-84K — must surface as 65536, not 81244.
+        let ctx = cap_ctx_by_ram(131_072, 8 * GB, 7 * GB, 1_561_318_368, 43_008, 0);
+        assert!(ctx.is_power_of_two(), "bucketed cap expected, got {ctx}");
+        assert_eq!(ctx, 65_536);
+    }
+
+    #[test]
+    fn floor_pow2_rounds_down_only() {
+        assert_eq!(floor_pow2_ctx(8_192), 8_192);
+        assert_eq!(floor_pow2_ctx(8_193), 8_192);
+        assert_eq!(floor_pow2_ctx(81_244), 65_536);
+        assert_eq!(floor_pow2_ctx(131_072), 131_072);
     }
 
     #[tokio::test]

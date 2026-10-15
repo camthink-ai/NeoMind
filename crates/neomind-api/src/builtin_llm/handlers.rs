@@ -222,6 +222,22 @@ pub(crate) fn guarded_ctx(
     guarded_ctx_ex(cfg, default_ctx, def, true)
 }
 
+/// Default context budget by device RAM tier, applied only when no explicit
+/// override is set. Deliberately conservative — a small box at a huge window
+/// thrashes and OOMs rather than answering slower.
+fn tier_default_ctx(total_ram_mb: u64) -> usize {
+    const GB: u64 = 1024;
+    if total_ram_mb < 8 * GB {
+        16 * 1024
+    } else if total_ram_mb < 16 * GB {
+        32 * 1024
+    } else if total_ram_mb < 32 * GB {
+        64 * 1024
+    } else {
+        usize::MAX // no tier cap — the model default governs
+    }
+}
+
 /// [`guarded_ctx`] without the cap WARN — for status/display paths that
 /// compute a hypothetical spawn every UI poll (3s); the warn belongs to
 /// actual spawns only.
@@ -239,14 +255,22 @@ fn guarded_ctx_ex(
     def: Option<&BuiltinModelDef>,
     warn_on_cap: bool,
 ) -> usize {
-    let requested = cfg.effective_ctx(default_ctx);
+    let (total_mb, available_mb) = memory_snapshot_mb();
+    // Tier default when the user has NOT overridden: the policy layer under
+    // the hard available-RAM guard below. Evidence from the 7.4 GB NG4520:
+    // 32K+f16 OOM-killed llama-server 10× over two days; 16K was the stable
+    // window (and 128K never loaded there at all). Conservative by RAM,
+    // always further capped by the guard, always overridable.
+    let requested = match cfg.ctx {
+        Some(v) => v,
+        None => (default_ctx as usize).min(tier_default_ctx(total_mb)),
+    };
     let Some(d) = def else {
         return requested;
     };
     let Some(kv_per_token) = d.kv_bytes_per_token else {
         return requested;
     };
-    let (total_mb, available_mb) = memory_snapshot_mb();
     // Replacement semantics: the live server's RSS frees when the new spawn
     // takes over, so count it as available for the budget.
     let live_rss = super::server::live_llama_rss_bytes();
@@ -990,6 +1014,8 @@ pub async fn status_handler(
         "total_bytes": file_size,
         "ctx": effective_ctx,
         "ctx_override": cfg.ctx,
+        // KV cache quantization the current spawn uses (spawn-time env).
+        "kv_cache": if cfg.kv_quant { "q8_0" } else { "f16" },
         "default_ctx": model_def_ctx,
         "memory_ok": available_mb >= min_ram_mb,
         "min_ram_mb": min_ram_mb,
@@ -1498,6 +1524,8 @@ async fn spawn_builtin_server(
         top_k: installed.top_k,
         min_p: installed.min_p,
         repeat_penalty: installed.repeat_penalty,
+        kv_quant: cfg.kv_quant,
+        parallel: cfg.parallel,
     };
     let mut proc = LlamaServerProcess::spawn(&server_cfg)?;
     if let Err(e) = proc.wait_healthy(Duration::from_secs(60)).await {
@@ -1983,6 +2011,16 @@ fn get_manager() -> Result<Arc<LlmBackendInstanceManager>, ErrorResponse> {
 #[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tier_default_ctx_buckets() {
+        // RAM-tier defaults double per tier; >=32GB leaves the model default.
+        assert_eq!(tier_default_ctx(4096), 16 * 1024);
+        assert_eq!(tier_default_ctx(7 * 1024), 16 * 1024); // NG4520 7.4 GB
+        assert_eq!(tier_default_ctx(8 * 1024), 32 * 1024);
+        assert_eq!(tier_default_ctx(16 * 1024), 64 * 1024);
+        assert_eq!(tier_default_ctx(32 * 1024), usize::MAX);
+    }
     use crate::server::ServerState;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};

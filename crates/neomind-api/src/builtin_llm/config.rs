@@ -14,6 +14,16 @@ pub struct BuiltinConfig {
     pub ngl: Option<u16>,
     pub model_path: Option<PathBuf>,
     pub quant_override: Option<String>,
+    /// KV cache quantization at spawn: `true` (default) passes
+    /// `-fa on -ctk q8_0 -ctv q8_0` — near-lossless, roughly halves KV
+    /// memory (verified: 32K + q8 KV uses less device memory than 16K +
+    /// f16 on the same model). `NEOMIND_BUILTIN_LLM_KV=f16|off|0` disables
+    /// for runtimes/arches where FA or q8 KV misbehaves.
+    pub kv_quant: bool,
+    /// llama-server slot count. Default `Some(1)`; `NEOMIND_BUILTIN_LLM_PARALLEL=0`
+    /// omits the flag (upstream default: 4 slots — the platform then budgets
+    /// n_ctx ÷ slots per request). Values 1-16 set the slot count explicitly.
+    pub parallel: Option<usize>,
 }
 
 impl Default for BuiltinConfig {
@@ -32,6 +42,8 @@ impl Default for BuiltinConfig {
             ngl: None,
             model_path: None,
             quant_override: None,
+            kv_quant: true,
+            parallel: Some(1),
         }
     }
 }
@@ -67,6 +79,19 @@ impl BuiltinConfig {
                 c.ngl = Some(n);
             }
         }
+        if let Ok(v) = std::env::var("NEOMIND_BUILTIN_LLM_PARALLEL") {
+            match v.trim().parse::<usize>() {
+                Ok(0) => c.parallel = None,
+                Ok(n) if (1..=16).contains(&n) => c.parallel = Some(n),
+                _ => {} // garbage ignored — keep the default
+            }
+        }
+        if let Ok(v) = std::env::var("NEOMIND_BUILTIN_LLM_KV") {
+            let v = v.trim().to_ascii_lowercase();
+            if matches!(v.as_str(), "f16" | "off" | "0" | "false") {
+                c.kv_quant = false;
+            }
+        }
         c
     }
 
@@ -97,6 +122,8 @@ mod tests {
             "NEOMIND_BUILTIN_LLM_CTX",
             "NEOMIND_BUILTIN_MODEL_PATH",
             "NEOMIND_BUILTIN_MODEL_NGL",
+            "NEOMIND_BUILTIN_LLM_KV",
+            "NEOMIND_BUILTIN_LLM_PARALLEL",
         ] {
             std::env::remove_var(var);
         }
@@ -107,8 +134,42 @@ mod tests {
         assert!(c.ngl.is_none());
         assert!(c.model_path.is_none());
         assert!(c.quant_override.is_none());
+        // KV q8_0 + FA is the spawn default (upstream practice).
+        assert!(c.kv_quant);
+        // Single slot is the shipped default (see the config field's doc).
+        assert_eq!(c.parallel, Some(1));
         // Effective ctx falls back to the model default.
         assert_eq!(c.effective_ctx(32_768), 32_768);
+    }
+
+    #[serial_test::serial]
+    #[test]
+    fn kv_quant_env_kill_switch() {
+        let _g = env_lock().lock().unwrap();
+        for v in ["f16", "off", "0", "false", "F16"] {
+            std::env::set_var("NEOMIND_BUILTIN_LLM_KV", v);
+            assert!(!BuiltinConfig::from_env().kv_quant, "value {v:?} must disable");
+        }
+        for v in ["q8_0", "on", "1", ""] {
+            std::env::set_var("NEOMIND_BUILTIN_LLM_KV", v);
+            assert!(BuiltinConfig::from_env().kv_quant, "value {v:?} must keep the default");
+        }
+        std::env::remove_var("NEOMIND_BUILTIN_LLM_KV");
+    }
+
+    #[serial_test::serial]
+    #[test]
+    fn parallel_env_knob() {
+        let _g = env_lock().lock().unwrap();
+        std::env::remove_var("NEOMIND_BUILTIN_LLM_PARALLEL");
+        assert_eq!(BuiltinConfig::from_env().parallel, Some(1));
+        std::env::set_var("NEOMIND_BUILTIN_LLM_PARALLEL", "4");
+        assert_eq!(BuiltinConfig::from_env().parallel, Some(4));
+        std::env::set_var("NEOMIND_BUILTIN_LLM_PARALLEL", "0");
+        assert_eq!(BuiltinConfig::from_env().parallel, None, "0 = omit flag (upstream default)");
+        std::env::set_var("NEOMIND_BUILTIN_LLM_PARALLEL", "99");
+        assert_eq!(BuiltinConfig::from_env().parallel, Some(1), "out of range ignored");
+        std::env::remove_var("NEOMIND_BUILTIN_LLM_PARALLEL");
     }
     #[serial_test::serial]
     #[test]
