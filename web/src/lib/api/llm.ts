@@ -140,6 +140,14 @@ export const llmApi = {
    * Start / resume the model download (single-flight on the server).
    * POST /api/builtin-llm/download
    */
+  /** POST /api/builtin-llm/restart?model=<id> — multi-model coexistence:
+   *  switch the builtin server to a DOWNLOADED model in seconds (pointer +
+   *  respawn), never a re-download. */
+  switchBuiltinModel: (modelId: string) =>
+    fetchAPI<{ restarted: boolean; already_running: boolean; endpoint: string }>(`/builtin-llm/restart?model=${encodeURIComponent(modelId)}`, {
+      method: 'POST',
+    }),
+
   downloadBuiltinLlm: (modelId?: string) =>
     fetchAPI<{ started: boolean; already_running: boolean; already_installed?: boolean; switched?: boolean }>('/builtin-llm/download', {
       method: 'POST',

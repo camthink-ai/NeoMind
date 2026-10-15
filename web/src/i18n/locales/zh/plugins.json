@@ -134,6 +134,8 @@
     "builtinWizardCtxLabel": "上下文",
     "builtinWizardStarting": "正在启动本地模型…",
     "switchModel": "更换模型",
+    "builtinSwitchCta": "启用此模型",
+    "builtinActiveNow": "当前使用中",
     "switchModelCta": "下载并替换当前模型",
     "protocol": {
       "ollama": {

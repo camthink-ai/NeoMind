@@ -62,9 +62,11 @@ describe('api surface (post-split composition)', () => {
   // `refreshDataDirUsage`, the manual recompute behind the data-directory
   // footprint — real, called members, not surface bloat. 270 -> 272 when
   // the context-card actions added `compactSession` and `clearSessionHistory`
-  // (manual compaction endpoints backing the usage ring).
-  it('member count grows only by deliberate additions (272)', () => {
+  // (manual compaction endpoints backing the usage ring). 272 -> 273 when
+  // multi-model coexistence added `switchBuiltinModel` (restart?model=, the
+  // instant switch to a downloaded builtin model).
+  it('member count grows only by deliberate additions (273)', () => {
     const keys = Object.keys(api)
-    expect(keys.length).toBe(272)
+    expect(keys.length).toBe(273)
   })
 })

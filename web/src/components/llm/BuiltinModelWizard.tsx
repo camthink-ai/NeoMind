@@ -31,13 +31,14 @@ import {
 } from '@/components/automation/dialog'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { fetchCache } from '@/lib/utils/async'
 import { Progress } from '@/components/ui/progress'
 import {
   AlertCircle,
   BrainCircuit,
   Info,
   CheckCircle2,
-  
+  RefreshCw,
   Download,
   HardDrive,
   Loader2,
@@ -399,6 +400,9 @@ export function BuiltinModelWizard({
       // status directly so the ready transition is immediate, not poll-lagged.
       if (res.already_installed) {
         sawDownloadingRef.current = false
+        // A switch may have happened (files on disk → pointer + respawn) —
+        // drop the chat dropdown's cached backend list.
+        fetchCache.invalidate('llmBackends')
         setStatus(await api.getBuiltinLlmStatus())
         return
       }
@@ -412,6 +416,26 @@ export function BuiltinModelWizard({
       sawDownloadingRef.current = true
       setPhase('downloading')
     } catch (error) {
+      failWith('download', error)
+    }
+  }
+
+  // Multi-model coexistence: switching to an already-downloaded model is
+  // pointer + respawn (seconds, zero bytes re-downloaded) — never the old
+  // "download & replace" path that deleted the other model's files.
+  const handleSwitchModel = async (modelId: string) => {
+    setErrorMsg(null)
+    try {
+      setPhase('starting')
+      await api.switchBuiltinModel(modelId)
+      // The chat header's model dropdown caches the backend list (10s
+      // fetchCache) — the switch is fast enough that returning to chat
+      // lands inside that window and shows the OLD model name. Invalidate.
+      fetchCache.invalidate('llmBackends')
+      setStatus(await api.getBuiltinLlmStatus())
+      setPhase('ready')
+    } catch (error) {
+      setPhase('idle')
       failWith('download', error)
     }
   }
@@ -585,17 +609,41 @@ export function BuiltinModelWizard({
                     )
                   })}
                 </div>
-                <Button
-                  size="lg"
-                  className="w-full"
-                  disabled={!selectedModelId}
-                  onClick={() => handleStartDownload(selectedModelId ?? undefined)}
-                >
-                  <Download className="mr-2 h-4 w-4" />
-                  {status?.installed
-                    ? t('plugins:llm.switchModelCta')
-                    : t('plugins:llm.builtinWizardStart')}
-                </Button>
+                {(() => {
+                  // Three states per SELECTED model (the old check —
+                  // "any model installed?" — showed 下载并替换 for an
+                  // already-downloaded model, sending users down the
+                  // delete-and-redownload path that no longer exists).
+                  const sel = models.find((m) => m.id === selectedModelId)
+                  const activeId = status?.active_model ?? status?.model_id
+                  if (sel?.installed && sel.id === activeId) {
+                    return (
+                      <Button size="lg" className="w-full" disabled>
+                        <CheckCircle2 className="mr-2 h-4 w-4" />
+                        {t('plugins:llm.builtinActiveNow')}
+                      </Button>
+                    )
+                  }
+                  if (sel?.installed) {
+                    return (
+                      <Button size="lg" className="w-full" onClick={() => handleSwitchModel(sel.id)}>
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                        {t('plugins:llm.builtinSwitchCta')}
+                      </Button>
+                    )
+                  }
+                  return (
+                    <Button
+                      size="lg"
+                      className="w-full"
+                      disabled={!selectedModelId}
+                      onClick={() => handleStartDownload(selectedModelId ?? undefined)}
+                    >
+                      <Download className="mr-2 h-4 w-4" />
+                      {t('plugins:llm.builtinWizardStart')}
+                    </Button>
+                  )
+                })()}
               </div>
             )}
 

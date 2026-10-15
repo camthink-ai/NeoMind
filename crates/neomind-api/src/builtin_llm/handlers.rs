@@ -1205,7 +1205,39 @@ pub async fn download_handler(
                 tokio::time::sleep(Duration::from_millis(300)).await;
             }
             if let Ok(manager) = get_instance_manager() {
-                let _ = spawn_builtin_server(&state.data_dir, &cfg, &manager, Some(&def.id)).await;
+                if spawn_builtin_server(&state.data_dir, &cfg, &manager, Some(&def.id))
+                    .await
+                    .is_ok()
+                {
+                    // The builtin may be the ACTIVE chat backend — its
+                    // session-manager snapshot still carries the OLD model
+                    // (prompt budget + chat dropdown name). Re-push, same as
+                    // the restart handler does after a respawn.
+                    let builtin_active = manager
+                        .get_active_instance()
+                        .map(|i| i.id == BUILTIN_INSTANCE_ID)
+                        .unwrap_or(false);
+                    if builtin_active {
+                        if let Some(instance) = manager.get_instance(BUILTIN_INSTANCE_ID) {
+                            let backend = LlmBackend::LlamaCpp {
+                                endpoint: instance
+                                    .endpoint
+                                    .clone()
+                                    .unwrap_or_else(|| format!("http://127.0.0.1:{}", cfg.port)),
+                                model: instance.model.clone(),
+                                capabilities: Some(convert_capabilities(&instance.capabilities)),
+                            };
+                            if let Err(e) =
+                                state.agents.session_manager.set_llm_backend(backend).await
+                            {
+                                tracing::warn!(
+                                    error = %e,
+                                    "builtin llm: failed to refresh session backend after switch"
+                                );
+                            }
+                        }
+                    }
+                }
             }
             tracing::info!(model = %def.id, "builtin llm: switched active model (files kept)");
         }

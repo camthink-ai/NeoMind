@@ -134,6 +134,8 @@
     "builtinWizardCtxLabel": "Context",
     "builtinWizardStarting": "Starting local model…",
     "switchModel": "Switch Model",
+    "builtinSwitchCta": "Switch to this model",
+    "builtinActiveNow": "Currently active",
     "switchModelCta": "Download & replace current model",
     "protocol": {
       "ollama": {
