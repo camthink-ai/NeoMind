@@ -125,6 +125,11 @@ export interface BuiltinLlmStatus {
   /** Whether the model GGUF is present on disk. */
   installed: boolean
   model_id: string | null
+  /** Multi-model coexistence: every downloaded model id (files kept across
+   * switches) and the one the active-model pointer selects. Switching a
+   * downloaded model is instant (restart?model=<id>) — never a re-download. */
+  installed_models?: string[]
+  active_model?: string | null
   /** Registry display name of the installed model (newer backends; the
    * frontend keeps an id→name fallback map for older ones). */
   model_name?: string | null

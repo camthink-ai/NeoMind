@@ -277,6 +277,25 @@ fn guarded_ctx_ex(
 /// Docker may pre-bundle QAD under the QAD name) plus the registry def (for
 /// ctx/name/thinking flags).
 pub fn installed_model(mdir: &Path) -> Option<(BuiltinModelDef, ModelManifest)> {
+    // Active pointer wins: downloaded model files are kept across switches
+    // (multi-model coexistence — switching must never re-download, the
+    // single-model purge made every lfm↔minicpm flip cost 1.5 GB), so the
+    // pointer is the only authority for "which one is active". Fall back to
+    // the registry-order scan for single-model installs predating the
+    // pointer file.
+    if let Some(active) = read_active_model(mdir) {
+        if let Some(def) = BUILTIN_MODELS.iter().find(|d| d.manifest.id == active) {
+            if let Ok(Some(manifest)) = load_manifest(mdir, &def.manifest.id) {
+                if manifest.model_path(mdir).exists() {
+                    return Some((def.clone(), manifest));
+                }
+            }
+        }
+        tracing::warn!(
+            active = %active,
+            "builtin llm: active-model pointer stale (model missing) — falling back to scan"
+        );
+    }
     BUILTIN_MODELS.iter().find_map(|def| {
         let manifest = load_manifest(mdir, &def.manifest.id).ok().flatten()?;
         manifest
@@ -284,6 +303,44 @@ pub fn installed_model(mdir: &Path) -> Option<(BuiltinModelDef, ModelManifest)> 
             .exists()
             .then(|| (def.clone(), manifest))
     })
+}
+
+// ---------------------------------------------------------------------------
+// Active-model pointer (data/models/.active-model)
+// ---------------------------------------------------------------------------
+
+/// The id of the model the builtin server should run. One line, plain text,
+/// beside the model dirs — visible, debuggable, survives restarts.
+const ACTIVE_MODEL_FILE: &str = ".active-model";
+
+pub fn read_active_model(mdir: &Path) -> Option<String> {
+    let raw = std::fs::read_to_string(mdir.join(ACTIVE_MODEL_FILE)).ok()?;
+    let id = raw.trim().to_string();
+    (!id.is_empty()).then_some(id)
+}
+
+pub fn write_active_model(mdir: &Path, id: &str) {
+    if let Err(e) = std::fs::write(mdir.join(ACTIVE_MODEL_FILE), format!("{id}\n")) {
+        tracing::warn!(error = %e, id, "builtin llm: failed to persist active-model pointer");
+    }
+}
+
+pub fn clear_active_model(mdir: &Path) {
+    let _ = std::fs::remove_file(mdir.join(ACTIVE_MODEL_FILE));
+}
+
+/// Every builtin model whose files are on disk (for the status/picker UI).
+pub fn installed_model_ids(mdir: &Path) -> Vec<String> {
+    BUILTIN_MODELS
+        .iter()
+        .filter(|def| {
+            load_manifest(mdir, &def.manifest.id)
+                .ok()
+                .flatten()
+                .is_some_and(|m| m.model_path(mdir).exists())
+        })
+        .map(|def| def.manifest.id.clone())
+        .collect()
 }
 
 /// Default context for an imported GGUF: the header's context_length capped
@@ -781,18 +838,9 @@ async fn import_gguf_from_path(
         {
             Ok(endpoint) => {
                 tracing::info!(endpoint = %endpoint, model = %id, "builtin llm: server started after local import");
-                // Single-model invariant confirmed: the imported model is live.
-                // Remove every OTHER model dir + the same-id backup.
-                if let Ok(entries) = std::fs::read_dir(&mdir) {
-                    for entry in entries.flatten() {
-                        let dir = entry.path();
-                        if dir.is_dir()
-                            && dir.file_name().and_then(|s| s.to_str()) != Some(id.as_str())
-                        {
-                            let _ = std::fs::remove_dir_all(&dir);
-                        }
-                    }
-                }
+                // Multi-model coexistence: keep other models on disk; the
+                // pointer decides which runs. Same-id backup still goes.
+                write_active_model(&mdir, &id);
                 let _ = std::fs::remove_dir_all(&backup_dir);
                 Some(endpoint)
             }
@@ -928,6 +976,11 @@ pub async fn status_handler(
     ok(json!({
         "installed": true,
         "model_id": model_id,
+        // Multi-model coexistence: everything on disk + which one the
+        // pointer selects, so the picker can offer instant switches
+        // (restart?model=<id>) instead of a re-download for downloaded ones.
+        "installed_models": installed_model_ids(&mdir),
+        "active_model": read_active_model(&mdir),
         // Registry display name for the installed model — the frontend used
         // to guess it from a hardcoded id→name map that drifted from the
         // registry (e.g. MiniCPM missing entirely).
@@ -1134,22 +1187,33 @@ pub async fn download_handler(
     let mdir = models_dir(&state.data_dir);
     let dest = mdir.join(&def.id).join(&file_name);
 
-    // Re-downloading the already-installed model is a no-op deeper down
-    // (download_with_resume returns immediately when dest exists) — but it
-    // used to still flip DL_ACTIVE, kill + respawn the server, and cycle
-    // the wizard through a fake "downloading 0%" ceremony before landing on
-    // ready. Decline up front: the wizard jumps straight to ready, and a
-    // true re-download stays delete-model + download. Gate on manifest AND
-    // file so a tampered/missing file still takes the (self-healing) path.
-    let already_installed = installed_model(&mdir)
-        .map(|(_, m)| m.id == def.id)
-        .unwrap_or(false)
-        && dest.exists();
-    if already_installed {
+    // Multi-model coexistence: model files are never removed on switch, so
+    // "download" of an on-disk model is really a SWITCH — pointer + respawn,
+    // zero bytes re-downloaded, never the old fake "downloading 0%"
+    // ceremony. Gate on the REQUESTED model's own manifest AND file (a
+    // tampered/missing file still takes the self-healing download path).
+    let on_disk = load_manifest(&mdir, &def.id)
+        .ok()
+        .flatten()
+        .is_some_and(|m| m.model_path(&mdir).exists());
+    if on_disk {
+        let switching = read_active_model(&mdir).as_deref() != Some(def.id.as_str());
+        if switching {
+            write_active_model(&mdir, &def.id);
+            if health_check(cfg.port).await {
+                kill_process_on_port(cfg.port);
+                tokio::time::sleep(Duration::from_millis(300)).await;
+            }
+            if let Ok(manager) = get_instance_manager() {
+                let _ = spawn_builtin_server(&state.data_dir, &cfg, &manager, Some(&def.id)).await;
+            }
+            tracing::info!(model = %def.id, "builtin llm: switched active model (files kept)");
+        }
         return ok(json!({
             "started": false,
             "already_running": false,
-            "already_installed": true
+            "already_installed": true,
+            "switched": switching
         }));
     }
 
@@ -1258,28 +1322,11 @@ async fn run_builtin_download(
             };
             save_manifest(&mdir, &manifest)?;
 
-            // Single-model invariant: the builtin server runs ONE llama-server
-            // and installed_model() picks by registry order — a leftover model
-            // from an earlier download would win over what the user just
-            // chose. Remove every other builtin model dir.
-            for other in BUILTIN_MODELS.iter() {
-                if other.manifest.id != model_id {
-                    let dir = mdir.join(&other.manifest.id);
-                    if dir.exists() {
-                        match std::fs::remove_dir_all(&dir) {
-                            Ok(_) => tracing::info!(
-                                model = %other.manifest.id,
-                                "builtin llm: removed other model (single-model invariant)"
-                            ),
-                            Err(e) => tracing::warn!(
-                                error = %e,
-                                model = %other.manifest.id,
-                                "builtin llm: failed to remove other model dir"
-                            ),
-                        }
-                    }
-                }
-            }
+            // Multi-model coexistence: downloaded files are NEVER removed on
+            // switch — the active-model pointer is the sole authority for
+            // which one runs (the old purge made every switch cost a full
+            // 1.5 GB re-download; observed 2026-10-15 lfm↔minicpm).
+            write_active_model(&mdir, model_id);
 
             // If a server is still running the PREVIOUS model (its files were
             // just removed above), it owns the port — a fresh spawn would die
@@ -1582,6 +1629,13 @@ pub async fn delete_model_handler(
 
     if deleted {
         tracing::info!("builtin llm: model deleted");
+        // Multi-model coexistence: the deleted model must not stay the
+        // active pointer — clear it; installed_model's scan fallback picks
+        // the remaining model (if any) on the next bootstrap.
+        let mdir = models_dir(&state.data_dir);
+        if read_active_model(&mdir).as_deref() == Some(model_id.as_str()) {
+            clear_active_model(&mdir);
+        }
     }
 
     ok(json!({ "deleted": deleted }))
@@ -1611,6 +1665,32 @@ pub async fn restart_handler(
     State(state): State<crate::server::types::ServerState>,
     Query(params): Query<HashMap<String, String>>,
 ) -> HandlerResult<serde_json::Value> {
+    // Optional model switch (?model=<id>): multi-model coexistence — model
+    // files stay on disk, switching is pointer + respawn, never a
+    // re-download. Validated against the downloaded set; unknown/missing →
+    // 400 pointing at the download flow.
+    let mdir_switch = models_dir(&state.data_dir);
+    let model_change_requested = match params.get("model") {
+        Some(want) => {
+            let want = want.trim().to_string();
+            if want.is_empty() {
+                return Err(ErrorResponse::bad_request("model must not be empty"));
+            }
+            if !installed_model_ids(&mdir_switch).contains(&want) {
+                return Err(ErrorResponse::bad_request(format!(
+                    "model '{want}' is not downloaded — download it first (installed: {})",
+                    installed_model_ids(&mdir_switch).join(", ")
+                )));
+            }
+            let changing = read_active_model(&mdir_switch).as_deref() != Some(want.as_str());
+            if changing {
+                write_active_model(&mdir_switch, &want);
+            }
+            changing
+        }
+        None => false,
+    };
+
     // Optional ctx override (?ctx=N): applied for this spawn and persisted in
     // the process env so subsequent bootstraps keep it (matches the port
     // override pattern). Validated to a sane window; 0/garbage → 400.
@@ -1653,7 +1733,7 @@ pub async fn restart_handler(
         .and_then(|v| v.trim().parse::<usize>().ok())
         .map(|want| current_n_ctx.map(|cur| cur != want).unwrap_or(true))
         .unwrap_or(false);
-    if health_check(cfg.port).await && !ctx_change_requested {
+    if health_check(cfg.port).await && !ctx_change_requested && !model_change_requested {
         return ok(json!({
             "restarted": true,
             "already_running": true,

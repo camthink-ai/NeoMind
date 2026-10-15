@@ -141,7 +141,7 @@ export const llmApi = {
    * POST /api/builtin-llm/download
    */
   downloadBuiltinLlm: (modelId?: string) =>
-    fetchAPI<{ started: boolean; already_running: boolean; already_installed?: boolean }>('/builtin-llm/download', {
+    fetchAPI<{ started: boolean; already_running: boolean; already_installed?: boolean; switched?: boolean }>('/builtin-llm/download', {
       method: 'POST',
       body: modelId ? JSON.stringify({ model_id: modelId }) : undefined,
     }),
