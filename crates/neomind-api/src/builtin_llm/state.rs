@@ -419,7 +419,10 @@ mod tests {
         let refreshed = manager
             .get_instance(BUILTIN_INSTANCE_ID)
             .expect("instance survived refresh");
-        assert_eq!(refreshed.name, neomind_core::builtin_llm::manifest::default_model_def().display_name);
+        assert_eq!(
+            refreshed.name,
+            neomind_core::builtin_llm::manifest::default_model_def().display_name
+        );
     }
 }
 
