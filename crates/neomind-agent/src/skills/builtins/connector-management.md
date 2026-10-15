@@ -7,7 +7,7 @@ origin: builtin
 priority: 80
 token_budget: 8000
 triggers:
-  keywords: [connector, 连接器, MQTT, broker, 代理, 订阅, subscribe, topic, 主题, webhook, 外部, external, broker, 远程, remote, 订阅主题, connector create, connector test, subscription]
+  keywords: [connector, 连接器, MQTT, broker, 代理, 订阅, subscribe, topic, 主题, webhook, 外部, external, broker, 远程, remote, 订阅主题, connector create, connector test, subscription, connect broker, mqtt broker, broker connection, broker 配置, 连接 broker, MQTT broker 连接]
   tool_target:
     - tool: connector
       actions: [list, get, create, update, delete, test, subscriptions, subscribe, unsubscribe]

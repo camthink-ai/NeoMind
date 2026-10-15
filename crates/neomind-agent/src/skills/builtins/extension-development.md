@@ -7,7 +7,7 @@ origin: builtin
 priority: 85
 token_budget: 14000
 triggers:
-  keywords: [extension development, create extension, build extension, extension sdk, neomind extension, 扩展开发, 开发扩展, extension create, extension build, custom extension, neomind_export, Extension trait, capability, FFI, native extension, .nep]
+  keywords: [extension development, create extension, build extension, extension sdk, neomind extension, 扩展开发, 开发扩展, extension create, extension build, custom extension, neomind_export, Extension trait, capability, FFI, native extension, .nep, from scratch, extension from scratch, write extension, extension source code, 编写扩展, 扩展源码]
   tool_target:
     - tool: extension
       actions: [create, build, validate, install, uninstall, list, get, status, logs, config, reload]

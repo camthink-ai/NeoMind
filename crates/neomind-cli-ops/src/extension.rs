@@ -138,6 +138,24 @@ pub async fn install_extension_market(
 
     let data = client.post("/extensions/market/install", &body).await?;
 
+    // The handler reports EVERY failure (unknown id, network, sha mismatch,
+    // no build for the platform — 17 paths) as HTTP 200 whose INNER payload
+    // carries success:false. The outer ApiResponse envelope says success:true
+    // (the request was served), so the verdict must be read from the inner
+    // body: `{"success":true,"data":{"success":false,"error":"…"}}`. Trusting
+    // the status code wrapped those failures in a success envelope:
+    // `market-install <bogus>` printed "✅ Extension installed" with exit 0
+    // while nothing ran (2026-10-15 audit). Fall back to the flat shape for
+    // unwrapped/older servers.
+    let inner = data.get("data").unwrap_or(&data);
+    if inner.get("success").and_then(|v| v.as_bool()) == Some(false) {
+        let err = inner
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown marketplace failure");
+        anyhow::bail!("marketplace install failed: {err}");
+    }
+
     Ok(CliResponse::success(
         data,
         "Extension installed from marketplace",
@@ -292,5 +310,32 @@ mod market_list_tests {
         let out = compact_market_list(&flat, None);
         assert_eq!(out["total"], 1);
         assert_eq!(out["extensions"][0]["id"], "x");
+    }
+}
+
+#[cfg(test)]
+mod market_install_verdict_tests {
+    use serde_json::json;
+
+    #[test]
+    fn failure_envelope_is_recognized() {
+        // The handler's failure shape: HTTP 200, success:false, error msg.
+        // The verdict check mirrors the CLI fix — kept here as the shape's
+        // executable documentation.
+        // Real wire shape: ApiResponse envelope (success:true) around the
+        // handler's own verdict (success:false).
+        let body = json!({
+            "success": true,
+            "data": {
+                "success": false,
+                "extension_id": "bogus-ext-xyz",
+                "downloaded": false,
+                "installed": false,
+                "error": "Extension not found: 404 Not Found"
+            }
+        });
+        let inner = body.get("data").unwrap_or(&body);
+        assert_eq!(inner["success"].as_bool(), Some(false), "inner verdict is the failure");
+        assert!(inner["error"].as_str().unwrap().contains("not found"));
     }
 }

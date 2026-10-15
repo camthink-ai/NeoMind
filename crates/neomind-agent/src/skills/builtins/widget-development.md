@@ -7,7 +7,7 @@ origin: builtin
 priority: 85
 token_budget: 14000
 triggers:
-  keywords: [widget, custom widget, 自定义组件, widget create, 组件开发, component, IIFE, bundle.js, manifest, 仪表盘组件, dashboard widget, 自定义图表, custom chart, jsxRuntime, device binding]
+  keywords: [widget, custom widget, 自定义组件, widget create, 组件开发, component, IIFE, bundle.js, manifest, 仪表盘组件, dashboard widget, 自定义图表, custom chart, jsxRuntime, device binding, build widget, create widget, 构建组件, 制作组件, widget 开发]
   tool_target:
     - tool: widget
       actions: [create, install, get, list, uninstall, market-list, market-install]

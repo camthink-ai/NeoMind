@@ -286,3 +286,73 @@ mod builtin_search_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod cross_domain_search_coverage {
+    use super::*;
+
+    /// The extension-domain incident (2026-10-15) was a SEARCH miss: an
+    /// English query scored zero because the skill lacked the specific
+    /// trigger terms. This table locks the same check for every domain with
+    /// its most likely user phrasings — the top BM25 domain must be the
+    /// intended skill.
+    #[test]
+    fn typical_queries_hit_their_domain() {
+        let registry = SkillRegistry::load_all(None);
+        let skills = registry.list();
+        let corpus: Vec<String> = skills
+            .iter()
+            .map(|s| crate::skills::matcher::searchable_text(s))
+            .collect();
+        let index = crate::skills::bm25::Bm25Index::build(corpus);
+        let cases: &[(&str, &str)] = &[
+            ("install the weather extension", "extension-management"),
+            ("安装天气预报扩展", "extension-management"),
+            ("uninstall an extension", "extension-management"),
+            ("add components to the dashboard", "dashboard-management"),
+            ("create a new dashboard", "dashboard-management"),
+            ("connect my sensor to the platform", "device-onboarding"),
+            ("接入设备", "device-onboarding"),
+            ("onboard a device", "device-onboarding"),
+            ("create an automation rule", "rule-management"),
+            ("创建规则", "rule-management"),
+            ("install a widget", "widget-management"),
+            ("组件市场安装", "widget-management"),
+            ("send an alert notification", "message-management"),
+            ("配置通知渠道", "message-management"),
+            ("push data to an external system", "data-push-management"),
+            ("switch the llm backend", "llm-management"),
+            ("system information and network", "system-info"),
+            ("磁盘空间还剩多少", "system-info"),
+            ("convert units in telemetry", "transform-management"),
+            ("write extension source code from scratch", "extension-development"),
+            ("build a custom widget", "widget-development"),
+            ("create an ai agent", "agent-management"),
+            ("connect an mqtt broker", "connector-management"),
+            ("set the timezone", "settings-management"),
+        ];
+        let mut misses = Vec::new();
+        for (query, want) in cases {
+            let tokens = crate::skills::bm25::tokenize(query);
+            let top = skills
+                .iter()
+                .enumerate()
+                .map(|(i, s)| (index.score(i, &tokens), s.metadata.id.as_str()))
+                .filter(|(sc, _)| *sc > 0.0)
+                .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            match top {
+                Some((_, id)) if id == *want => {}
+                other => misses.push(format!(
+                    "{query:?} → want {want}, got {:?}",
+                    other.map(|(sc, id)| (id, sc))
+                )),
+            }
+        }
+        assert!(
+            misses.is_empty(),
+            "cross-domain search misses ({}):\n{}",
+            misses.len(),
+            misses.join("\n")
+        );
+    }
+}

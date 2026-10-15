@@ -7,7 +7,7 @@ origin: builtin
 priority: 90
 token_budget: 12000
 triggers:
-  keywords: [设备接入, 接入, onboarding, 连接设备, connect device, MQTT, mqtt, broker, webhook, 传感器, sensor, 设备配置, device setup, device connect, provision, 配置设备, device provisioning, 网关, gateway, 接入方式, 订阅, subscribe, auto-discovery, 自动发现, 控制, 命令, 停机, 停止, control, command, stop, shutdown, reboot, set speed, device control, 虚拟设备, virtual device, 模拟设备, simulated device, 模拟数据, simulated data, mock device, 测试设备, test device, simulate]
+  keywords: [设备接入, 接入, onboarding, 连接设备, connect device, MQTT, mqtt, webhook, 传感器, sensor, 设备配置, device setup, device connect, provision, 配置设备, device provisioning, 网关, gateway, 接入方式, 订阅, subscribe, auto-discovery, 自动发现, 控制, 命令, 停机, 停止, control, command, stop, shutdown, reboot, set speed, device control, 虚拟设备, virtual device, 模拟设备, simulated device, 模拟数据, simulated data, mock device, 测试设备, test device, simulate]
   tool_target:
     - tool: system
       actions: [info]
