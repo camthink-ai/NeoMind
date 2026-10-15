@@ -6,6 +6,26 @@
  */
 
 import type { Message } from "@/types"
+import { normalizeTimestampMs } from "@/lib/utils/format"
+
+/**
+ * Normalize a history batch to the store's canonical ms timestamps.
+ *
+ * Server history carries Unix SECONDS (AgentMessage.timestamp =
+ * chrono::Utc::now().timestamp()); locally created messages carry ms.
+ * Display helpers tolerate both, but arithmetic on message.timestamp does
+ * not — `Date.now() - serverSecondsTs` produced a 497,289-hour generation
+ * time (2026-10-15). Every history ingest path funnels through
+ * mergeMessagesForDisplay, so normalizing here canonicalizes the store.
+ */
+function normalizeTimestamps(messages: Message[]): Message[] {
+  return messages.map(m => {
+    if (typeof m.timestamp !== 'number') return m
+    const ms = normalizeTimestampMs(m.timestamp)
+    // Already-ms timestamps (and unparseables) keep their value.
+    return ms != null && ms !== m.timestamp ? { ...m, timestamp: ms } : m
+  })
+}
 
 /**
  * Combine two content strings without duplicating when backend sent the same content twice.
@@ -29,7 +49,8 @@ export function dedupeContentConcat(a: string, b: string): string {
  * Reconstruct ONE message per user turn, combining all tool calls across rounds,
  * building round_contents, and using the final content as message content.
  */
-export function mergeMessagesForDisplay(messages: Message[]): Message[] {
+export function mergeMessagesForDisplay(rawMessages: Message[]): Message[] {
+  const messages = normalizeTimestamps(rawMessages)
   const result: Message[] = []
 
   for (let i = 0; i < messages.length; i++) {

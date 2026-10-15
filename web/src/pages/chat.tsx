@@ -18,6 +18,7 @@ import { ws, type ConnectionState } from "@/lib/websocket"
 import { api } from "@/lib/api"
 import type { Message, ChatImage } from "@/types"
 import { cn } from "@/lib/utils"
+import { normalizeTimestampMs } from "@/lib/utils/format"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { LoadingState } from "@/components/shared"
 import { forceViewportReset } from "@/hooks/useVisualViewport"
@@ -198,7 +199,13 @@ export function ChatPage() {
             .pop()?.timestamp
           await refreshCurrentSession()
           if (turnStart == null) return
-          const generationMs = Date.now() - turnStart
+          // turnStart comes from a store message — server history carries
+          // Unix SECONDS, local messages carry ms. Normalize before the
+          // subtraction: raw seconds against Date.now() produced a
+          // 497,289-hour generation time (2026-10-15).
+          const turnStartMs = normalizeTimestampMs(turnStart)
+          if (turnStartMs == null) return
+          const generationMs = Date.now() - turnStartMs
           useStore.setState(s => {
             const messages = [...s.messages]
             for (let i = messages.length - 1; i >= 0; i--) {

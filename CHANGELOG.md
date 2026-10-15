@@ -40,6 +40,9 @@ A full live run on an NG4520 (Orin, 7.4 GB) took the platform from "logs look od
 - The ctx RAM guard gained replacement semantics: every spawn REPLACES the single live llama-server, so the available-RAM clamp adds the live instance's RSS back — a status poll or respawn evaluated while the old server held ~1.2 GB floored the window to 8192 (and the status endpoint, polled every 3 s by the UI, warned each time). Status paths now compute the hypothetical ctx silently (`guarded_ctx_quiet`).
 - Jetson appliance memory tuning (deploy-side recipe for the fleet, applied on the incident box): per-CPU zram swap enlarged from 50% to 150% of RAM (lzo-rle; zstd where the kernel supports it), `vm.swappiness=150`, `vm.watermark_scale_factor=125` — reclaim now keeps up with KV-cache growth spikes instead of handing them to the OOM killer.
 
+### Fixed — frontend
+- Chat turn stats showed absurd durations ("497289h 3m" with 0 chars/s): server history timestamps are Unix SECONDS while locally created messages carry milliseconds — the interrupted-turn path subtracted the raw seconds value from `Date.now()`, producing an epoch-scale duration. A `normalizeTimestampMs` helper now canonicalizes every history ingest (all paths funnel through `mergeMessagesForDisplay`) and the interrupted-path arithmetic normalizes before subtracting; the display formatters were refactored onto the same helper. Regression test locks the incident shape.
+
 ### Fixed — build & release
 - The b11609 `linux-aarch64-jetson` runtime asset was rebuilt natively on an NG4520 (CUDA 12.6, `-DGGML_NATIVE=OFF -DGGML_CPU_ARM_ARCH=armv8.2-a`) and republished over the SIGILL-ing CI build; `build-llama-server.sh` pins the same baseline, and the Runtimes CI workflow carries the fix (NeoMind-Runtimes 26c9b92) with the incident documented. The install-time exec check (already present) is what catches this class at download, not at first spawn.
 
