@@ -576,6 +576,28 @@ impl ShellTool {
         working_dir: Option<&str>,
         timeout: Duration,
     ) -> Result<CommandOutput> {
+        // [fabricated-output guard] A small model asked to install an
+        // extension once answered by ECHOING a fake tool-result JSON
+        // ("exit_code":0 ... "command":"neomind extension install X" ...
+        // "message":"Installed extension") instead of running the real
+        // command (2026-10-15) — the user was told the install succeeded
+        // when nothing happened. Printing a tool-result-shaped payload via
+        // echo/printf is never legitimate agent behavior: refuse it and
+        // name the cure.
+        if let Some(real_cmd) = fabricated_tool_output(&command) {
+            return Ok(CommandOutput {
+                exit_code: Some(126),
+                stdout: format!(
+                    "FABRICATED TOOL OUTPUT REFUSED: this command prints a fake tool-result \
+                     JSON (exit_code/command/stdout keys) instead of executing the real \
+                     action — that reports success for something that never ran. Execute the \
+                     real command instead: `{real_cmd}`"
+                ),
+                stderr: String::new(),
+                timed_out: false,
+            });
+        }
+
         // Fast path: route `neomind` data commands through the in-process
         // dispatcher so the agent gets structured `CliResponse` directly,
         // without depending on whatever `neomind` binary happens to be in
@@ -1475,6 +1497,44 @@ Native host tools also available via `/bin/sh -c`: ping, curl, ps, df, grep, doc
     }
 }
 
+
+/// Detect `echo`/`printf` commands whose payload impersonates a tool
+/// result (JSON with `exit_code` + `command`/`stdout` keys). Returns the
+/// `neomind` command mentioned inside the payload, if any, for the cure
+/// message.
+fn fabricated_tool_output(command: &str) -> Option<String> {
+    let trimmed = command.trim();
+    let is_print = trimmed.starts_with("echo ")
+        || trimmed.starts_with("printf ")
+        || trimmed.starts_with("echo\t")
+        || trimmed.contains("| echo ");
+    if !is_print {
+        return None;
+    }
+    // Bare substrings, not quote-delimited: the payload's quotes arrive
+    // shell-escaped (`\"exit_code\"`), so a quoted match never fires.
+    let looks_like_tool_result = trimmed.contains("exit_code")
+        && (trimmed.contains("command") || trimmed.contains("stdout"));
+    if !looks_like_tool_result {
+        return None;
+    }
+    // Extract the real command the payload impersonates, for the cure:
+    // text after the last `command` key up to the closing brace, stripped
+    // of JSON punctuation and shell-escape backslashes.
+    let real: String = command
+        .rsplit("command")
+        .next()
+        .unwrap_or("")
+        .split('}')
+        .next()
+        .unwrap_or("")
+        .replace(['\\', '"', ':', '{'], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    (real.len() > 3).then_some(real)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2225,5 +2285,34 @@ mod dispatch_edge_tests {
             failures.len(),
             failures.join("\n")
         );
+    }
+}
+#[cfg(test)]
+mod fabrication_guard_tests {
+    use super::fabricated_tool_output;
+
+    #[test]
+    fn refuses_the_incident_shape() {
+        // Shape from the 2026-10-15 incident: echo of a fake install-success
+        // tool result (exit_code + command + stdout keys).
+        let cmd = r#"echo "{\"exit_code\":0,\"stdout\":\"{\\\"success\\\": true}\",\"command\":\"neomind extension install face-recognition\"}""#;
+        let real = fabricated_tool_output(cmd);
+        assert!(real.is_some(), "must refuse the fabricated payload");
+        assert!(
+            real.as_deref().unwrap_or("").contains("extension"),
+            "cure message should name the real command domain, got {real:?}"
+        );
+    }
+
+    #[test]
+    fn simple_echo_is_untouched() {
+        assert_eq!(fabricated_tool_output("echo hello"), None);
+        assert_eq!(
+            fabricated_tool_output(r#"echo '{"success":true}'"#),
+            None,
+            "no exit_code+command signature"
+        );
+        assert_eq!(fabricated_tool_output("neomind extension list"), None);
+        assert_eq!(fabricated_tool_output("printf '%s' hi"), None);
     }
 }
