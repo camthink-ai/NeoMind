@@ -732,6 +732,14 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                     // missing model never triggers respawn attempts.
                     let mut poll = Duration::from_secs(30);
                     let mut backoff = Duration::from_secs(30);
+                    // Consecutive alive-but-unhealthy cycles. A LIVE process
+                    // with a dead port is "loading / box under load", not an
+                    // OOM death — respawning it on a probe timeout would
+                    // double-spawn two ~47 GB mappings and OOM the box
+                    // (2026-10-15 near-miss). Only a genuinely wedged server
+                    // (5 min unresponsive) gets the kill-then-respawn
+                    // escalation.
+                    let mut wedged_cycles: u32 = 0;
                     loop {
                         tokio::time::sleep(poll).await;
                         if !cfg.enabled {
@@ -739,6 +747,7 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                         }
                         if crate::builtin_llm::server::health_check(cfg.port).await {
                             backoff = Duration::from_secs(30);
+                            wedged_cycles = 0;
                             continue;
                         }
                         // Port dead. Only an incident when a model is
@@ -747,6 +756,29 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                         let mdir = crate::builtin_llm::handlers::models_dir(&data_dir);
                         if crate::builtin_llm::handlers::installed_model(&mdir).is_none() {
                             continue;
+                        }
+                        if crate::builtin_llm::server::any_llama_server_alive() {
+                            wedged_cycles += 1;
+                            if wedged_cycles < 10 {
+                                // Alive but not answering yet — wait it out.
+                                tracing::debug!(
+                                    port = cfg.port,
+                                    wedged_cycles,
+                                    "builtin llm watchdog: llama-server alive but not answering — waiting"
+                                );
+                                continue;
+                            }
+                            tracing::warn!(
+                                port = cfg.port,
+                                "builtin llm watchdog: llama-server alive but unresponsive for ~5min — killing and respawning"
+                            );
+                            crate::builtin_llm::server::stop_all_llama_servers();
+                            wedged_cycles = 0;
+                        } else {
+                            wedged_cycles = 0;
+                            // Process gone (the OOM case): clear its stale
+                            // registry entry before the replacement lands.
+                            crate::builtin_llm::server::stop_all_llama_servers();
                         }
                         let Ok(manager) = neomind_agent::get_instance_manager() else {
                             continue;

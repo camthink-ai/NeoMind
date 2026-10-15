@@ -84,6 +84,17 @@ pub fn stop_all_llama_servers() {
     }
 }
 
+/// Whether any spawned llama-server process is still alive. The watchdog
+/// uses this to separate "the process is GONE (OOM-killed — respawn is
+/// correct)" from "the process is alive but the health probe timed out
+/// (busy loading / box under load — respawning would double-spawn two ~47 GB
+/// address-space mappings and OOM the box, the 2026-10-15 near-miss). A
+/// live-but-unresponsive server gets a kill-then-respawn escalation instead.
+pub fn any_llama_server_alive() -> bool {
+    let mut guard = LLAMA_SERVERS.lock().unwrap_or_else(|e| e.into_inner());
+    guard.iter_mut().any(|s| s.is_alive())
+}
+
 /// Total resident memory of the LIVE llama-server(s). Exactly one server is
 /// ever intended (the builtin spawn is single-instance), and every spawn
 /// path REPLACES it — so a ctx budget computed "now" must add this back:

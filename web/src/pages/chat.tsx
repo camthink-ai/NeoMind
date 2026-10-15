@@ -579,6 +579,10 @@ export function ChatPage() {
           if (stallTicks >= 20) {
             setResumedPendingStream(null)
             hardReset()
+            // A stalled snapshot means the turn died server-side — settle
+            // the view to whatever history has instead of leaving a
+            // vanished bubble over a stale composer state.
+            void refreshCurrentSession()
           }
         } else {
           setResumedPendingStream(null)
@@ -594,6 +598,7 @@ export function ChatPage() {
         if (stallTicks >= 20) {
           setResumedPendingStream(null)
           hardReset()
+          void refreshCurrentSession()
         }
       })
     }, 3000)
@@ -605,6 +610,21 @@ export function ChatPage() {
     const unsubscribe = ws.onStateChange(setConnectionState)
     return () => { void unsubscribe() }
   }, [])
+
+  // Mid-turn WS drop (server restart, network blip, proxy idle-kill): the
+  // live event feed is gone but the turn may well still be running or its
+  // pending snapshot recoverable. Instead of leaving the local bubble
+  // frozen (events between drop and reconnect are lost either way), hand
+  // the display to the pending-poll path IMMEDIATELY — it rebuilds from the
+  // server's snapshot, keeps updating while the turn lives, and settles to
+  // history when it ends or stalls. Previously the frozen bubble sat until
+  // the user refreshed or switched sessions (2026-10-15: "AI 回复的消息就
+  // 消失了，要刷新页面才能看到").
+  useEffect(() => {
+    if (connectionState.status === 'connected') return
+    if (!isStreaming || !sessionId || !urlSessionId) return
+    setResumedPendingStream(sessionId)
+  }, [connectionState.status, isStreaming, sessionId, urlSessionId])
 
   // Send message - in welcome mode, create session and navigate
   const handleSend = async (_e?: React.MouseEvent | React.KeyboardEvent) => {
