@@ -1,0 +1,278 @@
+{
+  "device_type": "ne302_camera",
+  "name": "CamThink Edge AI Camera 2",
+  "description": "CamThink NE302 Edge AI Camera with built-in object detection. Features WiFi HaLow connectivity and external power. Data protocol is compatible with the NE301.",
+  "categories": [
+    "Camera",
+    "AI",
+    "Edge Computing"
+  ],
+  "mode": "full",
+  "store_raw": false,
+  "metrics": [
+    {
+      "name": "metadata.image_id",
+      "display_name": "Image ID",
+      "data_type": "String",
+      "required": false
+    },
+    {
+      "name": "metadata.timestamp",
+      "display_name": "Capture Timestamp",
+      "data_type": "Integer",
+      "required": false
+    },
+    {
+      "name": "metadata.format",
+      "display_name": "Image Format",
+      "data_type": "String",
+      "required": false
+    },
+    {
+      "name": "metadata.width",
+      "display_name": "Image Width",
+      "data_type": "Integer",
+      "unit": "px",
+      "required": false
+    },
+    {
+      "name": "metadata.height",
+      "display_name": "Image Height",
+      "data_type": "Integer",
+      "unit": "px",
+      "required": false
+    },
+    {
+      "name": "metadata.size",
+      "display_name": "Image Size",
+      "data_type": "Integer",
+      "unit": "bytes",
+      "required": false
+    },
+    {
+      "name": "metadata.quality",
+      "display_name": "Image Quality",
+      "data_type": "Integer",
+      "required": false
+    },
+    {
+      "name": "metadata.trigger_type",
+      "display_name": "Trigger Type",
+      "data_type": "String",
+      "required": false
+    },
+    {
+      "name": "device_info.device_name",
+      "display_name": "Device Name",
+      "data_type": "String",
+      "required": false
+    },
+    {
+      "name": "device_info.mac_address",
+      "display_name": "MAC Address",
+      "data_type": "String",
+      "required": false
+    },
+    {
+      "name": "device_info.serial_number",
+      "display_name": "Serial Number",
+      "data_type": "String",
+      "required": false
+    },
+    {
+      "name": "device_info.hardware_version",
+      "display_name": "Hardware Version",
+      "data_type": "String",
+      "required": false
+    },
+    {
+      "name": "device_info.software_version",
+      "display_name": "Software Version",
+      "data_type": "String",
+      "required": false
+    },
+    {
+      "name": "device_info.power_supply_type",
+      "display_name": "Power Supply Type",
+      "data_type": "String",
+      "required": false
+    },
+    {
+      "name": "device_info.battery_percent",
+      "display_name": "Battery Level",
+      "data_type": "Integer",
+      "unit": "%",
+      "min": 0,
+      "max": 100,
+      "required": false
+    },
+    {
+      "name": "device_info.communication_type",
+      "display_name": "Communication Type",
+      "data_type": "String",
+      "required": false
+    },
+    {
+      "name": "ai_result.model_name",
+      "display_name": "AI Model Name",
+      "data_type": "String",
+      "required": false
+    },
+    {
+      "name": "ai_result.model_version",
+      "display_name": "AI Model Version",
+      "data_type": "String",
+      "required": false
+    },
+    {
+      "name": "ai_result.inference_time_ms",
+      "display_name": "Inference Time",
+      "data_type": "Integer",
+      "unit": "ms",
+      "required": false
+    },
+    {
+      "name": "ai_result.confidence_threshold",
+      "display_name": "Confidence Threshold",
+      "data_type": "Float",
+      "min": 0,
+      "max": 1,
+      "required": false
+    },
+    {
+      "name": "ai_result.nms_threshold",
+      "display_name": "NMS Threshold",
+      "data_type": "Float",
+      "min": 0,
+      "max": 1,
+      "required": false
+    },
+    {
+      "name": "ai_result.ai_result.type",
+      "display_name": "AI Result Type",
+      "data_type": "Integer",
+      "required": false
+    },
+    {
+      "name": "ai_result.ai_result.type_name",
+      "display_name": "AI Result Type Name",
+      "data_type": "String",
+      "required": false
+    },
+    {
+      "name": "ai_result.ai_result.detection_count",
+      "display_name": "Detection Count",
+      "data_type": "Integer",
+      "min": 0,
+      "required": false
+    },
+    {
+      "name": "ai_result.ai_result.pose_count",
+      "display_name": "Pose Count",
+      "data_type": "Integer",
+      "min": 0,
+      "required": false
+    },
+    {
+      "name": "ai_result.ai_result.detections",
+      "display_name": "Detections",
+      "data_type": "Array",
+      "required": false
+    },
+    {
+      "name": "ai_result.ai_result.poses",
+      "display_name": "Poses",
+      "data_type": "Array",
+      "required": false
+    },
+    {
+      "name": "image_data",
+      "display_name": "Image Data",
+      "data_type": "String",
+      "required": false
+    },
+    {
+      "name": "encoding",
+      "display_name": "Image Encoding",
+      "data_type": "String",
+      "required": false
+    }
+  ],
+  "uplink_samples": [
+    {
+      "metadata": {
+        "image_id": "cam01_1792113477",
+        "timestamp": 1792113477,
+        "format": "jpeg",
+        "width": 1280,
+        "height": 720,
+        "size": 71684,
+        "quality": 60,
+        "trigger_type": "rtc"
+      },
+      "device_info": {
+        "device_name": "NE302-2681D1",
+        "mac_address": "44:9f:da:26:81:d1",
+        "serial_number": "SN202500001",
+        "hardware_version": "V1.1",
+        "software_version": "4.3.1.22",
+        "power_supply_type": "external_power",
+        "battery_percent": 0,
+        "communication_type": "halow"
+      },
+      "ai_result": {
+        "model_name": "YOLOv8 Nano Object Detection Model - COCO 80 Classes (Int8)",
+        "model_version": "1.0.0",
+        "inference_time_ms": 50,
+        "confidence_threshold": 0.5,
+        "nms_threshold": 0.5,
+        "ai_result": {
+          "type": 1,
+          "detections": [
+            {
+              "index": 0,
+              "class_name": "bottle",
+              "confidence": 0.5764605402946472,
+              "x": 0.11801555752754211,
+              "y": 0.05219918489456177,
+              "width": 0.27234357595443726,
+              "height": 0.9395853281021118
+            }
+          ],
+          "detection_count": 1,
+          "poses": [],
+          "pose_count": 0,
+          "type_name": "object_detection"
+        }
+      },
+      "image_data": "data:image/jpeg;base64,...",
+      "encoding": "base64"
+    }
+  ],
+  "commands": [
+    {
+      "name": "capture",
+      "display_name": "Capture",
+      "description": "Capture an image from the camera",
+      "payload_template": "{\"cmd\": \"capture\", \"request_id\": \"${request_id}\"}",
+      "parameters": []
+    },
+    {
+      "name": "sleep",
+      "display_name": "Sleep",
+      "description": "Put the camera into sleep mode for a specified duration",
+      "payload_template": "{\"cmd\": \"sleep\", \"request_id\": \"${request_id}\", \"params\": {\"duration_sec\": ${duration_sec}}}",
+      "parameters": [
+        {
+          "name": "duration_sec",
+          "display_name": "Sleep Duration",
+          "data_type": "Integer",
+          "unit": "seconds",
+          "min": 1,
+          "max": 3600,
+          "required": true
+        }
+      ]
+    }
+  ]
+}

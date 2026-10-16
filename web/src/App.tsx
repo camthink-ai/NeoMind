@@ -20,6 +20,8 @@ import { StartupLoading } from "@/components/StartupLoading"
 import { LoadingState } from "@/components/shared/LoadingState"
 import { forceViewportReset } from "@/hooks/useVisualViewport"
 import { useExtensionComponents } from "@/hooks/useExtensionComponents"
+import { useExtensionPages, type ExtensionPage } from "@/hooks/useExtensionPages"
+import { ExtensionPageHost } from "@/components/extensions/ExtensionPageHost"
 import { UpdateDialog, ServerUpgradeDialog } from '@/components/update'
 import { InstanceSwitchOverlay } from '@/components/layout/InstanceSwitchOverlay'
 import { GlobalChatFab } from '@/components/chat/GlobalChatFab'
@@ -258,6 +260,7 @@ function App() {
   useDataChangeEvents()
   const extensionComponents = useExtensionComponents({ autoSync: true, syncInterval: 60000 })
   const extensionSyncRef = useRef(extensionComponents.sync)
+  const { pages: extensionPages } = useExtensionPages()
   
   // 更新 ref 当 sync 函数变化时
   useEffect(() => {
@@ -643,6 +646,21 @@ function App() {
                       <Route path="/plugins" element={<Navigate to="/extensions" replace />} />
                       {/* System container page (mobile primary nav target) */}
                       <Route path="/system" element={<SystemPage />} />
+                      {/* Extension-contributed pages (manifest frontend.pages) */}
+                      {extensionPages.map((page: ExtensionPage) => (
+                        <Route
+                          key={`ext-${page.extension_id}-${page.type}`}
+                          path={page.route}
+                          element={
+                            <ExtensionPageHost
+                              bundleUrl={page.bundle_url}
+                              exportName={page.export_name}
+                              globalName={page.global_name}
+                              title={page.title}
+                            />
+                          }
+                        />
+                      ))}
                       {/* Catch all - 404 page */}
                       <Route path="*" element={<NotFound />} />
                     </Routes>

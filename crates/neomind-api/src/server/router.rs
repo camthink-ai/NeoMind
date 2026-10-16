@@ -106,6 +106,10 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             get(extensions::get_all_dashboard_components_handler),
         )
         .route(
+            "/api/extensions/pages",
+            get(extensions::get_extension_pages_handler),
+        )
+        .route(
             "/api/extensions/capabilities",
             get(extensions::list_extension_capabilities_handler),
         )

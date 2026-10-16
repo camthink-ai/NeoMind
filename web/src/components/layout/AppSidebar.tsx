@@ -15,7 +15,7 @@
  * it reserves `--titlebar-inset` (set here) and is the window drag region.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { useLocation, useNavigate } from "react-router-dom"
 import { startTransition } from "react"
@@ -49,10 +49,12 @@ import {
   DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu"
 import {
-  navItems,
+  navItems as baseNavItems,
   isNavItemActive,
+  mergeExtensionNavItems,
   type NavItem,
 } from "./navItems"
+import { useExtensionPages } from "@/hooks/useExtensionPages"
 import { InstanceSelector } from "./InstanceSelector"
 import { OnboardingDialog } from "@/components/onboarding/OnboardingDialog"
 import { useOnboarding } from "@/hooks/useOnboarding"
@@ -78,6 +80,11 @@ export function AppSidebar() {
   const { t, i18n } = useTranslation("common")
   const location = useLocation()
   const navigate = useNavigate()
+  const { pages: extensionPages } = useExtensionPages()
+  const navItems = useMemo(
+    () => mergeExtensionNavItems(baseNavItems, extensionPages),
+    [extensionPages],
+  )
   const openSettings = useStore((s) => s.openSettings)
   const user = useStore((s) => s.user)
   const logout = useStore((s) => s.logout)

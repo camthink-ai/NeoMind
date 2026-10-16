@@ -154,6 +154,41 @@ pub struct FrontendConfig {
     /// Dashboard components provided by this extension
     #[serde(default)]
     pub components: Vec<DashboardComponentDef>,
+    /// Standalone pages contributed into the main app (routes + nav).
+    /// Rendered by the core web via ExtensionPageHost.
+    #[serde(default)]
+    pub pages: Vec<ExtensionPageDef>,
+}
+
+/// A page contributed by an extension into the main application.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtensionPageDef {
+    /// Page type ID (unique per extension)
+    #[serde(rename = "type")]
+    pub page_type: String,
+    /// Display title (used as page heading fallback and nav tooltip)
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    /// Route path inside the main app, e.g. "/devices/wifi-onboarding"
+    pub route: String,
+    /// Nav placement: "main" appends to the primary group, a known section
+    /// id (e.g. "devices") inserts after that item. Empty = route only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nav_section: Option<String>,
+    /// Nav label (plain text; extensions may ship localized strings client-side)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nav_label: Option<String>,
+    /// Icon name from the lucide set (e.g. "wifi"); default puzzle
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    /// Path to bundled JS file (relative to frontend/)
+    pub bundle_path: String,
+    /// Exported component name inside the bundle
+    pub export_name: String,
+    /// Global variable name for the bundle (script tag loading)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub global_name: Option<String>,
 }
 
 /// Intermediate type for deserializing frontend field that accepts both string and struct formats
@@ -173,6 +208,7 @@ impl FrontendField {
         match self {
             FrontendField::String(_) => FrontendConfig {
                 components: Vec::new(),
+                pages: Vec::new(),
             },
             FrontendField::Struct(config) => config,
         }

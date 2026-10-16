@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Bluetooth, Pencil, Search, RefreshCw, Cpu, 
-  Wifi, Globe, Radio,
+  Wifi, Globe, Radio, Puzzle, Plug, Network,
   CheckCircle2, XCircle, Loader2,
   Copy, LucideIcon, KeyRound, Download, Lock, ShieldCheck,
 } from 'lucide-react'
@@ -30,6 +30,11 @@ import {
 import { FormField } from '@/components/ui/field'
 import { FormSection, FormSectionGroup } from '@/components/ui/form-section'
 import { BleProvisionTab } from './BleProvisionTab'
+const EXT_TAB_ICONS: Record<string, typeof Puzzle> = {
+  wifi: Wifi, radio: Radio, plug: Plug, network: Network, puzzle: Puzzle,
+}
+import { useExtensionPages } from '@/hooks/useExtensionPages'
+import { ExtensionPageHost } from '@/components/extensions/ExtensionPageHost'
 import { toast } from '@/components/ui/use-toast'
 import { api } from '@/lib/api'
 import { useServerUrl } from '@/lib/server-url'
@@ -50,7 +55,7 @@ interface AddDeviceGlobalDialogProps {
   adding: boolean
 }
 
-type TabValue = 'ble' | 'manual' | 'auto'
+type TabValue = 'ble' | 'manual' | 'auto' | string
 
 interface TabItem {
   value: TabValue
@@ -103,6 +108,18 @@ export function AddDeviceGlobalDialog({
   const fetchDevices = useStore((s) => s.fetchDevices)
   const fetchDeviceTypes = useStore((s) => s.fetchDeviceTypes)
   const [activeTab, setActiveTab] = useState<TabValue>('ble')
+  const { pages: extensionPages } = useExtensionPages()
+  // Extension-contributed tabs: pages that opt into the add-device dialog
+  // via nav_section "add-device" render as a tab hosting their bundle.
+  const extensionTabs: TabItem[] = extensionPages
+    .filter((pg) => pg.nav_section === 'add-device')
+    .map((pg) => ({
+      value: `ext:${pg.extension_id}:${pg.type}`,
+      icon: EXT_TAB_ICONS[pg.icon?.toLowerCase() ?? ''] ?? Puzzle,
+      labelKey: pg.nav_label ?? pg.title,
+      descKey: pg.description,
+    }))
+  const allTabs = [...TABS, ...extensionTabs]
 
   // Footer content supplied by the active tab
   const [footer, setFooter] = useState<ReactNode>(null)
@@ -133,7 +150,7 @@ export function AddDeviceGlobalDialog({
         {/* Sidebar: tab navigation (hidden on mobile) */}
         <FullScreenDialogSidebar>
           <nav className="flex flex-col py-2 gap-0.5 px-2">
-            {TABS.map((tab) => {
+            {allTabs.map((tab) => {
               const Icon = tab.icon
               const isActive = activeTab === tab.value
               return (
@@ -173,7 +190,7 @@ export function AddDeviceGlobalDialog({
               {/* Mobile tab bar - grid layout for equal width */}
               {isMobile && (
                 <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2 mb-5">
-                  {TABS.map((tab) => {
+                  {allTabs.map((tab) => {
                     const Icon = tab.icon
                     const isActive = activeTab === tab.value
                     return (
@@ -218,6 +235,25 @@ export function AddDeviceGlobalDialog({
 
               {activeTab === 'auto' && open && (
                 <AutoDiscoveryTab renderFooter={setTabFooter} />
+              )}
+
+              {extensionTabs.length > 0 && open && extensionTabs.some((et) => et.value === activeTab) && (
+                (() => {
+                  const pg = extensionPages.find(
+                    (p2) => `ext:${p2.extension_id}:${p2.type}` === activeTab,
+                  )
+                  if (!pg) return null
+                  return (
+                    <div className='flex-1 overflow-auto -mx-4 px-4 md:-mx-6 md:px-6'>
+                      <ExtensionPageHost
+                        bundleUrl={pg.bundle_url}
+                        exportName={pg.export_name}
+                        globalName={pg.global_name}
+                        title={pg.title}
+                      />
+                    </div>
+                  )
+                })()
               )}
             </div>
           </FullScreenDialogMain>

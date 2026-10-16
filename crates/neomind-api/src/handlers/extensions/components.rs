@@ -202,6 +202,9 @@ pub struct FrontendConfigDef {
     /// Dashboard components provided by this extension
     #[serde(default)]
     pub components: Vec<DashboardComponentDef>,
+    /// Standalone pages contributed into the main app (routes + nav)
+    #[serde(default)]
+    pub pages: Vec<neomind_core::extension::package::ExtensionPageDef>,
 }
 
 /// GET /api/extensions/:id/components
@@ -242,12 +245,11 @@ pub async fn get_extension_components_handler(
     })
 }
 
-/// Load dashboard components from extension manifest.
-pub(crate) fn load_extension_components(
-    // Log path configuration for debugging
+/// Locate and parse an extension's manifest.json (shared discovery logic).
+pub(crate) fn load_extension_manifest(
     extension_id: &str,
     file_path: Option<&std::path::PathBuf>,
-) -> Option<Vec<DashboardComponentDto>> {
+) -> Option<ExtensionManifest> {
     // Log path configuration for debugging
     let data_dir = neomind_core::paths::data_dir()
         .to_string_lossy()
@@ -380,11 +382,15 @@ pub(crate) fn load_extension_components(
         }
     };
 
-    tracing::debug!(
-        extension_id = %extension_id,
-        components_count = manifest.frontend.as_ref().map(|f| f.components.len()).unwrap_or(0),
-        "Parsed manifest.json"
-    );
+    Some(manifest)
+}
+
+/// Load dashboard components from an extension manifest.
+pub(crate) fn load_extension_components(
+    extension_id: &str,
+    file_path: Option<&std::path::PathBuf>,
+) -> Option<Vec<DashboardComponentDto>> {
+    let manifest = load_extension_manifest(extension_id, file_path)?;
 
     // Convert component definitions to DTOs
     let base_url = format!("/api/extensions/{}/assets", extension_id);
@@ -428,6 +434,80 @@ pub(crate) fn load_extension_components(
         .collect();
 
     Some(components)
+}
+
+/// DTO for a page contributed by an extension into the main app.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ExtensionPageDto {
+    pub extension_id: String,
+    /// Page type ID (unique per extension)
+    #[serde(rename = "type")]
+    pub page_type: String,
+    pub title: String,
+    pub description: String,
+    /// Route path inside the main app
+    pub route: String,
+    /// Nav placement ("main" or a section id like "devices"); None = route only
+    pub nav_section: Option<String>,
+    pub nav_label: Option<String>,
+    pub icon: Option<String>,
+    pub bundle_url: String,
+    pub export_name: String,
+    pub global_name: Option<String>,
+}
+
+/// Load contributed pages from an extension manifest.
+pub(crate) fn load_extension_pages(
+    extension_id: &str,
+    file_path: Option<&std::path::PathBuf>,
+) -> Option<Vec<ExtensionPageDto>> {
+    let manifest = load_extension_manifest(extension_id, file_path)?;
+    let pages = manifest.frontend.map(|f| f.pages).unwrap_or_default();
+    if pages.is_empty() {
+        return None;
+    }
+    let base_url = format!("/api/extensions/{}/assets", extension_id);
+    let dtos = pages
+        .into_iter()
+        .map(|def| ExtensionPageDto {
+            extension_id: extension_id.to_string(),
+            page_type: def.page_type,
+            title: def.title,
+            description: def.description,
+            route: def.route,
+            nav_section: def.nav_section,
+            nav_label: def.nav_label,
+            icon: def.icon,
+            bundle_url: format!("{}/{}", base_url, def.bundle_path.trim_start_matches('/')),
+            export_name: def.export_name,
+            global_name: def.global_name,
+        })
+        .collect();
+    Some(dtos)
+}
+
+/// GET /api/extensions/pages
+/// List all pages contributed by installed extensions (public metadata,
+/// same policy as dashboard-components).
+#[utoipa::path(
+    get,
+    path = "/api/extensions/pages",
+    tag = "extensions",
+    responses(
+        (status = 200, description = "All extension-contributed pages"),
+    )
+)]
+pub async fn get_extension_pages_handler(
+    State(state): State<ServerState>,
+) -> HandlerResult<Vec<ExtensionPageDto>> {
+    let mut all_pages = Vec::new();
+    let all_extensions = state.extensions.runtime.list().await;
+    for info in all_extensions {
+        if let Some(pages) = load_extension_pages(&info.metadata.id, info.path.as_ref()) {
+            all_pages.extend(pages);
+        }
+    }
+    ok(all_pages)
 }
 
 /// GET /api/extensions/:id/assets/*

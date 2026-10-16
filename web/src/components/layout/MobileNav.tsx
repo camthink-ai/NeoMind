@@ -15,6 +15,8 @@
  */
 
 import { useEffect, useMemo, useState } from "react"
+import { useExtensionPages as useExtensionPagesHook } from "@/hooks/useExtensionPages"
+import { mergeExtensionNavItems } from "./navItems"
 import { useNavigate, useLocation } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import {
@@ -67,7 +69,7 @@ interface NavEntry {
   labelKey: string
 }
 
-const PRIMARY: NavEntry[] = [
+const BASE_PRIMARY: NavEntry[] = [
   { id: "chat", path: "/chat", icon: MessageSquare, labelKey: "nav.dashboard" },
   { id: "agents", path: "/agents", icon: Bot, labelKey: "nav.agents" },
   { id: "devices", path: "/devices", icon: Cpu, labelKey: "nav.devices" },
@@ -90,9 +92,14 @@ export function MobileNav() {
   const isMobile = useIsMobile()
   const { t, i18n } = useTranslation("common")
   const navigate = useNavigate()
+  const { pages: extensionPages } = useExtensionPagesHook()
   const openSettings = useStore((state) => state.openSettings)
   const location = useLocation()
   const user = useStore((s) => s.user)
+  const PRIMARY = useMemo(
+    () => mergeExtensionNavItems(BASE_PRIMARY as never, extensionPages) as NavEntry[],
+    [extensionPages],
+  )
   const logout = useStore((s) => s.logout)
   const alerts = useStore((s) => s.alerts)
   const { open, setOpen } = useMobileNav()
