@@ -18,7 +18,7 @@ vision slot stays `LFM2.5-VL-3B`.
 
 | Role | Model | Measured (2026-09 corrected harness) | Why |
 |---|---|---|---|
-| **Agent** (tool calling) | `MiniCPM5-2B` (text) | **64 overall 8K (81% tool accuracy)** — statistically ties cloud deepseek-v4-flash; best-in-class CLI domain selection at 2B and flat across context windows | 1.5 GB (Q4_K_M); native OpenAI-format tool calling incl. parallel calls; ~53 tok/s on M4 Pro. Serve at **32K context** (product default) — the harness's 8K optimum assumed a light prompt; the production platform prompt (system+tools+memory) weighs 4-6K tokens and starves anything below 16K (see streaming `effective_history_budget`) |
+| **Agent** (tool calling) | `MiniCPM5-2B` (text) | **64 overall 8K (81% tool accuracy)** — statistically ties cloud deepseek-v4-flash; best-in-class CLI domain selection at 2B and flat across context windows | 1.5 GB (Q4_K_M); native OpenAI-format tool calling incl. parallel calls; ~120 tok/s solo decode on M4 Pro (2026-10). Serve at **128K context** (product default since 2026-10, auto-capped to device RAM) — the harness's 8K optimum assumed a light prompt; the production platform prompt (system+tools+memory) weighs 4-6K tokens and starves anything below 16K (see streaming `effective_history_budget`) |
 | **Perception** (vision) | `LFM2.5-VL-3B` (vision) | 10% as an agent (2026-08) — **do not use it as the agent** | Strong vision (ScreenSpot 80.7, OCR-class benchmarks), but the vision training materially degraded its tool calling despite sharing the 2.6B backbone |
 
 Both models speak OpenAI-compatible function calling through llama.cpp's
@@ -28,9 +28,9 @@ Both models speak OpenAI-compatible function calling through llama.cpp's
 
 | Model | 8K | 16K | 32K | Context response profile |
 |---|---|---|---|---|
-| Qwen3.5-4B | 37.9 | **69.5** | 65.8 | Starved at 8K, peaks at 16K (tool 73.6%, recall 50%, context 82%). Serve 16K. |
-| MiniCPM5-2B | **64.0** (R24) | 61.4 | ~68* | Flat — most robust. Product default serve 32K: flat across windows, and production prompt overhead (4-6K tokens) rules out 8K/16K for long agent turns. |
-| Ling-3.0-tiny | 61.7 (R24) | 47.8 | 44.9 | Cliff between 8K and 16K. 8K-only. |
+| Qwen3.5-4B | 37.9 | **69.5** | 65.8 | Starved at 8K, peaks at 16K (tool 73.6%, recall 50%, context 82%). Product default 128K (RAM-capped). |
+| MiniCPM5-2B | **64.0** (R24) | 61.4 | ~68* | Flat — most robust. Product default 128K (RAM-capped since 2026-10): flat across windows, and production prompt overhead (4-6K tokens) rules out 8K/16K for long agent turns. |
+| Ling-3.0-tiny | 61.7 (R24) | 47.8 | 44.9 | Cliff between 8K and 16K — keep sessions short. Product default 128K (RAM-capped). |
 | gemma-4-E2B | 59.1* | — | 59.7 | Flat / long-context-stable. |
 | LFM2.5-2.6B | 41.3* | — | 53.5 | Improves with context. |
 | deepseek-v4-flash (cloud, 128K) | — | — | 65.0 / 75.0 | Reference tier. Highest run variance of the field (±5) — investigation style under keyword scoring. |
@@ -78,6 +78,42 @@ At 8K, planted facts are the first casualty of history trimming; DeepSeek's
 50% is largely free 128K-context reading. A platform-side dedicated extractor
 is the highest-leverage fix.
 
+## 2026-10 regression-gate re-verification
+
+All models re-ran against the current platform build on a shared llama-server
+(request sampler temp 0.6 / top_p 0.85, thinking on, 33-case hard-signal
+regression gate, one round per case — single-round noise floor ±7pp):
+
+| Model | Pass | Notes |
+|---|---|---|
+| Nanbeige4.2-3B Q4_K_M (official agent sampler: temp 1.0) | 23/28 (82%) | catalog candidate — see below |
+| LFM2.5-24B-A2B Q4_0 | 24/30 (80%) | not in the catalog; 3 timeouts |
+| MiniCPM5-2B (official sampler point) | 23/30 (77%) | validates catalog v6's official-first sampler decision |
+| LFM2.5-2.6B QAD | 23/32 (72%) | |
+| Gemma4-E2B QAT | 22/32 (69%) | |
+| Nanbeige4.2-3B Q4_K_M (platform-unified 0.6/0.85) | 12/33 (36%) | same model as the 82% row — sampler point, not capability |
+
+Sampler point is the dominant variable for thinking small models: MiniCPM5-2B
+moved 39→77 and Nanbeige 36→82 when switched from ad-hoc/unified points to the
+model card's official one. Always evaluate a catalog candidate at its official
+card values before ranking it. Nanbeige caveats (2026-10, M4 Pro): Looped
+Transformer → slowest decode of the field (~49 t/s solo); temp 1.0 lengthens
+thinking and 5/33 cases hit the 600s wall-clock cap (excluded from the pass
+denominator); its official card recommends XML tool-call format while NeoMind's
+custom-endpoint path teaches the JSON text protocol — native-tools adaptation
+is the likely upside path. Context was verified NOT a factor (peak sequence
+20.6K/32K, zero truncations).
+
+The non-Nanbeige rows ran on a default 4-slot server. The platform sends
+background tasks (memory extraction, system context) concurrently with the
+foreground chat, and 4 slots split GPU throughput 3-4× (2026-10: 17 overlapping
+request pairs measured; per-request decode 2.4-12 t/s vs 49 t/s solo). Their
+pass rates are therefore floors. Both Nanbeige rows ran with **`--parallel 1`**
+(no contention, 0 truncations, peak sequence 20.6K/32K). Serve eval traffic
+with `--parallel 1` so the foreground stream gets full throughput, and warm the
+model with a request or two before the first case (cold-start costs ~5× on the
+first generation).
+
 ## Serving (llama.cpp)
 
 ```bash
@@ -85,9 +121,12 @@ is the highest-leverage fix.
 # Port 29375 is what the platform's builtin server uses (moved off 8081,
 # which collides with llama.cpp's own 8080-era tooling); a custom backend
 # registered at another port is fine — just keep `endpoint` in sync.
+# Context: the product default is now 128K, auto-capped to device RAM; for
+# manual serving start at 32768 and raise toward 131072 as memory allows.
 llama-server -m MiniCPM5-2B-Q4_K_M.gguf \
   --host 127.0.0.1 --port 29375 -ngl 99 -c 32768 \
-  --jinja --alias MiniCPM5-2B --temp 1.0 --top-p 0.95
+  --jinja --alias MiniCPM5-2B \
+  --temp 1.0 --top-p 0.95 --top-k 40 --min-p 0 --repeat-penalty 1.05
 
 # Perception — LFM2.5-VL-3B (vision; needs its mmproj)
 llama-server -m LFM2.5-VL-3B-Q4_K_M.gguf --mmproj mmproj-LFM2.5-VL-3B-F16.gguf \
@@ -95,25 +134,28 @@ llama-server -m LFM2.5-VL-3B-Q4_K_M.gguf --mmproj mmproj-LFM2.5-VL-3B-F16.gguf \
   --jinja --repeat-penalty 1.0 --top-k 50
 ```
 
-Non-negotiable flags (MiniCPM5):
+Non-negotiable settings (MiniCPM5):
 
 - **`--jinja`** — MiniCPM5's function calling is template-rendered XML; without
   the Jinja handler the calls never round-trip into OpenAI `tool_calls`.
-- **`-c 32768`** — the platform default (2026-09-12). The harness A/B showed
-  a flat overall score across 8K/32K (66.2 vs 67.9) with 8K ahead on tool
-  accuracy and parallel calls, BUT that measured a LIGHT prompt: the real
-  platform prompt (system + tool definitions + memory/skill context) weighs
-  4-6K tokens, which starves an 8K window and triggered constructed overflows
-  (see `stream_core::effective_history_budget`). 32K restores usable history
-  headroom at no measured accuracy cost.
-- **`--temp 1.0 --top-p 0.95`** — model-card recommendation, used server-side
-  as default; NeoMind's requests carry their own sampler (temp 0.6) which
-  overrides it — both were validated working.
-- **`--repeat-penalty 1.0`** — Mamba-style hybrids degrade under repeat
-  penalty (vendor recommendation; verified in testing).
-- **`-c 131072`** — the hybrid KV state is cheap; long agent loops on slow
-  models legitimately grow past 20k tokens and truncation breaks multi-round
-  tool flows.
+- **Context: 128K default (RAM-capped)** — platform default since 2026-10
+  (native 131072; was 32K, 2026-09-12). The harness A/B showed a flat overall
+  score across 8K/32K (66.2 vs 67.9) with 8K ahead on tool accuracy and
+  parallel calls, BUT that measured a LIGHT prompt: the real platform prompt
+  (system + tool definitions + memory/skill context) weighs 4-6K tokens, which
+  starves an 8K window and triggered constructed overflows (see
+  `stream_core::effective_history_budget`). 32K+ restores usable history
+  headroom at no measured accuracy cost; the spawn auto-caps to available
+  device RAM. Long agent loops on slow models legitimately grow past 20K
+  tokens — truncation breaks multi-round tool flows, so size for the workload.
+- **`--temp 1.0 --top-p 0.95 --top-k 40`** — model-card recommendation, used
+  server-side as default; NeoMind's requests carry their own sampler (temp 0.6)
+  which overrides it — both were validated working.
+- **`--min-p 0 --repeat-penalty 1.05`** — the official card's anti-repetition
+  pair (OpenBMB #374: llama.cpp's 0.05 min_p default causes runaway loops).
+  Validated 2026-10 on the 33-case regression gate: **77% — the model's best
+  measured sampler point**. Do not crank the penalty higher: a 1.15 recipe
+  degraded structured tool-call output (39%, 2026-10).
 
 Quantization: Q4_K_M is the sweet spot measured here. Q6_K was not observed to
 matter (test aborted — effect below noise for the effort).

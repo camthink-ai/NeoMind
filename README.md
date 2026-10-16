@@ -174,15 +174,15 @@ nginx reverse proxy, manual install — are in the wiki's
 
 ### Recommended Local Models
 
-Pick a catalog model in **Settings → LLM Backends** (or the first-run wizard) — it downloads and runs with zero configuration. Context defaults to each model's tested optimum; 32K/64K/128K presets and custom values available.
+Pick a catalog model in **Settings → LLM Backends** (or the first-run wizard) — it downloads and runs with zero configuration. Context defaults to 128K and auto-caps to available RAM; 32K/64K/128K presets and custom values available.
 
 Scores from the 2026-09 agent eval: 12 scenarios per cycle (Chinese + English, 40-turn long-horizon, tools-breadth), executed against a seeded sandbox platform under identical conditions. Finalists ran two cycles.
 
 | Model | Quant | Size | Min RAM | 8K | 16K | 32K | Best for |
 |-------|-------|------|---------|-----|------|------|----------|
-| **MiniCPM5-2B** ⭐ | Q4_K_M | 1.5 GB | 3 GB | **64** | 61 | ~68* | Most robust across windows, 81% tool accuracy 8K. Apache-2.0. Serve 8K. |
-| **Qwen 3.5 4B** | Q4_K_M | 2.7 GB | 4 GB | 38* | **70** | 66 | Strongest agent at ≥16K context; collapses at 8K. Vision via mmproj. Serve 16K. |
-| **Ling 3.0-tiny** | Q4_K_M | 4.8 GB | 6 GB | 62 | 48 | 45 | Fast MoE, 8K-only — cliffs past 8K. Needs llama.cpp ≥ b10545. |
+| **MiniCPM5-2B** ⭐ | Q4_K_M | 1.5 GB | 3 GB | **64** | 61 | ~68* | Most robust across windows, 81% tool accuracy 8K. Apache-2.0. Default 128K (RAM-capped); keep ≥32K for long agent turns. |
+| **Qwen 3.5 4B** | Q4_K_M | 2.7 GB | 4 GB | 38* | **70** | 66 | Strongest agent at ≥16K context; collapses at 8K. Vision via mmproj. Default 128K (RAM-capped). |
+| **Ling 3.0-tiny** | Q4_K_M | 4.8 GB | 6 GB | 62 | 48 | 45 | Fast MoE; quality cliffs past 8K — short sessions advised. Default 128K (RAM-capped). Needs llama.cpp ≥ b10545. |
 | **Gemma 4 E2B** | QAT q4_0 | 3.1 GB | 4.5 GB | 59* | — | 60 | Long-context-stable; weak resource creation. |
 | **LFM 2.5 2.6B** | QAD Q4_0 | 1.5 GB | 3 GB | 41* | — | 54 | Improves with context; native 128K. |
 | deepseek-v4-flash (cloud) | — | — | — | — | — | 65–75 | Same tier as the best locals, 5× faster per turn. |
@@ -190,7 +190,9 @@ Scores from the 2026-09 agent eval: 12 scenarios per cycle (Chinese + English, 4
 
 \*Earlier 5-scenario suite at that window. Finalists were measured twice: stable models repeat within ±1 point; deepseek-v4-flash spread 65–75 (investigative style is variance-prone under keyword scoring).
 
-Under fair scoring the top four are one tier (83–90% tool accuracy) — pick by footprint, latency, and context fit: **MiniCPM5-2B 8K** default, **Qwen 16K** strongest, **deepseek-v4-flash** cloud fallback. Full data: [docs/edge-models.md](docs/edge-models.md) · catalog: [NeoMind-Runtimes](https://github.com/camthink-ai/NeoMind-Runtimes).
+Under fair scoring the top four are one tier (83–90% tool accuracy) — pick by footprint, latency, and context fit: **MiniCPM5-2B** default, **Qwen 3.5 4B** strongest local agent, **deepseek-v4-flash** cloud fallback.
+
+**2026-10 re-verification:** all catalog locals re-ran on the 33-case hard-signal regression gate (current platform build, thinking on): MiniCPM5-2B 77% at its official sampler point, LFM 2.5 2.6B 72%, Gemma 4 E2B 69% — the one-tier picture holds on the newer suite. Full data: [docs/edge-models.md](docs/edge-models.md) · catalog: [NeoMind-Runtimes](https://github.com/camthink-ai/NeoMind-Runtimes).
 
 ### Development
 
