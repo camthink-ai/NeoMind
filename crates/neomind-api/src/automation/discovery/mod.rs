@@ -36,7 +36,7 @@ pub use statistics_analyzer::{
     compute_quick_stats, StatisticsAnalyzer, StatisticsResult, ValuePattern, ValueStatistics,
 };
 pub use structure_analyzer::{
-    extract_field_name, normalize_path, InferredType, PathInfo, StructureAnalyzer, StructureResult,
+    extract_field_name, InferredType, PathInfo, StructureAnalyzer, StructureResult,
 };
 pub use types::*;
 pub use virtual_metric::{

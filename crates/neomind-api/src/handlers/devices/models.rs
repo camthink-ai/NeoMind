@@ -76,6 +76,10 @@ pub struct DeviceTypeDto {
     /// Command count (for backward compatibility)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub command_count: Option<usize>,
+    /// Origin marker: Some(version) for built-in seeded types, None for
+    /// user-created / imported ones
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub builtin_version: Option<String>,
 }
 
 /// Metric definition for API responses

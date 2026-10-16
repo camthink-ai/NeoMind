@@ -82,12 +82,16 @@ impl MessageRateLimiter {
 
 /// Type signature for matching similar device types
 ///
-/// A type signature is a fingerprint based on the semantic and data types
-/// of metrics, allowing devices with the same data structure to share types.
+/// A type signature is a fingerprint based on the metric paths, semantic
+/// types, and data types, allowing devices with the same data structure to
+/// share types. Paths are part of the fingerprint on purpose: two devices
+/// whose fields carry the same semantics but live under different paths
+/// (e.g. `{"temp":21}` vs `{"sensors":{"temperature":21}}`) must NOT be
+/// matched — the reused template would extract nothing from the new device.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TypeSignature {
-    /// Ordered list of metric signatures (semantic_type, data_type pairs)
-    pub metric_signatures: Vec<(String, String)>,
+    /// Ordered list of metric signatures (path, semantic_type, data_type triples)
+    pub metric_signatures: Vec<(String, String, String)>,
     /// Device category for coarse filtering
     pub category: String,
 }
@@ -449,8 +453,20 @@ impl AutoOnboardManager {
             DiscoveryError::InvalidData(format!("Draft device not found: {}", device_id))
         })?;
 
-        // Don't add samples if already analyzing
-        if draft.status != DraftDeviceStatus::Collecting {
+        // Accept follow-up samples while the draft awaits review or sits in a
+        // failed analysis — the FIRST frame alone defines the generated type,
+        // and it may miss optional fields (null values are skipped during
+        // analysis) or capture an atypical frame. Every added sample refines
+        // the generated type via re-analysis. Terminal states (registering /
+        // registered / rejected) no longer accept samples.
+        let accepts_samples = matches!(
+            draft.status,
+            DraftDeviceStatus::Collecting
+                | DraftDeviceStatus::WaitingProcessing
+                | DraftDeviceStatus::Analyzing
+                | DraftDeviceStatus::Failed
+        );
+        if !accepts_samples {
             return Ok(false);
         }
 
@@ -496,8 +512,11 @@ impl AutoOnboardManager {
                     .await;
             });
 
-            // Check if ready for analysis
-            if draft.ready_for_analysis(MIN_SAMPLES_FOR_ANALYSIS) {
+            // (Re-)trigger analysis: the first sample while Collecting, or a
+            // later sample refining an already-generated (or failed) type.
+            // Skip only while an analysis run is in flight — its tail re-check
+            // picks up samples stored in the meantime.
+            if draft.status != DraftDeviceStatus::Analyzing {
                 let draft_id = draft.id.clone();
                 let device_id = draft.device_id.clone();
                 let samples = draft.json_samples();
@@ -526,13 +545,33 @@ impl AutoOnboardManager {
         }
     }
 
-    /// Analyze collected samples and generate device type
-    pub async fn analyze_device(
+    /// Analyze collected samples and generate device type.
+    ///
+    /// Boxed future on purpose: the tail re-check (re-)spawns
+    /// `analyze_device` when samples arrived mid-analysis, and a directly
+    /// self-spawning async fn makes the future's `Send`ness cyclic — the
+    /// box breaks the type recursion.
+    pub fn analyze_device<'a>(
+        &'a self,
+        draft_id: &'a str,
+        device_id: &'a str,
+        samples: Vec<serde_json::Value>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<GeneratedDeviceType>> + Send + 'a>>
+    {
+        Box::pin(self.analyze_device_inner(draft_id, device_id, samples))
+    }
+
+    /// Analysis body — see `analyze_device` for why it is reached boxed.
+    async fn analyze_device_inner(
         &self,
         draft_id: &str,
         device_id: &str,
         samples: Vec<serde_json::Value>,
     ) -> Result<GeneratedDeviceType> {
+        // Count at entry: the tail re-check compares against it to catch
+        // samples stored mid-analysis (see add_sample_to_draft).
+        let analyzed_sample_count = samples.len();
+
         // Update status to Analyzing
         {
             let mut drafts = self.drafts.write().await;
@@ -730,6 +769,28 @@ impl AutoOnboardManager {
             type_id,
             reusing_type
         );
+
+        // Samples that arrived while this analysis was running were stored
+        // but not analyzed (add_sample_to_draft skips spawning mid-analysis).
+        // Re-run so later frames can refine the generated type — a first
+        // frame may miss optional fields (nulls are skipped above).
+        {
+            let drafts = self.drafts.read().await;
+            if let Some(draft) = drafts.get(device_id) {
+                if draft.samples.len() > analyzed_sample_count {
+                    let manager = self.clone_for_task();
+                    let draft_id_str = draft_id.to_string();
+                    let device_id_str = device_id.to_string();
+                    let samples = draft.json_samples();
+                    drop(drafts);
+                    tokio::spawn(async move {
+                        let _ = manager
+                            .analyze_device(&draft_id_str, &device_id_str, samples)
+                            .await;
+                    });
+                }
+            }
+        }
 
         // Get the generated type from drafts
         let drafts = self.drafts.read().await;
@@ -1248,19 +1309,23 @@ impl AutoOnboardManager {
                 std::cmp::Ordering::Equal => {
                     let a_data = format!("{:?}", a.data_type);
                     let b_data = format!("{:?}", b.data_type);
-                    a_data.cmp(&b_data)
+                    a_data.cmp(&b_data).then_with(|| a.path.cmp(&b.path))
                 }
                 other => other,
             }
         });
 
+        // The path is part of every metric signature: it is the extraction
+        // identity, so same-semantics-different-paths devices must not hash
+        // to the same signature (a reused template with foreign paths
+        // extracts nothing from the new device).
         let metric_signatures = sorted_metrics
             .iter()
             .map(|m| {
                 // Convert semantic_type and data_type to strings for consistent hashing
                 let semantic_str = format!("{:?}", m.semantic_type);
                 let data_type_str = format!("{:?}", m.data_type);
-                (semantic_str, data_type_str)
+                (m.path.clone(), semantic_str, data_type_str)
             })
             .collect();
 
@@ -1605,6 +1670,49 @@ mod tests {
             manager.infer_category(&metrics),
             DeviceCategory::TemperatureSensor
         );
+    }
+
+    #[test]
+    fn test_type_signature_includes_paths() {
+        // Same semantics + data types under DIFFERENT paths must not collide:
+        // a reused template built from foreign paths extracts nothing from
+        // the new device (silent data loss — the reason paths are part of
+        // the signature).
+        let manager = create_test_manager();
+        let mk = |name: &str, path: &str, semantic: SemanticType| DiscoveredMetric {
+            name: name.to_string(),
+            path: path.to_string(),
+            data_type: DataType::Float,
+            semantic_type: semantic,
+            ..Default::default()
+        };
+
+        let flat = vec![
+            mk("temp", "temp", SemanticType::Temperature),
+            mk("hum", "hum", SemanticType::Humidity),
+        ];
+        let nested = vec![
+            mk(
+                "temperature",
+                "sensors.temperature",
+                SemanticType::Temperature,
+            ),
+            mk("humidity", "sensors.humidity", SemanticType::Humidity),
+        ];
+
+        let sig_flat = manager.compute_type_signature(&flat, &DeviceCategory::Unknown);
+        let sig_nested = manager.compute_type_signature(&nested, &DeviceCategory::Unknown);
+        assert_ne!(
+            sig_flat.to_hash(),
+            sig_nested.to_hash(),
+            "same semantics under different paths must not hash equal"
+        );
+        assert!(manager.compute_signature_similarity(&sig_flat, &sig_nested) < 1.0);
+
+        // Identical structure (same paths) still matches exactly
+        let sig_flat_again = manager.compute_type_signature(&flat, &DeviceCategory::Unknown);
+        assert_eq!(sig_flat.to_hash(), sig_flat_again.to_hash());
+        assert_eq!(sig_flat, sig_flat_again);
     }
 
     fn create_test_manager() -> AutoOnboardManager {

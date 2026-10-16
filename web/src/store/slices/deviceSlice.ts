@@ -449,7 +449,9 @@ export const createDeviceSlice: StateCreator<
       const newValues = buildNestedValues(data.metrics || {})
       // Sync status fields (online/status/last_seen/transport_*) back to the
       // devices list cache — same rationale as fetchDeviceDetails above.
-      const frag = data as Partial<DeviceStatusFragment>
+      // These fields live under `data.device` in the /current envelope; reading
+      // them from the top level left every field undefined (silent no-op).
+      const frag = data.device as Partial<DeviceStatusFragment>
       const online = frag.online
       const status = frag.status
       const lastSeen = frag.last_seen

@@ -336,16 +336,6 @@ struct PathTypeInfo {
     values: Vec<Value>,
 }
 
-/// Get a normalized path for use as a metric name
-pub fn normalize_path(path: &str) -> String {
-    path.replace("$.", "")
-        .replace("$", "")
-        .replace("[*]", "")
-        .replace("[", "_")
-        .replace("]", "")
-        .replace(".", "_")
-}
-
 /// Extract a simple field name from a JSON path
 pub fn extract_field_name(path: &str) -> String {
     if let Some(last_dot) = path.rfind('.') {
@@ -361,14 +351,6 @@ pub fn extract_field_name(path: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn test_normalize_path() {
-        assert_eq!(normalize_path("$.temperature"), "temperature");
-        assert_eq!(normalize_path("$.sensors[0].temp"), "sensors_0_temp");
-        assert_eq!(normalize_path("$"), "");
-        assert_eq!(normalize_path("$.data.humidity"), "data_humidity");
-    }
 
     #[test]
     fn test_extract_field_name() {

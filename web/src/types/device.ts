@@ -70,6 +70,9 @@ export interface DeviceType {
   // Optional counts for display purposes
   metric_count?: number
   command_count?: number
+  // Origin marker: present for built-in seeded types (NE101/NE301/NE302…),
+  // absent for user-created / imported ones
+  builtin_version?: string | null
 }
 
 export interface MetricDefinition {

@@ -47,6 +47,16 @@ export function DevicesPage() {
     devicesLoading: s.devicesLoading,
   }), shallow)
 
+  // Attached device count per device-type id — drives the types-tab column
+  // and the delete confirmation warning
+  const deviceTypeDeviceCounts = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const d of devices) {
+      if (d.device_type) counts[d.device_type] = (counts[d.device_type] ?? 0) + 1
+    }
+    return counts
+  }, [devices])
+
   // Group device type data selectors (change together)
   const { deviceTypes, deviceTypesLoading } = useStore((s) => ({
     deviceTypes: s.deviceTypes,
@@ -558,9 +568,12 @@ export function DevicesPage() {
   }
 
   const handleDeleteDeviceType = async (id: string) => {
+    const attachedCount = deviceTypeDeviceCounts[id] ?? 0
     const confirmed = await confirm({
       title: t('common:delete'),
-      description: t('devices:deleteTypeConfirm'),
+      description: attachedCount > 0
+        ? t('devices:deleteTypeConfirmWithDevices', { count: attachedCount })
+        : t('devices:deleteTypeConfirm'),
       confirmText: t('common:delete'),
       cancelText: t('common:cancel'),
       variant: "destructive"
@@ -868,6 +881,7 @@ export function DevicesPage() {
                 paginatedDeviceTypes={paginatedDeviceTypes}
                 deviceTypePage={deviceTypePage}
                 deviceTypesPerPage={deviceTypesPerPage}
+                deviceCounts={deviceTypeDeviceCounts}
                 onRefresh={handleRefreshDeviceTypes}
                 onViewDetails={handleViewDeviceType}
                 onEdit={handleEditDeviceType}

@@ -874,6 +874,10 @@ impl DeviceRegistryStore {
                 "ne301_camera",
                 include_str!("builtin_types/ne301_camera.json"),
             ),
+            (
+                "ne302_camera",
+                include_str!("builtin_types/ne302_camera.json"),
+            ),
         ];
 
         let mut changed = 0;
@@ -883,9 +887,12 @@ impl DeviceRegistryStore {
             if self.load_template(device_type)?.is_some() {
                 continue;
             }
-            let bundled: DeviceTypeTemplate = serde_json::from_str(json).map_err(|e| {
+            let mut bundled: DeviceTypeTemplate = serde_json::from_str(json).map_err(|e| {
                 Error::Serialization(format!("Invalid builtin template {}: {}", device_type, e))
             })?;
+            // Mark the origin so the API/UI can distinguish builtin types
+            // (insert-only re-seeded on upgrade) from user-created ones.
+            bundled.builtin_version = Some(env!("CARGO_PKG_VERSION").to_string());
             self.save_template(&bundled)?;
             changed += 1;
         }
@@ -1187,13 +1194,14 @@ mod tests {
     fn test_seed_builtin_templates() {
         let store = create_temp_store();
 
-        // First seed should insert NE101 and NE301
+        // First seed should insert NE101, NE301 and NE302
         let seeded = store.seed_builtin_templates().unwrap();
-        assert_eq!(seeded, 2);
+        assert_eq!(seeded, 3);
 
         // Templates should exist
         assert!(store.template_exists("ne101_camera").unwrap());
         assert!(store.template_exists("ne301_camera").unwrap());
+        assert!(store.template_exists("ne302_camera").unwrap());
 
         // Verify NE101 content
         let ne101 = store.load_template("ne101_camera").unwrap().unwrap();
@@ -1207,6 +1215,22 @@ mod tests {
         assert!(ne301.name.contains("NE301") || ne301.name.contains("Edge AI"));
         assert!(!ne301.metrics.is_empty());
         assert!(!ne301.commands.is_empty()); // NE301 has capture/sleep commands
+
+        // Verify NE302 content (NE301-compatible protocol + trigger_type)
+        let ne302 = store.load_template("ne302_camera").unwrap().unwrap();
+        assert_eq!(ne302.device_type, "ne302_camera");
+        assert!(ne302.name.contains("NE302") || ne302.name.contains("Edge AI"));
+        assert!(!ne302.metrics.is_empty());
+        assert!(!ne302.commands.is_empty()); // NE302 shares NE301 capture/sleep commands
+        assert!(ne302
+            .metrics
+            .iter()
+            .any(|m| m.name == "metadata.trigger_type")); // NE302-only field
+        assert_eq!(ne302.store_raw, Some(false)); // NE301 parity: skip _raw
+        assert!(
+            ne302.builtin_version.is_some(),
+            "seeded builtins carry their origin marker"
+        );
 
         // Second seed is a no-op (insert-only: existing templates are never touched)
         let seeded_again = store.seed_builtin_templates().unwrap();
@@ -1237,9 +1261,12 @@ mod tests {
         };
         store.save_template(&custom).unwrap();
 
-        // Seed must NOT overwrite the existing NE101; only insert NE301 fresh
+        // Seed must NOT overwrite the existing NE101; insert NE301/NE302 fresh
         let seeded = store.seed_builtin_templates().unwrap();
-        assert_eq!(seeded, 1, "only NE301 inserted; existing NE101 untouched");
+        assert_eq!(
+            seeded, 2,
+            "only NE301/NE302 inserted; existing NE101 untouched"
+        );
 
         // Existing NE101 is preserved verbatim (not reset to the bundled one)
         let loaded = store.load_template("ne101_camera").unwrap().unwrap();
@@ -1269,7 +1296,7 @@ mod tests {
 
         // Seed should NOT overwrite the user template
         let seeded = store.seed_builtin_templates().unwrap();
-        assert_eq!(seeded, 1); // Only NE301 was inserted, NE101 was skipped
+        assert_eq!(seeded, 2); // Only NE301/NE302 were inserted, NE101 was skipped
 
         // Verify user template is preserved
         let loaded = store.load_template("ne101_camera").unwrap().unwrap();

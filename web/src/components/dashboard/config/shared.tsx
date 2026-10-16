@@ -2,10 +2,11 @@ import { Circle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { textNano } from '@/design-system/tokens/typography'
 
-export function ItemBadge({ itemType, t }: { itemType: 'template' | 'virtual' | 'info'; t: (key: string) => string }) {
+export function ItemBadge({ itemType, t }: { itemType: 'template' | 'virtual' | 'runtime' | 'info'; t: (key: string) => string }) {
   const config = {
     template: { label: t('dataSource.badgeTemplate'), className: 'bg-info-light text-info border-info' },
     virtual: { label: t('dataSource.badgeVirtual'), className: 'bg-accent-purple-light text-accent-purple border-accent-purple-light' },
+    runtime: { label: t('dataSource.badgeRuntime'), className: 'bg-muted-30 text-muted-foreground border-muted' },
     info: { label: t('dataSource.badgeInfo'), className: 'bg-warning-light text-warning border-warning' },
   }[itemType]
   return (

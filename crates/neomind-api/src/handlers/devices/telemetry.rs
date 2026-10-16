@@ -225,14 +225,16 @@ pub async fn get_device_telemetry_handler(
                     _ => vec!["_raw".to_string()],
                 }
             } else {
-                // Include template metrics + sub-metrics + transform virtual metrics
+                // Template metrics, plus every metric that actually exists in
+                // storage: transform-generated, sub-metrics of template
+                // containers, and runtime auto-extracted metrics the device
+                // reported under names absent from the template. The old
+                // whitelist (transform/sub-path only) made the default query
+                // blind to the only metrics with data whenever a template
+                // didn't match the device's real payload.
                 let mut all_metrics: Vec<String> =
                     template.metrics.iter().map(|m| m.name.clone()).collect();
 
-                // Transform-generated metric namespaces (with dot notation)
-                let transform_namespaces = get_transform_namespaces();
-
-                // Add Transform-generated AND sub-metrics from storage
                 if let Ok(storage_metrics) = state
                     .devices
                     .telemetry
@@ -240,22 +242,14 @@ pub async fn get_device_telemetry_handler(
                     .await
                 {
                     for metric in storage_metrics {
-                        // Skip template metrics and _raw
+                        // Skip the raw payload dump and already-listed names
                         if metric == "_raw"
                             || template_metric_names.contains(&metric)
                             || all_metrics.contains(&metric)
                         {
                             continue;
                         }
-                        // Add Transform-generated metrics or sub-metrics of template containers
-                        let is_transform_metric =
-                            transform_namespaces.iter().any(|p| metric.starts_with(p));
-                        let is_sub_metric = template_metric_names
-                            .iter()
-                            .any(|t| metric.starts_with(&format!("{}.", t)));
-                        if is_transform_metric || is_sub_metric {
-                            all_metrics.push(metric);
-                        }
+                        all_metrics.push(metric);
                     }
                 }
 

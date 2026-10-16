@@ -635,6 +635,24 @@ function DataDefinitionStep({
       // Handle array of samples
       const samples = Array.isArray(parsed) ? parsed : [parsed]
 
+      // Guard: a firmware config export is not telemetry. Devices like the
+      // NE302 camera can export their whole config tree as JSON; flattening
+      // it turns hundreds of settings into "metrics" that no uplink ever
+      // matches (this exact case produced a 269-metric ne302_camera type).
+      const looksLikeConfigDump = samples.some(
+        (s) =>
+          s &&
+          typeof s === 'object' &&
+          !Array.isArray(s) &&
+          (('config' in s && s.config && typeof s.config === 'object') ||
+            'export_version' in s ||
+            'config_magic_number' in s)
+      )
+      if (looksLikeConfigDump) {
+        setImportError(t('devices:metricEditor.configDumpDetected'))
+        return
+      }
+
       // Collect all unique keys and their values using flattenJson for nested support
       const valueMap = new Map<string, Set<unknown>>()
       for (const sample of samples) {
@@ -692,8 +710,11 @@ function DataDefinitionStep({
         }
 
         metricsToAdd.push({
-          // Convert dotted path to snake_case (e.g., "sensor.temperature" -> "sensor_temperature")
-          name: key.replace(/\./g, '_'),
+          // Keep the dotted path as the metric name: template metric names
+          // double as extraction paths — extract_by_path resolves dots and
+          // [index] segments (snake_case names made every imported metric
+          // permanently unextractable).
+          name: key,
           display_name: finalDisplayName,
           data_type: dataType,
           unit: '',

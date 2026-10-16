@@ -299,7 +299,6 @@ pub async fn approve_draft_device(
             } else {
                 ConnectionConfig {
                     telemetry_topic: Some(topic.clone()),
-                    json_path: Some("$.value".to_string()),
                     ..Default::default()
                 }
             };
@@ -377,6 +376,7 @@ pub async fn approve_draft_device(
                 uplink_samples: Vec::new(), // Samples not stored in draft
                 default_offline_timeout_secs: None,
                 store_raw: None,
+                builtin_version: None, // auto-onboard types are user-domain, never builtin
             };
 
             // Register the device type template
@@ -402,7 +402,6 @@ pub async fn approve_draft_device(
             } else {
                 ConnectionConfig {
                     telemetry_topic: Some(topic.clone()),
-                    json_path: Some("$.value".to_string()),
                     ..Default::default()
                 }
             };
@@ -476,39 +475,37 @@ fn convert_metrics_to_template(metrics: &[DiscoveredMetric]) -> Vec<MetricDefini
     metrics
         .iter()
         .map(|m| {
-            // Map semantic type to data type
-            let data_type = match m.semantic_type {
-                SemanticType::Temperature
-                | SemanticType::Humidity
-                | SemanticType::Pressure
-                | SemanticType::Light
-                | SemanticType::Power
-                | SemanticType::Energy
-                | SemanticType::Speed
-                | SemanticType::Flow
-                | SemanticType::Level
-                | SemanticType::Co2
-                | SemanticType::Pm25
-                | SemanticType::Voc => MetricDataType::Float,
+            // Data type comes from the OBSERVED values; the semantic type only
+            // fills the gap when the observed type carries no information
+            // (unknown/all-null fields). The old mapping let the semantic type
+            // override real values — numeric battery/rssi fields were forced
+            // to String (SemanticType::Battery/Rssi arm), breaking charts and
+            // numeric transforms.
+            let data_type = match m.data_type {
+                DataType::Float => MetricDataType::Float,
+                DataType::Integer => MetricDataType::Integer,
+                DataType::Boolean => MetricDataType::Boolean,
+                DataType::String => MetricDataType::String,
+                DataType::Array => MetricDataType::Array { element_type: None },
+                DataType::Binary => MetricDataType::Binary,
+                DataType::Object | DataType::Null | DataType::Unknown => match m.semantic_type {
+                    SemanticType::Temperature
+                    | SemanticType::Humidity
+                    | SemanticType::Pressure
+                    | SemanticType::Light
+                    | SemanticType::Power
+                    | SemanticType::Energy
+                    | SemanticType::Speed
+                    | SemanticType::Flow
+                    | SemanticType::Level
+                    | SemanticType::Co2
+                    | SemanticType::Pm25
+                    | SemanticType::Voc => MetricDataType::Float,
 
-                SemanticType::Motion | SemanticType::Switch => MetricDataType::Boolean,
+                    SemanticType::Motion | SemanticType::Switch => MetricDataType::Boolean,
 
-                SemanticType::Dimmer => MetricDataType::Integer,
+                    SemanticType::Dimmer => MetricDataType::Integer,
 
-                SemanticType::Color => MetricDataType::String,
-
-                SemanticType::Status
-                | SemanticType::Error
-                | SemanticType::Alarm
-                | SemanticType::Battery
-                | SemanticType::Rssi => MetricDataType::String,
-
-                SemanticType::Unknown => match m.data_type {
-                    DataType::Float => MetricDataType::Float,
-                    DataType::Integer => MetricDataType::Integer,
-                    DataType::Boolean => MetricDataType::Boolean,
-                    DataType::String => MetricDataType::String,
-                    DataType::Array => MetricDataType::Array { element_type: None },
                     _ => MetricDataType::String,
                 },
             };
@@ -1243,4 +1240,61 @@ fn infer_semantic_type_from_metric_name(name: &str) -> SemanticType {
     }
 
     SemanticType::Unknown
+}
+
+#[cfg(test)]
+mod convert_metrics_tests {
+    use super::*;
+    use neomind_devices::MetricDataType;
+
+    fn metric(path: &str, data_type: DataType, semantic_type: SemanticType) -> DiscoveredMetric {
+        DiscoveredMetric {
+            name: path.to_string(),
+            display_name: path.to_string(),
+            description: String::new(),
+            path: path.to_string(),
+            data_type,
+            semantic_type,
+            unit: None,
+            value_range: None,
+            is_readable: true,
+            is_writable: false,
+        }
+    }
+
+    #[test]
+    fn observed_data_type_wins_over_semantic_type() {
+        // Numeric battery/rssi fields used to be forced to String by the
+        // semantic-type arm (SemanticType::Battery/Rssi → String), breaking
+        // charts and numeric transforms.
+        let metrics = vec![
+            metric(
+                "device_info.battery_percent",
+                DataType::Integer,
+                SemanticType::Battery,
+            ),
+            metric("rssi", DataType::Integer, SemanticType::Rssi),
+            metric("status", DataType::String, SemanticType::Status),
+        ];
+        let defs = convert_metrics_to_template(&metrics);
+
+        assert!(matches!(defs[0].data_type, MetricDataType::Integer));
+        assert!(matches!(defs[1].data_type, MetricDataType::Integer));
+        assert!(matches!(defs[2].data_type, MetricDataType::String));
+        // Dotted path is kept as the metric name (it doubles as the
+        // extraction path).
+        assert_eq!(defs[0].name, "device_info.battery_percent");
+    }
+
+    #[test]
+    fn semantic_type_fills_uninformative_observed_types() {
+        let metrics = vec![
+            metric("temp", DataType::Unknown, SemanticType::Temperature),
+            metric("flag", DataType::Null, SemanticType::Switch),
+        ];
+        let defs = convert_metrics_to_template(&metrics);
+
+        assert!(matches!(defs[0].data_type, MetricDataType::Float));
+        assert!(matches!(defs[1].data_type, MetricDataType::Boolean));
+    }
 }

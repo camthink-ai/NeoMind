@@ -630,7 +630,7 @@ export function UnifiedDataSourceConfig({
         isSelected: boolean
         hasData: boolean | null
         dataPointCount?: number
-        itemType: 'template' | 'virtual' | 'info'
+        itemType: 'template' | 'virtual' | 'runtime' | 'info'
         unit?: string
         dataType?: string
       }
@@ -669,9 +669,12 @@ export function UnifiedDataSourceConfig({
         })
       }
 
-      // Add virtual metrics from summary (not in template)
+      // Add non-template metrics from summary: transform-generated virtual
+      // metrics AND runtime auto-extracted metrics the device actually reported.
+      // Gating on is_virtual hid the only metrics with data whenever a type's
+      // template didn't match the device's real payload.
       for (const [metricId, metricSummary] of Object.entries(deviceSummary)) {
-        if (!templateMetricNames.has(metricId) && metricSummary.is_virtual) {
+        if (!templateMetricNames.has(metricId)) {
           const availabilityKey = `${selectedDevice.id}:${metricId}`
           const metricAvailability = availability.get(availabilityKey)
           items.push({
@@ -682,7 +685,7 @@ export function UnifiedDataSourceConfig({
             isSelected: isSelected('device', selectedDevice.id, metricId),
             hasData: metricAvailability?.hasData ?? null,
             dataPointCount: metricAvailability?.dataPointCount,
-            itemType: 'virtual',
+            itemType: metricSummary.is_virtual ? 'virtual' : 'runtime',
             unit: metricSummary.unit,
             dataType: metricSummary.data_type,
           })
@@ -730,9 +733,9 @@ export function UnifiedDataSourceConfig({
         })
       }
 
-      // Sort items: template metrics first, then device info, then virtual metrics
+      // Sort items: template metrics first, then device info, then virtual/runtime metrics
       items.sort((a, b) => {
-        const order = { template: 0, info: 1, virtual: 2 }
+        const order = { template: 0, info: 1, virtual: 2, runtime: 3 }
         return order[a.itemType] - order[b.itemType]
       })
 

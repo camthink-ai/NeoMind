@@ -301,6 +301,7 @@ impl DeviceCapabilityProvider {
             commands,
             default_offline_timeout_secs: None,
             store_raw: None,
+            builtin_version: None,
         };
 
         device_service

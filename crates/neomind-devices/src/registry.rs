@@ -194,6 +194,12 @@ pub struct DeviceTypeTemplate {
     /// cameras) whose structured metrics already cover all fields.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub store_raw: Option<bool>,
+    /// Origin marker: `Some(version)` for templates seeded from the built-in
+    /// bundle (NE101/NE301/NE302…), `None` for user-created / imported ones.
+    /// Informational — seeding is insert-only either way; user edits to a
+    /// builtin type are preserved (and keep this marker).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub builtin_version: Option<String>,
 }
 
 impl DeviceTypeTemplate {
@@ -210,6 +216,7 @@ impl DeviceTypeTemplate {
             commands: Vec::new(),
             default_offline_timeout_secs: None,
             store_raw: None,
+            builtin_version: None,
         }
     }
 
@@ -584,6 +591,7 @@ impl DeviceRegistry {
                     .collect(),
                 default_offline_timeout_secs: storage_template.default_offline_timeout_secs,
                 store_raw: storage_template.store_raw,
+                builtin_version: storage_template.builtin_version,
             };
 
             self.templates
@@ -738,7 +746,7 @@ impl DeviceRegistry {
                     .collect(),
                 default_offline_timeout_secs: template.default_offline_timeout_secs,
                 store_raw: template.store_raw,
-                builtin_version: None,
+                builtin_version: template.builtin_version.clone(),
             };
             store
                 .save_template(&storage_template)
@@ -875,7 +883,7 @@ impl DeviceRegistry {
                 .collect(),
             default_offline_timeout_secs: template.default_offline_timeout_secs,
             store_raw: template.store_raw,
-            builtin_version: None,
+            builtin_version: template.builtin_version.clone(),
         };
 
         self.templates.insert(device_type, template);

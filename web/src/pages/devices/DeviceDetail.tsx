@@ -187,22 +187,25 @@ export function DeviceDetail({
   const commands = deviceCurrentState?.commands || deviceType?.commands || []
   const templateMetrics = deviceType?.metrics || []
 
-  // Build all metrics from unified response (contains both template and virtual metrics)
+  // Build all metrics from unified response (template + virtual + runtime auto-extracted)
   const metricsMap = deviceCurrentState?.metrics || {}
 
-  // Get metric definitions: template metrics + virtual metrics from unified response
+  // Template metrics first (curated display_name/unit/data_type), then every
+  // non-template metric the device has actually reported. Runtime auto-extracted
+  // metrics have is_virtual=false — filtering on is_virtual hides the only
+  // metrics with live values whenever a type's template doesn't match the
+  // device's real payload (all template cards render "-").
+  const templateMetricNames = new Set(templateMetrics.map((m) => m.name))
   const metricDefinitions = [
-    // Template metrics (for reference - values come from deviceCurrentState.metrics)
     ...templateMetrics,
-    // Virtual metrics (from deviceCurrentState - those with is_virtual=true)
     ...Object.entries(metricsMap)
-      .filter(([, v]) => v.is_virtual)
+      .filter(([name]) => !templateMetricNames.has(name))
       .map(([name, v]) => ({
         name,
         display_name: v.display_name || name,
         data_type: v.data_type as 'float' | 'integer' | 'string' | 'boolean' | 'binary' | 'array',
         unit: v.unit,
-      }))
+      })),
   ]
 
   const handleCommandClick = (cmd: CommandDefinition) => {

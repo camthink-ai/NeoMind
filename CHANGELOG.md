@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Fixed — devices
+- Device detail page rendered only "-" cards when a type's template didn't match the device's real payload: `metricDefinitions` whitelisted template ∪ `is_virtual` metrics, hiding runtime auto-extracted metrics (`is_virtual=false`) — the only ones with live values — so the page and its per-metric history dialog (whose only entry point is the card) were empty while `/current` returned data. Cards now render every metric the device actually reports; the dashboard data-source picker gets the same fix, with a "Runtime" badge distinguishing reported metrics from virtual ones.
+- `GET /devices/:id/telemetry` without `?metric=` whitelisted only template ∪ transform ∪ template-sub-path metrics, so metrics the device actually reported (auto-extracted names absent from the template) were invisible to the default query — and with an oversized template the request 400'd outright (`Too many metrics requested: 269 (max 50)`); metrics that exist in storage are now included alongside template metrics.
+- deviceSlice synced `online/status/last_seen/transport_*` from the `/current` envelope's top level (always `undefined` — the fields live under `data.device`), making the status writeback to the devices list a silent no-op; it now reads them from `data.device`.
+- Device-type wizard's "import metrics from JSON" turned every flattened path into a snake_case metric name (`key.replace(/\./g,'_')`), but template metric names double as extraction paths (`extract_by_path` resolves dots/`[index]`, never snake_case) — every imported metric was permanently unextractable (the ne302_camera incident: a pasted config export became 269 dead `config_*` metrics). Names now keep the dotted path, and the import rejects config exports (root `config`/`export_version`/`config_magic_number` signature). Dead `normalize_path` (same snake conversion, zero callers) removed from the discovery module.
+
+### Fixed — auto-onboard (draft → device type)
+- Type-signature reuse matched on (semantic, data-type) sets only, ignoring paths — `{"temp":21}` and `{"sensors":{"temperature":21}}` hashed identically, so the second device silently reused a template whose paths extract nothing from its payload (all metrics gone, only `_raw`). Paths are now part of every metric signature (exact-hash and Jaccard similarity).
+- A draft was finalized from its FIRST uplink frame: analysis fired at one sample and later frames were discarded by a status gate. Follow-up samples are now stored while the draft awaits review (or sits in failed analysis) and re-run the analysis — a null/missing field in frame one no longer vanishes from the generated type permanently.
+- Template data types came from the semantic type (numeric battery/rssi fields → String, breaking charts and numeric transforms); the OBSERVED data type now wins, semantic types only fill unknown/all-null observations.
+- Array-container metrics were named with a literal `$.` prefix (`$.sensors`) that leaked into the UI, history queries and dashboard data-source lists — now stripped like leaf paths. Draft approval no longer hardcodes `json_path: "$.value"` into every auto-registered device (dead config today, a trap if json_path filtering is ever implemented).
+
+### Added — device types
+- `ne302_camera` builtin template (NE301-compatible protocol plus `metadata.trigger_type`, capture/sleep commands, `store_raw=false`), seeded insert-only like NE101/NE301.
+- Device-type list: attached-device count per type (new column + card stat) with a delete-confirmation warning when devices are still attached; "Built-in" origin badge — `builtin_version` was a dead never-set field, now stamped by the seeder, threaded through the devices registry (both conversion directions preserve it), and exposed in the list/get API.
+
 ## [1.2.1] - 2026-10-15 — live-Jetson hardening: rebuilt runtime, layered self-heal, and chat-driven extension installs
 
 Two days of live runs on an NG4520 (Orin, 7.4 GB) diagnosed and closed a full fault chain: the first CI-built llama.cpp runtime SIGILL'd on every Orin (Neoverse build host compiled SVE; A78AE has none), llama-server stderr went to /dev/null so deaths were invisible, an 8K effective window (4-slot KV split) wedged the 2B model, memory extraction raced chat on the shared server, and seven OOM kills each left chat dead until a manual restart. Everything below was diagnosed on-device, fixed, and re-verified (kill-tests included).

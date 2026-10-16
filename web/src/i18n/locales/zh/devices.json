@@ -245,7 +245,8 @@
       "path": "路径",
       "displayName": "显示名称",
       "dataType": "数据类型",
-      "unit": "单位"
+      "unit": "单位",
+      "devices": "设备"
     },
     "add": {
       "title": "添加设备类型",
@@ -386,7 +387,8 @@
       "interval": "间隔时间",
       "seconds": "秒"
     },
-    "adding": "添加中"
+    "adding": "添加中",
+    "builtinBadge": "内置"
   },
   "pending": {
     "tab": "待注册设备",
@@ -660,7 +662,8 @@
     "importSuccess": "导入成功",
     "importSuccessDesc": "从 JSON 解析出 {{count}} 个指标",
     "jsonError": "JSON 格式无效，请检查后重试",
-    "orImportFromJson": "手动添加指标或从 JSON 导入"
+    "orImportFromJson": "手动添加指标或从 JSON 导入",
+    "configDumpDetected": "检测到设备配置导出数据（根级存在 config / export_version 字段）。请粘贴设备上报的一帧遥测数据——把配置树导入成指标后，这些指标永远匹配不到上报数据。"
   },
   "commandEditor": {
     "templates": {
@@ -970,5 +973,6 @@
   "range": {
     "min": "最小",
     "max": "最大"
-  }
+  },
+  "deleteTypeConfirmWithDevices": "该类型下仍有 {{count}} 台设备。删除类型不会删除设备，但这些设备将失去指标定义与命令，直到重新分配类型。确定删除？"
 }

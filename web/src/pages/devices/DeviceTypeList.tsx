@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/card"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu"
 import { IconButton } from "@/components/ui/button"
 import { ResponsiveTable, EmptyState, EmptyStateCard } from "@/components/shared"
-import { Eye, Pencil, Trash2, Download, MoreVertical, Cpu, Database, Activity } from "lucide-react"
+import { Eye, Pencil, Trash2, Download, MoreVertical, Cpu, Database, Activity, Boxes } from "lucide-react"
 import type { DeviceType } from "@/types"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -21,6 +21,8 @@ interface DeviceTypeListProps {
   paginatedDeviceTypes: DeviceType[]
   deviceTypePage: number
   deviceTypesPerPage: number
+  /** Attached device count per device_type id — for the devices column and delete guard */
+  deviceCounts: Record<string, number>
   onRefresh: () => void
   onViewDetails: (type: DeviceType) => void
   onEdit: (type: DeviceType) => void
@@ -35,6 +37,7 @@ export function DeviceTypeList({
   paginatedDeviceTypes,
   deviceTypePage: _deviceTypePage,
   deviceTypesPerPage: _deviceTypesPerPage,
+  deviceCounts,
   onRefresh,
   onViewDetails,
   onEdit,
@@ -46,6 +49,8 @@ export function DeviceTypeList({
   const { toast } = useToast()
   const isMobile = useIsMobile()
   const { deviceTypeCounts, refresh: refreshTransformCounts } = useTransformCounts()
+
+  const metricCountOf = (dt: DeviceType) => dt.metrics?.length ?? dt.metric_count ?? 0
 
   // Export single device type as JSON file
   const handleExport = async (deviceType: DeviceType) => {
@@ -116,14 +121,26 @@ export function DeviceTypeList({
                   <div className="flex-1 min-w-0">
                     <div className="font-medium text-sm truncate">{dt.name}</div>
                   </div>
+                  {dt.builtin_version && (
+                    <Badge variant="outline" className={cn("shrink-0", textNano, "bg-muted-30 text-muted-foreground border-muted")}>
+                      {t('devices:types.builtinBadge')}
+                    </Badge>
+                  )}
                   {/* Compact stats: icon + count */}
                   <span className={cn("flex items-center gap-0.5", textMini, "text-info shrink-0")}>
                     <Activity className="h-3 w-3" />
-                    {dt.metrics?.length ?? dt.metric_count ?? 0}
+                    {metricCountOf(dt)}
                   </span>
                   <span className={cn("flex items-center gap-0.5", textMini, "text-accent-purple shrink-0")}>
                     <Cpu className="h-3 w-3" />
                     {dt.commands?.length ?? dt.command_count ?? 0}
+                  </span>
+                  <span
+                    className={cn("flex items-center gap-0.5", textMini, "text-muted-foreground shrink-0")}
+                    title={t('devices:types.headers.devices')}
+                  >
+                    <Boxes className="h-3 w-3" />
+                    {deviceCounts[dt.device_type] ?? 0}
                   </span>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
@@ -196,6 +213,12 @@ export function DeviceTypeList({
             width: 'w-16',
           },
           {
+            key: 'devices',
+            label: t('devices:types.headers.devices'),
+            align: 'center',
+            width: 'w-16',
+          },
+          {
             key: 'transforms',
             label: t('automation:transforms', { defaultValue: 'Transforms' }),
             align: 'center',
@@ -219,6 +242,13 @@ export function DeviceTypeList({
                   <div className="min-w-0">
                     <div className="font-medium text-sm truncate">{type.name}</div>
                     <code className="text-xs text-muted-foreground font-mono">{type.device_type}</code>
+                    {type.builtin_version && (
+                      <div>
+                        <Badge variant="outline" className={cn("mt-0.5", textNano, "bg-muted-30 text-muted-foreground border-muted")}>
+                          {t('devices:types.builtinBadge')}
+                        </Badge>
+                      </div>
+                    )}
                   </div>
                 </div>
               )
@@ -241,6 +271,13 @@ export function DeviceTypeList({
               return (
                 <Badge variant="outline" className="text-xs bg-accent-purple-light text-accent-purple border-accent-purple-light">
                   {type.commands?.length ?? type.command_count ?? 0}
+                </Badge>
+              )
+
+            case 'devices':
+              return (
+                <Badge variant="outline" className="text-xs bg-muted-30 text-muted-foreground border-muted">
+                  {deviceCounts[type.device_type] ?? 0}
                 </Badge>
               )
 

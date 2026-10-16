@@ -623,11 +623,26 @@ impl SemanticInference {
                 // Infer element type from samples
                 let element_type = Self::infer_array_element_type(&array_samples);
 
+                // Strip the "$." prefix like leaf metrics do — the template
+                // metric name doubles as an extraction path, and a literal
+                // "$.sensors" name leaks into the UI, history queries and
+                // dashboard data-source lists.
+                let metric_path = if let Some(rest) = parent_path.strip_prefix("$.") {
+                    let trimmed = rest.trim_start();
+                    if trimmed.is_empty() {
+                        &parent_path
+                    } else {
+                        trimmed
+                    }
+                } else {
+                    &parent_path
+                };
+
                 let metric = DiscoveredMetric {
                     name: field_name.to_string(),
                     display_name: Self::to_display_name(field_name),
                     description: format!("Array of {}", element_type.display_name()),
-                    path: parent_path.clone(),
+                    path: metric_path.to_string(),
                     data_type: DataType::Array,
                     semantic_type: SemanticType::Unknown,
                     unit: None,

@@ -245,7 +245,8 @@
       "path": "Path",
       "displayName": "Display Name",
       "dataType": "Data Type",
-      "unit": "Unit"
+      "unit": "Unit",
+      "devices": "Devices"
     },
     "add": {
       "title": "Add Device Type",
@@ -386,7 +387,8 @@
       "interval": "Interval",
       "seconds": "seconds"
     },
-    "adding": "Adding"
+    "adding": "Adding",
+    "builtinBadge": "Built-in"
   },
   "pending": {
     "tab": "Pending Devices",
@@ -660,7 +662,8 @@
     "importSuccess": "Import Successful",
     "importSuccessDesc": "Parsed {{count}} metrics from JSON",
     "jsonError": "Invalid JSON format, please check and try again",
-    "orImportFromJson": "Add metrics manually or import from JSON"
+    "orImportFromJson": "Add metrics manually or import from JSON",
+    "configDumpDetected": "This looks like a device config export (root-level config / export_version fields). Paste a single telemetry uplink frame instead — a flattened config tree becomes metrics that never match any uplink."
   },
   "commandEditor": {
     "templates": {
@@ -970,5 +973,6 @@
   "range": {
     "min": "min",
     "max": "max"
-  }
+  },
+  "deleteTypeConfirmWithDevices": "This type still has {{count}} device(s) attached. Deleting it does not delete the devices, but they lose their metric/command definitions until reassigned. Delete anyway?"
 }
