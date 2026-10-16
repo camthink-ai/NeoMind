@@ -1,14 +1,21 @@
 name: CI Checks
 
-# Continuous-integration checks that don't gate the release pipeline.
-# Runs on every PR and every push to main; cheap enough that we don't
-# cache aggressively here (the release pipeline in build.yml owns caching).
+# Continuous-integration quality gates: frontend lint/typecheck/unit tests,
+# Rust fmt/clippy/tests, skill↔CLI drift, desktop compile check, cargo-audit.
+# Runs standalone on every PR and push to main, and — via workflow_call — as
+# the first stage of the release pipelines (build.yml, docker.yml), so no
+# compilation starts until every gate passes.
+# Kept affordable rather than exhaustively cached (the release pipeline in
+# build.yml owns the aggressive caching).
 
 on:
   pull_request:
     branches: [main]
   push:
     branches: [main]
+  # Called as the quality-gate stage of build.yml / docker.yml. The trigger
+  # filters above don't apply to workflow_call invocations — all jobs run.
+  workflow_call:
   workflow_dispatch:
 
 env:

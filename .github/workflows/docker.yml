@@ -31,7 +31,17 @@ env:
   IMAGE: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/neomind
 
 jobs:
+  # Quality gates first: reuse the full ci.yml suite so a red commit can't
+  # build — let alone push to Docker Hub (:latest) — just because a tag or
+  # manual dispatch started this workflow.
+  quality-gates:
+    name: Quality gates (CI Checks)
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
   build:
+    needs: quality-gates
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false

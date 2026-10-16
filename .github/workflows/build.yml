@@ -41,9 +41,21 @@ env:
   RUSTC_WRAPPER: ""
 
 jobs:
+  # ========== 质量门禁(先过门禁,再开编译)==========
+  # 复用 ci.yml 的完整检查套件。所有编译 job 都 needs 本 job:
+  # 门禁不通过,任何平台都不会开始编译 —— tag 发布也不例外。
+  # 注意:本 job 被跳过(skipped)时 needs 视为通过,但这里没有
+  # 任何 if 条件,所以永远不会被跳过,门禁是强制的。
+  quality-gates:
+    name: Quality gates (CI Checks)
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
   # ========== 前端构建（只构建一次）==========
   build-frontend:
     name: Build Frontend
+    needs: quality-gates
     runs-on: ubuntu-latest
     outputs:
       frontend-sha: ${{ steps.build.outputs.sha }}
@@ -320,6 +332,7 @@ jobs:
   # - 通过反向代理或 CORS 实现通信
   build-server:
     name: Server (${{ matrix.os }}-${{ matrix.arch }})
+    needs: quality-gates
     strategy:
       fail-fast: false
       matrix:
