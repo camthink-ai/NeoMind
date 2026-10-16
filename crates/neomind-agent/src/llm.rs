@@ -1329,6 +1329,8 @@ impl LlmInterface {
             thinking_enabled,
             thinking_effort,
             max_context: None,
+            // Chat path — no JSON constraint (structured extraction sets this).
+            json_mode: None,
         };
 
         let system_msg = Message::system(&system_prompt);
@@ -1510,6 +1512,8 @@ impl LlmInterface {
             thinking_enabled,
             thinking_effort,
             max_context: None,
+            // Chat path — no JSON constraint (structured extraction sets this).
+            json_mode: None,
         };
 
         let system_msg = Message::system(&system_prompt);
@@ -1770,6 +1774,8 @@ impl LlmInterface {
             thinking_enabled,
             thinking_effort,
             max_context: None,
+            // Chat path — no JSON constraint (structured extraction sets this).
+            json_mode: None,
         };
 
         let system_msg = Message::system(&system_prompt);
@@ -2051,6 +2057,8 @@ impl LlmInterface {
             thinking_enabled,
             thinking_effort,
             max_context: None,
+            // Chat path — no JSON constraint (structured extraction sets this).
+            json_mode: None,
         };
 
         let system_msg = Message::system(&system_prompt);
@@ -2268,6 +2276,7 @@ impl LlmInterface {
                                     thinking_enabled: None, // Disable thinking on retry
                                     thinking_effort: None,
                                     max_context: None,
+                                    json_mode: None,
                                 },
                                 model: Some(model.clone()),
                                 stream: true,

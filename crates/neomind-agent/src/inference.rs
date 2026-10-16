@@ -171,12 +171,27 @@ impl InferenceClient {
             .map_err(|e: LlmError| InferenceError::Transport(e.to_string()))?;
 
             let raw = output.text.trim().to_string();
-            let parsed = extract_json_object(&raw)
-                .ok_or_else(|| InferenceError::NotJson(truncate(&raw, 120)))?;
-
-            let object = match parsed {
-                serde_json::Value::Object(map) => map,
-                _ => return Err(InferenceError::NotJson(truncate(&raw, 120))),
+            let object = match extract_json_object(&raw) {
+                Some(serde_json::Value::Object(map)) => map,
+                _ => {
+                    // Non-JSON output (small models drift to `[key]: value`
+                    // pseudo-lists). First attempt: show the model its own
+                    // output and demand one JSON object. Second: give up.
+                    if attempt == 1 {
+                        messages = vec![
+                            Message::system(Self::contract_message(&req.schema)),
+                            Message::user(Self::payload_message(req, None)),
+                            Message::assistant(raw.clone()),
+                            Message::user(
+                                "That was not a JSON object. Respond again with ONE JSON \
+                                 object only — no markdown fence, no `[key]:` lines, no \
+                                 explanation.",
+                            ),
+                        ];
+                        continue;
+                    }
+                    return Err(InferenceError::NotJson(truncate(&raw, 120)));
+                }
             };
 
             let mut fields = BTreeMap::new();
@@ -233,6 +248,10 @@ impl InferenceClient {
             // single structured call (CLAUDE.md gotcha #7).
             thinking_enabled: Some(false),
             max_tokens: Some(req.max_output_tokens),
+            // Grammar-constrained JSON where the backend supports it
+            // (llama.cpp/Ollama). Small models intermittently emit
+            // `[key]: value` pseudo-lists without this.
+            json_mode: Some(true),
             ..GenerationParams::default()
         }
     }

@@ -149,6 +149,7 @@ pub async fn llm_generate_handler(
             thinking_enabled: None,
             thinking_effort: None,
             max_context: None,
+            json_mode: None, // prompt-test path — free-form output
         },
         model: Some(model_name),
         stream: false,

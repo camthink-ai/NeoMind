@@ -471,6 +471,13 @@ impl LlmRuntime for LlamaCppRuntime {
             req_body["stop"] = serde_json::json!(stop);
         }
 
+        // Grammar-constrained JSON: llama.cpp converts json_object into a GBNF
+        // grammar so the sampled output is ALWAYS a valid JSON object. Small
+        // models (1B-3B) drift to `[key]: value` pseudo-formats without it.
+        if input.params.json_mode == Some(true) {
+            req_body["response_format"] = serde_json::json!({"type": "json_object"});
+        }
+
         // Tools
         if let Some(ref tools) = input.tools {
             if !tools.is_empty() {

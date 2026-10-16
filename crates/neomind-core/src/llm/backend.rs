@@ -95,6 +95,13 @@ pub struct GenerationParams {
     /// Maximum context window size in tokens
     /// CRITICAL for Qwen3: must be >= 16384 to avoid infinite repetition loops
     pub max_context: Option<usize>,
+
+    /// Request grammar-constrained JSON output from backends that support it
+    /// (llama.cpp `response_format: {"type":"json_object"}`, Ollama
+    /// `format: "json"`). Set by structured-extraction callers — small models
+    /// (1B–3B) intermittently emit pseudo-formats like `[key]: value` without
+    /// this constraint.
+    pub json_mode: Option<bool>,
 }
 
 impl Default for GenerationParams {
@@ -110,6 +117,7 @@ impl Default for GenerationParams {
             thinking_enabled: None, // Let backend decide based on model capabilities
             thinking_effort: None,  // Let backend decide based on model capabilities
             max_context: None,      // Let backend decide based on model capabilities
+            json_mode: None,        // Only set by structured-extraction callers
         }
     }
 }
