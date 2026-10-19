@@ -245,12 +245,18 @@ impl VisionTool {
         //    this tier routinely non-empty; keep the prefix literal in sync
         //    with builtin_llm::handlers::companion_instance_id in
         //    neomind-api).
+        // The active backend is EXCLUDED here even when it claims
+        // multimodal — tier 3 owns it, keeping "active last" deterministic
+        // (list_instances order is a DashMap artifact, not a priority).
+        let active_id = self.llm_manager.get_active_instance().map(|i| i.id);
         let mut multimodal: Vec<_> = self
             .llm_manager
             .list_instances()
             .into_iter()
             .filter(|inst| {
-                inst.capabilities.supports_multimodal && !seen.contains(&inst.id)
+                inst.capabilities.supports_multimodal
+                    && !seen.contains(&inst.id)
+                    && Some(&inst.id) != active_id.as_ref()
             })
             .collect();
         multimodal.sort_by_key(|inst| !is_local_companion(&inst.id));
@@ -822,6 +828,9 @@ mod candidate_tests {
         let mut active = vlm_instance("active-main", "main-model", &ep_active);
         active.is_active = true;
         manager.upsert_instance(active).await.unwrap();
+        // The candidates resolver reads the manager's ACTIVE POINTER (not the
+        // stored is_active flag) — set it the way the platform does.
+        manager.set_active("active-main").await.unwrap();
         set_instance_manager(manager.clone());
 
         let tool = VisionTool::new(VisionConfig::default(), manager);
