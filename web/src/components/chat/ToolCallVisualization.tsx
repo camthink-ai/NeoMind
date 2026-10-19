@@ -1,21 +1,14 @@
 /**
- * ToolCallVisualization - Displays AI tool/function calls as a "task process"
+ * Tool call sub-components for the round-based execution timeline.
  *
- * Mental model: tool calls are a process the AI goes through to complete a task.
- * The final answer (message.content) is always shown separately below this block.
- *
- * Structure:
- *   ┌─ 🔧 N tool calls · M steps  ▾ ─────────┐
- *   │ Step 1: 🧠 Thinking + 🔧 Tools          │  ← collapsible
- *   │ Step 2: 🧠 Thinking + 🔧 Tools          │
- *   └──────────────────────────────────────────┘
- *   Markdown content (the final answer)        ← rendered separately in ChatMessages
+ * TurnTimeline owns the outer process card and round grouping; this file
+ * provides the reusable intermediate-output row (RoundContent) and the
+ * single tool-call row (ToolCallItem).
  */
 
 import { useId, useState } from "react"
 import { useTranslation } from "react-i18next"
 import {
-  Wrench,
   ChevronDown,
   CheckCircle2,
   AlertCircle,
@@ -27,7 +20,6 @@ import { cn } from "@/lib/utils"
 import { textMini, textCode, textNano } from "@/design-system/tokens/typography"
 import { formatElapsedMs } from "@/lib/utils/format"
 import type { ToolCall } from "@/types"
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { getToolDisplayName, isToolError } from "./toolCallUtils"
 
 // ─── Helpers ───
@@ -52,141 +44,8 @@ function formatJson(data: unknown): string {
   return JSON.stringify(data, null, 2)
 }
 
-function groupByRound(toolCalls: ToolCall[]): Map<number, ToolCall[]> {
-  const groups = new Map<number, ToolCall[]>()
-  for (const tc of toolCalls) {
-    const round = tc.round ?? 1
-    if (!groups.has(round)) groups.set(round, [])
-    groups.get(round)!.push(tc)
-  }
-  return groups
-}
+// ─── RoundContent: intermediate output row inside a round ───
 
-// ─── ToolProcessBlock: the main exported component ───
-
-interface ToolProcessBlockProps {
-  toolCalls: ToolCall[]
-  /** Per-round intermediate content (shown alongside tools in each round) */
-  roundContents?: Record<number, string>
-  isStreaming?: boolean
-}
-
-/**
- * Renders the tool-calling process as a collapsible card.
- * Shows: summary header + per-round content & tool calls.
- * Does NOT render thinking or final content — those are handled by ChatMessages.
- */
-export function ToolProcessBlock({
-  toolCalls,
-  roundContents = {},
-  isStreaming = false,
-}: ToolProcessBlockProps) {
-  const { t } = useTranslation("chat")
-  // Expansion is decided ONCE at mount: long completed batches start
-  // collapsed, streaming/short ones start expanded. The previous auto-collapse
-  // effect fired exactly when isStreaming flipped false — a message that
-  // streamed expanded would visually SNAP shut at completion (bubble
-  // re-layout mid-view). A streamed message keeps its expansion until the
-  // user toggles it.
-  const [isExpanded, setIsExpanded] = useState(
-    !(toolCalls.length > 4 && !isStreaming)
-  )
-
-  if (!toolCalls || toolCalls.length === 0) return null
-
-  const toolGroups = groupByRound(toolCalls)
-  const steps = Array.from(toolGroups.keys()).sort((a, b) => a - b)
-  const completedCount = toolCalls.filter(tc => tc.result != null).length
-  const allComplete = completedCount === toolCalls.length && !isStreaming
-  const hasError = toolCalls.some(isToolError)
-  const runningCall = toolCalls.find(tc => tc.result == null) ?? null
-
-  // While streaming, name the action in flight so a long tool round reads as
-  // work rather than a hang. Completed batches use plural-aware counts.
-  const runningName = runningCall
-    ? getToolDisplayName(runningCall.name, runningCall.arguments)
-    : null
-  const summary = isStreaming
-    ? runningName
-      ? `${t("chat:toolCall.runningWith", { name: runningName })} · ${completedCount}/${toolCalls.length}`
-      : `${completedCount}/${toolCalls.length} ${t("toolCall.status.running")}`
-    : `${t("chat:toolCall.callsCount", { count: toolCalls.length })} · ${t("chat:toolCall.roundsCount", { count: steps.length })}`
-
-  return (
-    <Collapsible
-      open={isExpanded}
-      onOpenChange={setIsExpanded}
-      className="mx-3 mb-4 overflow-hidden rounded-xl border border-chat-card-border bg-muted-20"
-    >
-      {/* Summary header */}
-      <CollapsibleTrigger asChild>
-        <button
-          type="button"
-          className="w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-muted-30"
-        >
-          <div className={cn(
-            "h-4 w-4 rounded flex items-center justify-center shrink-0",
-            hasError && !isStreaming && "bg-error-light text-error",
-            !hasError && allComplete && "bg-accent-emerald-light text-accent-emerald",
-            isStreaming && "bg-warning-light text-warning",
-            !allComplete && !isStreaming && !hasError && "bg-muted text-muted-foreground"
-          )}>
-            {isStreaming ? (
-              <Loader2 className="h-2.5 w-2.5 animate-spin" aria-hidden="true" />
-            ) : hasError ? (
-              <AlertCircle className="h-4 w-4" aria-hidden="true" />
-            ) : allComplete ? (
-              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-            ) : (
-              <Wrench className="h-2.5 w-2.5" aria-hidden="true" />
-            )}
-          </div>
-          <span className={cn("text-body sm:text-sm", "font-medium text-foreground truncate")}>
-            {summary}
-          </span>
-          <div className="flex-1" />
-          <ChevronDown
-            className={cn(
-              "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-normal",
-              isExpanded && "rotate-180"
-            )}
-            aria-hidden="true"
-          />
-        </button>
-      </CollapsibleTrigger>
-
-      {/* Steps */}
-      <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down">
-        <div>
-          {steps.map((step, idx) => {
-            const calls = toolGroups.get(step) ?? []
-            const isLastStep = idx === steps.length - 1
-            const stepStreaming = isStreaming && isLastStep
-            const roundContent = roundContents[step]
-            return (
-              <div key={step} className="mb-1">
-                {/* Round content (intermediate results) */}
-                {roundContent && (
-                  <RoundContent content={roundContent} />
-                )}
-                {calls.map((tc, i) => (
-                  <ToolCallItem
-                    key={`${step}-${i}`}
-                    toolCall={tc}
-                    isStreaming={stepStreaming && tc.result == null}
-                    t={t}
-                  />
-                ))}
-              </div>
-            )
-          })}
-        </div>
-      </CollapsibleContent>
-    </Collapsible>
-  )
-}
-
-/** Round content block - shows intermediate results from each round */
 export function RoundContent({ content }: { content: string }) {
   const [isExpanded, setIsExpanded] = useState(false)
   const contentId = useId()
@@ -351,9 +210,9 @@ export function ToolCallItem({
 // ─── Legacy exports (keep for backward compat if other files import them) ───
 
 export function PerRoundBlocks(_props: any) {
-  return null // Deprecated: use ToolProcessBlock + MarkdownMessage instead
+  return null // Deprecated: use TurnTimeline + MarkdownMessage instead
 }
 
 export function ToolCallVisualization(_props: any) {
-  return null // Deprecated: use ToolProcessBlock instead
+  return null // Deprecated: use TurnTimeline instead
 }

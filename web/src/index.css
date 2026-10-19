@@ -491,7 +491,6 @@ html {
     --msg-user-code-bg: oklch(1 0 0 / 14%);
     --msg-user-code-hover: oklch(1 0 0 / 18%);
     --msg-user-code-border: oklch(1 0 0 / 18%);
-    --msg-ai-bg: oklch(0.97 0.003 270);
     --msg-ai-text: oklch(0.18 0.02 270);
     /* Syntax-highlighting palette (rehype-highlight / hljs). GitHub-based,
        tuned for the muted code background. Light theme. */
@@ -507,12 +506,6 @@ html {
     --msg-system-bg: oklch(0.95 0.003 270);
     --msg-system-text: oklch(0.45 0.01 270);
 
-    --tool-bg: oklch(0.97 0.003 270);
-    --tool-border: oklch(0.45 0.15 260);
-    --tool-header-bg: oklch(0.94 0.005 270);
-
-    --thinking-bg: oklch(0.97 0.01 80);
-    --thinking-border: oklch(0.68 0.17 65);
     --thinking-text: oklch(0.40 0.01 270);
 
     --card-hover-bg: oklch(0.995 0 0);
@@ -681,7 +674,6 @@ html {
     --msg-user-code-bg: oklch(0 0 0 / 10%);
     --msg-user-code-hover: oklch(0 0 0 / 14%);
     --msg-user-code-border: oklch(0 0 0 / 14%);
-    --msg-ai-bg: oklch(0.18 0.008 270);
     --msg-ai-text: oklch(0.90 0.005 270);
     /* Syntax-highlighting palette — dark theme */
     --syn-text: oklch(0.92 0.004 270);
@@ -696,12 +688,6 @@ html {
     --msg-system-bg: oklch(0.20 0.008 270);
     --msg-system-text: oklch(0.58 0.012 270);
 
-    --tool-bg: oklch(0.20 0.008 270);
-    --tool-border: oklch(1 0 0 / 15%);
-    --tool-header-bg: oklch(0.22 0.008 270);
-
-    --thinking-bg: oklch(0.20 0.008 270);
-    --thinking-border: oklch(1 0 0 / 12%);
     --thinking-text: oklch(0.62 0.01 270);
 
     --card-hover-bg: oklch(0.18 0.008 270);

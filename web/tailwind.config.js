@@ -63,24 +63,17 @@ export default {
           30: "var(--muted-30)",
           50: "var(--muted-50)",
         },
-        // Chat surfaces — mapped from the chat-specific CSS variables so the
-        // three reply layers (thinking / tool / answer) can use real token
-        // classes. Never write bg-chat-*/40: Tailwind v3 cannot apply the
-        // opacity modifier to a CSS-variable color (see DESIGN_SPEC).
+        // Chat surfaces. Process cards use the neutral bg-muted-20 wash; only
+        // the user bubble and thinking text still need dedicated chat tokens.
+        // Never write bg-chat-*/40: Tailwind v3 cannot apply the opacity
+        // modifier to a CSS-variable color (see DESIGN_SPEC).
         chat: {
           user: {
             bg: "var(--msg-user-bg)",
             text: "var(--msg-user-text)",
           },
           thinking: {
-            bg: "var(--thinking-bg)",
-            border: "var(--thinking-border)",
             text: "var(--thinking-text)",
-          },
-          tool: {
-            bg: "var(--tool-bg)",
-            border: "var(--tool-border)",
-            header: "var(--tool-header-bg)",
           },
         },
         "chat-card-border": "var(--chat-card-border)",

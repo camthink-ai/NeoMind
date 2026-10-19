@@ -67,6 +67,8 @@
     "rounds": "轮",
     "callsCount": "{{count}} 个工具调用",
     "callsCount_other": "{{count}} 个工具调用",
+    "countShort": "{{count}} 个工具",
+    "countShort_other": "{{count}} 个工具",
     "roundsCount": "{{count}} 轮",
     "roundsCount_other": "{{count}} 轮",
     "runningWith": "正在执行 {{name}}…",

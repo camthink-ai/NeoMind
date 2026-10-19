@@ -127,8 +127,9 @@ export function TurnTimeline({
     finalContent,
   })
 
-  // Expansion is decided once at mount, matching ToolProcessBlock: a turn
-  // that streamed open must not snap shut when isStreaming flips false.
+  // Expansion is decided once at mount: a turn that streamed open must not
+  // snap shut when isStreaming flips false. The user keeps their choice until
+  // they toggle it.
   const [isExpanded, setIsExpanded] = useState(() => isStreaming || toolCalls.length <= 4)
   const [openRounds, setOpenRounds] = useState<Record<number, boolean>>({})
 
@@ -243,11 +244,8 @@ export function TurnTimeline({
                     <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
                   )}
                   {group.calls.length > 0 && (
-                    <span
-                      title={t("chat:toolCall.callsCount", { count: group.calls.length })}
-                      className={cn(textNano, "shrink-0 text-muted-foreground tabular-nums")}
-                    >
-                      {group.calls.length}
+                    <span className={cn(textNano, "shrink-0 whitespace-nowrap text-muted-foreground tabular-nums")}>
+                      {t("chat:toolCall.countShort", { count: group.calls.length })}
                     </span>
                   )}
                   <ChevronDown
