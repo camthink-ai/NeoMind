@@ -43,9 +43,9 @@ env:
 jobs:
   # ========== 质量门禁(先过门禁,再开编译)==========
   # 复用 ci.yml 的完整检查套件。所有编译 job 都 needs 本 job:
-  # 门禁不通过,任何平台都不会开始编译 —— tag 发布也不例外。
-  # 注意:本 job 被跳过(skipped)时 needs 视为通过,但这里没有
-  # 任何 if 条件,所以永远不会被跳过,门禁是强制的。
+  # 本 job 没有任何 if 条件,必然执行;一旦门禁失败,依赖链上
+  # 后续 job(前端/桌面/服务端/release/cleanup)全部被跳过 ——
+  # 不编译、不打包、不发布。tag 发布与手动触发一视同仁。
   quality-gates:
     name: Quality gates (CI Checks)
     uses: ./.github/workflows/ci.yml
