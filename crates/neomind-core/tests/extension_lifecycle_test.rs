@@ -110,6 +110,7 @@ impl Extension for LifecycleTrackingExtension {
                         fixed_values: Default::default(),
                         samples: vec![],
                         parameter_groups: vec![],
+                        ai_exposed: true,
                     },
                     ExtensionCommand {
                         name: "get_stats".to_string(),
@@ -120,6 +121,7 @@ impl Extension for LifecycleTrackingExtension {
                         fixed_values: Default::default(),
                         samples: vec![],
                         parameter_groups: vec![],
+                        ai_exposed: true,
                     },
                 ]
             })

@@ -95,6 +95,7 @@ impl Extension for ConfigurableExtension {
                 }],
                 fixed_values: Default::default(),
                 samples: vec![],
+                ai_exposed: true,
                 parameter_groups: vec![],
             },
             ExtensionCommand {
@@ -105,6 +106,7 @@ impl Extension for ConfigurableExtension {
                 parameters: vec![],
                 fixed_values: Default::default(),
                 samples: vec![],
+                ai_exposed: true,
                 parameter_groups: vec![],
             },
             ExtensionCommand {
@@ -125,6 +127,7 @@ impl Extension for ConfigurableExtension {
                 }],
                 fixed_values: Default::default(),
                 samples: vec![],
+                ai_exposed: true,
                 parameter_groups: vec![],
             },
         ]

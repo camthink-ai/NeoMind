@@ -357,6 +357,15 @@ pub struct CommandDescriptor {
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parameters: Option<serde_json::Value>,
+    /// Whether this command is exposed to the LLM as a tool (default true).
+    /// `false` hides it from `definitions_for_llm()` regardless of admin
+    /// toggles — the extension author's decision wins.
+    #[serde(default = "default_true", skip_serializing_if = "bool::clone")]
+    pub ai_exposed: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Installation result

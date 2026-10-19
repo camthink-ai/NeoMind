@@ -634,6 +634,10 @@ pub(crate) fn parse_descriptor_json(
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
+                    let ai_exposed = c
+                        .get("ai_exposed")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true);
 
                     // Parse parameters
                     let parameters: Vec<ParameterDefinition> = c
@@ -697,6 +701,7 @@ pub(crate) fn parse_descriptor_json(
                         description,
                         payload_template: String::new(),
                         parameters,
+                        ai_exposed,
                         fixed_values: HashMap::new(),
                         samples,
                         parameter_groups: Vec::new(),

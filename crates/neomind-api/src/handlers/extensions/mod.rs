@@ -238,7 +238,8 @@ pub(crate) fn extension_info_to_dto(
                 is_stream: false,
                 expected_duration_ms: None,
             },
-            disabled: !enabled || disabled_set.contains(&cmd.name),
+            disabled: !enabled || !cmd.ai_exposed || disabled_set.contains(&cmd.name),
+            ai_exposed: cmd.ai_exposed,
         })
         .collect();
 

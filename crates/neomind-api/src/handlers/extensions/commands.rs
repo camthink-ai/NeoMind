@@ -237,10 +237,19 @@ pub struct CommandDescriptorDto {
     pub output_fields: Vec<OutputFieldDto>,
     pub config: CommandConfigDto,
     /// True when this command is excluded from the LLM tool registry — either
-    /// named in the parent extension's `disabled_commands` list, or the parent
-    /// extension's master `enabled` flag is off.
+    /// named in the parent extension's `disabled_commands` list, the parent
+    /// extension's master `enabled` flag is off, or the extension declared
+    /// `ai_exposed=false` for it.
     #[serde(default)]
     pub disabled: bool,
+    /// The extension author's declaration: false means UI/automation-only,
+    /// never sent to the LLM. When false the toggle is locked.
+    #[serde(default = "default_true")]
+    pub ai_exposed: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Output field DTO
@@ -328,7 +337,8 @@ pub async fn list_extension_commands_handler(
                 is_stream: false,
                 expected_duration_ms: None,
             },
-            disabled: !ext_enabled || disabled_cmds.contains(&cmd.name),
+            disabled: !ext_enabled || !cmd.ai_exposed || disabled_cmds.contains(&cmd.name),
+            ai_exposed: cmd.ai_exposed,
         })
         .collect();
 
@@ -371,6 +381,15 @@ pub(crate) async fn refresh_tool_registry_disabled(state: &ServerState) {
                 }
                 for cmd_name in &r.disabled_commands {
                     disabled.insert(format!("{}:{}", r.id, cmd_name));
+                }
+                // Author-declared hidden commands (ai_exposed=false) are
+                // always hidden — admin toggles cannot override.
+                if let Some(info) = state.extensions.runtime.get(&r.id).await {
+                    for cmd in &info.commands {
+                        if !cmd.ai_exposed {
+                            disabled.insert(format!("{}:{}", r.id, cmd.name));
+                        }
+                    }
                 }
             }
         }

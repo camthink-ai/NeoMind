@@ -495,6 +495,7 @@ mod tests {
             fixed_values: HashMap::new(),
             samples: vec![],
             parameter_groups: vec![],
+            ai_exposed: true,
         }];
 
         let ext = MockExtension { metadata, commands };

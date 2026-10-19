@@ -137,6 +137,7 @@ mod tests {
                 expected_duration_ms: None,
             },
             disabled: false,
+            ai_exposed: true,
         };
 
         assert_eq!(command.id, "turn_on");
@@ -259,6 +260,7 @@ mod tests {
                     expected_duration_ms: None,
                 },
                 disabled: false,
+                ai_exposed: true,
             }],
             metrics: vec![MetricDescriptorDto {
                 name: "temperature".to_string(),
@@ -310,6 +312,7 @@ mod tests {
                     expected_duration_ms: None,
                 },
                 disabled: false,
+                ai_exposed: true,
             }],
             metrics: vec![MetricDescriptorDto {
                 name: "metric1".to_string(),

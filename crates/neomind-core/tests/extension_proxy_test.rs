@@ -81,6 +81,7 @@ fn test_extension_descriptor_with_capabilities() {
         fixed_values: Default::default(),
         samples: vec![],
         parameter_groups: vec![],
+        ai_exposed: true,
     }];
 
     let metrics = vec![MetricDescriptor {

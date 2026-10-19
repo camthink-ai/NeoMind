@@ -154,6 +154,7 @@ fn test_extension_command() {
         fixed_values,
         samples: vec![],
         parameter_groups: vec![],
+        ai_exposed: true,
     };
 
     assert_eq!(cmd.name, "detect_objects");
@@ -172,6 +173,7 @@ fn test_extension_command_serialization() {
         fixed_values: HashMap::new(),
         samples: vec![],
         parameter_groups: vec![],
+        ai_exposed: true,
     };
 
     let json = serde_json::to_string(&cmd).unwrap();

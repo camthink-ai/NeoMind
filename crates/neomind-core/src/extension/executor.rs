@@ -437,6 +437,7 @@ mod tests {
             fixed_values: std::collections::HashMap::new(),
             samples: vec![],
             parameter_groups: vec![],
+            ai_exposed: true,
         };
 
         let result = executor

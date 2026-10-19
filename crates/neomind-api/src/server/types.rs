@@ -3544,6 +3544,15 @@ async fn apply_persisted_tool_disabled_state(
         for cmd_name in &r.disabled_commands {
             disabled.insert(format!("{}:{}", r.id, cmd_name));
         }
+        // Author-declared hidden commands (ai_exposed=false in the live
+        // descriptor) are always hidden — admin toggles cannot override.
+        if let Some(info) = runtime.get(&r.id).await {
+            for cmd in &info.commands {
+                if !cmd.ai_exposed {
+                    disabled.insert(format!("{}:{}", r.id, cmd.name));
+                }
+            }
+        }
     }
 
     if disabled.is_empty() {

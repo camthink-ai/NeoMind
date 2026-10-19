@@ -94,6 +94,7 @@ impl Extension for MockExtension {
                         fixed_values: Default::default(),
                         samples: vec![],
                         parameter_groups: vec![],
+                        ai_exposed: true,
                     },
                     ExtensionCommand {
                         name: "get_value".to_string(),
@@ -104,6 +105,7 @@ impl Extension for MockExtension {
                         fixed_values: Default::default(),
                         samples: vec![],
                         parameter_groups: vec![],
+                        ai_exposed: true,
                     },
                 ]
             })
