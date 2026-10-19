@@ -260,8 +260,12 @@ pub struct ParameterGroup {
 // Command Definition
 // ============================================================================
 
+fn default_true() -> bool {
+    true
+}
+
 /// Command definition/descriptor.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandDescriptor {
     /// Command name (used as identifier)
     pub name: String,
@@ -286,6 +290,28 @@ pub struct CommandDescriptor {
     /// Parameter groups
     #[serde(default)]
     pub parameter_groups: Vec<ParameterGroup>,
+    /// Whether this command is exposed to the LLM as a tool.
+    /// Extensions declare `false` for UI-/automation-only commands; the
+    /// platform then hides them from `definitions_for_llm()` regardless of
+    /// admin toggles (the author's decision wins).
+    #[serde(default = "default_true")]
+    pub ai_exposed: bool,
+}
+
+impl Default for CommandDescriptor {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            display_name: String::new(),
+            description: String::new(),
+            payload_template: String::new(),
+            parameters: Vec::new(),
+            fixed_values: HashMap::new(),
+            samples: Vec::new(),
+            parameter_groups: Vec::new(),
+            ai_exposed: true,
+        }
+    }
 }
 
 impl CommandDescriptor {
@@ -306,6 +332,12 @@ impl CommandDescriptor {
     /// Add description.
     pub fn with_description(mut self, description: impl Into<String>) -> Self {
         self.description = description.into();
+        self
+    }
+
+    /// Mark this command as not exposed to the LLM tool registry.
+    pub fn ai_exposed_false(mut self) -> Self {
+        self.ai_exposed = false;
         self
     }
 
@@ -1885,6 +1917,25 @@ mod segmented_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn command_descriptor_legacy_json_defaults_ai_exposed_true() {
+        // Descriptors emitted by pre-0.8.1 extensions have no ai_exposed key.
+        // They must deserialize as AI-exposed (previous behavior, no regression).
+        let legacy = r#"{"name":"turn_on","display_name":"Turn On","description":"d"}"#;
+        let cmd: CommandDescriptor = serde_json::from_str(legacy).unwrap();
+        assert!(cmd.ai_exposed);
+        assert_eq!(cmd.name, "turn_on");
+    }
+
+    #[test]
+    fn command_descriptor_explicit_false_roundtrip() {
+        let cmd = CommandDescriptor::new("wizard").ai_exposed_false();
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"ai_exposed\":false"));
+        let back: CommandDescriptor = serde_json::from_str(&json).unwrap();
+        assert!(!back.ai_exposed);
+    }
 
     #[test]
     fn test_metric_data_type_serialization() {

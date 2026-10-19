@@ -381,8 +381,16 @@ impl CommandBuilder {
                 fixed_values: std::collections::HashMap::new(),
                 samples: Vec::new(),
                 parameter_groups: Vec::new(),
+                ai_exposed: true,
             },
         }
+    }
+
+    /// Exclude this command from the LLM tool registry. Use for commands
+    /// that only the web UI or automations invoke directly.
+    pub fn without_ai(mut self) -> Self {
+        self.command.ai_exposed = false;
+        self
     }
 
     pub fn display_name(mut self, display_name: impl Into<String>) -> Self {

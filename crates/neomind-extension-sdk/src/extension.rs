@@ -456,6 +456,9 @@ pub struct SdkCommandDefinition {
     /// Parameter groups
     #[serde(default)]
     pub parameter_groups: Vec<SdkParameterGroup>,
+    /// Whether this command is exposed to the LLM as a tool (default true).
+    #[serde(default = "default_true")]
+    pub ai_exposed: bool,
 }
 
 /// Parameter group for organizing command parameters
@@ -486,6 +489,7 @@ impl SdkCommandDefinition {
             fixed_values: std::collections::HashMap::new(),
             samples: Vec::new(),
             parameter_groups: Vec::new(),
+            ai_exposed: true,
         }
     }
 
@@ -512,6 +516,7 @@ impl From<SdkCommandDefinition> for CommandDescriptor {
             parameters: c.parameters.into_iter().map(|p| p.into()).collect(),
             fixed_values: c.fixed_values,
             samples: c.samples,
+            ai_exposed: c.ai_exposed,
             parameter_groups: c
                 .parameter_groups
                 .into_iter()
