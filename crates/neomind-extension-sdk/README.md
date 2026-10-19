@@ -91,6 +91,14 @@ impl Extension for MyExtension {
                         .build(),
                 )
                 .build(),
+            // UI/automation-only command: hidden from the LLM tool registry.
+            // The admin toggle in the web UI is locked off for such commands
+            // (the author's declaration wins), but direct execution via
+            // API/UI is unaffected.
+            CommandBuilder::new("run_setup_wizard")
+                .display_name("Run Setup Wizard")
+                .without_ai()
+                .build(),
         ]
     }
 
