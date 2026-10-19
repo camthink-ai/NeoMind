@@ -749,6 +749,10 @@ export function ChatPage() {
 
   // Vision companion: a running local VLM lets a text-only active model
   // take images (the session layer delegates the descriptions to it).
+  // 8s + refresh-on-focus is enough: the check matters ONLY while the
+  // active model is text-only (otherwise the gate passes on its own), and
+  // route changes remount this page with an immediate check anyway.
+  const needCompanionPoll = !supportsMultimodal
   const [companionRunning, setCompanionRunning] = useState(false)
   useEffect(() => {
     let alive = true
@@ -760,12 +764,15 @@ export function ChatPage() {
         })
         .catch(() => {})
     check()
-    const timer = window.setInterval(check, 20000)
+    if (!needCompanionPoll) return () => { alive = false }
+    const timer = window.setInterval(check, 8000)
+    window.addEventListener('focus', check)
     return () => {
       alive = false
       window.clearInterval(timer)
+      window.removeEventListener('focus', check)
     }
-  }, [])
+  }, [needCompanionPoll])
   const imagesAllowed = supportsMultimodal || companionRunning
   const visionDelegate = !supportsMultimodal && companionRunning
 

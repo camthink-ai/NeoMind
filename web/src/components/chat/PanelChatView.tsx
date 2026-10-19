@@ -510,6 +510,9 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
 
   // Vision companion: same delegation rule as the main chat page — a
   // running local VLM unlocks image upload for a text-only active model.
+  // 8s + refresh-on-focus; the poll only runs while the active model is
+  // text-only (a multimodal model passes the gate on its own).
+  const needCompanionPoll = !supportsMultimodal
   const [companionRunning, setCompanionRunning] = useState(false)
   useEffect(() => {
     let alive = true
@@ -521,12 +524,15 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
         })
         .catch(() => {})
     check()
-    const timer = window.setInterval(check, 20000)
+    if (!needCompanionPoll) return () => { alive = false }
+    const timer = window.setInterval(check, 8000)
+    window.addEventListener('focus', check)
     return () => {
       alive = false
       window.clearInterval(timer)
+      window.removeEventListener('focus', check)
     }
-  }, [])
+  }, [needCompanionPoll])
   const imagesAllowed = supportsMultimodal || companionRunning
   const visionDelegate = !supportsMultimodal && companionRunning
 
