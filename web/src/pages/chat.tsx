@@ -518,25 +518,60 @@ export function ChatPage() {
       useStore.getState().setPendingTurnHint(null)
       restore("", "", {})
     }
-    api.getPendingStream(sessionId).then(result => {
-      if (cancelled) return
-      if (!result?.hasPending) {
-        // The turn finished BEFORE this page mounted — its end event had no
-        // live listener. Clear the optimistic spinner (if any) and take the
-        // server's completed answer.
-        if (optimisticTurn) {
-          hardReset()
-          void refreshCurrentSession()
-        }
-        return
+    // An optimistic turn (just sent from the welcome page) with no snapshot
+    // yet is usually a RACE, not a finished turn: the frame can still be
+    // queued on a reconnecting socket, and the server writes the snapshot at
+    // frame receipt — the pre-stream setup (backend reconfig, decision
+    // pipeline, first LLM request) follows it, it doesn't precede it.
+    // Killing the optimistic spinner on the first false left the whole
+    // model-load window showing an empty reply area (2026-10-19:
+    // "ai回复UI为空需要刷新页面才看得到ai正在回复中"). Retry briefly before
+    // declaring the turn dead; a live event or the snapshot takes over, and
+    // the exhausted path still settles to history.
+    const OPTIMISTIC_PENDING_RETRIES = 5
+    let attempts = 0
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+    const settleDeadTurn = () => {
+      // The turn finished BEFORE this page mounted — its end event had no
+      // live listener. Clear the optimistic spinner (if any) and take the
+      // server's completed answer.
+      if (optimisticTurn) {
+        hardReset()
+        void refreshCurrentSession()
       }
-      resumePending(sessionId, result.content || "", result.thinking || "", {
-              toolCalls: result.toolCalls,
-              roundContents: result.roundContents,
-              currentRound: result.currentRound,
-            })
-    }).catch(() => {})
-    return () => { cancelled = true }
+    }
+    const checkPending = () => {
+      api.getPendingStream(sessionId).then(result => {
+        if (cancelled) return
+        if (result?.hasPending) {
+          resumePending(sessionId, result.content || "", result.thinking || "", {
+            toolCalls: result.toolCalls,
+            roundContents: result.roundContents,
+            currentRound: result.currentRound,
+          })
+          return
+        }
+        if (optimisticTurn && attempts < OPTIMISTIC_PENDING_RETRIES) {
+          attempts += 1
+          retryTimer = setTimeout(checkPending, 1000)
+          return
+        }
+        settleDeadTurn()
+      }).catch(() => {
+        if (cancelled) return
+        if (optimisticTurn && attempts < OPTIMISTIC_PENDING_RETRIES) {
+          attempts += 1
+          retryTimer = setTimeout(checkPending, 1000)
+          return
+        }
+        settleDeadTurn()
+      })
+    }
+    checkPending()
+    return () => {
+      cancelled = true
+      if (retryTimer) clearTimeout(retryTimer)
+    }
   }, [sessionId, urlSessionId, resumePending, restore, hardReset, refreshCurrentSession])
 
   // Detached-turn poll: after a resume, the generating turn's events may be

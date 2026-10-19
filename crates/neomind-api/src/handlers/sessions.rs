@@ -468,6 +468,37 @@ use super::ServerState;
 /// Heartbeat interval for WebSocket connections (seconds)
 const HEARTBEAT_INTERVAL_SECS: u64 = 30;
 
+/// Create the session's pending-stream snapshot at FRAME RECEIPT — before
+/// the awaited stream-creation chain (backend reconfig, memory snapshot
+/// load, decision pipeline, first LLM request) that precedes
+/// `process_stream_to_channel`. That function's own snapshot comes too late
+/// for a client that remounts right after sending (the welcome-page send
+/// navigates /chat → /chat/:id and polls /sessions/:id/pending within
+/// ~300ms): `hasPending: false` read as "turn already finished" killed the
+/// client's optimistic spinner, leaving an empty reply area for the whole
+/// model-load window (2026-10-19: "ai回复UI为空需要刷新页面才看得到正在回复中").
+///
+/// Create-if-absent: an existing snapshot belongs to a live turn on this
+/// session — overwriting it would reset the recovery view mid-turn. Callers
+/// whose stream creation FAILS must delete the snapshot themselves (the
+/// non-streaming fallback never runs `process_stream_to_channel`'s
+/// end-of-turn cleanup); the "already being generated" rejection keeps the
+/// live turn's snapshot as-is.
+fn create_initial_pending_snapshot(
+    state: &super::ServerState,
+    session_id: &str,
+    user_message: &str,
+) {
+    let session_store = state.agents.session_manager.session_store();
+    if matches!(session_store.get_pending_stream(session_id), Ok(Some(_))) {
+        return;
+    }
+    let pending_state = PendingStreamState::new(session_id.to_string(), user_message.to_string());
+    if let Err(e) = session_store.save_pending_stream(&pending_state) {
+        tracing::warn!(error = %e, session_id, "Failed to save frame-receipt pending stream state");
+    }
+}
+
 /// Session list item.
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionListItem {
@@ -1858,6 +1889,11 @@ async fn handle_ws_socket(
                                         let task_session_id = session_id.clone();
                                         let task_state = state.clone();
 
+                                        // [frame-receipt pending snapshot] Born BEFORE the
+                                        // awaited stream creation below (and before the pinned-
+                                        // skills await) — see create_initial_pending_snapshot.
+                                        create_initial_pending_snapshot(&task_state, &task_session_id, &chat_req.message);
+
                                         // Set session ID on memory tool for session-scoped operations
                                         // (now handled inside Agent::process to avoid cross-session races)
 
@@ -1905,6 +1941,11 @@ async fn handle_ws_socket(
                                             Err(e) => {
                                                 // Fallback to non-streaming on error
                                                 tracing::error!(error = %e, session_id = %task_session_id, backend_id = ?backend_id_str, "Streaming multimodal failed, falling back to non-streaming");
+                                                // The frame-receipt snapshot must not outlive this
+                                                // fallback turn — the Ok arm's end-of-turn cleanup
+                                                // (inside process_stream_to_channel) never runs here.
+                                                // (json! below moves task_session_id — clone first.)
+                                                let snapshot_cleanup_id = task_session_id.clone();
                                                 let response = match task_state.agents.session_manager.process_message_multimodal_with_backend(
                                                     &task_session_id,
                                                     &chat_req.message,
@@ -1923,6 +1964,11 @@ async fn handle_ws_socket(
                                                         "message": inner_e.to_string(),
                                                     }).to_string(),
                                                 };
+                                                let _ = task_state
+                                                    .agents
+                                                    .session_manager
+                                                    .session_store()
+                                                    .delete_pending_stream(&snapshot_cleanup_id);
 
                                                 if socket.send(AxumMessage::Text(response)).await.is_err() {
                                                     break;
@@ -1970,6 +2016,10 @@ async fn handle_ws_socket(
                                             // IM bridges, extension chat capability — gets
                                             // identical coverage. Nothing to do here.
                                             tokio::spawn(async move {
+                                                // [frame-receipt pending snapshot] Born BEFORE the
+                                                // awaited stream creation below — see
+                                                // create_initial_pending_snapshot.
+                                                create_initial_pending_snapshot(&task_state, &task_session_id, &task_user_message);
                                                 match task_state
                                                     .agents
                                                     .session_manager
@@ -2016,6 +2066,11 @@ async fn handle_ws_socket(
                                                         }
                                                         // Fallback to non-streaming on error
                                                         tracing::error!(error = %e, session_id = %task_session_id, backend_id = ?task_req_backend, "Streaming text failed, falling back to non-streaming");
+                                                        // The frame-receipt snapshot must not outlive this
+                                                        // fallback turn — the Ok arm's end-of-turn cleanup
+                                                        // (inside process_stream_to_channel) never runs here.
+                                                        // (json! below moves task_session_id — clone first.)
+                                                        let snapshot_cleanup_id = task_session_id.clone();
                                                         let response = match task_state
                                                             .agents
                                                             .session_manager
@@ -2043,6 +2098,11 @@ async fn handle_ws_socket(
                                                         let _ = task_tx
                                                             .send(StreamEvent { json: response })
                                                             .await;
+                                                        let _ = task_state
+                                                            .agents
+                                                            .session_manager
+                                                            .session_store()
+                                                            .delete_pending_stream(&snapshot_cleanup_id);
                                                     }
                                                 }
                                             });
