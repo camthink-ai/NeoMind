@@ -22,7 +22,8 @@
     "newChat": "New chat",
     "startNewConversation": "Start typing to chat with AI assistant",
     "fallbackHelpPrompt": "What can you do?",
-    "skills": "Skills"
+    "skills": "Skills",
+    "cancel": "Cancel request"
   },
   "model": {
     "supportsVision": "Supports vision",
@@ -36,8 +37,12 @@
   "thinking": {
     "title": "Thinking process",
     "thinking": "Thinking...",
-    "characters": "characters",
-    "rounds": "Rounds"
+    "characters": "{{count}} characters",
+    "characters_one": "{{count}} character",
+    "characters_other": "{{count}} characters",
+    "rounds": "{{count}} rounds",
+    "rounds_one": "{{count}} round",
+    "rounds_other": "{{count}} rounds"
   },
   "progress": {
     "thinking": "Thinking",
@@ -56,12 +61,26 @@
     "status": {
       "pending": "Pending",
       "running": "Running",
-      "completed": "Completed"
+      "completed": "Completed",
+      "failed": "Failed"
     },
     "arguments": "Arguments",
     "result": "Result",
     "rounds": "rounds",
+    "callsCount": "{{count}} tool call",
+    "callsCount_one": "{{count}} tool call",
+    "callsCount_other": "{{count}} tool calls",
+    "roundsCount": "{{count}} round",
+    "roundsCount_one": "{{count}} round",
+    "roundsCount_other": "{{count}} rounds",
+    "runningWith": "Running {{name}}…",
+    "details": "Details",
+    "hideDetails": "Hide details",
     "toggleDetails": "Toggle details"
+  },
+  "timeline": {
+    "title": "Execution process",
+    "roundFallback": "Round {{round}}"
   },
   "connection": {
     "connected": "Connected",
@@ -129,8 +148,25 @@
   },
   "code": {
     "copy": "Copy",
-    "copied": "Copied"
+    "copied": "Copied",
+    "wrap": "Wrap lines",
+    "unwrap": "Disable line wrapping",
+    "expand": "Show all",
+    "collapse": "Show less"
   },
+  "image": {
+    "view": "View image",
+    "close": "Close image",
+    "alt": "Image {{index}}"
+  },
+  "message": {
+    "charsPerSecond": "chars/s"
+  },
+  "a11y": {
+    "generating": "Generating a response",
+    "answerReady": "Response complete"
+  },
+  "newContent": "New content",
   "scrollToBottom": "Scroll to bottom",
   "copyMessage": "Copy message",
   "toolLoopProgress": "Working · tool round {{round}}",

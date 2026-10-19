@@ -23,7 +23,7 @@ const dark = css.slice(css.indexOf(DARK_MARK))
 
 function varsOf(block) {
   const vars = {}
-  for (const m of block.matchAll(/(--[a-z-]+):\s*([^;]+);/g)) vars[m[1]] = m[2].trim()
+  for (const m of block.matchAll(/(--[a-z0-9-]+):\s*([^;]+);/g)) vars[m[1]] = m[2].trim()
   return vars
 }
 
@@ -107,6 +107,37 @@ for (const [theme, block] of [["light", light], ["dark", dark]]) {
       if (!pass) failures++
       console.log(`  text-${role.padEnd(8)} on ${name.padEnd(11)} ${c.toFixed(2)}:1  ${pass ? "AA ✓" : "AA ✗ FAIL"}`)
     }
+  }
+
+  // Chat reply layers: user bubble + its code wash, AI answer, and the two
+  // process-card surfaces. These combinations had no check before, which is
+  // how white-on-near-white user code shipped.
+  const userBg = resolve(vars, "--msg-user-bg", bg)
+  const userCodeBg = resolve(vars, "--msg-user-code-bg", userBg)
+  const userText = resolve(vars, "--msg-user-text", WHITE)
+  const aiText = resolve(vars, "--msg-ai-text", bg)
+  // Process cards use the neutral muted-20 wash, not the old warm/cool fills.
+  const cardWash = resolve(vars, "--muted-20", bg)
+  const thinkingText = resolve(vars, "--thinking-text", cardWash)
+  const toolText = resolve(vars, "--muted-foreground", cardWash)
+
+  const chatChecks = [
+    ["user-text", userText, userBg, "--msg-user-text on --msg-user-bg"],
+    ["user-code", userText, userCodeBg, "--msg-user-text on --msg-user-code-bg"],
+    ["ai-text", aiText, bg, "--msg-ai-text on --background"],
+    ["thinking", thinkingText, cardWash, "--thinking-text on --muted-20"],
+    ["tool-text", toolText, cardWash, "--muted-foreground on --muted-20"],
+  ]
+  for (const [label, fg, carrier, desc] of chatChecks) {
+    if (!fg || !carrier) {
+      console.log(`  !! missing chat token for ${desc}`)
+      failures++
+      continue
+    }
+    const c = contrast(fg, carrier)
+    const pass = c >= 4.5
+    if (!pass) failures++
+    console.log(`  chat-${label.padEnd(9)} on surface ${c.toFixed(2)}:1  ${pass ? "AA ✓" : "AA ✗ FAIL"}  (${desc})`)
   }
 }
 

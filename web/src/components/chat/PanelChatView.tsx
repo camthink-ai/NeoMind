@@ -29,6 +29,7 @@ import { pickPageAssistant, panelSessionKey, profileFingerprint, readStoredPanel
 import { useLocation } from "react-router-dom"
 import { ChatMessages } from "./ChatMessages"
 import { ChatComposer } from "./ChatComposer"
+import { ChatScrollPill } from "./ChatScrollPill"
 import { X, Minimize2, Bot, Plus, Settings, Cpu, Download } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import type { ChatImage } from "@/types"
@@ -243,6 +244,8 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const isPinnedRef = useRef(true)
+  const [showScrollPill, setShowScrollPill] = useState(false)
   const onStreamingChangeRef = useRef(onStreamingChange)
   useEffect(() => { onStreamingChangeRef.current = onStreamingChange }, [onStreamingChange])
 
@@ -251,8 +254,24 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     onStreamingChangeRef.current(isStreaming)
   }, [isStreaming])
 
-  // Auto-scroll
+  const handlePanelScroll = useCallback(() => {
+    const el = scrollContainerRef.current
+    if (!el) return
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    isPinnedRef.current = distanceFromBottom < 80
+    setShowScrollPill(distanceFromBottom > 120)
+  }, [])
+
+  const scrollPanelToBottom = useCallback(() => {
+    isPinnedRef.current = true
+    setShowScrollPill(false)
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  }, [])
+
+  // Auto-scroll — same pinning rule as the chat page: once the user scrolls
+  // up to read, streaming updates must not yank them back to the bottom.
   useEffect(() => {
+    if (!isPinnedRef.current) return
     messagesEndRef.current?.scrollIntoView({
       behavior: isStreaming ? "smooth" : "instant",
     })
@@ -340,6 +359,8 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
         filterSessionIdRef.current = result.sessionId
         writeStoredPanelSession(currentPageKeyRef.current, result.sessionId, profileFingerprint(baseAssistant))
         ws.setSessionId(result.sessionId)
+        isPinnedRef.current = true
+        setShowScrollPill(false)
         setPanelMessages([])
       }
     } catch { /* ignore — panel just won't work until backend is available */ }
@@ -360,6 +381,8 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     // including a resumed poll: keyed to the OLD page's session, it would
     // re-inject that conversation's content into the new page's panel.
     panelSessionIdRef.current = null
+    isPinnedRef.current = true
+    setShowScrollPill(false)
     setPanelMessages([])
     setIsHistoryLoading(true)
     setResumedPendingPanel(null)
@@ -426,6 +449,8 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     if (isStreaming) return
     localStorage.removeItem(panelSessionKey(currentPageKeyRef.current))
     panelSessionIdRef.current = null
+    isPinnedRef.current = true
+    setShowScrollPill(false)
     setPanelMessages([])
     hardReset()
     await createPanelSession()
@@ -645,10 +670,12 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
       </div>
 
       {/* Messages */}
-      <div
-        ref={scrollContainerRef}
-        className="flex-1 overflow-y-auto px-4 py-5 min-h-0"
-      >
+      <div className="relative flex-1 min-h-0">
+        <div
+          ref={scrollContainerRef}
+          onScroll={handlePanelScroll}
+          className="h-full overflow-y-auto px-4 py-5"
+        >
         {!llmBackendLoading && (!llmBackends || llmBackends.length === 0) ? (
             <div className="flex flex-col items-center justify-center h-full gap-3 px-4">
               <div className="w-14 h-14 rounded-xl bg-primary-light text-primary flex items-center justify-center">
@@ -762,16 +789,18 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
               roundContents={roundContents}
               currentRound={currentRound}
               streamingMessageId={streamingMessageId}
-              onScrollToBottom={() => {
-                const el = scrollContainerRef.current
-                if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
-              }}
               endRef={messagesEndRef}
             />
           )}
 
           {/* Scroll anchor */}
           <div ref={messagesEndRef} />
+        </div>
+        <ChatScrollPill
+          visible={showScrollPill}
+          hasNewContent={isStreaming}
+          onClick={scrollPanelToBottom}
+        />
       </div>
 
       {/* Input area — the shared ChatComposer, same design as the chat page */}

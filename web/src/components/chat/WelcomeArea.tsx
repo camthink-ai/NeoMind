@@ -80,7 +80,7 @@ export function WelcomeArea({ className, onQuickAction, children }: WelcomeAreaP
             <button
               key={label}
               onClick={() => onQuickAction?.(prompt)}
-              className="group inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-transparent px-4 h-9 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground hover:border-muted-foreground/40"
+              className="group inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-transparent px-4 h-9 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground hover:border-border-hover"
             >
               <span className="truncate">{label}</span>
               <ArrowRight className="h-3.5 w-3.5 shrink-0 transition-all opacity-0 -ml-1.5 w-0 group-hover:opacity-100 group-hover:ml-0 group-hover:w-3.5" />

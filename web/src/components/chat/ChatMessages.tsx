@@ -10,9 +10,9 @@
  * (no flicker).
  */
 
-import { useMemo, type RefObject } from "react"
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react"
 import { useTranslation } from "react-i18next"
-import { ChevronDown, Loader2, Sparkles } from "lucide-react"
+import { Loader2, Sparkles, Info } from "lucide-react"
 import type { ChatImage, Message, UserInfo } from "@/types"
 import { cn } from "@/lib/utils"
 import { textMini, textNano } from "@/design-system/tokens/typography"
@@ -22,8 +22,9 @@ import { getServerOrigin } from "@/lib/api"
 import { isThinkingDuplicate } from "./toolCallUtils"
 import { MarkdownMessage } from "./MarkdownMessage"
 import { ThinkingBlock } from "./ThinkingBlock"
-import { ToolProcessBlock } from "./ToolCallVisualization"
+import { TurnTimeline } from "./TurnTimeline"
 import { CopyMessageButton } from "./CopyMessageButton"
+import { ZoomableImage } from "@/components/shared/ZoomableImage"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 
 interface ChatMessagesProps {
@@ -42,7 +43,6 @@ interface ChatMessagesProps {
   currentRound: number
   /** Id the streaming message will keep once persisted (smooth transition). */
   streamingMessageId?: string | null
-  onScrollToBottom?: () => void
   endRef?: RefObject<HTMLDivElement>
   /** Older history exists beyond the loaded window — renders the
    *  "load earlier" affordance at the top of the list. */
@@ -53,23 +53,27 @@ interface ChatMessagesProps {
 
 /** Image gallery for user messages */
 function MessageImages({ images }: { images: ChatImage[] }) {
+  const { t } = useTranslation("chat")
   if (!images || images.length === 0) return null
 
   return (
     <div className={images.length === 1 ? "mb-2" : "mb-2 grid grid-cols-2 gap-2"}>
-      {images.map((img, idx) => (
-        <img
-          key={idx}
-          src={img.data.startsWith('/api/images/')
-            // Persisted reference form — prepend the server origin (the
-            // webview origin differs from the API in Tauri / Vite dev).
-            ? getServerOrigin() + img.data
-            : img.data}
-          alt={`Image ${idx + 1}`}
-          className="rounded-lg max-w-full max-h-64 object-cover"
-          loading="lazy"
-        />
-      ))}
+      {images.map((img, idx) => {
+        const src = img.data.startsWith('/api/images/')
+          // Persisted reference form — prepend the server origin (the
+          // webview origin differs from the API in Tauri / Vite dev).
+          ? getServerOrigin() + img.data
+          : img.data
+        return (
+          <ZoomableImage
+            key={idx}
+            src={src}
+            alt={t("chat:image.alt", { index: idx + 1 })}
+            className={images.length === 1 ? "my-0" : "my-0 block w-full"}
+            imgClassName={images.length === 1 ? "max-h-64" : "max-h-48 w-full object-cover"}
+          />
+        )
+      })}
     </div>
   )
 }
@@ -85,7 +89,6 @@ export function ChatMessages({
   roundContents,
   currentRound,
   streamingMessageId,
-  onScrollToBottom,
   endRef,
   hasEarlierHistory,
   loadingEarlier,
@@ -93,6 +96,20 @@ export function ChatMessages({
 }: ChatMessagesProps) {
   const { t } = useTranslation("chat")
   const getUserInitials = (username: string) => username.slice(0, 2).toUpperCase()
+
+  // Announce turn boundaries, not every streamed chunk. Screen readers get
+  // "generating" once when a turn starts and "ready" when it ends; the log
+  // itself is not a live region.
+  const [announcement, setAnnouncement] = useState("")
+  const wasStreamingRef = useRef(false)
+  useEffect(() => {
+    if (isStreaming) {
+      setAnnouncement(t("a11y.generating"))
+    } else if (wasStreamingRef.current) {
+      setAnnouncement(t("a11y.answerReady"))
+    }
+    wasStreamingRef.current = isStreaming
+  }, [isStreaming, t])
 
   const displayMessages = useMemo(() => {
     const merged = mergeMessagesForDisplay(messages)
@@ -143,7 +160,15 @@ export function ChatMessages({
   }, [displayMessages, isStreaming, streamingContent, streamingThinking, streamingRoundThinking, streamingToolCalls, roundContents, currentRound, streamingMessageId])
 
   return (
-    <div className="max-w-3xl mx-auto space-y-4 sm:space-y-6">
+    <div
+      role="log"
+      aria-busy={isStreaming}
+      data-testid="messages-container"
+      className="max-w-3xl mx-auto space-y-4 sm:space-y-6"
+    >
+      <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+        {announcement}
+      </div>
       {hasEarlierHistory && onLoadEarlier && (
         <div className="flex justify-center">
           <button
@@ -177,9 +202,20 @@ export function ChatMessages({
           : (message.tool_calls && message.tool_calls.length > 0
               ? cleanToolCallJson(message.content || "")
               : (message.content || ""))
+        // Reply stats stay available in the timestamp tooltip instead of
+        // occupying the action row on every message.
+        const statsTitle = message.role === "assistant" && !isCurrentlyStreaming && message.generationMs != null && message.generationMs > 0
+          ? [
+              formatElapsedMs(message.generationMs),
+              message.content.length > 0
+                ? `${Math.round(message.content.length / (message.generationMs / 1000)).toLocaleString()} ${t("message.charsPerSecond")}`
+                : null,
+            ].filter(Boolean).join(" · ")
+          : undefined
         return (
           <div
             key={message.id || `msg-${idx}`}
+            data-testid={message.role === "assistant" ? "assistant-message" : message.role === "user" ? "user-message" : undefined}
             className={`group flex gap-2 sm:gap-3 animate-fade-in-up ${message.role === "user" ? "justify-end" : "justify-start"}`}
           >
             {message.role === "assistant" && (
@@ -207,7 +243,7 @@ export function ChatMessages({
               <div
                 className={cn(
                   message.role === "user"
-                    ? "rounded-lg px-3 py-2 sm:px-4 sm:py-3 bg-[var(--msg-user-bg)] text-[var(--msg-user-text)]"
+                    ? "rounded-xl px-3 py-2 sm:px-4 sm:py-3 bg-chat-user-bg text-chat-user-text"
                     : ""
                 )}
               >
@@ -232,10 +268,11 @@ export function ChatMessages({
                         )
                       : undefined
 
-                    // Three-layer design:
-                    // 1. Thinking (top) - with per-round differentiation
-                    // 2. Task Process (middle) - tool calls + round content
-                    // 3. Final Answer (bottom) - markdown content
+                    // Round-based process: each round owns its thinking, tools,
+                    // and intermediate output. The final answer is rendered
+                    // separately below the timeline.
+                    // 1. Process timeline (rounds of thinking / tools / output)
+                    // 2. Final answer (bottom) - markdown content
 
                     // Determine thinking to show
                     const hasRoundThinking = message.round_thinking && Object.keys(message.round_thinking).length > 0
@@ -267,22 +304,17 @@ export function ChatMessages({
                     if (hasTools) {
                       return (
                         <>
-                          {showThinking && (
-                            <ThinkingBlock
-                              thinking={!hasRoundThinking ? message.thinking : undefined}
-                              roundThinking={filteredRoundThinking}
-                              isStreaming={isCurrentlyStreaming}
-                              defaultExpanded={false}
-                            />
-                          )}
-                          <ToolProcessBlock
-
-                          toolCalls={message.tool_calls!}
+                          <TurnTimeline
+                            toolCalls={message.tool_calls!}
+                            roundThinking={filteredRoundThinking}
                             roundContents={cleanedRoundContents}
+                            thinking={!hasRoundThinking && !thinkingDupesContent ? message.thinking : undefined}
                             isStreaming={isCurrentlyStreaming}
+                            currentRound={currentRound}
+                            finalContent={displayContent}
                           />
                           {displayContent ? (
-                            <MarkdownMessage content={displayContent} variant="assistant" className="px-3" />
+                            <MarkdownMessage content={displayContent} variant="assistant" className="px-3" isStreaming={isCurrentlyStreaming} />
                           ) : isCurrentlyStreaming ? (
                             <div className="flex items-center gap-1 px-3 py-1">
                               <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground opacity-40 animate-bounce" style={{ animationDelay: '0ms' }} />
@@ -305,7 +337,7 @@ export function ChatMessages({
                           />
                         )}
                         {displayContent ? (
-                          <MarkdownMessage content={displayContent} variant="assistant" className="px-3" />
+                          <MarkdownMessage content={displayContent} variant="assistant" className="px-3" isStreaming={isCurrentlyStreaming} />
                         ) : isCurrentlyStreaming ? (
                           <div className="flex items-center gap-1 px-3 py-1">
                             <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground opacity-40 animate-bounce" style={{ animationDelay: '0ms' }} />
@@ -324,9 +356,9 @@ export function ChatMessages({
                       {message.systemNotes.map((note, i) => (
                         <div
                           key={i}
-                          className="flex items-start gap-2 rounded-md border border-dashed border-border bg-muted/40 px-3 py-2 text-xs leading-relaxed text-muted-foreground"
+                          className="flex items-start gap-2 rounded-lg border border-dashed border-border bg-muted-20 px-3 py-2 text-xs leading-relaxed text-muted-foreground"
                         >
-                          <span className="mt-px shrink-0">ℹ️</span>
+                          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                           <span>{note}</span>
                         </div>
                       ))}
@@ -335,37 +367,23 @@ export function ChatMessages({
                 </div>
               </div>
 
-              <div className="flex items-center gap-2.5 mt-1.5 px-3">
-                <p className="text-xs text-muted-foreground">
+              <div className="mt-1.5 flex items-center gap-2 px-3">
+                <time
+                  title={statsTitle}
+                  className="text-xs text-muted-foreground tabular-nums"
+                >
                   {formatTimestamp(message.timestamp, false)}
-                </p>
-                {message.role === 'assistant' && !isCurrentlyStreaming && message.generationMs != null && message.generationMs > 0 && (
-                  <>
-                    <span className="text-xs text-muted-foreground/80 tabular-nums">
-                      {formatElapsedMs(message.generationMs)}
-                    </span>
-                    {message.content.length > 0 && (
-                      <span className="text-xs text-muted-foreground/80 tabular-nums">
-                        {Math.round(message.content.length / (message.generationMs / 1000)).toLocaleString()} chars/s
-                      </span>
-                    )}
-                  </>
-                )}
+                </time>
                 {!isCurrentlyStreaming && (
-                  <CopyMessageButton content={copyContent} />
-                )}
-                {/* Always-visible scroll-to-bottom, next to the copy
-                    button on assistant replies */}
-                {message.role === "assistant" && !isCurrentlyStreaming && onScrollToBottom && (
-                  <button
-                    type="button"
-                    onClick={onScrollToBottom}
-                    className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                    aria-label={t("scrollToBottom", "回到底部")}
-                    title={t("scrollToBottom", "回到底部")}
+                  <div
+                    className={cn(
+                      "flex items-center gap-0.5 transition-opacity duration-fast",
+                      "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100",
+                      "pointer-events-none group-hover:pointer-events-auto group-focus-within:pointer-events-auto max-md:pointer-events-auto"
+                    )}
                   >
-                    <ChevronDown className="h-3.5 w-3.5" />
-                  </button>
+                    <CopyMessageButton content={copyContent} />
+                  </div>
                 )}
               </div>
             </div>

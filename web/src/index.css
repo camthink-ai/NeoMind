@@ -212,6 +212,12 @@ body,
   .group-hover\:opacity-50 {
     opacity: 0.55 !important;
   }
+  /* Message action rows use pointer-events-none while hidden so the
+     invisible buttons cannot be tapped. Touch devices need the same
+     override as the opacity rule above. */
+  .group-hover\:pointer-events-auto {
+    pointer-events: auto !important;
+  }
 }
 
 /* iOS touch scrolling for overflow-y-auto containers */
@@ -332,6 +338,9 @@ html {
     --destructive: oklch(0.577 0.245 27);
     --destructive-foreground: oklch(1 0 0);
     --border: oklch(0.21 0.01 264 / 11.5%);
+    /* Softer outline for chat process cards: their fill is intentionally
+       faint, so the standard border reads as a drawn frame. */
+    --chat-card-border: oklch(0.21 0.01 264 / 8%);
     --input: oklch(0.21 0.01 264 / 12.5%);
     /* Hover-deepened border for interactive cards (see interactiveCard). */
     --border-hover: oklch(0.21 0.01 264 / 18%);
@@ -476,6 +485,12 @@ html {
     /* Chat-specific colors - light mode */
     --msg-user-bg: oklch(0.15 0.02 270);
     --msg-user-text: oklch(1 0 0);
+    /* Code sits ON the user bubble: a light wash over the dark bubble keeps
+       inherited white text readable (the old var(--muted) rule produced
+       white-on-near-white). Dark theme below mirrors this with a dark wash. */
+    --msg-user-code-bg: oklch(1 0 0 / 14%);
+    --msg-user-code-hover: oklch(1 0 0 / 18%);
+    --msg-user-code-border: oklch(1 0 0 / 18%);
     --msg-ai-bg: oklch(0.97 0.003 270);
     --msg-ai-text: oklch(0.18 0.02 270);
     /* Syntax-highlighting palette (rehype-highlight / hljs). GitHub-based,
@@ -571,6 +586,7 @@ html {
     --destructive: oklch(0.577 0.245 27);
     --destructive-foreground: oklch(0.95 0.006 270);
     --border: oklch(1 0 0 / 10%);
+    --chat-card-border: oklch(1 0 0 / 8%);
     --input: oklch(1 0 0 / 12%);
     /* Hover-deepened border for interactive cards (see interactiveCard). */
     --border-hover: oklch(1 0 0 / 16%);
@@ -662,6 +678,9 @@ html {
 
     --msg-user-bg: oklch(0.97 0.003 270);
     --msg-user-text: oklch(0.15 0.02 270);
+    --msg-user-code-bg: oklch(0 0 0 / 10%);
+    --msg-user-code-hover: oklch(0 0 0 / 14%);
+    --msg-user-code-border: oklch(0 0 0 / 14%);
     --msg-ai-bg: oklch(0.18 0.008 270);
     --msg-ai-text: oklch(0.90 0.005 270);
     /* Syntax-highlighting palette — dark theme */
@@ -1229,6 +1248,24 @@ html {
   color: var(--msg-ai-text) !important;
 }
 
+/* Code surfaces are variant-scoped: assistant code uses the neutral muted
+ * surface; user code sits on the user bubble and needs a wash derived from
+ * the bubble foreground, not the page muted color. MarkdownMessage reads
+ * these variables so both inline code and fenced blocks follow the bubble. */
+.prose[data-variant="assistant"] {
+  --code-bg: var(--muted);
+  --inline-code-bg: var(--muted);
+  --code-border: var(--border);
+  --code-control-hover: var(--muted-50);
+}
+
+.prose[data-variant="user"] {
+  --code-bg: var(--msg-user-code-bg);
+  --inline-code-bg: var(--msg-user-code-bg);
+  --code-border: var(--msg-user-code-border);
+  --code-control-hover: var(--msg-user-code-hover);
+}
+
 /* Links: inherit the per-bubble text color so they stay readable on every
  * background. We previously hardcoded `var(--primary)`, but in light theme
  * `--primary` is near-white (oklch 0.95) which collides with the user
@@ -1252,7 +1289,10 @@ html {
   color: inherit !important;
 }
 
-/* Code blocks background - keep readable */
+/* Code text follows the bubble foreground. The surface itself is owned by
+ * MarkdownMessage via the variant-scoped --code-* variables above — the old
+ * `background-color: var(--muted) !important` made user code white-on-white
+ * in light mode and dark-on-dark in dark mode. */
 .message-bubble-user .prose pre,
 .message-bubble-assistant .prose pre,
 .message-bubble-user .prose code:not(pre code),
@@ -1261,7 +1301,6 @@ html {
 .dark .message-bubble-assistant .prose pre,
 .dark .message-bubble-user .prose code:not(pre code),
 .dark .message-bubble-assistant .prose code:not(pre code) {
-  background-color: var(--muted) !important;
   color: inherit !important;
 }
 

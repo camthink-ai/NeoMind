@@ -20,6 +20,10 @@ export const textMini = 'text-mini'
 // Body: chat messages, tool call text, markdown body
 export const textBody = 'text-body'
 
+// Chat reading sizes — one step above the dense dashboard body.
+export const textChatBody = 'text-chat-body'
+export const textChatBodyLg = 'text-chat-body-lg'
+
 // Code inline: inline code in markdown, code snippets
 export const textCode = 'text-code'
 

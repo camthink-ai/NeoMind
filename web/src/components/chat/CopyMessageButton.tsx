@@ -16,8 +16,9 @@ interface CopyMessageButtonProps {
  * lists, and tables survive a paste into a markdown-aware target — the same
  * behavior as ChatGPT/Claude.
  *
- * Hidden until hover on desktop (`group-hover` — the message container needs
- * a `group` class), but always visible on touch where there is no hover.
+ * Visibility is owned by the caller's action-row wrapper (hover/focus reveal
+ * on desktop, always-on for touch). The button itself stays focusable so
+ * keyboard users can reveal the row by tabbing to it.
  */
 export function CopyMessageButton({ content, className }: CopyMessageButtonProps) {
   const [copied, setCopied] = useState(false)
@@ -40,9 +41,10 @@ export function CopyMessageButton({ content, className }: CopyMessageButtonProps
       type="button"
       onClick={handleCopy}
       className={cn(
-        "inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors",
+        "inline-flex h-8 w-8 sm:h-7 sm:w-7 items-center justify-center rounded text-muted-foreground transition-colors",
         "opacity-100",
         "hover:bg-muted hover:text-foreground",
+        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
         className
       )}
       aria-label={copied ? t("code.copied", "已复制") : t("copyMessage", "复制消息")}

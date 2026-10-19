@@ -328,6 +328,7 @@ export function useChatStream(options: UseChatStreamOptions) {
           arguments: data.arguments,
           result: null,
           round: data.round ?? currentRoundRef.current,
+          startedAt: Date.now(),
         }
         accRef.current.toolCalls = [...accRef.current.toolCalls, toolCall]
         setStreamingToolCalls([...accRef.current.toolCalls])
@@ -338,7 +339,13 @@ export function useChatStream(options: UseChatStreamOptions) {
         const updated = [...accRef.current.toolCalls]
         const idx = updated.findIndex(tc => tc.name === data.tool && tc.result === null)
         if (idx !== -1) {
-          updated[idx] = { ...updated[idx], result: data.result }
+          const startedAt = updated[idx].startedAt
+          updated[idx] = {
+            ...updated[idx],
+            result: data.result,
+            success: data.success,
+            durationMs: startedAt != null ? Date.now() - startedAt : undefined,
+          }
           accRef.current.toolCalls = updated
           setStreamingToolCalls([...updated])
         }

@@ -136,4 +136,45 @@ describe('ChatMessages', () => {
     btn.click()
     expect(onLoadEarlier).toHaveBeenCalledTimes(1)
   })
+
+  it('renders a log region with hover-revealed copy and no per-message scroll button', () => {
+    render(
+      <ChatMessages
+        messages={[{ id: 'a1', role: 'assistant', content: '回答', timestamp: 2 }]}
+        user={null}
+        isStreaming={false}
+        streamingContent=""
+        streamingThinking=""
+        streamingRoundThinking={{}}
+        streamingToolCalls={[]}
+        roundContents={{}}
+        currentRound={1}
+      />,
+    )
+    const log = screen.getByTestId('messages-container')
+    expect(log.getAttribute('role')).toBe('log')
+    expect(log.getAttribute('aria-busy')).toBe('false')
+    expect(screen.getByTestId('assistant-message')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'copyMessage' })).toBeTruthy()
+    // The jump-to-bottom control is host-level now, not per message.
+    expect(screen.queryByRole('button', { name: 'scrollToBottom' })).toBeNull()
+  })
+
+  it('announces generation start and completion without announcing every chunk', () => {
+    const props = {
+      messages: [] as Message[],
+      user: null,
+      streamingContent: '生成中',
+      streamingThinking: '',
+      streamingRoundThinking: {},
+      streamingToolCalls: [] as never[],
+      roundContents: {},
+      currentRound: 1,
+      streamingMessageId: '__streaming__',
+    }
+    const { rerender } = render(<ChatMessages {...props} isStreaming />)
+    expect(screen.getByText('a11y.generating')).toBeTruthy()
+    rerender(<ChatMessages {...props} isStreaming={false} />)
+    expect(screen.getByText('a11y.answerReady')).toBeTruthy()
+  })
 })

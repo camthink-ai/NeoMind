@@ -12,6 +12,7 @@ import { SessionSidebar } from "@/components/session/SessionSidebar"
 import { WelcomeArea } from "@/components/chat/WelcomeArea"
 import { ChatMessages } from "@/components/chat/ChatMessages"
 import { ChatComposer } from "@/components/chat/ChatComposer"
+import { ChatScrollPill } from "@/components/chat/ChatScrollPill"
 import { ConnectionStatus } from "@/components/chat/ConnectionStatus"
 import { MobilePageHeader } from "@/components/layout/MobilePageHeader"
 import { ws, type ConnectionState } from "@/lib/websocket"
@@ -415,6 +416,7 @@ export function ChatPage() {
   // scrolled up to read history, auto-scrolling would yank them back down —
   // extremely annoying when waiting for a long response while reviewing context.
   const isPinnedToBottomRef = useRef(true)
+  const [showScrollPill, setShowScrollPill] = useState(false)
 
   const handleScroll = useCallback(() => {
     const container = scrollContainerRef.current
@@ -423,6 +425,7 @@ export function ChatPage() {
     // diffs and the gap inserted by smooth-scroll inertia.
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
     isPinnedToBottomRef.current = distanceFromBottom < 80
+    setShowScrollPill(distanceFromBottom > 120)
   }, [])
 
   // Auto-scroll to bottom by directly setting scrollTop on the scroll container
@@ -434,12 +437,21 @@ export function ChatPage() {
       // Sending a new message or opening a session — force-pin so subsequent
       // streaming tokens auto-scroll.
       isPinnedToBottomRef.current = true
+      setShowScrollPill(false)
       container.scrollTo({ top: container.scrollHeight, behavior: "smooth" })
     }
   }, [])
 
   // Debounced scroll to reduce excessive scrolling during streaming
   const debouncedScrollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Entering or switching a session starts pinned to the newest message.
+  // Without this, a user who had scrolled up in the previous session could
+  // land mid-history in the new one.
+  useEffect(() => {
+    isPinnedToBottomRef.current = true
+    setShowScrollPill(false)
+  }, [urlSessionId])
 
   useEffect(() => {
     // Don't auto-scroll if the user has scrolled away from the bottom to read
@@ -704,6 +716,7 @@ export function ChatPage() {
     // streaming response auto-scroll into view, even if they had scrolled up
     // to read history a moment ago.
     isPinnedToBottomRef.current = true
+    setShowScrollPill(false)
 
     setInput("")
     setAttachedImages([])
@@ -1184,33 +1197,39 @@ export function ChatPage() {
           </div>
         ) : hasMessages ? (
           /* Chat Messages - shown on /chat/:sessionId with messages */
-          <div
-            ref={scrollContainerRef}
-            onScroll={handleScroll}
-            className={cn("touch-scroll relative flex-1 min-h-0 overflow-y-auto px-2 sm:px-4 pt-6 pb-2 sm:pb-4 md:pt-20")}
-            onClick={(e) => {
-              // If clicking outside interactive elements, dismiss keyboard
-              if ((e.target as HTMLElement).closest('button, a, input, textarea, [role="button"]')) return
-              handleBackdropClick()
-            }}
-          >
-            <ChatMessages
+          <div className="relative flex-1 min-h-0">
+            <div
+              ref={scrollContainerRef}
+              onScroll={handleScroll}
+              className={cn("touch-scroll h-full overflow-y-auto px-2 sm:px-4 pt-6 pb-2 sm:pb-4 md:pt-20")}
+              onClick={(e) => {
+                // If clicking outside interactive elements, dismiss keyboard
+                if ((e.target as HTMLElement).closest('button, a, input, textarea, [role="button"]')) return
+                handleBackdropClick()
+              }}
+            >
+              <ChatMessages
 
-              messages={filteredMessages}
-              user={user}
-              isStreaming={isStreaming}
-              streamingContent={streamingContent}
-              streamingThinking={streamingThinking}
-              streamingRoundThinking={streamingRoundThinking}
-              streamingToolCalls={streamingToolCalls}
-              roundContents={roundContents}
-              currentRound={currentRound}
-              streamingMessageId={streamingMessageId}
-              hasEarlierHistory={hasEarlierHistory}
-              loadingEarlier={loadingEarlier}
-              onLoadEarlier={handleLoadEarlier}
-              onScrollToBottom={scrollToBottom}
-              endRef={messagesEndRef}
+                messages={filteredMessages}
+                user={user}
+                isStreaming={isStreaming}
+                streamingContent={streamingContent}
+                streamingThinking={streamingThinking}
+                streamingRoundThinking={streamingRoundThinking}
+                streamingToolCalls={streamingToolCalls}
+                roundContents={roundContents}
+                currentRound={currentRound}
+                streamingMessageId={streamingMessageId}
+                hasEarlierHistory={hasEarlierHistory}
+                loadingEarlier={loadingEarlier}
+                onLoadEarlier={handleLoadEarlier}
+                endRef={messagesEndRef}
+              />
+            </div>
+            <ChatScrollPill
+              visible={showScrollPill}
+              hasNewContent={isStreaming}
+              onClick={scrollToBottom}
             />
           </div>
         ) : (

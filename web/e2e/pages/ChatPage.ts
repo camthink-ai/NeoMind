@@ -9,7 +9,7 @@ export class ChatPage extends BasePage {
   readonly messageInput: string = 'textarea';
   // Send button - try to find the blue round button
   readonly sendButton: string = 'button:has(svg)';
-  readonly messagesContainer: string = '[data-testid="messages-container"], .messages-container, .chat-messages';
+  readonly messagesContainer: string = '[data-testid="messages-container"]';
 
   constructor(page: Page) {
     super(page);
@@ -57,7 +57,7 @@ export class ChatPage extends BasePage {
    * Wait for AI response
    */
   async waitForResponse(timeout = 30000): Promise<string> {
-    const responseLocator = this.page.locator('.message.assistant, [data-testid="assistant-message"]').last();
+    const responseLocator = this.page.locator('[data-testid="assistant-message"]').last();
     await responseLocator.waitFor({ state: 'visible', timeout });
     return await responseLocator.textContent() || '';
   }
@@ -66,7 +66,7 @@ export class ChatPage extends BasePage {
    * Get all user messages
    */
   async getUserMessages(): Promise<string[]> {
-    const messages = await this.page.locator('.message.user, [data-testid="user-message"]').allTextContents();
+    const messages = await this.page.locator('[data-testid="user-message"]').allTextContents();
     return messages;
   }
 
@@ -74,7 +74,7 @@ export class ChatPage extends BasePage {
    * Get all assistant messages
    */
   async getAssistantMessages(): Promise<string[]> {
-    const messages = await this.page.locator('.message.assistant, [data-testid="assistant-message"]').allTextContents();
+    const messages = await this.page.locator('[data-testid="assistant-message"]').allTextContents();
     return messages;
   }
 

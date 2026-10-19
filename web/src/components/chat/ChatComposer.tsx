@@ -459,7 +459,8 @@ export function ChatComposer({
               onClick={onCancel}
               variant="outline"
               className="h-8 w-8 rounded-full flex-shrink-0 p-0 border-destructive text-destructive hover:bg-destructive-light"
-              title="Cancel request"
+              title={t("chat:input.cancel")}
+              aria-label={t("chat:input.cancel")}
             >
               <Loader2 className="h-4 w-4 animate-spin" />
             </Button>

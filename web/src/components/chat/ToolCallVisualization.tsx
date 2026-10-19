@@ -9,15 +9,26 @@
  *   │ Step 1: 🧠 Thinking + 🔧 Tools          │  ← collapsible
  *   │ Step 2: 🧠 Thinking + 🔧 Tools          │
  *   └──────────────────────────────────────────┘
- *   Markdown content (the final answer)        ← rendered separately in chat.tsx
+ *   Markdown content (the final answer)        ← rendered separately in ChatMessages
  */
 
-import { useState } from "react"
+import { useId, useState } from "react"
 import { useTranslation } from "react-i18next"
-import { Wrench, ChevronDown, CheckCircle2, Loader2, Code, FileText } from "lucide-react"
+import {
+  Wrench,
+  ChevronDown,
+  CheckCircle2,
+  AlertCircle,
+  Loader2,
+  Code,
+  FileText,
+} from "lucide-react"
 import { cn } from "@/lib/utils"
-import { textMini, textCode } from "@/design-system/tokens/typography"
+import { textMini, textCode, textNano } from "@/design-system/tokens/typography"
+import { formatElapsedMs } from "@/lib/utils/format"
 import type { ToolCall } from "@/types"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { getToolDisplayName, isToolError } from "./toolCallUtils"
 
 // ─── Helpers ───
 
@@ -27,34 +38,6 @@ function getToolStatus(hasResult: boolean, isStreaming: boolean): ToolStatus {
   if (hasResult) return "completed"
   if (isStreaming) return "running"
   return "pending"
-}
-
-/** "device list --yes" → "device list" */
-function getToolDisplayName(name: string, args?: unknown): string {
-  if (!args || typeof args !== 'object') return name
-  const a = args as Record<string, unknown>
-
-  // Shell tool: parse "neomind device list" → "device list"
-  if (typeof a.command === 'string' && a.command.trim()) {
-    const cmd = a.command.trim()
-    if (cmd.startsWith('neomind ')) {
-      let rest = cmd.slice(8).trim()
-      // Remove cosmetic flags
-      rest = rest.replace(/\s*--(?:json|yes|force)\b/g, '')
-      return rest || name
-    }
-    // Non-neomind shell commands: show as-is (truncated)
-    return cmd.length > 40 ? cmd.slice(0, 37) + '...' : cmd
-  }
-
-  // Legacy aggregated tools: device(action)
-  const action = typeof a.action === 'string' ? a.action : ''
-  if (!action) return name
-  const extras: string[] = []
-  if (typeof a.device_id === 'string') extras.push(a.device_id)
-  if (typeof a.metric === 'string') extras.push(a.metric)
-  const suffix = extras.length > 0 ? ` ${extras.join(' · ')}` : ''
-  return `${name} ${action}${suffix}`
 }
 
 function formatJson(data: unknown): string {
@@ -91,7 +74,7 @@ interface ToolProcessBlockProps {
 /**
  * Renders the tool-calling process as a collapsible card.
  * Shows: summary header + per-round content & tool calls.
- * Does NOT render thinking or final content — those are handled by chat.tsx.
+ * Does NOT render thinking or final content — those are handled by ChatMessages.
  */
 export function ToolProcessBlock({
   toolCalls,
@@ -115,44 +98,65 @@ export function ToolProcessBlock({
   const steps = Array.from(toolGroups.keys()).sort((a, b) => a - b)
   const completedCount = toolCalls.filter(tc => tc.result != null).length
   const allComplete = completedCount === toolCalls.length && !isStreaming
-  const _manyCalls = toolCalls.length > 4
+  const hasError = toolCalls.some(isToolError)
+  const runningCall = toolCalls.find(tc => tc.result == null) ?? null
+
+  // While streaming, name the action in flight so a long tool round reads as
+  // work rather than a hang. Completed batches use plural-aware counts.
+  const runningName = runningCall
+    ? getToolDisplayName(runningCall.name, runningCall.arguments)
+    : null
+  const summary = isStreaming
+    ? runningName
+      ? `${t("chat:toolCall.runningWith", { name: runningName })} · ${completedCount}/${toolCalls.length}`
+      : `${completedCount}/${toolCalls.length} ${t("toolCall.status.running")}`
+    : `${t("chat:toolCall.callsCount", { count: toolCalls.length })} · ${t("chat:toolCall.roundsCount", { count: steps.length })}`
 
   return (
-    <div className="mb-4 overflow-hidden rounded-lg bg-muted/40">
+    <Collapsible
+      open={isExpanded}
+      onOpenChange={setIsExpanded}
+      className="mx-3 mb-4 overflow-hidden rounded-xl border border-chat-card-border bg-muted-20"
+    >
       {/* Summary header */}
-      <button
-        onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-muted-50 transition-colors"
-      >
-        <div className={cn(
-          "h-4 w-4 rounded flex items-center justify-center shrink-0",
-          allComplete && "bg-accent-emerald-light text-accent-emerald",
-          isStreaming && "bg-warning-light text-warning",
-          !allComplete && !isStreaming && "bg-muted text-muted-foreground"
-        )}>
-          {isStreaming ? (
-            <Loader2 className="h-2.5 w-2.5 animate-spin" />
-          ) : allComplete ? (
-            <CheckCircle2 className="h-4 w-4" />
-          ) : (
-            <Wrench className="h-2.5 w-2.5" />
-          )}
-        </div>
-        <span className={cn("text-body sm:text-sm", "font-medium text-foreground")}>
-          {isStreaming
-            ? `${completedCount}/${toolCalls.length} ${t("toolCall.status.running")}`
-            : `${toolCalls.length} ${t("toolCall.title")} · ${steps.length} ${t("toolCall.rounds")}`
-          }
-        </span>
-        <div className="flex-1" />
-        <ChevronDown className={cn(
-          "h-4 w-4 text-muted-foreground transition-transform duration-normal",
-          isExpanded && "rotate-180"
-        )} />
-      </button>
+      <CollapsibleTrigger asChild>
+        <button
+          type="button"
+          className="w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-muted-30"
+        >
+          <div className={cn(
+            "h-4 w-4 rounded flex items-center justify-center shrink-0",
+            hasError && !isStreaming && "bg-error-light text-error",
+            !hasError && allComplete && "bg-accent-emerald-light text-accent-emerald",
+            isStreaming && "bg-warning-light text-warning",
+            !allComplete && !isStreaming && !hasError && "bg-muted text-muted-foreground"
+          )}>
+            {isStreaming ? (
+              <Loader2 className="h-2.5 w-2.5 animate-spin" aria-hidden="true" />
+            ) : hasError ? (
+              <AlertCircle className="h-4 w-4" aria-hidden="true" />
+            ) : allComplete ? (
+              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+            ) : (
+              <Wrench className="h-2.5 w-2.5" aria-hidden="true" />
+            )}
+          </div>
+          <span className={cn("text-body sm:text-sm", "font-medium text-foreground truncate")}>
+            {summary}
+          </span>
+          <div className="flex-1" />
+          <ChevronDown
+            className={cn(
+              "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-normal",
+              isExpanded && "rotate-180"
+            )}
+            aria-hidden="true"
+          />
+        </button>
+      </CollapsibleTrigger>
 
       {/* Steps */}
-      {isExpanded && (
+      <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down">
         <div>
           {steps.map((step, idx) => {
             const calls = toolGroups.get(step) ?? []
@@ -177,41 +181,51 @@ export function ToolProcessBlock({
             )
           })}
         </div>
-      )}
-    </div>
+      </CollapsibleContent>
+    </Collapsible>
   )
 }
 
 /** Round content block - shows intermediate results from each round */
-function RoundContent({ content }: { content: string }) {
+export function RoundContent({ content }: { content: string }) {
   const [isExpanded, setIsExpanded] = useState(false)
+  const contentId = useId()
+  const { t } = useTranslation("chat")
 
   if (!content || content.trim().length === 0) return null
 
   return (
     <div>
       <button
+        type="button"
         onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full flex items-center gap-2 px-3 py-1 text-left hover:bg-muted-30 transition-colors"
+        aria-expanded={isExpanded}
+        aria-controls={contentId}
+        className="w-full flex items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-muted-30"
       >
-        <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+        <FileText className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden="true" />
         {!isExpanded && (
-          <span className={cn(textMini, "text-muted-foreground truncate")}>
+          <span className="text-sm text-muted-foreground truncate">
             {content.slice(0, 80)}{content.length > 80 && "..."}
           </span>
         )}
         {isExpanded && (
-          <span className={cn(textMini, "text-muted-foreground")}>Details</span>
+          <span className="text-sm text-muted-foreground">
+            {t("toolCall.hideDetails")}
+          </span>
         )}
         <div className="flex-1" />
-        <ChevronDown className={cn(
-          "h-4 w-4 text-muted-foreground transition-transform",
-          isExpanded && "rotate-180"
-        )} />
+        <ChevronDown
+          className={cn(
+            "h-4 w-4 text-muted-foreground transition-transform duration-normal",
+            isExpanded && "rotate-180"
+          )}
+          aria-hidden="true"
+        />
       </button>
       {isExpanded && (
-        <div className="px-3 pb-2">
-          <div className={cn("text-body sm:text-sm", "font-mono text-muted-foreground whitespace-pre-wrap break-words leading-relaxed")}>
+        <div id={contentId} className="px-3 pb-2">
+          <div className="text-sm font-mono text-muted-foreground whitespace-pre-wrap break-words leading-relaxed">
             {content}
           </div>
         </div>
@@ -222,17 +236,17 @@ function RoundContent({ content }: { content: string }) {
 
 // ─── ToolCallItem: single tool call with expandable args/result ───
 
-function ToolCallItem({
+export function ToolCallItem({
   toolCall,
   isStreaming,
   t,
 }: {
   toolCall: ToolCall
   isStreaming: boolean
-  t: (key: string) => string
-
+  t: (key: string, options?: Record<string, unknown>) => string
 }) {
   const [isExpanded, setIsExpanded] = useState(false)
+  const detailsId = useId()
   const status = getToolStatus(
     toolCall.result !== undefined && toolCall.result !== null,
     isStreaming
@@ -240,17 +254,22 @@ function ToolCallItem({
   const hasArguments = toolCall.arguments !== undefined && toolCall.arguments !== null
   const hasResult = toolCall.result !== undefined && toolCall.result !== null
   const hasDetails = hasArguments || hasResult
+  const failed = isToolError(toolCall)
 
   const statusLabels = {
     pending: t("toolCall.status.pending"),
     running: t("toolCall.status.running"),
     completed: t("toolCall.status.completed"),
+    failed: t("toolCall.status.failed"),
   }
 
   return (
     <div className="px-3 py-1">
       <button
+        type="button"
         onClick={() => { if (hasDetails) setIsExpanded(!isExpanded) }}
+        aria-expanded={hasDetails ? isExpanded : undefined}
+        aria-controls={hasDetails ? detailsId : undefined}
         className={cn(
           "w-full flex items-center gap-2 rounded text-left transition-colors",
           hasDetails && "hover:bg-muted-30"
@@ -258,23 +277,38 @@ function ToolCallItem({
         aria-label={hasDetails ? t("toolCall.toggleDetails") : undefined}
       >
         <div className={cn(
-          "h-3.5 w-3.5 rounded-full flex items-center justify-center shrink-0",
-          status === "completed" && "text-accent-emerald",
+          "h-4 w-4 rounded-full flex items-center justify-center shrink-0",
+          failed && "text-error",
+          !failed && status === "completed" && "text-muted-foreground",
           status === "running" && "text-warning",
           status === "pending" && "text-muted-foreground"
         )}>
           {status === "running" ? (
-            <Loader2 className="h-3 w-3 animate-spin" />
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+          ) : failed ? (
+            <AlertCircle className="h-4 w-4" aria-hidden="true" />
           ) : status === "completed" ? (
-            <CheckCircle2 className="h-3.5 w-3.5" />
+            <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
           ) : (
             <div className="h-1.5 w-1.5 rounded-full bg-muted-foreground" />
           )}
         </div>
-        <span className={cn("text-sm", "truncate text-muted-foreground")}>{getToolDisplayName(toolCall.name, toolCall.arguments)}</span>
+        <span className={cn("text-sm", "truncate", failed ? "text-error" : "text-muted-foreground")}>
+          {getToolDisplayName(toolCall.name, toolCall.arguments)}
+        </span>
+        {!isStreaming && toolCall.durationMs != null && toolCall.durationMs > 0 && (
+          <span className={cn(textNano, "text-muted-foreground tabular-nums shrink-0")}>
+            {formatElapsedMs(toolCall.durationMs)}
+          </span>
+        )}
         {status === "running" && (
           <span className={cn(textMini, "px-1.5 py-0.5 rounded bg-warning-light text-warning shrink-0")}>
             {statusLabels[status]}
+          </span>
+        )}
+        {failed && (
+          <span className={cn(textMini, "px-1.5 py-0.5 rounded bg-error-light text-error shrink-0")}>
+            {statusLabels.failed}
           </span>
         )}
         <div className="flex-1" />
@@ -282,15 +316,15 @@ function ToolCallItem({
           <ChevronDown className={cn(
             "h-4 w-4 text-muted-foreground transition-transform duration-normal shrink-0",
             isExpanded && "rotate-180"
-          )} />
+          )} aria-hidden="true" />
         )}
       </button>
       {isExpanded && hasDetails && (
-        <div className="ml-5.5 mt-0.5 mb-1 space-y-1">
+        <div id={detailsId} className="ml-5.5 mt-0.5 mb-1 space-y-1">
           {hasArguments && (
             <div className="rounded bg-muted-30 p-1.5">
               <div className={cn(textMini, "text-muted-foreground mb-0.5 flex items-center gap-1")}>
-                <Code className="h-3 w-3" />{t("toolCall.arguments")}
+                <Code className="h-3 w-3" aria-hidden="true" />{t("toolCall.arguments")}
               </div>
               <pre className={cn(textCode, "font-mono text-muted-foreground whitespace-pre-wrap break-words leading-relaxed")}>
                 {formatJson(toolCall.arguments)}
@@ -300,7 +334,8 @@ function ToolCallItem({
           {hasResult && (
             <div className="rounded bg-muted-30 p-1.5">
               <div className={cn(textMini, "text-muted-foreground mb-0.5 flex items-center gap-1")}>
-                <CheckCircle2 className="h-3 w-3" />{t("toolCall.result")}
+                {failed ? <AlertCircle className="h-3 w-3" aria-hidden="true" /> : <CheckCircle2 className="h-3 w-3" aria-hidden="true" />}
+                {t("toolCall.result")}
               </div>
               <pre className={cn(textCode, "font-mono text-muted-foreground whitespace-pre-wrap break-words max-h-32 overflow-y-auto leading-relaxed")}>
                 {formatJson(toolCall.result)}

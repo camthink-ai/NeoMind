@@ -22,7 +22,8 @@
     "newChat": "新对话",
     "startNewConversation": "开始输入消息，与 AI 助手对话",
     "fallbackHelpPrompt": "你能做什么",
-    "skills": "技能"
+    "skills": "技能",
+    "cancel": "取消请求"
   },
   "model": {
     "supportsVision": "支持图像",
@@ -36,8 +37,10 @@
   "thinking": {
     "title": "思考过程",
     "thinking": "思考中...",
-    "characters": "字符",
-    "rounds": "轮次"
+    "characters": "{{count}} 字符",
+    "characters_other": "{{count}} 字符",
+    "rounds": "{{count}} 轮",
+    "rounds_other": "{{count}} 轮"
   },
   "progress": {
     "thinking": "思考中",
@@ -56,12 +59,24 @@
     "status": {
       "pending": "等待",
       "running": "执行中",
-      "completed": "完成"
+      "completed": "完成",
+      "failed": "失败"
     },
     "arguments": "参数",
     "result": "结果",
     "rounds": "轮",
+    "callsCount": "{{count}} 个工具调用",
+    "callsCount_other": "{{count}} 个工具调用",
+    "roundsCount": "{{count}} 轮",
+    "roundsCount_other": "{{count}} 轮",
+    "runningWith": "正在执行 {{name}}…",
+    "details": "查看详情",
+    "hideDetails": "收起详情",
     "toggleDetails": "展开/收起详情"
+  },
+  "timeline": {
+    "title": "执行过程",
+    "roundFallback": "第 {{round}} 轮"
   },
   "connection": {
     "connected": "已连接",
@@ -129,8 +144,25 @@
   },
   "code": {
     "copy": "复制",
-    "copied": "已复制"
+    "copied": "已复制",
+    "wrap": "换行显示",
+    "unwrap": "取消换行",
+    "expand": "展开全部",
+    "collapse": "收起"
   },
+  "image": {
+    "view": "查看图片",
+    "close": "关闭图片",
+    "alt": "图片 {{index}}"
+  },
+  "message": {
+    "charsPerSecond": "字符/秒"
+  },
+  "a11y": {
+    "generating": "正在生成回复",
+    "answerReady": "回复已完成"
+  },
+  "newContent": "有新内容",
   "scrollToBottom": "回到底部",
   "copyMessage": "复制消息",
   "toolLoopProgress": "工具调用中 · 第 {{round}} 轮",

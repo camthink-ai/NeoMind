@@ -26,9 +26,14 @@ export default {
         code: ["12px", { lineHeight: "17px" }],     // inline code, code snippets
         body: ["13px", { lineHeight: "19px" }],     // chat messages, tool call text, markdown body
         heading: ["15px", { lineHeight: "22px" }],  // markdown headings
+        // Chat reading sizes — the conversation surface is read, not scanned,
+        // so it gets one step above the dense dashboard body (13px).
+        "chat-body": ["14px", { lineHeight: "22px" }],
+        "chat-body-lg": ["15px", { lineHeight: "26px" }],
       },
       colors: {
         border: "var(--border)",
+        "border-hover": "var(--border-hover)",
         input: "var(--input)",
         ring: "var(--ring)",
         background: "var(--background)",
@@ -58,6 +63,27 @@ export default {
           30: "var(--muted-30)",
           50: "var(--muted-50)",
         },
+        // Chat surfaces — mapped from the chat-specific CSS variables so the
+        // three reply layers (thinking / tool / answer) can use real token
+        // classes. Never write bg-chat-*/40: Tailwind v3 cannot apply the
+        // opacity modifier to a CSS-variable color (see DESIGN_SPEC).
+        chat: {
+          user: {
+            bg: "var(--msg-user-bg)",
+            text: "var(--msg-user-text)",
+          },
+          thinking: {
+            bg: "var(--thinking-bg)",
+            border: "var(--thinking-border)",
+            text: "var(--thinking-text)",
+          },
+          tool: {
+            bg: "var(--tool-bg)",
+            border: "var(--tool-border)",
+            header: "var(--tool-header-bg)",
+          },
+        },
+        "chat-card-border": "var(--chat-card-border)",
         accent: {
           DEFAULT: "var(--accent)",
           foreground: "var(--accent-foreground)",
@@ -211,6 +237,13 @@ export default {
           "0%, 50%": { opacity: "1" },
           "51%, 100%": { opacity: "0" },
         },
+        // Radix Collapsible exposes --radix-collapsible-content-height on the
+        // content node. Open-only animation keeps focus management simple:
+        // closed content unmounts, so there is no inert/hidden dance.
+        "collapsible-down": {
+          "from": { height: "0" },
+          "to": { height: "var(--radix-collapsible-content-height)" },
+        },
       },
       animation: {
         // Entrance/exit animations reference the motion tokens
@@ -233,6 +266,7 @@ export default {
         "shimmer": "shimmer 2s linear infinite",
         "typewriter": "typewriter 2s steps(40) infinite",
         "blink": "blink 1s step-end infinite",
+        "collapsible-down": "collapsible-down var(--duration-normal) var(--ease-out)",
       },
       // Performance: Animation delay variants for staggered animations
       animationDelay: {

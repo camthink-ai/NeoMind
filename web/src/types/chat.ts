@@ -41,6 +41,11 @@ export interface ToolCall {
   arguments: Record<string, unknown>
   result?: unknown
   round?: number // 1-based round number for multi-round tool calling
+  /** Live WS ToolCallEnd carries success; persisted history does not. */
+  success?: boolean
+  /** Client-measured wall time for this turn only (absent after reload). */
+  startedAt?: number
+  durationMs?: number
 }
 
 // Session Types
