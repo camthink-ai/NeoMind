@@ -2448,3 +2448,79 @@ async fn comprehensive_20round_evaluation() -> anyhow::Result<()> {
     sandbox::stop();
     Ok(())
 }
+
+// ── Vision tool eval ─────────────────────────────────────────────────
+//
+// The comprehensive rounds above never exercise the vision tool (no VLM in
+// the default loop). This hook runs the REAL VisionTool end-to-end against
+// any OpenAI-compatible VLM — point it at the builtin vision companion
+// (llama-server on its vlm port speaks /v1/chat/completions) or a cloud
+// VLM, and it checks the model actually SEES a known image.
+//
+//   NEOMIND_TEST_VLM_ENDPOINT=http://127.0.0.1:29385/v1 \
+//   NEOMIND_TEST_VLM_MODEL=minicpm-v-4.7-1b \
+//   cargo test -p neomind-agent --test comprehensive_agent_eval vision_tool_eval -- --ignored --nocapture
+
+/// 96×96 solid red PNG as a data URL — no image crate needed in tests.
+const RED_SQUARE_DATA_URL: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAIAAABt+uBvAAAA1klEQVR4nO3SMREAIAADMUAJ/oWgCwXwBpK121/n2Xvwtj4bAjUPCgIFgYJAQaAgUBAoCBQECgIFgYJAQaAgUBAoCBQECgIFgYJAQaAgUBAoCBQECgIFgYJAQaAgUBAoCBQECgIFgYJAQaAgUBAoCBQECgIFgYJAQaAgUBAoCBQECgIFgYJAQaAgUBAoCBQECgIFgYJAQaAgUBAoCBQECgIFgYJAQaAgUBAoCBQECgIFgYJAQaAgUBAoCBQECgIFgYJAQaAgUBAoCBQECgIFgYJAQaDxdwECIgHGcdR4PQAAAABJRU5ErkJggg==";
+
+#[tokio::test]
+#[ignore = "Requires a live VLM. Set NEOMIND_TEST_VLM_ENDPOINT (OpenAI-compatible, e.g. the builtin companion)."]
+async fn vision_tool_eval() -> anyhow::Result<()> {
+    use neomind_agent::llm_backends::{
+        set_instance_manager, LlmBackendInstanceManager,
+    };
+    use neomind_agent::toolkit::tool::Tool;
+    use neomind_agent::toolkit::vision::{VisionConfig, VisionTool};
+    use neomind_storage::{LlmBackendInstance, LlmBackendStore, LlmBackendType};
+
+    let Ok(endpoint) = std::env::var("NEOMIND_TEST_VLM_ENDPOINT") else {
+        eprintln!("NEOMIND_TEST_VLM_ENDPOINT not set — skipping (e.g. http://127.0.0.1:29385/v1)");
+        return Ok(());
+    };
+    let model = std::env::var("NEOMIND_TEST_VLM_MODEL")
+        .unwrap_or_else(|_| "vision-model".to_string());
+
+    let path =
+        std::env::temp_dir().join(format!("neomind-vision-eval-{}.redb", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let manager = Arc::new(LlmBackendInstanceManager::new(
+        LlmBackendStore::open(&path)?,
+    ));
+    let mut inst = LlmBackendInstance::new(
+        "eval-vlm".to_string(),
+        "Eval VLM".to_string(),
+        LlmBackendType::OpenAi,
+    );
+    inst.endpoint = Some(endpoint);
+    inst.model = model;
+    inst.api_key = Some(std::env::var("NEOMIND_TEST_VLM_KEY").unwrap_or_else(|_| "none".into()));
+    inst.capabilities.supports_multimodal = true;
+    inst.capabilities.multimodal_source = Some("runtime_api".into());
+    manager.upsert_instance(inst).await?;
+    set_instance_manager(manager.clone());
+
+    let tool = VisionTool::new(VisionConfig::default(), manager);
+    let start = Instant::now();
+    let out = tool
+        .execute(serde_json::json!({
+            "image": RED_SQUARE_DATA_URL,
+            "prompt": "What is the dominant color of this image? Answer with just the color name.",
+        }))
+        .await?;
+    let elapsed = start.elapsed();
+
+    let analysis = out
+        .data
+        .get("analysis")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_lowercase();
+    println!("vision_tool_eval: {}ms — analysis: {:?}", elapsed.as_millis(), analysis);
+    assert!(!analysis.is_empty(), "VLM returned an empty analysis");
+    assert!(
+        analysis.contains("red") || analysis.contains("红"),
+        "the model did not see the red square: {analysis}"
+    );
+    Ok(())
+}
