@@ -206,6 +206,9 @@ export interface ExtensionCommandDescriptor {
   // config removed - no execution config
   /** True when this command is hidden from the LLM tool registry. */
   disabled?: boolean
+  /** Extension author declared this command UI/automation-only. When false
+   *  the tool toggle is locked off — the author's decision wins. */
+  ai_exposed?: boolean
 }
 
 /**

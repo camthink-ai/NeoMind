@@ -755,10 +755,18 @@ export function ExtensionDetailsDialog({
                     )}
                   />
                 </button>
-                {/* Per-command tool toggle */}
+                {/* Per-command tool toggle. Author-declared ai_exposed=false
+                    locks the toggle: the command never reaches the LLM. */}
                 <Switch
                   checked={command.disabled ? false : masterEnabled}
-                  disabled={!masterEnabled}
+                  disabled={!masterEnabled || command.ai_exposed === false}
+                  title={
+                    command.ai_exposed === false
+                      ? t("extensions:tools.authorHidden", {
+                          defaultValue: "Not AI-exposed (declared by extension)",
+                        })
+                      : undefined
+                  }
                   onCheckedChange={(checked) => handleCmdToggle(command.id, checked)}
                   onClick={(e) => e.stopPropagation()}
                   aria-label={t("extensions:tools.cmdToggleAria", {
