@@ -381,20 +381,6 @@ const ComponentWrapper = memo(function ComponentWrapper({
             <button className={cn('absolute inset-0', isSelected ? 'pointer-events-none' : 'cursor-pointer')}
               onClick={handleEditButtonMouseEvent} onTouchEnd={handleEditButtonTouchEvent} aria-label="Select component" />
           )}
-          {isSelected && (
-            <div className="absolute bottom-2 right-2 z-20 flex gap-1">
-              <Button variant="secondary" size="xs" onClick={handleConfigClick}>
-                <Settings2 className="h-3 w-3 mr-1" />{t('componentWrapper.config')}
-              </Button>
-              <Button variant="secondary" size="xs" onClick={handleDuplicateClick}>
-                <Copy className="h-3 w-3 mr-1" />{t('componentWrapper.copy')}
-              </Button>
-              <Button variant="secondary" size="xs" className="hover:bg-destructive hover:text-destructive-foreground"
-                onClick={() => { confirm({ title: t('componentWrapper.remove'), description: t('componentWrapper.removeConfirm'), confirmText: t('componentWrapper.remove'), variant: 'destructive' }).then(ok => { if (ok) onRemove(component.id) }) }}>
-                <Trash2 className="h-3 w-3 mr-1" />{t('componentWrapper.remove')}
-              </Button>
-            </div>
-          )}
         </div>
       )}
     </div>
