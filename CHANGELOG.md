@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-10-19 — round-based chat reply timeline, reply readability, and device runtime-metric fixes
+
+The chat reply is now organized by execution round instead of by widget category: each round owns its reasoning, intermediate output, and tool calls, while the final answer stays a separate reading surface. The built-in LLM can also run a local vision companion alongside the main text model, and the pending device and auto-onboard fixes from the previous Unreleased section are included below.
+
+### Added — builtin LLM vision companion
+- The built-in LLM can run a local VLM companion alongside the main text model, so image understanding no longer requires switching the whole conversation to a multimodal backend.
+- Vision tool calls now prefer local `builtin-vlm-*` companions ahead of cloud multimodal backends — lower cost and LAN latency — with clearer guidance when no VLM is installed.
+- Added companion role/capability plumbing, candidate-selection tests, and an ignored end-to-end VLM eval driven by `NEOMIND_TEST_VLM_ENDPOINT`.
+
+### Added — chat
+- Round-based execution timeline (`TurnTimeline`): each round groups thinking, intermediate output, and tool calls; rounds collapse independently, and the final answer is rendered outside the timeline.
+- Floating scroll-to-latest pill on both the chat page and the floating panel; the panel now respects the user's scroll position instead of snapping to the bottom on every stream update.
+- Streaming caret, live thinking/running-tool labels, and per-tool success/failure plus live duration.
+- Image lightbox for markdown images and user attachments; code-block wrap/copy/expand controls; horizontally scrollable tables.
+- Screen-reader announcements for turn start/completion, `role="log"`/`aria-busy`, and Radix collapsibles with `aria-expanded`.
+
+### Changed — chat
+- Process cards use a neutral `muted-20` surface with a softer 8% border; removed the warm/cool fills and colored left rails.
+- Assistant process cards and the final answer now share the same content measure; paragraph-level `max-w-prose` was removed so the answer no longer looks narrower than the card.
+- Chat typography raised to 14/15px with paragraph and heading rhythm; intermediate output previews now match the tool-name size (14px).
+- Tables are no longer boxed or zebra-striped: header band + 1px horizontal rules, no vertical lines.
+- Completed tool/round checks are muted; color is reserved for running, failed, and the outer summary. Round tool counts are text ("17 tools" / "17 个工具").
+
+### Fixed — chat
+- User-message code was white-on-white in light mode and dark-on-dark in dark mode; code surfaces are now variant-scoped and readable in both themes.
+- Code blocks no longer inherit Tailwind Typography's dark `<pre>` background.
+- Removed the redundant divider between thinking and the rest of the same round.
+- English pluralization for tool, round, and character counts.
+
+### Cleanup — chat
+- Removed the obsolete `ToolProcessBlock`, its test, and unused chat tokens/mappings (`--thinking-bg`, `--thinking-border`, `--tool-*`, `--msg-ai-bg`); `--thinking-text` and the user-message tokens remain.
+
 ### Fixed — devices
 - Device detail page rendered only "-" cards when a type's template didn't match the device's real payload: `metricDefinitions` whitelisted template ∪ `is_virtual` metrics, hiding runtime auto-extracted metrics (`is_virtual=false`) — the only ones with live values — so the page and its per-metric history dialog (whose only entry point is the card) were empty while `/current` returned data. Cards now render every metric the device actually reports; the dashboard data-source picker gets the same fix, with a "Runtime" badge distinguishing reported metrics from virtual ones.
 - `GET /devices/:id/telemetry` without `?metric=` whitelisted only template ∪ transform ∪ template-sub-path metrics, so metrics the device actually reported (auto-extracted names absent from the template) were invisible to the default query — and with an oversized template the request 400'd outright (`Too many metrics requested: 269 (max 50)`); metrics that exist in storage are now included alongside template metrics.
