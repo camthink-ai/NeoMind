@@ -711,8 +711,14 @@ export function BuiltinModelWizard({
                                 onClick={() => {
                                   api
                                     .deleteBuiltinLlmModel(m.id)
-                                    .then(() => api.getBuiltinLlmStatus())
-                                    .then(setStatus)
+                                    .then(async () => {
+                                      // Refresh BOTH surfaces: status drives the running pill, the
+                                      // models list drives the installed badge — updating only one
+                                      // left the card showing a deleted companion until reopen.
+                                      setStatus(await api.getBuiltinLlmStatus())
+                                      const r = await api.getBuiltinModels()
+                                      setModels(r.models)
+                                    })
                                     .catch(() => {})
                                 }}
                               >

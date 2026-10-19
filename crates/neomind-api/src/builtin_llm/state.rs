@@ -235,6 +235,14 @@ pub async fn bootstrap(
                 tracing::warn!(error = %e, "builtin llm: failed to clean up orphan instance");
             }
         }
+        // No MAIN model ≠ no companion: a vision companion still serves the
+        // vision tool and chat-image delegation against whatever text backend
+        // IS active (e.g. a cloud one). Skipping it here left an installed
+        // companion dead on every boot without a main model.
+        match super::handlers::ensure_companion(data_dir, cfg, manager).await {
+            Ok(_) => {}
+            Err(skip) => tracing::info!(reason = %skip, "builtin llm: vision companion not running"),
+        }
         return BootstrapOutcome::ModelMissing;
     };
 

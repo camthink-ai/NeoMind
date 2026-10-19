@@ -174,10 +174,16 @@ pub(crate) fn is_vlm_model(model_id: &str) -> bool {
 /// The installed vision companion, if any (scan on-disk ids for a vlm role —
 /// main-model discovery deliberately ignores role, this one filters on it).
 pub(crate) fn installed_companion(mdir: &Path) -> Option<InstalledModel> {
-    installed_model_ids(mdir)
+    let mut companion = installed_model_ids(mdir)
         .into_iter()
         .find(|id| is_vlm_model(id))
-        .and_then(|id| installed_model_by_id(mdir, &id))
+        .and_then(|id| installed_model_by_id(mdir, &id))?;
+    // by-id resolution only knows the id — restamp the registry's display
+    // name so status/UI show "MiniCPM-V-4.7-1B", not the slug.
+    if let Some(def) = model_def(&companion.manifest.id) {
+        companion.display_name = def.display_name.to_string();
+    }
+    Some(companion)
 }
 
 /// Why a companion spawn didn't happen (status surfaces it; none of these
@@ -1076,6 +1082,25 @@ pub async fn status_handler(
             .unwrap_or_else(|| m.model_path(&mdir))
     });
 
+    // Vision companion: reported in EVERY branch (downloading /
+    // not_configured included) — it runs independently of the main model,
+    // and the UI's companion row must not blink out mid-download or after a
+    // main-model delete. Null when the feature is off or none installed
+    // (old and new frontends agree "absent").
+    let companion = if !cfg.vlm_enabled {
+        serde_json::Value::Null
+    } else {
+        match installed_companion(&mdir) {
+            Some(c) => json!({
+                "model_id": c.manifest.id,
+                "name": c.display_name,
+                "port": cfg.vlm_port,
+                "running": health_check(cfg.vlm_port).await,
+            }),
+            None => serde_json::Value::Null,
+        }
+    };
+
     // Downloading overrides running/stopped/not_configured. The lock is the
     // authoritative single-flight gate (per the task design decision); the
     // atomic covers the brief window between lock acquisition and the spawned
@@ -1089,6 +1114,7 @@ pub async fn status_handler(
             "installed": installed,
             "model_id": dl_id,
             "server_state": "downloading",
+            "companion": companion,
             "downloaded_bytes": downloaded,
             "total_bytes": if total > 0 { json!(total) } else { serde_json::Value::Null },
         }));
@@ -1099,6 +1125,7 @@ pub async fn status_handler(
             "installed": false,
             "model_id": serde_json::Value::Null,
             "server_state": "not_configured",
+            "companion": companion,
             "downloaded_bytes": serde_json::Value::Null,
             "total_bytes": serde_json::Value::Null,
         }));
@@ -1129,22 +1156,6 @@ pub async fn status_handler(
         .as_ref()
         .map(|(d, _)| d.min_ram_mb)
         .unwrap_or(0);
-
-    // Vision companion: reported only when the feature is on AND a companion
-    // is installed — null otherwise (old and new frontends agree "absent").
-    let companion = if !cfg.vlm_enabled {
-        serde_json::Value::Null
-    } else {
-        match installed_companion(&mdir) {
-            Some(c) => json!({
-                "model_id": c.manifest.id,
-                "name": c.display_name,
-                "port": cfg.vlm_port,
-                "running": health_check(cfg.vlm_port).await,
-            }),
-            None => serde_json::Value::Null,
-        }
-    };
 
     ok(json!({
         "installed": true,
