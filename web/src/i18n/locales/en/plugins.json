@@ -132,6 +132,10 @@
       "gemma4-e2b": {
         "name": "Gemma4-E2B",
         "notes": "Official Google QAT quant — vision built in"
+      },
+      "minicpm-v-4.7-1b": {
+        "name": "MiniCPM-V-4.7-1B",
+        "notes": "Local vision model — describes images for text-only main models; ~1.8 GB resident"
       }
     },
     "builtinWizardCtxLabel": "Context",
@@ -184,7 +188,13 @@
     "builtinMemLowInstalled": "This model recommends ≥{{min}} GB free RAM; only {{avail}} GB available — inference may be very slow or fail. Consider a cloud backend or freeing memory.",
     "builtinCtxDefault": "model default",
     "cloudCtx": "Context window (optional)",
-    "cloudCtxHelp": "Real context length for custom backends (e.g. RKLLM3 -c 16384). Blank = default 128000"
+    "cloudCtxHelp": "Real context length for custom backends (e.g. RKLLM3 -c 16384). Blank = default 128000",
+    "companionGroup": "Vision Companion",
+    "companionHint": "sees images alongside the main model; never chats",
+    "companionRunning": "Running",
+    "companionStopped": "Stopped",
+    "companionLabel": "Vision companion",
+    "companionInstall": "Install"
   },
   "yes": "Yes",
   "no": "No",

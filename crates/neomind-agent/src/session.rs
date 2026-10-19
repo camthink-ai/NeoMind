@@ -372,6 +372,78 @@ fn parse_extracted_facts(text: &str) -> (Vec<String>, Vec<String>) {
     (user, knowledge)
 }
 
+async fn delegate_images_to_companion(message: &str, images: &[String]) -> Option<String> {
+    if let Ok(v) = std::env::var("NEOMIND_BUILTIN_VLM_DELEGATE") {
+        if v.trim().eq_ignore_ascii_case("off") {
+            return None;
+        }
+    }
+    let manager = get_instance_manager().ok()?;
+    let companion = manager
+        .list_instances()
+        .into_iter()
+        .find(|i| i.id.starts_with("builtin-vlm-") && i.capabilities.supports_multimodal)?;
+    let runtime = manager.get_runtime(&companion.id).await.ok()?;
+
+    use neomind_core::llm::backend::{GenerationParams, LlmInput};
+    use neomind_core::message::{Content, ContentPart, Message, MessageRole};
+
+    let mut described = Vec::with_capacity(images.len());
+    for img in images {
+        // Chat uploads arrive as data URLs — anything else takes the
+        // legacy error path rather than guessing the encoding.
+        let raw = img.trim().strip_prefix("data:")?;
+        let (mime, data) = raw.split_once(",")?;
+        let mime = mime.strip_suffix(";base64")?.to_string();
+        let msg = Message::new(
+            MessageRole::User,
+            Content::Parts(vec![
+                ContentPart::text(
+                    "Describe this image factually and concisely: objects, people, visible text, colors, and the overall scene. Describe only what is visible — do not speculate.",
+                ),
+                ContentPart::image_base64(data, &mime),
+            ]),
+        );
+        let input = LlmInput {
+            messages: vec![msg],
+            params: GenerationParams {
+                max_tokens: Some(400),
+                ..Default::default()
+            },
+            model: None,
+            stream: false,
+            tools: None,
+        };
+        let out = tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            runtime.generate(input),
+        )
+        .await
+        .ok()?
+        .ok()?;
+        let text = out.text.trim();
+        if text.is_empty() {
+            return None;
+        }
+        described.push(text.to_string());
+    }
+
+    let mut combined = message.to_string();
+    combined.push_str(&format!(
+        "\n\n[The user attached {} image(s); a local vision model described them:]\n",
+        described.len()
+    ));
+    for (i, d) in described.iter().enumerate() {
+        combined.push_str(&format!("[Image {}] {}\n", i + 1, d));
+    }
+    tracing::info!(
+        companion = %companion.id,
+        images = described.len(),
+        "session: delegated chat images to the vision companion"
+    );
+    Some(combined)
+}
+
 impl SessionManager {
     /// Create a new session manager with persistent storage.
     pub fn new() -> Result<Self> {
@@ -1947,6 +2019,15 @@ Assistant: {ar}\n"
         Ok(response)
     }
 
+    /// Chat-image delegation: the active model is text-only but a healthy
+    /// vision companion (`builtin-vlm-*`) is registered — describe each
+    /// image with the companion and continue the turn as TEXT instead of
+    /// rejecting the send. Returns the combined prompt, or None when
+    /// delegation is disabled / no companion / any step fails (the caller
+    /// then keeps the legacy validation error). Failures NEVER invent image
+    /// content: no description, no delegation.
+    /// NEOMIND_BUILTIN_VLM_DELEGATE=off restores the pre-companion behavior.
+
     /// Process a multimodal message with optional LLM backend override.
     pub async fn process_message_multimodal_with_backend(
         &self,
@@ -1969,6 +2050,13 @@ Assistant: {ar}\n"
         if !images.is_empty() {
             let agent = self.get_session(session_id).await?;
             if !agent.llm_interface().supports_multimodal().await {
+                // Text-only active model: a healthy vision companion can
+                // describe the images and the turn continues as text.
+                if let Some(combined) =
+                    delegate_images_to_companion(message, &images).await
+                {
+                    return self.process_message(session_id, &combined).await;
+                }
                 return Err(super::error::NeoMindError::Validation(
                     "Current model does not support image input. Please select a vision-capable model or remove images before retrying."
                         .to_string(),
@@ -2002,6 +2090,11 @@ Assistant: {ar}\n"
         if !images.is_empty() {
             let agent = self.get_session(session_id).await?;
             if !agent.llm_interface().supports_multimodal().await {
+                if let Some(combined) =
+                    delegate_images_to_companion(message, &images).await
+                {
+                    return self.process_message_events(session_id, &combined).await;
+                }
                 return Err(super::error::NeoMindError::Validation(
                     "Current model does not support image input. Please select a vision-capable model or remove images before retrying."
                         .to_string(),
@@ -2024,6 +2117,11 @@ Assistant: {ar}\n"
         if !images.is_empty() {
             let agent = self.get_session(session_id).await?;
             if !agent.llm_interface().supports_multimodal().await {
+                if let Some(combined) =
+                    delegate_images_to_companion(message, &images).await
+                {
+                    return self.process_message_events(session_id, &combined).await;
+                }
                 return Err(super::error::NeoMindError::Validation(
                     "Current model does not support image input. Please select a vision-capable model or remove images before retrying."
                         .to_string(),
@@ -2931,5 +3029,119 @@ mod extraction_parse_tests {
     fn bullet_dot_variant_accepted() {
         let (u, _) = parse_extracted_facts("• [user] likes sailing on weekends");
         assert_eq!(u, vec!["likes sailing on weekends"]);
+    }
+}
+
+#[cfg(test)]
+mod companion_delegation_tests {
+    use super::delegate_images_to_companion;
+    use crate::llm_backends::{set_instance_manager, LlmBackendInstanceManager};
+    use neomind_storage::{LlmBackendInstance, LlmBackendStore, LlmBackendType};
+    use std::sync::Arc;
+
+    fn test_store(tag: &str) -> Arc<LlmBackendStore> {
+        let path = std::env::temp_dir().join(format!(
+            "neomind-deleg-{}-{}.redb",
+            tag,
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        LlmBackendStore::open(&path).expect("open test store")
+    }
+
+    /// Fake OpenAI-compatible /v1/chat/completions answering with a fixed
+    /// description (raw-socket HTTP — this crate has no axum dependency;
+    /// same pattern as the instance_manager auto-register test). Proves the
+    /// companion runtime is actually queried and its text lands verbatim in
+    /// the combined prompt.
+    async fn fake_vlm_server() -> (String, tokio::task::JoinHandle<()>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let body = r#"{"choices":[{"message":{"role":"assistant","content":"a red square and a green circle"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2},"created":0,"model":"fake-vlm","id":"x","object":"chat.completion"}"#;
+        let h = tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else { break };
+                let mut buf = [0u8; 4096];
+                let _ = socket.read(&mut buf).await;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(), body
+                );
+                let _ = socket.write_all(resp.as_bytes()).await;
+            }
+        });
+        (format!("http://127.0.0.1:{}", addr.port()), h)
+    }
+
+    fn data_url() -> String {
+        use base64::Engine;
+        format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(b"fake-png-bytes")
+        )
+    }
+
+    #[cfg(feature = "llamacpp")]
+    #[serial_test::serial]
+    #[tokio::test]
+    async fn companion_descriptions_are_injected_into_the_prompt() {
+        let (ep, _h) = fake_vlm_server().await;
+        let manager = Arc::new(LlmBackendInstanceManager::new(test_store("ok")));
+        let mut inst = LlmBackendInstance::new(
+            "builtin-vlm-fake".into(),
+            "FakeVLM".into(),
+            LlmBackendType::LlamaCpp,
+        );
+        inst.endpoint = Some(ep);
+        inst.capabilities.supports_multimodal = true;
+        // Same protection the real spawn stamps: without runtime_api the
+        // name-heuristic in ensure_instance_capabilities flips the flag back
+        // to false on read (model name is not in its vision tables).
+        inst.capabilities.multimodal_source = Some("runtime_api".to_string());
+        manager.upsert_instance(inst).await.unwrap();
+        set_instance_manager(manager);
+
+        let combined = delegate_images_to_companion("what is in this picture?", &[data_url()])
+            .await
+            .expect("delegation must succeed with a healthy companion");
+        assert!(combined.contains("what is in this picture?"));
+        assert!(
+            combined.contains("a red square and a green circle"),
+            "companion text must land verbatim: {combined}"
+        );
+        assert!(combined.contains("[Image 1]"));
+    }
+
+    #[serial_test::serial]
+    #[tokio::test]
+    async fn no_companion_or_text_only_companion_means_no_delegation() {
+        // No companion at all.
+        let manager = Arc::new(LlmBackendInstanceManager::new(test_store("none")));
+        set_instance_manager(manager.clone());
+        assert!(delegate_images_to_companion("hi", &[data_url()]).await.is_none());
+
+        // A companion-lookalike WITHOUT the multimodal flag is skipped —
+        // the flag is the vision contract, the id alone is not.
+        let mut inst = LlmBackendInstance::new(
+            "builtin-vlm-blind".into(),
+            "Blind".into(),
+            LlmBackendType::LlamaCpp,
+        );
+        inst.endpoint = Some("http://127.0.0.1:1".into());
+        inst.capabilities.supports_multimodal = false;
+        manager.upsert_instance(inst).await.unwrap();
+        assert!(delegate_images_to_companion("hi", &[data_url()]).await.is_none());
+    }
+
+    #[serial_test::serial]
+    #[tokio::test]
+    async fn env_off_restores_legacy_rejection() {
+        std::env::set_var("NEOMIND_BUILTIN_VLM_DELEGATE", "off");
+        let manager = Arc::new(LlmBackendInstanceManager::new(test_store("off")));
+        set_instance_manager(manager);
+        let r = delegate_images_to_companion("hi", &[data_url()]).await;
+        std::env::remove_var("NEOMIND_BUILTIN_VLM_DELEGATE");
+        assert!(r.is_none(), "kill switch must short-circuit before any call");
     }
 }

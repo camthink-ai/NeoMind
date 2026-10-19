@@ -30,7 +30,8 @@
     "addImage": "添加图片",
     "notSupportImage": "当前模型不支持图片",
     "visionError": "当前模型不支持图像输入。\n\n请选择一个支持视觉的模型（如 qwen3.5:4b），或者移除图片后重试。\n\n支持视觉的模型会显示 👁️ 图标。",
-    "supportsTools": "支持工具调用"
+    "supportsTools": "支持工具调用",
+    "visionViaCompanion": "图片将由本地视觉模型代为分析"
   },
   "thinking": {
     "title": "思考过程",

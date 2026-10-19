@@ -543,14 +543,16 @@ export function BuiltinModelWizard({
                   ) : null
                 })()}
                 {/* Model picker — one builtin model at a time; pick then
-                    download (installed model is marked and pre-selected). */}
+                    download (installed model is marked and pre-selected).
+                    Vision companions (role=vlm) group apart: they run
+                    alongside the main model, never replace it. */}
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {models.length === 0 && (
                     <div className="col-span-full text-xs text-muted-foreground text-center py-2">
                       {t('plugins:llm.builtinWizardNoModels')}
                     </div>
                   )}
-                  {models.map((m) => {
+                  {models.filter((m) => m.role !== 'vlm').map((m) => {
                     const selected = selectedModelId === m.id
                     // Display copy is i18n'd on the frontend (fall back to the
                     // backend's notes for non-i18n API consumers).
@@ -655,6 +657,82 @@ export function BuiltinModelWizard({
                     </Button>
                   )
                 })()}
+
+                {/* Vision companions: install/running state independent of
+                    the main model — download starts it, delete removes it.
+                    The active-main button states above never apply (a
+                    companion is never "active"). */}
+                {models.some((m) => m.role === 'vlm') && (
+                  <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
+                    <div className="flex items-center gap-2">
+                      <Eye className="h-4 w-4 text-info" />
+                      <span className="text-xs font-medium text-foreground">
+                        {t('plugins:llm.companionGroup')}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {t('plugins:llm.companionHint')}
+                      </span>
+                    </div>
+                    {models
+                      .filter((m) => m.role === 'vlm')
+                      .map((m) => {
+                        const isInstalledCompanion = m.installed
+                        const running = status?.companion?.model_id === m.id && status.companion.running
+                        return (
+                          <div
+                            key={m.id}
+                            className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="truncate text-sm font-medium">
+                                  {t(`plugins:llm.models.${m.id}.name`, { defaultValue: m.name })}
+                                </span>
+                                {isInstalledCompanion && (
+                                  <span className="rounded-full bg-success-light px-1.5 py-0.5 text-[10px] font-medium text-success">
+                                    {t('plugins:llm.installed')}
+                                  </span>
+                                )}
+                                {running && (
+                                  <span className="rounded-full bg-info-light px-1.5 py-0.5 text-[10px] font-medium text-info">
+                                    {t('plugins:llm.companionRunning')}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
+                                {t(`plugins:llm.models.${m.id}.notes`, { defaultValue: m.notes })}
+                              </p>
+                            </div>
+                            {isInstalledCompanion ? (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 px-2 text-xs text-destructive hover:text-destructive"
+                                onClick={() => {
+                                  api
+                                    .deleteBuiltinLlmModel(m.id)
+                                    .then(() => api.getBuiltinLlmStatus())
+                                    .then(setStatus)
+                                    .catch(() => {})
+                                }}
+                              >
+                                {t('common:delete', 'Delete')}
+                              </Button>
+                            ) : (
+                              <Button
+                                size="sm"
+                                className="h-7 px-3 text-xs"
+                                onClick={() => handleStartDownload(m.id)}
+                              >
+                                <Download className="mr-1 h-3 w-3" />
+                                {t('plugins:llm.companionInstall')}
+                              </Button>
+                            )}
+                          </div>
+                        )
+                      })}
+                  </div>
+                )}
               </div>
             )}
 

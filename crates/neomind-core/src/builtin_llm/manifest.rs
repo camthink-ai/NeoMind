@@ -121,6 +121,12 @@ pub struct BuiltinModelDef {
     /// Downloaded with the model (never separately switchable); spawn passes
     /// `--mmproj` when the file is present.
     pub mmproj: Option<MmprojSource>,
+    /// Instance role: `None` = main chat model (the switchable builtin);
+    /// `Some("vlm")` = vision companion — spawns on its own port alongside
+    /// the main model, is NEVER set as the active chat backend, and is
+    /// picked up by the vision tool / image delegation through
+    /// `supports_multimodal`.
+    pub role: Option<&'static str>,
 }
 
 /// The builtin model registry. LFM2.5-2.6B is the default (2026-10-10,
@@ -186,6 +192,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             thinking_is_integral: false,
             min_ram_mb: 3_072,
             mmproj: None,
+            role: None,
         },
         BuiltinModelDef {
             manifest: ModelManifest {
@@ -224,6 +231,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             thinking_is_integral: true,
             min_ram_mb: 3_072,
             mmproj: None,
+            role: None,
         },
         BuiltinModelDef {
             manifest: ModelManifest {
@@ -271,6 +279,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
                 // the footprint for marginal quality, BF16 adds compat risk.
                 size_bytes: 672_423_616,
             }),
+            role: None,
         },
         BuiltinModelDef {
             manifest: ModelManifest {
@@ -315,6 +324,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
                 hf_file: "gemma-4-E2B-it-mmproj.gguf".to_string(),
                 size_bytes: 986_833_664,
             }),
+            role: None,
         },
         BuiltinModelDef {
             manifest: ModelManifest {
@@ -358,6 +368,57 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             thinking_is_integral: true,
             min_ram_mb: 6_144,
             mmproj: None,
+            role: None,
+        },
+        BuiltinModelDef {
+            manifest: ModelManifest {
+                id: "minicpm-v-4.7-1b".to_string(),
+                version: "1.0".to_string(),
+                file_name: "minicpm-v-4.7-1b-q4_k_m.gguf".to_string(),
+                // Official openbmb LFS oid (captured 2026-10-19 via the HF
+                // API tree), same capture discipline as the other pins.
+                sha256: "588c6c94c82f756b86dba35c42ed9ba9ec187d65824eb52f039c347df563e63d"
+                    .to_string(),
+                quant: "q4_k_m".to_string(),
+                mmproj: None,
+            },
+            display_name: "MiniCPM-V-4.7-1B",
+            // Low-temp VQA point (the field's manual Jetson deployment of
+            // this exact model runs --temp 0; 0.1 keeps a sliver of sampling
+            // to avoid degenerate loops). top_p/top_k: MiniCPM family
+            // defaults — no official card values for this release.
+            temperature: Some(0.1),
+            top_p: Some(0.95),
+            top_k: Some(40),
+            min_p: None,
+            repeat_penalty: None,
+            hf_repo: "openbmb/MiniCPM-V-4.7-1B-GGUF",
+            hf_file: "MiniCPM-V-4_7-1B-Q4_K_M.gguf",
+            size_bytes: 672_003_680,
+            // The companion answers short describe-the-image prompts — it
+            // never carries an agent history. 32K default keeps the KV tiny;
+            // no kv cost model on record, so the main guard passes through
+            // and the companion's own availability gate (weights + projector
+            // + headroom) is the RAM authority.
+            default_ctx: 32768,
+            max_ctx: 32768,
+            kv_bytes_per_token: None,
+            kv_const_bytes: None,
+            notes: "视觉伴侣(VLM)— 与主模型并行负责看图(vision 工具与聊天传图委托);官方 openbmb Q4_K_M + F16 投影器,常驻约 1.8 GB",
+            recommended: false,
+            default_thinking: false,
+            thinking_is_integral: false,
+            // Weights 672 MB + F16 projector 1110 MB + runtime headroom.
+            min_ram_mb: 2_400,
+            mmproj: Some(MmprojSource {
+                file_name: "minicpm-v-4.7-1b-mmproj-f16.gguf".to_string(),
+                sha256: "fb9cc047a3cdad5317fd8433a4aeda2d22f00f02ca4bd93b34ad84165b25a900"
+                    .to_string(),
+                hf_repo: "openbmb/MiniCPM-V-4.7-1B-GGUF".to_string(),
+                hf_file: "mmproj-model-f16.gguf".to_string(),
+                size_bytes: 1_110_117_984,
+            }),
+            role: Some("vlm"),
         },
     ]
 });
@@ -577,10 +638,35 @@ mod tests {
             qwen.sha256,
             "cd88edcf8d031894960bb0c9c5b9b7e1fea6abee02b9f7ce925a00d12891f864"
         );
+        // The vision companion: main + projector pins (openbmb official,
+        // captured 2026-10-19 via the HF API tree).
+        let vlm = by_id("minicpm-v-4.7-1b");
+        assert_eq!(vlm.role, Some("vlm"), "companion entry must carry the vlm role");
+        assert_eq!(
+            vlm.manifest.sha256,
+            "588c6c94c82f756b86dba35c42ed9ba9ec187d65824eb52f039c347df563e63d"
+        );
+        assert_eq!(vlm.size_bytes, 672_003_680);
+        let vmm = vlm.mmproj.as_ref().expect("vlm mmproj");
+        assert_eq!(vmm.hf_file, "mmproj-model-f16.gguf");
+        assert_eq!(vmm.size_bytes, 1_110_117_984);
+        assert_eq!(
+            vmm.sha256,
+            "fb9cc047a3cdad5317fd8433a4aeda2d22f00f02ca4bd93b34ad84165b25a900"
+        );
+        assert!(vlm.min_ram_mb >= 1_782, "floor must cover weights + projector");
         // Text-only entries stay text-only.
         for id in ["minicpm5-2b", "lfm25-2.6b", "ling30-tiny"] {
             assert!(by_id(id).mmproj.is_none(), "{id} must stay text-only");
         }
+        // Role discipline: exactly one vlm, everything else is a main model.
+        assert_eq!(
+            BUILTIN_MODELS
+                .iter()
+                .filter(|d| d.role == Some("vlm"))
+                .count(),
+            1
+        );
         // Vision entries' RAM floor must include the projector — a floor that
         // ignores ~1 GB of resident weights green-lights OOM installs.
         assert!(by_id("gemma4-e2b").min_ram_mb >= 4_608 + 900);

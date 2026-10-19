@@ -667,7 +667,7 @@ export function ChatPage() {
     if ((!trimmedInput && attachedImages.length === 0) || isStreaming || isLoadingSession) return
 
     // Check if images are attached but current model doesn't support vision
-    if (attachedImages.length > 0 && !supportsMultimodal) {
+    if (attachedImages.length > 0 && !imagesAllowed) {
       toast({ title: t('chat:model.visionError'), variant: "destructive" })
       return
     }
@@ -733,6 +733,28 @@ export function ChatPage() {
   // Toggle skill selection
   // Check if multimodal is supported
   const supportsMultimodal = getActiveBackendSupportsMultimodal(llmBackends, activeBackendId)
+
+  // Vision companion: a running local VLM lets a text-only active model
+  // take images (the session layer delegates the descriptions to it).
+  const [companionRunning, setCompanionRunning] = useState(false)
+  useEffect(() => {
+    let alive = true
+    const check = () =>
+      api
+        .getBuiltinLlmStatus()
+        .then((s) => {
+          if (alive) setCompanionRunning(s?.companion?.running === true)
+        })
+        .catch(() => {})
+    check()
+    const timer = window.setInterval(check, 20000)
+    return () => {
+      alive = false
+      window.clearInterval(timer)
+    }
+  }, [])
+  const imagesAllowed = supportsMultimodal || companionRunning
+  const visionDelegate = !supportsMultimodal && companionRunning
 
   // Handle quick action
   const handleQuickAction = (prompt: string) => {
@@ -949,7 +971,8 @@ export function ChatPage() {
       onCancel={handleCancelRequest}
       attachments={attachedImages}
       onAttachmentsChange={setAttachedImages}
-      supportsMultimodal={supportsMultimodal}
+      supportsMultimodal={imagesAllowed}
+      visionDelegate={visionDelegate}
       backends={llmBackends}
       activeBackendId={activeBackendId}
       onActivateBackend={activateBackend}

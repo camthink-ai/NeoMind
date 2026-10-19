@@ -45,6 +45,8 @@ interface ChatComposerProps {
   attachments?: ChatImage[]
   onAttachmentsChange?: (images: ChatImage[]) => void
   supportsMultimodal?: boolean
+  /** Image support comes from the vision companion, not the active model. */
+  visionDelegate?: boolean
   // Model selector — hidden when no backends are passed.
   backends?: LlmBackendInstance[]
   activeBackendId?: string | null
@@ -87,6 +89,7 @@ export function ChatComposer({
   attachments = [],
   onAttachmentsChange,
   supportsMultimodal = false,
+  visionDelegate,
   backends,
   activeBackendId,
   onActivateBackend,
@@ -255,7 +258,7 @@ export function ChatComposer({
                   "rounded-lg flex-shrink-0 text-muted-foreground hover:text-foreground",
                   !supportsMultimodal && "opacity-50"
                 )}
-                title={supportsMultimodal ? t("chat:model.addImage") : t("chat:model.notSupportImage")}
+                title={supportsMultimodal ? (visionDelegate ? t("chat:model.visionViaCompanion") : t("chat:model.addImage")) : t("chat:model.notSupportImage")}
               >
                 {isUploadingImage ? (
                   <Loader2 className="h-4 w-4 animate-spin" />

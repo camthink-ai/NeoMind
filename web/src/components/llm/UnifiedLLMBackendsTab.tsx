@@ -660,6 +660,26 @@ export function UnifiedLLMBackendsTab({
               <CardDescription className="text-xs line-clamp-1">
                 {t('plugins:llm.builtinDesc')}
               </CardDescription>
+              {builtinStatus?.companion && (
+                <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Eye className="h-3 w-3 text-info shrink-0" />
+                  <span className="truncate">
+                    {t('plugins:llm.companionLabel')}: {builtinStatus.companion.name}
+                  </span>
+                  <span
+                    className={cn(
+                      'shrink-0 rounded px-1 py-0.5 text-[10px] font-medium',
+                      builtinStatus.companion.running
+                        ? 'bg-success-light text-success'
+                        : 'bg-muted text-muted-foreground',
+                    )}
+                  >
+                    {builtinStatus.companion.running
+                      ? t('plugins:llm.companionRunning')
+                      : t('plugins:llm.companionStopped')}
+                  </span>
+                </div>
+              )}
             </div>
             <span className={cn('inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium shrink-0', builtinInfo.pillClass)}>
               {builtinInfo.text}

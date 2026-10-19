@@ -483,13 +483,35 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
   const activeBackend = llmBackends.find(b => b.id === activeBackendId)
   const supportsMultimodal = activeBackend?.capabilities?.supports_multimodal ?? false
 
+  // Vision companion: same delegation rule as the main chat page — a
+  // running local VLM unlocks image upload for a text-only active model.
+  const [companionRunning, setCompanionRunning] = useState(false)
+  useEffect(() => {
+    let alive = true
+    const check = () =>
+      api
+        .getBuiltinLlmStatus()
+        .then((s) => {
+          if (alive) setCompanionRunning(s?.companion?.running === true)
+        })
+        .catch(() => {})
+    check()
+    const timer = window.setInterval(check, 20000)
+    return () => {
+      alive = false
+      window.clearInterval(timer)
+    }
+  }, [])
+  const imagesAllowed = supportsMultimodal || companionRunning
+  const visionDelegate = !supportsMultimodal && companionRunning
+
   // Send message — ensure session is ready before sending
   const handleSend = useCallback(async () => {
     const text = input.trim()
     if ((!text && attachedImages.length === 0) || isStreaming) return
 
     // Images need a vision-capable backend
-    if (attachedImages.length > 0 && !supportsMultimodal) {
+    if (attachedImages.length > 0 && !imagesAllowed) {
       toast({ title: t("model.visionError"), variant: "destructive" })
       return
     }
@@ -517,7 +539,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     const skillIds = matchedSkillIdsRef.current.length > 0 ? [...matchedSkillIdsRef.current] : undefined
     ws.sendMessage(text, sentImages, skillIds, undefined)
     requestAnimationFrame(() => inputRef.current?.focus())
-  }, [input, attachedImages, isStreaming, addPanelMessage, createPanelSession, supportsMultimodal, toast, t, beginTurn])
+  }, [input, attachedImages, isStreaming, addPanelMessage, createPanelSession, imagesAllowed, toast, t, beginTurn])
 
   const filteredMessages = useMemo(() => filterPartialMessages(panelMessages), [panelMessages])
 
@@ -771,7 +793,8 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
           onCancel={handleCancelRequest}
           attachments={attachedImages}
           onAttachmentsChange={setAttachedImages}
-          supportsMultimodal={supportsMultimodal}
+          supportsMultimodal={imagesAllowed}
+          visionDelegate={visionDelegate}
           backends={llmBackends}
           activeBackendId={activeBackendId}
           onActivateBackend={activateBackend}

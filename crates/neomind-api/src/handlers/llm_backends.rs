@@ -29,6 +29,11 @@ pub struct ListBackendsQuery {
     pub r#type: Option<String>,
     /// Show only active backend
     pub active_only: Option<bool>,
+    /// Include vision-companion instances (builtin-vlm-*) — hidden by
+    /// DEFAULT so pre-companion UIs (and the chat picker) never see a
+    /// non-chat backend they would try to activate. Settings surfaces that
+    /// manage the companion pass ?include_vlm=true.
+    pub include_vlm: Option<bool>,
 }
 
 /// Request to create/update an LLM backend instance
@@ -153,6 +158,9 @@ pub struct BackendInstanceDto {
     pub api_key_configured: bool,
     pub is_active: bool,
     pub is_builtin: bool,
+    /// `"vlm"` = vision companion (describe-only, never a chat backend);
+    /// null = regular backend. Derived from the id prefix.
+    pub role: Option<String>,
     pub thinking_is_integral: bool,
     pub temperature: f32,
     pub top_p: f32,
@@ -169,6 +177,10 @@ pub struct BackendInstanceDto {
 impl From<LlmBackendInstance> for BackendInstanceDto {
     fn from(instance: LlmBackendInstance) -> Self {
         let backend_type = instance.backend_name().to_string();
+        // Role is derived, never stored — the builtin-vlm- id prefix IS the
+        // marker, so no schema can drift it.
+        let role = crate::builtin_llm::handlers::is_companion_instance_id(&instance.id)
+            .then(|| "vlm".to_string());
         Self {
             id: instance.id,
             name: instance.name,
@@ -179,6 +191,7 @@ impl From<LlmBackendInstance> for BackendInstanceDto {
                 && !instance.api_key.as_ref().is_some_and(|k| k.is_empty()),
             is_active: instance.is_active,
             is_builtin: instance.is_builtin,
+            role,
             thinking_is_integral: instance.thinking_is_integral,
             temperature: instance.temperature,
             top_p: instance.top_p,
@@ -288,6 +301,14 @@ pub async fn list_backends_handler(
 ) -> HandlerResult<serde_json::Value> {
     let manager = get_manager()?;
     let mut instances = manager.list_instances();
+
+    // Companions are hidden unless explicitly requested — the default list
+    // feeds chat pickers and activation flows that must never see them.
+    if !query.include_vlm.unwrap_or(false) {
+        instances.retain(|inst| {
+            !crate::builtin_llm::handlers::is_companion_instance_id(&inst.id)
+        });
+    }
 
     // Apply filters
     if let Some(type_filter) = query.r#type {
@@ -847,6 +868,15 @@ pub async fn activate_backend_handler(
     Path(id): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
     let manager = get_manager()?;
+
+    // Vision companions are describe-only engines (vision tool / image
+    // delegation), not chat backends — activating one would strand every
+    // session on a model that can't hold a conversation.
+    if crate::builtin_llm::handlers::is_companion_instance_id(&id) {
+        return Err(ErrorResponse::bad_request(format!(
+            "{id} is a vision companion (describe-only) — activate a main chat backend instead"
+        )));
+    }
 
     // Get the backend instance to extract its configuration
     let instance = manager

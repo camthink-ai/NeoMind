@@ -119,6 +119,8 @@ export interface BuiltinModelDef {
   installed: boolean
   /** Ships a vision projector (mmproj) — images work in chat out of the box. */
   vision?: boolean
+  /** `"vlm"` = vision companion entry (own port, never the chat backend). */
+  role?: string | null
   /** Locally imported GGUF (open catalog local channel). */
   custom?: boolean
 }
@@ -159,6 +161,13 @@ export interface BuiltinLlmStatus {
   min_ram_mb?: number
   available_ram_mb?: number
   total_ram_mb?: number
+  /** Vision companion state — null when not installed or feature off. */
+  companion?: {
+    model_id: string
+    name: string
+    port: number
+    running: boolean
+  } | null
   downloaded_bytes: number | null
   total_bytes: number | null
 }

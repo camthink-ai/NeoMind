@@ -140,7 +140,82 @@ fn builtin_to_catalog(def: &BuiltinModelDef) -> super::catalog::CatalogModel {
         min_p: def.min_p,
         repeat_penalty: def.repeat_penalty,
         mmproj: def.mmproj.clone(),
+        role: def.role.map(str::to_string),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Vision-companion (VLM) role helpers
+// ---------------------------------------------------------------------------
+
+/// Stable instance id for the vision companion running `model_id` (e.g.
+/// `builtin-vlm-minicpm-v-4.7-1b`). The `builtin-vlm-` prefix IS the role
+/// marker — derived, never stored, so no schema migration can drift it.
+pub(crate) fn companion_instance_id(model_id: &str) -> String {
+    format!("builtin-vlm-{model_id}")
+}
+
+/// True when an instance id names a vision companion (not a chat backend).
+pub(crate) fn is_companion_instance_id(id: &str) -> bool {
+    id.starts_with("builtin-vlm-")
+}
+
+/// True when a model id names a vision-companion entry (registry or catalog
+/// role == "vlm").
+pub(crate) fn is_vlm_model(model_id: &str) -> bool {
+    model_def(model_id)
+        .map(|d| d.role == Some("vlm"))
+        .unwrap_or(false)
+        || super::catalog::catalog_model(model_id)
+            .map(|m| m.role.as_deref() == Some("vlm"))
+            .unwrap_or(false)
+}
+
+/// The installed vision companion, if any (scan on-disk ids for a vlm role —
+/// main-model discovery deliberately ignores role, this one filters on it).
+pub(crate) fn installed_companion(mdir: &Path) -> Option<InstalledModel> {
+    installed_model_ids(mdir)
+        .into_iter()
+        .find(|id| is_vlm_model(id))
+        .and_then(|id| installed_model_by_id(mdir, &id))
+}
+
+/// Why a companion spawn didn't happen (status surfaces it; none of these
+/// are errors — the main model is unaffected).
+#[derive(Debug)]
+pub(crate) enum CompanionSkip {
+    Disabled,
+    NotInstalled,
+    LowRam { available_mb: u64, need_mb: u64 },
+    PortBusy(u16),
+    /// Spawn attempted and failed (binary missing, unhealthy, …). Still not
+    /// an error for the platform — the main model runs on without vision.
+    Other(String),
+}
+
+impl std::fmt::Display for CompanionSkip {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CompanionSkip::Disabled => write!(f, "disabled (NEOMIND_BUILTIN_VLM=off)"),
+            CompanionSkip::NotInstalled => write!(f, "no vision companion installed"),
+            CompanionSkip::LowRam {
+                available_mb,
+                need_mb,
+            } => write!(
+                f,
+                "skipped: low RAM (need ~{need_mb} MB, {available_mb} MB available)"
+            ),
+            CompanionSkip::PortBusy(p) => write!(f, "skipped: port {p} in use"),
+            CompanionSkip::Other(msg) => write!(f, "spawn failed: {msg}"),
+        }
+    }
+}
+
+/// RAM gate for the companion: weights + projector + headroom must fit in
+/// AVAILABLE memory (the main model already holds its share — this is the
+/// marginal budget for a second resident server).
+fn companion_ram_ok(available_mb: u64, need_mb: u64) -> bool {
+    available_mb >= need_mb
 }
 
 /// Resolve a model by id: compiled-in curated def first, else the remote
@@ -1055,6 +1130,22 @@ pub async fn status_handler(
         .map(|(d, _)| d.min_ram_mb)
         .unwrap_or(0);
 
+    // Vision companion: reported only when the feature is on AND a companion
+    // is installed — null otherwise (old and new frontends agree "absent").
+    let companion = if !cfg.vlm_enabled {
+        serde_json::Value::Null
+    } else {
+        match installed_companion(&mdir) {
+            Some(c) => json!({
+                "model_id": c.manifest.id,
+                "name": c.display_name,
+                "port": cfg.vlm_port,
+                "running": health_check(cfg.vlm_port).await,
+            }),
+            None => serde_json::Value::Null,
+        }
+    };
+
     ok(json!({
         "installed": true,
         "model_id": model_id,
@@ -1082,6 +1173,7 @@ pub async fn status_handler(
         "min_ram_mb": min_ram_mb,
         "available_ram_mb": available_mb,
         "total_ram_mb": total_mb,
+        "companion": companion,
     }))
 }
 
@@ -1162,6 +1254,9 @@ pub async fn models_handler(
                 // Vision projector ships with the model — the wizard badge
                 // and the picker derive it from this, not from notes text.
                 "vision": d.mmproj.is_some(),
+                // "vlm" = vision companion entry (wizard groups it apart;
+                // spawn registers it as builtin-vlm-*, never chat-active).
+                "role": d.role.clone(),
                 "custom": false,
             })
         })
@@ -1294,6 +1389,10 @@ pub async fn download_handler(
     // resolve_mmproj_source). None = text-only model.
     let mmproj_src = resolve_mmproj_source(&def);
     let quant_label = def.quant.clone();
+    // Role split: a vlm entry becomes the vision companion (own port, own
+    // instance, never the active chat model) — every spawn/switch action
+    // below must route accordingly.
+    let is_vlm = def.role.as_deref() == Some("vlm");
     let mdir = models_dir(&state.data_dir);
     let dest = mdir.join(&def.id).join(&file_name);
 
@@ -1307,6 +1406,27 @@ pub async fn download_handler(
         .flatten()
         .is_some_and(|m| m.model_path(&mdir).exists());
     if on_disk {
+        // Companion on-disk = "make sure it runs", never a main-model
+        // switch: the active-model pointer and the main port are untouched.
+        if is_vlm {
+            if let Ok(manager) = get_instance_manager() {
+                match ensure_companion(&state.data_dir, &cfg, &manager).await {
+                    Ok(ep) => {
+                        tracing::info!(endpoint = %ep, "builtin llm: vision companion running after install request")
+                    }
+                    Err(skip) => {
+                        tracing::warn!(reason = %skip, "builtin llm: vision companion not running")
+                    }
+                }
+            }
+            return ok(json!({
+                "started": false,
+                "already_running": false,
+                "already_installed": true,
+                "switched": false,
+                "companion": true
+            }));
+        }
         let switching = read_active_model(&mdir).as_deref() != Some(def.id.as_str());
         if switching {
             write_active_model(&mdir, &def.id);
@@ -1394,6 +1514,7 @@ pub async fn download_handler(
             &sha,
             &quant_task,
             mmproj_src_task,
+            is_vlm,
             _active,
         )
         .await
@@ -1415,6 +1536,7 @@ async fn run_builtin_download(
     sha: &str,
     quant: &str,
     mmproj_src: Option<(String, String, String)>,
+    companion: bool,
     _active: DownloadActiveGuard,
 ) -> anyhow::Result<()> {
     let client = reqwest::Client::new();
@@ -1523,13 +1645,18 @@ async fn run_builtin_download(
             // switch — the active-model pointer is the sole authority for
             // which one runs (the old purge made every switch cost a full
             // 1.5 GB re-download; observed 2026-10-15 lfm↔minicpm).
-            write_active_model(&mdir, model_id);
+            // The pointer is a MAIN-model concept — a companion download
+            // must never move it.
+            if !companion {
+                write_active_model(&mdir, model_id);
+            }
 
             // If a server is still running the PREVIOUS model (its files were
             // just removed above), it owns the port — a fresh spawn would die
             // on bind while health-checks pass against the stale server
-            // (port misattribution). Free the port first.
-            if health_check(cfg.port).await {
+            // (port misattribution). Free the port first. Main-model path
+            // only — a companion never touches the main port.
+            if !companion && health_check(cfg.port).await {
                 tracing::info!(
                     port = cfg.port,
                     "builtin llm: stopping previous-model server before spawn"
@@ -1559,13 +1686,26 @@ async fn run_builtin_download(
             // upsert instance with is_builtin/thinking_is_integral, set_active
             // only when nothing else is active). Failures here are logged, not
             // fatal — the model is downloaded and restart/status can recover.
+            // A companion download brings up the COMPANION instead (own port,
+            // never active).
             if let Ok(manager) = get_instance_manager() {
-                match spawn_builtin_server(&state.data_dir, cfg, &manager, None).await {
-                    Ok(endpoint) => {
-                        tracing::info!(endpoint = %endpoint, "builtin llm: server started after download")
+                if companion {
+                    match ensure_companion(&state.data_dir, cfg, &manager).await {
+                        Ok(endpoint) => {
+                            tracing::info!(endpoint = %endpoint, "builtin llm: vision companion started after download")
+                        }
+                        Err(skip) => {
+                            tracing::warn!(reason = %skip, "builtin llm: vision companion not started after download")
+                        }
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "builtin llm: server spawn after download failed (run /restart)")
+                } else {
+                    match spawn_builtin_server(&state.data_dir, cfg, &manager, None).await {
+                        Ok(endpoint) => {
+                            tracing::info!(endpoint = %endpoint, "builtin llm: server started after download")
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "builtin llm: server spawn after download failed (run /restart)")
+                        }
                     }
                 }
             }
@@ -1779,6 +1919,220 @@ async fn spawn_builtin_server(
     Ok(endpoint)
 }
 
+/// File size in MB (0 when unreadable) — the companion RAM gate prefers the
+/// bytes actually on disk over catalog numbers (imports, quant overrides).
+fn metadata_len_mb(p: &Path) -> u64 {
+    std::fs::metadata(p).map(|m| m.len() / (1024 * 1024)).unwrap_or(0)
+}
+
+/// Spawn the installed vision companion on its own port and register the
+/// `builtin-vlm-<id>` instance. Mirrors `spawn_builtin_server` with three
+/// deliberate differences: its own port (`cfg.vlm_port`), its own instance
+/// id, and it NEVER calls set_active — the companion serves the vision tool
+/// and chat image-delegation, not chat itself.
+async fn spawn_companion_server(
+    data_dir: &Path,
+    cfg: &BuiltinConfig,
+    manager: &LlmBackendInstanceManager,
+) -> Result<String, CompanionSkip> {
+    if !cfg.vlm_enabled {
+        return Err(CompanionSkip::Disabled);
+    }
+    let mdir = models_dir(data_dir);
+    let installed = installed_companion(&mdir).ok_or(CompanionSkip::NotInstalled)?;
+
+    // Marginal RAM gate: the main model already holds its (guarded) share —
+    // this budget is the SECOND server's weights + projector + headroom
+    // against what is left. Skipping is a status-visible degrade, never an
+    // OOM gamble.
+    const COMPANION_HEADROOM_MB: u64 = 768; // KV (small window on a 1B VLM) + compute buffers
+    let weights_mb = metadata_len_mb(&installed.manifest.model_path(&mdir));
+    let mmproj_mb = installed
+        .manifest
+        .mmproj_path(&mdir)
+        .map(|p| metadata_len_mb(&p))
+        .unwrap_or(0);
+    let need_mb = weights_mb + mmproj_mb + COMPANION_HEADROOM_MB;
+    let (_total_mb, available_mb) = memory_snapshot_mb();
+    if !companion_ram_ok(available_mb, need_mb) {
+        tracing::warn!(
+            model = %installed.manifest.id,
+            available_mb, need_mb,
+            "builtin llm: vision companion skipped — not enough RAM for a second server"
+        );
+        return Err(CompanionSkip::LowRam {
+            available_mb,
+            need_mb,
+        });
+    }
+
+    // A healthy listener already on the port: ours and registered →
+    // idempotent success; anything else → skip rather than fight for the
+    // bind (the main spawn's port-misattribution lesson applies).
+    let endpoint = format!("http://127.0.0.1:{}", cfg.vlm_port);
+    if health_check(cfg.vlm_port).await {
+        let ours = manager
+            .list_instances()
+            .iter()
+            .any(|i| is_companion_instance_id(&i.id) && i.endpoint.as_deref() == Some(endpoint.as_str()));
+        if ours {
+            return Ok(endpoint);
+        }
+        return Err(CompanionSkip::PortBusy(cfg.vlm_port));
+    }
+
+    let binary = match ensure_llama_server(data_dir).await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(error = %e, "builtin llm: vision companion spawn failed (no llama-server)");
+            return Err(CompanionSkip::Other(format!("llama-server unavailable: {e}")));
+        }
+    };
+    let model_path = installed.manifest.model_path(&mdir);
+    if !model_path.exists() {
+        return Err(CompanionSkip::NotInstalled);
+    }
+    let ctx = guarded_ctx(
+        cfg,
+        installed.default_ctx,
+        model_def(&installed.manifest.id),
+    );
+    // Same projector resolution rules as the main spawn.
+    let mmproj = match installed.manifest.mmproj_path(&mdir) {
+        Some(p) if p.exists() => Some(p),
+        Some(p) => {
+            tracing::warn!(
+                path = %p.display(),
+                "builtin llm: companion mmproj recorded but file missing — spawning text-only"
+            );
+            None
+        }
+        None => None,
+    };
+    let mmproj_attached = mmproj.is_some();
+    let server_cfg = LlamaServerConfig {
+        binary,
+        model: model_path,
+        port: cfg.vlm_port,
+        ctx,
+        ngl: cfg.ngl,
+        threads: None,
+        temperature: installed.temperature,
+        top_p: installed.top_p,
+        top_k: installed.top_k,
+        min_p: installed.min_p,
+        repeat_penalty: installed.repeat_penalty,
+        kv_quant: cfg.kv_quant,
+        parallel: Some(1),
+        mmproj,
+    };
+    let mut proc = match LlamaServerProcess::spawn(&server_cfg) {
+        Ok(p) => p,
+        Err(e) => {
+            return Err(CompanionSkip::Other(format!("companion spawn failed: {e}")))
+        }
+    };
+    if let Err(e) = proc.wait_healthy(Duration::from_secs(60)).await {
+        let _ = proc.stop().await;
+        return Err(CompanionSkip::Other(format!("companion unhealthy: {e}")));
+    }
+    // Same port-misattribution guard as the main spawn.
+    if !proc.is_alive() {
+        let _ = proc.stop().await;
+        return Err(CompanionSkip::PortBusy(cfg.vlm_port));
+    }
+
+    // Register — the companion is describe-only: no tool calls, and it is
+    // NEVER set active (chat backends are main models; the vision tool and
+    // image delegation find it through supports_multimodal).
+    let inst_id = companion_instance_id(&installed.manifest.id);
+    let mut instance = match manager.get_instance(&inst_id) {
+        Some(mut i) => {
+            i.endpoint = Some(endpoint.clone());
+            i
+        }
+        None => LlmBackendInstance::new(
+            inst_id.clone(),
+            installed.display_name.clone(),
+            LlmBackendType::LlamaCpp,
+        ),
+    };
+    instance.is_builtin = true;
+    instance.name = installed.display_name.clone();
+    instance.thinking_is_integral = installed.thinking_is_integral;
+    instance.thinking_enabled = installed.default_thinking;
+    instance.endpoint = Some(endpoint.clone());
+    instance.model = installed.manifest.id.clone();
+    instance.capabilities.supports_streaming = true;
+    instance.capabilities.supports_tools = false;
+    instance.capabilities.supports_thinking = installed.default_thinking;
+    instance.capabilities.max_context = effective_spawn_ctx(cfg.vlm_port, ctx).await;
+    let multimodal = query_server_modalities_vision(cfg.vlm_port)
+        .await
+        .unwrap_or(mmproj_attached);
+    instance.capabilities.supports_multimodal = multimodal;
+    instance.capabilities.multimodal_source = Some("runtime_api".to_string());
+    let _ = manager.upsert_instance(instance).await;
+
+    tracing::info!(
+        model = %installed.manifest.id,
+        port = cfg.vlm_port,
+        "builtin llm: vision companion ready"
+    );
+    Ok(endpoint)
+}
+
+/// Idempotent companion bring-up (bootstrap + restart): heal orphan/stale
+/// instances, spawn when down. Every failure is a logged skip — the MAIN
+/// model's outcome is never affected.
+pub(crate) async fn ensure_companion(
+    data_dir: &Path,
+    cfg: &BuiltinConfig,
+    manager: &LlmBackendInstanceManager,
+) -> Result<String, CompanionSkip> {
+    if !cfg.vlm_enabled {
+        return Err(CompanionSkip::Disabled);
+    }
+    let mdir = models_dir(data_dir);
+
+    // The companion that WOULD run now (first installed vlm entry).
+    let chosen = installed_companion(&mdir).map(|m| m.manifest.id.clone());
+
+    // Orphan/stale heal: companion instances whose model is gone — or that
+    // name a DIFFERENT vlm than the chosen one (single-companion semantics;
+    // a switched-away model would otherwise linger as a dead entry in the
+    // include=vlm listing).
+    for inst in manager.list_instances() {
+        if !is_companion_instance_id(&inst.id) {
+            continue;
+        }
+        let stale = match (&chosen, &inst.model) {
+            (Some(c), m) => m != c,
+            (None, _) => true,
+        } || installed_model_by_id(&mdir, &inst.model)
+            .map(|m| !is_vlm_model(&m.manifest.id))
+            .unwrap_or(true);
+        if stale {
+            tracing::info!(instance = %inst.id, "builtin llm: removing stale companion instance");
+            let _ = manager.force_remove_instance(&inst.id).await;
+        }
+    }
+
+    // Idempotent fast path: healthy port + our instance registered.
+    if health_check(cfg.vlm_port).await {
+        let endpoint = format!("http://127.0.0.1:{}", cfg.vlm_port);
+        let ours = manager
+            .list_instances()
+            .iter()
+            .any(|i| is_companion_instance_id(&i.id) && i.endpoint.as_deref() == Some(endpoint.as_str()));
+        if ours {
+            return Ok(endpoint);
+        }
+    }
+
+    spawn_companion_server(data_dir, cfg, manager).await
+}
+
 /// Best-effort kill of whatever process listens on `port` (unix only).
 ///
 /// Used to free a wedged llama-server port before a fresh spawn. Relies on
@@ -1822,8 +2176,65 @@ pub(crate) fn kill_process_on_port(_port: u16) {}
 )]
 pub async fn delete_model_handler(
     State(state): State<crate::server::types::ServerState>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> HandlerResult<serde_json::Value> {
     let cfg = BuiltinConfig::from_env();
+    let mdir = models_dir(&state.data_dir);
+
+    // `?model=<id>`: delete THAT model. Absent = the legacy contract —
+    // delete the active MAIN model (what the shipped UI does today; keeping
+    // it byte-compatible for every existing caller).
+    let model_id = match params.get("model") {
+        Some(m) => {
+            let m = m.trim().to_string();
+            if m.is_empty() {
+                return Err(ErrorResponse::bad_request("model must not be empty"));
+            }
+            if !installed_model_ids(&mdir).contains(&m) {
+                return Err(ErrorResponse::bad_request(format!(
+                    "model '{m}' is not installed (installed: {})",
+                    installed_model_ids(&mdir).join(", ")
+                )));
+            }
+            m
+        }
+        None => installed_model(&mdir)
+            .map(|(_, m)| m.id)
+            .unwrap_or_else(|| BUILTIN_MODEL_ID.to_string()),
+    };
+
+    // Companion target: stop ITS port + drop ITS instance; the main model,
+    // its instance and the main port are untouched.
+    if is_vlm_model(&model_id) {
+        if health_check(cfg.vlm_port).await {
+            tracing::info!(
+                port = cfg.vlm_port,
+                "builtin llm: stopping vision companion for delete"
+            );
+            kill_process_on_port(cfg.vlm_port);
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+        if let Ok(manager) = get_instance_manager() {
+            let id = companion_instance_id(&model_id);
+            if manager.get_instance(&id).is_some() {
+                if let Err(e) = manager.force_remove_instance(&id).await {
+                    return Err(ErrorResponse::internal(format!(
+                        "Failed to remove companion instance: {e}"
+                    )));
+                }
+            }
+        }
+        let model_dir = mdir.join(&model_id);
+        let deleted = match std::fs::remove_dir_all(&model_dir) {
+            Ok(_) => true,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+            Err(e) => {
+                tracing::warn!(error = %e, path = %model_dir.display(), "builtin llm: failed to remove companion dir");
+                false
+            }
+        };
+        return ok(json!({ "deleted": deleted, "model_id": model_id, "companion": true }));
+    }
 
     // Stop the server first (best-effort; no process handle survives bootstrap).
     if health_check(cfg.port).await {
@@ -1854,10 +2265,7 @@ pub async fn delete_model_handler(
         }
     }
 
-    let model_id = installed_model(&models_dir(&state.data_dir))
-        .map(|(_, m)| m.id)
-        .unwrap_or_else(|| BUILTIN_MODEL_ID.to_string());
-    let model_dir = models_dir(&state.data_dir).join(&model_id);
+    let model_dir = mdir.join(&model_id);
     let deleted = match std::fs::remove_dir_all(&model_dir) {
         Ok(_) => true,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
@@ -1872,13 +2280,12 @@ pub async fn delete_model_handler(
         // Multi-model coexistence: the deleted model must not stay the
         // active pointer — clear it; installed_model's scan fallback picks
         // the remaining model (if any) on the next bootstrap.
-        let mdir = models_dir(&state.data_dir);
         if read_active_model(&mdir).as_deref() == Some(model_id.as_str()) {
             clear_active_model(&mdir);
         }
     }
 
-    ok(json!({ "deleted": deleted }))
+    ok(json!({ "deleted": deleted, "model_id": model_id }))
 }
 
 // ---------------------------------------------------------------------------
@@ -2061,6 +2468,17 @@ pub async fn restart_handler(
                     if let Err(e) = state.agents.session_manager.set_llm_backend(backend).await {
                         tracing::warn!(error = %e, "Failed to refresh session backend after ctx change");
                     }
+                }
+            }
+            // stop_all_llama_servers above killed the companion too — bring
+            // it back whenever one is installed (idempotent; skip reasons
+            // logged, never fatal to the restart).
+            match ensure_companion(&state.data_dir, &cfg, &manager).await {
+                Ok(ep) => {
+                    tracing::info!(endpoint = %ep, "builtin llm: vision companion restored after restart")
+                }
+                Err(skip) => {
+                    tracing::info!(reason = %skip, "builtin llm: vision companion not restored")
                 }
             }
             ok(json!({ "restarted": true, "already_running": false, "endpoint": endpoint }))
@@ -2535,6 +2953,7 @@ mod quant_override_tests {
             min_p: None,
             repeat_penalty: None,
             mmproj: None,
+            role: None,
         }
     }
 
@@ -2556,5 +2975,36 @@ mod quant_override_tests {
             base[1].mmproj.is_none(),
             "catalog-only ids keep the catalog's word (no inheritance source)"
         );
+    }
+
+    // ---- vision-companion identity helpers ----
+
+    #[test]
+    fn companion_instance_id_roundtrip() {
+        assert_eq!(
+            companion_instance_id("minicpm-v-4.7-1b"),
+            "builtin-vlm-minicpm-v-4.7-1b"
+        );
+        assert!(is_companion_instance_id("builtin-vlm-minicpm-v-4.7-1b"));
+        // The MAIN builtin id must never match the companion prefix — a
+        // sloppy prefix check would hide the main chat backend from lists.
+        assert!(!is_companion_instance_id(BUILTIN_INSTANCE_ID));
+        assert!(!is_companion_instance_id("openai-gpt4o"));
+        assert!(!is_companion_instance_id(""));
+    }
+
+    #[test]
+    fn vlm_role_resolves_from_registry_and_not_from_main_models() {
+        assert!(is_vlm_model("minicpm-v-4.7-1b"), "registry companion entry");
+        for id in ["minicpm5-2b", "lfm25-2.6b", "gemma4-e2b"] {
+            assert!(!is_vlm_model(id), "{id} is a main model");
+        }
+    }
+
+    #[test]
+    fn companion_ram_gate_is_a_plain_floor() {
+        assert!(companion_ram_ok(3000, 2500));
+        assert!(!companion_ram_ok(2000, 2500));
+        assert!(companion_ram_ok(2500, 2500), "exactly enough is enough");
     }
 }

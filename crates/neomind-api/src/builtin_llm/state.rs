@@ -208,6 +208,13 @@ pub async fn bootstrap(
                 let _ = manager.upsert_instance(updated).await;
             }
         }
+        // Companion bring-up runs on the already-running path too — a main
+        // server that survived a process restart must not leave an installed
+        // companion sleeping. Skip reasons are logged inside; never fatal.
+        match super::handlers::ensure_companion(data_dir, cfg, manager).await {
+            Ok(_) => {}
+            Err(skip) => tracing::info!(reason = %skip, "builtin llm: vision companion not running"),
+        }
         return BootstrapOutcome::ServerAlreadyRunning;
     }
 
@@ -359,6 +366,14 @@ pub async fn bootstrap(
     // 活跃策略:仅当没有任何活跃后端时设为活跃(「有后端不抢」)。
     if manager.get_active_instance().is_none() {
         let _ = manager.set_active(BUILTIN_INSTANCE_ID).await;
+    }
+
+    // Vision companion AFTER the main model is fully up (ordering contract:
+    // main-first — a companion spawn/RAM contention must never delay or
+    // fail the chat model). Skip reasons logged, never fatal.
+    match super::handlers::ensure_companion(data_dir, cfg, manager).await {
+        Ok(_) => {}
+        Err(skip) => tracing::info!(reason = %skip, "builtin llm: vision companion not running"),
     }
 
     BootstrapOutcome::ServerReady { endpoint }

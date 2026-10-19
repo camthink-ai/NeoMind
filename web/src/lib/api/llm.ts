@@ -162,12 +162,16 @@ export const llmApi = {
 
   /**
    * Delete the downloaded model files (stops the server first).
-   * DELETE /api/builtin-llm/model
+   * DELETE /api/builtin-llm/model — `modelId` targets a specific model
+   * (vision companions); omitted = the active main model (legacy contract).
    */
-  deleteBuiltinLlmModel: () =>
-    fetchAPI<{ deleted: boolean }>('/builtin-llm/model', {
-      method: 'DELETE',
-    }),
+  deleteBuiltinLlmModel: (modelId?: string) =>
+    fetchAPI<{ deleted: boolean; model_id?: string; companion?: boolean }>(
+      modelId ? `/builtin-llm/model?model=${encodeURIComponent(modelId)}` : '/builtin-llm/model',
+      {
+        method: 'DELETE',
+      },
+    ),
   /**
    * Ensure the bundled llama-server is running (starts it if stopped).
    * POST /api/builtin-llm/restart

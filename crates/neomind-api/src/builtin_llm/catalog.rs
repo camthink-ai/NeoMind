@@ -68,6 +68,11 @@ pub struct CatalogModel {
     /// silently disable vision).
     #[serde(default)]
     pub mmproj: Option<neomind_core::builtin_llm::manifest::MmprojSource>,
+    /// Instance role: absent = main chat model; `Some("vlm")` = vision
+    /// companion (own port, never the active chat backend). Pre-role
+    /// catalogs parse as all-main — safe default.
+    #[serde(default)]
+    pub role: Option<String>,
 }
 
 /// Catalog fetch target. The Runtimes repo's `models/catalog.json` on the
@@ -196,10 +201,13 @@ mod tests {
                         "hf_file":"mm.gguf","size_bytes":2}},
             {"id":"old","name":"Old","file_name":"o.gguf","sha256":"cc",
              "quant":"q4_0","hf_repo":"r","hf_file":"o.gguf","size_bytes":1,
-             "default_ctx":8192}
+             "default_ctx":8192},
+            {"id":"minicpm-v-4.7-1b","name":"MiniCPM-V-4.7-1B","file_name":"v.gguf","sha256":"dd",
+             "quant":"q4_k_m","hf_repo":"r","hf_file":"v.gguf","size_bytes":3,
+             "default_ctx":32768,"role":"vlm"}
         ]}"#;
         let parsed: CatalogRoot = serde_json::from_str(raw).expect("catalog parses");
-        assert_eq!(parsed.models.len(), 2);
+        assert_eq!(parsed.models.len(), 3);
         let mm = parsed.models[0].mmproj.as_ref().expect("mmproj parsed");
         assert_eq!(mm.file_name, "mm.gguf");
         assert_eq!(mm.sha256, "bb");
@@ -209,6 +217,12 @@ mod tests {
         assert!(
             parsed.models[1].mmproj.is_none(),
             "entry without mmproj must parse to None"
+        );
+        assert_eq!(parsed.models[1].role, None, "main model has no role");
+        assert_eq!(
+            parsed.models[2].role.as_deref(),
+            Some("vlm"),
+            "companion role must parse"
         );
     }
 }

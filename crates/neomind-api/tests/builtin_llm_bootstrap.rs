@@ -63,8 +63,16 @@ esac
 if [ -f "$_script_dir/REPORT_VISION" ]; then
     export FAKE_VISION=1
 fi
+# "$@" is forwarded so the python payload can bind the REAL --port from the
+# spawn argv — one binary then serves any port (the dual-model tests spawn
+# the main server AND the vision companion through the same script).
 exec python3 -c '
 import http.server, socketserver, json, sys, os
+port = {port}
+args = sys.argv[1:]
+for i in range(len(args)-1):
+    if args[i] == "--port":
+        port = int(args[i+1])
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
@@ -93,9 +101,9 @@ class H(http.server.BaseHTTPRequestHandler):
 # dies instantly. That exact bug masqueraded as sandbox flakiness for
 # days — tests failed fast with "server unhealthy" while the same payload
 # worked when run by hand with double quotes.
-with socketserver.TCPServer(("127.0.0.1", {port}), H) as httpd:
+with socketserver.TCPServer(("127.0.0.1", port), H) as httpd:
     httpd.serve_forever()
-'
+' "$@"
 "#,
             port = server_port,
             model = props_model_path,
@@ -557,6 +565,161 @@ async fn missing_mmproj_file_degrades_to_text_only() {
     assert!(
         !fx.bin_dir.path().join("MMPROJ_ARGS").exists(),
         "text-only degrade must not pass --mmproj"
+    );
+
+    neomind_api::builtin_llm::server::stop_all_llama_servers();
+}
+
+/// Seed the registry's vision-companion model (minicpm-v-4.7-1b, role=vlm)
+/// with its projector on disk — the dual-model tests' companion payload.
+fn seed_companion(fx: &Fixture) {
+    fx.seed_model(
+        "minicpm-v-4.7-1b",
+        "minicpm-v-4.7-1b-q4_k_m.gguf",
+        "588c6c94c82f756b86dba35c42ed9ba9ec187d65824eb52f039c347df563e63d",
+    );
+    let cdir = fx.data_dir.path().join("models").join("minicpm-v-4.7-1b");
+    std::fs::write(
+        cdir.join("minicpm-v-4.7-1b-mmproj-f16.gguf"),
+        b"fake-mmproj-bytes",
+    )
+    .unwrap();
+    // seed_model's manifest has no mmproj — rewrite with the vision shape.
+    let manifest = serde_json::json!({
+        "id": "minicpm-v-4.7-1b", "version": "1.0",
+        "file_name": "minicpm-v-4.7-1b-q4_k_m.gguf",
+        "sha256": "588c6c94c82f756b86dba35c42ed9ba9ec187d65824eb52f039c347df563e63d",
+        "quant": "q4_k_m",
+        "mmproj": {"file_name": "minicpm-v-4.7-1b-mmproj-f16.gguf",
+                    "sha256": "fb9cc047a3cdad5317fd8433a4aeda2d22f00f02ca4bd93b34ad84165b25a900"}
+    });
+    std::fs::write(
+        cdir.join("manifest.json"),
+        serde_json::to_string(&manifest).unwrap(),
+    )
+    .unwrap();
+}
+
+/// Dual-model bootstrap: main text model AND the vision companion come up on
+/// their own ports; the companion instance is registered with vision
+/// capabilities but is NEVER the active chat backend.
+#[serial_test::serial]
+#[tokio::test]
+async fn bootstrap_spawns_vision_companion_alongside_main() {
+    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    require_fake_server!();
+    let main_port = pick_free_port();
+    let vlm_port = pick_free_port();
+    let fx = Fixture::new(main_port, "/tmp/x/minicpm5-2b-q4_k_m.gguf");
+    // /props reports vision for both spawns (same script + env) — fine: the
+    // assertions below only read the COMPANION's capability stamp.
+    std::fs::write(fx.bin_dir.path().join("REPORT_VISION"), "1").unwrap();
+    fx.seed_model(
+        "minicpm5-2b",
+        "minicpm5-2b-q4_k_m.gguf",
+        "ec2d5801640099e97d8d7e8003ad4d81f336e757811f03a26173dddf386602fd",
+    );
+    seed_companion(&fx);
+
+    let mut cfg = fx.cfg();
+    cfg.vlm_port = vlm_port;
+
+    let saved_path = std::env::var("PATH").unwrap_or_default();
+    std::env::set_var(
+        "PATH",
+        format!("{}:{}", fx.bin_dir.path().display(), saved_path),
+    );
+    let outcome = bootstrap(fx.data_dir.path(), &cfg, &fx.manager).await;
+    std::env::set_var("PATH", &saved_path);
+
+    assert!(
+        matches!(outcome, BootstrapOutcome::ServerReady { .. }),
+        "expected ServerReady, got {outcome:?}"
+    );
+
+    // Main first: active as usual.
+    let active_id = fx.manager.get_active_instance().map(|i| i.id);
+    assert_eq!(active_id.as_deref(), Some("builtin-lfm25-2.6b"));
+
+    // Companion: registered, vision-capable, describe-only, NEVER active.
+    let comp = fx
+        .manager
+        .get_instance("builtin-vlm-minicpm-v-4.7-1b")
+        .expect("companion instance registered");
+    assert!(!comp.is_active, "companion must never be the active backend");
+    assert!(comp.is_builtin);
+    assert!(comp.capabilities.supports_multimodal, "vision capability stamped");
+    assert!(
+        !comp.capabilities.supports_tools,
+        "companion is describe-only"
+    );
+    assert_eq!(
+        comp.endpoint.as_deref(),
+        Some(format!("http://127.0.0.1:{}", vlm_port).as_str())
+    );
+
+    // argv proof: the projector AND the companion model reached llama-server
+    // on the companion port (marker content carries the full argv).
+    let marker = fx.bin_dir.path().join("MMPROJ_ARGS");
+    assert!(marker.exists(), "companion spawn must carry --mmproj");
+    let args = std::fs::read_to_string(&marker).unwrap();
+    assert!(args.contains("--mmproj"), "args: {args}");
+    assert!(
+        args.contains("minicpm-v-4.7-1b"),
+        "companion model in argv: {args}"
+    );
+    assert!(
+        args.contains(&format!("--port {vlm_port}")),
+        "companion on its own port: {args}"
+    );
+
+    neomind_api::builtin_llm::server::stop_all_llama_servers();
+}
+
+/// NEOMIND_BUILTIN_VLM=off (cfg.vlm_enabled=false): the companion is skipped
+/// entirely — no instance, no second server — and the MAIN model's outcome
+/// is untouched.
+#[serial_test::serial]
+#[tokio::test]
+async fn vlm_disabled_skips_companion_main_unaffected() {
+    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    require_fake_server!();
+    let main_port = pick_free_port();
+    let vlm_port = pick_free_port();
+    let fx = Fixture::new(main_port, "/tmp/x/minicpm5-2b-q4_k_m.gguf");
+    fx.seed_model(
+        "minicpm5-2b",
+        "minicpm5-2b-q4_k_m.gguf",
+        "ec2d5801640099e97d8d7e8003ad4d81f336e757811f03a26173dddf386602fd",
+    );
+    seed_companion(&fx);
+
+    let mut cfg = fx.cfg();
+    cfg.vlm_port = vlm_port;
+    cfg.vlm_enabled = false;
+
+    let saved_path = std::env::var("PATH").unwrap_or_default();
+    std::env::set_var(
+        "PATH",
+        format!("{}:{}", fx.bin_dir.path().display(), saved_path),
+    );
+    let outcome = bootstrap(fx.data_dir.path(), &cfg, &fx.manager).await;
+    std::env::set_var("PATH", &saved_path);
+
+    assert!(
+        matches!(outcome, BootstrapOutcome::ServerReady { .. }),
+        "main model must be unaffected: {outcome:?}"
+    );
+    assert!(
+        fx.manager
+            .list_instances()
+            .iter()
+            .all(|i| i.id != "builtin-vlm-minicpm-v-4.7-1b"),
+        "disabled companion must not register an instance"
+    );
+    assert!(
+        !neomind_api::builtin_llm::server::health_check(vlm_port).await,
+        "no second server may run with the feature off"
     );
 
     neomind_api::builtin_llm::server::stop_all_llama_servers();

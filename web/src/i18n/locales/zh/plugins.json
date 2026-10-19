@@ -132,6 +132,10 @@
       "gemma4-e2b": {
         "name": "Gemma4-E2B",
         "notes": "Google 官方 QAT 量化——自带视觉(可发图)"
+      },
+      "minicpm-v-4.7-1b": {
+        "name": "MiniCPM-V-4.7-1B",
+        "notes": "本地视觉模型 — 主模型纯文本时自动代看图片;常驻约 1.8 GB"
       }
     },
     "builtinWizardCtxLabel": "上下文",
@@ -184,7 +188,13 @@
     "builtinMemLowInstalled": "当前模型建议 ≥{{min}} GB 可用内存,本机仅 {{avail}} GB 可用——推理可能极慢或失败,建议改用云端后端或释放内存",
     "builtinCtxDefault": "模型默认",
     "cloudCtx": "上下文窗口 (可选)",
-    "cloudCtxHelp": "自定义后端(如 RKLLM3)声明真实的上下文长度;留空用默认 128000"
+    "cloudCtxHelp": "自定义后端(如 RKLLM3)声明真实的上下文长度;留空用默认 128000",
+    "companionGroup": "视觉伴侣",
+    "companionHint": "与主模型并行看图,不参与对话",
+    "companionRunning": "运行中",
+    "companionStopped": "已停止",
+    "companionLabel": "视觉伴侣",
+    "companionInstall": "安装"
   },
   "yes": "是",
   "no": "否",

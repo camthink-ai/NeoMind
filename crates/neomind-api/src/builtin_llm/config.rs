@@ -24,6 +24,14 @@ pub struct BuiltinConfig {
     /// omits the flag (upstream default: 4 slots — the platform then budgets
     /// n_ctx ÷ slots per request). Values 1-16 set the slot count explicitly.
     pub parallel: Option<usize>,
+    /// Vision-companion (VLM) feature switch: `NEOMIND_BUILTIN_VLM=off`
+    /// disables the companion entirely (no spawn, no status block content,
+    /// download of vlm entries still works on request).
+    pub vlm_enabled: bool,
+    /// Vision-companion llama-server port. Default 29385 — deliberately clear
+    /// of 29375 (main builtin) and 29376 (a hot manual-VLM port seen in the
+    /// field on Jetson boxes). `NEOMIND_BUILTIN_VLM_PORT` overrides.
+    pub vlm_port: u16,
 }
 
 impl Default for BuiltinConfig {
@@ -44,6 +52,8 @@ impl Default for BuiltinConfig {
             quant_override: None,
             kv_quant: true,
             parallel: Some(1),
+            vlm_enabled: true,
+            vlm_port: 29385,
         }
     }
 }
@@ -92,6 +102,17 @@ impl BuiltinConfig {
                 c.kv_quant = false;
             }
         }
+        if let Ok(v) = std::env::var("NEOMIND_BUILTIN_VLM") {
+            let v = v.trim().to_ascii_lowercase();
+            if matches!(v.as_str(), "off" | "0" | "false" | "disable" | "disabled") {
+                c.vlm_enabled = false;
+            }
+        }
+        if let Ok(v) = std::env::var("NEOMIND_BUILTIN_VLM_PORT") {
+            if let Ok(p) = v.trim().parse() {
+                c.vlm_port = p;
+            }
+        }
         c
     }
 
@@ -124,6 +145,8 @@ mod tests {
             "NEOMIND_BUILTIN_MODEL_NGL",
             "NEOMIND_BUILTIN_LLM_KV",
             "NEOMIND_BUILTIN_LLM_PARALLEL",
+            "NEOMIND_BUILTIN_VLM",
+            "NEOMIND_BUILTIN_VLM_PORT",
         ] {
             std::env::remove_var(var);
         }
@@ -138,8 +161,35 @@ mod tests {
         assert!(c.kv_quant);
         // Single slot is the shipped default (see the config field's doc).
         assert_eq!(c.parallel, Some(1));
+        // Companion defaults: on, on its own port clear of 29375/29376.
+        assert!(c.vlm_enabled);
+        assert_eq!(c.vlm_port, 29385);
         // Effective ctx falls back to the model default.
         assert_eq!(c.effective_ctx(32_768), 32_768);
+    }
+
+    #[serial_test::serial]
+    #[test]
+    fn vlm_env_knobs() {
+        let _g = env_lock().lock().unwrap();
+        for v in ["off", "0", "false", "OFF"] {
+            std::env::set_var("NEOMIND_BUILTIN_VLM", v);
+            assert!(!BuiltinConfig::from_env().vlm_enabled, "{v:?} must disable");
+        }
+        for v in ["on", "1", ""] {
+            std::env::set_var("NEOMIND_BUILTIN_VLM", v);
+            assert!(BuiltinConfig::from_env().vlm_enabled, "{v:?} keeps default");
+        }
+        std::env::set_var("NEOMIND_BUILTIN_VLM_PORT", "30000");
+        assert_eq!(BuiltinConfig::from_env().vlm_port, 30000);
+        std::env::set_var("NEOMIND_BUILTIN_VLM_PORT", "garbage");
+        assert_eq!(
+            BuiltinConfig::from_env().vlm_port,
+            29385,
+            "garbage ignored — default stands"
+        );
+        std::env::remove_var("NEOMIND_BUILTIN_VLM");
+        std::env::remove_var("NEOMIND_BUILTIN_VLM_PORT");
     }
 
     #[serial_test::serial]
