@@ -62,6 +62,12 @@ pub struct CatalogModel {
     /// server default.
     #[serde(default)]
     pub repeat_penalty: Option<f32>,
+    /// Vision projector shipped with the model; absent = text-only (and in
+    /// pre-mmproj catalogs — resolve_model inherits from the compiled-in
+    /// registry entry of the same id so a stale remote catalog can't
+    /// silently disable vision).
+    #[serde(default)]
+    pub mmproj: Option<neomind_core::builtin_llm::manifest::MmprojSource>,
 }
 
 /// Catalog fetch target. The Runtimes repo's `models/catalog.json` on the
@@ -168,4 +174,41 @@ pub fn catalog_model(id: &str) -> Option<CatalogModel> {
     let guard = cache().read().ok()?;
     let models = guard.as_ref()?.1.as_ref()?;
     models.iter().find(|m| m.id == id).cloned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The mmproj extension must parse from real catalog JSON (the Runtimes
+    /// file ships this shape since catalog_version 11) — and pre-mmproj
+    /// entries must keep parsing (serde default, no deny_unknown_fields).
+    /// Locks the JSON key names against the `MmprojSource` field names: a
+    /// rename on either side silently turns every vision entry into
+    /// text-only.
+    #[test]
+    fn catalog_json_with_and_without_mmproj_parses() {
+        let raw = r#"{"catalog_version": 11, "schema": "neomind-model-catalog/v1", "models": [
+            {"id":"gemma4-e2b","name":"Gemma4-E2B","file_name":"m.gguf","sha256":"aa",
+             "quant":"q4_0","hf_repo":"r","hf_file":"m.gguf","size_bytes":1,
+             "default_ctx":8192,
+             "mmproj":{"file_name":"mm.gguf","sha256":"bb","hf_repo":"r",
+                        "hf_file":"mm.gguf","size_bytes":2}},
+            {"id":"old","name":"Old","file_name":"o.gguf","sha256":"cc",
+             "quant":"q4_0","hf_repo":"r","hf_file":"o.gguf","size_bytes":1,
+             "default_ctx":8192}
+        ]}"#;
+        let parsed: CatalogRoot = serde_json::from_str(raw).expect("catalog parses");
+        assert_eq!(parsed.models.len(), 2);
+        let mm = parsed.models[0].mmproj.as_ref().expect("mmproj parsed");
+        assert_eq!(mm.file_name, "mm.gguf");
+        assert_eq!(mm.sha256, "bb");
+        assert_eq!(mm.hf_repo, "r");
+        assert_eq!(mm.hf_file, "mm.gguf");
+        assert_eq!(mm.size_bytes, 2);
+        assert!(
+            parsed.models[1].mmproj.is_none(),
+            "entry without mmproj must parse to None"
+        );
+    }
 }

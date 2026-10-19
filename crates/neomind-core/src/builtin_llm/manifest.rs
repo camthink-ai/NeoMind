@@ -10,6 +10,29 @@ use std::sync::LazyLock;
 /// real-world usage over the harness.
 pub const BUILTIN_MODEL_ID: &str = "lfm25-2.6b";
 
+/// On-disk record of an installed vision projector (mmproj). Lives inside
+/// `ModelManifest` so presence checks (`mmproj_path().exists()`) double as
+/// "vision is installed for this model".
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct MmprojFile {
+    pub file_name: String,
+    pub sha256: String,
+}
+
+/// Download source + size for a model's vision projector. Registry/catalog
+/// entries only — the on-disk manifest stores the slimmer [`MmprojFile`].
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct MmprojSource {
+    /// Canonical local file name (stored under `models/<id>/`).
+    pub file_name: String,
+    pub sha256: String,
+    /// HuggingFace repo hosting `hf_file` (usually the model's own repo).
+    pub hf_repo: String,
+    /// Filename *in the HF repo* (may differ from `file_name`).
+    pub hf_file: String,
+    pub size_bytes: u64,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ModelManifest {
     pub id: String,
@@ -17,11 +40,25 @@ pub struct ModelManifest {
     pub file_name: String,
     pub sha256: String,
     pub quant: String,
+    /// Vision projector, when the model was installed with one. Absent on
+    /// text-only models AND on pre-mmproj manifests (serde default keeps
+    /// those parsing).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mmproj: Option<MmprojFile>,
 }
 
 impl ModelManifest {
     pub fn model_path(&self, models_dir: &Path) -> PathBuf {
         models_dir.join(&self.id).join(&self.file_name)
+    }
+
+    /// Path of the recorded mmproj file, if any. Existence is the spawn-time
+    /// gate for `--mmproj` (a missing file degrades to text-only, never a
+    /// failed spawn).
+    pub fn mmproj_path(&self, models_dir: &Path) -> Option<PathBuf> {
+        self.mmproj
+            .as_ref()
+            .map(|m| models_dir.join(&self.id).join(&m.file_name))
     }
 }
 
@@ -78,7 +115,12 @@ pub struct BuiltinModelDef {
     pub thinking_is_integral: bool,
     /// Recommended MINIMUM available RAM (MB): weights + KV cache + runtime
     /// + OS headroom. The UI discourages (not blocks) installs below this.
+    /// Entries with an mmproj must include its weights here.
     pub min_ram_mb: u64,
+    /// Vision projector shipped alongside the model. `None` = text-only.
+    /// Downloaded with the model (never separately switchable); spawn passes
+    /// `--mmproj` when the file is present.
+    pub mmproj: Option<MmprojSource>,
 }
 
 /// The builtin model registry. LFM2.5-2.6B is the default (2026-10-10,
@@ -103,6 +145,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
                 sha256: "ec2d5801640099e97d8d7e8003ad4d81f336e757811f03a26173dddf386602fd"
                     .to_string(),
                 quant: "q4_k_m".to_string(),
+                mmproj: None,
             },
             display_name: "MiniCPM5-2B",
             // Official openbmb card (2026-10 official-first policy):
@@ -142,6 +185,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             default_thinking: true,
             thinking_is_integral: false,
             min_ram_mb: 3_072,
+            mmproj: None,
         },
         BuiltinModelDef {
             manifest: ModelManifest {
@@ -151,6 +195,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
                 sha256: "a247afd6414918eac8e520a9e6137dc271235461ecbe1180462221d5b8d40b03"
                     .to_string(),
                 quant: "qad_q4_0".to_string(),
+                mmproj: None,
             },
             display_name: "LFM2.5-2.6B",
             // Official card (2026-10 official-first policy):
@@ -178,6 +223,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             default_thinking: true,
             thinking_is_integral: true,
             min_ram_mb: 3_072,
+            mmproj: None,
         },
         BuiltinModelDef {
             manifest: ModelManifest {
@@ -187,6 +233,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
                 sha256: "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4"
                     .to_string(),
                 quant: "q4_k_m".to_string(),
+                mmproj: None,
             },
             display_name: "Qwen3.5-4B",
             // Official non-thinking recommendation (qwen.readthedocs.io).
@@ -208,11 +255,22 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             kv_bytes_per_token: Some(32_768),
             kv_const_bytes: Some(201_326_592),
             notes:
-                "端侧最强 agent 之一(2026-09 评测 70 分@16K)— 8K 下会大幅退化;可挂 mmproj 加视觉",
+                "端侧最强 agent 之一(2026-09 评测 70 分@16K)— 8K 下会大幅退化;自带视觉(mmproj 随模型下载)",
             recommended: false,
             default_thinking: false,
             thinking_is_integral: false,
-            min_ram_mb: 4_096,
+            // 4096 (model alone) + ~672 MB F16 projector.
+            min_ram_mb: 4_800,
+            mmproj: Some(MmprojSource {
+                file_name: "qwen3.5-4b-mmproj-f16.gguf".to_string(),
+                sha256: "cd88edcf8d031894960bb0c9c5b9b7e1fea6abee02b9f7ce925a00d12891f864"
+                    .to_string(),
+                hf_repo: "unsloth/Qwen3.5-4B-GGUF".to_string(),
+                hf_file: "mmproj-F16.gguf".to_string(),
+                // F16: the llama.cpp-universal projector variant; F32 doubles
+                // the footprint for marginal quality, BF16 adds compat risk.
+                size_bytes: 672_423_616,
+            }),
         },
         BuiltinModelDef {
             manifest: ModelManifest {
@@ -222,6 +280,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
                 sha256: "fa401b55b07ee70a54c6dae3903c783a6e65064312529ea57175cb5f8dec6634"
                     .to_string(),
                 quant: "qat_q4_0".to_string(),
+                mmproj: None,
             },
             display_name: "Gemma4-E2B",
             // Official Gemma 4 model card (uniform across the family).
@@ -242,11 +301,20 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             max_ctx: 131072,
             kv_bytes_per_token: Some(14_336),
             kv_const_bytes: Some(14_680_064),
-            notes: "Google 官方 QAT 量化 — 可挂 mmproj 加视觉",
+            notes: "Google 官方 QAT 量化 — 自带视觉(mmproj 随模型下载)",
             recommended: false,
             default_thinking: true,
             thinking_is_integral: false,
-            min_ram_mb: 4_608,
+            // 4608 (model alone) + ~987 MB projector.
+            min_ram_mb: 5_632,
+            mmproj: Some(MmprojSource {
+                file_name: "gemma-4-E2B-it-mmproj.gguf".to_string(),
+                sha256: "021059cce659fe7f9170d5599761d7bbaf644b798dab9503aca30dc43e6beb14"
+                    .to_string(),
+                hf_repo: "google/gemma-4-E2B-it-qat-q4_0-gguf".to_string(),
+                hf_file: "gemma-4-E2B-it-mmproj.gguf".to_string(),
+                size_bytes: 986_833_664,
+            }),
         },
         BuiltinModelDef {
             manifest: ModelManifest {
@@ -256,6 +324,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
                 sha256: "9842cce7c1a07ad4adefd2b79a1035710ff196576d89128eade29351b79c8e68"
                     .to_string(),
                 quant: "q4_k_m".to_string(),
+                mmproj: None,
             },
             display_name: "Ling-3.0-tiny",
             // Official inclusionAI card (thinking enabled by default).
@@ -288,6 +357,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             default_thinking: true,
             thinking_is_integral: true,
             min_ram_mb: 6_144,
+            mmproj: None,
         },
     ]
 });
@@ -411,6 +481,7 @@ mod tests {
             file_name: "lfm25-2.6b-q4_k_m.gguf".to_string(),
             sha256: "abc123".to_string(),
             quant: "q4_k_m".to_string(),
+            mmproj: None,
         };
         save_manifest(&dir, &m).expect("save");
         let loaded = load_manifest(&dir, BUILTIN_MODEL_ID)
@@ -423,6 +494,97 @@ mod tests {
             dir.join(BUILTIN_MODEL_ID).join("lfm25-2.6b-q4_k_m.gguf")
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Pre-mmproj manifests (written before the field existed) must keep
+    /// parsing — serde default, not deny — or every existing install breaks
+    /// on upgrade.
+    #[test]
+    fn legacy_manifest_without_mmproj_parses() {
+        let dir = temp_dir("legacy");
+        let _ = std::fs::remove_dir_all(&dir);
+        let legacy = r#"{
+            "id": "lfm25-2.6b",
+            "version": "1.0",
+            "file_name": "lfm25-2.6b-qad_q4_0.gguf",
+            "sha256": "a247afd6",
+            "quant": "qad_q4_0"
+        }"#;
+        std::fs::create_dir_all(dir.join("lfm25-2.6b")).unwrap();
+        std::fs::write(dir.join("lfm25-2.6b/manifest.json"), legacy).unwrap();
+        let m = load_manifest(&dir, "lfm25-2.6b")
+            .expect("load")
+            .expect("some");
+        assert_eq!(m.mmproj, None);
+        assert_eq!(m.mmproj_path(&dir), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A manifest WITH an mmproj roundtrips the projector record and resolves
+    /// its path beside the model file.
+    #[test]
+    fn manifest_with_mmproj_roundtrip() {
+        let dir = temp_dir("mmproj");
+        let _ = std::fs::remove_dir_all(&dir);
+        let m = ModelManifest {
+            id: "gemma4-e2b".to_string(),
+            version: "1.0".to_string(),
+            file_name: "gemma-4-E2B_q4_0-it.qat.gguf".to_string(),
+            sha256: "fa401b55".to_string(),
+            quant: "qat_q4_0".to_string(),
+            mmproj: Some(MmprojFile {
+                file_name: "gemma-4-E2B-it-mmproj.gguf".to_string(),
+                sha256: "021059cc".to_string(),
+            }),
+        };
+        save_manifest(&dir, &m).expect("save");
+        let loaded = load_manifest(&dir, "gemma4-e2b")
+            .expect("load")
+            .expect("some");
+        assert_eq!(loaded.mmproj, m.mmproj);
+        assert_eq!(
+            m.mmproj_path(&dir),
+            Some(dir.join("gemma4-e2b/gemma-4-E2B-it-mmproj.gguf"))
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Lock the projector pins like the sampling points — a typo'd sha/size
+    /// silently breaks every NEW vision install while old ones keep working.
+    #[test]
+    fn builtin_models_mmproj_pins_locked() {
+        let by_id = |id: &str| {
+            BUILTIN_MODELS
+                .iter()
+                .find(|d| d.manifest.id == id)
+                .unwrap_or_else(|| panic!("{id} missing from registry"))
+        };
+        let gemma = by_id("gemma4-e2b").mmproj.as_ref().expect("gemma mmproj");
+        assert_eq!(gemma.file_name, "gemma-4-E2B-it-mmproj.gguf");
+        assert_eq!(gemma.hf_file, "gemma-4-E2B-it-mmproj.gguf");
+        assert_eq!(gemma.hf_repo, "google/gemma-4-E2B-it-qat-q4_0-gguf");
+        assert_eq!(gemma.size_bytes, 986_833_664);
+        assert_eq!(
+            gemma.sha256,
+            "021059cce659fe7f9170d5599761d7bbaf644b798dab9503aca30dc43e6beb14"
+        );
+        let qwen = by_id("qwen3.5-4b").mmproj.as_ref().expect("qwen mmproj");
+        assert_eq!(qwen.file_name, "qwen3.5-4b-mmproj-f16.gguf");
+        assert_eq!(qwen.hf_file, "mmproj-F16.gguf");
+        assert_eq!(qwen.hf_repo, "unsloth/Qwen3.5-4B-GGUF");
+        assert_eq!(qwen.size_bytes, 672_423_616);
+        assert_eq!(
+            qwen.sha256,
+            "cd88edcf8d031894960bb0c9c5b9b7e1fea6abee02b9f7ce925a00d12891f864"
+        );
+        // Text-only entries stay text-only.
+        for id in ["minicpm5-2b", "lfm25-2.6b", "ling30-tiny"] {
+            assert!(by_id(id).mmproj.is_none(), "{id} must stay text-only");
+        }
+        // Vision entries' RAM floor must include the projector — a floor that
+        // ignores ~1 GB of resident weights green-lights OOM installs.
+        assert!(by_id("gemma4-e2b").min_ram_mb >= 4_608 + 900);
+        assert!(by_id("qwen3.5-4b").min_ram_mb >= 4_096 + 600);
     }
 
     #[test]

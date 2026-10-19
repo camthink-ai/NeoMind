@@ -29,8 +29,8 @@ use super::runtime::ensure_llama_server;
 use neomind_agent::llm_backends::{get_instance_manager, LlmBackendInstanceManager};
 use neomind_agent::LlmBackend;
 use neomind_core::builtin_llm::manifest::{
-    load_manifest, model_def, save_manifest, BuiltinModelDef, ModelManifest, BUILTIN_MODELS,
-    BUILTIN_MODEL_ID,
+    load_manifest, model_def, save_manifest, BuiltinModelDef, MmprojFile, ModelManifest,
+    BUILTIN_MODELS, BUILTIN_MODEL_ID,
 };
 use neomind_core::builtin_llm::variant::Quant;
 use neomind_core::NeoMindEvent;
@@ -139,6 +139,7 @@ fn builtin_to_catalog(def: &BuiltinModelDef) -> super::catalog::CatalogModel {
         top_k: def.top_k,
         min_p: def.min_p,
         repeat_penalty: def.repeat_penalty,
+        mmproj: def.mmproj.clone(),
     }
 }
 
@@ -147,6 +148,8 @@ fn builtin_to_catalog(def: &BuiltinModelDef) -> super::catalog::CatalogModel {
 /// product release). `None` → unknown id.
 fn resolve_model(model_id: Option<&str>) -> Result<super::catalog::CatalogModel, ErrorResponse> {
     let id = model_id.unwrap_or(BUILTIN_MODEL_ID);
+    // Compiled registry wins resolution outright — a stale remote catalog
+    // can never strip a projector (or anything else) from a known model.
     if let Some(def) = model_def(id) {
         return Ok(builtin_to_catalog(def));
     }
@@ -283,11 +286,19 @@ fn guarded_ctx_ex(
     // Replacement semantics: the live server's RSS frees when the new spawn
     // takes over, so count it as available for the budget.
     let live_rss = super::server::live_llama_rss_bytes();
+    // Resident weights include the vision projector when the model ships one
+    // (~0.7–1 GB) — a budget that ignores it green-lights spawns that OOM
+    // the moment llama-server mmaps the mtmd adapter.
+    let mmproj_bytes = d
+        .mmproj
+        .as_ref()
+        .map(|m| m.size_bytes)
+        .unwrap_or(0);
     let capped = super::server::cap_ctx_by_ram(
         requested,
         total_mb * 1_048_576,
         available_mb * 1_048_576 + live_rss,
-        d.size_bytes,
+        d.size_bytes + mmproj_bytes,
         kv_per_token,
         d.kv_const_bytes.unwrap_or(0),
     );
@@ -407,6 +418,9 @@ pub struct InstalledModel {
     pub default_thinking: bool,
     /// Model property (see the registry field): thinking cannot be disabled.
     pub thinking_is_integral: bool,
+    /// Vision projector recorded on the manifest (file presence is checked
+    /// at spawn — a deleted file degrades to text-only).
+    pub mmproj: Option<MmprojFile>,
     pub is_custom: bool,
 }
 
@@ -416,7 +430,7 @@ pub struct InstalledModel {
 pub fn installed_model_any(mdir: &Path) -> Option<InstalledModel> {
     if let Some((def, manifest)) = installed_model(mdir) {
         return Some(InstalledModel {
-            manifest,
+            manifest: manifest.clone(),
             display_name: def.display_name.to_string(),
             default_ctx: def.default_ctx,
             max_ctx: Some(def.max_ctx),
@@ -427,6 +441,7 @@ pub fn installed_model_any(mdir: &Path) -> Option<InstalledModel> {
             repeat_penalty: def.repeat_penalty,
             default_thinking: def.default_thinking,
             thinking_is_integral: def.thinking_is_integral,
+            mmproj: manifest.mmproj,
             is_custom: false,
         });
     }
@@ -493,6 +508,7 @@ pub fn installed_model_any(mdir: &Path) -> Option<InstalledModel> {
         // The IMPORT path goes through `installed_model_by_id`, which
         // resolves registry ids and keeps their integral-thinking property.
         thinking_is_integral: false,
+        mmproj: manifest.mmproj.clone(),
         is_custom: true,
         manifest,
     })
@@ -537,6 +553,7 @@ pub fn installed_model_by_id(mdir: &Path, id: &str) -> Option<InstalledModel> {
         thinking_is_integral: model_def(id)
             .map(|d| d.thinking_is_integral)
             .unwrap_or(false),
+        mmproj: manifest.mmproj.clone(),
         is_custom: true,
         manifest,
     })
@@ -572,6 +589,24 @@ fn resolve_source(
         def.sha256.clone(),
         def.file_name.clone(),
     )
+}
+
+/// Download source for the model's vision projector: `(url, sha256, local
+/// file_name)`. Deliberately IGNORES the quant override — the projector is
+/// quant-independent (it wraps the vision tower, not the text weights), so
+/// every quant of a model shares the same mmproj file.
+fn resolve_mmproj_source(
+    def: &super::catalog::CatalogModel,
+) -> Option<(String, String, String)> {
+    let mm = def.mmproj.as_ref()?;
+    Some((
+        format!(
+            "https://huggingface.co/{}/resolve/main/{}",
+            mm.hf_repo, mm.hf_file
+        ),
+        mm.sha256.clone(),
+        mm.file_name.clone(),
+    ))
 }
 
 /// Local file name for a quant-override download: the model's own prefix
@@ -783,6 +818,16 @@ async fn import_gguf_from_path(
     let meta = super::gguf::parse_gguf(src)
         .map_err(|e| ErrorResponse::bad_request(format!("not a valid GGUF: {e}")))?;
 
+    // A projector file is a VALID GGUF (it would parse above and then spawn
+    // a llama-server with no language model in it). architecture 'clip' is
+    // the mmproj signature — reject with a pointer at what the file is.
+    if meta.architecture.as_deref() == Some("clip") {
+        return Err(ErrorResponse::bad_request(
+            "this file is a vision projector (mmproj, architecture 'clip'), not a runnable \
+             model — vision projectors download automatically with models that ship one",
+        ));
+    }
+
     let mdir = models_dir(&state.data_dir);
     let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or("model");
     let id = slugify(meta.name.as_deref().unwrap_or(stem));
@@ -832,6 +877,9 @@ async fn import_gguf_from_path(
             file_name: file_name.clone(),
             sha256: sha,
             quant,
+            // Imported GGUFs carry no projector (imports are rejected for
+            // clip-arch files); vision is a catalog-download feature.
+            mmproj: None,
         })
     })();
     let manifest = match post_copy {
@@ -1041,6 +1089,19 @@ pub async fn status_handler(
 // Models list (registry)
 // ---------------------------------------------------------------------------
 
+/// Fill `mmproj` on catalog entries that lack it from the compiled registry
+/// entry of the same id. The remote catalog is the DISPLAY list while
+/// downloads resolve through the registry first — without this, a stale
+/// catalog predating the mmproj field shows no vision badge yet still
+/// downloads the projector (the registry wins download resolution).
+fn inherit_registry_mmproj(base: &mut [super::catalog::CatalogModel]) {
+    for m in base.iter_mut() {
+        if m.mmproj.is_none() {
+            m.mmproj = model_def(&m.id).and_then(|d| d.mmproj.clone());
+        }
+    }
+}
+
 /// GET /api/builtin-llm/models — the installable builtin models with
 /// per-entry install state.
 #[utoipa::path(
@@ -1059,7 +1120,8 @@ pub async fn models_handler(
     // Source of truth: the REMOTE catalog when reachable (new models ship as
     // a JSON edit), else the compiled-in curated set. A network failure must
     // never degrade the list — offline fallback is the full builtin default.
-    let base: Vec<super::catalog::CatalogModel> = match super::catalog::fetch_catalog().await {
+    let mut base: Vec<super::catalog::CatalogModel> = match super::catalog::fetch_catalog().await
+    {
         Some(catalog) => {
             tracing::debug!(
                 count = catalog.len(),
@@ -1072,6 +1134,7 @@ pub async fn models_handler(
             BUILTIN_MODELS.iter().map(builtin_to_catalog).collect()
         }
     };
+    inherit_registry_mmproj(&mut base);
     let mut models: Vec<serde_json::Value> = base
         .iter()
         .map(|d| {
@@ -1096,6 +1159,9 @@ pub async fn models_handler(
                 "notes": d.notes,
                 "recommended": d.recommended,
                 "installed": installed,
+                // Vision projector ships with the model — the wizard badge
+                // and the picker derive it from this, not from notes text.
+                "vision": d.mmproj.is_some(),
                 "custom": false,
             })
         })
@@ -1149,6 +1215,7 @@ pub async fn models_handler(
                 "notes": "本地导入的模型",
                 "recommended": false,
                 "installed": true,
+                "vision": false,
                 "custom": true,
             }));
         }
@@ -1223,6 +1290,10 @@ pub async fn download_handler(
     let _ = super::catalog::fetch_catalog().await;
     let def = resolve_model(model_id.as_deref())?;
     let (url, sha, file_name) = resolve_source(&cfg, &def);
+    // Vision projector source (quant-override independent — see
+    // resolve_mmproj_source). None = text-only model.
+    let mmproj_src = resolve_mmproj_source(&def);
+    let quant_label = def.quant.clone();
     let mdir = models_dir(&state.data_dir);
     let dest = mdir.join(&def.id).join(&file_name);
 
@@ -1305,6 +1376,8 @@ pub async fn download_handler(
     let state_for_task = state.clone();
     let cfg_for_task = cfg.clone();
     let model_id_task = def.id.clone();
+    let mmproj_src_task = mmproj_src.clone();
+    let quant_task = quant_label.clone();
     tokio::spawn(async move {
         // `guard` single-flights concurrent POSTs; `_active` flips DL_ACTIVE
         // back off on finish/panic (or earlier — run_builtin_download drops it
@@ -1319,6 +1392,8 @@ pub async fn download_handler(
             &dest,
             &url,
             &sha,
+            &quant_task,
+            mmproj_src_task,
             _active,
         )
         .await
@@ -1338,6 +1413,8 @@ async fn run_builtin_download(
     dest: &Path,
     url: &str,
     sha: &str,
+    quant: &str,
+    mmproj_src: Option<(String, String, String)>,
     _active: DownloadActiveGuard,
 ) -> anyhow::Result<()> {
     let client = reqwest::Client::new();
@@ -1351,27 +1428,40 @@ async fn run_builtin_download(
     // be 30-250 events/sec. Atomics update cheaply every chunk, but the WS
     // publish is throttled to ~250ms so the frontend doesn't re-render storm
     // (that manifested as UI flicker during downloads).
+    //
+    // Phase offset: vision models download two files (GGUF then mmproj)
+    // under ONE progress bar. Phase 2 adds the main file's final size to
+    // both counters so the bar keeps climbing instead of restarting at 0
+    // (a resetting bar reads as "download broke and began again").
+    let phase_offset = Arc::new(AtomicU64::new(0));
     let last_publish_ms = Arc::new(AtomicU64::new(0));
-    let on_progress = move |p: DownloadProgress| {
-        DL_DOWNLOADED.store(p.downloaded, Ordering::SeqCst);
-        DL_TOTAL.store(p.total.unwrap_or(0), Ordering::SeqCst);
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
-        let last = last_publish_ms.load(Ordering::Relaxed);
-        if now.saturating_sub(last) < 250 && last != 0 {
-            return;
-        }
-        last_publish_ms.store(now, Ordering::Relaxed);
-        if let Some(bus) = &bus_for_cb {
-            bus.publish_sync(NeoMindEvent::ModelDownloadProgress {
-                model_id: model_id.to_string(),
-                downloaded: p.downloaded,
-                total: p.total,
-                status: "downloading".to_string(),
-                error: None,
-            });
+    let on_progress = {
+        let bus_for_cb = bus_for_cb.clone();
+        let phase_offset = phase_offset.clone();
+        move |p: DownloadProgress| {
+            let offset = phase_offset.load(Ordering::SeqCst);
+            let downloaded = p.downloaded + offset;
+            let total = p.total.map(|t| t + offset);
+            DL_DOWNLOADED.store(downloaded, Ordering::SeqCst);
+            DL_TOTAL.store(total.unwrap_or(0), Ordering::SeqCst);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let last = last_publish_ms.load(Ordering::Relaxed);
+            if now.saturating_sub(last) < 250 && last != 0 {
+                return;
+            }
+            last_publish_ms.store(now, Ordering::Relaxed);
+            if let Some(bus) = &bus_for_cb {
+                bus.publish_sync(NeoMindEvent::ModelDownloadProgress {
+                    model_id: model_id.to_string(),
+                    downloaded,
+                    total,
+                    status: "downloading".to_string(),
+                    error: None,
+                });
+            }
         }
     };
 
@@ -1379,8 +1469,43 @@ async fn run_builtin_download(
 
     match result {
         Ok(_) => {
-            // Persist the manifest so bootstrap/status know the model exists.
             let mdir = models_dir(&state.data_dir);
+
+            // Vision projector phase — AFTER the main GGUF so a projector
+            // failure never strands a manifest-less model dir. Failure is a
+            // degrade, not an abort: the text model is installed and usable,
+            // the manifest just records no mmproj (spawn stays text-only,
+            // the wizard shows no vision badge).
+            let mut mmproj_installed: Option<MmprojFile> = None;
+            if let Some((mp_url, mp_sha, mp_file)) = mmproj_src.as_ref() {
+                let mp_dest = mdir.join(model_id).join(mp_file);
+                // metadata (not the downloader's return) is the truth even
+                // when the file already existed (resume-complete returns 0).
+                phase_offset.store(
+                    std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0),
+                    Ordering::SeqCst,
+                );
+                match download_with_resume(&client, mp_url, &mp_dest, mp_sha, Some(&on_progress))
+                    .await
+                {
+                    Ok(_) => {
+                        mmproj_installed = Some(MmprojFile {
+                            file_name: mp_file.clone(),
+                            sha256: mp_sha.clone(),
+                        });
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            model = model_id,
+                            "builtin llm: mmproj download failed — installing text-only"
+                        );
+                        phase_offset.store(0, Ordering::SeqCst);
+                    }
+                }
+            }
+
+            // Persist the manifest so bootstrap/status know the model exists.
             let manifest = ModelManifest {
                 id: model_id.to_string(),
                 version: "1.0".to_string(),
@@ -1389,7 +1514,8 @@ async fn run_builtin_download(
                     .map(|s| s.to_string_lossy().to_string())
                     .unwrap_or_else(|| model_id.to_string()),
                 sha256: sha.to_string(),
-                quant: "q4_k_m".to_string(),
+                quant: quant.to_string(),
+                mmproj: mmproj_installed,
             };
             save_manifest(&mdir, &manifest)?;
 
@@ -1525,6 +1651,28 @@ async fn spawn_builtin_server(
         installed.default_ctx,
         model_def(&installed.manifest.id),
     );
+    // Vision projector: the manifest must record it AND the file must be
+    // present — a deleted/failed projector degrades to a text-only spawn,
+    // never a failed model. An explicit NEOMIND_BUILTIN_MODEL_PATH override
+    // opts out entirely (the operator owns their file layout).
+    let mmproj = if cfg.model_path.is_some() {
+        None
+    } else {
+        match installed.manifest.mmproj_path(&mdir) {
+            Some(p) if p.exists() => Some(p),
+            Some(p) => {
+                tracing::warn!(
+                    path = %p.display(),
+                    "builtin llm: mmproj recorded but file missing — spawning text-only"
+                );
+                None
+            }
+            None => None,
+        }
+    };
+    // Captured before the config consumes the path (the capability stamp
+    // below needs "did we attach a projector", not the path itself).
+    let mmproj_attached = mmproj.is_some();
     let server_cfg = LlamaServerConfig {
         binary,
         model: model_path,
@@ -1539,6 +1687,7 @@ async fn spawn_builtin_server(
         repeat_penalty: installed.repeat_penalty,
         kv_quant: cfg.kv_quant,
         parallel: cfg.parallel,
+        mmproj,
     };
     let mut proc = LlamaServerProcess::spawn(&server_cfg)?;
     if let Err(e) = proc.wait_healthy(Duration::from_secs(60)).await {
@@ -1591,6 +1740,24 @@ async fn spawn_builtin_server(
     instance.capabilities.supports_tools = true;
     instance.capabilities.supports_thinking = installed.default_thinking;
     instance.capabilities.max_context = effective_spawn_ctx(cfg.port, ctx).await;
+    // Vision capability, stamped AT SPAWN so the chat picker / image-upload
+    // gate reflects it immediately — the alternative (build_runtime's /props
+    // probe) only lands on the first chat round. /props is the authority: a
+    // projector that failed to mount leaves modalities.vision off while our
+    // `mmproj` variable still says attached; manifest presence is only the
+    // fallback for runtimes that don't report modalities at all.
+    //
+    // `multimodal_source = "runtime_api"` matters as much as the value:
+    // get_instance() runs ensure_instance_capabilities, which re-derives
+    // supports_multimodal from the MODEL NAME (registry/heuristic tables of
+    // cloud model names — "gemma4-e2b" isn't in them) and would clobber an
+    // observed value back to false on every read. runtime_api-sourced
+    // values are exempt; user overrides still win over both.
+    let multimodal = query_server_modalities_vision(cfg.port)
+        .await
+        .unwrap_or(mmproj_attached);
+    instance.capabilities.supports_multimodal = multimodal;
+    instance.capabilities.multimodal_source = Some("runtime_api".to_string());
     // Per-model sampling: applies both as server-side defaults (above) and
     // on the request side (the instance fields are what chat sends).
     if let Some(t) = installed.temperature {
@@ -1994,6 +2161,22 @@ fn memory_snapshot_mb() -> (u64, u64) {
     (total, available)
 }
 
+/// Read the running llama-server's vision modality from /props
+/// (`modalities.vision` — present only when a projector mounted). `None`
+/// when unreachable or the field is absent (older runtimes); callers fall
+/// back to what they know about the spawn.
+pub(super) async fn query_server_modalities_vision(port: u16) -> Option<bool> {
+    let url = format!("http://127.0.0.1:{}/props", port);
+    let resp = reqwest::Client::new()
+        .get(&url)
+        .timeout(Duration::from_secs(2))
+        .send()
+        .await
+        .ok()?;
+    let v: serde_json::Value = resp.json().await.ok()?;
+    v.get("modalities")?.get("vision")?.as_bool()
+}
+
 /// Read the running llama-server's actual context size from /props.
 /// `None` when the server is unreachable or the field is absent.
 async fn query_server_n_ctx(port: u16) -> Option<usize> {
@@ -2192,6 +2375,7 @@ mod tests {
                 file_name: "lfm25-2.6b-q4_k_m.gguf".to_string(),
                 sha256: "abc".to_string(),
                 quant: "q4_k_m".to_string(),
+                mmproj: None,
             },
         )
         .expect("save manifest");
@@ -2295,6 +2479,82 @@ mod quant_override_tests {
         assert_eq!(
             sha,
             "36587fdf27bdfc69caf2637273679a0870ec155162161bde6fd16e8c70bdb757"
+        );
+    }
+
+    // ---- mmproj (vision projector) source resolution ----
+
+    fn gemma_def() -> super::super::catalog::CatalogModel {
+        let def = model_def("gemma4-e2b").expect("registry entry");
+        builtin_to_catalog(def)
+    }
+
+    /// The projector source is pinned to the model's own repo under its
+    /// canonical local name. `resolve_mmproj_source` takes no cfg — the
+    /// projector is quant-independent by construction (there is no override
+    /// path to drift onto), unlike the text weights above.
+    #[test]
+    fn mmproj_source_pins_repo_sha_and_local_name() {
+        let (url, sha, file) = resolve_mmproj_source(&gemma_def()).expect("gemma mmproj");
+        assert_eq!(
+            url,
+            "https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf/resolve/main/gemma-4-E2B-it-mmproj.gguf"
+        );
+        assert_eq!(
+            sha,
+            "021059cce659fe7f9170d5599761d7bbaf644b798dab9503aca30dc43e6beb14"
+        );
+        assert_eq!(file, "gemma-4-E2B-it-mmproj.gguf");
+    }
+
+    #[test]
+    fn mmproj_source_none_for_text_models() {
+        assert!(resolve_mmproj_source(&lfm_def()).is_none());
+        assert!(resolve_mmproj_source(&minicpm_def()).is_none());
+    }
+
+    fn stale_catalog_entry(id: &str) -> super::super::catalog::CatalogModel {
+        super::super::catalog::CatalogModel {
+            id: id.to_string(),
+            display_name: id.to_string(),
+            file_name: "x.gguf".to_string(),
+            sha256: "deadbeef".to_string(),
+            quant: "q4_k_m".to_string(),
+            hf_repo: "r/x".to_string(),
+            hf_file: "x.gguf".to_string(),
+            size_bytes: 1,
+            default_ctx: 32768,
+            max_ctx: None,
+            default_thinking: false,
+            min_ram_mb: 0,
+            notes: String::new(),
+            recommended: false,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            min_p: None,
+            repeat_penalty: None,
+            mmproj: None,
+        }
+    }
+
+    /// The remote catalog is the display list while downloads resolve
+    /// through the registry — a stale entry must regain the registry's
+    /// projector or the wizard hides the vision badge yet downloads it.
+    #[test]
+    fn stale_catalog_inherits_registry_mmproj_for_display() {
+        let mut base = vec![
+            stale_catalog_entry("gemma4-e2b"),
+            stale_catalog_entry("some-catalog-only-id"),
+        ];
+        inherit_registry_mmproj(&mut base);
+        assert!(
+            base[0].mmproj.is_some(),
+            "registry vision model must regain its projector"
+        );
+        assert!(
+            base[1].mmproj.is_none(),
+            "catalog-only ids keep the catalog's word (no inheritance source)"
         );
     }
 }

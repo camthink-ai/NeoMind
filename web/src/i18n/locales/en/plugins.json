@@ -117,6 +117,9 @@
     "builtinWizardRestartEngine": "Restart Engine",
     "builtinWizardNoModels": "Failed to load models — retry",
     "installed": "Installed",
+    "builtinVision": "Vision",
+    "builtinVisionHint": "Ships a vision projector (mmproj) — send images in chat right after install",
+    "customModel": "Local import",
     "models": {
       "lfm25-2.6b": {
         "name": "LFM2.5-2.6B",
@@ -124,11 +127,11 @@
       },
       "qwen3.5-4b": {
         "name": "Qwen3.5-4B",
-        "notes": "Strongest edge agent in our 30-case evals (76% cmd_ok) — tool-calling first pick"
+        "notes": "Strongest edge agent in our evals — tool-calling first pick, vision built in"
       },
       "gemma4-e2b": {
         "name": "Gemma4-E2B",
-        "notes": "Official Google QAT quant — mmproj-ready for vision"
+        "notes": "Official Google QAT quant — vision built in"
       }
     },
     "builtinWizardCtxLabel": "Context",

@@ -117,6 +117,9 @@
     "builtinWizardRestartEngine": "重启引擎",
     "builtinWizardNoModels": "模型列表加载失败，请重试",
     "installed": "已安装",
+    "builtinVision": "支持视觉",
+    "builtinVisionHint": "自带视觉投影器(mmproj),安装后可直接在聊天中发送图片",
+    "customModel": "本地导入",
     "models": {
       "lfm25-2.6b": {
         "name": "LFM2.5-2.6B",
@@ -124,11 +127,11 @@
       },
       "qwen3.5-4b": {
         "name": "Qwen3.5-4B",
-        "notes": "30 案 eval 最强的端侧 agent 模型(76% cmd_ok)——工具调用首选"
+        "notes": "端侧最强 agent 之一——工具调用首选,自带视觉(可发图)"
       },
       "gemma4-e2b": {
         "name": "Gemma4-E2B",
-        "notes": "Google 官方 QAT 量化——可挂 mmproj 加视觉"
+        "notes": "Google 官方 QAT 量化——自带视觉(可发图)"
       }
     },
     "builtinWizardCtxLabel": "上下文",

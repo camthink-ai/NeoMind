@@ -117,6 +117,8 @@ export interface BuiltinModelDef {
   notes: string
   recommended: boolean
   installed: boolean
+  /** Ships a vision projector (mmproj) — images work in chat out of the box. */
+  vision?: boolean
   /** Locally imported GGUF (open catalog local channel). */
   custom?: boolean
 }

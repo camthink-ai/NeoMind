@@ -38,6 +38,7 @@ import {
   BrainCircuit,
   Info,
   CheckCircle2,
+  Eye,
   RefreshCw,
   Download,
   HardDrive,
@@ -568,6 +569,15 @@ export function BuiltinModelWizard({
                       >
                         <div className="flex items-center gap-2 min-w-0">
                           <span className="min-w-0 flex-1 truncate text-sm font-medium">{modelName}</span>
+                          {m.vision && (
+                            <span
+                              className="flex shrink-0 items-center gap-1 rounded-full bg-info-light px-1.5 py-0.5 text-[10px] font-medium text-info"
+                              title={t('plugins:llm.builtinVisionHint')}
+                            >
+                              <Eye className="h-3 w-3" />
+                              {t('plugins:llm.builtinVision')}
+                            </span>
+                          )}
                           {m.recommended && (
                             <span className="shrink-0 rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">
                               {t('common:llmGuide.recommended')}
@@ -575,6 +585,7 @@ export function BuiltinModelWizard({
                           )}
                           {m.custom && (
                             <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                              {t('plugins:llm.customModel')}
                             </span>
                           )}
                         </div>

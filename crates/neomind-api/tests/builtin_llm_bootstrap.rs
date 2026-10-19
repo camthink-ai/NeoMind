@@ -54,8 +54,17 @@ echo "spawned: dir=$_script_dir args=$*" >> /tmp/fake-spawns.log
 if [ -f "$_script_dir/FAST_FAIL" ]; then
     exit 1
 fi
+# Vision-chain markers (mmproj e2e): record whether the spawn carried
+# --mmproj (the test asserts the flag reached argv), and switch /props
+# modalities.vision on when the test planted REPORT_VISION.
+case "$*" in
+    *--mmproj*) printf "%s\n" "$*" > "$_script_dir/MMPROJ_ARGS" ;;
+esac
+if [ -f "$_script_dir/REPORT_VISION" ]; then
+    export FAKE_VISION=1
+fi
 exec python3 -c '
-import http.server, socketserver, json, sys
+import http.server, socketserver, json, sys, os
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
@@ -63,7 +72,9 @@ class H(http.server.BaseHTTPRequestHandler):
         elif self.path == "/props":
             # slot_n_ctx + slot count: the instance stamps the PER-SLOT
             # share (32768 / 2 = 16384), not the raw server n_ctx.
-            body = json.dumps({{"model_path": "{model}", "n_ctx": 32768, "total_slots": 2}}).encode()
+            # modalities.vision mirrors what a projector-mounted llama-server
+            # reports (off unless the test planted REPORT_VISION).
+            body = json.dumps({{"model_path": "{model}", "n_ctx": 32768, "total_slots": 2, "modalities": {{"vision": os.environ.get("FAKE_VISION") == "1"}}}}).encode()
         else:
             self.send_error(404); return
         self.send_response(200)
@@ -412,4 +423,141 @@ async fn already_running_refresh_honors_ctx_override() {
 
     let _ = child.kill();
     let _ = child.wait();
+}
+
+/// Vision chain: a manifest recording an mmproj (file present) makes the
+/// spawn carry `--mmproj`, and the instance is stamped
+/// `supports_multimodal` from the server's /props modalities — so the chat
+/// picker and image-upload gate light up without waiting for a chat round.
+#[serial_test::serial]
+#[tokio::test]
+async fn bootstrap_spawns_with_mmproj_and_stamps_vision() {
+    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    require_fake_server!();
+    let port = pick_free_port();
+    let model_path = "/tmp/x/gemma-4-E2B_q4_0-it.qat.gguf";
+    let fx = Fixture::new(port, model_path);
+    // The fake /props reports modalities.vision=true only when planted.
+    std::fs::write(fx.bin_dir.path().join("REPORT_VISION"), "1").unwrap();
+    fx.seed_model(
+        "gemma4-e2b",
+        "gemma-4-E2B_q4_0-it.qat.gguf",
+        "fa401b55b07ee70a54c6dae3903c783a6e65064312529ea57175cb5f8dec6634",
+    );
+    // Projector file + a manifest that records it (seed_model's manifest
+    // has no mmproj — overwrite with the vision shape).
+    let mdir = fx.data_dir.path().join("models").join("gemma4-e2b");
+    std::fs::write(
+        mdir.join("gemma-4-E2B-it-mmproj.gguf"),
+        b"fake-mmproj-bytes",
+    )
+    .unwrap();
+    let manifest = serde_json::json!({
+        "id": "gemma4-e2b", "version": "1.0",
+        "file_name": "gemma-4-E2B_q4_0-it.qat.gguf",
+        "sha256": "fa401b55b07ee70a54c6dae3903c783a6e65064312529ea57175cb5f8dec6634",
+        "quant": "qat_q4_0",
+        "mmproj": {"file_name": "gemma-4-E2B-it-mmproj.gguf",
+                    "sha256": "021059cce659fe7f9170d5599761d7bbaf644b798dab9503aca30dc43e6beb14"}
+    });
+    std::fs::write(
+        mdir.join("manifest.json"),
+        serde_json::to_string(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    let saved_path = std::env::var("PATH").unwrap_or_default();
+    std::env::set_var(
+        "PATH",
+        format!("{}:{}", fx.bin_dir.path().display(), saved_path),
+    );
+    let outcome = bootstrap(fx.data_dir.path(), &fx.cfg(), &fx.manager).await;
+    std::env::set_var("PATH", &saved_path);
+
+    assert!(
+        matches!(outcome, BootstrapOutcome::ServerReady { .. }),
+        "expected ServerReady, got {outcome:?}"
+    );
+
+    // argv check: the projector flag AND file reached llama-server.
+    let marker = fx.bin_dir.path().join("MMPROJ_ARGS");
+    assert!(
+        marker.exists(),
+        "spawn must carry --mmproj when the manifest records a present projector"
+    );
+    let args = std::fs::read_to_string(&marker).unwrap();
+    assert!(args.contains("--mmproj"), "args: {args}");
+    assert!(
+        args.contains("gemma-4-E2B-it-mmproj.gguf"),
+        "projector path must be the argv value, args: {args}"
+    );
+
+    let inst = fx
+        .manager
+        .get_instance(BUILTIN_INSTANCE_ID)
+        .expect("instance registered");
+    assert!(
+        inst.capabilities.supports_multimodal,
+        "/props modalities.vision must stamp the instance at spawn time"
+    );
+
+    neomind_api::builtin_llm::server::stop_all_llama_servers();
+}
+
+/// Manifest records a projector but the FILE is gone (partial delete /
+/// failed mmproj download) → the spawn degrades to text-only: ServerReady,
+/// no --mmproj on argv, and no vision capability stamped (the fake reports
+/// modalities.vision=true — /props is the authority, attachment is not).
+#[serial_test::serial]
+#[tokio::test]
+async fn missing_mmproj_file_degrades_to_text_only() {
+    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    require_fake_server!();
+    let port = pick_free_port();
+    let model_path = "/tmp/x/gemma-4-E2B_q4_0-it.qat.gguf";
+    let fx = Fixture::new(port, model_path);
+    // /props claims vision — the stamp must still be false because the
+    // projector never reached argv... the server LIES here on purpose:
+    // query_server_modalities_vision would stamp true. The degrade contract
+    // is therefore "no --mmproj flag", not "capability false" — a lying
+    // /props is exactly what the spawn-time probe trusts by design.
+    std::fs::write(fx.bin_dir.path().join("REPORT_VISION"), "1").unwrap();
+    fx.seed_model(
+        "gemma4-e2b",
+        "gemma-4-E2B_q4_0-it.qat.gguf",
+        "fa401b55b07ee70a54c6dae3903c783a6e65064312529ea57175cb5f8dec6634",
+    );
+    // Manifest records a projector whose file does NOT exist.
+    let mdir = fx.data_dir.path().join("models").join("gemma4-e2b");
+    let manifest = serde_json::json!({
+        "id": "gemma4-e2b", "version": "1.0",
+        "file_name": "gemma-4-E2B_q4_0-it.qat.gguf",
+        "sha256": "fa401b55b07ee70a54c6dae3903c783a6e65064312529ea57175cb5f8dec6634",
+        "quant": "qat_q4_0",
+        "mmproj": {"file_name": "gemma-4-E2B-it-mmproj.gguf", "sha256": "021059cc"}
+    });
+    std::fs::write(
+        mdir.join("manifest.json"),
+        serde_json::to_string(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    let saved_path = std::env::var("PATH").unwrap_or_default();
+    std::env::set_var(
+        "PATH",
+        format!("{}:{}", fx.bin_dir.path().display(), saved_path),
+    );
+    let outcome = bootstrap(fx.data_dir.path(), &fx.cfg(), &fx.manager).await;
+    std::env::set_var("PATH", &saved_path);
+
+    assert!(
+        matches!(outcome, BootstrapOutcome::ServerReady { .. }),
+        "missing projector must degrade, not fail: {outcome:?}"
+    );
+    assert!(
+        !fx.bin_dir.path().join("MMPROJ_ARGS").exists(),
+        "text-only degrade must not pass --mmproj"
+    );
+
+    neomind_api::builtin_llm::server::stop_all_llama_servers();
 }

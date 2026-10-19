@@ -37,6 +37,10 @@ pub struct LlamaServerConfig {
     /// shrinking the usable window. `None` omits the flag entirely
     /// (upstream default: 4 slots, unified KV).
     pub parallel: Option<usize>,
+    /// Vision projector GGUF (`--mmproj`). `None` = text-only spawn — the
+    /// caller resolves presence from the on-disk manifest and degrades to
+    /// text-only (never a failed spawn) when the file is missing.
+    pub mmproj: Option<PathBuf>,
 }
 
 /// Largest context window the device RAM can fund for a given model.
@@ -251,42 +255,90 @@ fn server_stderr_stdio(binary: &std::path::Path) -> std::process::Stdio {
     }
 }
 
+/// Full llama-server argument vector for a config (everything except the
+/// argv[0] binary). Extracted from `spawn` so the flag surface — including
+/// the vision `--mmproj` — is unit-testable without constructing a child
+/// process (the `LlamaServerProcess` fields are private by design).
+///
+/// Order matters only for the tests and human eyes; llama-server parses
+/// flags positionally-independently.
+fn build_llama_args(cfg: &LlamaServerConfig) -> Vec<String> {
+    let mut args: Vec<String> = Vec::new();
+    args.push("-m".into());
+    args.push(cfg.model.display().to_string());
+    args.push("-c".into());
+    args.push(cfg.ctx.to_string());
+    if let Some(p) = &cfg.mmproj {
+        // Vision projector: mounts the mtmd multimodal adapter. llama-server
+        // then reports modalities.vision=true on /props, which the platform's
+        // capability probe turns into supports_multimodal.
+        args.push("--mmproj".into());
+        args.push(p.display().to_string());
+    }
+    // Slot count, default 1. Why not leave it unspecified: upstream's
+    // own default is 4 slots (verified on b11609: n_slots=4,
+    // kv_unified=true) — and /props then reports total_slots>1, which
+    // the platform budgets as n_ctx ÷ slots, silently shrinking the
+    // usable window (the 8K-wedge class, observed 2026-10-14 on
+    // NG4520). With one slot the full window is the per-request truth;
+    // background LLM work already defers to foreground streams, so
+    // concurrency here is rare — requests queue, which is the correct
+    // behavior for a shared decode budget. NEOMIND_BUILTIN_LLM_PARALLEL:
+    // N for explicit slots, 0 to omit the flag (upstream default).
+    if let Some(p) = cfg.parallel {
+        args.push("--parallel".into());
+        args.push(p.to_string());
+    }
+    args.push("--port".into());
+    args.push(cfg.port.to_string());
+    args.push("--host".into());
+    args.push("127.0.0.1".into());
+    // `--no-webui`(非旧名 `--nobrowser`,当前 llama.cpp 已改名,旧参数报 invalid argument)
+    args.push("--no-webui".into());
+    if cfg.kv_quant {
+        // -fa on is REQUIRED for V-cache quantization; q8_0 K+V roughly
+        // halves the KV pool (see the config field's doc).
+        args.extend(
+            ["-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0"]
+                .into_iter()
+                .map(String::from),
+        );
+    }
+    if let Some(n) = cfg.ngl {
+        args.push("-ngl".into());
+        args.push(n.to_string());
+    }
+    if let Some(t) = cfg.threads {
+        args.push("-t".into());
+        args.push(t.to_string());
+    }
+    if let Some(t) = cfg.temperature {
+        args.push("--temp".into());
+        args.push(format!("{t:.2}"));
+    }
+    if let Some(p) = cfg.top_p {
+        args.push("--top-p".into());
+        args.push(format!("{p:.2}"));
+    }
+    if let Some(k) = cfg.top_k {
+        args.push("--top-k".into());
+        args.push(k.to_string());
+    }
+    if let Some(m) = cfg.min_p {
+        args.push("--min-p".into());
+        args.push(format!("{m:.2}"));
+    }
+    if let Some(r) = cfg.repeat_penalty {
+        args.push("--repeat-penalty".into());
+        args.push(format!("{r:.2}"));
+    }
+    args
+}
+
 impl LlamaServerProcess {
     pub fn spawn(cfg: &LlamaServerConfig) -> anyhow::Result<Self> {
         let mut cmd = tokio::process::Command::new(&cfg.binary);
-        cmd.arg("-m")
-            .arg(&cfg.model)
-            .arg("-c")
-            .arg(cfg.ctx.to_string());
-        // Slot count, default 1. Why not leave it unspecified: upstream's
-        // own default is 4 slots (verified on b11609: n_slots=4,
-        // kv_unified=true) — and /props then reports total_slots>1, which
-        // the platform budgets as n_ctx ÷ slots, silently shrinking the
-        // usable window (the 8K-wedge class, observed 2026-10-14 on
-        // NG4520). With one slot the full window is the per-request truth;
-        // background LLM work already defers to foreground streams, so
-        // concurrency here is rare — requests queue, which is the correct
-        // behavior for a shared decode budget. NEOMIND_BUILTIN_LLM_PARALLEL:
-        // N for explicit slots, 0 to omit the flag (upstream default).
-        if let Some(p) = cfg.parallel {
-            cmd.arg("--parallel").arg(p.to_string());
-        }
-        cmd.arg("--port")
-            .arg(cfg.port.to_string())
-            .arg("--host")
-            .arg("127.0.0.1")
-            // `--no-webui`(非旧名 `--nobrowser`,当前 llama.cpp 已改名,旧参数报 invalid argument)
-            .arg("--no-webui");
-        if cfg.kv_quant {
-            // -fa on is REQUIRED for V-cache quantization; q8_0 K+V roughly
-            // halves the KV pool (see the config field's doc).
-            cmd.arg("-fa")
-                .arg("on")
-                .arg("-ctk")
-                .arg("q8_0")
-                .arg("-ctv")
-                .arg("q8_0");
-        }
+        cmd.args(build_llama_args(cfg));
         cmd
             // stderr → truncate-on-spawn log next to the binary. /dev/null
             // made every startup death indistinguishable — the b11609 SIGILL
@@ -294,27 +346,6 @@ impl LlamaServerProcess {
             // binary by hand; the log makes the next one visible in place.
             .stderr(server_stderr_stdio(&cfg.binary))
             .stdout(std::process::Stdio::null());
-        if let Some(n) = cfg.ngl {
-            cmd.arg("-ngl").arg(n.to_string());
-        }
-        if let Some(t) = cfg.threads {
-            cmd.arg("-t").arg(t.to_string());
-        }
-        if let Some(t) = cfg.temperature {
-            cmd.arg("--temp").arg(format!("{t:.2}"));
-        }
-        if let Some(p) = cfg.top_p {
-            cmd.arg("--top-p").arg(format!("{p:.2}"));
-        }
-        if let Some(k) = cfg.top_k {
-            cmd.arg("--top-k").arg(k.to_string());
-        }
-        if let Some(m) = cfg.min_p {
-            cmd.arg("--min-p").arg(format!("{m:.2}"));
-        }
-        if let Some(r) = cfg.repeat_penalty {
-            cmd.arg("--repeat-penalty").arg(format!("{r:.2}"));
-        }
         // [deterministic cleanup] The process must die with the server even
         // on abnormal termination (crash, kill -9, force-quit): without
         // kill_on_drop, a dropped handle leaked a model-loaded llama-server
@@ -423,6 +454,64 @@ mod tests {
 
     const GB: u64 = 1024 * 1024 * 1024;
     const MB: u64 = 1024 * 1024;
+
+    fn test_server_config(mmproj: Option<PathBuf>) -> LlamaServerConfig {
+        LlamaServerConfig {
+            binary: PathBuf::from("/usr/bin/llama-server"),
+            model: PathBuf::from("/data/models/gemma4-e2b/model.gguf"),
+            port: 29375,
+            ctx: 32768,
+            ngl: None,
+            threads: None,
+            temperature: Some(1.0),
+            top_p: Some(0.95),
+            top_k: Some(64),
+            min_p: None,
+            repeat_penalty: None,
+            kv_quant: true,
+            parallel: Some(1),
+            mmproj,
+        }
+    }
+
+    /// The argv surface a spawn actually produces — locked so a refactor
+    /// can't silently drop a flag (each one changes runtime behavior in
+    /// ways the spawn sites' behavior tests would only catch downstream).
+    #[test]
+    fn build_args_without_mmproj_is_text_only() {
+        let args = build_llama_args(&test_server_config(None));
+        let joined = args.join(" ");
+        assert!(joined.starts_with("-m /data/models/gemma4-e2b/model.gguf -c 32768"));
+        assert!(joined.contains("--port 29375 --host 127.0.0.1 --no-webui"));
+        assert!(joined.contains("--parallel 1"));
+        assert!(joined.contains("-fa on -ctk q8_0 -ctv q8_0"));
+        assert!(joined.contains("--temp 1.00 --top-p 0.95 --top-k 64"));
+        assert!(
+            !joined.contains("--mmproj"),
+            "text-only spawn must not pass --mmproj"
+        );
+    }
+
+    #[test]
+    fn build_args_with_mmproj_places_flag_with_model() {
+        let args = build_llama_args(&test_server_config(Some(PathBuf::from(
+            "/data/models/gemma4-e2b/mmproj.gguf",
+        ))));
+        // Paired with -m/-c at the head — vision mounts with the model, and
+        // a fixed position keeps the e2e fixture's marker parsing simple.
+        assert_eq!(
+            args[..6],
+            [
+                "-m",
+                "/data/models/gemma4-e2b/model.gguf",
+                "-c",
+                "32768",
+                "--mmproj",
+                "/data/models/gemma4-e2b/mmproj.gguf"
+            ]
+            .map(String::from)
+        );
+    }
 
     #[test]
     fn eight_gb_jetson_caps_minicpm_below_default() {

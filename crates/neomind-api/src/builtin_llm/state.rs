@@ -176,6 +176,17 @@ pub async fn bootstrap(
                 updated.capabilities.supports_streaming = true;
                 updated.capabilities.supports_tools = true;
                 updated.capabilities.supports_thinking = def.default_thinking;
+                // Vision: refresh only when /props actually reports
+                // modalities — an older runtime's silence must not clear a
+                // capability stamped at spawn. Source stays runtime_api so
+                // the name-heuristic in ensure_instance_capabilities can't
+                // rewrite an observed value.
+                if let Some(v) =
+                    super::handlers::query_server_modalities_vision(cfg.port).await
+                {
+                    updated.capabilities.supports_multimodal = v;
+                    updated.capabilities.multimodal_source = Some("runtime_api".to_string());
+                }
                 // Model property — refreshed alongside the rest: the spawn
                 // path sets it, so a short-circuited restart used to keep
                 // whatever a PREVIOUS build stamped (e.g. Ling imported
@@ -246,6 +257,24 @@ pub async fn bootstrap(
     // restart API) picks the starting point, the RAM guard caps what the
     // device can fund (128K defaults on small edge devices would OOM).
     let effective_ctx = super::handlers::guarded_ctx(cfg, def.default_ctx, Some(&def));
+    // Vision projector (same resolution rules as spawn_builtin_server):
+    // manifest records it + file present; a model_path override opts out.
+    let mmproj = if cfg.model_path.is_some() {
+        None
+    } else {
+        match manifest.mmproj_path(&mdir) {
+            Some(p) if p.exists() => Some(p),
+            Some(p) => {
+                tracing::warn!(
+                    path = %p.display(),
+                    "builtin llm: mmproj recorded but file missing — spawning text-only"
+                );
+                None
+            }
+            None => None,
+        }
+    };
+    let mmproj_attached = mmproj.is_some();
     let server_cfg = LlamaServerConfig {
         binary,
         model: model_path,
@@ -262,6 +291,7 @@ pub async fn bootstrap(
         repeat_penalty: def.repeat_penalty,
         kv_quant: cfg.kv_quant,
         parallel: cfg.parallel,
+        mmproj,
     };
     let mut proc = match LlamaServerProcess::spawn(&server_cfg) {
         Ok(p) => p,
@@ -314,6 +344,16 @@ pub async fn bootstrap(
     instance.capabilities.supports_thinking = def.default_thinking;
     instance.capabilities.max_context =
         super::handlers::effective_spawn_ctx(cfg.port, effective_ctx).await;
+    // Same spawn-time vision stamp as spawn_builtin_server: /props is the
+    // authority, projector attachment the fallback for runtimes that don't
+    // report modalities. Source "runtime_api" keeps the observed value safe
+    // from ensure_instance_capabilities' name-heuristic rewrite (see the
+    // handlers.rs stamp for the full story).
+    let multimodal = super::handlers::query_server_modalities_vision(cfg.port)
+        .await
+        .unwrap_or(mmproj_attached);
+    instance.capabilities.supports_multimodal = multimodal;
+    instance.capabilities.multimodal_source = Some("runtime_api".to_string());
     let _ = manager.upsert_instance(instance).await;
 
     // 活跃策略:仅当没有任何活跃后端时设为活跃(「有后端不抢」)。

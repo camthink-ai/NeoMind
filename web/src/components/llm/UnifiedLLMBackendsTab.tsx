@@ -649,6 +649,12 @@ export function UnifiedLLMBackendsTab({
                   {installedModelName && <span className="text-muted-foreground"> · {installedModelName}</span>}
                 </CardTitle>
                 <Badge variant="outline" className="text-xs shrink-0">{t('plugins:llm.builtinBadge')}</Badge>
+                {builtinInstance?.capabilities?.supports_multimodal && (
+                  <Badge variant="outline" className="text-xs shrink-0 gap-1">
+                    <Eye className="h-3 w-3" />
+                    {t('plugins:llm.capabilityVision')}
+                  </Badge>
+                )}
                 {builtinIsActive && <Badge variant="default" className="text-xs shrink-0">{t('plugins:llm.active')}</Badge>}
               </div>
               <CardDescription className="text-xs line-clamp-1">
