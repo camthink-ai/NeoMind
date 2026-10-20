@@ -362,7 +362,7 @@ function CompanionSettingsPopover({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
-          className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
+          className="grid h-6 w-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
           title={t('plugins:llm.companionSettings')}
         >
           <Settings2 className="h-3 w-3" />
@@ -786,7 +786,7 @@ export function UnifiedLLMBackendsTab({
               inside one bordered list — siblings by structure, not by prose. */}
           {builtinStatus.installed && builtinStatus.server_state !== 'downloading' && (
             <div className="rounded-md border border-border divide-y divide-border">
-              <div className="flex items-center gap-2 px-3 py-2">
+              <div className="flex h-9 items-center gap-2 px-3">
                 <BrainCircuit className="h-3.5 w-3.5 shrink-0 text-warning" />
                 <span className="shrink-0 text-xs font-medium">
                   {t('plugins:llm.builtinMainEngine')}
@@ -815,7 +815,7 @@ export function UnifiedLLMBackendsTab({
                 </Button>
               </div>
               {builtinStatus.companion && (
-                <div className="flex items-center gap-2 px-3 py-2">
+                <div className="flex h-9 items-center gap-2 px-3">
                   <Eye className="h-3.5 w-3.5 shrink-0 text-info" />
                   <span className="shrink-0 text-xs font-medium">
                     {t('plugins:llm.companionLabel')}
