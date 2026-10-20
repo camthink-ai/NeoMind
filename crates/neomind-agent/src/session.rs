@@ -453,6 +453,61 @@ async fn delegate_images_to_companion(message: &str, images: &[String]) -> Optio
     Some(combined)
 }
 
+/// Fit (existing content + fresh "- fact" lines) into `limit` chars with
+/// FRESH priority: on a full file the old TAIL gives way so this turn's
+/// facts land, while the old TOP (the hand-curated durable head — same
+/// priority as the store's own eviction) survives longest.
+///
+/// Replaces the old fit-old-first logic, which dropped every fresh fact on
+/// a full file AND pushed a trailing '\n' past the fitted size — the
+/// "2001 > 2000" write rejection that lost the whole extraction (observed
+/// 2026-10-20: user-facts persisted 0/N for hours on a marker-heavy file).
+fn fit_facts_with_fresh_priority(existing: &str, fresh: &[&String], limit: usize) -> String {
+    let fresh_block = {
+        let mut b = String::new();
+        for f in fresh {
+            if !b.is_empty() {
+                b.push('\n');
+            }
+            b.push_str("- ");
+            b.push_str(f);
+        }
+        b
+    };
+    let fresh_cost = fresh_block.chars().count();
+    let sep = usize::from(fresh_cost > 0);
+    let old_budget = limit.saturating_sub(fresh_cost + sep);
+
+    let mut kept_old = String::new();
+    for line in existing.trim_end().lines() {
+        let need = line.chars().count() + usize::from(!kept_old.is_empty());
+        if kept_old.chars().count() + need > old_budget {
+            break;
+        }
+        if !kept_old.is_empty() {
+            kept_old.push('\n');
+        }
+        kept_old.push_str(line);
+    }
+
+    let mut out = kept_old;
+    if !fresh_block.is_empty() {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&fresh_block);
+    }
+    // Pathological: a single fact larger than the whole budget — hard fit.
+    if out.chars().count() > limit {
+        out = out.chars().take(limit).collect();
+    }
+    // Trailing newline only when it still fits — never exceed the limit.
+    if out.chars().count() < limit {
+        out.push('\n');
+    }
+    out
+}
+
 impl SessionManager {
     /// Create a new session manager with persistent storage.
     pub fn new() -> Result<Self> {
@@ -1557,18 +1612,7 @@ Assistant: {ar}\n"
                     _ => knowledge_limit,
                 };
                 if merged.chars().count() > limit {
-                    let mut kept = String::new();
-                    for line in merged.lines() {
-                        if kept.chars().count() + line.chars().count() + 1 > limit {
-                            break;
-                        }
-                        if !kept.is_empty() {
-                            kept.push('\n');
-                        }
-                        kept.push_str(line);
-                    }
-                    merged = kept;
-                    merged.push('\n');
+                    merged = fit_facts_with_fresh_priority(&existing, &fresh, limit);
                 }
                 (Some(merged), fresh.len())
             };
@@ -2028,7 +2072,8 @@ Assistant: {ar}\n"
         Ok(response)
     }
 
-    /// Chat-image delegation: the active model is text-only but a healthy
+    
+/// Chat-image delegation: the active model is text-only but a healthy
     /// vision companion (`builtin-vlm-*`) is registered — describe each
     /// image with the companion and continue the turn as TEXT instead of
     /// rejecting the send. Returns the combined prompt, or None when
@@ -3156,5 +3201,70 @@ mod companion_delegation_tests {
         let r = delegate_images_to_companion("hi", &[data_url()]).await;
         std::env::remove_var("NEOMIND_BUILTIN_VLM_DELEGATE");
         assert!(r.is_none(), "kill switch must short-circuit before any call");
+    }
+}
+
+#[cfg(test)]
+mod memory_fit_tests {
+    use super::fit_facts_with_fresh_priority;
+
+    fn fact(s: &str) -> String {
+        format!("- {s}")
+    }
+
+    /// The observed incident: a full 2000-char file (markers + old facts)
+    /// — the fresh fact MUST land and the result must never exceed the
+    /// limit (the old logic produced 2001 and the write was rejected,
+    /// losing the extraction entirely).
+    #[test]
+    fn full_file_still_lands_fresh_fact_within_limit() {
+        let old_top = "# Profile".to_string();
+        let mut existing = old_top.clone();
+        while existing.chars().count() < 1990 {
+            existing.push_str("\n- old fact line filler");
+        }
+        let fresh = vec![fact("brand new fact from this turn")];
+        let out = fit_facts_with_fresh_priority(&existing, &fresh.iter().collect::<Vec<_>>(), 2000);
+        assert!(out.chars().count() <= 2000, "never exceed limit: {}", out.chars().count());
+        assert!(out.contains("brand new fact from this turn"), "fresh fact must land");
+        assert!(out.starts_with("# Profile"), "old top survives longest");
+    }
+
+    /// Exact-boundary regression: composition math (separator + trailing
+    /// newline) may not sneak a single char past the limit.
+    #[test]
+    fn exact_boundary_never_off_by_one() {
+        for limit in [10usize, 100, 2000] {
+            let existing: String = "x".repeat(limit);
+            let fresh = vec![fact(&"y".repeat(50))];
+            let out =
+                fit_facts_with_fresh_priority(&existing, &fresh.iter().collect::<Vec<_>>(), limit);
+            assert!(
+                out.chars().count() <= limit,
+                "limit {limit}: got {}",
+                out.chars().count()
+            );
+        }
+    }
+
+    /// Pathological: a single fact larger than the whole budget — hard-fit
+    /// instead of erroring (the store boundary still rejects > limit, so
+    /// this path must never hand it one).
+    #[test]
+    fn oversized_fact_hard_fits() {
+        let fresh = vec![fact(&"z".repeat(5000))];
+        let out = fit_facts_with_fresh_priority("", &fresh.iter().collect::<Vec<_>>(), 2000);
+        assert!(out.chars().count() <= 2000);
+    }
+
+    /// Plenty of room: everything is kept, old first, fresh appended.
+    #[test]
+    fn roomy_file_keeps_everything() {
+        let existing = "# Profile\n- likes tea";
+        let fresh = vec![fact("likes coffee too")];
+        let out = fit_facts_with_fresh_priority(existing, &fresh.iter().collect::<Vec<_>>(), 2000);
+        assert!(out.contains("# Profile"));
+        assert!(out.contains("- likes tea"));
+        assert!(out.contains("- likes coffee too"));
     }
 }
