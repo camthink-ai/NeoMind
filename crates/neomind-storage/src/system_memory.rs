@@ -481,14 +481,12 @@ impl Clone for MarkdownMemoryStore {
 /// same Arcs, now also shared with every other instance).
 fn shared_locks_for(
     base_path: &std::path::Path,
-) -> (
-    Arc<tokio::sync::Mutex<()>>,
-    Arc<tokio::sync::Mutex<()>>,
-) {
+) -> (Arc<tokio::sync::Mutex<()>>, Arc<tokio::sync::Mutex<()>>) {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
-    static REGISTRY: OnceLock<Mutex<HashMap<String, (Arc<tokio::sync::Mutex<()>>, Arc<tokio::sync::Mutex<()>>)>>> =
-        OnceLock::new();
+    static REGISTRY: OnceLock<
+        Mutex<HashMap<String, (Arc<tokio::sync::Mutex<()>>, Arc<tokio::sync::Mutex<()>>)>>,
+    > = OnceLock::new();
     // Deterministic key: ABSOLUTE, not canonical. canonicalize() resolves
     // differently before vs after the directory exists (and through
     // symlinks like macOS /var → /private/var), so an instance created
@@ -2281,8 +2279,10 @@ fn append_facts_transform(current: &str, facts: &[String], limit: usize) -> (Str
         let t = l.trim().trim_start_matches("- ").trim_start_matches("• ");
         (!t.is_empty()).then_some(t)
     }
-    let existing_norms: std::collections::HashSet<String> =
-        current.lines().filter_map(|l| bullet_text(l).map(&norm)).collect();
+    let existing_norms: std::collections::HashSet<String> = current
+        .lines()
+        .filter_map(|l| bullet_text(l).map(&norm))
+        .collect();
     let fresh: Vec<&String> = facts
         .iter()
         .filter(|f| !existing_norms.contains(&norm(f)))
@@ -2297,7 +2297,10 @@ fn append_facts_transform(current: &str, facts: &[String], limit: usize) -> (Str
     let mut pending: Option<MarkerSegment> = None;
     for line in current.lines() {
         if let Some(name) = marker_open_name(line) {
-            pending = Some(MarkerSegment { name, lines: vec![line.to_string()] });
+            pending = Some(MarkerSegment {
+                name,
+                lines: vec![line.to_string()],
+            });
             continue;
         }
         if let Some(seg) = pending.as_mut() {
@@ -2319,8 +2322,7 @@ fn append_facts_transform(current: &str, facts: &[String], limit: usize) -> (Str
         }
     }
 
-    let fresh_block: Vec<(String, bool)> =
-        fresh.iter().map(|f| (format!("- {f}"), true)).collect();
+    let fresh_block: Vec<(String, bool)> = fresh.iter().map(|f| (format!("- {f}"), true)).collect();
     lines.extend(fresh_block);
 
     fn compose(lines: &[(String, bool)], markers: &mut [MarkerSegment]) -> String {
@@ -3390,239 +3392,235 @@ fn replace_marker_section_locked(
     Ok(true)
 }
 
-    /// Regression (limit+1 write): content exactly at the limit without a
-    /// trailing newline used to come back as limit+1 — and was written to
-    /// disk, breaking the file-never-exceeds-limit invariant.
-    #[test]
-    fn evict_at_exact_limit_keeps_invariant() {
-        let content = "a".repeat(50);
-        let out = evict_to_limit_preserving_markers(&content, 50);
-        assert!(out.chars().count() <= 50, "got {}", out.chars().count());
-        // Under the limit the newline is appended only when it fits.
-        let out2 = evict_to_limit_preserving_markers("abc", 50);
-        assert!(out2.chars().count() <= 50);
+/// Regression (limit+1 write): content exactly at the limit without a
+/// trailing newline used to come back as limit+1 — and was written to
+/// disk, breaking the file-never-exceeds-limit invariant.
+#[test]
+fn evict_at_exact_limit_keeps_invariant() {
+    let content = "a".repeat(50);
+    let out = evict_to_limit_preserving_markers(&content, 50);
+    assert!(out.chars().count() <= 50, "got {}", out.chars().count());
+    // Under the limit the newline is appended only when it fits.
+    let out2 = evict_to_limit_preserving_markers("abc", 50);
+    assert!(out2.chars().count() <= 50);
+}
+
+/// Every instance over the same memory dir must share one write lock —
+/// per-instance locks let extraction (agent side), per-request API
+/// handlers, and background marker jobs interleave RMWs on the same
+/// files, silently rolling each other back.
+#[test]
+fn instances_over_same_path_share_locks() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = MarkdownMemoryStore::new(dir.path());
+    let b = MarkdownMemoryStore::new(dir.path());
+    assert!(Arc::ptr_eq(&a.write_lock, &b.write_lock));
+    assert!(Arc::ptr_eq(&a.custom_write_lock, &b.custom_write_lock));
+    let dir2 = tempfile::tempdir().unwrap();
+    let c = MarkdownMemoryStore::new(dir2.path());
+    assert!(!Arc::ptr_eq(&a.write_lock, &c.write_lock));
+}
+
+/// A raised configured limit must govern writes — `new()` used the
+/// DEFAULT limit, so a user who raised limits had every extraction
+/// write rejected (fit passed at the configured limit, store rejected
+/// at the default).
+#[tokio::test]
+async fn write_honors_configured_limit_not_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = MemoryConfig {
+        storage_path: dir.path().to_str().unwrap().to_string(),
+        user_char_limit: 5000,
+        ..Default::default()
+    };
+    let store = MarkdownMemoryStore::with_config(dir.path(), cfg);
+    store.init().unwrap();
+    let big = "x".repeat(4500); // way over the default 2000
+    store
+        .write_file("user", &big)
+        .await
+        .expect("the CONFIGURED limit must govern writes");
+}
+
+// ---- append_facts_transform: marker-aware merge ----
+
+#[test]
+fn append_facts_shrinks_marker_bodies_before_facts() {
+    let mut current = String::from("# Profile\n- old fact one\n- old fact two");
+    current.push_str("\n<!-- chat-summary -->\n");
+    for i in 0..20 {
+        current.push_str(&format!("summary line {i} that is reasonably long\n"));
     }
+    current.push_str("<!-- /chat-summary -->");
+    let facts = vec!["brand new fact".to_string()];
+    let (out, fresh) = append_facts_transform(&current, &facts, 220);
+    assert_eq!(fresh, 1);
+    assert!(out.chars().count() <= 220, "limit invariant");
+    assert!(out.contains("brand new fact"), "fresh fact must land");
+    assert!(out.contains("old fact one"), "facts outrank marker bodies");
+    assert!(out.contains("old fact two"));
+    // Tags balanced even after body shrink.
+    assert!(out.contains("<!-- chat-summary -->"));
+    assert!(out.contains("<!-- /chat-summary -->"));
+}
 
-    /// Every instance over the same memory dir must share one write lock —
-    /// per-instance locks let extraction (agent side), per-request API
-    /// handlers, and background marker jobs interleave RMWs on the same
-    /// files, silently rolling each other back.
-    #[test]
-    fn instances_over_same_path_share_locks() {
-        let dir = tempfile::tempdir().unwrap();
-        let a = MarkdownMemoryStore::new(dir.path());
-        let b = MarkdownMemoryStore::new(dir.path());
-        assert!(Arc::ptr_eq(&a.write_lock, &b.write_lock));
-        assert!(Arc::ptr_eq(&a.custom_write_lock, &b.custom_write_lock));
-        let dir2 = tempfile::tempdir().unwrap();
-        let c = MarkdownMemoryStore::new(dir2.path());
-        assert!(!Arc::ptr_eq(&a.write_lock, &c.write_lock));
-    }
+#[test]
+fn append_facts_go_before_markers() {
+    let current = "# Profile\n<!-- chat-summary -->\nbody\n<!-- /chat-summary -->";
+    let facts = vec!["likes tea".to_string()];
+    let (out, fresh) = append_facts_transform(current, &facts, 500);
+    assert_eq!(fresh, 1);
+    let fact_pos = out.find("- likes tea").expect("fact present");
+    let marker_pos = out.find("<!-- chat-summary -->").expect("marker present");
+    assert!(fact_pos < marker_pos, "facts sit before the marker tail");
+}
 
-    /// A raised configured limit must govern writes — `new()` used the
-    /// DEFAULT limit, so a user who raised limits had every extraction
-    /// write rejected (fit passed at the configured limit, store rejected
-    /// at the default).
-    #[tokio::test]
-    async fn write_honors_configured_limit_not_default() {
-        let dir = tempfile::tempdir().unwrap();
-        let cfg = MemoryConfig {
-            storage_path: dir.path().to_str().unwrap().to_string(),
-            user_char_limit: 5000,
-            ..Default::default()
-        };
-        let store = MarkdownMemoryStore::with_config(dir.path(), cfg);
-        store.init().unwrap();
-        let big = "x".repeat(4500); // way over the default 2000
-        store
-            .write_file("user", &big)
-            .await
-            .expect("the CONFIGURED limit must govern writes");
-    }
+#[test]
+fn append_facts_exact_duplicates_are_not_fresh() {
+    let current = "- Likes Tea";
+    let facts = vec!["likes tea".to_string()];
+    let (out, fresh) = append_facts_transform(current, &facts, 100);
+    assert_eq!(fresh, 0);
+    assert_eq!(out, current, "unchanged content → caller skips the write");
+}
 
-    // ---- append_facts_transform: marker-aware merge ----
-
-    #[test]
-    fn append_facts_shrinks_marker_bodies_before_facts() {
-        let mut current = String::from("# Profile\n- old fact one\n- old fact two");
-        current.push_str("\n<!-- chat-summary -->\n");
-        for i in 0..20 {
-            current.push_str(&format!("summary line {i} that is reasonably long\n"));
+#[test]
+fn sanitize_drops_whole_marker_blocks_never_half() {
+    // Markers alone exceed the budget: whole blocks must go, tags never
+    // split (an orphan open tag used to trigger the replace-recovery
+    // path that deleted everything after it).
+    let mut content = String::from("# Profile\n- fact");
+    for name in ["a", "b"] {
+        content.push_str(&format!("\n<!-- {name} -->\n"));
+        for i in 0..15 {
+            content.push_str(&format!("body-{name}-{i} padding padding padding\n"));
         }
-        current.push_str("<!-- /chat-summary -->");
-        let facts = vec!["brand new fact".to_string()];
-        let (out, fresh) = append_facts_transform(&current, &facts, 220);
-        assert_eq!(fresh, 1);
-        assert!(out.chars().count() <= 220, "limit invariant");
-        assert!(out.contains("brand new fact"), "fresh fact must land");
-        assert!(out.contains("old fact one"), "facts outrank marker bodies");
-        assert!(out.contains("old fact two"));
-        // Tags balanced even after body shrink.
-        assert!(out.contains("<!-- chat-summary -->"));
-        assert!(out.contains("<!-- /chat-summary -->"));
+        content.push_str(&format!("<!-- /{name} -->"));
     }
+    let out = evict_to_limit_preserving_markers(&content, 120);
+    assert!(out.chars().count() <= 120, "limit invariant");
+    let opens = out.matches("<!-- ").count();
+    let closes = out.matches("<!-- /").count();
+    assert_eq!(opens, closes, "no orphan tags: {out}");
+    assert!(out.contains("- fact"), "facts outlive regenerable markers");
+}
 
-    #[test]
-    fn append_facts_go_before_markers() {
-        let current = "# Profile\n<!-- chat-summary -->\nbody\n<!-- /chat-summary -->";
-        let facts = vec!["likes tea".to_string()];
-        let (out, fresh) = append_facts_transform(current, &facts, 500);
-        assert_eq!(fresh, 1);
-        let fact_pos = out.find("- likes tea").expect("fact present");
-        let marker_pos = out.find("<!-- chat-summary -->").expect("marker present");
-        assert!(fact_pos < marker_pos, "facts sit before the marker tail");
-    }
+// ---- append_facts: on-disk integration (transform ↔ modify_file seam) ----
 
-    #[test]
-    fn append_facts_exact_duplicates_are_not_fresh() {
-        let current = "- Likes Tea";
-        let facts = vec!["likes tea".to_string()];
-        let (out, fresh) = append_facts_transform(current, &facts, 100);
-        assert_eq!(fresh, 0);
-        assert_eq!(out, current, "unchanged content → caller skips the write");
-    }
+#[tokio::test]
+async fn append_facts_integration_lands_on_disk() {
+    let temp = tempfile::tempdir().unwrap();
+    let cfg = MemoryConfig {
+        storage_path: temp.path().to_str().unwrap().to_string(),
+        user_char_limit: 4000,
+        ..Default::default()
+    };
+    let store = MarkdownMemoryStore::with_config(temp.path(), cfg);
+    store.init().unwrap();
 
-    #[test]
-    fn sanitize_drops_whole_marker_blocks_never_half() {
-        // Markers alone exceed the budget: whole blocks must go, tags never
-        // split (an orphan open tag used to trigger the replace-recovery
-        // path that deleted everything after it).
-        let mut content = String::from("# Profile\n- fact");
-        for name in ["a", "b"] {
-            content.push_str(&format!("\n<!-- {name} -->\n"));
-            for i in 0..15 {
-                content.push_str(&format!("body-{name}-{i} padding padding padding\n"));
-            }
-            content.push_str(&format!("<!-- /{name} -->"));
-        }
-        let out = evict_to_limit_preserving_markers(&content, 120);
-        assert!(out.chars().count() <= 120, "limit invariant");
-        let opens = out.matches("<!-- ").count();
-        let closes = out.matches("<!-- /").count();
-        assert_eq!(opens, closes, "no orphan tags: {out}");
-        assert!(out.contains("- fact"), "facts outlive regenerable markers");
-    }
+    // Seed: facts + a marker block (the shape extraction coexists with).
+    store
+        .write_file(
+            "user",
+            "# Profile\n- old fact\n<!-- chat-summary -->\nsummary body\n<!-- /chat-summary -->",
+        )
+        .await
+        .unwrap();
 
-    // ---- append_facts: on-disk integration (transform ↔ modify_file seam) ----
+    let (wrote, fresh) = store
+        .append_facts("user", &["brand new fact".into()])
+        .await
+        .unwrap();
+    assert!(wrote);
+    assert_eq!(fresh, 1);
+    let on_disk = store.read_file_sync("user");
+    assert!(on_disk.contains("- brand new fact"), "fact persisted");
+    let fact_at = on_disk.find("- brand new fact").unwrap();
+    let marker_at = on_disk.find("<!-- chat-summary -->").unwrap();
+    assert!(fact_at < marker_at, "facts before the marker tail");
+    assert!(on_disk.contains("<!-- /chat-summary -->"), "tags balanced");
 
-    #[tokio::test]
-    async fn append_facts_integration_lands_on_disk() {
-        let temp = tempfile::tempdir().unwrap();
-        let cfg = MemoryConfig {
-            storage_path: temp.path().to_str().unwrap().to_string(),
-            user_char_limit: 4000,
-            ..Default::default()
-        };
-        let store = MarkdownMemoryStore::with_config(temp.path(), cfg);
-        store.init().unwrap();
+    // Dedup round: exact-normalized repeat writes NOTHING.
+    let (wrote2, fresh2) = store
+        .append_facts("user", &["Brand   New FACT".into()])
+        .await
+        .unwrap();
+    assert!(!wrote2, "dedup round must not touch the disk");
+    assert_eq!(fresh2, 0);
+}
 
-        // Seed: facts + a marker block (the shape extraction coexists with).
-        store
-            .write_file(
-                "user",
-                "# Profile\n- old fact\n<!-- chat-summary -->\nsummary body\n<!-- /chat-summary -->",
-            )
-            .await
-            .unwrap();
+// ---- Gap 2: cross-instance concurrency — the lost-update regression.
+// Two SEPARATE store instances over the same directory (extraction +
+// canonical-server shape) interleave fact appends with marker writes.
+// With per-instance locks the read-modify-writes interleaved and facts
+// silently vanished; with the per-path registry every append survives.
 
-        let (wrote, fresh) = store
-            .append_facts("user", &["brand new fact".into()])
-            .await
-            .unwrap();
-        assert!(wrote);
-        assert_eq!(fresh, 1);
-        let on_disk = store.read_file_sync("user");
-        assert!(on_disk.contains("- brand new fact"), "fact persisted");
-        let fact_at = on_disk.find("- brand new fact").unwrap();
-        let marker_at = on_disk.find("<!-- chat-summary -->").unwrap();
-        assert!(fact_at < marker_at, "facts before the marker tail");
-        assert!(on_disk.contains("<!-- /chat-summary -->"), "tags balanced");
+#[tokio::test]
+async fn concurrent_append_and_marker_writes_lose_nothing() {
+    let temp = tempfile::tempdir().unwrap();
+    let mk = || {
+        MarkdownMemoryStore::new(temp.path()) // separate instance = separate struct, shared lock
+    };
+    mk().init().unwrap();
+    mk().write_file("user", "# Profile").await.unwrap();
 
-        // Dedup round: exact-normalized repeat writes NOTHING.
-        let (wrote2, fresh2) = store
-            .append_facts("user", &["Brand   New FACT".into()])
-            .await
-            .unwrap();
-        assert!(!wrote2, "dedup round must not touch the disk");
-        assert_eq!(fresh2, 0);
-    }
-
-    // ---- Gap 2: cross-instance concurrency — the lost-update regression.
-    // Two SEPARATE store instances over the same directory (extraction +
-    // canonical-server shape) interleave fact appends with marker writes.
-    // With per-instance locks the read-modify-writes interleaved and facts
-    // silently vanished; with the per-path registry every append survives.
-
-    #[tokio::test]
-    async fn concurrent_append_and_marker_writes_lose_nothing() {
-        let temp = tempfile::tempdir().unwrap();
-        let mk = || {
-            MarkdownMemoryStore::new(temp.path()) // separate instance = separate struct, shared lock
-        };
-        mk().init().unwrap();
-        mk().write_file("user", "# Profile").await.unwrap();
-
-        const TASKS: usize = 8;
-        const FACTS_PER: usize = 5;
-        let mut handles = Vec::new();
-        for t in 0..TASKS {
-            let store = mk();
-            handles.push(tokio::spawn(async move {
-                for i in 0..FACTS_PER {
-                    let fact = format!("fact-t{t}-i{i}");
-                    let (wrote, _) = store.append_facts("user", &[fact]).await.unwrap();
-                    assert!(wrote, "a fresh fact must always be written");
-                }
-            }));
-        }
-        // Marker churn from the "background job" instance, concurrent.
-        let marker_store = mk();
-        let marker_task = tokio::spawn(async move {
-            for round in 0..10 {
-                marker_store
-                    .replace_marker_section(
-                        "user",
-                        "chat-summary",
-                        &format!("summary round {round}"),
-                    )
-                    .await
-                    .unwrap();
-                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-            }
-        });
-
-        for h in handles {
-            h.await.unwrap();
-        }
-        marker_task.await.unwrap();
-
-        let final_content = mk().read_file_sync("user");
-        for t in 0..TASKS {
+    const TASKS: usize = 8;
+    const FACTS_PER: usize = 5;
+    let mut handles = Vec::new();
+    for t in 0..TASKS {
+        let store = mk();
+        handles.push(tokio::spawn(async move {
             for i in 0..FACTS_PER {
-                assert!(
-                    final_content.contains(&format!("fact-t{t}-i{i}")),
-                    "lost update: fact-t{t}-i{i} missing — the per-path lock regressed"
-                );
+                let fact = format!("fact-t{t}-i{i}");
+                let (wrote, _) = store.append_facts("user", &[fact]).await.unwrap();
+                assert!(wrote, "a fresh fact must always be written");
             }
+        }));
+    }
+    // Marker churn from the "background job" instance, concurrent.
+    let marker_store = mk();
+    let marker_task = tokio::spawn(async move {
+        for round in 0..10 {
+            marker_store
+                .replace_marker_section("user", "chat-summary", &format!("summary round {round}"))
+                .await
+                .unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
         }
-        let opens = final_content.matches("<!-- chat-summary -->").count();
-        let closes = final_content.matches("<!-- /chat-summary -->").count();
-        assert_eq!(opens, closes, "marker structure must stay balanced");
-    }
+    });
 
-    // ---- Gap 3 regression: instances created BEFORE and AFTER the
-    // directory exists must still share locks (the canonicalize variant
-    // split them).
-
-    #[test]
-    fn lock_key_stable_across_directory_creation() {
-        let temp = tempfile::tempdir().unwrap();
-        let not_yet = temp.path().join("deep/memory");
-        let pre = MarkdownMemoryStore::new(&not_yet);
-        std::fs::create_dir_all(&not_yet).unwrap();
-        let post = MarkdownMemoryStore::new(&not_yet);
-        assert!(
-            Arc::ptr_eq(&pre.write_lock, &post.write_lock),
-            "pre-init and post-init instances must share one lock"
-        );
+    for h in handles {
+        h.await.unwrap();
     }
+    marker_task.await.unwrap();
+
+    let final_content = mk().read_file_sync("user");
+    for t in 0..TASKS {
+        for i in 0..FACTS_PER {
+            assert!(
+                final_content.contains(&format!("fact-t{t}-i{i}")),
+                "lost update: fact-t{t}-i{i} missing — the per-path lock regressed"
+            );
+        }
+    }
+    let opens = final_content.matches("<!-- chat-summary -->").count();
+    let closes = final_content.matches("<!-- /chat-summary -->").count();
+    assert_eq!(opens, closes, "marker structure must stay balanced");
+}
+
+// ---- Gap 3 regression: instances created BEFORE and AFTER the
+// directory exists must still share locks (the canonicalize variant
+// split them).
+
+#[test]
+fn lock_key_stable_across_directory_creation() {
+    let temp = tempfile::tempdir().unwrap();
+    let not_yet = temp.path().join("deep/memory");
+    let pre = MarkdownMemoryStore::new(&not_yet);
+    std::fs::create_dir_all(&not_yet).unwrap();
+    let post = MarkdownMemoryStore::new(&not_yet);
+    assert!(
+        Arc::ptr_eq(&pre.write_lock, &post.write_lock),
+        "pre-init and post-init instances must share one lock"
+    );
+}

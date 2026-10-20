@@ -192,7 +192,10 @@ pub(crate) fn installed_companion(mdir: &Path) -> Option<InstalledModel> {
 pub(crate) enum CompanionSkip {
     Disabled,
     NotInstalled,
-    LowRam { available_mb: u64, need_mb: u64 },
+    LowRam {
+        available_mb: u64,
+        need_mb: u64,
+    },
     PortBusy(u16),
     /// Spawn attempted and failed (binary missing, unhealthy, …). Still not
     /// an error for the platform — the main model runs on without vision.
@@ -370,11 +373,7 @@ fn guarded_ctx_ex(
     // Resident weights include the vision projector when the model ships one
     // (~0.7–1 GB) — a budget that ignores it green-lights spawns that OOM
     // the moment llama-server mmaps the mtmd adapter.
-    let mmproj_bytes = d
-        .mmproj
-        .as_ref()
-        .map(|m| m.size_bytes)
-        .unwrap_or(0);
+    let mmproj_bytes = d.mmproj.as_ref().map(|m| m.size_bytes).unwrap_or(0);
     let capped = super::server::cap_ctx_by_ram(
         requested,
         total_mb * 1_048_576,
@@ -676,9 +675,7 @@ fn resolve_source(
 /// file_name)`. Deliberately IGNORES the quant override — the projector is
 /// quant-independent (it wraps the vision tower, not the text weights), so
 /// every quant of a model shares the same mmproj file.
-fn resolve_mmproj_source(
-    def: &super::catalog::CatalogModel,
-) -> Option<(String, String, String)> {
+fn resolve_mmproj_source(def: &super::catalog::CatalogModel) -> Option<(String, String, String)> {
     let mm = def.mmproj.as_ref()?;
     Some((
         format!(
@@ -1247,8 +1244,7 @@ pub async fn models_handler(
     // Source of truth: the REMOTE catalog when reachable (new models ship as
     // a JSON edit), else the compiled-in curated set. A network failure must
     // never degrade the list — offline fallback is the full builtin default.
-    let mut base: Vec<super::catalog::CatalogModel> = match super::catalog::fetch_catalog().await
-    {
+    let mut base: Vec<super::catalog::CatalogModel> = match super::catalog::fetch_catalog().await {
         Some(catalog) => {
             tracing::debug!(
                 count = catalog.len(),
@@ -1957,7 +1953,9 @@ async fn spawn_builtin_server(
 /// File size in MB (0 when unreadable) — the companion RAM gate prefers the
 /// bytes actually on disk over catalog numbers (imports, quant overrides).
 fn metadata_len_mb(p: &Path) -> u64 {
-    std::fs::metadata(p).map(|m| m.len() / (1024 * 1024)).unwrap_or(0)
+    std::fs::metadata(p)
+        .map(|m| m.len() / (1024 * 1024))
+        .unwrap_or(0)
 }
 
 /// Spawn the installed vision companion on its own port and register the
@@ -2006,10 +2004,9 @@ async fn spawn_companion_server(
     // bind (the main spawn's port-misattribution lesson applies).
     let endpoint = format!("http://127.0.0.1:{}", cfg.vlm_port);
     if health_check(cfg.vlm_port).await {
-        let ours = manager
-            .list_instances()
-            .iter()
-            .any(|i| is_companion_instance_id(&i.id) && i.endpoint.as_deref() == Some(endpoint.as_str()));
+        let ours = manager.list_instances().iter().any(|i| {
+            is_companion_instance_id(&i.id) && i.endpoint.as_deref() == Some(endpoint.as_str())
+        });
         if ours {
             return Ok(endpoint);
         }
@@ -2020,7 +2017,9 @@ async fn spawn_companion_server(
         Ok(b) => b,
         Err(e) => {
             tracing::warn!(error = %e, "builtin llm: vision companion spawn failed (no llama-server)");
-            return Err(CompanionSkip::Other(format!("llama-server unavailable: {e}")));
+            return Err(CompanionSkip::Other(format!(
+                "llama-server unavailable: {e}"
+            )));
         }
     };
     let model_path = installed.manifest.model_path(&mdir);
@@ -2077,9 +2076,7 @@ async fn spawn_companion_server(
     };
     let mut proc = match LlamaServerProcess::spawn(&server_cfg) {
         Ok(p) => p,
-        Err(e) => {
-            return Err(CompanionSkip::Other(format!("companion spawn failed: {e}")))
-        }
+        Err(e) => return Err(CompanionSkip::Other(format!("companion spawn failed: {e}"))),
     };
     if let Err(e) = proc.wait_healthy(Duration::from_secs(60)).await {
         let _ = proc.stop().await;
@@ -2170,10 +2167,9 @@ pub(crate) async fn ensure_companion(
     // Idempotent fast path: healthy port + our instance registered.
     if health_check(cfg.vlm_port).await {
         let endpoint = format!("http://127.0.0.1:{}", cfg.vlm_port);
-        let ours = manager
-            .list_instances()
-            .iter()
-            .any(|i| is_companion_instance_id(&i.id) && i.endpoint.as_deref() == Some(endpoint.as_str()));
+        let ours = manager.list_instances().iter().any(|i| {
+            is_companion_instance_id(&i.id) && i.endpoint.as_deref() == Some(endpoint.as_str())
+        });
         if ours {
             return Ok(endpoint);
         }

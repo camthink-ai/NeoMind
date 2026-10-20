@@ -429,13 +429,11 @@ async fn delegate_images_to_companion(message: &str, images: &[String]) -> Optio
             stream: false,
             tools: None,
         };
-        let out = tokio::time::timeout(
-            std::time::Duration::from_secs(120),
-            runtime.generate(input),
-        )
-        .await
-        .ok()?
-        .ok()?;
+        let out =
+            tokio::time::timeout(std::time::Duration::from_secs(120), runtime.generate(input))
+                .await
+                .ok()?
+                .ok()?;
         let text = out.text.trim();
         if text.is_empty() {
             return None;
@@ -467,7 +465,6 @@ async fn delegate_images_to_companion(message: &str, images: &[String]) -> Optio
     );
     Some(combined)
 }
-
 
 impl SessionManager {
     /// Create a new session manager with persistent storage.
@@ -2027,8 +2024,7 @@ Assistant: {ar}\n"
         Ok(response)
     }
 
-    
-/// Chat-image delegation: the active model is text-only but a healthy
+    /// Chat-image delegation: the active model is text-only but a healthy
     /// vision companion (`builtin-vlm-*`) is registered — describe each
     /// image with the companion and continue the turn as TEXT instead of
     /// rejecting the send. Returns the combined prompt, or None when
@@ -2067,7 +2063,10 @@ Assistant: {ar}\n"
                 // transient on the agent's LLM interface.
                 match delegate_images_to_companion(message, &images).await {
                     Some(combined) => {
-                        agent.llm_interface().set_image_delegation_prompt(combined).await;
+                        agent
+                            .llm_interface()
+                            .set_image_delegation_prompt(combined)
+                            .await;
                     }
                     None => {
                         return Err(super::error::NeoMindError::Validation(
@@ -2111,7 +2110,10 @@ Assistant: {ar}\n"
                 // transient on the agent's LLM interface.
                 match delegate_images_to_companion(message, &images).await {
                     Some(combined) => {
-                        agent.llm_interface().set_image_delegation_prompt(combined).await;
+                        agent
+                            .llm_interface()
+                            .set_image_delegation_prompt(combined)
+                            .await;
                     }
                     None => {
                         return Err(super::error::NeoMindError::Validation(
@@ -2144,7 +2146,10 @@ Assistant: {ar}\n"
                 // transient on the agent's LLM interface.
                 match delegate_images_to_companion(message, &images).await {
                     Some(combined) => {
-                        agent.llm_interface().set_image_delegation_prompt(combined).await;
+                        agent
+                            .llm_interface()
+                            .set_image_delegation_prompt(combined)
+                            .await;
                     }
                     None => {
                         return Err(super::error::NeoMindError::Validation(
@@ -3083,11 +3088,8 @@ mod companion_delegation_tests {
     use std::sync::Arc;
 
     fn test_store(tag: &str) -> Arc<LlmBackendStore> {
-        let path = std::env::temp_dir().join(format!(
-            "neomind-deleg-{}-{}.redb",
-            tag,
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("neomind-deleg-{}-{}.redb", tag, std::process::id()));
         let _ = std::fs::remove_file(&path);
         LlmBackendStore::open(&path).expect("open test store")
     }
@@ -3104,7 +3106,9 @@ mod companion_delegation_tests {
         let body = r#"{"choices":[{"message":{"role":"assistant","content":"a red square and a green circle"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2},"created":0,"model":"fake-vlm","id":"x","object":"chat.completion"}"#;
         let h = tokio::spawn(async move {
             loop {
-                let Ok((mut socket, _)) = listener.accept().await else { break };
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
                 let mut buf = [0u8; 4096];
                 let _ = socket.read(&mut buf).await;
                 let resp = format!(
@@ -3166,7 +3170,9 @@ mod companion_delegation_tests {
         // No companion at all.
         let manager = Arc::new(LlmBackendInstanceManager::new(test_store("none")));
         set_instance_manager(manager.clone());
-        assert!(delegate_images_to_companion("hi", &[data_url()]).await.is_none());
+        assert!(delegate_images_to_companion("hi", &[data_url()])
+            .await
+            .is_none());
 
         // A companion-lookalike WITHOUT the multimodal flag is skipped —
         // the flag is the vision contract, the id alone is not.
@@ -3178,7 +3184,9 @@ mod companion_delegation_tests {
         inst.endpoint = Some("http://127.0.0.1:1".into());
         inst.capabilities.supports_multimodal = false;
         manager.upsert_instance(inst).await.unwrap();
-        assert!(delegate_images_to_companion("hi", &[data_url()]).await.is_none());
+        assert!(delegate_images_to_companion("hi", &[data_url()])
+            .await
+            .is_none());
     }
 
     #[serial_test::serial]
@@ -3189,7 +3197,9 @@ mod companion_delegation_tests {
         set_instance_manager(manager);
         let r = delegate_images_to_companion("hi", &[data_url()]).await;
         std::env::remove_var("NEOMIND_BUILTIN_VLM_DELEGATE");
-        assert!(r.is_none(), "kill switch must short-circuit before any call");
+        assert!(
+            r.is_none(),
+            "kill switch must short-circuit before any call"
+        );
     }
 }
-

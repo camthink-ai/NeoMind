@@ -72,10 +72,15 @@ export function useExtensionPages(options?: {
     const onVisible = () => {
       if (document.visibilityState === 'visible') void refresh()
     }
+    // Extensions page dispatches this after install/uninstall — the
+    // sidebar picks it up immediately instead of waiting for the poll.
+    const onExtensionsChanged = () => void refresh()
     document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('extensions-changed', onExtensionsChanged)
     return () => {
       clearInterval(timer)
       document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('extensions-changed', onExtensionsChanged)
     }
   }, [autoSync, syncInterval, refresh])
 

@@ -181,9 +181,7 @@ pub async fn bootstrap(
                 // capability stamped at spawn. Source stays runtime_api so
                 // the name-heuristic in ensure_instance_capabilities can't
                 // rewrite an observed value.
-                if let Some(v) =
-                    super::handlers::query_server_modalities_vision(cfg.port).await
-                {
+                if let Some(v) = super::handlers::query_server_modalities_vision(cfg.port).await {
                     updated.capabilities.supports_multimodal = v;
                     updated.capabilities.multimodal_source = Some("runtime_api".to_string());
                 }
@@ -213,7 +211,9 @@ pub async fn bootstrap(
         // companion sleeping. Skip reasons are logged inside; never fatal.
         match super::handlers::ensure_companion(data_dir, cfg, manager).await {
             Ok(_) => {}
-            Err(skip) => tracing::info!(reason = %skip, "builtin llm: vision companion not running"),
+            Err(skip) => {
+                tracing::info!(reason = %skip, "builtin llm: vision companion not running")
+            }
         }
         return BootstrapOutcome::ServerAlreadyRunning;
     }
@@ -241,7 +241,9 @@ pub async fn bootstrap(
         // companion dead on every boot without a main model.
         match super::handlers::ensure_companion(data_dir, cfg, manager).await {
             Ok(_) => {}
-            Err(skip) => tracing::info!(reason = %skip, "builtin llm: vision companion not running"),
+            Err(skip) => {
+                tracing::info!(reason = %skip, "builtin llm: vision companion not running")
+            }
         }
         return BootstrapOutcome::ModelMissing;
     };

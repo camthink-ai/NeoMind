@@ -646,9 +646,15 @@ async fn bootstrap_spawns_vision_companion_alongside_main() {
         .manager
         .get_instance("builtin-vlm-minicpm-v-4.7-1b")
         .expect("companion instance registered");
-    assert!(!comp.is_active, "companion must never be the active backend");
+    assert!(
+        !comp.is_active,
+        "companion must never be the active backend"
+    );
     assert!(comp.is_builtin);
-    assert!(comp.capabilities.supports_multimodal, "vision capability stamped");
+    assert!(
+        comp.capabilities.supports_multimodal,
+        "vision capability stamped"
+    );
     assert!(
         !comp.capabilities.supports_tools,
         "companion is describe-only"

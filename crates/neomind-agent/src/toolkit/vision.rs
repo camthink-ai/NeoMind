@@ -782,7 +782,9 @@ mod candidate_tests {
         let addr = listener.local_addr().unwrap();
         let h = tokio::spawn(async move {
             loop {
-                let Ok((mut socket, _)) = listener.accept().await else { break };
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
                 let mut buf = [0u8; 8192];
                 let _ = socket.read(&mut buf).await;
                 let body = format!(
@@ -823,8 +825,18 @@ mod candidate_tests {
         let (ep_active, _h3) = fake_vlm("\"active says hi\"").await;
         let manager = Arc::new(LlmBackendInstanceManager::new(test_store("order")));
         // Registration order deliberately hostile: cloud first, local last.
-        manager.upsert_instance(vlm_instance("openai-cloud", "gpt-4o", &ep_cloud)).await.unwrap();
-        manager.upsert_instance(vlm_instance(&(LOCAL_COMPANION_PREFIX.to_string() + "x"), "minicpm-v", &ep_local)).await.unwrap();
+        manager
+            .upsert_instance(vlm_instance("openai-cloud", "gpt-4o", &ep_cloud))
+            .await
+            .unwrap();
+        manager
+            .upsert_instance(vlm_instance(
+                &(LOCAL_COMPANION_PREFIX.to_string() + "x"),
+                "minicpm-v",
+                &ep_local,
+            ))
+            .await
+            .unwrap();
         let mut active = vlm_instance("active-main", "main-model", &ep_active);
         active.is_active = true;
         manager.upsert_instance(active).await.unwrap();
@@ -849,8 +861,18 @@ mod candidate_tests {
         let (ep_a, _h1) = fake_vlm("\"a\"").await;
         let (ep_b, _h2) = fake_vlm("\"b\"").await;
         let manager = Arc::new(LlmBackendInstanceManager::new(test_store("pin")));
-        manager.upsert_instance(vlm_instance("vlm-a", "pinned-model", &ep_a)).await.unwrap();
-        manager.upsert_instance(vlm_instance(&(LOCAL_COMPANION_PREFIX.to_string() + "y"), "minicpm-v", &ep_b)).await.unwrap();
+        manager
+            .upsert_instance(vlm_instance("vlm-a", "pinned-model", &ep_a))
+            .await
+            .unwrap();
+        manager
+            .upsert_instance(vlm_instance(
+                &(LOCAL_COMPANION_PREFIX.to_string() + "y"),
+                "minicpm-v",
+                &ep_b,
+            ))
+            .await
+            .unwrap();
         set_instance_manager(manager.clone());
 
         let tool = VisionTool::new(VisionConfig::default(), manager);
@@ -874,7 +896,10 @@ mod candidate_tests {
         let mut blind = vlm_instance("vlm-blind", "blind-model", &ep_blind);
         blind.capabilities.supports_multimodal = true;
         manager.upsert_instance(blind).await.unwrap();
-        manager.upsert_instance(vlm_instance("vlm-good", "good-model", &ep_good)).await.unwrap();
+        manager
+            .upsert_instance(vlm_instance("vlm-good", "good-model", &ep_good))
+            .await
+            .unwrap();
         set_instance_manager(manager.clone());
 
         let tool = VisionTool::new(VisionConfig::default(), manager);
@@ -887,7 +912,10 @@ mod candidate_tests {
         // resolve skips it while a healthy alternative exists.
         {
             let h = tool.health.read().await;
-            assert!(h.is_blocked("vlm-blind"), "cant-see reply must demote the backend");
+            assert!(
+                h.is_blocked("vlm-blind"),
+                "cant-see reply must demote the backend"
+            );
         }
     }
 
@@ -923,8 +951,14 @@ mod candidate_tests {
         let missing = serde_json::json!({ "prompt": "x" });
         assert!(tool.execute(missing).await.is_err(), "image is required");
         let empty_img = serde_json::json!({ "image": "  ", "prompt": "x" });
-        assert!(tool.execute(empty_img).await.is_err(), "image must be non-empty");
+        assert!(
+            tool.execute(empty_img).await.is_err(),
+            "image must be non-empty"
+        );
         let empty_prompt = serde_json::json!({ "image": "abc", "prompt": "" });
-        assert!(tool.execute(empty_prompt).await.is_err(), "prompt must be non-empty");
+        assert!(
+            tool.execute(empty_prompt).await.is_err(),
+            "prompt must be non-empty"
+        );
     }
 }

@@ -305,9 +305,7 @@ pub async fn list_backends_handler(
     // Companions are hidden unless explicitly requested — the default list
     // feeds chat pickers and activation flows that must never see them.
     if !query.include_vlm.unwrap_or(false) {
-        instances.retain(|inst| {
-            !crate::builtin_llm::handlers::is_companion_instance_id(&inst.id)
-        });
+        instances.retain(|inst| !crate::builtin_llm::handlers::is_companion_instance_id(&inst.id));
     }
 
     // Apply filters

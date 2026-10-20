@@ -641,7 +641,11 @@ mod tests {
         // The vision companion: main + projector pins (openbmb official,
         // captured 2026-10-19 via the HF API tree).
         let vlm = by_id("minicpm-v-4.7-1b");
-        assert_eq!(vlm.role, Some("vlm"), "companion entry must carry the vlm role");
+        assert_eq!(
+            vlm.role,
+            Some("vlm"),
+            "companion entry must carry the vlm role"
+        );
         assert_eq!(
             vlm.manifest.sha256,
             "588c6c94c82f756b86dba35c42ed9ba9ec187d65824eb52f039c347df563e63d"
@@ -654,7 +658,10 @@ mod tests {
             vmm.sha256,
             "fb9cc047a3cdad5317fd8433a4aeda2d22f00f02ca4bd93b34ad84165b25a900"
         );
-        assert!(vlm.min_ram_mb >= 1_782, "floor must cover weights + projector");
+        assert!(
+            vlm.min_ram_mb >= 1_782,
+            "floor must cover weights + projector"
+        );
         // Text-only entries stay text-only.
         for id in ["minicpm5-2b", "lfm25-2.6b", "ling30-tiny"] {
             assert!(by_id(id).mmproj.is_none(), "{id} must stay text-only");
