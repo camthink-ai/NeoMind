@@ -177,11 +177,21 @@ export const llmApi = {
    * POST /api/builtin-llm/restart
    */
   restartBuiltinLlm: (
-    opts?: number | { ctx?: number; parallel?: number | 'auto'; kv?: 'q8_0' | 'f16' },
+    opts?:
+      | number
+      | {
+          ctx?: number
+          parallel?: number | 'auto'
+          kv?: 'q8_0' | 'f16'
+          vlm_ctx?: number
+          vlm_kv?: 'q8_0' | 'f16'
+        },
   ) => {
     const o = typeof opts === 'number' ? { ctx: opts } : (opts ?? {})
     const qs = new URLSearchParams()
     if (o.ctx) qs.set('ctx', String(o.ctx))
+    if (o.vlm_ctx) qs.set('vlm_ctx', String(o.vlm_ctx))
+    if (o.vlm_kv) qs.set('vlm_kv', o.vlm_kv)
     // 'auto' = omit the flag; upstream picks (4 slots on current builds).
     if (o.parallel !== undefined) qs.set('parallel', o.parallel === 'auto' ? '0' : String(o.parallel))
     if (o.kv) qs.set('kv', o.kv)

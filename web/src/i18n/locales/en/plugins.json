@@ -195,7 +195,12 @@
     "companionStopped": "Stopped",
     "companionLabel": "Vision companion",
     "companionInstall": "Install",
-    "companionNotNeeded": "The selected main model already sees images — no vision companion needed"
+    "companionNotNeeded": "The selected main model already sees images — no vision companion needed",
+    "companionSettings": "Vision companion settings",
+    "companionCtxLabel": "Context window",
+    "companionKvLabel": "KV cache",
+    "companionApply": "Apply & restart companion",
+    "companionApplyHint": "Restarts only the vision companion; the main model keeps serving"
   },
   "yes": "Yes",
   "no": "No",

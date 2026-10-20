@@ -1091,12 +1091,23 @@ pub async fn status_handler(
         serde_json::Value::Null
     } else {
         match installed_companion(&mdir) {
-            Some(c) => json!({
-                "model_id": c.manifest.id,
-                "name": c.display_name,
-                "port": cfg.vlm_port,
-                "running": health_check(cfg.vlm_port).await,
-            }),
+            Some(c) => {
+                // Effective ctx from the REGISTERED instance (what the
+                // companion actually runs with) when present.
+                let inst_ctx = get_instance_manager().ok().and_then(|m| {
+                    m.list_instances()
+                        .into_iter()
+                        .find(|i| is_companion_instance_id(&i.id))
+                        .map(|i| i.capabilities.max_context)
+                });
+                json!({
+                    "model_id": c.manifest.id,
+                    "name": c.display_name,
+                    "port": cfg.vlm_port,
+                    "running": health_check(cfg.vlm_port).await,
+                    "ctx": inst_ctx,
+                })
+            }
             None => serde_json::Value::Null,
         }
     };
@@ -2438,6 +2449,69 @@ pub async fn restart_handler(
             }
             _ => {
                 return Err(ErrorResponse::bad_request("invalid kv (expected q8_0|f16)"));
+            }
+        }
+    }
+
+    // Companion-only engine knobs (?vlm_ctx= / ?vlm_kv=): persisted the
+    // same env-backed way; a change respawns ONLY the companion below —
+    // the main server must not bounce because a describe-model knob moved.
+    let mut vlm_change_requested = false;
+    if let Some(v) = params.get("vlm_ctx") {
+        match v.trim().parse::<usize>() {
+            Ok(n) if (1024..=1_048_576).contains(&n) => {
+                vlm_change_requested |= cfg.vlm_ctx != Some(n);
+                std::env::set_var("NEOMIND_BUILTIN_VLM_CTX", n.to_string());
+                cfg.vlm_ctx = Some(n);
+            }
+            _ => {
+                return Err(ErrorResponse::bad_request(
+                    "invalid vlm_ctx (expected 1024..=1048576)",
+                ));
+            }
+        }
+    }
+    if let Some(kv_str) = params.get("vlm_kv") {
+        match kv_str.trim().to_ascii_lowercase().as_str() {
+            "q8_0" | "q8" => {
+                vlm_change_requested |= cfg.vlm_kv_quant != Some(true);
+                std::env::remove_var("NEOMIND_BUILTIN_VLM_KV");
+                cfg.vlm_kv_quant = Some(true);
+            }
+            "f16" | "off" => {
+                vlm_change_requested |= cfg.vlm_kv_quant != Some(false);
+                std::env::set_var("NEOMIND_BUILTIN_VLM_KV", "f16");
+                cfg.vlm_kv_quant = Some(false);
+            }
+            _ => {
+                return Err(ErrorResponse::bad_request(
+                    "invalid vlm_kv (expected q8_0|f16)",
+                ));
+            }
+        }
+    }
+
+    // Companion knob change alone: respawn ONLY the companion and return —
+    // no main-server bounce, no full stop_all (which would kill the main).
+    if vlm_change_requested {
+        let manager = get_manager()?;
+        if health_check(cfg.vlm_port).await {
+            kill_process_on_port(cfg.vlm_port);
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+        match ensure_companion(&state.data_dir, &cfg, &manager).await {
+            Ok(ep) => {
+                return ok(json!({
+                    "restarted": true,
+                    "already_running": false,
+                    "companion_endpoint": ep,
+                    "companion_only": true,
+                }));
+            }
+            Err(skip) => {
+                return Err(ErrorResponse::internal(format!(
+                    "vision companion restart failed: {skip}"
+                )));
             }
         }
     }

@@ -167,6 +167,7 @@ export interface BuiltinLlmStatus {
     name: string
     port: number
     running: boolean
+    ctx?: number | null
   } | null
   downloaded_bytes: number | null
   total_bytes: number | null

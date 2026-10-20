@@ -29,6 +29,8 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Progress } from '@/components/ui/progress'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Input } from '@/components/ui/input'
 import { UnifiedFormDialog } from '@/components/dialog/UnifiedFormDialog'
 import { FormField } from '@/components/ui/field'
 import { EmptyState, LoadingState, ListToolbar } from '@/components/shared'
@@ -318,6 +320,92 @@ function toPluginInstance(instance: LlmBackendInstance, activeId: string | null)
 // boxes: the NG4520 incident box OOM-killed llama-server roughly every
 // 1-1.5 h at 32K (10 kills over two days) and settled stable at 16K.
 const BUILTIN_CTX_PRESETS = [16384, 32768, 65536, 131072]
+
+// Companion engine knobs (ctx + KV) — companion-only restart; the main
+// model never bounces for these.
+function CompanionSettingsPopover({
+  ctx,
+  onApplied,
+}: {
+  ctx: number | null
+  onApplied: () => void
+}) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const [vlmCtx, setVlmCtx] = useState<string>(ctx ? String(ctx) : '')
+  const [vlmKv, setVlmKv] = useState<'q8_0' | 'f16'>('q8_0')
+  const [busy, setBusy] = useState(false)
+
+  const apply = async () => {
+    const parsed = Number.parseInt(vlmCtx.trim(), 10)
+    if (Number.isFinite(parsed) && (parsed < 1024 || parsed > 1_048_576)) {
+      toast({ title: t('plugins:llm.builtinCtxInvalid', 'ctx must be 1024..=1048576'), variant: 'destructive' })
+      return
+    }
+    setBusy(true)
+    try {
+      await api.restartBuiltinLlm({
+        ...(Number.isFinite(parsed) ? { vlm_ctx: parsed } : {}),
+        vlm_kv: vlmKv,
+      })
+      onApplied()
+      setOpen(false)
+    } catch {
+      // restartBuiltinLlm surfaces errors via its own toast path
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
+          title={t('plugins:llm.companionSettings')}
+        >
+          <Settings2 className="h-3 w-3" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-64 space-y-3" align="start">
+        <p className="text-xs font-medium">{t('plugins:llm.companionSettings')}</p>
+        <label className="block space-y-1">
+          <span className="text-[11px] text-muted-foreground">
+            {t('plugins:llm.companionCtxLabel')}
+          </span>
+          <Input
+            value={vlmCtx}
+            onChange={(e) => setVlmCtx(e.target.value)}
+            placeholder="8192"
+            className="h-8 text-xs"
+            inputMode="numeric"
+          />
+        </label>
+        <label className="block space-y-1">
+          <span className="text-[11px] text-muted-foreground">
+            {t('plugins:llm.companionKvLabel')}
+          </span>
+          <Select value={vlmKv} onValueChange={(v) => setVlmKv(v as 'q8_0' | 'f16')}>
+            <SelectTrigger className="h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="q8_0">q8_0</SelectItem>
+              <SelectItem value="f16">f16</SelectItem>
+            </SelectContent>
+          </Select>
+        </label>
+        <Button size="sm" className="h-7 w-full text-xs" disabled={busy} onClick={apply}>
+          {t('plugins:llm.companionApply')}
+        </Button>
+        <p className="text-[10px] leading-snug text-muted-foreground">
+          {t('plugins:llm.companionApplyHint')}
+        </p>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 
 export function UnifiedLLMBackendsTab({
   onCreateBackend,
@@ -678,6 +766,22 @@ export function UnifiedLLMBackendsTab({
                       ? t('plugins:llm.companionRunning')
                       : t('plugins:llm.companionStopped')}
                   </span>
+                  {builtinStatus.companion.ctx != null && (
+                    <span className="shrink-0 text-[10px] text-muted-foreground">
+                      ctx {builtinStatus.companion.ctx >= 1024
+                        ? `${Math.round(builtinStatus.companion.ctx / 1024)}K`
+                        : builtinStatus.companion.ctx}
+                    </span>
+                  )}
+                  <CompanionSettingsPopover
+                    ctx={builtinStatus.companion.ctx ?? null}
+                    onApplied={() => {
+                      api
+                        .getBuiltinLlmStatus()
+                        .then(setBuiltinStatus)
+                        .catch(() => {})
+                    }}
+                  />
                 </div>
               )}
             </div>

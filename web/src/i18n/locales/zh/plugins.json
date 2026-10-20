@@ -195,7 +195,12 @@
     "companionStopped": "已停止",
     "companionLabel": "视觉伴侣",
     "companionInstall": "安装",
-    "companionNotNeeded": "当前主模型已自带视觉,无需视觉伴侣"
+    "companionNotNeeded": "当前主模型已自带视觉,无需视觉伴侣",
+    "companionSettings": "视觉伴侣设置",
+    "companionCtxLabel": "上下文窗口",
+    "companionKvLabel": "KV 缓存",
+    "companionApply": "应用并重启伴侣",
+    "companionApplyHint": "仅重启视觉伴侣,不影响主模型会话"
   },
   "yes": "是",
   "no": "否",
