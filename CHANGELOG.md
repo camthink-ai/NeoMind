@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.2.2] - 2026-10-19 — round-based chat reply timeline, reply readability, and device runtime-metric fixes
+## [1.2.2] - 2026-10-20 — round-based chat timeline, local vision companion, memory reliability, and device runtime-metric fixes
 
 The chat reply is now organized by execution round instead of by widget category: each round owns its reasoning, intermediate output, and tool calls, while the final answer stays a separate reading surface. The built-in LLM can also run a local vision companion alongside the main text model, memory extraction got a full reliability pass (a Chinese-bullet panic, merge and limit bugs, and cross-writer races had been silently losing facts), and the pending device and auto-onboard fixes from the previous Unreleased section are included below.
 
@@ -22,6 +22,7 @@ The chat reply is now organized by execution round instead of by widget category
 ### Fixed — builtin LLM vision companion
 - Companion lifecycle and status: an installed companion now starts even when the main model is deleted, and `status` reports its block in every branch (it used to blink out mid-download). Delegated image turns no longer deliberate a redundant vision-tool call (small models burned minutes of thinking before an empty answer); VLM candidate order is deterministic with local companions first.
 - Wizard: the companion block sits above the primary CTA, collapses to a one-line hint when the selected main model already sees images, and delete refreshes the models list. Chat upload gating polls at 8s with focus refresh, and only while the active model is text-only.
+- Delegated image turns no longer dump the injection into the user's chat bubble: history keeps the original message + image attachment (thumbnail as on any upload), and the combined prompt reaches the LLM only, via a one-shot transient that can never leak into a later turn.
 
 ### Fixed — memory extraction reliability
 - A byte-slice PANIC on unlabeled Chinese bullets killed the extraction task and lost every fact of that turn (the main driver of the observed `user_facts=1 persisted 0`); merging into a full file dropped all fresh facts and then tripped `2001 > 2000` rejections; extraction fitted against CONFIGURED limits while the store validated DEFAULTS, rejecting every write for users who raised limits. All fixed.
