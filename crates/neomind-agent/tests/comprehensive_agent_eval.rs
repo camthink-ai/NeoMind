@@ -539,6 +539,44 @@ async fn send(sm: &SessionManager, sid: &str, msg: &str) -> MsgResult {
     }
 }
 
+/// Streaming-path send — drives the SAME engine the WS chat path uses
+/// (`process_message_events` → stream_core with all guards: narration nudge,
+/// dead-end injection, completeness notes). `send()` above drives the
+/// NON-streaming `process_with_llm` engine, which has none of them — replay
+/// evals that observe guard behavior must use this one. Returns
+/// (content, shell commands, elapsed ms).
+async fn send_stream(sm: &SessionManager, sid: &str, msg: &str) -> (String, Vec<String>, u64) {
+    use futures::StreamExt;
+    use neomind_agent::AgentEvent;
+    let start = Instant::now();
+    let mut stream = sm.process_message_events(sid, msg).await.unwrap();
+    let mut content = String::new();
+    let mut cmds = Vec::new();
+    while let Some(ev) = stream.next().await {
+        match ev {
+            AgentEvent::Content { content: c } => content.push_str(&c),
+            AgentEvent::ToolCallStart {
+                tool, arguments, ..
+            } => {
+                if tool == "shell" {
+                    if let Some(c) = arguments.get("command").and_then(|v| v.as_str()) {
+                        cmds.push(c.to_string());
+                    }
+                }
+            }
+            // NOTE: do NOT break on End — keep polling to the stream's
+            // natural end (None). The cleanup wrapper removes the session's
+            // cancel sender INLINE on natural end; breaking and dropping
+            // relies on a spawned async removal that races the next
+            // process_message_events into "already being generated".
+            _ => {}
+        }
+    }
+    let elapsed = start.elapsed().as_millis() as u64;
+    TOTAL_ELAPSED_MS.fetch_add(elapsed, std::sync::atomic::Ordering::Relaxed);
+    (content, cmds, elapsed)
+}
+
 #[allow(dead_code)]
 struct MsgResult {
     content: String,
@@ -2449,6 +2487,274 @@ async fn comprehensive_20round_evaluation() -> anyhow::Result<()> {
     Ok(())
 }
 
+// ── Incident regression eval ──────────────────────────────────────────
+//
+// Live incident 2026-10-19: "创建一个展示设备图片的仪表盘" on minicpm5-2b
+// became a 20-minute guard cascade — a round-1 list-only dead-end injection
+// demanding a PHANTOM `neomind device create` (keyword extraction picked
+// 设备 over 仪表盘), an act-now directive fired on a stale read-only streak
+// right after `dashboard create` had SUCCEEDED, and a false turn-end
+// "requested ACTION never executed" note after add-components ran. The
+// fixes: DOMAIN_KEYWORDS priority extraction, the coercion repetition gate
+// (inject only on the 2nd consecutive read-only round), and delivered-aware
+// completeness notes.
+//
+// This eval replays the exact request against the sandbox platform + a live
+// model. It is OBSERVATIONAL by design — small models are nondeterministic,
+// so hard outcome assertions would flake. Read the verdict lines plus the
+// RUST_LOG=neomind_agent=info trace (guard firings are WARN/INFO lines:
+// "List-only dead end detected", "Read-only explore loop", "never
+// executed").
+//
+//   LLAMACPP_ENDPOINT=http://127.0.0.1:29375 MODEL=minicpm5-2b \
+//   RUST_LOG=neomind_agent=info EVAL_TRACE=1 \
+//   cargo test -p neomind-agent --test comprehensive_agent_eval \
+//     --features llamacpp incident_dashboard_of_device_images -- --ignored --nocapture
+#[tokio::test]
+#[ignore = "Live model + sandbox. See the doc comment above for the run command."]
+async fn incident_dashboard_of_device_images() -> anyhow::Result<()> {
+    if !ollama_up()
+        && std::env::var("LLM_API_KEY").is_err()
+        && std::env::var("LLAMACPP_ENDPOINT").is_err()
+    {
+        eprintln!("Neither Ollama, llama.cpp, nor LLM_API_KEY available, skipping");
+        return Ok(());
+    }
+    // Same trace hookup as the main eval — without a subscriber the guard
+    // WARN/INFO lines this regression exists to observe are dropped.
+    if std::env::var("EVAL_TRACE").is_ok() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "neomind_agent=info".into()),
+            )
+            .with_writer(std::io::stderr)
+            .try_init();
+    }
+    sandbox::start().await;
+    let (sm, sid) = new_session().await;
+
+    let r = send(&sm, &sid, "创建一个展示设备图片的仪表盘").await;
+
+    let cmds = r
+        .shell_commands
+        .iter()
+        .map(|c| c.as_str())
+        .collect::<Vec<_>>();
+    let dashboard_create = cmds.iter().any(|c| c.contains("dashboard create"));
+    let add_components = cmds.iter().any(|c| c.contains("add-component"));
+    let phantom_device_create = cmds.iter().any(|c| c.contains("device create"));
+
+    println!("\n{}", "─".repeat(60));
+    println!("INCIDENT REGRESSION: dashboard-of-device-images");
+    println!("{}", "─".repeat(60));
+    println!("  Elapsed:            {:.1}s", r.elapsed_ms as f64 / 1000.0);
+    println!("  Shell commands:     {}", cmds.join(" | "));
+    println!("  dashboard create:   {dashboard_create}");
+    println!("  add-components:     {add_components}");
+    println!("  PHANTOM device create: {phantom_device_create}  (must be false)");
+    println!("  Reply:              {:.200}", r.content);
+    println!("{}", "─".repeat(60));
+
+    // Only hard invariants: the turn must terminate with a reply, and the
+    // phantom action must never run regardless of model mood.
+    assert!(!r.content.is_empty(), "turn must produce a reply");
+    assert!(
+        !phantom_device_create,
+        "the guard cascade must never drive a phantom `neomind device create`"
+    );
+
+    sandbox::stop();
+    Ok(())
+}
+
+// ── Incident conversation replay ──────────────────────────────────────
+//
+// The tail of the SAME live session (extracted from the user's real
+// sessions.redb, 2026-10-19 13:42–13:46): after the dashboard was built,
+// the user said 「没有绑定正确的设备指标」 and then pressed 「继续」/「继续吧」
+// twice — and the model answered THREE consecutive turns with the identical
+// promise 「我来检查仪表盘和组件的当前状态，确认是否正确绑定。」 (25/18/25
+// chars, matching the log's "reply too short" ar_len values) while executing
+// ZERO tools. That promise-loop IS the "task interruption" the user saw.
+//
+// This replay seeds a sandbox session with the real conversation history
+// (original ask + the real final summary), recreates the same dashboard in
+// the sandbox, then replays the user's exact follow-ups. Verdict per turn:
+// did the model EXECUTE (shell calls) or collapse into a bare promise.
+// Nondeterministic model — observational, run on old vs new code to compare.
+//
+//   LLAMACPP_ENDPOINT=http://127.0.0.1:29375 MODEL=minicpm5-2b \
+//   RUST_LOG=neomind_agent=info EVAL_TRACE=1 \
+//   cargo test -p neomind-agent --test comprehensive_agent_eval \
+//     --features llamacpp incident_conversation_replay -- --ignored --nocapture
+#[tokio::test]
+#[ignore = "Live model + sandbox. See the doc comment above for the run command."]
+async fn incident_conversation_replay() -> anyhow::Result<()> {
+    use neomind_agent::AgentMessage;
+
+    if !ollama_up()
+        && std::env::var("LLM_API_KEY").is_err()
+        && std::env::var("LLAMACPP_ENDPOINT").is_err()
+    {
+        eprintln!("Neither Ollama, llama.cpp, nor LLM_API_KEY available, skipping");
+        return Ok(());
+    }
+    if std::env::var("EVAL_TRACE").is_ok() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "neomind_agent=info".into()),
+            )
+            .with_writer(std::io::stderr)
+            .try_init();
+    }
+    sandbox::start().await;
+
+    // Recreate the incident's dashboard so the model's tools see the same
+    // world its history claims exists. Best-effort: on failure the replay
+    // still runs (the model just finds no dashboard and may create one).
+    {
+        let base = std::env::var("NEOMIND_API_BASE").unwrap();
+        let key = std::env::var("NEOMIND_API_KEY").unwrap();
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("{}/api/dashboards", base))
+            .bearer_auth(&key)
+            .json(&serde_json::json!({"name": "Device Image Dashboard"}))
+            .send()
+            .await?;
+        let status = resp.status();
+        let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
+        println!("sandbox dashboard create: {status} {}", body.to_string());
+        let dash_id = body["data"]["id"]
+            .as_str()
+            .or(body["data"]["dashboard"]["id"].as_str())
+            .unwrap_or("")
+            .to_string();
+        if status.is_success() && !dash_id.is_empty() {
+            let components = serde_json::json!([
+                {"id":"img1","type":"image-display","title":"Test Camera 01 Image","position":{"x":0,"y":0,"w":4,"h":2}},
+                {"id":"img2","type":"image-display","title":"NE101 Camera Image","position":{"x":4,"y":0,"w":4,"h":2}},
+                {"id":"img3","type":"image-display","title":"Light Sensor Test Image","position":{"x":8,"y":0,"w":4,"h":2}}
+            ]);
+            let cresp = client
+                .post(format!("{}/api/dashboards/{}/components", base, dash_id))
+                .bearer_auth(&key)
+                .json(&components)
+                .send()
+                .await?;
+            println!(
+                "sandbox dashboard components: {} → {dash_id}",
+                cresp.status()
+            );
+        }
+    }
+
+    let (sm, sid) = new_session().await;
+
+    // History seed. INCIDENT_HISTORY_JSON points at a JSON array of
+    // {"role": "user"|"assistant"|"tool", "content": "..."} — the FULL
+    // conversation extracted from the live session (the real incident's
+    // promise-loop rode on ~30 polluted messages, not a clean 2-message
+    // seed). Without it, a distilled inline seed is used.
+    let history: Vec<neomind_agent::AgentMessage> = match std::env::var("INCIDENT_HISTORY_JSON") {
+        Ok(path) => {
+            let raw: Vec<serde_json::Value> =
+                serde_json::from_str(&std::fs::read_to_string(&path)?)
+                    .map_err(|e| anyhow::anyhow!("bad INCIDENT_HISTORY_JSON {path}: {e}"))?;
+            raw.iter()
+                .map(|m| {
+                    let role = m["role"].as_str().unwrap_or("user");
+                    let content = m["content"].as_str().unwrap_or("").to_string();
+                    match role {
+                        "assistant" => AgentMessage::assistant(content),
+                        "tool" => AgentMessage::tool_result("shell", content),
+                        _ => AgentMessage::user(content),
+                    }
+                })
+                .collect()
+        }
+        Err(_) => vec![
+            AgentMessage::user("我想要创建一个 dashboard 并展示几台设备的图像数据 请"),
+            AgentMessage::assistant(
+                "任务已完成。以下是创建和配置的摘要：\n\n\
+                     **仪表盘：** \"Device Image Dashboard\"\n\n\
+                     **已添加的组件（3个 image-display 类型）：**\n\n\
+                     | ID | 标题 | 位置 |\n|---|---|---|\n\
+                     | img1 | Test Camera 01 Image | x=0, y=0, w=4, h=2 |\n\
+                     | img2 | NE101 Camera Image | x=4, y=0, w=4, h=2 |\n\
+                     | img3 | Light Sensor Test Image | x=8, y=0, w=4, h=2 |\n\n\
+                     仪表盘布局为 12 列网格，3 个组件已按网格对齐放置在第一行。",
+            ),
+        ],
+    };
+    println!("history seeded: {} messages", history.len());
+
+    let agent = sm.get_session(&sid).await?;
+    agent.restore_history(history).await;
+    drop(agent);
+
+    println!("\n{}", "─".repeat(60));
+    println!("INCIDENT CONVERSATION REPLAY (real history, real follow-ups)");
+    println!("{}", "─".repeat(60));
+
+    // The user's exact follow-ups from the live session. Streaming path —
+    // the incident ran on the WS streaming engine, where the guards live.
+    let follow_ups = ["没有绑定正确的设备指标", "继续", "继续吧"];
+    let mut executed_turns = 0usize;
+    for (i, msg) in follow_ups.iter().enumerate() {
+        let (content, shell_commands, elapsed_ms) = send_stream(&sm, &sid, msg).await;
+        let r = MsgResult {
+            content,
+            tool_calls: Vec::new(),
+            shell_commands,
+            tool_results: Vec::new(),
+            tools_used: Vec::new(),
+            memory_used: false,
+            processing_ms: elapsed_ms,
+            elapsed_ms,
+        };
+        let executed = !r.shell_commands.is_empty();
+        if executed {
+            executed_turns += 1;
+        }
+        let promise_only = !executed
+            && (r.content.contains("我来")
+                || r.content.contains("让我")
+                || r.content.contains("检查"));
+        println!(
+            "\n  Turn {} 「{}」 → {} in {:.1}s",
+            i + 1,
+            msg,
+            if executed {
+                "EXECUTED tools"
+            } else {
+                "no tools"
+            },
+            r.elapsed_ms as f64 / 1000.0
+        );
+        println!("    commands: {}", r.shell_commands.join(" | "));
+        println!(
+            "    reply({} ch): {:.150}",
+            r.content.chars().count(),
+            r.content.replace('\n', " ")
+        );
+        if promise_only {
+            println!("    ⚠️ PROMISE-ONLY reply (the incident's collapse shape)");
+        }
+    }
+
+    println!("\n  VERDICT: {}/3 turns executed tools", executed_turns);
+    println!("{}", "─".repeat(60));
+
+    // The incident's defining failure was 0/3 executed with three identical
+    // promise replies. We do not hard-assert (nondeterministic model) — the
+    // printed verdict is the evidence; a healthy run executes ≥1 turn.
+    sandbox::stop();
+    Ok(())
+}
+
 // ── Vision tool eval ─────────────────────────────────────────────────
 //
 // The comprehensive rounds above never exercise the vision tool (no VLM in
@@ -2467,9 +2773,7 @@ const RED_SQUARE_DATA_URL: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgA
 #[tokio::test]
 #[ignore = "Requires a live VLM. Set NEOMIND_TEST_VLM_ENDPOINT (OpenAI-compatible, e.g. the builtin companion)."]
 async fn vision_tool_eval() -> anyhow::Result<()> {
-    use neomind_agent::llm_backends::{
-        set_instance_manager, LlmBackendInstanceManager,
-    };
+    use neomind_agent::llm_backends::{set_instance_manager, LlmBackendInstanceManager};
     use neomind_agent::toolkit::tool::Tool;
     use neomind_agent::toolkit::vision::{VisionConfig, VisionTool};
     use neomind_storage::{LlmBackendInstance, LlmBackendStore, LlmBackendType};
@@ -2478,15 +2782,15 @@ async fn vision_tool_eval() -> anyhow::Result<()> {
         eprintln!("NEOMIND_TEST_VLM_ENDPOINT not set — skipping (e.g. http://127.0.0.1:29385/v1)");
         return Ok(());
     };
-    let model = std::env::var("NEOMIND_TEST_VLM_MODEL")
-        .unwrap_or_else(|_| "vision-model".to_string());
+    let model =
+        std::env::var("NEOMIND_TEST_VLM_MODEL").unwrap_or_else(|_| "vision-model".to_string());
 
     let path =
         std::env::temp_dir().join(format!("neomind-vision-eval-{}.redb", std::process::id()));
     let _ = std::fs::remove_file(&path);
-    let manager = Arc::new(LlmBackendInstanceManager::new(
-        LlmBackendStore::open(&path)?,
-    ));
+    let manager = Arc::new(LlmBackendInstanceManager::new(LlmBackendStore::open(
+        &path,
+    )?));
     let mut inst = LlmBackendInstance::new(
         "eval-vlm".to_string(),
         "Eval VLM".to_string(),
@@ -2516,7 +2820,11 @@ async fn vision_tool_eval() -> anyhow::Result<()> {
         .and_then(|v| v.as_str())
         .unwrap_or_default()
         .to_lowercase();
-    println!("vision_tool_eval: {}ms — analysis: {:?}", elapsed.as_millis(), analysis);
+    println!(
+        "vision_tool_eval: {}ms — analysis: {:?}",
+        elapsed.as_millis(),
+        analysis
+    );
     assert!(!analysis.is_empty(), "VLM returned an empty analysis");
     assert!(
         analysis.contains("red") || analysis.contains("红"),
