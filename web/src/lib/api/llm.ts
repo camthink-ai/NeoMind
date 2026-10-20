@@ -5,7 +5,7 @@ import { fetchAPI } from "./client"
 
 export const llmApi = {
   // ========== LLM Backends API ==========
-  listLlmBackends: (params?: { type?: string; active_only?: boolean }) =>
+  listLlmBackends: (params?: { type?: string; active_only?: boolean; include_vlm?: boolean }) =>
     fetchAPI<LlmBackendListResponse>(
       `/llm-backends${params ? `?${new URLSearchParams(
         Object.entries(params).reduce((acc, [key, value]) => {

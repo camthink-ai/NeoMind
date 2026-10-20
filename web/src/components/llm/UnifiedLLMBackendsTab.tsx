@@ -711,11 +711,11 @@ export function UnifiedLLMBackendsTab({
             <div className="rounded-md border border-border divide-y divide-border">
               <div className="flex h-9 items-center gap-2 px-3">
                 <BrainCircuit className="h-3.5 w-3.5 shrink-0 text-warning" />
-                <span className="shrink-0 text-xs font-medium">
+                <span className="w-28 shrink-0 truncate text-xs font-medium">
                   {t('plugins:llm.builtinMainEngine')}
                 </span>
                 <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                  ctx {fmtCtx(builtinStatus.ctx ?? builtinStatus.default_ctx)}
+                  {installedModelName ?? builtinStatus.model_id} · ctx {fmtCtx(builtinStatus.ctx ?? builtinStatus.default_ctx)}
                   {builtinStatus.kv_cache && ` · KV ${builtinStatus.kv_cache}`}
                   {builtinStatus.parallel != null && ` · ×${builtinStatus.parallel}`}
                 </span>
@@ -752,13 +752,11 @@ export function UnifiedLLMBackendsTab({
               {builtinStatus.companion && (
                 <div className="flex h-9 items-center gap-2 px-3">
                   <Eye className="h-3.5 w-3.5 shrink-0 text-info" />
-                  <span className="shrink-0 text-xs font-medium">
+                  <span className="w-28 shrink-0 truncate text-xs font-medium">
                     {t('plugins:llm.companionLabel')}
                   </span>
                   <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                    {builtinStatus.companion.name}
-                    <span className="mx-1.5 text-border">·</span>
-                    ctx {fmtCtx(builtinStatus.companion.ctx)}
+                    {builtinStatus.companion.name} · ctx {fmtCtx(builtinStatus.companion.ctx)}
                   </span>
                   <span
                     className={cn(

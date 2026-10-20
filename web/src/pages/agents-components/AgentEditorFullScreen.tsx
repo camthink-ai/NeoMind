@@ -409,7 +409,9 @@ export function AgentEditorFullScreen({
   // Load LLM backends
   const loadBackends = useCallback(async () => {
     try {
-      const response = await api.listLlmBackends()
+      // Agents may pin the vision companion as their engine (describe-only
+      // image analysis) — the chat picker keeps the default filtered list.
+      const response = await api.listLlmBackends({ include_vlm: true })
       setLlmBackends(response.backends)
       setActiveBackendId(response.active_id)
     } catch (e) {
