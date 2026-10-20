@@ -185,7 +185,7 @@ export function ToolCallItem({
               <div className={cn(textMini, "text-muted-foreground mb-0.5 flex items-center gap-1")}>
                 <Code className="h-3 w-3" aria-hidden="true" />{t("toolCall.arguments")}
               </div>
-              <pre className={cn(textCode, "font-mono text-muted-foreground whitespace-pre-wrap break-words leading-relaxed")}>
+              <pre className={cn(textCode, "font-mono text-muted-foreground whitespace-pre-wrap [overflow-wrap:anywhere] max-h-40 overflow-y-auto overscroll-contain leading-relaxed")}>
                 {formatJson(toolCall.arguments)}
               </pre>
             </div>
@@ -196,7 +196,7 @@ export function ToolCallItem({
                 {failed ? <AlertCircle className="h-3 w-3" aria-hidden="true" /> : <CheckCircle2 className="h-3 w-3" aria-hidden="true" />}
                 {t("toolCall.result")}
               </div>
-              <pre className={cn(textCode, "font-mono text-muted-foreground whitespace-pre-wrap break-words max-h-32 overflow-y-auto leading-relaxed")}>
+              <pre className={cn(textCode, "font-mono text-muted-foreground whitespace-pre-wrap [overflow-wrap:anywhere] max-h-40 overflow-y-auto overscroll-contain leading-relaxed")}>
                 {formatJson(toolCall.result)}
               </pre>
             </div>

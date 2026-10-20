@@ -81,6 +81,36 @@ describe('TurnTimeline', () => {
     expect(screen.getByText('toolCall.status.failed')).toBeTruthy()
   })
 
+  it('caps expanded JSON blocks so long base64 values cannot grow the timeline', () => {
+    render(
+      <TurnTimeline
+        toolCalls={[
+          {
+            id: 't-long',
+            name: 'vision.inspect',
+            arguments: { image: `data:image/jpeg;base64,${'A'.repeat(2000)}` },
+            result: 'ok',
+            round: 1,
+          },
+        ]}
+      />
+    )
+    const toolButton = screen
+      .getAllByText('vision.inspect')
+      .map((el) => el.closest('button'))
+      .find((btn) => /toggleDetails|Toggle details|展开\/收起详情/i.test(btn?.getAttribute('aria-label') || ''))
+    expect(toolButton).toBeTruthy()
+    fireEvent.click(toolButton!)
+    const blocks = document.querySelectorAll('pre')
+    expect(blocks).toHaveLength(2)
+    blocks.forEach((pre) => {
+      expect(pre.className).toContain('max-h-40')
+      expect(pre.className).toContain('overflow-y-auto')
+      expect(pre.className).toContain('[overflow-wrap:anywhere]')
+      expect(pre.className).not.toContain('break-words')
+    })
+  })
+
   it('shows the running status in the active streaming round', () => {
     render(
       <TurnTimeline
