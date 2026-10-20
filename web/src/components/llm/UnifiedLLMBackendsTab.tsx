@@ -752,14 +752,19 @@ export function UnifiedLLMBackendsTab({
                 {t('plugins:llm.builtinDesc')}
               </p>
             </div>
-            <span
-              className={cn(
-                'inline-flex h-5 items-center gap-1 px-2 rounded-md text-xs font-medium shrink-0',
-                builtinInfo.pillClass,
-              )}
-            >
-              {builtinInfo.text}
-            </span>
+            {/* Card-level pill speaks only for states without an engine row
+                (downloading / not configured); once the engine zone renders,
+                the per-row pills are the single voice. */}
+            {!(builtinStatus.installed && builtinStatus.server_state !== 'downloading') && (
+              <span
+                className={cn(
+                  'inline-flex h-5 items-center gap-1 px-2 rounded-md text-xs font-medium shrink-0',
+                  builtinInfo.pillClass,
+                )}
+              >
+                {builtinInfo.text}
+              </span>
+            )}
           </div>
         </CardHeader>
 
@@ -796,10 +801,23 @@ export function UnifiedLLMBackendsTab({
                   {builtinStatus.kv_cache && ` · KV ${builtinStatus.kv_cache}`}
                   {builtinStatus.parallel != null && ` · ×${builtinStatus.parallel}`}
                 </span>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-6 gap-1 px-2 text-xs"
+                {/* Same status pill template as the companion row below. */}
+                <span
+                  className={cn(
+                    badgeSize.small,
+                    'shrink-0 rounded font-medium',
+                    builtinStatus.server_state === 'running'
+                      ? 'bg-success-light text-success'
+                      : 'bg-muted text-muted-foreground',
+                  )}
+                >
+                  {builtinStatus.server_state === 'running'
+                    ? t('plugins:llm.companionRunning')
+                    : t('plugins:llm.companionStopped')}
+                </span>
+                <button
+                  className="grid h-6 w-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
+                  title={t('plugins:llm.builtinEngineSettings')}
                   disabled={!!builtinBusyAction}
                   onClick={() => {
                     const cur = builtinStatus.ctx_override ?? builtinStatus.ctx ?? builtinStatus.default_ctx ?? 32768
@@ -811,8 +829,7 @@ export function UnifiedLLMBackendsTab({
                   }}
                 >
                   <Settings2 className="h-3 w-3" />
-                  {t('plugins:llm.builtinEngineSettings')}
-                </Button>
+                </button>
               </div>
               {builtinStatus.companion && (
                 <div className="flex h-9 items-center gap-2 px-3">
