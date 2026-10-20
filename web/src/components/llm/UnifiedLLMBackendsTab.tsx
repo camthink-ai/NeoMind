@@ -757,6 +757,8 @@ export function UnifiedLLMBackendsTab({
                   </span>
                   <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
                     {builtinStatus.companion.name} · ctx {fmtCtx(builtinStatus.companion.ctx)}
+                    {builtinStatus.companion.kv_cache && ` · KV ${builtinStatus.companion.kv_cache}`}
+                    {builtinStatus.companion.parallel != null && ` · ×${builtinStatus.companion.parallel}`}
                   </span>
                   <span
                     className={cn(

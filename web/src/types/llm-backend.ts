@@ -168,6 +168,8 @@ export interface BuiltinLlmStatus {
     port: number
     running: boolean
     ctx?: number | null
+    kv_cache?: string
+    parallel?: number
   } | null
   downloaded_bytes: number | null
   total_bytes: number | null

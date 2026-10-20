@@ -1114,6 +1114,11 @@ pub async fn status_handler(
                     "port": cfg.vlm_port,
                     "running": health_check(cfg.vlm_port).await,
                     "ctx": inst_ctx,
+                    // Same engine-fact pair the main row shows: effective KV
+                    // (dedicated override else shared) and the slot count
+                    // (the companion is deliberately single-slot).
+                    "kv_cache": if cfg.vlm_kv_quant.unwrap_or(cfg.kv_quant) { "q8_0" } else { "f16" },
+                    "parallel": 1,
                 })
             }
             None => serde_json::Value::Null,
