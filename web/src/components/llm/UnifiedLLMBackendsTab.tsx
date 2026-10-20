@@ -31,6 +31,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Progress } from '@/components/ui/progress'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Input } from '@/components/ui/input'
+import { badgeSize } from '@/design-system/tokens/typography'
 import { UnifiedFormDialog } from '@/components/dialog/UnifiedFormDialog'
 import { FormField } from '@/components/ui/field'
 import { EmptyState, LoadingState, ListToolbar } from '@/components/shared'
@@ -370,7 +371,7 @@ function CompanionSettingsPopover({
       <PopoverContent className="w-64 space-y-3" align="start">
         <p className="text-xs font-medium">{t('plugins:llm.companionSettings')}</p>
         <label className="block space-y-1">
-          <span className="text-[11px] text-muted-foreground">
+          <span className="text-xs text-muted-foreground">
             {t('plugins:llm.companionCtxLabel')}
           </span>
           <Input
@@ -382,7 +383,7 @@ function CompanionSettingsPopover({
           />
         </label>
         <label className="block space-y-1">
-          <span className="text-[11px] text-muted-foreground">
+          <span className="text-xs text-muted-foreground">
             {t('plugins:llm.companionKvLabel')}
           </span>
           <Select value={vlmKv} onValueChange={(v) => setVlmKv(v as 'q8_0' | 'f16')}>
@@ -398,7 +399,7 @@ function CompanionSettingsPopover({
         <Button size="sm" className="h-7 w-full text-xs" disabled={busy} onClick={apply}>
           {t('plugins:llm.companionApply')}
         </Button>
-        <p className="text-[10px] leading-snug text-muted-foreground">
+        <p className="text-xs leading-snug text-muted-foreground">
           {t('plugins:llm.companionApplyHint')}
         </p>
       </PopoverContent>
@@ -736,24 +737,24 @@ export function UnifiedLLMBackendsTab({
                 <div className="flex items-center justify-center h-8 w-8 rounded-lg shrink-0 bg-warning-light text-warning">
                   <BrainCircuit className="h-4 w-4" />
                 </div>
-                <CardTitle className="text-base truncate min-w-0">
+                <CardTitle className="text-sm font-medium truncate min-w-0">
                   {t('plugins:llm.builtinTitle')}
                   {installedModelName && <span className="text-muted-foreground"> · {installedModelName}</span>}
                 </CardTitle>
-                <Badge variant="outline" className="text-xs shrink-0">{t('plugins:llm.builtinBadge')}</Badge>
+                <Badge variant="outline" className={cn(badgeSize.small, 'shrink-0')}>{t('plugins:llm.builtinBadge')}</Badge>
                 {builtinInstance?.capabilities?.supports_multimodal && (
-                  <Badge variant="outline" className="text-xs shrink-0 gap-1">
+                  <Badge variant="outline" className={cn(badgeSize.small, 'shrink-0 gap-1')}>
                     <Eye className="h-3 w-3" />
                     {t('plugins:llm.capabilityVision')}
                   </Badge>
                 )}
-                {builtinIsActive && <Badge variant="default" className="text-xs shrink-0">{t('plugins:llm.active')}</Badge>}
+                {builtinIsActive && <Badge variant="default" className={cn(badgeSize.small, 'shrink-0')}>{t('plugins:llm.active')}</Badge>}
               </div>
               <CardDescription className="text-xs line-clamp-1">
                 {t('plugins:llm.builtinDesc')}
               </CardDescription>
             </div>
-            <span className={cn('inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium shrink-0', builtinInfo.pillClass)}>
+            <span className={cn('inline-flex h-5 items-center gap-1 px-2 rounded-md text-xs font-medium shrink-0', builtinInfo.pillClass)}>
               {builtinInfo.text}
             </span>
           </div>
@@ -783,7 +784,7 @@ export function UnifiedLLMBackendsTab({
                 <span className="font-mono text-foreground ml-1">{fmtCtx(builtinStatus.ctx ?? builtinStatus.default_ctx)}</span>
               </span>
               {builtinStatus.ctx_override != null && (
-                <Badge variant="outline" className="text-[10px] shrink-0">
+                <Badge variant="outline" className={cn(badgeSize.small, 'shrink-0')}>
                   {t('plugins:llm.builtinCtxOverride', { def: fmtCtx(builtinStatus.default_ctx) })}
                 </Badge>
               )}
@@ -819,7 +820,8 @@ export function UnifiedLLMBackendsTab({
               </span>
               <span
                 className={cn(
-                  'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium',
+                  badgeSize.small,
+                  'shrink-0 rounded font-medium',
                   builtinStatus.companion.running
                     ? 'bg-success-light text-success'
                     : 'bg-muted text-muted-foreground',
@@ -829,7 +831,7 @@ export function UnifiedLLMBackendsTab({
                   ? t('plugins:llm.companionRunning')
                   : t('plugins:llm.companionStopped')}
               </span>
-              <span className="shrink-0 text-[10px] text-muted-foreground">
+              <span className="shrink-0 text-xs text-muted-foreground">
                 ctx {fmtCtx(builtinStatus.companion.ctx)}
               </span>
               <CompanionSettingsPopover
@@ -848,15 +850,16 @@ export function UnifiedLLMBackendsTab({
               // Progress shown above; no actions while a download is in flight.
               null
             ) : !builtinStatus.installed ? (
-              <Button onClick={() => handleBuiltinAction('download')} disabled={!!builtinBusyAction}>
+              <Button size="sm" onClick={() => handleBuiltinAction('download')} disabled={!!builtinBusyAction}>
                 {builtinBusyAction === 'download'
-                  ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  : <Download className="mr-2 h-4 w-4" />}
+                  ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  : <Download className="mr-1.5 h-3.5 w-3.5" />}
                 {t('plugins:llm.builtinDownload')}
               </Button>
             ) : (
               <>
                 <Button
+                  size="sm"
                   variant="outline"
                   onClick={() => {
                     setWizardStartInPicker(true)
@@ -864,10 +867,11 @@ export function UnifiedLLMBackendsTab({
                   }}
                   disabled={!!builtinBusyAction}
                 >
-                  <Download className="mr-2 h-4 w-4" />
+                  <Download className="mr-1.5 h-3.5 w-3.5" />
                   {t('plugins:llm.switchModel')}
                 </Button>
                 <Button
+                  size="sm"
                   onClick={() => handleBuiltinAction('activate')}
                   // Activate only makes sense while the bundled server is
                   // healthy — activating a stopped server would point chat at a
@@ -876,10 +880,10 @@ export function UnifiedLLMBackendsTab({
                   variant={builtinIsActive ? 'secondary' : 'default'}
                 >
                   {builtinBusyAction === 'activate'
-                    ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
                     : builtinIsActive
-                      ? <CheckCircle2 className="mr-2 h-4 w-4" />
-                      : <Zap className="mr-2 h-4 w-4" />}
+                      ? <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
+                      : <Zap className="mr-1.5 h-3.5 w-3.5" />}
                   {builtinIsActive ? t('plugins:llm.builtinActive') : t('plugins:llm.builtinActivate')}
                 </Button>
                 {builtinStatus.server_state === 'stopped' && (
@@ -895,13 +899,14 @@ export function UnifiedLLMBackendsTab({
                   </Button>
                 )}
                 <Button
+                  size="sm"
                   onClick={() => handleBuiltinAction('delete')}
                   disabled={!!builtinBusyAction}
                   variant="destructive"
                 >
                   {builtinBusyAction === 'delete'
-                    ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    : <Trash2 className="mr-2 h-4 w-4" />}
+                    ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    : <Trash2 className="mr-1.5 h-3.5 w-3.5" />}
                   {t('plugins:llm.builtinDelete')}
                 </Button>
               </>
