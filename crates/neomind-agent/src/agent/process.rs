@@ -402,9 +402,20 @@ impl Agent {
             .collect();
 
         // === Process with LLM using multimodal message ===
+        // Image delegation (text-only active model + vision companion): the
+        // LLM gets the combined prompt as plain text (no image parts for a
+        // model that cannot see them); the history above already stored the
+        // ORIGINAL message + attachments.
+        let llm_msg = match self.llm_interface.take_image_delegation_prompt().await {
+            Some(prompt) => neomind_core::Message::new(
+                neomind_core::MessageRole::User,
+                neomind_core::Content::Text(prompt),
+            ),
+            None => user_msg,
+        };
         match self
             .llm_interface
-            .chat_multimodal_with_history(user_msg, &core_history)
+            .chat_multimodal_with_history(llm_msg, &core_history)
             .await
         {
             Ok(llm_response) => {

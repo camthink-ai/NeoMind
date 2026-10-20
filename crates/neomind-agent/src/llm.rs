@@ -307,6 +307,13 @@ pub struct LlmInterface {
     /// Deduplicates by skill id so loading the same skill N times in a turn only appends once
     /// (preserves full body on first legitimate load).
     skill_context: Arc<RwLock<TransientSkillContext>>,
+    /// Transient image-delegation prompt: when the active model is text-only
+    /// but a vision companion described the images, this holds the FULL
+    /// prompt (original message + descriptions) for the LLM while history
+    /// keeps the ORIGINAL message + image attachments for display. One-shot
+    /// (take semantics) — consumed by the multimodal stream/turn entry and
+    /// never persisted.
+    image_delegation_prompt: Arc<RwLock<Option<String>>>,
     /// Pinned skill IDs selected by the user for this session.
     /// These skills are injected as full guides (not just hints) into the system prompt.
     pinned_skills: Arc<RwLock<Vec<String>>>,
@@ -411,6 +418,7 @@ impl LlmInterface {
             global_timezone: Arc::new(RwLock::new(None)), // Will be loaded from settings
             skill_registry: Arc::new(RwLock::new(None)),
             skill_context: Arc::new(RwLock::new(TransientSkillContext::default())),
+            image_delegation_prompt: Arc::new(RwLock::new(None)),
             pinned_skills: Arc::new(RwLock::new(Vec::new())),
             memory_context: Arc::new(RwLock::new(None)),
         }
@@ -445,6 +453,7 @@ impl LlmInterface {
             global_timezone: Arc::new(RwLock::new(None)), // Will be loaded from settings
             skill_registry: Arc::new(RwLock::new(None)),
             skill_context: Arc::new(RwLock::new(TransientSkillContext::default())),
+            image_delegation_prompt: Arc::new(RwLock::new(None)),
             pinned_skills: Arc::new(RwLock::new(Vec::new())),
             memory_context: Arc::new(RwLock::new(None)),
         }
@@ -899,6 +908,20 @@ impl LlmInterface {
     }
 
     /// Clear transient skill context (called at start of each new user message).
+    /// Stage the image-delegation prompt for the NEXT multimodal turn (see
+    /// the field doc). The turn entry TAKES it — staging twice before a
+    /// turn simply replaces the pending prompt.
+    pub async fn set_image_delegation_prompt(&self, prompt: String) {
+        *self.image_delegation_prompt.write().await = Some(prompt);
+    }
+
+    /// One-shot consume: returns the staged delegation prompt (if any) and
+    /// clears it, so a missed turn can never leak the prompt into a later,
+    /// unrelated message.
+    pub async fn take_image_delegation_prompt(&self) -> Option<String> {
+        self.image_delegation_prompt.write().await.take()
+    }
+
     pub async fn clear_skill_context(&self) {
         *self.skill_context.write().await = TransientSkillContext::default();
     }
@@ -2534,6 +2557,30 @@ mod tests {
             .await
             .expect("body present after clear")
             .contains("RULE GUIDE"));
+    }
+
+    #[test]
+    fn image_delegation_prompt_is_one_shot() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let interface = LlmInterface::new(ChatConfig::default());
+            assert!(interface.take_image_delegation_prompt().await.is_none());
+            interface
+                .set_image_delegation_prompt("combined".into())
+                .await;
+            // Staging twice replaces the pending prompt.
+            interface
+                .set_image_delegation_prompt("combined-2".into())
+                .await;
+            assert_eq!(
+                interface.take_image_delegation_prompt().await.as_deref(),
+                Some("combined-2")
+            );
+            // One-shot: a missed turn can never leak into a later message.
+            assert!(interface.take_image_delegation_prompt().await.is_none());
+        });
     }
 
     #[tokio::test]

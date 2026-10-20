@@ -2061,15 +2061,21 @@ Assistant: {ar}\n"
             if !agent.llm_interface().supports_multimodal().await {
                 // Text-only active model: a healthy vision companion can
                 // describe the images and the turn continues as text.
-                if let Some(combined) =
-                    delegate_images_to_companion(message, &images).await
-                {
-                    return self.process_message(session_id, &combined).await;
+                // Companion describes the images; the ORIGINAL message +
+                // attachments still go to history (clean bubble), while the
+                // LLM turn consumes the combined prompt via the one-shot
+                // transient on the agent's LLM interface.
+                match delegate_images_to_companion(message, &images).await {
+                    Some(combined) => {
+                        agent.llm_interface().set_image_delegation_prompt(combined).await;
+                    }
+                    None => {
+                        return Err(super::error::NeoMindError::Validation(
+                            "Current model does not support image input. Please select a vision-capable model or remove images before retrying."
+                                .to_string(),
+                        ));
+                    }
                 }
-                return Err(super::error::NeoMindError::Validation(
-                    "Current model does not support image input. Please select a vision-capable model or remove images before retrying."
-                        .to_string(),
-                ));
             }
         }
 
@@ -2099,15 +2105,21 @@ Assistant: {ar}\n"
         if !images.is_empty() {
             let agent = self.get_session(session_id).await?;
             if !agent.llm_interface().supports_multimodal().await {
-                if let Some(combined) =
-                    delegate_images_to_companion(message, &images).await
-                {
-                    return self.process_message_events(session_id, &combined).await;
+                // Companion describes the images; the ORIGINAL message +
+                // attachments still go to history (clean bubble), while the
+                // LLM turn consumes the combined prompt via the one-shot
+                // transient on the agent's LLM interface.
+                match delegate_images_to_companion(message, &images).await {
+                    Some(combined) => {
+                        agent.llm_interface().set_image_delegation_prompt(combined).await;
+                    }
+                    None => {
+                        return Err(super::error::NeoMindError::Validation(
+                            "Current model does not support image input. Please select a vision-capable model or remove images before retrying."
+                                .to_string(),
+                        ));
+                    }
                 }
-                return Err(super::error::NeoMindError::Validation(
-                    "Current model does not support image input. Please select a vision-capable model or remove images before retrying."
-                        .to_string(),
-                ));
             }
         }
 
@@ -2126,15 +2138,21 @@ Assistant: {ar}\n"
         if !images.is_empty() {
             let agent = self.get_session(session_id).await?;
             if !agent.llm_interface().supports_multimodal().await {
-                if let Some(combined) =
-                    delegate_images_to_companion(message, &images).await
-                {
-                    return self.process_message_events(session_id, &combined).await;
+                // Companion describes the images; the ORIGINAL message +
+                // attachments still go to history (clean bubble), while the
+                // LLM turn consumes the combined prompt via the one-shot
+                // transient on the agent's LLM interface.
+                match delegate_images_to_companion(message, &images).await {
+                    Some(combined) => {
+                        agent.llm_interface().set_image_delegation_prompt(combined).await;
+                    }
+                    None => {
+                        return Err(super::error::NeoMindError::Validation(
+                            "Current model does not support image input. Please select a vision-capable model or remove images before retrying."
+                                .to_string(),
+                        ));
+                    }
                 }
-                return Err(super::error::NeoMindError::Validation(
-                    "Current model does not support image input. Please select a vision-capable model or remove images before retrying."
-                        .to_string(),
-                ));
             }
         }
         let agent = self.get_session(session_id).await?;

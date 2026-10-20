@@ -105,10 +105,22 @@ pub async fn process_multimodal_stream_events_with_safeguards(
         neomind_core::Content::Parts(parts),
     );
 
+    // Image delegation (text-only active model + vision companion): the
+    // LLM receives the companion's combined prompt as PLAIN TEXT — no image
+    // parts to send to a model that cannot see them — while the history
+    // push below keeps the ORIGINAL message + attachments for display.
+    let llm_user_msg = match llm_interface.take_image_delegation_prompt().await {
+        Some(prompt) => neomind_core::Message::new(
+            neomind_core::MessageRole::User,
+            neomind_core::Content::Text(prompt),
+        ),
+        None => multimodal_user_msg,
+    };
+
     // Use regular multimodal chat (with thinking enabled)
     // Thinking helps the model analyze images more thoroughly
     let stream_result = llm_interface
-        .chat_stream_multimodal_with_history(multimodal_user_msg, &history_for_llm)
+        .chat_stream_multimodal_with_history(llm_user_msg, &history_for_llm)
         .await;
 
     let stream = stream_result.map_err(|e| NeoMindError::Llm(e.to_string()))?;
