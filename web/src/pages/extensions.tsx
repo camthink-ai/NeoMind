@@ -75,6 +75,10 @@ export function ExtensionsPage() {
       // Clear extension's components from dynamic registry
       dynamicRegistry.unregisterExtension(id)
 
+      // Notify sidebar/nav that the extension page list changed —
+      // useExtensionPages picks this up and clears stale nav entries.
+      window.dispatchEvent(new CustomEvent('extensions-changed'))
+
       toast({
         title: t("extensions:extensionUninstalled"),
       })
@@ -125,6 +129,8 @@ export function ExtensionsPage() {
   }
 
   const handleUploadComplete = (_extensionId: string) => {
+    // Notify sidebar/nav that the extension page list changed.
+    window.dispatchEvent(new CustomEvent('extensions-changed'))
     fetchExtensions()
     toast({
       title: t("extensions:extensionUploaded"),
