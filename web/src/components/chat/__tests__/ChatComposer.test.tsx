@@ -47,6 +47,25 @@ describe('ChatComposer', () => {
     expect(onCancel).toHaveBeenCalledTimes(1)
     expect(onSend).not.toHaveBeenCalled()
   })
+
+  it('keeps the attachment preview and input box under one root', () => {
+    // Hosts apply `space-y-*` to direct children. If these two were siblings
+    // at the host level, the gap between them would depend on the host.
+    const { container } = render(
+      <ChatComposer
+        value=""
+        onChange={vi.fn()}
+        onSend={vi.fn()}
+        attachments={[{ data: 'data:image/png;base64,AA==', mimeType: 'image/jpeg' }]}
+      />,
+    )
+    const root = container.firstElementChild as HTMLElement
+    const preview = screen.getByAltText('Attached 1')
+    const box = screen.getByRole('textbox').closest('div.rounded-lg')
+    expect(root.contains(preview)).toBe(true)
+    expect(root.contains(box)).toBe(true)
+    expect(preview.closest('.mb-1')?.nextElementSibling).toBe(box)
+  })
 })
 
 /// Context usage card actions — the manual compact/clear affordances added

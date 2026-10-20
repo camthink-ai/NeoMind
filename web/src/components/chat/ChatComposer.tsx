@@ -179,8 +179,10 @@ export function ChatComposer({
   const hasAttachments = attachments.length > 0
   const canSend = (value.trim().length > 0 || hasAttachments) && !inputDisabled
 
+  // Single root: hosts apply `space-y-*` to their direct children, which
+  // would otherwise insert a gap between the preview strip and the box.
   return (
-    <>
+    <div>
       {/* Image previews */}
       {hasAttachments && (
         <div className="flex flex-wrap gap-1.5 mb-1">
@@ -481,6 +483,6 @@ export function ChatComposer({
           )}
         </div>
       </div>
-    </>
+    </div>
   )
 }
