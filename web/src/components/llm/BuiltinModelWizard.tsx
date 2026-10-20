@@ -622,46 +622,12 @@ export function BuiltinModelWizard({
                     )
                   })}
                 </div>
-                {(() => {
-                  // Three states per SELECTED model (the old check —
-                  // "any model installed?" — showed 下载并替换 for an
-                  // already-downloaded model, sending users down the
-                  // delete-and-redownload path that no longer exists).
-                  const sel = models.find((m) => m.id === selectedModelId)
-                  const activeId = status?.active_model ?? status?.model_id
-                  if (sel?.installed && sel.id === activeId) {
-                    return (
-                      <Button size="lg" className="w-full" disabled>
-                        <CheckCircle2 className="mr-2 h-4 w-4" />
-                        {t('plugins:llm.builtinActiveNow')}
-                      </Button>
-                    )
-                  }
-                  if (sel?.installed) {
-                    return (
-                      <Button size="lg" className="w-full" onClick={() => handleSwitchModel(sel.id)}>
-                        <RefreshCw className="mr-2 h-4 w-4" />
-                        {t('plugins:llm.builtinSwitchCta')}
-                      </Button>
-                    )
-                  }
-                  return (
-                    <Button
-                      size="lg"
-                      className="w-full"
-                      disabled={!selectedModelId}
-                      onClick={() => handleStartDownload(selectedModelId ?? undefined)}
-                    >
-                      <Download className="mr-2 h-4 w-4" />
-                      {t('plugins:llm.builtinWizardStart')}
-                    </Button>
-                  )
-                })()}
 
                 {/* Vision companions: install/running state independent of
                     the main model — download starts it, delete removes it.
-                    The active-main button states above never apply (a
-                    companion is never "active"). */}
+                    Kept ABOVE the CTA so the primary action stays last
+                    (conventional dialog layout); the active-main button
+                    states never apply (a companion is never "active"). */}
                 {models.some((m) => m.role === 'vlm') && (
                   <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
                     <div className="flex items-center gap-2">
@@ -739,6 +705,42 @@ export function BuiltinModelWizard({
                       })}
                   </div>
                 )}
+
+                {(() => {
+                  // Three states per SELECTED model (the old check —
+                  // "any model installed?" — showed 下载并替换 for an
+                  // already-downloaded model, sending users down the
+                  // delete-and-redownload path that no longer exists).
+                  const sel = models.find((m) => m.id === selectedModelId)
+                  const activeId = status?.active_model ?? status?.model_id
+                  if (sel?.installed && sel.id === activeId) {
+                    return (
+                      <Button size="lg" className="w-full" disabled>
+                        <CheckCircle2 className="mr-2 h-4 w-4" />
+                        {t('plugins:llm.builtinActiveNow')}
+                      </Button>
+                    )
+                  }
+                  if (sel?.installed) {
+                    return (
+                      <Button size="lg" className="w-full" onClick={() => handleSwitchModel(sel.id)}>
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                        {t('plugins:llm.builtinSwitchCta')}
+                      </Button>
+                    )
+                  }
+                  return (
+                    <Button
+                      size="lg"
+                      className="w-full"
+                      disabled={!selectedModelId}
+                      onClick={() => handleStartDownload(selectedModelId ?? undefined)}
+                    >
+                      <Download className="mr-2 h-4 w-4" />
+                      {t('plugins:llm.builtinWizardStart')}
+                    </Button>
+                  )
+                })()}
               </div>
             )}
 
