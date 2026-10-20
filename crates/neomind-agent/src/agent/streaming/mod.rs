@@ -66,14 +66,104 @@ where
     }
 }
 
+/// Outcome of an interruptible chunk wait.
+pub(crate) enum StreamWait<T> {
+    /// A chunk arrived (`Some`) or the stream ended/stalled (`None`).
+    Chunk(Option<T>),
+    /// The cancel watch channel fired while waiting.
+    Interrupted,
+}
+
+/// `next_chunk_or_timeout` + cancel-channel awareness.
+///
+/// The plain helper blocks on `next(stream)` for up to `dur` — on a local
+/// llama.cpp backend the wait for the FIRST chunk includes request queueing
+/// behind other slots plus prompt prefill, which can run tens of seconds
+/// (live 2026-10-19: ~62s). During that wait the stream loop body (where the
+/// interrupt signal was checked) never executes, so a user cancel sat
+/// unprocessed until the first token arrived — 55s after the __CANCEL__
+/// frame — while the zombie request kept occupying the backend's only slot
+/// and every retry queued behind it. This variant wakes on the cancel
+/// channel as well, so the generator (and with it the underlying HTTP
+/// request) terminates immediately.
+pub(crate) async fn next_chunk_or_timeout_or_interrupt<S>(
+    stream: &mut S,
+    dur: std::time::Duration,
+    interrupt: Option<&tokio::sync::watch::Receiver<bool>>,
+) -> StreamWait<S::Item>
+where
+    S: futures::Stream + Unpin,
+{
+    // Fast path: already interrupted before waiting (cancel arrived while
+    // the previous chunk was being processed).
+    if interrupt.map(|rx| *rx.borrow()).unwrap_or(false) {
+        return StreamWait::Interrupted;
+    }
+    let mut rx = interrupt.cloned();
+    loop {
+        let Some(current) = rx.as_ref() else {
+            return StreamWait::Chunk(next_chunk_or_timeout(stream, dur).await);
+        };
+        let mut probe = current.clone();
+        tokio::select! {
+            item = next_chunk_or_timeout(stream, dur) => return StreamWait::Chunk(item),
+            changed = probe.changed() => match changed {
+                // Sender dropped: no future cancel can arrive — stop
+                // selecting on it (a resolved-Err changed() would otherwise
+                // busy-loop).
+                Err(_) => rx = None,
+                Ok(()) => {
+                    if *probe.borrow_and_update() {
+                        return StreamWait::Interrupted;
+                    }
+                    // Flipped back to false — fall through and keep waiting.
+                }
+            },
+        }
+    }
+}
+
 // Re-exports for internal crate use and test access
 pub(crate) use resolve::resolve_cached_arguments;
 pub(crate) use sanitize::{sanitize_tool_result_for_prompt, truncate_result_utf8};
 
 #[cfg(test)]
 mod stall_tests {
-    use super::next_chunk_or_timeout;
+    use super::{next_chunk_or_timeout, next_chunk_or_timeout_or_interrupt, StreamWait};
     use std::time::Duration;
+
+    /// A cancel arriving while the stream is stalled/pending must wake the
+    /// wait IMMEDIATELY — not when the chunk/stall deadline finally hits.
+    /// Regression for the live 55s cancel latency (2026-10-19): the wait
+    /// sat on `next()` while llama.cpp spent ~60s on slot queueing + prompt
+    /// prefill before the first token, so the __CANCEL__ frame wasn't seen
+    /// until then and the zombie request kept the backend's only slot.
+    #[tokio::test]
+    async fn cancel_interrupts_pending_chunk_wait() {
+        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        let mut stalled: futures::stream::Pending<Result<(String, bool), &'static str>> =
+            futures::stream::pending();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let _ = cancel_tx.send(true);
+        });
+        let started = std::time::Instant::now();
+        let got = next_chunk_or_timeout_or_interrupt(
+            &mut stalled,
+            // Far beyond the test's patience: only the cancel may end this.
+            Duration::from_secs(60),
+            Some(&cancel_rx),
+        )
+        .await;
+        assert!(
+            matches!(got, StreamWait::Interrupted),
+            "cancel must interrupt the pending wait"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "cancel must not wait for the chunk/stall deadline"
+        );
+    }
 
     /// A zero-chunk stall (upstream LLM never yields) must force-break via
     /// the timeout instead of hanging forever. Regression for the 8h hang on

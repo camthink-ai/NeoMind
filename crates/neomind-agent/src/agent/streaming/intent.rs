@@ -107,14 +107,35 @@ pub(crate) fn all_tools_were_read_only(
 /// - `executed_commands`: actual shell command strings from prior tool calls
 ///   (used for the "Previously executed" summary AND the read-only check)
 /// - `all_results`: `(tool_name, result_text)` accumulator across rounds
+/// - `consecutive_read_only_rounds`: PRIOR consecutive all-read-only rounds
+///   (the caller counts; the round being decided here is the next one)
 pub(crate) fn build_list_only_dead_end_prompt(
     user_message: &str,
     executed_commands: &[&str],
     all_results: &[(String, String)],
+    consecutive_read_only_rounds: u32,
 ) -> Option<String> {
     if !user_message_requires_action(user_message) {
         return None;
     }
+
+    // === COERCION EVIDENCE GATE (live 2026-10-19) ===
+    // This prompt is a STRONG model-facing directive ("You MUST execute X
+    // NOW"), and it fired after ONE exploratory round on a mis-extracted
+    // request — demanding a phantom `neomind device create` for 20 minutes
+    // while the model was already on the correct path (`device list` +
+    // `dashboard list` were the RIGHT first steps of the flow that
+    // eventually built the dashboard). A single list-only round is ID
+    // discovery, not a dead end: coerce only on the SECOND consecutive
+    // all-read-only round. (A separate multi-domain ambiguity gate was
+    // considered and rejected: after DOMAIN_KEYWORDS prioritization the
+    // extraction picks the most specific artifact domain, and a blanket
+    // ambiguity suppressor would also kill the documented widget→dashboard
+    // pipeline recoveries, which ride on genuinely multi-domain messages.)
+    if consecutive_read_only_rounds < 1 {
+        return None;
+    }
+
     if !all_tools_were_read_only(executed_commands, all_results) {
         return None;
     }
@@ -353,6 +374,40 @@ fn delivering_subcommand(domain: &str, class: &str) -> Option<&'static str> {
         .map(|s| s.as_str())
 }
 
+/// Domain keyword table. Order is DISAMBIGUATION PRIORITY, not mere
+/// convention: a request can legitimately name several domains, and the
+/// first matching entry wins. `device` is deliberately LAST — on an IoT
+/// platform "device" is ambient vocabulary (requests are routinely ABOUT
+/// devices: "创建一个展示**设备**图片的**仪表盘**"), so a first-keyword
+/// chain that checked 设备 before 仪表盘 extracted `device` from a
+/// dashboard request (live 2026-10-19: the dead-end guard then spent the
+/// whole turn nagging for a `neomind device create` the user never asked
+/// for, and the turn ended with a false "requested ACTION never executed"
+/// note AFTER the dashboard had been built). All other pair priorities are
+/// the historical chain order, unchanged.
+const DOMAIN_KEYWORDS: &[(&str, &[&str])] = &[
+    ("rule", &["规则", "rule"]),
+    ("agent", &["agent", "代理", "智能体"]),
+    ("dashboard", &["仪表盘", "仪表板", "dashboard", "面板"]),
+    ("transform", &["转换", "transform"]),
+    ("widget", &["组件", "widget", "小部件"]),
+    ("extension", &["扩展", "extension", "插件"]),
+    ("message", &["消息", "message", "通知", "通道", "channel"]),
+    ("device", &["设备", "device", "sensor"]),
+];
+
+/// Every domain whose keywords occur in the message, in DOMAIN_KEYWORDS
+/// priority order. The first entry is what `extract_action_parts` picks;
+/// len > 1 documents that the extraction was ambiguous.
+pub(crate) fn matched_domains(msg: &str) -> Vec<&'static str> {
+    let msg_lower = msg.to_lowercase();
+    DOMAIN_KEYWORDS
+        .iter()
+        .filter(|(_, kws)| kws.iter().any(|k| msg_lower.contains(k)))
+        .map(|(d, _)| *d)
+        .collect()
+}
+
 /// Domain + action class the user asked for. Identical to the old
 /// first-match chain, plus one refinement: when the domain is known, a
 /// candidate class the domain's real CLI surface cannot deliver is skipped
@@ -367,47 +422,9 @@ fn delivering_subcommand(domain: &str, class: &str) -> Option<&'static str> {
 pub(crate) fn extract_action_parts(msg: &str) -> (&'static str, &'static str) {
     let msg_lower = msg.to_lowercase();
 
-    // Domain detection
-    let domain = if msg_lower.contains("规则") || msg_lower.contains("rule") {
-        "rule"
-    } else if msg_lower.contains("agent")
-        || msg_lower.contains("代理")
-        || msg_lower.contains("智能体")
-    {
-        "agent"
-    } else if msg_lower.contains("设备")
-        || msg_lower.contains("device")
-        || msg_lower.contains("sensor")
-    {
-        "device"
-    } else if msg_lower.contains("仪表盘")
-        || msg_lower.contains("仪表板")
-        || msg_lower.contains("dashboard")
-        || msg_lower.contains("面板")
-    {
-        "dashboard"
-    } else if msg_lower.contains("转换") || msg_lower.contains("transform") {
-        "transform"
-    } else if msg_lower.contains("组件")
-        || msg_lower.contains("widget")
-        || msg_lower.contains("小部件")
-    {
-        "widget"
-    } else if msg_lower.contains("扩展")
-        || msg_lower.contains("extension")
-        || msg_lower.contains("插件")
-    {
-        "extension"
-    } else if msg_lower.contains("消息")
-        || msg_lower.contains("message")
-        || msg_lower.contains("通知")
-        || msg_lower.contains("通道")
-        || msg_lower.contains("channel")
-    {
-        "message"
-    } else {
-        ""
-    };
+    // Domain detection: first match in DOMAIN_KEYWORDS priority order —
+    // see the table's doc comment for why device ranks last.
+    let domain = matched_domains(msg).first().copied().unwrap_or("");
 
     // Action candidates in table-priority order (= the old chain order).
     let candidates: Vec<&str> = ACTION_CLASSES
@@ -736,16 +753,65 @@ mod tests {
             "neomind device get demo-001",
         ];
         assert!(all_tools_were_read_only(&cmds, &[]));
-        assert!(build_list_only_dead_end_prompt(msg, &cmds, &[]).is_none());
+        assert!(build_list_only_dead_end_prompt(msg, &cmds, &[], 1).is_none());
     }
 
     #[test]
     fn test_named_action_still_injects() {
         // Guard must not over-suppress: a genuine action request with a
-        // nameable action still injects.
+        // nameable action still injects — on the SECOND consecutive
+        // read-only round (streak=1 = one prior read-only round).
         let msg = "创建一个温湿度仪表盘";
         let cmds = ["neomind device list", "neomind widget list"];
-        assert!(build_list_only_dead_end_prompt(msg, &cmds, &[]).is_some());
+        assert!(build_list_only_dead_end_prompt(msg, &cmds, &[], 1).is_some());
+        // First read-only round → repetition gate holds the injection.
+        assert!(build_list_only_dead_end_prompt(msg, &cmds, &[], 0).is_none());
+    }
+
+    /// Coercion evidence gate (live 2026-10-19): the dead-end injection is a
+    /// MUST-directive into the model's context, so it must not fire on one
+    /// exploratory round — `device list` + `dashboard list` right after the
+    /// ask was the CORRECT first step of the flow that built the dashboard,
+    /// and the round-1 injection demanding a phantom action hijacked the
+    /// turn for 20 minutes. On a genuine stall (second consecutive
+    /// read-only round) the guard still fires — now demanding the RIGHT
+    /// action, thanks to the DOMAIN_KEYWORDS priority table.
+    #[test]
+    fn dead_end_needs_repetition_not_first_round_exploration() {
+        // The incident's round 1: ID discovery, not a dead end → no
+        // injection (old behavior: demanded "neomind device create").
+        assert!(build_list_only_dead_end_prompt(
+            "创建一个展示设备图片的仪表盘",
+            &["neomind device list 2>&1", "neomind dashboard list 2>&1"],
+            &[],
+            0,
+        )
+        .is_none());
+
+        // Same message, genuinely stalled (streak ≥1) → injects, and the
+        // demanded action is the CORRECT one — the incident's phantom
+        // "device create" is gone.
+        let msg = build_list_only_dead_end_prompt(
+            "创建一个展示设备图片的仪表盘",
+            &["neomind device list", "neomind device get demo-001"],
+            &[],
+            1,
+        )
+        .expect("genuine stall must still inject");
+        assert!(
+            msg.contains("neomind dashboard create"),
+            "must demand the correct domain, got: {msg}"
+        );
+        assert!(!msg.contains("device create"), "phantom demand gone: {msg}");
+
+        // Unambiguous English ask behaves identically.
+        assert!(build_list_only_dead_end_prompt(
+            "add it to my dashboard",
+            &["neomind dashboard list"],
+            &[],
+            0,
+        )
+        .is_none());
     }
 
     /// Turn-end completeness: fires when an action was requested and only
@@ -796,6 +862,54 @@ mod tests {
         let no_shell = build_incomplete_action_note("帮我创建规则", &[], &[])
             .expect("action requested with zero successful mutations must be flagged");
         assert!(no_shell.contains("no commands ran"), "{no_shell}");
+    }
+
+    /// Live incident (2026-10-19): a dashboard-of-device-images request
+    /// named BOTH 设备 and 仪表盘. The old first-keyword chain extracted
+    /// `device`, so the dead-end guard chased a phantom `neomind device
+    /// create` all turn, and after `dashboard create` + `add-components`
+    /// SUCCEEDED the turn still ended with a false "requested ACTION never
+    /// executed" completeness note. The specific artifact domain now wins.
+    #[test]
+    fn multi_domain_request_prefers_artifact_over_ambient_device() {
+        assert_eq!(
+            extract_action_parts("创建一个展示设备图片的仪表盘"),
+            ("dashboard", "create")
+        );
+        assert_eq!(
+            extract_action_parts("create a dashboard showing device images"),
+            ("dashboard", "create")
+        );
+        // The dead-end hint follows the corrected domain.
+        assert_eq!(
+            extract_action_hint("创建一个展示设备图片的仪表盘"),
+            "neomind dashboard create"
+        );
+        // The delivered dashboard mutations now satisfy the request — no
+        // false completeness note after the task ran.
+        assert!(build_incomplete_action_note(
+            "创建一个展示设备图片的仪表盘",
+            &["neomind dashboard add-components d1 --components '[...]'"],
+            &[
+                "neomind dashboard create --name x".to_string(),
+                "neomind dashboard add-components d1 --components '[...]'".to_string(),
+            ],
+        )
+        .is_none());
+        // Single-domain requests keep the old extraction.
+        assert_eq!(extract_action_parts("创建一个新设备"), ("device", "create"));
+        assert_eq!(
+            extract_action_parts("为设备创建告警规则"),
+            ("rule", "create")
+        );
+        // A dashboard request answered only by device mutations still
+        // flags — the fix disambiguates the ASK, it does not excuse misses.
+        assert!(build_incomplete_action_note(
+            "创建一个展示设备图片的仪表盘",
+            &["neomind device create foo"],
+            &["neomind device create foo".to_string()],
+        )
+        .is_some());
     }
 
     /// Live incident (2026-10-09 round 7): a timer SPEC mentioning 停止 —
@@ -922,6 +1036,7 @@ mod tests {
             "帮我开发一个前端画图组件 并且添加到dashboard",
             &["neomind widget list"],
             &[],
+            1,
         )
         .expect("action request must inject");
         assert!(msg.contains("widget install"), "{msg}");
@@ -937,6 +1052,7 @@ mod tests {
             "帮我开发一个前端画图组件 并且添加到dashboard",
             &["neomind dashboard list", "neomind widget list"],
             &[],
+            1,
         )
         .expect("action request with only list calls must inject");
         assert!(msg.contains("`shell` tool"), "{msg}");

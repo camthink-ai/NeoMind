@@ -483,6 +483,11 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                 &user_message,
                 &commands_ref,
                 &tool_call_results,
+                // No round loop on this path — the whole turn being read-only
+                // IS the repetition evidence (this is the end-of-turn last
+                // chance, not a per-round coercion). The ambiguity gate
+                // applies in full.
+                1,
             ) {
                 tracing::info!("Multimodal dead-end: invoking one continuation round");
                 yield AgentEvent::progress("Continuing action...", "continuing", 0);

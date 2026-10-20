@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use futures::{Stream, StreamExt};
 
-use super::next_chunk_or_timeout;
+use super::{next_chunk_or_timeout, next_chunk_or_timeout_or_interrupt, StreamWait};
 
 use super::context::{
     build_context_window_with_config, build_context_window_with_summary, ToolExecutionResult,
@@ -292,6 +292,12 @@ pub async fn process_stream_events_with_safeguards(
 
             // === SAFEGUARD: Track stream start time for timeout ===
             let stream_start = Instant::now();
+            // First-chunk arrival. `stream_start` covers backend queueing +
+            // prompt prefill BEFORE the first token (tens of seconds on
+            // local models — longer when the previous turn's request still
+            // occupies the only llama.cpp slot). Perceived-latency warnings
+            // must measure actual GENERATION time, not queue wait.
+            let mut first_chunk_at: Option<Instant> = None;
 
             // === KEEPALIVE: Track last event time for heartbeat ===
             #[allow(unused_assignments)]
@@ -400,6 +406,16 @@ pub async fn process_stream_events_with_safeguards(
             let mut post_dead_end_read_only_rounds: u32 = 0;
             let mut explore_recovery_nudged = false;
 
+            // === PRE-INJECTION READ-ONLY STREAK (repetition gate) ===
+            // Consecutive all-read-only rounds BEFORE any dead-end injection.
+            // The first injection requires the streak to already be ≥1 — a
+            // single exploratory list round is ID discovery, not a dead end
+            // (live 2026-10-19: `device list` + `dashboard list` was the
+            // correct first step of a successful flow, and the round-1
+            // injection demanding a phantom action hijacked the turn for
+            // 20 minutes). See the coercion evidence gates in intent.rs.
+            let mut consecutive_read_only_rounds: u32 = 0;
+
             // === NARRATION-COLLAPSE GUARD (bounded: a few retries per turn) ===
             // Small models sometimes narrate a promised action ("我现在使用
             // image_edit 工具…") WITHOUT emitting any tool call. Ending the turn
@@ -507,6 +523,7 @@ pub async fn process_stream_events_with_safeguards(
                                 &user_message,
                                 &commands_ref,
                                 &all_round_tool_results,
+                                consecutive_read_only_rounds,
                             )
                         };
 
@@ -522,16 +539,25 @@ pub async fn process_stream_events_with_safeguards(
                             );
                             "You have now listed the relevant CLI surface more than once but the user's action is still not performed. Do NOT call any more list/help/query tools. Either execute the actual action command now with the concrete arguments, or — only if a required value is genuinely missing — ask the user for exactly that value and end your turn.".to_string()
                         } else {
-                            // Streak bookkeeping for the act-now directive above:
-                            // count post-dead-end rounds that were still read-only.
+                            // Streak bookkeeping: consecutive all-read-only
+                            // rounds feed BOTH the act-now directive above
+                            // (post-injection) and the first-injection
+                            // repetition gate (pre-injection — see the
+                            // coercion evidence gates in intent.rs).
+                            let cmds: Vec<&str> =
+                                recently_executed_commands.iter().map(|s| s.as_str()).collect();
+                            let round_was_read_only =
+                                all_tools_were_read_only(&cmds, &all_round_tool_results);
                             if list_only_dead_end_injected {
-                                let cmds: Vec<&str> =
-                                    recently_executed_commands.iter().map(|s| s.as_str()).collect();
-                                if all_tools_were_read_only(&cmds, &all_round_tool_results) {
+                                if round_was_read_only {
                                     post_dead_end_read_only_rounds += 1;
                                 } else {
                                     post_dead_end_read_only_rounds = 0;
                                 }
+                            } else if round_was_read_only {
+                                consecutive_read_only_rounds += 1;
+                            } else {
+                                consecutive_read_only_rounds = 0;
                             }
                             // Anti-hallucination guard: small models sometimes
                             // report FAILED commands as successful in the final
@@ -656,8 +682,35 @@ pub async fn process_stream_events_with_safeguards(
 
                 // === PHASE 1: Stream initial response (thinking + content + tool calls) ===
                 // Bounded `next()`: a zero-chunk stall (upstream LLM never yields)
-                // force-breaks the round instead of hanging forever.
-                while let Some(result) = next_chunk_or_timeout(&mut stream, safeguards.max_stream_duration).await {
+                // force-breaks the round instead of hanging forever. The wait
+                // is ALSO cancel-aware: on local backends the first-chunk wait
+                // (slot queueing + prefill) can run a minute, and a user
+                // cancel during it must not sit unprocessed until the first
+                // token arrives (live 2026-10-19: 55s cancel latency, the
+                // zombie request blocking the backend's only slot while every
+                // retry queued behind it).
+                loop {
+                    let result = match next_chunk_or_timeout_or_interrupt(
+                        &mut stream,
+                        safeguards.max_stream_duration,
+                        safeguards.interrupt_signal.as_ref(),
+                    )
+                    .await
+                    {
+                        StreamWait::Chunk(Some(item)) => item,
+                        // Stream ended (or stalled past max duration) —
+                        // fall through to tool-call processing below.
+                        StreamWait::Chunk(None) => break,
+                        StreamWait::Interrupted => {
+                            tracing::info!("Stream interrupted by user");
+                            yield AgentEvent::content("\n\n[Interrupted]");
+                            yield AgentEvent::end();
+                            return;
+                        }
+                    };
+                    if first_chunk_at.is_none() {
+                        first_chunk_at = Some(Instant::now());
+                    }
                     let elapsed = stream_start.elapsed();
 
                     // Check timeout with early warning at 80% of max duration
@@ -681,9 +734,18 @@ pub async fn process_stream_events_with_safeguards(
                         timeout_warned = true;
                     }
 
-                    // Special warning for extended thinking with no content
-                    if has_thinking && !has_content && elapsed > Duration::from_secs(60) && !long_thinking_warned {
-                        tracing::warn!("Extended thinking detected ({:.1}s) with no content yet", elapsed.as_secs_f64());
+                    // Special warning for extended thinking with no content.
+                    // Timed from the FIRST CHUNK, not stream start: the
+                    // queue+prefill wait before it is backend latency, not
+                    // the model thinking (live 2026-10-19: this fired during
+                    // a 42s slot-queue wait with zero tokens generated).
+                    let generating_elapsed =
+                        first_chunk_at.map(|t| t.elapsed()).unwrap_or_default();
+                    if has_thinking && !has_content
+                        && generating_elapsed > Duration::from_secs(60)
+                        && !long_thinking_warned
+                    {
+                        tracing::warn!("Extended thinking detected ({:.1}s) with no content yet", generating_elapsed.as_secs_f64());
                         yield AgentEvent::warning("The model is performing deep thinking, this may take longer...".to_string());
                         long_thinking_warned = true;
                     }

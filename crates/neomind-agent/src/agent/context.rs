@@ -252,6 +252,20 @@ const ACTION_PROMISE_PATTERNS: &[&str] = &[
     "接下来我",
     "下一步我",
     "最后一步",
+    // 2026-10-19 incident session tail (reproduced via conversation replay):
+    // after the dashboard was built, THREE consecutive turns answered with
+    // promise-only replies none of the patterns above matched — 「我来检查
+    // 仪表盘和组件的当前状态，确认是否正确绑定。」「我来帮您继续处理…
+    // 首先让我了解仪表盘的可用操作…」. The table had 让我检查 but not
+    // 我来检查; the nudge never fired, the user pressed 继续 twice and got
+    // the same promise again — this read as the task being "interrupted".
+    "我来检查",
+    "我来查看",
+    "我来帮",
+    "我来处理",
+    "我来确认",
+    "让我了解",
+    "首先让我",
     // English
     "i will use",
     "i'll use",
@@ -265,6 +279,10 @@ const ACTION_PROMISE_PATTERNS: &[&str] = &[
     "let me call",
     "let me run",
     "let me check",
+    "let me look",
+    "let me inspect",
+    "i will check",
+    "i'll check",
     "i'm going to use",
     "i'm going to call",
     "i'm going to run",
@@ -881,6 +899,24 @@ mod narration_tests {
         ));
         assert!(is_narration_without_action(
             "I'm going to run the command now."
+        ));
+    }
+
+    /// The exact promise-only replies from the 2026-10-19 incident session
+    /// tail (verbatim from sessions.redb; reproduced by the conversation
+    /// replay eval). None matched the previous pattern list — the nudge
+    /// never fired and the user read the repeat promises as the task being
+    /// interrupted.
+    #[test]
+    fn detects_incident_tail_promise_phrasing() {
+        assert!(is_narration_without_action(
+            "我来检查仪表盘和组件的当前状态，确认是否正确绑定。"
+        ));
+        assert!(is_narration_without_action(
+            "我来检查仪表盘的当前状态和组件详情。"
+        ));
+        assert!(is_narration_without_action(
+            "我来帮您继续处理设备指标绑定问题。首先让我了解仪表盘的可用操作和现有配置。"
         ));
     }
 
