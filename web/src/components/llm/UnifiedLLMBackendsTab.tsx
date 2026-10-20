@@ -704,6 +704,10 @@ export function UnifiedLLMBackendsTab({
     // Built-in bundled LLM card (top of the list, above the provider grid).
     const builtinInstance = instances.find(i => i.is_builtin)
     const builtinIsActive = !!builtinInstance && builtinInstance.id === activeBackendId
+    // Context sizes read as buckets, not ledger numbers: "128K" beats
+    // "131,072" at a glance in a card this dense.
+    const fmtCtx = (n: number | null | undefined) =>
+      n == null ? '—' : n >= 1024 ? `${Math.round(n / 1024)}K` : String(n)
     const BUILTIN_MODEL_NAMES: Record<string, string> = {
       'minicpm5-2b': 'MiniCPM5-2B',
       'lfm25-2.6b': 'LFM2.5-2.6B',
@@ -748,42 +752,6 @@ export function UnifiedLLMBackendsTab({
               <CardDescription className="text-xs line-clamp-1">
                 {t('plugins:llm.builtinDesc')}
               </CardDescription>
-              {builtinStatus?.companion && (
-                <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <Eye className="h-3 w-3 text-info shrink-0" />
-                  <span className="truncate">
-                    {t('plugins:llm.companionLabel')}: {builtinStatus.companion.name}
-                  </span>
-                  <span
-                    className={cn(
-                      'shrink-0 rounded px-1 py-0.5 text-[10px] font-medium',
-                      builtinStatus.companion.running
-                        ? 'bg-success-light text-success'
-                        : 'bg-muted text-muted-foreground',
-                    )}
-                  >
-                    {builtinStatus.companion.running
-                      ? t('plugins:llm.companionRunning')
-                      : t('plugins:llm.companionStopped')}
-                  </span>
-                  {builtinStatus.companion.ctx != null && (
-                    <span className="shrink-0 text-[10px] text-muted-foreground">
-                      ctx {builtinStatus.companion.ctx >= 1024
-                        ? `${Math.round(builtinStatus.companion.ctx / 1024)}K`
-                        : builtinStatus.companion.ctx}
-                    </span>
-                  )}
-                  <CompanionSettingsPopover
-                    ctx={builtinStatus.companion.ctx ?? null}
-                    onApplied={() => {
-                      api
-                        .getBuiltinLlmStatus()
-                        .then(setBuiltinStatus)
-                        .catch(() => {})
-                    }}
-                  />
-                </div>
-              )}
             </div>
             <span className={cn('inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium shrink-0', builtinInfo.pillClass)}>
               {builtinInfo.text}
@@ -812,11 +780,11 @@ export function UnifiedLLMBackendsTab({
             <div className="flex items-center gap-2 text-xs">
               <span className="text-muted-foreground">
                 {t('plugins:llm.builtinCtx')}:
-                <span className="font-mono text-foreground ml-1">{(builtinStatus.ctx ?? builtinStatus.default_ctx ?? 0).toLocaleString()}</span>
+                <span className="font-mono text-foreground ml-1">{fmtCtx(builtinStatus.ctx ?? builtinStatus.default_ctx)}</span>
               </span>
               {builtinStatus.ctx_override != null && (
                 <Badge variant="outline" className="text-[10px] shrink-0">
-                  {t('plugins:llm.builtinCtxOverride', { def: (builtinStatus.default_ctx ?? 0).toLocaleString() })}
+                  {t('plugins:llm.builtinCtxOverride', { def: fmtCtx(builtinStatus.default_ctx) })}
                 </Badge>
               )}
               <Button
@@ -837,6 +805,42 @@ export function UnifiedLLMBackendsTab({
                 <Settings2 className="h-3.5 w-3.5" />
                 {t('plugins:llm.builtinEngineSettings')}
               </Button>
+            </div>
+          )}
+          {builtinStatus.companion && (
+            // Companion is a SUB-ENTITY of the builtin card — its own muted
+            // strip, one status pill (the header pill above speaks ONLY for
+            // the main model), bucket ctx, and its own settings popover.
+            <div className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2">
+              <Eye className="h-3.5 w-3.5 shrink-0 text-info" />
+              <span className="min-w-0 flex-1 truncate text-xs">
+                <span className="text-muted-foreground">{t('plugins:llm.companionLabel')}: </span>
+                {builtinStatus.companion.name}
+              </span>
+              <span
+                className={cn(
+                  'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium',
+                  builtinStatus.companion.running
+                    ? 'bg-success-light text-success'
+                    : 'bg-muted text-muted-foreground',
+                )}
+              >
+                {builtinStatus.companion.running
+                  ? t('plugins:llm.companionRunning')
+                  : t('plugins:llm.companionStopped')}
+              </span>
+              <span className="shrink-0 text-[10px] text-muted-foreground">
+                ctx {fmtCtx(builtinStatus.companion.ctx)}
+              </span>
+              <CompanionSettingsPopover
+                ctx={builtinStatus.companion.ctx ?? null}
+                onApplied={() => {
+                  api
+                    .getBuiltinLlmStatus()
+                    .then(setBuiltinStatus)
+                    .catch(() => {})
+                }}
+              />
             </div>
           )}
           <div className="flex flex-wrap items-center gap-2">
