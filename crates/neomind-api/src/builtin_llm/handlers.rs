@@ -2003,8 +2003,22 @@ async fn spawn_companion_server(
     if !model_path.exists() {
         return Err(CompanionSkip::NotInstalled);
     }
+    // Dedicated companion overrides DECOUPLE the engine knobs: without
+    // them the main-model NEOMIND_BUILTIN_LLM_CTX/KV/NGL silently moved the
+    // companion too (raising the main to 128K also raised the companion's
+    // KV bill for no describe-workload benefit).
+    let mut ccfg = cfg.clone();
+    if let Some(v) = cfg.vlm_ctx {
+        ccfg.ctx = Some(v);
+    }
+    if let Some(kv) = cfg.vlm_kv_quant {
+        ccfg.kv_quant = kv;
+    }
+    if let Some(n) = cfg.vlm_ngl {
+        ccfg.ngl = Some(n);
+    }
     let ctx = guarded_ctx(
-        cfg,
+        &ccfg,
         installed.default_ctx,
         model_def(&installed.manifest.id),
     );
@@ -2026,14 +2040,14 @@ async fn spawn_companion_server(
         model: model_path,
         port: cfg.vlm_port,
         ctx,
-        ngl: cfg.ngl,
+        ngl: ccfg.ngl,
         threads: None,
         temperature: installed.temperature,
         top_p: installed.top_p,
         top_k: installed.top_k,
         min_p: installed.min_p,
         repeat_penalty: installed.repeat_penalty,
-        kv_quant: cfg.kv_quant,
+        kv_quant: ccfg.kv_quant,
         parallel: Some(1),
         mmproj,
     };

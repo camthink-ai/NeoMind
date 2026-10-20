@@ -15,6 +15,7 @@ The chat reply is now organized by execution round instead of by widget category
 - The built-in LLM can run a local VLM companion alongside the main text model, so image understanding no longer requires switching the whole conversation to a multimodal backend.
 - Vision tool calls now prefer local `builtin-vlm-*` companions ahead of cloud multimodal backends — lower cost and LAN latency — with clearer guidance when no VLM is installed.
 - Added companion role/capability plumbing, candidate-selection tests, and an ignored end-to-end VLM eval driven by `NEOMIND_TEST_VLM_ENDPOINT`.
+- Companion engine knobs decoupled from the main model: `NEOMIND_BUILTIN_VLM_CTX` / `_KV` / `_NGL` override the companion specifically (unset = follow the shared knobs); previously the main-model `NEOMIND_BUILTIN_LLM_CTX/KV/NGL` silently moved the companion too. Port (`_VLM_PORT`) and the kill switch (`NEOMIND_BUILTIN_VLM=off`) shipped earlier.
 
 ### Fixed — builtin LLM vision companion
 - Companion lifecycle and status: an installed companion now starts even when the main model is deleted, and `status` reports its block in every branch (it used to blink out mid-download). Delegated image turns no longer deliberate a redundant vision-tool call (small models burned minutes of thinking before an empty answer); VLM candidate order is deterministic with local companions first.

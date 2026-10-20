@@ -32,6 +32,16 @@ pub struct BuiltinConfig {
     /// of 29375 (main builtin) and 29376 (a hot manual-VLM port seen in the
     /// field on Jetson boxes). `NEOMIND_BUILTIN_VLM_PORT` overrides.
     pub vlm_port: u16,
+    /// Companion ctx OVERRIDE (`NEOMIND_BUILTIN_VLM_CTX`). `None` = the
+    /// companion follows the SHARED ctx override / its model default — the
+    /// pre-split behavior where the main-model env also moved the companion.
+    pub vlm_ctx: Option<usize>,
+    /// Companion KV-quant override (`NEOMIND_BUILTIN_VLM_KV`); None = follow
+    /// the shared `kv_quant`.
+    pub vlm_kv_quant: Option<bool>,
+    /// Companion GPU-layer override (`NEOMIND_BUILTIN_VLM_NGL`); None = follow
+    /// the shared `ngl`.
+    pub vlm_ngl: Option<u16>,
 }
 
 impl Default for BuiltinConfig {
@@ -54,6 +64,9 @@ impl Default for BuiltinConfig {
             parallel: Some(1),
             vlm_enabled: true,
             vlm_port: 29385,
+            vlm_ctx: None,
+            vlm_kv_quant: None,
+            vlm_ngl: None,
         }
     }
 }
@@ -113,6 +126,29 @@ impl BuiltinConfig {
                 c.vlm_port = p;
             }
         }
+        // Companion-specific engine overrides — the DECOUPLING matters more
+        // than the knobs themselves: without these, the main-model
+        // NEOMIND_BUILTIN_LLM_CTX/KV/NGL silently moved the companion too.
+        if let Ok(v) = std::env::var("NEOMIND_BUILTIN_VLM_CTX") {
+            if let Ok(n) = v.trim().parse::<usize>() {
+                if n >= 1024 {
+                    c.vlm_ctx = Some(n);
+                }
+            }
+        }
+        if let Ok(v) = std::env::var("NEOMIND_BUILTIN_VLM_KV") {
+            let v = v.trim().to_ascii_lowercase();
+            if matches!(v.as_str(), "f16" | "off" | "0" | "false") {
+                c.vlm_kv_quant = Some(false);
+            } else if matches!(v.as_str(), "q8_0" | "on" | "1" | "true") {
+                c.vlm_kv_quant = Some(true);
+            }
+        }
+        if let Ok(v) = std::env::var("NEOMIND_BUILTIN_VLM_NGL") {
+            if let Ok(n) = v.trim().parse() {
+                c.vlm_ngl = Some(n);
+            }
+        }
         c
     }
 
@@ -147,6 +183,9 @@ mod tests {
             "NEOMIND_BUILTIN_LLM_PARALLEL",
             "NEOMIND_BUILTIN_VLM",
             "NEOMIND_BUILTIN_VLM_PORT",
+            "NEOMIND_BUILTIN_VLM_CTX",
+            "NEOMIND_BUILTIN_VLM_KV",
+            "NEOMIND_BUILTIN_VLM_NGL",
         ] {
             std::env::remove_var(var);
         }
@@ -161,9 +200,13 @@ mod tests {
         assert!(c.kv_quant);
         // Single slot is the shipped default (see the config field's doc).
         assert_eq!(c.parallel, Some(1));
-        // Companion defaults: on, on its own port clear of 29375/29376.
+        // Companion defaults: on, on its own port clear of 29375/29376, and
+        // with NO dedicated engine overrides (follow the shared knobs).
         assert!(c.vlm_enabled);
         assert_eq!(c.vlm_port, 29385);
+        assert_eq!(c.vlm_ctx, None);
+        assert_eq!(c.vlm_kv_quant, None);
+        assert_eq!(c.vlm_ngl, None);
         // Effective ctx falls back to the model default.
         assert_eq!(c.effective_ctx(32_768), 32_768);
     }
@@ -188,8 +231,31 @@ mod tests {
             29385,
             "garbage ignored — default stands"
         );
-        std::env::remove_var("NEOMIND_BUILTIN_VLM");
-        std::env::remove_var("NEOMIND_BUILTIN_VLM_PORT");
+        // Dedicated companion overrides parse; None (unset) means "follow the
+        // shared knob".
+        std::env::set_var("NEOMIND_BUILTIN_VLM_CTX", "8192");
+        assert_eq!(BuiltinConfig::from_env().vlm_ctx, Some(8192));
+        std::env::set_var("NEOMIND_BUILTIN_VLM_CTX", "512");
+        assert_eq!(
+            BuiltinConfig::from_env().vlm_ctx,
+            None,
+            "sub-1024 ctx is ignored, same floor as the main knob"
+        );
+        std::env::set_var("NEOMIND_BUILTIN_VLM_KV", "f16");
+        assert_eq!(BuiltinConfig::from_env().vlm_kv_quant, Some(false));
+        std::env::set_var("NEOMIND_BUILTIN_VLM_KV", "q8_0");
+        assert_eq!(BuiltinConfig::from_env().vlm_kv_quant, Some(true));
+        std::env::set_var("NEOMIND_BUILTIN_VLM_NGL", "99");
+        assert_eq!(BuiltinConfig::from_env().vlm_ngl, Some(99));
+        for var in [
+            "NEOMIND_BUILTIN_VLM",
+            "NEOMIND_BUILTIN_VLM_PORT",
+            "NEOMIND_BUILTIN_VLM_CTX",
+            "NEOMIND_BUILTIN_VLM_KV",
+            "NEOMIND_BUILTIN_VLM_NGL",
+        ] {
+            std::env::remove_var(var);
+        }
     }
 
     #[serial_test::serial]
