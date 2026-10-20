@@ -325,7 +325,16 @@ fn strip_tag(line: &str, tag: &str) -> Option<String> {
     let raw = line
         .strip_prefix("- ")
         .or_else(|| line.strip_prefix("• "))?;
-    if raw.len() < tag.len() || !raw[..tag.len()].eq_ignore_ascii_case(tag) {
+    // Boundary-safe: `raw[..tag.len()]` PANICS when the tag length lands
+    // inside a multibyte char — any unlabeled Chinese bullet line hit this
+    // ("- [knowledge]" is 11 bytes = mid-4th-CJK-char), killing the whole
+    // extraction task and losing every fact that turn. `get` returns None
+    // on a non-boundary → the line is simply not a tagged fact.
+    if raw.len() < tag.len()
+        || !raw
+            .get(..tag.len())
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(tag))
+    {
         return None;
     }
     Some(strip_leading_separators(&raw[tag.len()..]))
@@ -1462,7 +1471,13 @@ impl SessionManager {
         // hardcoding 2000/3000 here would truncate files the user had raised
         // the limits for (Settings → Preferences), silently destroying memory.
         let mem_cfg = neomind_storage::MemoryConfig::load();
-        let store = neomind_storage::MarkdownMemoryStore::new(&mem_cfg.storage_path);
+        // with_config — `new` silently uses DEFAULT limits, so a user who
+        // raised the limits had the fit pass (configured limit) and the
+        // write rejected (default limit) on every extraction.
+        let store = neomind_storage::MarkdownMemoryStore::with_config(
+            &mem_cfg.storage_path,
+            mem_cfg.clone(),
+        );
         // new() does NOT create the directory tree — only the server's
         // init() does. Core-path consumers (CLI/eval/embedded) run before or
         // without that init, and every write into the missing dir failed
@@ -1693,8 +1708,9 @@ Assistant: {ar}\n"
                 return;
             }
         }
-        let memory_store = neomind_storage::MarkdownMemoryStore::new(
+        let memory_store = neomind_storage::MarkdownMemoryStore::with_config(
             neomind_core::paths::data_dir().join("memory"),
+            neomind_storage::MemoryConfig::load(),
         );
         let snapshot = crate::memory::MemorySnapshot::load(&memory_store);
         if !snapshot.is_empty() {
@@ -3077,6 +3093,18 @@ mod extraction_parse_tests {
         );
         assert!(u.is_empty());
         assert!(k.is_empty());
+    }
+
+    /// Regression: "[knowledge]" is 11 BYTES; byte 11 lands mid-character
+    /// on a 4th CJK char, and the old raw[..tag.len()] PANICKED — killing
+    /// the spawned extraction task and losing every fact of that turn
+    /// (the recurring "user_facts=1 persisted 0" signature).
+    #[test]
+    fn unlabeled_chinese_bullet_does_not_panic() {
+        assert_eq!(strip_tag("- 今天天气很不错的样子哦", "[user]"), None);
+        assert_eq!(strip_tag("• 四个汉字的行也安全", "[knowledge]"), None);
+        assert!(strip_tag("- [user] 喜欢喝茶", "[user]").is_some());
+        assert!(strip_tag("- [KNOWLEDGE] 温度阈值 25 度", "[knowledge]").is_some());
     }
 
     #[test]

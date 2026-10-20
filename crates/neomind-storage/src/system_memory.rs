@@ -469,26 +469,60 @@ impl Clone for MarkdownMemoryStore {
     }
 }
 
+/// Per-path write-lock registry. The store is instantiated from several
+/// places (canonical server state, per-request API handlers, agent-side
+/// extraction), and PER-INSTANCE locks let read-modify-writes against the
+/// SAME files interleave: extraction's unlocked read + late write silently
+/// rolled back concurrent marker updates (and vice versa — a second
+/// lost-facts channel, independent of the merge-fit bug). Keying both
+/// locks by the canonical directory makes every instance over the same
+/// memory dir share one mutex — single-writer discipline without
+/// cross-crate plumbing. Manual `Clone` keeps working (it re-shares the
+/// same Arcs, now also shared with every other instance).
+fn shared_locks_for(
+    base_path: &std::path::Path,
+) -> (
+    Arc<tokio::sync::Mutex<()>>,
+    Arc<tokio::sync::Mutex<()>>,
+) {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static REGISTRY: OnceLock<Mutex<HashMap<String, (Arc<tokio::sync::Mutex<()>>, Arc<tokio::sync::Mutex<()>>)>>> =
+        OnceLock::new();
+    let key = base_path
+        .canonicalize()
+        .unwrap_or_else(|_| base_path.to_path_buf())
+        .to_string_lossy()
+        .into_owned();
+    let registry = REGISTRY.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = registry.lock().unwrap_or_else(|e| e.into_inner());
+    guard
+        .entry(key)
+        .or_insert_with(|| {
+            (
+                Arc::new(tokio::sync::Mutex::new(())),
+                Arc::new(tokio::sync::Mutex::new(())),
+            )
+        })
+        .clone()
+}
+
 impl MarkdownMemoryStore {
     /// Create a new memory store with default config
     pub fn new(base_path: impl Into<PathBuf>) -> Self {
-        Self {
-            base_path: base_path.into(),
-            config: MemoryConfig::default(),
-            cache: Arc::new(RwLock::new(HashMap::new())),
-            write_lock: Arc::new(tokio::sync::Mutex::new(())),
-            custom_write_lock: Arc::new(tokio::sync::Mutex::new(())),
-        }
+        Self::with_config(base_path, MemoryConfig::default())
     }
 
     /// Create a new memory store with custom config
     pub fn with_config(base_path: impl Into<PathBuf>, config: MemoryConfig) -> Self {
+        let base_path = base_path.into();
+        let (write_lock, custom_write_lock) = shared_locks_for(&base_path);
         Self {
-            base_path: base_path.into(),
+            base_path,
             config,
             cache: Arc::new(RwLock::new(HashMap::new())),
-            write_lock: Arc::new(tokio::sync::Mutex::new(())),
-            custom_write_lock: Arc::new(tokio::sync::Mutex::new(())),
+            write_lock,
+            custom_write_lock,
         }
     }
 
@@ -2186,7 +2220,14 @@ fn evict_to_limit_preserving_markers(content: &str, max_chars: usize) -> String 
         if content.ends_with('\n') {
             return content.to_string();
         }
-        return format!("{}\n", content);
+        // At exactly the limit there is no room for the newline — appending
+        // it returned limit+1 chars, and replace_marker_section wrote that
+        // to disk verbatim, breaking the "file never exceeds its limit"
+        // invariant (the write_file mirror then rejected the same length).
+        if content.chars().count() < max_chars {
+            return format!("{}\n", content);
+        }
+        return content.to_string();
     }
 
     let lines: Vec<&str> = content.lines().collect();
@@ -2258,7 +2299,13 @@ fn evict_to_limit_preserving_markers(content: &str, max_chars: usize) -> String 
         .join("\n");
     out.push('\n');
 
-    if out.chars().count() > max_chars {
+    // Trailing newline only when it fits: the old unconditional push made
+    // an exactly-at-limit result limit+1, and the guard's take() then ate
+    // the newline while warning about "markers exceeding the budget" —
+    // misleading on both counts.
+    if out.chars().count() < max_chars {
+        out.push('\n');
+    } else if out.chars().count() > max_chars {
         tracing::warn!(
             chars = out.chars().count(),
             max_chars,
@@ -3101,3 +3148,53 @@ fn replace_marker_section_locked(
     info!(target = %target, marker = %marker, "Replaced marker section");
     Ok(true)
 }
+
+    /// Regression (limit+1 write): content exactly at the limit without a
+    /// trailing newline used to come back as limit+1 — and was written to
+    /// disk, breaking the file-never-exceeds-limit invariant.
+    #[test]
+    fn evict_at_exact_limit_keeps_invariant() {
+        let content = "a".repeat(50);
+        let out = evict_to_limit_preserving_markers(&content, 50);
+        assert!(out.chars().count() <= 50, "got {}", out.chars().count());
+        // Under the limit the newline is appended only when it fits.
+        let out2 = evict_to_limit_preserving_markers("abc", 50);
+        assert!(out2.chars().count() <= 50);
+    }
+
+    /// Every instance over the same memory dir must share one write lock —
+    /// per-instance locks let extraction (agent side), per-request API
+    /// handlers, and background marker jobs interleave RMWs on the same
+    /// files, silently rolling each other back.
+    #[test]
+    fn instances_over_same_path_share_locks() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = MarkdownMemoryStore::new(dir.path());
+        let b = MarkdownMemoryStore::new(dir.path());
+        assert!(Arc::ptr_eq(&a.write_lock, &b.write_lock));
+        assert!(Arc::ptr_eq(&a.custom_write_lock, &b.custom_write_lock));
+        let dir2 = tempfile::tempdir().unwrap();
+        let c = MarkdownMemoryStore::new(dir2.path());
+        assert!(!Arc::ptr_eq(&a.write_lock, &c.write_lock));
+    }
+
+    /// A raised configured limit must govern writes — `new()` used the
+    /// DEFAULT limit, so a user who raised limits had every extraction
+    /// write rejected (fit passed at the configured limit, store rejected
+    /// at the default).
+    #[tokio::test]
+    async fn write_honors_configured_limit_not_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = MemoryConfig {
+            storage_path: dir.path().to_str().unwrap().to_string(),
+            user_char_limit: 5000,
+            ..Default::default()
+        };
+        let store = MarkdownMemoryStore::with_config(dir.path(), cfg);
+        store.init().unwrap();
+        let big = "x".repeat(4500); // way over the default 2000
+        store
+            .write_file("user", &big)
+            .await
+            .expect("the CONFIGURED limit must govern writes");
+    }

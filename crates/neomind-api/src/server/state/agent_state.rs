@@ -107,8 +107,9 @@ impl AgentState {
             session_manager: Arc::new(SessionManager::memory()),
             agent_store: AgentStore::memory().unwrap(),
             agent_manager: Arc::new(RwLock::new(None)),
-            system_memory_store: Arc::new(MarkdownMemoryStore::new(
+            system_memory_store: Arc::new(MarkdownMemoryStore::with_config(
                 std::env::temp_dir().join("test-memory"),
+                neomind_storage::MemoryConfig::default(),
             )),
             memory_session_handle: Arc::new(RwLock::new(None)),
             memory_scheduler: Arc::new(RwLock::new(None)),
