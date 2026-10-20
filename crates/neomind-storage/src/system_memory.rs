@@ -2500,8 +2500,8 @@ fn evict_to_limit_preserving_markers(content: &str, max_chars: usize) -> String 
         while start > 0 && alive[start - 1] && protected[start - 1] {
             start -= 1;
         }
-        for k in start..=end {
-            alive[k] = false;
+        for a in alive.iter_mut().take(end + 1).skip(start) {
+            *a = false;
         }
     }
 
@@ -2529,8 +2529,8 @@ fn evict_to_limit_preserving_markers(content: &str, max_chars: usize) -> String 
         while start > 0 && alive[start - 1] && protected[start - 1] {
             start -= 1;
         }
-        for k in start..=end {
-            alive[k] = false;
+        for a in alive.iter_mut().take(end + 1).skip(start) {
+            *a = false;
         }
     }
 

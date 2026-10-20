@@ -1539,13 +1539,15 @@ pub async fn download_handler(
         match run_builtin_download(
             &state_for_task,
             &cfg_for_task,
-            &model_id_task,
-            &dest,
-            &url,
-            &sha,
-            &quant_task,
-            mmproj_src_task,
-            is_vlm,
+            DownloadJob {
+                model_id: model_id_task,
+                dest,
+                url,
+                sha,
+                quant: quant_task,
+                mmproj_src: mmproj_src_task,
+                companion: is_vlm,
+            },
             _active,
         )
         .await
@@ -1558,18 +1560,38 @@ pub async fn download_handler(
     ok(json!({ "started": true, "already_running": false }))
 }
 
+/// Pass-through payload for [`run_builtin_download`] — grouped so the
+/// signature stays clippy-sized while the call site reads as one bundle.
+struct DownloadJob {
+    model_id: String,
+    dest: PathBuf,
+    url: String,
+    sha: String,
+    quant: String,
+    mmproj_src: Option<(String, String, String)>,
+    companion: bool,
+}
+
 async fn run_builtin_download(
     state: &crate::server::types::ServerState,
     cfg: &BuiltinConfig,
-    model_id: &str,
-    dest: &Path,
-    url: &str,
-    sha: &str,
-    quant: &str,
-    mmproj_src: Option<(String, String, String)>,
-    companion: bool,
+    job: DownloadJob,
     _active: DownloadActiveGuard,
 ) -> anyhow::Result<()> {
+    let DownloadJob {
+        model_id,
+        dest,
+        url,
+        sha,
+        quant,
+        mmproj_src,
+        companion,
+    } = job;
+    let model_id = model_id.as_str();
+    let dest = dest.as_path();
+    let url = url.as_str();
+    let sha = sha.as_str();
+    let quant = quant.as_str();
     let client = reqwest::Client::new();
     let bus = state.event_bus();
 

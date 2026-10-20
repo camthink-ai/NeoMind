@@ -115,6 +115,7 @@ pub struct BuiltinModelDef {
     pub thinking_is_integral: bool,
     /// Recommended MINIMUM available RAM (MB): weights + KV cache + runtime
     /// + OS headroom. The UI discourages (not blocks) installs below this.
+    ///
     /// Entries with an mmproj must include its weights here.
     pub min_ram_mb: u64,
     /// Vision projector shipped alongside the model. `None` = text-only.

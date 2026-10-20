@@ -2024,15 +2024,6 @@ Assistant: {ar}\n"
         Ok(response)
     }
 
-    /// Chat-image delegation: the active model is text-only but a healthy
-    /// vision companion (`builtin-vlm-*`) is registered — describe each
-    /// image with the companion and continue the turn as TEXT instead of
-    /// rejecting the send. Returns the combined prompt, or None when
-    /// delegation is disabled / no companion / any step fails (the caller
-    /// then keeps the legacy validation error). Failures NEVER invent image
-    /// content: no description, no delegation.
-    /// NEOMIND_BUILTIN_VLM_DELEGATE=off restores the pre-companion behavior.
-
     /// Process a multimodal message with optional LLM backend override.
     pub async fn process_message_multimodal_with_backend(
         &self,

@@ -146,9 +146,12 @@ fn page_size_bytes() -> u64 {
         std::fs::read("/proc/self/auxv")
             .ok()
             .and_then(|raw| {
-                raw.chunks_exact(16).find_map(|c| {
-                    let key = u64::from_ne_bytes(c[0..8].try_into().ok()?);
-                    let val = u64::from_ne_bytes(c[8..16].try_into().ok()?);
+                // auxv entries are native-endian (u64 key, u64 value)
+                // pairs; step manually so a trailing partial entry can never
+                // misparse as a full one.
+                (0..raw.len().saturating_sub(15)).step_by(16).find_map(|i| {
+                    let key = u64::from_ne_bytes(raw[i..i + 8].try_into().ok()?);
+                    let val = u64::from_ne_bytes(raw[i + 8..i + 16].try_into().ok()?);
                     (key == 6 && val > 0).then_some(val)
                 })
             })
@@ -263,11 +266,12 @@ fn server_stderr_stdio(binary: &std::path::Path) -> std::process::Stdio {
 /// Order matters only for the tests and human eyes; llama-server parses
 /// flags positionally-independently.
 fn build_llama_args(cfg: &LlamaServerConfig) -> Vec<String> {
-    let mut args: Vec<String> = Vec::new();
-    args.push("-m".into());
-    args.push(cfg.model.display().to_string());
-    args.push("-c".into());
-    args.push(cfg.ctx.to_string());
+    let mut args: Vec<String> = vec![
+        "-m".into(),
+        cfg.model.display().to_string(),
+        "-c".into(),
+        cfg.ctx.to_string(),
+    ];
     if let Some(p) = &cfg.mmproj {
         // Vision projector: mounts the mtmd multimodal adapter. llama-server
         // then reports modalities.vision=true on /props, which the platform's

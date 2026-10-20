@@ -558,10 +558,11 @@ async fn send_stream(sm: &SessionManager, sid: &str, msg: &str) -> (String, Vec<
             AgentEvent::ToolCallStart {
                 tool, arguments, ..
             } => {
-                if tool == "shell" {
-                    if let Some(c) = arguments.get("command").and_then(|v| v.as_str()) {
-                        cmds.push(c.to_string());
-                    }
+                if let ("shell", Some(c)) = (
+                    tool.as_str(),
+                    arguments.get("command").and_then(|v| v.as_str()),
+                ) {
+                    cmds.push(c.to_string());
                 }
             }
             // NOTE: do NOT break on End — keep polling to the stream's
@@ -2626,7 +2627,7 @@ async fn incident_conversation_replay() -> anyhow::Result<()> {
             .await?;
         let status = resp.status();
         let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
-        println!("sandbox dashboard create: {status} {}", body.to_string());
+        println!("sandbox dashboard create: {status} {body}");
         let dash_id = body["data"]["id"]
             .as_str()
             .or(body["data"]["dashboard"]["id"].as_str())
