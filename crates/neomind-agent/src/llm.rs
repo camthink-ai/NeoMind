@@ -2735,6 +2735,7 @@ mod tests {
         LOCK.get_or_init(|| std::sync::Mutex::new(()))
     }
 
+    #[serial_test::serial]
     #[tokio::test]
     // The guard is held across the whole test ON PURPOSE: it serializes tests
     // that swap the process-global instance manager (test_global_manager_serial).
@@ -2775,6 +2776,7 @@ mod tests {
         );
     }
 
+    #[serial_test::serial]
     #[tokio::test]
     // Deliberate serialization guard (see the test above).
     #[allow(clippy::await_holding_lock)]
