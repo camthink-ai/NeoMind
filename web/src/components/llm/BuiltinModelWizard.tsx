@@ -623,12 +623,28 @@ export function BuiltinModelWizard({
                   })}
                 </div>
 
-                {/* Vision companions: install/running state independent of
-                    the main model — download starts it, delete removes it.
-                    Kept ABOVE the CTA so the primary action stays last
-                    (conventional dialog layout); the active-main button
-                    states never apply (a companion is never "active"). */}
-                {models.some((m) => m.role === 'vlm') && (
+                {/* Vision companion: runs alongside the main model to see
+                    images; the main CTA below never applies to it (a
+                    companion is never "active"). A vision-capable MAIN
+                    model makes it redundant — collapse to a one-line hint
+                    unless one is already installed (state/delete stay
+                    reachable). */}
+                {(() => {
+                  const vlmEntries = models.filter((m) => m.role === 'vlm')
+                  if (vlmEntries.length === 0) return null
+                  const selMainHasVision =
+                    models.find((m) => m.id === selectedModelId && m.role !== 'vlm')
+                      ?.vision === true
+                  const companionInstalled = vlmEntries.some((m) => m.installed)
+                  if (selMainHasVision && !companionInstalled) {
+                    return (
+                      <div className="flex items-center gap-1.5 rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                        <Eye className="h-3.5 w-3.5 shrink-0 text-info" />
+                        {t('plugins:llm.companionNotNeeded')}
+                      </div>
+                    )
+                  }
+                  return (
                   <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
                     <div className="flex items-center gap-2">
                       <Eye className="h-4 w-4 text-info" />
@@ -704,7 +720,8 @@ export function BuiltinModelWizard({
                         )
                       })}
                   </div>
-                )}
+                  )
+                })()}
 
                 {(() => {
                   // Three states per SELECTED model (the old check —

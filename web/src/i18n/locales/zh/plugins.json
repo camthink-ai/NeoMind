@@ -194,7 +194,8 @@
     "companionRunning": "运行中",
     "companionStopped": "已停止",
     "companionLabel": "视觉伴侣",
-    "companionInstall": "安装"
+    "companionInstall": "安装",
+    "companionNotNeeded": "当前主模型已自带视觉,无需视觉伴侣"
   },
   "yes": "是",
   "no": "否",

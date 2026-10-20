@@ -194,7 +194,8 @@
     "companionRunning": "Running",
     "companionStopped": "Stopped",
     "companionLabel": "Vision companion",
-    "companionInstall": "Install"
+    "companionInstall": "Install",
+    "companionNotNeeded": "The selected main model already sees images — no vision companion needed"
   },
   "yes": "Yes",
   "no": "No",
