@@ -164,7 +164,7 @@ export function ChatMessages({
       role="log"
       aria-busy={isStreaming}
       data-testid="messages-container"
-      className="max-w-3xl mx-auto space-y-4 sm:space-y-6"
+      className="max-w-3xl mx-auto space-y-4 sm:space-y-6 @container"
     >
       <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
         {announcement}
@@ -232,12 +232,16 @@ export function ChatMessages({
                 size to the widest sibling, so a content-hugging max-width
                 made their width jump (short during early streaming, wide
                 once long text/tables arrive) — a fixed full width keeps the
-                card geometry stable through the whole turn. */}
+                card geometry stable through the whole turn.
+
+                On a wide chat column, mirror the left avatar gutter on the
+                right so the assistant block is centred under the composer.
+                The container query leaves the narrow floating panel alone. */}
             <div
               className={
                 message.role === "user"
                   ? "order-1 max-w-[85%] sm:max-w-[80%]"
-                  : "w-full"
+                  : "w-full @[36rem]:pr-11"
               }
             >
               <div
