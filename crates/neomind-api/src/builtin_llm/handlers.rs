@@ -1094,12 +1094,20 @@ pub async fn status_handler(
             Some(c) => {
                 // Effective ctx from the REGISTERED instance (what the
                 // companion actually runs with) when present.
-                let inst_ctx = get_instance_manager().ok().and_then(|m| {
-                    m.list_instances()
-                        .into_iter()
-                        .find(|i| is_companion_instance_id(&i.id))
-                        .map(|i| i.capabilities.max_context)
-                });
+                // Never "—": instance truth first, then the env override,
+                // then the model's default — same "effective" contract as
+                // the main ctx display.
+                let inst_ctx = get_instance_manager()
+                    .ok()
+                    .and_then(|m| {
+                        m.list_instances()
+                            .into_iter()
+                            .find(|i| is_companion_instance_id(&i.id))
+                            .map(|i| i.capabilities.max_context)
+                    })
+                    .filter(|c| *c > 0)
+                    .or(cfg.vlm_ctx)
+                    .or(Some(c.default_ctx as usize));
                 json!({
                     "model_id": c.manifest.id,
                     "name": c.display_name,

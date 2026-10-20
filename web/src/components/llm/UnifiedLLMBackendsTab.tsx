@@ -29,8 +29,6 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Progress } from '@/components/ui/progress'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { Input } from '@/components/ui/input'
 import { badgeSize } from '@/design-system/tokens/typography'
 import { UnifiedFormDialog } from '@/components/dialog/UnifiedFormDialog'
 import { FormField } from '@/components/ui/field'
@@ -322,91 +320,6 @@ function toPluginInstance(instance: LlmBackendInstance, activeId: string | null)
 // 1-1.5 h at 32K (10 kills over two days) and settled stable at 16K.
 const BUILTIN_CTX_PRESETS = [16384, 32768, 65536, 131072]
 
-// Companion engine knobs (ctx + KV) — companion-only restart; the main
-// model never bounces for these.
-function CompanionSettingsPopover({
-  ctx,
-  onApplied,
-}: {
-  ctx: number | null
-  onApplied: () => void
-}) {
-  const { t } = useTranslation()
-  const [open, setOpen] = useState(false)
-  const [vlmCtx, setVlmCtx] = useState<string>(ctx ? String(ctx) : '')
-  const [vlmKv, setVlmKv] = useState<'q8_0' | 'f16'>('q8_0')
-  const [busy, setBusy] = useState(false)
-
-  const apply = async () => {
-    const parsed = Number.parseInt(vlmCtx.trim(), 10)
-    if (Number.isFinite(parsed) && (parsed < 1024 || parsed > 1_048_576)) {
-      toast({ title: t('plugins:llm.builtinCtxInvalid', 'ctx must be 1024..=1048576'), variant: 'destructive' })
-      return
-    }
-    setBusy(true)
-    try {
-      await api.restartBuiltinLlm({
-        ...(Number.isFinite(parsed) ? { vlm_ctx: parsed } : {}),
-        vlm_kv: vlmKv,
-      })
-      onApplied()
-      setOpen(false)
-    } catch {
-      // restartBuiltinLlm surfaces errors via its own toast path
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          className="grid h-6 w-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-          title={t('plugins:llm.companionSettings')}
-        >
-          <Settings2 className="h-3 w-3" />
-        </button>
-      </PopoverTrigger>
-      <PopoverContent className="w-64 space-y-3" align="start">
-        <p className="text-xs font-medium">{t('plugins:llm.companionSettings')}</p>
-        <label className="block space-y-1">
-          <span className="text-xs text-muted-foreground">
-            {t('plugins:llm.companionCtxLabel')}
-          </span>
-          <Input
-            value={vlmCtx}
-            onChange={(e) => setVlmCtx(e.target.value)}
-            placeholder="8192"
-            className="h-8 text-xs"
-            inputMode="numeric"
-          />
-        </label>
-        <label className="block space-y-1">
-          <span className="text-xs text-muted-foreground">
-            {t('plugins:llm.companionKvLabel')}
-          </span>
-          <Select value={vlmKv} onValueChange={(v) => setVlmKv(v as 'q8_0' | 'f16')}>
-            <SelectTrigger className="h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="q8_0">q8_0</SelectItem>
-              <SelectItem value="f16">f16</SelectItem>
-            </SelectContent>
-          </Select>
-        </label>
-        <Button size="sm" className="h-7 w-full text-xs" disabled={busy} onClick={apply}>
-          {t('plugins:llm.companionApply')}
-        </Button>
-        <p className="text-xs leading-snug text-muted-foreground">
-          {t('plugins:llm.companionApplyHint')}
-        </p>
-      </PopoverContent>
-    </Popover>
-  )
-}
-
 
 export function UnifiedLLMBackendsTab({
   onCreateBackend,
@@ -440,6 +353,11 @@ export function UnifiedLLMBackendsTab({
   const [wizardStartInPicker, setWizardStartInPicker] = useState(false)
   // Builtin engine-settings dialog (ctx today; port and friends later).
   const [ctxDialogOpen, setCtxDialogOpen] = useState(false)
+  const [vlmDialogOpen, setVlmDialogOpen] = useState(false)
+  const [vlmDialogInput, setVlmDialogInput] = useState<number | null>(null)
+  const [vlmKvInput, setVlmKvInput] = useState<'q8_0' | 'f16'>('q8_0')
+  const [vlmDialogSaving, setVlmDialogSaving] = useState(false)
+  const [vlmDialogError, setVlmDialogError] = useState<string | null>(null)
   const [ctxDialogInput, setCtxDialogInput] = useState<number | null>(null)
   // Engine knobs exposed alongside ctx (1.2.1): slot count and KV quant.
   const [parallelInput, setParallelInput] = useState<number | 'auto'>('auto')
@@ -855,15 +773,17 @@ export function UnifiedLLMBackendsTab({
                       ? t('plugins:llm.companionRunning')
                       : t('plugins:llm.companionStopped')}
                   </span>
-                  <CompanionSettingsPopover
-                    ctx={builtinStatus.companion.ctx ?? null}
-                    onApplied={() => {
-                      api
-                        .getBuiltinLlmStatus()
-                        .then(setBuiltinStatus)
-                        .catch(() => {})
+                  <button
+                    className="grid h-6 w-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+                    title={t('plugins:llm.companionSettings')}
+                    onClick={() => {
+                      setVlmDialogInput(builtinStatus.companion?.ctx ?? 32768)
+                      setVlmKvInput('q8_0')
+                      setVlmDialogOpen(true)
                     }}
-                  />
+                  >
+                    <Settings2 className="h-3 w-3" />
+                  </button>
                 </div>
               )}
             </div>
@@ -1261,6 +1181,71 @@ export function UnifiedLLMBackendsTab({
             </FormField>
             <FormField label={t('plugins:llm.builtinKv')} helpText={t('plugins:llm.builtinKvHelp')}>
               <Select value={kvInput} onValueChange={(v) => setKvInput(v as 'q8_0' | 'f16')}>
+                <SelectTrigger className="w-full font-mono">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="q8_0">q8_0</SelectItem>
+                  <SelectItem value="f16">f16</SelectItem>
+                </SelectContent>
+              </Select>
+            </FormField>
+          </div>
+        </UnifiedFormDialog>
+
+        {/* Companion engine settings — same dialog pattern as the main
+            engine settings above (ctx presets + KV). */}
+        <UnifiedFormDialog
+          open={vlmDialogOpen}
+          onOpenChange={(o) => { setVlmDialogOpen(o); if (!o) setVlmDialogError(null) }}
+          title={t('plugins:llm.companionSettings')}
+          description={t('plugins:llm.companionApplyHint')}
+          icon={<Eye className="h-5 w-5 text-muted-foreground" />}
+          className="z-[110]"
+          isSubmitting={vlmDialogSaving}
+          onSubmit={async () => {
+            const v = vlmDialogInput
+            if (v == null || !Number.isFinite(v) || v < 1024 || v > 1_048_576) {
+              setVlmDialogError(t('plugins:llm.builtinCtxInvalid'))
+              return
+            }
+            setVlmDialogSaving(true)
+            setVlmDialogError(null)
+            try {
+              await api.restartBuiltinLlm({ vlm_ctx: v, vlm_kv: vlmKvInput })
+              toast({ title: t('plugins:llm.builtinEngineApplied') })
+              setVlmDialogOpen(false)
+              await refreshBuiltinStatus()
+            } catch (e) {
+              setVlmDialogError(e instanceof Error ? e.message : String(e))
+            } finally {
+              setVlmDialogSaving(false)
+            }
+          }}
+          submitLabel={t('plugins:llm.companionApply')}
+          submitDisabled={vlmDialogSaving}
+          submitError={vlmDialogError ?? undefined}
+        >
+          <div className="space-y-4">
+            <FormField label={t('plugins:llm.builtinCtx')} helpText={t('plugins:llm.builtinCtxHelp')}>
+              <Select
+                value={String(vlmDialogInput ?? '')}
+                onValueChange={(v) => setVlmDialogInput(Number(v))}
+              >
+                <SelectTrigger className="w-full font-mono">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {BUILTIN_CTX_PRESETS.map((n) => (
+                    <SelectItem key={n} value={String(n)}>
+                      {(n / 1024).toFixed(0)}K
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FormField>
+            <FormField label={t('plugins:llm.builtinKv')} helpText={t('plugins:llm.builtinKvHelp')}>
+              <Select value={vlmKvInput} onValueChange={(v) => setVlmKvInput(v as 'q8_0' | 'f16')}>
                 <SelectTrigger className="w-full font-mono">
                   <SelectValue />
                 </SelectTrigger>
