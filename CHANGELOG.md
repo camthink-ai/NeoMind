@@ -7,16 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
-
 ## [1.2.2] - 2026-10-19 — round-based chat reply timeline, reply readability, and device runtime-metric fixes
 
-The chat reply is now organized by execution round instead of by widget category: each round owns its reasoning, intermediate output, and tool calls, while the final answer stays a separate reading surface. The built-in LLM can also run a local vision companion alongside the main text model, and the pending device and auto-onboard fixes from the previous Unreleased section are included below.
+The chat reply is now organized by execution round instead of by widget category: each round owns its reasoning, intermediate output, and tool calls, while the final answer stays a separate reading surface. The built-in LLM can also run a local vision companion alongside the main text model, memory extraction got a full reliability pass (a Chinese-bullet panic, merge and limit bugs, and cross-writer races had been silently losing facts), and the pending device and auto-onboard fixes from the previous Unreleased section are included below.
 
 ### Added — builtin LLM vision companion
 - The built-in LLM can run a local VLM companion alongside the main text model, so image understanding no longer requires switching the whole conversation to a multimodal backend.
 - Vision tool calls now prefer local `builtin-vlm-*` companions ahead of cloud multimodal backends — lower cost and LAN latency — with clearer guidance when no VLM is installed.
 - Added companion role/capability plumbing, candidate-selection tests, and an ignored end-to-end VLM eval driven by `NEOMIND_TEST_VLM_ENDPOINT`.
+
+### Fixed — builtin LLM vision companion
+- Companion lifecycle and status: an installed companion now starts even when the main model is deleted, and `status` reports its block in every branch (it used to blink out mid-download). Delegated image turns no longer deliberate a redundant vision-tool call (small models burned minutes of thinking before an empty answer); VLM candidate order is deterministic with local companions first.
+- Wizard: the companion block sits above the primary CTA, collapses to a one-line hint when the selected main model already sees images, and delete refreshes the models list. Chat upload gating polls at 8s with focus refresh, and only while the active model is text-only.
+
+### Fixed — memory extraction reliability
+- A byte-slice PANIC on unlabeled Chinese bullets killed the extraction task and lost every fact of that turn (the main driver of the observed `user_facts=1 persisted 0`); merging into a full file dropped all fresh facts and then tripped `2001 > 2000` rejections; extraction fitted against CONFIGURED limits while the store validated DEFAULTS, rejecting every write for users who raised limits. All fixed.
+- Per-instance write locks let extraction, API handlers, and background marker jobs silently roll each other back — locks are now shared per memory directory, guarded by an adversarial lost-updates test.
+- Persistence is marker-aware (`append_facts`): over budget, regenerable marker bodies shrink before facts, tags never split (an orphan tag used to trigger a recovery path that deleted user content). Pre-filters: 300-char fact cap, n-gram fuzzy dedup (the exact normalizer is blind to reworded Chinese), CJK facts exempt from the ASCII junk floor.
+- Default limits raised user 2000→4000 / knowledge 3000→6000 (persisted `memory_config.json` values are unaffected).
 
 ### Added — chat
 - Round-based execution timeline (`TurnTimeline`): each round groups thinking, intermediate output, and tool calls; rounds collapse independently, and the final answer is rendered outside the timeline.
@@ -52,6 +60,10 @@ The chat reply is now organized by execution round instead of by widget category
 - A draft was finalized from its FIRST uplink frame: analysis fired at one sample and later frames were discarded by a status gate. Follow-up samples are now stored while the draft awaits review (or sits in failed analysis) and re-run the analysis — a null/missing field in frame one no longer vanishes from the generated type permanently.
 - Template data types came from the semantic type (numeric battery/rssi fields → String, breaking charts and numeric transforms); the OBSERVED data type now wins, semantic types only fill unknown/all-null observations.
 - Array-container metrics were named with a literal `$.` prefix (`$.sensors`) that leaked into the UI, history queries and dashboard data-source lists — now stripped like leaf paths. Draft approval no longer hardcodes `json_path: "$.value"` into every auto-registered device (dead config today, a trap if json_path filtering is ever implemented).
+
+### Fixed — misc
+- `unified_pipeline_test` missed the new `builtin_version` field and broke workspace-wide test compiles; dashboard dropped the redundant selected-component floating text toolbar; extension pages crashed in dev.
+- Chat reply-polish follow-ups: long tool JSON contained in scrollable blocks, attachment preview stays with the composer, assistant content centered, interruptible stream wait + intent-guard fixes, live-model incident-replay evals.
 
 ### Added — device types
 - `ne302_camera` builtin template (NE301-compatible protocol plus `metadata.trigger_type`, capture/sleep commands, `store_raw=false`), seeded insert-only like NE101/NE301.
