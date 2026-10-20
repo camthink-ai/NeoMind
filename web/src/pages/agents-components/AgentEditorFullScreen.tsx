@@ -498,6 +498,7 @@ export function AgentEditorFullScreen({
     if (open && agent && devices.length > 0) {
       loadAgentResources(agent)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- agent identity changes reload resources via the [agent, open] effect above
   }, [devices, deviceTypes, open])
 
   // Auto-focus name input when creating a new agent

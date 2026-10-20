@@ -3090,6 +3090,7 @@ mod companion_delegation_tests {
     /// same pattern as the instance_manager auto-register test). Proves the
     /// companion runtime is actually queried and its text lands verbatim in
     /// the combined prompt.
+    #[cfg(feature = "llamacpp")]
     async fn fake_vlm_server() -> (String, tokio::task::JoinHandle<()>) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

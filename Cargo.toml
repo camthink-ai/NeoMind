@@ -109,7 +109,7 @@ chrono-tz = "0.10"
 
 # Utilities
 regex = "1"
-lru = "0.12"
+lru = "0.13"
 toml = "0.8"
 async-stream = "0.3"
 tempfile = "3"

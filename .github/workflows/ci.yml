@@ -243,8 +243,20 @@ jobs:
             --ignore RUSTSEC-2026-0098 \
             --ignore RUSTSEC-2026-0099 \
             --ignore RUSTSEC-2026-0049 \
-            --ignore RUSTSEC-2024-0437
+            --ignore RUSTSEC-2024-0437 \
+            --ignore RUSTSEC-2026-0002 \
+            --ignore RUSTSEC-2026-0367 \
+            --ignore RUSTSEC-2026-0368 \
+            --ignore RUSTSEC-2026-0369
           # webpki 0.102 (0104/0098/0099/0049): upstream-blocked — rumqttc 0.25.1
           #   pins webpki 0.102; re-check on each rumqttc release.
           # protobuf RUSTSEC-2024-0437: prometheus output-only (encodes, never
           #   parses external protobuf) -> unexploitable; re-check if we parse untrusted input.
+          # lru RUSTSEC-2026-0002 (unsound IterMut under Stacked Borrows):
+          #   we never call IterMut on the LRU (plain get/put hot paths only),
+          #   and 0.13 still carries the advisory; re-check on each lru release.
+          # zip 2.x 0367/0368/0369: all three are extract()-path privilege
+          #   escalations (SUID bits, symlink escape, perms-through-symlinks).
+          #   We NEVER call ZipArchive::extract — runtime.rs/frontend_components
+          #   open entries by name and copy bytes explicitly. Blocked at zip
+          #   "^2.1" (workspace pin); revisit on the zip 9 migration.
