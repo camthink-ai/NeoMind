@@ -429,8 +429,17 @@ async fn delegate_images_to_companion(message: &str, images: &[String]) -> Optio
     }
 
     let mut combined = message.to_string();
+    // Explicit handling instructions matter for small models: without them
+    // the model deliberates calling the `vision` tool (still in its tool
+    // list — the vision-tool filter only fires when the message ITSELF
+    // carries images, and this turn is text-only) and burns minutes of
+    // thinking before an empty answer (observed 2026-10-20: 2min of
+    // "should I call vision..." then a no-content retry).
     combined.push_str(&format!(
-        "\n\n[The user attached {} image(s); a local vision model described them:]\n",
+        "\n\n[The user attached {} image(s); a local vision model has ALREADY analyzed \
+         them — the descriptions below are complete. Answer directly from these \
+         descriptions. Do NOT call the vision tool: the images are not accessible \
+         to you and are already analyzed.]\n",
         described.len()
     ));
     for (i, d) in described.iter().enumerate() {
@@ -3111,6 +3120,10 @@ mod companion_delegation_tests {
             "companion text must land verbatim: {combined}"
         );
         assert!(combined.contains("[Image 1]"));
+        assert!(
+            combined.contains("Do NOT call the vision tool"),
+            "delegated turns must tell the model not to re-analyze via the tool: {combined}"
+        );
     }
 
     #[serial_test::serial]
