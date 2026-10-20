@@ -4,7 +4,12 @@
  * loading path: script tag injection, global lookup, named/default export.
  */
 
-import { useEffect, useState, type ComponentType } from 'react'
+import { Component, type ComponentType } from 'react'
+
+interface HostState {
+  Component: ComponentType | null
+  error: string | null
+}
 
 export interface ExtensionPageHostProps {
   bundleUrl: string
@@ -47,62 +52,79 @@ function loadUmdBundle(
   })
 }
 
-export function ExtensionPageHost({ bundleUrl, exportName, globalName, title }: ExtensionPageHostProps) {
-  const [Component, setComponent] = useState<ComponentType | null>(null)
-  const [error, setError] = useState<string | null>(null)
+export class ExtensionPageHost extends Component<ExtensionPageHostProps, HostState> {
+  // Class component on purpose: the function version gets a react-refresh
+  // `_s()` signature sigil in dev, whose hook-collection window corrupts
+  // the dispatcher when a bundle-loaded component first mounts from inside
+  // useEffect — React 18 dev then throws "Should have a queue" and the
+  // ErrorBoundary eats the route. Classes take a different refresh path
+  // (no hook signature collection), so this host behaves identically in
+  // dev and production.
+  state: HostState = { Component: null, error: null }
+  private cancelled = false
 
-  useEffect(() => {
-    let cancelled = false
-    setComponent(null)
-    setError(null)
-    // Extensions without global_name can't be loaded via script tag — the
-    // assets route serves the raw UMD; require the declaration.
-    if (!globalName) {
-      setError('Page manifest lacks global_name')
+  componentDidMount() {
+    this.load()
+  }
+
+  componentDidUpdate(prev: ExtensionPageHostProps) {
+    if (prev.bundleUrl !== this.props.bundleUrl) {
+      this.setState({ Component: null, error: null })
+      this.load()
+    }
+  }
+
+  componentWillUnmount() {
+    this.cancelled = true
+  }
+
+  private load() {
+    this.cancelled = false
+    if (!this.props.globalName) {
+      this.setState({ error: 'Page manifest lacks global_name' })
       return
     }
-    loadUmdBundle(bundleUrl, globalName)
+    loadUmdBundle(this.props.bundleUrl, this.props.globalName)
       .then((global) => {
-        if (cancelled) return
-        const named = global[exportName]
+        if (this.cancelled) return
+        const named = global[this.props.exportName]
         const def = typeof global === 'function' ? global : (global.default as unknown)
         const resolved = (named ?? def) as ComponentType | undefined
         if (typeof resolved === 'function' || (resolved && typeof resolved === 'object')) {
-          setComponent(resolved as ComponentType)
+          this.setState({ Component: resolved as ComponentType })
         } else {
-          setError(`Export "${exportName}" not found in bundle`)
+          this.setState({ error: `Export "${this.props.exportName}" not found in bundle` })
         }
       })
       .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e))
+        if (!this.cancelled) this.setState({ error: e instanceof Error ? e.message : String(e) })
       })
-    return () => {
-      cancelled = true
-    }
-  }, [bundleUrl, exportName, globalName])
+  }
 
-  if (error) {
-    return (
-      <div className="flex h-full items-center justify-center p-8">
-        <div className="max-w-md rounded-lg border border-destructive/40 bg-destructive/10 p-6 text-center">
-          <div className="mb-1 font-semibold text-destructive">扩展页面加载失败</div>
-          <div className="text-sm text-muted-foreground">{title}: {error}</div>
+  render() {
+    const { title } = this.props
+    const { Component, error } = this.state
+    if (error) {
+      return (
+        <div className="flex h-full items-center justify-center p-8">
+          <div className="max-w-md rounded-lg border border-destructive/40 bg-destructive/10 p-6 text-center">
+            <div className="mb-1 font-semibold text-destructive">扩展页面加载失败</div>
+            <div className="text-sm text-muted-foreground">{title}: {error}</div>
+          </div>
         </div>
-      </div>
-    )
-  }
-
-  if (!Component) {
+      )
+    }
+    if (!Component) {
+      return (
+        <div className="flex h-full items-center justify-center p-8 text-muted-foreground">
+          正在加载 {title}…
+        </div>
+      )
+    }
     return (
-      <div className="flex h-full items-center justify-center p-8 text-muted-foreground">
-        正在加载 {title}…
+      <div className="h-full overflow-auto p-4 md:p-6">
+        <Component />
       </div>
     )
   }
-
-  return (
-    <div className="h-full overflow-auto p-4 md:p-6">
-      <Component />
-    </div>
-  )
 }
