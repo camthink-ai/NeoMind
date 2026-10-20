@@ -200,7 +200,8 @@
     "companionCtxLabel": "Context window",
     "companionKvLabel": "KV cache",
     "companionApply": "Apply & restart companion",
-    "companionApplyHint": "Restarts only the vision companion; the main model keeps serving"
+    "companionApplyHint": "Restarts only the vision companion; the main model keeps serving",
+    "builtinMainEngine": "Main engine"
   },
   "yes": "Yes",
   "no": "No",

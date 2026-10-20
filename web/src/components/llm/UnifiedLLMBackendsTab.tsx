@@ -730,35 +730,39 @@ export function UnifiedLLMBackendsTab({
           builtinIsActive && 'border-success'
         )}
       >
+        {/* ── Zone 1 · identity: ONE status voice (the engine pill), the
+            model NAME as the title, category demoted to the subline. */}
         <CardHeader className="pb-3">
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1 min-w-0">
-                <div className="flex items-center justify-center h-8 w-8 rounded-lg shrink-0 bg-warning-light text-warning">
-                  <BrainCircuit className="h-4 w-4" />
-                </div>
+          <div className="flex items-center gap-2.5">
+            <div className="flex items-center justify-center h-8 w-8 rounded-lg shrink-0 bg-warning-light text-warning">
+              <BrainCircuit className="h-4 w-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5 min-w-0">
                 <CardTitle className="text-sm font-medium truncate min-w-0">
-                  {t('plugins:llm.builtinTitle')}
-                  {installedModelName && <span className="text-muted-foreground"> · {installedModelName}</span>}
+                  {installedModelName ?? t('plugins:llm.builtinTitle')}
                 </CardTitle>
-                <Badge variant="outline" className={cn(badgeSize.small, 'shrink-0')}>{t('plugins:llm.builtinBadge')}</Badge>
-                {builtinInstance?.capabilities?.supports_multimodal && (
-                  <Badge variant="outline" className={cn(badgeSize.small, 'shrink-0 gap-1')}>
-                    <Eye className="h-3 w-3" />
-                    {t('plugins:llm.capabilityVision')}
+                {builtinIsActive && (
+                  <Badge variant="default" className={cn(badgeSize.small, 'shrink-0')}>
+                    {t('plugins:llm.active')}
                   </Badge>
                 )}
-                {builtinIsActive && <Badge variant="default" className={cn(badgeSize.small, 'shrink-0')}>{t('plugins:llm.active')}</Badge>}
               </div>
-              <CardDescription className="text-xs line-clamp-1">
+              <p className="text-xs text-muted-foreground truncate">
                 {t('plugins:llm.builtinDesc')}
-              </CardDescription>
+              </p>
             </div>
-            <span className={cn('inline-flex h-5 items-center gap-1 px-2 rounded-md text-xs font-medium shrink-0', builtinInfo.pillClass)}>
+            <span
+              className={cn(
+                'inline-flex h-5 items-center gap-1 px-2 rounded-md text-xs font-medium shrink-0',
+                builtinInfo.pillClass,
+              )}
+            >
               {builtinInfo.text}
             </span>
           </div>
         </CardHeader>
+
         <CardContent className="pb-3 space-y-3">
           {builtinStatus.server_state === 'downloading' && (
             <div className="space-y-1">
@@ -777,77 +781,80 @@ export function UnifiedLLMBackendsTab({
               </span>
             </div>
           )}
+
+          {/* ── Zone 2 · engines: main + companion as the SAME row template
+              inside one bordered list — siblings by structure, not by prose. */}
           {builtinStatus.installed && builtinStatus.server_state !== 'downloading' && (
-            <div className="flex items-center gap-2 text-xs">
-              <span className="text-muted-foreground">
-                {t('plugins:llm.builtinCtx')}:
-                <span className="font-mono text-foreground ml-1">{fmtCtx(builtinStatus.ctx ?? builtinStatus.default_ctx)}</span>
-              </span>
-              {builtinStatus.ctx_override != null && (
-                <Badge variant="outline" className={cn(badgeSize.small, 'shrink-0')}>
-                  {t('plugins:llm.builtinCtxOverride', { def: fmtCtx(builtinStatus.default_ctx) })}
-                </Badge>
+            <div className="rounded-md border border-border divide-y divide-border">
+              <div className="flex items-center gap-2 px-3 py-2">
+                <BrainCircuit className="h-3.5 w-3.5 shrink-0 text-warning" />
+                <span className="shrink-0 text-xs font-medium">
+                  {t('plugins:llm.builtinMainEngine')}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                  ctx {fmtCtx(builtinStatus.ctx ?? builtinStatus.default_ctx)}
+                  {builtinStatus.kv_cache && ` · KV ${builtinStatus.kv_cache}`}
+                  {builtinStatus.parallel != null && ` · ×${builtinStatus.parallel}`}
+                </span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 gap-1 px-2 text-xs"
+                  disabled={!!builtinBusyAction}
+                  onClick={() => {
+                    const cur = builtinStatus.ctx_override ?? builtinStatus.ctx ?? builtinStatus.default_ctx ?? 32768
+                    const presets = BUILTIN_CTX_PRESETS
+                    setCtxDialogInput(presets.reduce((a, b) => Math.abs(b - cur) < Math.abs(a - cur) ? b : a, presets[0]))
+                    setParallelInput(builtinStatus.parallel == null ? 'auto' : (builtinStatus.parallel as number))
+                    setKvInput(builtinStatus.kv_cache === 'f16' ? 'f16' : 'q8_0')
+                    setCtxDialogOpen(true)
+                  }}
+                >
+                  <Settings2 className="h-3 w-3" />
+                  {t('plugins:llm.builtinEngineSettings')}
+                </Button>
+              </div>
+              {builtinStatus.companion && (
+                <div className="flex items-center gap-2 px-3 py-2">
+                  <Eye className="h-3.5 w-3.5 shrink-0 text-info" />
+                  <span className="shrink-0 text-xs font-medium">
+                    {t('plugins:llm.companionLabel')}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                    {builtinStatus.companion.name}
+                    <span className="mx-1.5 text-border">·</span>
+                    ctx {fmtCtx(builtinStatus.companion.ctx)}
+                  </span>
+                  <span
+                    className={cn(
+                      badgeSize.small,
+                      'shrink-0 rounded font-medium',
+                      builtinStatus.companion.running
+                        ? 'bg-success-light text-success'
+                        : 'bg-muted text-muted-foreground',
+                    )}
+                  >
+                    {builtinStatus.companion.running
+                      ? t('plugins:llm.companionRunning')
+                      : t('plugins:llm.companionStopped')}
+                  </span>
+                  <CompanionSettingsPopover
+                    ctx={builtinStatus.companion.ctx ?? null}
+                    onApplied={() => {
+                      api
+                        .getBuiltinLlmStatus()
+                        .then(setBuiltinStatus)
+                        .catch(() => {})
+                    }}
+                  />
+                </div>
               )}
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 gap-1.5 px-2"
-                disabled={!!builtinBusyAction}
-                onClick={() => {
-                  // Snap to the nearest preset (the Select only offers presets).
-                  const cur = builtinStatus.ctx_override ?? builtinStatus.ctx ?? builtinStatus.default_ctx ?? 32768
-                  const presets = BUILTIN_CTX_PRESETS
-                  setCtxDialogInput(presets.reduce((a, b) => Math.abs(b - cur) < Math.abs(a - cur) ? b : a, presets[0]))
-                  setParallelInput(builtinStatus.parallel == null ? 'auto' : builtinStatus.parallel)
-                  setKvInput(builtinStatus.kv_cache === 'f16' ? 'f16' : 'q8_0')
-                  setCtxDialogOpen(true)
-                }}
-              >
-                <Settings2 className="h-3.5 w-3.5" />
-                {t('plugins:llm.builtinEngineSettings')}
-              </Button>
             </div>
           )}
-          {builtinStatus.companion && (
-            // Companion is a SUB-ENTITY of the builtin card — its own muted
-            // strip, one status pill (the header pill above speaks ONLY for
-            // the main model), bucket ctx, and its own settings popover.
-            <div className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2">
-              <Eye className="h-3.5 w-3.5 shrink-0 text-info" />
-              <span className="min-w-0 flex-1 truncate text-xs">
-                <span className="text-muted-foreground">{t('plugins:llm.companionLabel')}: </span>
-                {builtinStatus.companion.name}
-              </span>
-              <span
-                className={cn(
-                  badgeSize.small,
-                  'shrink-0 rounded font-medium',
-                  builtinStatus.companion.running
-                    ? 'bg-success-light text-success'
-                    : 'bg-muted text-muted-foreground',
-                )}
-              >
-                {builtinStatus.companion.running
-                  ? t('plugins:llm.companionRunning')
-                  : t('plugins:llm.companionStopped')}
-              </span>
-              <span className="shrink-0 text-xs text-muted-foreground">
-                ctx {fmtCtx(builtinStatus.companion.ctx)}
-              </span>
-              <CompanionSettingsPopover
-                ctx={builtinStatus.companion.ctx ?? null}
-                onApplied={() => {
-                  api
-                    .getBuiltinLlmStatus()
-                    .then(setBuiltinStatus)
-                    .catch(() => {})
-                }}
-              />
-            </div>
-          )}
+
+          {/* ── Zone 3 · actions: navigation left, state + destructive right. */}
           <div className="flex flex-wrap items-center gap-2">
             {builtinStatus.server_state === 'downloading' ? (
-              // Progress shown above; no actions while a download is in flight.
               null
             ) : !builtinStatus.installed ? (
               <Button size="sm" onClick={() => handleBuiltinAction('download')} disabled={!!builtinBusyAction}>
@@ -870,45 +877,35 @@ export function UnifiedLLMBackendsTab({
                   <Download className="mr-1.5 h-3.5 w-3.5" />
                   {t('plugins:llm.switchModel')}
                 </Button>
-                <Button
-                  size="sm"
-                  onClick={() => handleBuiltinAction('activate')}
-                  // Activate only makes sense while the bundled server is
-                  // healthy — activating a stopped server would point chat at a
-                  // dead endpoint. Use 重启引擎 to bring it up first.
-                  disabled={!!builtinBusyAction || builtinIsActive || builtinStatus.server_state !== 'running'}
-                  variant={builtinIsActive ? 'secondary' : 'default'}
-                >
-                  {builtinBusyAction === 'activate'
-                    ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                    : builtinIsActive
-                      ? <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
-                      : <Zap className="mr-1.5 h-3.5 w-3.5" />}
-                  {builtinIsActive ? t('plugins:llm.builtinActive') : t('plugins:llm.builtinActivate')}
-                </Button>
-                {builtinStatus.server_state === 'stopped' && (
+                <div className="ml-auto flex items-center gap-2">
                   <Button
-                    onClick={() => handleBuiltinAction('restart')}
-                    disabled={!!builtinBusyAction}
-                    variant="secondary"
+                    size="sm"
+                    onClick={() => handleBuiltinAction('activate')}
+                    // Activate only makes sense while the bundled server is
+                    // healthy — activating a stopped server would point chat
+                    // at a dead endpoint.
+                    disabled={!!builtinBusyAction || builtinIsActive || builtinStatus.server_state !== 'running'}
+                    variant={builtinIsActive ? 'secondary' : 'default'}
                   >
-                    {builtinBusyAction === 'restart'
-                      ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      : <RotateCcw className="mr-2 h-4 w-4" />}
-                    {t('plugins:llm.builtinRestart')}
+                    {builtinBusyAction === 'activate'
+                      ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                      : builtinIsActive
+                        ? <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
+                        : <Zap className="mr-1.5 h-3.5 w-3.5" />}
+                    {builtinIsActive ? t('plugins:llm.builtinActive') : t('plugins:llm.builtinActivate')}
                   </Button>
-                )}
-                <Button
-                  size="sm"
-                  onClick={() => handleBuiltinAction('delete')}
-                  disabled={!!builtinBusyAction}
-                  variant="destructive"
-                >
-                  {builtinBusyAction === 'delete'
-                    ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                    : <Trash2 className="mr-1.5 h-3.5 w-3.5" />}
-                  {t('plugins:llm.builtinDelete')}
-                </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => handleBuiltinAction('delete')}
+                    disabled={!!builtinBusyAction}
+                    variant="destructive"
+                  >
+                    {builtinBusyAction === 'delete'
+                      ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                      : <Trash2 className="mr-1.5 h-3.5 w-3.5" />}
+                    {t('plugins:llm.builtinDelete')}
+                  </Button>
+                </div>
               </>
             )}
           </div>

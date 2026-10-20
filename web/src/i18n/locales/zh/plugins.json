@@ -200,7 +200,8 @@
     "companionCtxLabel": "上下文窗口",
     "companionKvLabel": "KV 缓存",
     "companionApply": "应用并重启伴侣",
-    "companionApplyHint": "仅重启视觉伴侣,不影响主模型会话"
+    "companionApplyHint": "仅重启视觉伴侣,不影响主模型会话",
+    "builtinMainEngine": "主引擎"
   },
   "yes": "是",
   "no": "否",
