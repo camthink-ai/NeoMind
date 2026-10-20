@@ -20,7 +20,8 @@ use super::stream_core::StreamSafeguards;
 use super::tool_detect::detect_json_tool_calls;
 use super::tool_exec::execute_tool_with_retry;
 use crate::agent::tool_parser::{
-    is_degenerate_fence_only_output, parse_tool_calls, remove_tool_calls_from_response,
+    is_degenerate_fence_only_output, is_degenerate_final_output, parse_tool_calls,
+    remove_tool_calls_from_response,
 };
 use crate::agent::types::{
     AgentEvent, AgentInternalState, AgentMessage, AgentMessageImage, ToolCall,
@@ -750,31 +751,61 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                     .unwrap_or_default();
 
                 if nudge_tool_calls.is_empty() {
-                    // Escape hatch: the model gave a real answer without
-                    // tools — that IS the final response now. Unless it's
-                    // STILL an action promise (narration collapse twice in a
-                    // row): label it as a progress report rather than letting
-                    // the promise impersonate a finished answer (see the
-                    // stream_core backstop for the rationale).
-                    let nudge_final = nudge_buffer.clone();
-                    let mut system_notes: Vec<String> = Vec::new();
-                    if crate::agent::is_narration_without_action(&nudge_final) {
-                        tracing::warn!("Multimodal turn ending on an action promise after nudge — appending progress note");
-                        // English only (decision 2026-10-10) — emitted as a
-                        // SystemNote callout, never merged into the reply
-                        // text.
+                    // === Post-nudge degenerate output — keep the narration ===
+                    // The model complied with "output the tool calls"
+                    // literally and answered with a bare empty JSON container
+                    // (live 2026-10-20 stream_core shape: `[]`). The
+                    // narration saved above is the real reply — keep it as
+                    // the final message (nothing new to yield, it was already
+                    // streamed) and label it as a progress report: the nudge
+                    // fired precisely because that narration was
+                    // promise-shaped.
+                    if is_degenerate_final_output(&remove_tool_calls_from_response(&nudge_buffer))
+                        && !said.is_empty()
+                    {
+                        tracing::warn!(
+                            narration_chars = said.chars().count(),
+                            degenerate_chars = nudge_buffer.chars().count(),
+                            "Multimodal nudge round degenerated to an empty JSON container — keeping the pre-nudge narration as the final reply"
+                        );
                         let note = "The turn ended here: the reply above is a progress report, not a completed result. Send \"continue\" to resume.".to_string();
                         yield AgentEvent::system_note(note.clone());
-                        system_notes.push(note);
+                        {
+                            let mut state = internal_state.write().await;
+                            if let Some(last_msg) = state.memory.last_mut() {
+                                if last_msg.role == "assistant" {
+                                    last_msg.system_notes = Some(vec![note]);
+                                }
+                            }
+                        }
+                        handled_by_nudge = true;
+                    } else {
+                        // Escape hatch: the model gave a real answer without
+                        // tools — that IS the final response now. Unless it's
+                        // STILL an action promise (narration collapse twice in
+                        // a row): label it as a progress report rather than
+                        // letting the promise impersonate a finished answer
+                        // (see the stream_core backstop for the rationale).
+                        let nudge_final = nudge_buffer.clone();
+                        let mut system_notes: Vec<String> = Vec::new();
+                        if crate::agent::is_narration_without_action(&nudge_final) {
+                            tracing::warn!("Multimodal turn ending on an action promise after nudge — appending progress note");
+                            // English only (decision 2026-10-10) — emitted as a
+                            // SystemNote callout, never merged into the reply
+                            // text.
+                            let note = "The turn ended here: the reply above is a progress report, not a completed result. Send \"continue\" to resume.".to_string();
+                            yield AgentEvent::system_note(note.clone());
+                            system_notes.push(note);
+                        }
+                        yield AgentEvent::content(nudge_final.clone());
+                        let final_text = remove_tool_calls_from_response(&nudge_final);
+                        let mut final_msg = AgentMessage::assistant(&final_text);
+                        if !system_notes.is_empty() {
+                            final_msg.system_notes = Some(system_notes);
+                        }
+                        internal_state.write().await.push_message(final_msg);
+                        handled_by_nudge = true;
                     }
-                    yield AgentEvent::content(nudge_final.clone());
-                    let final_text = remove_tool_calls_from_response(&nudge_final);
-                    let mut final_msg = AgentMessage::assistant(&final_text);
-                    if !system_notes.is_empty() {
-                        final_msg.system_notes = Some(system_notes);
-                    }
-                    internal_state.write().await.push_message(final_msg);
-                    handled_by_nudge = true;
                 } else {
                     // Recovered tool calls — execute them (inline pattern
                     // from the dead-end continuation), then summarize.

@@ -203,6 +203,10 @@ const KEEP_IMAGES_ON_RECENT_USER_MSGS: usize = 2;
 /// 0.3s turn end while the user waits for a watermarked image that never
 /// comes). English patterns are lowercase — the text is lowercased before
 /// matching, which leaves the Chinese patterns untouched.
+///
+/// Only matched against the HEAD of the reply (see [`PROMISE_HEAD_CHARS`]):
+/// narration collapse LEADS with the promise; politeness closings ("随时
+/// 告诉我，我来帮你实现！") live at the tail of a complete answer.
 const ACTION_PROMISE_PATTERNS: &[&str] = &[
     // Chinese
     "我将使用",
@@ -292,6 +296,15 @@ const ACTION_PROMISE_PATTERNS: &[&str] = &[
 /// that merely contains "let me use" somewhere is a legitimate final answer.
 const NARRATION_MAX_CHARS: usize = 500;
 
+/// How deep into the reply a promise pattern may sit and still count. A real
+/// narration collapse opens with the promise ("我来检查仪表盘…", "Let me
+/// check…"); the same words at the tail of a complete answer are a politeness
+/// closing. Live 2026-10-20: a full ~300-char capability-list answer ending
+/// in "随时告诉我，我来帮你一步步实现！" was misclassified, the nudge round
+/// ran, and the small model answered the nudge with a bare `[]` — replacing
+/// the real answer in the UI. Position, not just presence, decides.
+const PROMISE_HEAD_CHARS: usize = 80;
+
 /// True when `text` is a short reply that promises a tool action — the
 /// narration-without-action failure the tool loops nudge once before
 /// accepting the turn as complete.
@@ -308,14 +321,25 @@ pub fn is_narration_without_action(text: &str) -> bool {
     if trimmed.ends_with('：') || trimmed.ends_with(':') {
         return true;
     }
-    let lower = trimmed.to_lowercase();
+    let head: String = trimmed.chars().take(PROMISE_HEAD_CHARS).collect();
+    let lower = head.to_lowercase();
     ACTION_PROMISE_PATTERNS.iter().any(|p| lower.contains(p))
 }
 
 /// The one-shot nudge injected when narration collapse is detected.
 /// Bilingual: the failure is observed mostly on small bilingual edge models.
-pub const NARRATION_NUDGE_PROMPT: &str = "你上一条回复承诺了要调用工具，但没有发出任何工具调用——这不是最终答复。现在立即以 JSON 数组格式输出所需的工具调用：[{\"name\":\"工具名\",\"arguments\":{...}}]，不要再描述将要做什么。\n\
-Your previous reply promised a tool call but emitted none — that is not a final answer. Output the tool call(s) NOW as a JSON array [{\"name\":\"...\",\"arguments\":{...}}] instead of describing what you will do. If no tool is genuinely needed, give the complete final answer to the user directly.";
+/// Decision-first: small models follow the FIRST imperative they see, so the
+/// old prompt (which led with "output the tool calls as a JSON array") got
+/// literal compliance — a bare `[]` — whenever no tool was actually needed
+/// (live 2026-10-20: the complete capability-list answer was replaced by
+/// `[]`). The branch order and the explicit empty-array ban exist so the
+/// model must judge before it emits anything.
+pub const NARRATION_NUDGE_PROMPT: &str = "你上一条回复承诺了要执行操作，但没有发出任何工具调用——这不是最终答复。请先判断：\n\
+1. 如果确实需要工具才能完成用户的需求，现在立即只输出工具调用 JSON 数组：[{\"name\":\"工具名\",\"arguments\":{...}}]，不要输出其他文字。\n\
+2. 如果不需要任何工具，就不要输出 JSON 数组（绝对不要输出空数组 []），直接用文字给用户完整的最终答复。\n\
+Your previous reply promised an action but emitted no tool call — that is not a final answer. Decide first:\n\
+1. If a tool is genuinely required, output ONLY the tool-call JSON array now: [{\"name\":\"...\",\"arguments\":{...}}] — no other text.\n\
+2. If no tool is needed, do NOT output a JSON array (never an empty array \"[]\") — give the user the complete final answer as plain text.";
 
 /// Strip images from every user message older than the most recent
 /// [`KEEP_IMAGES_ON_RECENT_USER_MSGS`] image-bearing ones, leaving a short
@@ -939,6 +963,40 @@ mod narration_tests {
         // without a promise phrase.
         assert!(!is_narration_without_action(
             "已完成：水印已绘制并通过 vision 验证。"
+        ));
+    }
+
+    /// Live 2026-10-20 regression (verbatim shape): a COMPLETE ~300-char
+    /// capability-list answer whose politeness closing contains "我来帮你
+    /// …实现！". The promise pattern at the tail is a closing formula, not
+    /// an unexecuted action — the nudge round it triggered answered with a
+    /// bare `[]` and replaced the real answer. Promise phrases now only
+    /// count when they LEAD the reply.
+    #[test]
+    fn tail_politeness_closing_is_not_narration() {
+        let reply = format!(
+            "你好！我是 NeoMind，一个驻扎在 IoT 边缘平台上的 AI 工程师助手。我可以帮你处理以下工作：{}如果你有具体需求，随时告诉我，我来帮你一步步实现！",
+            "平台操作、设备管理、数据处理、模型调用、系统设置。".repeat(6)
+        );
+        assert!(reply.chars().count() > 200, "fixture must be substantial");
+        assert!(!is_narration_without_action(&reply));
+        // The English twin: "let me know"/"I'll help" closings under a long
+        // complete answer.
+        let english = format!(
+            "Here is the full capability overview of the platform. {}If you have a concrete task, just tell me and I'll help you implement it step by step!",
+            "Device management, dashboards, rules, data transforms. ".repeat(4)
+        );
+        assert!(!is_narration_without_action(&english));
+    }
+
+    /// The same closing words ARE a collapse when they lead the reply —
+    /// position is the discriminator, not presence.
+    #[test]
+    fn head_promise_still_detected() {
+        assert!(is_narration_without_action("我来帮你创建设备。"));
+        assert!(is_narration_without_action("好的，我来处理这个问题。"));
+        assert!(is_narration_without_action(
+            "Sure! I can help with that. Let me check your devices first."
         ));
     }
 }

@@ -36,7 +36,7 @@ impl AgentExecutor {
         tool_name_map: &std::collections::HashMap<String, String>,
         bound_image: Option<&str>,
     ) -> ToolLoopOutput {
-        use crate::agent::tool_parser::parse_tool_calls;
+        use crate::agent::tool_parser::{is_degenerate_final_output, parse_tool_calls};
         use neomind_core::llm::backend::{GenerationParams, LlmInput};
 
         // Build reverse map: original_name → sanitized_name
@@ -88,6 +88,9 @@ impl AgentExecutor {
         // Duplicate round detection: track tool signatures per round to detect loops.
         // Narration-collapse guard state: fires at most once (see below).
         let mut narration_nudged = false;
+        // The narration that triggered the nudge — restore source when the
+        // nudged round degenerates to a bare empty JSON container.
+        let mut nudge_saved_narration: Option<String> = None;
 
         // Get context window for token-aware compaction
         let context_window = llm_runtime.max_context_length();
@@ -409,6 +412,7 @@ impl AgentExecutor {
                     tracing::info!(
                         agent_id = %agent.id,
                         round = round + 1,
+                        chars = remaining_text.chars().count(),
                         "Narration without tool call — nudging once"
                     );
                     self.send_thinking(
@@ -421,7 +425,10 @@ impl AgentExecutor {
                     step_num += 1;
                     // Record the narration, then the pointed nudge. `messages`
                     // is this execution's working copy — nothing is persisted
-                    // to session history on this path.
+                    // to session history on this path. Keep the narration as
+                    // the restore source in case the nudged round degenerates
+                    // (bare `[]` compliance with the JSON-array directive).
+                    nudge_saved_narration = Some(remaining_text.clone());
                     messages.push(Message::new(
                         MessageRole::Assistant,
                         Content::text(&remaining_text),
@@ -432,6 +439,22 @@ impl AgentExecutor {
                     ));
                     round += 1;
                     continue;
+                }
+                // === Post-nudge degenerate output — restore the narration ===
+                // The nudged round complied with "output the tool calls"
+                // literally (bare empty JSON container, live 2026-10-20
+                // shape). The recorded narration is the real reply — keep it
+                // instead of a 2-char `[]` as the agent's final analysis.
+                if is_degenerate_final_output(&remaining_text) {
+                    if let Some(restored) = nudge_saved_narration.take() {
+                        tracing::warn!(
+                            agent_id = %agent.id,
+                            restored_chars = restored.chars().count(),
+                            "Post-nudge round degenerated to an empty JSON container — restoring the pre-nudge narration as the final text"
+                        );
+                        final_text = restored;
+                        break;
+                    }
                 }
                 final_text = remaining_text;
                 break;
@@ -840,7 +863,10 @@ impl AgentExecutor {
         let needs_summary = stop_reason != StopReason::Cancelled
             && (final_text.is_empty()
                 || final_text == "LLM generation failed during tool execution."
-                || final_text == "Completed tool execution rounds.");
+                || final_text == "Completed tool execution rounds."
+                // Degenerate finals (bare `[]`/`{}`, fence-only) carry no
+                // analysis value — synthesize from tool results instead.
+                || is_degenerate_final_output(&final_text));
         if needs_summary && !all_tool_results.is_empty() {
             final_text.clear();
             let summary = self

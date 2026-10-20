@@ -25,7 +25,7 @@ use super::tool_detect::detect_json_tool_calls;
 use super::tool_exec::execute_tool_with_retry;
 use crate::agent::staged::{IntentCategory, IntentClassifier};
 use crate::agent::tool_parser::{
-    is_degenerate_fence_only_output, parse_tool_calls, remove_tool_calls_from_response,
+    is_degenerate_final_output, parse_tool_calls, remove_tool_calls_from_response,
 };
 use crate::agent::types::{AgentEvent, AgentInternalState, AgentMessage, ToolCall};
 // No stuck-loop breaker in the chat path — the user is watching and can
@@ -428,6 +428,15 @@ pub async fn process_stream_events_with_safeguards(
             const NARRATION_NUDGE_MAX: usize = 3;
             let mut narration_nudges = 0usize;
             let mut narration_nudge_pending: Option<String> = None;
+            // Cleaned narration from the round that triggered the nudge —
+            // the restore source when the nudged round degenerates (see the
+            // post-nudge degenerate guard near the final save). Always the
+            // LATEST narration: a second nudge overwrites it.
+            let mut nudge_saved_narration: Option<String> = None;
+            // True while processing the round launched by the narration
+            // nudge — its output is held to stricter JSON-array suspicion
+            // (see might_be_json_start) and degenerate results are restored.
+            let mut round_is_nudge = false;
 
             // === STATED-INTENT MISMATCH GUARD (once per turn) ===
             // The model's own narrated command promises vs what actually
@@ -482,6 +491,11 @@ pub async fn process_stream_events_with_safeguards(
                     let recently_executed: Vec<&str> = recently_executed_tools.iter().map(|s| s.as_str()).collect();
                     drop(state_guard);
 
+                    // A nudge round's model output is held to stricter
+                    // JSON-array suspicion (see might_be_json_start below):
+                    // the model was ORDERED to emit a tool-call array, so a
+                    // bare `[` opening is suspect from the first byte.
+                    round_is_nudge = narration_nudge_pending.is_some();
                     let context_msg = if let Some(nudge) = narration_nudge_pending.take() {
                         // Narration-collapse retry: a pointed nudge replaces the
                         // generic round prompt so the model can't pattern-match
@@ -971,17 +985,24 @@ pub async fn process_stream_events_with_safeguards(
                                         || buffer.ends_with("```")
                                         || buffer.ends_with("```json")
                                         || (buffer.contains("[{\"name") && !buffer.contains("]}"))
-                                        || (buffer.contains("{\"name\"") && !buffer.contains("}]}"));
+                                        || (buffer.contains("{\"name\"") && !buffer.contains("}]}"))
+                                        // Nudge round: the model was ordered to answer with
+                                        // a JSON array — a leading `[` is suspicious even
+                                        // before anything else arrives.
+                                        || (round_is_nudge && buffer.trim_start().starts_with('['));
 
                                     if might_be_json_start {
                                         // Don't yield yet — wait for more chunks to determine
-                                        // if this is a tool call JSON or normal text
+                                        // if this is a tool call JSON or normal text.
                                         // Find the earliest suspicious position
                                         let suspicious_pos = {
                                             let mut pos = buffer.len();
                                             if let Some(p) = buffer.rfind("[{") { pos = pos.min(p); }
                                             if let Some(p) = buffer.rfind("{\"") { pos = pos.min(p); }
                                             if let Some(p) = buffer.rfind("```") { pos = pos.min(p); }
+                                            if round_is_nudge && buffer.trim_start().starts_with('[') {
+                                                if let Some(p) = buffer.find('[') { pos = pos.min(p); }
+                                            }
                                             pos
                                         };
                                         if suspicious_pos > yielded_up_to {
@@ -1056,7 +1077,20 @@ pub async fn process_stream_events_with_safeguards(
                     let should_suppress = remaining.trim_start().starts_with('[')
                         && (remaining.contains("\"name\"") || remaining.contains("\"arguments\""))
                         && !remaining.trim_end().ends_with(']');
-                    if !remaining.is_empty() && !should_suppress {
+                    // Nudge round whose ENTIRE output is a bare empty JSON
+                    // container: the model complied with "output the tool
+                    // calls" literally (live 2026-10-20: `[]` on screen after
+                    // a complete answer). Suppress it here — the post-nudge
+                    // degenerate guard near the final save restores the
+                    // pre-nudge narration as the turn's reply.
+                    let degenerate_nudge_output =
+                        round_is_nudge && is_degenerate_final_output(remaining);
+                    if degenerate_nudge_output {
+                        tracing::warn!(
+                            len = remaining.len(),
+                            "Nudge round produced only a bare empty JSON container — suppressing display; the pre-nudge narration will be restored as the final reply"
+                        );
+                    } else if !remaining.is_empty() && !should_suppress {
                         content_before_tools.push_str(remaining);
                         yield AgentEvent::content(remaining);
                     } else if should_suppress {
@@ -1753,7 +1787,7 @@ pub async fn process_stream_events_with_safeguards(
                         narration_nudges += 1;
                         tracing::info!(
                             round = tool_iteration_count + 1,
-                            chars = raw_response.len(),
+                            chars = raw_response.chars().count(),
                             "Narration without tool call — nudging once"
                         );
                         yield AgentEvent::progress(
@@ -1764,6 +1798,9 @@ pub async fn process_stream_events_with_safeguards(
                         // The narration was already streamed to the user; record
                         // it so the retry round sees what was said.
                         let said = remove_tool_calls_from_response(&raw_response);
+                        // Keep it as the restore source in case the nudged
+                        // round degenerates (bare `[]`).
+                        nudge_saved_narration = Some(said.clone());
                         internal_state
                             .write()
                             .await
@@ -1772,6 +1809,28 @@ pub async fn process_stream_events_with_safeguards(
                         narration_nudge_pending = Some(crate::agent::NARRATION_NUDGE_PROMPT.to_string());
                         yield AgentEvent::IntermediateEnd;
                         continue 'multi_round_loop;
+                    }
+
+                    // === RECOVERY: post-nudge degenerate round — restore the narration ===
+                    // The nudged round answered the "output the tool calls"
+                    // directive with a bare empty JSON container instead of
+                    // either a tool call or a real final answer (live
+                    // 2026-10-20: the nudged round's entire output was `[]`).
+                    // The narration recorded before the nudge was already a
+                    // complete streamed reply — restore it deterministically,
+                    // with no extra LLM call, so the turn keeps the real
+                    // answer instead of a 2-char `[]`. Runs BEFORE the
+                    // promise backstop so a restored promise-shaped narration
+                    // still gets its progress label.
+                    if is_degenerate_final_output(&raw_response) {
+                        if let Some(restored) = nudge_saved_narration.take() {
+                            tracing::warn!(
+                                restored_chars = restored.chars().count(),
+                                degenerate_chars = raw_response.chars().count(),
+                                "Post-nudge round degenerated to an empty JSON container — restoring the pre-nudge narration as the final reply"
+                            );
+                            raw_response = restored;
+                        }
                     }
 
                     // === TURN-END PROMISE BACKSTOP ===
@@ -1906,9 +1965,10 @@ pub async fn process_stream_events_with_safeguards(
                     // This handles the case where thinking models consume all generation
                     // budget on thinking tokens, producing no content. Retry once with
                     // thinking forcefully disabled so the model outputs content directly.
-                    // Also covers degenerate "fence-only" output (e.g. DeepSeek emitting
-                    // just "```" as the final answer) — treated as empty so the retry fires.
-                    if is_degenerate_fence_only_output(&raw_response) {
+                    // Also covers degenerate output — fence-only (e.g. DeepSeek emitting
+                    // just "```" as the final answer) and bare empty JSON containers
+                    // (`[]`/`{}`) — treated as empty so the retry fires.
+                    if is_degenerate_final_output(&raw_response) {
                         let had_thinking = !thinking_content.is_empty();
                         let orig_len = raw_response.len();
                         // Blank out the degenerate buffer so the retry fully replaces it

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Fixed — chat/agent narration guard
+- A COMPLETE reply ending in a politeness closing ("随时告诉我，我来帮你一步步实现！") was misread by the narration-collapse guard as an unexecuted action promise — the pattern table matched "我来帮" anywhere in a ≤500-char reply. The nudge round it launched re-entered thinking after the answer had already finished streaming (the "r2 thinking after reply complete" report), and the small model answered the nudge's "output the tool calls as a JSON array" directive with a bare `[]`, which then became the persisted final answer (2 chars; memory extraction skipped it as too short). Promise phrases now only count when they LEAD the reply (first 80 chars): politeness closings at the tail no longer trigger the nudge, while real promise-led collapses ("我来检查仪表盘…") still do.
+- The nudge prompt is now decision-first and explicitly bans the empty array: small models follow the FIRST imperative they see, so the old "output tool calls as a JSON array NOW" lead got literal `[]` compliance whenever no tool was actually needed.
+- Post-nudge degenerate output is recovered on all three tool loops (text streaming, multimodal, scheduled-agent executor): when the nudged round answers with a bare `[]`/`{}`/`null` (new `is_degenerate_final_output`), the pre-nudge narration is restored as the final reply — deterministically, no extra LLM call — and the bare container is suppressed from display. Without a nudge in play, degenerate finals now trigger the existing no-thinking retry (streaming) or the Phase-2 tool-result summary (executor) instead of being saved. Non-empty JSON arrays stay legitimate answers.
+- The narration guard log's `chars` field reported BYTES (920 for a ~300-char Chinese reply — which made the 500-char exemption look like it should have fired); it now reports characters.
+
 ## [1.2.2] - 2026-10-20 — round-based chat timeline, local vision companion, memory reliability, and device runtime-metric fixes
 
 The chat reply is now organized by execution round instead of by widget category: each round owns its reasoning, intermediate output, and tool calls, while the final answer stays a separate reading surface. The built-in LLM can also run a local vision companion alongside the main text model, memory extraction got a full reliability pass (a Chinese-bullet panic, merge and limit bugs, and cross-writer races had been silently losing facts), and the pending device and auto-onboard fixes from the previous Unreleased section are included below.

@@ -793,6 +793,35 @@ pub fn is_degenerate_fence_only_output(content: &str) -> bool {
     saw_fence
 }
 
+/// True when `content` carries no user-facing value as a final chat reply:
+/// empty/whitespace, fence-only output (see [`is_degenerate_fence_only_output`]),
+/// or a bare EMPTY JSON array/object (`[]` / `{}`).
+///
+/// The `[]` shape is what a small model emits when the narration nudge
+/// demands "output the tool calls as a JSON array" but no tool is actually
+/// needed — it complies literally with an empty array, and
+/// [`remove_tool_calls_from_response`] lets it through (an empty array
+/// contains no name/tool objects to strip). Left alone it becomes the
+/// persisted final answer (live 2026-10-20: a complete 920-byte answer was
+/// replaced by a 2-char `[]`). A NON-empty array stays legitimate — the user
+/// may have asked for JSON data.
+pub fn is_degenerate_final_output(content: &str) -> bool {
+    let trimmed = content.trim();
+    if is_degenerate_fence_only_output(trimmed) {
+        return true;
+    }
+    match serde_json::from_str::<serde_json::Value>(trimmed) {
+        Ok(v) => match v {
+            serde_json::Value::Array(a) => a.is_empty(),
+            serde_json::Value::Object(o) => o.is_empty(),
+            // A literal `null` reply is as empty as an empty string.
+            serde_json::Value::Null => true,
+            _ => false,
+        },
+        Err(_) => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -835,6 +864,35 @@ mod tests {
         // Empty input is the only overlap — treated as degenerate so recovery runs.
         assert!(is_degenerate_fence_only_output(""));
         assert!(is_degenerate_fence_only_output("   \n  "));
+    }
+
+    #[test]
+    fn test_degenerate_final_empty_json_containers() {
+        // The narration-nudge `[]` failure (live 2026-10-20).
+        assert!(is_degenerate_final_output("[]"));
+        assert!(is_degenerate_final_output("  []  "));
+        assert!(is_degenerate_final_output("[\n]"));
+        assert!(is_degenerate_final_output("{}"));
+        assert!(is_degenerate_final_output("null"));
+        // Empty / fence-only supersets still caught.
+        assert!(is_degenerate_final_output(""));
+        assert!(is_degenerate_final_output("```"));
+        assert!(is_degenerate_final_output("```json\n```"));
+    }
+
+    #[test]
+    fn test_degenerate_final_not_triggered_for_real_content() {
+        // A non-empty array is a legitimate data answer ("give me the list as JSON").
+        assert!(!is_degenerate_final_output(
+            r#"[{"id":"demo-001","online":true}]"#
+        ));
+        assert!(!is_degenerate_final_output(r#"{"status":"ok"}"#));
+        assert!(!is_degenerate_final_output("设备在线，温度 23.5°C。"));
+        assert!(!is_degenerate_final_output("null pointer? No — prose."));
+        // Prose that merely CONTAINS brackets/braces is not a bare container.
+        assert!(!is_degenerate_final_output(
+            "Result: [] (no devices matched) — done."
+        ));
     }
 
     #[test]
