@@ -489,8 +489,13 @@ fn shared_locks_for(
     use std::sync::{Mutex, OnceLock};
     static REGISTRY: OnceLock<Mutex<HashMap<String, (Arc<tokio::sync::Mutex<()>>, Arc<tokio::sync::Mutex<()>>)>>> =
         OnceLock::new();
-    let key = base_path
-        .canonicalize()
+    // Deterministic key: ABSOLUTE, not canonical. canonicalize() resolves
+    // differently before vs after the directory exists (and through
+    // symlinks like macOS /var → /private/var), so an instance created
+    // pre-init and one created post-init could land on DIFFERENT keys —
+    // silently splitting the lock again. `absolute()` depends only on the
+    // input path, which every call site derives from the same config.
+    let key = std::path::absolute(base_path)
         .unwrap_or_else(|_| base_path.to_path_buf())
         .to_string_lossy()
         .into_owned();
@@ -868,8 +873,12 @@ impl MarkdownMemoryStore {
         };
         let facts = facts.to_vec();
         let mut fresh_count = 0usize;
+        // NOT `move`: modify_file runs the closure inline (no Send bound),
+        // so a plain borrow lets the fresh-count write through to the outer
+        // variable — the moved closure updated its own copy and the caller
+        // always read 0 (caught by the integration test).
         let wrote = self
-            .modify_file(target, move |current| {
+            .modify_file(target, |current| {
                 let (out, n) = append_facts_transform(current, &facts, limit);
                 fresh_count = n;
                 out
@@ -3492,4 +3501,128 @@ fn replace_marker_section_locked(
         let closes = out.matches("<!-- /").count();
         assert_eq!(opens, closes, "no orphan tags: {out}");
         assert!(out.contains("- fact"), "facts outlive regenerable markers");
+    }
+
+    // ---- append_facts: on-disk integration (transform ↔ modify_file seam) ----
+
+    #[tokio::test]
+    async fn append_facts_integration_lands_on_disk() {
+        let temp = tempfile::tempdir().unwrap();
+        let cfg = MemoryConfig {
+            storage_path: temp.path().to_str().unwrap().to_string(),
+            user_char_limit: 4000,
+            ..Default::default()
+        };
+        let store = MarkdownMemoryStore::with_config(temp.path(), cfg);
+        store.init().unwrap();
+
+        // Seed: facts + a marker block (the shape extraction coexists with).
+        store
+            .write_file(
+                "user",
+                "# Profile\n- old fact\n<!-- chat-summary -->\nsummary body\n<!-- /chat-summary -->",
+            )
+            .await
+            .unwrap();
+
+        let (wrote, fresh) = store
+            .append_facts("user", &["brand new fact".into()])
+            .await
+            .unwrap();
+        assert!(wrote);
+        assert_eq!(fresh, 1);
+        let on_disk = store.read_file_sync("user");
+        assert!(on_disk.contains("- brand new fact"), "fact persisted");
+        let fact_at = on_disk.find("- brand new fact").unwrap();
+        let marker_at = on_disk.find("<!-- chat-summary -->").unwrap();
+        assert!(fact_at < marker_at, "facts before the marker tail");
+        assert!(on_disk.contains("<!-- /chat-summary -->"), "tags balanced");
+
+        // Dedup round: exact-normalized repeat writes NOTHING.
+        let (wrote2, fresh2) = store
+            .append_facts("user", &["Brand   New FACT".into()])
+            .await
+            .unwrap();
+        assert!(!wrote2, "dedup round must not touch the disk");
+        assert_eq!(fresh2, 0);
+    }
+
+    // ---- Gap 2: cross-instance concurrency — the lost-update regression.
+    // Two SEPARATE store instances over the same directory (extraction +
+    // canonical-server shape) interleave fact appends with marker writes.
+    // With per-instance locks the read-modify-writes interleaved and facts
+    // silently vanished; with the per-path registry every append survives.
+
+    #[tokio::test]
+    async fn concurrent_append_and_marker_writes_lose_nothing() {
+        let temp = tempfile::tempdir().unwrap();
+        let mk = || {
+            MarkdownMemoryStore::new(temp.path()) // separate instance = separate struct, shared lock
+        };
+        mk().init().unwrap();
+        mk().write_file("user", "# Profile").await.unwrap();
+
+        const TASKS: usize = 8;
+        const FACTS_PER: usize = 5;
+        let mut handles = Vec::new();
+        for t in 0..TASKS {
+            let store = mk();
+            handles.push(tokio::spawn(async move {
+                for i in 0..FACTS_PER {
+                    let fact = format!("fact-t{t}-i{i}");
+                    let (wrote, _) = store.append_facts("user", &[fact]).await.unwrap();
+                    assert!(wrote, "a fresh fact must always be written");
+                }
+            }));
+        }
+        // Marker churn from the "background job" instance, concurrent.
+        let marker_store = mk();
+        let marker_task = tokio::spawn(async move {
+            for round in 0..10 {
+                marker_store
+                    .replace_marker_section(
+                        "user",
+                        "chat-summary",
+                        &format!("summary round {round}"),
+                    )
+                    .await
+                    .unwrap();
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+        });
+
+        for h in handles {
+            h.await.unwrap();
+        }
+        marker_task.await.unwrap();
+
+        let final_content = mk().read_file_sync("user");
+        for t in 0..TASKS {
+            for i in 0..FACTS_PER {
+                assert!(
+                    final_content.contains(&format!("fact-t{t}-i{i}")),
+                    "lost update: fact-t{t}-i{i} missing — the per-path lock regressed"
+                );
+            }
+        }
+        let opens = final_content.matches("<!-- chat-summary -->").count();
+        let closes = final_content.matches("<!-- /chat-summary -->").count();
+        assert_eq!(opens, closes, "marker structure must stay balanced");
+    }
+
+    // ---- Gap 3 regression: instances created BEFORE and AFTER the
+    // directory exists must still share locks (the canonicalize variant
+    // split them).
+
+    #[test]
+    fn lock_key_stable_across_directory_creation() {
+        let temp = tempfile::tempdir().unwrap();
+        let not_yet = temp.path().join("deep/memory");
+        let pre = MarkdownMemoryStore::new(&not_yet);
+        std::fs::create_dir_all(&not_yet).unwrap();
+        let post = MarkdownMemoryStore::new(&not_yet);
+        assert!(
+            Arc::ptr_eq(&pre.write_lock, &post.write_lock),
+            "pre-init and post-init instances must share one lock"
+        );
     }
