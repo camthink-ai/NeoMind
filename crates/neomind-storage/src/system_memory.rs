@@ -419,7 +419,7 @@ pub struct CustomFileStats {
 /// - `custom/{name}.md` - Domain-specific knowledge (max `agent_char_limit` chars/file)
 ///
 /// **Agent files (managed by bridge):**
-/// - `agents/{agent_id}.md` - Agent summaries (max `agent_char_limit` chars, default 500)
+/// - `agents/{agent_id}.md` - Agent summaries (max `agent_char_limit` chars, default 20000)
 #[derive(Debug)]
 pub struct MarkdownMemoryStore {
     /// Base path for memory files
@@ -849,6 +849,35 @@ impl MarkdownMemoryStore {
     ///
     /// # Returns
     /// `Ok(true)` if file was modified, `Ok(false)` if content unchanged.
+    /// Append fresh memory facts to a persistent file, marker-aware (see
+    /// [`append_facts_transform`]). Built on [`modify_file`]: one locked
+    /// read-modify-write, the char limit enforced on the result. Returns
+    /// (wrote, fresh_count) — a dedup-only call reports (false, 0) and
+    /// never touches the disk.
+    pub async fn append_facts(&self, target: &str, facts: &[String]) -> Result<(bool, usize)> {
+        let limit = match target {
+            "user" => self.config.user_char_limit,
+            "knowledge" => self.config.knowledge_char_limit,
+            "procedures" => self.config.procedures_char_limit,
+            _ => {
+                return Err(Error::InvalidInput(format!(
+                    "Invalid target: {}. Must be 'user', 'knowledge', or 'procedures'",
+                    target
+                )))
+            }
+        };
+        let facts = facts.to_vec();
+        let mut fresh_count = 0usize;
+        let wrote = self
+            .modify_file(target, move |current| {
+                let (out, n) = append_facts_transform(current, &facts, limit);
+                fresh_count = n;
+                out
+            })
+            .await?;
+        Ok((wrote, fresh_count))
+    }
+
     pub async fn replace_marker_section(
         &self,
         target: &str,
@@ -2207,6 +2236,163 @@ fn replace_section_in_content(content: &str, heading: &str, new_body: &str) -> S
 /// sections, and dropping half of one corrupts the next regeneration).
 ///
 /// Ordinary lines are evicted from the BOTTOM — the same end-of-file
+/// One parsed marker block (`<!-- name -->` … `<!-- /name -->`, complete
+/// pairs only — an unpaired open tag stays an ordinary line).
+struct MarkerSegment {
+    name: String,
+    /// open tag, body lines, close tag — in order.
+    lines: Vec<String>,
+}
+
+fn marker_open_name(line: &str) -> Option<String> {
+    let t = line.trim();
+    t.strip_prefix("<!-- ")
+        .and_then(|r| r.strip_suffix(" -->"))
+        .filter(|n| !n.is_empty() && !n.starts_with('/'))
+        .map(str::to_string)
+}
+
+/// Marker-aware fact append — the extraction path's merge.
+///
+/// Placement: fresh facts go after the ordinary lines and BEFORE the marker
+/// blocks (markers stay at the tail where `replace_marker_section` expects
+/// them). Over budget, in order: (1) marker block BODIES shrink from the
+/// last block backwards — tags stay balanced and the background jobs refill
+/// the bodies next cycle, so regenerable content gives way first; (2) old
+/// ordinary lines evict bottom-first, timestamped log lines ahead of
+/// curated ones — never the fresh facts; (3) a line-boundary truncation as
+/// the last-resort guard (callers cap per-fact length).
+///
+/// Exact-normalized duplicates against existing bullets are dropped and
+/// not counted fresh. Returns (content, fresh_count); with nothing fresh
+/// the content comes back UNCHANGED so the caller skips the write.
+fn append_facts_transform(current: &str, facts: &[String], limit: usize) -> (String, usize) {
+    let norm = |s: &str| -> String { s.to_lowercase().split_whitespace().collect::<String>() };
+    fn bullet_text(l: &str) -> Option<&str> {
+        let t = l.trim().trim_start_matches("- ").trim_start_matches("• ");
+        (!t.is_empty()).then_some(t)
+    }
+    let existing_norms: std::collections::HashSet<String> =
+        current.lines().filter_map(|l| bullet_text(l).map(&norm)).collect();
+    let fresh: Vec<&String> = facts
+        .iter()
+        .filter(|f| !existing_norms.contains(&norm(f)))
+        .collect();
+    if fresh.is_empty() {
+        return (current.to_string(), 0);
+    }
+
+    // Parse: ordinary lines (+fresh flags) and complete marker blocks.
+    let mut lines: Vec<(String, bool)> = Vec::new(); // (line, is_fresh)
+    let mut markers: Vec<MarkerSegment> = Vec::new();
+    let mut pending: Option<MarkerSegment> = None;
+    for line in current.lines() {
+        if let Some(name) = marker_open_name(line) {
+            pending = Some(MarkerSegment { name, lines: vec![line.to_string()] });
+            continue;
+        }
+        if let Some(seg) = pending.as_mut() {
+            seg.lines.push(line.to_string());
+            if line.trim() == format!("<!-- /{} -->", seg.name) {
+                if let Some(done) = pending.take() {
+                    markers.push(done);
+                }
+            }
+            continue;
+        }
+        lines.push((line.to_string(), false));
+    }
+    // Unpaired open tag at EOF: keep as ordinary lines (corrupt input —
+    // the sanitizer owns repairing it; we never invent a close tag).
+    if let Some(seg) = pending.take() {
+        for l in seg.lines {
+            lines.push((l, false));
+        }
+    }
+
+    let fresh_block: Vec<(String, bool)> =
+        fresh.iter().map(|f| (format!("- {f}"), true)).collect();
+    lines.extend(fresh_block);
+
+    fn compose(lines: &[(String, bool)], markers: &mut [MarkerSegment]) -> String {
+        let mut text = String::new();
+        let mut first = true;
+        for (l, _) in lines {
+            if !first {
+                text.push('\n');
+            }
+            first = false;
+            text.push_str(l);
+        }
+        for seg in markers.iter_mut() {
+            if !first {
+                text.push('\n');
+            }
+            first = false;
+            for l in &seg.lines {
+                text.push_str(l);
+            }
+        }
+        text
+    }
+
+    let mut text = compose(&lines, &mut markers);
+
+    // Phase 1: shrink marker BODIES, last block first (tags survive, the
+    // background job refills the body next cycle).
+    while text.chars().count() > limit {
+        let mut shrunk = false;
+        for seg in markers.iter_mut().rev() {
+            if seg.lines.len() > 2 {
+                seg.lines.remove(seg.lines.len() - 2);
+                shrunk = true;
+                break;
+            }
+        }
+        if !shrunk {
+            break;
+        }
+        text = compose(&lines, &mut markers);
+    }
+
+    // Phase 2: evict old ordinary lines bottom-first — timestamped log
+    // lines ahead of curated ones — never the fresh facts.
+    let is_log = |l: &str| l.trim_start().starts_with("- [");
+    while text.chars().count() > limit {
+        let idx = (0..lines.len())
+            .rev()
+            .find(|&i| !lines[i].1 && is_log(&lines[i].0))
+            .or_else(|| (0..lines.len()).rev().find(|&i| !lines[i].1));
+        let Some(i) = idx else { break };
+        lines.remove(i);
+        text = compose(&lines, &mut markers);
+    }
+
+    // Phase 3 guard: line-boundary truncation (keeps marker tags balanced).
+    if text.chars().count() > limit {
+        let mut acc = 0usize;
+        let mut cut = 1usize;
+        for (i, (l, _)) in lines.iter().enumerate() {
+            let add = l.chars().count() + usize::from(i > 0);
+            if acc + add > limit {
+                break;
+            }
+            acc += add;
+            cut = i + 1;
+        }
+        lines.truncate(cut);
+        text = compose(&lines, &mut markers);
+        if text.chars().count() > limit {
+            text = text.chars().take(limit).collect();
+        }
+    }
+
+    if text.chars().count() < limit && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    (text, fresh.len())
+}
+
 /// policy the compressor's `evict_to_limit` uses — so the oldest tail
 /// content goes first. If the file is over budget with markers alone,
 /// hard-truncate on a char boundary and warn: the snapshot layer caps
@@ -2281,6 +2467,33 @@ fn evict_to_limit_preserving_markers(content: &str, max_chars: usize) -> String 
     // the file survives longest.
     let is_log_line = |l: &str| l.trim_start().starts_with("- [");
     let mut alive: Vec<bool> = vec![true; lines.len()];
+
+    // Markers that can NEVER fit (their own chars alone ≥ the budget)
+    // must go BEFORE any plain line burns: evicting user content first and
+    // dropping markers afterwards destroyed facts for nothing (markers are
+    // regenerable; facts are not).
+    let protected_only = |alive: &[bool]| -> usize {
+        lines
+            .iter()
+            .zip(alive)
+            .zip(&protected)
+            .filter(|((_, a), p)| **a && **p)
+            .map(|((l, _), _)| l.chars().count() + 1)
+            .sum::<usize>()
+            .saturating_sub(1)
+    };
+    while char_count(&alive) > max_chars && protected_only(&alive) >= max_chars {
+        let last_protected = (0..lines.len()).rev().find(|&k| alive[k] && protected[k]);
+        let Some(end) = last_protected else { break };
+        let mut start = end;
+        while start > 0 && alive[start - 1] && protected[start - 1] {
+            start -= 1;
+        }
+        for k in start..=end {
+            alive[k] = false;
+        }
+    }
+
     while char_count(&alive) > max_chars {
         let next = (0..lines.len())
             .rev()
@@ -2290,6 +2503,26 @@ fn evict_to_limit_preserving_markers(content: &str, max_chars: usize) -> String 
         alive[pos] = false;
     }
 
+    // Still over budget with protected markers alive: drop WHOLE trailing
+    // marker blocks before ever hard-truncating. The old take(max_chars)
+    // could slice through an open/close tag — the orphan tag then sent the
+    // NEXT replace_marker_section down its "recover by deleting everything
+    // after the open tag" path, destroying user content wholesale.
+    // Marker blocks are regenerable (background jobs re-append them), so
+    // losing one beats corrupting the structure.
+    while char_count(&alive) > max_chars {
+        let last_protected = (0..lines.len()).rev().find(|&k| alive[k] && protected[k]);
+        let Some(end) = last_protected else { break };
+        // Walk back to the start of this contiguous protected run.
+        let mut start = end;
+        while start > 0 && alive[start - 1] && protected[start - 1] {
+            start -= 1;
+        }
+        for k in start..=end {
+            alive[k] = false;
+        }
+    }
+
     let mut out = lines
         .iter()
         .zip(&alive)
@@ -2297,7 +2530,6 @@ fn evict_to_limit_preserving_markers(content: &str, max_chars: usize) -> String 
         .map(|(l, _)| *l)
         .collect::<Vec<_>>()
         .join("\n");
-    out.push('\n');
 
     // Trailing newline only when it fits: the old unconditional push made
     // an exactly-at-limit result limit+1, and the guard's take() then ate
@@ -2309,7 +2541,7 @@ fn evict_to_limit_preserving_markers(content: &str, max_chars: usize) -> String 
         tracing::warn!(
             chars = out.chars().count(),
             max_chars,
-            "Memory file over limit even after eviction (marker blocks alone exceed the budget) — hard-truncating"
+            "Memory file over limit even after eviction — hard-truncating"
         );
         out = out.chars().take(max_chars).collect();
     }
@@ -3197,4 +3429,67 @@ fn replace_marker_section_locked(
             .write_file("user", &big)
             .await
             .expect("the CONFIGURED limit must govern writes");
+    }
+
+    // ---- append_facts_transform: marker-aware merge ----
+
+    #[test]
+    fn append_facts_shrinks_marker_bodies_before_facts() {
+        let mut current = String::from("# Profile\n- old fact one\n- old fact two");
+        current.push_str("\n<!-- chat-summary -->\n");
+        for i in 0..20 {
+            current.push_str(&format!("summary line {i} that is reasonably long\n"));
+        }
+        current.push_str("<!-- /chat-summary -->");
+        let facts = vec!["brand new fact".to_string()];
+        let (out, fresh) = append_facts_transform(&current, &facts, 220);
+        assert_eq!(fresh, 1);
+        assert!(out.chars().count() <= 220, "limit invariant");
+        assert!(out.contains("brand new fact"), "fresh fact must land");
+        assert!(out.contains("old fact one"), "facts outrank marker bodies");
+        assert!(out.contains("old fact two"));
+        // Tags balanced even after body shrink.
+        assert!(out.contains("<!-- chat-summary -->"));
+        assert!(out.contains("<!-- /chat-summary -->"));
+    }
+
+    #[test]
+    fn append_facts_go_before_markers() {
+        let current = "# Profile\n<!-- chat-summary -->\nbody\n<!-- /chat-summary -->";
+        let facts = vec!["likes tea".to_string()];
+        let (out, fresh) = append_facts_transform(current, &facts, 500);
+        assert_eq!(fresh, 1);
+        let fact_pos = out.find("- likes tea").expect("fact present");
+        let marker_pos = out.find("<!-- chat-summary -->").expect("marker present");
+        assert!(fact_pos < marker_pos, "facts sit before the marker tail");
+    }
+
+    #[test]
+    fn append_facts_exact_duplicates_are_not_fresh() {
+        let current = "- Likes Tea";
+        let facts = vec!["likes tea".to_string()];
+        let (out, fresh) = append_facts_transform(current, &facts, 100);
+        assert_eq!(fresh, 0);
+        assert_eq!(out, current, "unchanged content → caller skips the write");
+    }
+
+    #[test]
+    fn sanitize_drops_whole_marker_blocks_never_half() {
+        // Markers alone exceed the budget: whole blocks must go, tags never
+        // split (an orphan open tag used to trigger the replace-recovery
+        // path that deleted everything after it).
+        let mut content = String::from("# Profile\n- fact");
+        for name in ["a", "b"] {
+            content.push_str(&format!("\n<!-- {name} -->\n"));
+            for i in 0..15 {
+                content.push_str(&format!("body-{name}-{i} padding padding padding\n"));
+            }
+            content.push_str(&format!("<!-- /{name} -->"));
+        }
+        let out = evict_to_limit_preserving_markers(&content, 120);
+        assert!(out.chars().count() <= 120, "limit invariant");
+        let opens = out.matches("<!-- ").count();
+        let closes = out.matches("<!-- /").count();
+        assert_eq!(opens, closes, "no orphan tags: {out}");
+        assert!(out.contains("- fact"), "facts outlive regenerable markers");
     }

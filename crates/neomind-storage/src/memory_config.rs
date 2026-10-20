@@ -49,10 +49,15 @@ fn default_storage_path() -> String {
         .to_string()
 }
 fn default_user_limit() -> usize {
-    2000
+    // 4000 (raised from 2000, 2026-10-20): the three marker blocks
+    // (system-context 800 + summaries 500 + tag overhead) alone could eat
+    // ~1400 chars of the old budget — live files hit "markers alone exceed
+    // the budget" with facts squeezed to zero.
+    4000
 }
 fn default_knowledge_limit() -> usize {
-    3000
+    // 6000 (raised with user limit, same marker-pressure rationale).
+    6000
 }
 fn default_procedures_limit() -> usize {
     3000
@@ -120,8 +125,8 @@ mod tests {
     fn test_default_config() {
         let config = MemoryConfig::default();
         assert!(config.enabled);
-        assert_eq!(config.user_char_limit, 2000);
-        assert_eq!(config.knowledge_char_limit, 3000);
+        assert_eq!(config.user_char_limit, 4000);
+        assert_eq!(config.knowledge_char_limit, 6000);
         assert_eq!(config.procedures_char_limit, 3000);
         assert_eq!(config.agent_char_limit, 20000);
         assert_eq!(config.temp_file_ttl_days, 7);

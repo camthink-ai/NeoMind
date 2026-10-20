@@ -357,7 +357,13 @@ fn is_junk_fact(f: &str) -> bool {
         "the ai",
     ];
     let lowered = f.to_lowercase();
-    f.chars().count() < 6 || META_OPENERS.iter().any(|p| lowered.starts_with(p))
+    // The <6 gate targets English filler ("ok", "yes"); CJK carries ~3x
+    // the information per char, so a 2-char Chinese fact ("住沪") is real —
+    // CJK floor is 2, non-CJK stays 6. Single-char CJK ("好") is still
+    // interjection noise.
+    let has_cjk = f.chars().any(|c| ('\u{4E00}'..='\u{9FFF}').contains(&c));
+    let floor = if has_cjk { 2 } else { 6 };
+    f.chars().count() < floor || META_OPENERS.iter().any(|p| lowered.starts_with(p))
 }
 
 /// Parse extraction LLM output into (user, knowledge) fact lists. Lines that
@@ -462,60 +468,6 @@ async fn delegate_images_to_companion(message: &str, images: &[String]) -> Optio
     Some(combined)
 }
 
-/// Fit (existing content + fresh "- fact" lines) into `limit` chars with
-/// FRESH priority: on a full file the old TAIL gives way so this turn's
-/// facts land, while the old TOP (the hand-curated durable head — same
-/// priority as the store's own eviction) survives longest.
-///
-/// Replaces the old fit-old-first logic, which dropped every fresh fact on
-/// a full file AND pushed a trailing '\n' past the fitted size — the
-/// "2001 > 2000" write rejection that lost the whole extraction (observed
-/// 2026-10-20: user-facts persisted 0/N for hours on a marker-heavy file).
-fn fit_facts_with_fresh_priority(existing: &str, fresh: &[&String], limit: usize) -> String {
-    let fresh_block = {
-        let mut b = String::new();
-        for f in fresh {
-            if !b.is_empty() {
-                b.push('\n');
-            }
-            b.push_str("- ");
-            b.push_str(f);
-        }
-        b
-    };
-    let fresh_cost = fresh_block.chars().count();
-    let sep = usize::from(fresh_cost > 0);
-    let old_budget = limit.saturating_sub(fresh_cost + sep);
-
-    let mut kept_old = String::new();
-    for line in existing.trim_end().lines() {
-        let need = line.chars().count() + usize::from(!kept_old.is_empty());
-        if kept_old.chars().count() + need > old_budget {
-            break;
-        }
-        if !kept_old.is_empty() {
-            kept_old.push('\n');
-        }
-        kept_old.push_str(line);
-    }
-
-    let mut out = kept_old;
-    if !fresh_block.is_empty() {
-        if !out.is_empty() {
-            out.push('\n');
-        }
-        out.push_str(&fresh_block);
-    }
-    // Pathological: a single fact larger than the whole budget — hard fit.
-    if out.chars().count() > limit {
-        out = out.chars().take(limit).collect();
-    }
-    // Trailing newline only when it still fits — never exceed the limit.
-    if out.chars().count() < limit {
-        out.push('\n');
-    }
-    out
-}
 
 impl SessionManager {
     /// Create a new session manager with persistent storage.
@@ -1484,7 +1436,6 @@ impl SessionManager {
         // silently (write_file error swallowed by the merge below), so
         // extracted facts vanished. Initialize best-effort; idempotent.
         let _ = store.init();
-        let (user_limit, knowledge_limit) = (mem_cfg.user_char_limit, mem_cfg.knowledge_char_limit);
         let snapshots = self.memory_snapshots.clone();
         let session_id = session_id.to_string();
 
@@ -1585,83 +1536,71 @@ Assistant: {ar}\n"
                 "memory extraction: parsed facts"
             );
 
-            // Merge: exact-normalized dedup against existing bullets; cap to
-            // the file budget keeping the OLDEST facts (durable base facts
-            // outrank recent chatter).
-            let norm =
-                |s: &str| -> String { s.to_lowercase().split_whitespace().collect::<String>() };
-            // Returns (new file content if anything fresh was added, count of
-            // NON-duplicate facts) so the merge log reports what was actually
-            // written, not the pre-dedup parse count.
-            let merged = |target: &str, additions: &[String]| -> (Option<String>, usize) {
-                let existing = store.read_file_sync(target);
-                let existing_norms: std::collections::HashSet<String> = existing
-                    .lines()
-                    .filter_map(|l| {
-                        let l = l.trim().trim_start_matches("- ").trim_start_matches("• ");
-                        if l.is_empty() {
-                            None
-                        } else {
-                            Some(norm(l))
-                        }
-                    })
-                    .collect();
-                let fresh: Vec<&String> = additions
-                    .iter()
-                    .filter(|f| !existing_norms.contains(&norm(f)))
-                    .collect();
-                if fresh.is_empty() {
-                    return (None, 0);
+            // Persist via the store's marker-aware append: one locked
+            // read-modify-write per target (the shared per-path lock also
+            // serializes against background marker jobs), exact dedup
+            // inside, marker bodies shrink BEFORE facts when over budget.
+            // Pre-filter here: cap runaway per-fact length, then fuzzy
+            // dedup (n-gram Jaccard — the store's exact normalizer cannot
+            // catch reworded repeats, which Chinese produces a lot of since
+            // it has no whitespace to normalize).
+            const FACT_CHAR_CAP: usize = 300;
+            let cap_fact = |f: &str| -> String {
+                if f.chars().count() <= FACT_CHAR_CAP {
+                    f.to_string()
+                } else {
+                    let cut: String = f.chars().take(FACT_CHAR_CAP - 1).collect();
+                    format!("{cut}…")
                 }
-                let mut merged = existing.trim_end().to_string();
-                for f in &fresh {
-                    if !merged.is_empty() {
-                        merged.push('\n');
-                    }
-                    merged.push_str("- ");
-                    merged.push_str(f);
-                }
-                merged.push('\n');
-                let limit = match target {
-                    "user" => user_limit,
-                    _ => knowledge_limit,
-                };
-                if merged.chars().count() > limit {
-                    merged = fit_facts_with_fresh_priority(&existing, &fresh, limit);
-                }
-                (Some(merged), fresh.len())
             };
-
-            // Serialize the read-modify-write: two concurrent extractions
-            // reading the same base then writing would lose one's facts (the
-            // store's write lock only serializes the write, not the merge).
-            static MEMORY_EXTRACT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-            let _guard = MEMORY_EXTRACT_LOCK.lock().await;
+            let fuzzy = crate::memory::dedup::DedupProcessor::with_defaults();
+            let prep = |target: &str, additions: &[String]| -> Vec<String> {
+                let existing_bullets: Vec<String> = store
+                    .read_file_sync(target)
+                    .lines()
+                    .map(|l| {
+                        l.trim()
+                            .trim_start_matches("- ")
+                            .trim_start_matches("• ")
+                            .to_string()
+                    })
+                    .filter(|l| !l.is_empty())
+                    .collect();
+                additions
+                    .iter()
+                    .map(|f| cap_fact(f))
+                    .filter(|f| fuzzy.find_similar(f, &existing_bullets).is_none())
+                    .collect()
+            };
+            let user_fresh = prep("user", &new_user);
+            let knowledge_fresh = prep("knowledge", &new_knowledge);
 
             let mut wrote_any = false;
-            let (user_write, fresh_user) = merged("user", &new_user);
-            if let Some(content) = user_write {
-                match store.write_file("user", &content).await {
-                    Ok(()) => wrote_any = true,
-                    Err(e) => tracing::warn!(
-                        category = "memory",
-                        error = %e,
-                        "Failed to persist extracted user facts — this extraction's \
+            let mut fresh_user = 0usize;
+            let mut fresh_knowledge = 0usize;
+            match store.append_facts("user", &user_fresh).await {
+                Ok((wrote, n)) => {
+                    wrote_any |= wrote;
+                    fresh_user = n;
+                }
+                Err(e) => tracing::warn!(
+                    category = "memory",
+                    error = %e,
+                    "Failed to persist extracted user facts — this extraction's \
                          facts are lost and the snapshot cache stays stale"
-                    ),
-                }
+                ),
             }
-            let (knowledge_write, fresh_knowledge) = merged("knowledge", &new_knowledge);
-            if let Some(content) = knowledge_write {
-                match store.write_file("knowledge", &content).await {
-                    Ok(()) => wrote_any = true,
-                    Err(e) => tracing::warn!(
-                        category = "memory",
-                        error = %e,
-                        "Failed to persist extracted knowledge facts — this \
-                         extraction's facts are lost and the snapshot cache stays stale"
-                    ),
+            match store.append_facts("knowledge", &knowledge_fresh).await {
+                Ok((wrote, n)) => {
+                    wrote_any |= wrote;
+                    fresh_knowledge = n;
                 }
+                Err(e) => tracing::warn!(
+                    category = "memory",
+                    error = %e,
+                    "Failed to persist extracted knowledge facts — this \
+                         extraction's facts are lost and the snapshot cache stays stale"
+                ),
             }
 
             if wrote_any {
@@ -3079,6 +3018,10 @@ mod extraction_parse_tests {
              - [knowledge] devices report over MQTT every 20 seconds",
         );
         assert!(u.is_empty(), "short + meta user facts must be dropped");
+        // CJK floor is 2: single-char interjections stay junk, a real
+        // short Chinese fact survives the gate.
+        let (u2, _) = parse_extracted_facts("- [user] 住上海\n- [user] 嗯");
+        assert_eq!(u2, vec!["住上海"], "2+ char CJK facts must survive");
         assert_eq!(
             k,
             vec!["devices report over MQTT every 20 seconds"],
@@ -3232,67 +3175,3 @@ mod companion_delegation_tests {
     }
 }
 
-#[cfg(test)]
-mod memory_fit_tests {
-    use super::fit_facts_with_fresh_priority;
-
-    fn fact(s: &str) -> String {
-        format!("- {s}")
-    }
-
-    /// The observed incident: a full 2000-char file (markers + old facts)
-    /// — the fresh fact MUST land and the result must never exceed the
-    /// limit (the old logic produced 2001 and the write was rejected,
-    /// losing the extraction entirely).
-    #[test]
-    fn full_file_still_lands_fresh_fact_within_limit() {
-        let old_top = "# Profile".to_string();
-        let mut existing = old_top.clone();
-        while existing.chars().count() < 1990 {
-            existing.push_str("\n- old fact line filler");
-        }
-        let fresh = vec![fact("brand new fact from this turn")];
-        let out = fit_facts_with_fresh_priority(&existing, &fresh.iter().collect::<Vec<_>>(), 2000);
-        assert!(out.chars().count() <= 2000, "never exceed limit: {}", out.chars().count());
-        assert!(out.contains("brand new fact from this turn"), "fresh fact must land");
-        assert!(out.starts_with("# Profile"), "old top survives longest");
-    }
-
-    /// Exact-boundary regression: composition math (separator + trailing
-    /// newline) may not sneak a single char past the limit.
-    #[test]
-    fn exact_boundary_never_off_by_one() {
-        for limit in [10usize, 100, 2000] {
-            let existing: String = "x".repeat(limit);
-            let fresh = vec![fact(&"y".repeat(50))];
-            let out =
-                fit_facts_with_fresh_priority(&existing, &fresh.iter().collect::<Vec<_>>(), limit);
-            assert!(
-                out.chars().count() <= limit,
-                "limit {limit}: got {}",
-                out.chars().count()
-            );
-        }
-    }
-
-    /// Pathological: a single fact larger than the whole budget — hard-fit
-    /// instead of erroring (the store boundary still rejects > limit, so
-    /// this path must never hand it one).
-    #[test]
-    fn oversized_fact_hard_fits() {
-        let fresh = vec![fact(&"z".repeat(5000))];
-        let out = fit_facts_with_fresh_priority("", &fresh.iter().collect::<Vec<_>>(), 2000);
-        assert!(out.chars().count() <= 2000);
-    }
-
-    /// Plenty of room: everything is kept, old first, fresh appended.
-    #[test]
-    fn roomy_file_keeps_everything() {
-        let existing = "# Profile\n- likes tea";
-        let fresh = vec![fact("likes coffee too")];
-        let out = fit_facts_with_fresh_priority(existing, &fresh.iter().collect::<Vec<_>>(), 2000);
-        assert!(out.contains("# Profile"));
-        assert!(out.contains("- likes tea"));
-        assert!(out.contains("- likes coffee too"));
-    }
-}
