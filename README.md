@@ -178,16 +178,16 @@ Pick a catalog model in **Settings → LLM Backends** (or the first-run wizard) 
 
 Scores from the 2026-09 agent eval: 12 scenarios per cycle (Chinese + English, 40-turn long-horizon, tools-breadth), executed against a seeded sandbox platform under identical conditions. Finalists ran two cycles.
 
-| Model | Quant | Size | Min RAM | 8K | 16K | 32K | Best for |
-|-------|-------|------|---------|-----|------|------|----------|
-| **MiniCPM5-2B** ⭐ | Q4_K_M | 1.5 GB | 3 GB | **64** | 61 | ~68* | Most robust across windows, 81% tool accuracy 8K. Apache-2.0. Default 128K (RAM-capped); keep ≥32K for long agent turns. |
-| **Qwen 3.5 4B** | Q4_K_M | 2.7 GB | 4 GB | 38* | **70** | 66 | Strongest agent at ≥16K context; collapses at 8K. Vision via mmproj. Default 128K (RAM-capped). |
-| **Ling 3.0-tiny** | Q4_K_M | 4.8 GB | 6 GB | 62 | 48 | 45 | Fast MoE; quality cliffs past 8K — short sessions advised. Default 128K (RAM-capped). Needs llama.cpp ≥ b10545. |
-| **Gemma 4 E2B** | QAT q4_0 | 3.1 GB | 4.5 GB | 59* | — | 60 | Long-context-stable; weak resource creation. |
-| **LFM 2.5 2.6B** | QAD Q4_0 | 1.5 GB | 3 GB | 41* | — | 54 | Improves with context; native 128K. |
-| MiniCPM5-1B / Qwen3.5-0.8B | Q4 | ~1 GB | 2 GB | ~26* | — | — | Below agent threshold; not in the catalog. |
+| Model | Size (min RAM) | Best window | Score | Best for |
+|-------|----------------|-------------|-------|----------|
+| **MiniCPM5-2B** ⭐ | 1.5 GB (3 GB) | 8K–32K, flat | **64** | Default pick; most robust across windows, 81% tool accuracy |
+| **Qwen 3.5 4B** | 2.7 GB (4 GB) | 16K | **70** | Strongest local agent; weak at 8K |
+| **Ling 3.0-tiny** | 4.8 GB (6 GB) | 8K | 62 | Fast MoE; keep sessions short |
+| **Gemma 4 E2B** | 3.1 GB (4.5 GB) | 32K | 60 | Long-context stable; weak resource creation |
+| **LFM 2.5 2.6B** | 1.5 GB (3 GB) | 32K | 54 | Small footprint; improves with context |
+| MiniCPM5-1B / Qwen3.5-0.8B | ~1 GB (2 GB) | — | ~26 | Below the agent threshold; not in the catalog |
 
-\*Earlier 5-scenario suite at that window. Finalists were measured twice: stable models repeat within ±1 point.
+Score = the model's best window in that eval; the 1B row is from the earlier 5-scenario suite. All catalog models default to 128K context (RAM-capped). Per-window scores: [docs/edge-models.md](docs/edge-models.md).
 
 Under fair scoring the top three are one tier (83–90% tool accuracy) — pick by footprint, latency, and context fit: **MiniCPM5-2B** default, **Qwen 3.5 4B** strongest local agent.
 
