@@ -848,7 +848,9 @@ def cmd_regression(args):
                         signal.alarm(0)
                     hard = hard_signal.compute(case, rec)
                     sf.write(json.dumps({"case_id": cid, "lang": case.get("lang"),
-                                         "hard": hard, "round": ridx}, ensure_ascii=False) + "\n")
+                                         "hard": hard,
+                                         "guards": rec.get("guards") or {},
+                                         "round": ridx}, ensure_ascii=False) + "\n")
                     sf.flush()
                     vds.append(hard_signal.pass_for_case(hard))
                 results[cid] = vds
