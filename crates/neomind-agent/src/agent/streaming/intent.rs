@@ -642,7 +642,29 @@ fn segment_satisfies_action(seg: &str, hint_domain: &str, hint_action: &str) -> 
         .iter()
         .filter_map(|p| pattern_action_class(p))
         .collect();
-    classes.is_empty() || classes.contains(&hint_action)
+    if classes.is_empty() || classes.contains(&hint_action) {
+        return true;
+    }
+    // `neomind device control <id> <verb>` carries the verb in an ARGUMENT, so
+    // it classifies as "control" while the user's ask classifies as the verb
+    // ("use its stop command" -> disable/stop). Requiring an exact class match
+    // made a SUCCESSFUL stop report "the requested action was NEVER executed"
+    // (live 2026-10-21 eval: `device control pump-A stop`, exit 0, note fired).
+    // A control mutation delivers the verb class when the verb is present as a
+    // standalone token in the command.
+    if classes.contains(&"control") {
+        let has = |verb: &str| {
+            seg_lower
+                .split(|c: char| c.is_whitespace() || c == '"' || c == '\'')
+                .any(|t| t == verb)
+        };
+        match hint_action {
+            "disable/stop" => return has("stop") || has("disable"),
+            "enable/start" => return has("start") || has("enable"),
+            _ => {}
+        }
+    }
+    false
 }
 
 // ---------------------------------------------------------------------------
@@ -813,6 +835,33 @@ mod tests {
         assert!(build_list_only_dead_end_prompt(msg, &["neomind device list"], &[], 3,).is_none());
         // The same request WITHOUT the plan-only clause still flags.
         assert!(build_incomplete_action_note("帮我创建设备", &[], &[]).is_some());
+    }
+
+    /// Live 2026-10-21: "use its stop command to shut it down" + a successful
+    /// `neomind device control pump-A stop` (exit 0) still produced "the
+    /// requested action was NEVER executed" — the ask classifies as
+    /// disable/stop, the command as control, and an exact-class match failed.
+    #[test]
+    fn control_verb_delivers_stop_and_start_actions() {
+        let msg = "pump-A's vibration is too high \u{2014} use its stop command to shut it down.";
+        assert_eq!(extract_action_parts(msg).1, "disable/stop");
+        let stop = "neomind device control pump-A stop 2>&1";
+        assert!(
+            mutation_satisfies_action(stop, "", "disable/stop"),
+            "{stop}"
+        );
+        assert!(build_incomplete_action_note(
+            msg,
+            &["neomind device list 2>&1", stop],
+            &[stop.to_string()],
+        )
+        .is_none());
+        // Symmetric: a start request delivered by `control ... start`.
+        let start = "neomind device control pump-A start";
+        assert!(mutation_satisfies_action(start, "", "enable/start"));
+        // A control mutation whose verb does NOT match the ask still fails.
+        let other = "neomind device control valve-1 set_valve open";
+        assert!(!mutation_satisfies_action(other, "", "disable/stop"));
     }
 
     #[test]
