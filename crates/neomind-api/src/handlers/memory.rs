@@ -729,7 +729,7 @@ pub async fn update_memory_file(
 
     match store.write_file(&target, &req.content).await {
         Ok(()) => {
-            tracing::info!(target = %target, chars = req.content.len(), "Memory file updated via API");
+            tracing::info!(target = %target, chars = req.content.chars().count(), "Memory file updated via API");
             Json(serde_json::json!({
                 "success": true,
                 "message": format!("{} updated", target),
@@ -847,7 +847,7 @@ pub async fn update_custom_file(
 
     match store.write_custom_file(&name, &req.content).await {
         Ok(()) => {
-            tracing::info!(name = %name, chars = req.content.len(), "Custom memory file updated via API");
+            tracing::info!(name = %name, chars = req.content.chars().count(), "Custom memory file updated via API");
             Json(serde_json::json!({
                 "success": true,
                 "message": format!("Custom file '{}' updated", name),

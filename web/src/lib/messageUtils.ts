@@ -221,8 +221,12 @@ export function cleanToolCallJson(content: string): string {
 
   let cleaned = content
 
-  // Remove ```json ... ``` blocks containing tool call JSON
-  cleaned = cleaned.replace(/```(?:json)?\s*\n?\s*(\[\s*\{[\s\S]*?"name"\s*:[\s\S]*?\}\s*\])\s*\n?\s*```/g, '')
+  // Remove ```json ... ``` blocks containing tool call JSON.
+  // Requires "arguments" as well as "name": a fenced DATA array (a device
+  // list quoted as ```json [{"id","name","online"}] ```) carries name
+  // fields but no arguments, and the old name-only pattern deleted the
+  // whole block from the reply (mirror of the backend cleanup fix).
+  cleaned = cleaned.replace(/```(?:json)?\s*\n?\s*(\[\s*\{[\s\S]*?"name"\s*:[\s\S]*?"arguments"\s*:[\s\S]*?\}\s*\])\s*\n?\s*```/g, '')
 
   // Remove bare JSON arrays that look like tool calls: [{"name":"...", ...}]
   cleaned = cleaned.replace(/\[\s*\{\s*"name"\s*:\s*"[^"]*"\s*,\s*"arguments"\s*:\s*\{[^}]*\}\s*\}\s*\]/g, '')

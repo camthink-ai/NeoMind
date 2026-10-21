@@ -1,7 +1,10 @@
 /// Clean up repetitive thinking content by removing excessive repeated phrases
 /// This preserves the core thinking while removing the repetitive noise
 pub fn cleanup_thinking_content(thinking: &str) -> String {
-    if thinking.len() < 200 {
+    // Chars, not bytes: `.len()` counted ~3 bytes per CJK char, so a short
+    // 100-char Chinese reasoning block (300 bytes) passed this "short text,
+    // leave alone" gate and got the repetition rewrite applied to it.
+    if thinking.chars().count() < 200 {
         return thinking.to_string();
     }
 

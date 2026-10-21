@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The scheduled-agent Phase-2 summary accepted a bare `[]` as the agent's final analysis (only emptiness was checked) — degenerate summaries are now rejected and the executor falls back to building the analysis from tool results.
 - The "content is preamble" gate counted BYTES (<200), so a 100-char Chinese preamble (300 bytes) read as a complete answer and skipped the forced error-recovery summary; the threshold now counts characters.
 
+### Fixed — same-class sweep, round 2 (frontend mirror, question-shaped asks)
+- The web UI's `cleanToolCallJson` carried a mirror of the backend's over-broad fenced-array pattern: it required only "name", so a device list quoted as a fenced JSON data block was deleted from the rendered reply even when the backend kept it. The fenced pattern now requires "arguments" too; a vitest regression pins it (the old regex provably deleted the block).
+- Instructional questions ("如何创建设备？", "how do I create a device?") contain action verbs and were treated as action requests: a correct how-to answer got the "requested action was NOT successfully executed — the reply above is a progress report" callout, and the list-only dead-end guard could demand a phantom `neomind device create`. `user_message_requires_action` now excludes instructional-question shapes; genuine requests phrased as questions ("你能帮我创建吗？", "can you create…") still trigger both guards.
+- `cleanup_thinking_content` gated on BYTES (<200), so a 100-char Chinese reasoning block (300 bytes) got the repetition rewrite; it now counts characters.
+- API memory-write logs reported `chars` as bytes (the same mislabel that muddied the narration-guard investigation); they now report character counts, matching the response payload.
+
 ### Known sharp edge (not changed this pass)
 - `detect_json_tool_calls` accepts any array with a string "name" field as a tool call, so a model reply that IS a JSON data array with name-bearing rows can be executed as phantom tool calls ("unknown tool Demo" errors instead of displaying the list). Tightening detection to require "arguments" risks breaking real argument-less calls (`{"name":"get_time"}`) that currently execute; it needs its own change validated against the eval baselines.
 

@@ -58,9 +58,39 @@ const ACTION_VERBS: &[&str] = &[
     "bind",
 ];
 
+/// Instructional-question shapes ("如何创建设备？", "how do I create a
+/// device?"). These CONTAIN action verbs but ask for an explanation — no
+/// action is being requested, so the turn-end completeness note must not
+/// label a correct explanatory answer as "the requested action was NOT
+/// executed", and the list-only coercion must not demand a phantom command.
+/// Same over-broad-pattern family as the 2026-10-20 narration incident.
+/// Deliberately narrow: genuine requests phrased as questions ("你能帮我
+/// 创建吗？", "can you create…") do NOT match and still trigger the guards.
+const INSTRUCTIONAL_QUESTION_PATTERNS: &[&str] = &[
+    "如何",
+    "怎么",
+    "怎样",
+    "为什么",
+    "什么是",
+    "是什么",
+    "how do i",
+    "how to",
+    "how can i",
+    "how does",
+    "what is",
+    "what's",
+    "explain",
+];
+
 /// Check if the user message requests a mutation/action (not just a query).
 pub(crate) fn user_message_requires_action(msg: &str) -> bool {
     let msg_lower = msg.to_lowercase();
+    if INSTRUCTIONAL_QUESTION_PATTERNS
+        .iter()
+        .any(|p| msg_lower.contains(p))
+    {
+        return false;
+    }
     ACTION_VERBS.iter().any(|verb| msg_lower.contains(verb))
 }
 
@@ -702,6 +732,33 @@ mod tests {
         assert!(user_message_requires_action("STOP the service"));
         assert!(!user_message_requires_action("list devices"));
         assert!(!user_message_requires_action("get status"));
+    }
+
+    /// Instructional questions carry action verbs but request an
+    /// EXPLANATION, not execution: "如何创建设备？" answered with a correct
+    /// how-to was being labelled "the requested action was NOT executed …
+    /// the reply above is a progress report" (same over-broad-pattern family
+    /// as the 2026-10-20 narration incident).
+    #[test]
+    fn instructional_questions_do_not_request_action() {
+        assert!(!user_message_requires_action("如何创建设备？"));
+        assert!(!user_message_requires_action("怎么删除一条规则"));
+        assert!(!user_message_requires_action("怎样启用监控最稳妥"));
+        assert!(!user_message_requires_action("为什么发送消息失败了？"));
+        assert!(!user_message_requires_action("How do I create a device?"));
+        assert!(!user_message_requires_action(
+            "how to add a widget to the dashboard"
+        ));
+        // The turn-end completeness note stays silent for them.
+        assert!(build_incomplete_action_note("如何创建设备？", &[], &[]).is_none());
+        assert!(build_incomplete_action_note("How do I create a device?", &[], &[]).is_none());
+        // Genuine requests phrased as questions still trigger — the gate
+        // must not swallow "can you …?" asks.
+        assert!(user_message_requires_action("你能帮我创建一个设备吗？"));
+        assert!(user_message_requires_action(
+            "Can you create a device for me?"
+        ));
+        assert!(build_incomplete_action_note("你能帮我创建一个设备吗？", &[], &[]).is_some());
     }
 
     #[test]
