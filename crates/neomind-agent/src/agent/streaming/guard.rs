@@ -41,6 +41,9 @@ pub enum GuardKind {
     DegenerateSuppressed,
     /// The whole action-guard family muted for a plan-only request.
     PlanOnlySuppression,
+    /// The whole action-guard family muted by the ablation switch
+    /// (`NEOMIND_GUARD_MODE=off`) — eval A/B only.
+    GuardsDisabled,
 }
 
 impl GuardKind {
@@ -56,6 +59,7 @@ impl GuardKind {
             GuardKind::DegenerateRestore => "degenerate_restore",
             GuardKind::DegenerateSuppressed => "degenerate_suppressed",
             GuardKind::PlanOnlySuppression => "plan_only_suppression",
+            GuardKind::GuardsDisabled => "guards_disabled",
         }
     }
 }
@@ -202,6 +206,16 @@ pub fn should_inject_promise_directive(promise_rounds: usize, already_sent: bool
     promise_rounds >= 2 && !already_sent
 }
 
+/// Eval-only ablation switch: `NEOMIND_GUARD_MODE=off` (case-insensitive)
+/// disables the five post-hoc action guards (narration nudge, narration
+/// label, promise directive, list-only coercion, incomplete-action note) so
+/// an A/B run can measure their net lift. Output sanitizers (degenerate `[]`
+/// recovery) and safety caps (loop break, dedup, iteration/wall-clock bounds)
+/// are NOT ablated — they are correctness/safety, not action guards.
+pub fn guards_disabled(mode: Option<&str>) -> bool {
+    matches!(mode.map(str::trim), Some(m) if m.eq_ignore_ascii_case("off"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,6 +267,16 @@ mod tests {
         assert!(should_label_narration(true, false));
         assert!(!should_label_narration(true, true));
         assert!(!should_label_narration(false, false));
+    }
+
+    #[test]
+    fn ablation_switch_parses_env_value() {
+        assert!(guards_disabled(Some("off")));
+        assert!(guards_disabled(Some("OFF")));
+        assert!(guards_disabled(Some(" off ")));
+        assert!(!guards_disabled(Some("on")));
+        assert!(!guards_disabled(Some("")));
+        assert!(!guards_disabled(None));
     }
 
     #[test]

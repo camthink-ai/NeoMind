@@ -443,6 +443,12 @@ pub async fn process_stream_events_with_safeguards(
             // output, so neither the nudge nor the progress-report label may
             // fire — forcing execution would contradict the instruction.
             let no_execution_requested = crate::agent::user_requested_no_execution(&user_message);
+            // Eval-only ablation switch (`NEOMIND_GUARD_MODE=off`): A/B runs use
+            // it to measure the guards' net lift. Output sanitizers (degenerate
+            // `[]` recovery) and safety caps stay active.
+            let guards_disabled = super::guard::guards_disabled(
+                std::env::var("NEOMIND_GUARD_MODE").ok().as_deref(),
+            );
             // True while processing the round launched by the narration
             // nudge — its output is held to stricter JSON-array suspicion
             // (see might_be_json_start) and degenerate results are restored.
@@ -475,6 +481,14 @@ pub async fn process_stream_events_with_safeguards(
                     super::guard::GuardOutcome::Suppressed,
                     0,
                     "user asked for a plan",
+                );
+            }
+            if guards_disabled {
+                guard_ledger.record(
+                    super::guard::GuardKind::GuardsDisabled,
+                    super::guard::GuardOutcome::Suppressed,
+                    0,
+                    "guard_mode_off",
                 );
             }
 
@@ -553,7 +567,7 @@ pub async fn process_stream_events_with_safeguards(
                         // At most once per turn (see list_only_dead_end_injected).
                         let commands_ref: Vec<&str> = recently_executed_commands.iter().map(|s| s.as_str()).collect();
 
-                        let dead_end_msg = if list_only_dead_end_injected {
+                        let dead_end_msg = if guards_disabled || list_only_dead_end_injected {
                             None
                         } else {
                             build_list_only_dead_end_prompt(
@@ -573,7 +587,10 @@ pub async fn process_stream_events_with_safeguards(
                                 "only_read_only_commands",
                             );
                             dead_end_msg
-                        } else if post_dead_end_read_only_rounds >= 2 && !explore_recovery_nudged {
+                        } else if !guards_disabled
+                            && post_dead_end_read_only_rounds >= 2
+                            && !explore_recovery_nudged
+                        {
                             explore_recovery_nudged = true;
                             guard_ledger.record(
                                 super::guard::GuardKind::ExploreRecovery,
@@ -1573,10 +1590,12 @@ pub async fn process_stream_events_with_safeguards(
                             &mut promised_cmd,
                             &mut promise_rounds,
                         );
-                        if super::guard::should_inject_promise_directive(
-                            promise_rounds,
-                            promise_directive_sent,
-                        ) {
+                        if !guards_disabled
+                            && super::guard::should_inject_promise_directive(
+                                promise_rounds,
+                                promise_directive_sent,
+                            )
+                        {
                             if let Some(cmd) = promised_cmd.clone() {
                                 promise_directive_sent = true;
                                 guard_ledger.record(
@@ -1854,16 +1873,19 @@ pub async fn process_stream_events_with_safeguards(
                     // through and is accepted as the final answer.
                     let is_narration_reply =
                         crate::agent::is_narration_without_action(&raw_response);
-                    let nudge_allowed = super::guard::should_nudge_narration(
+                    let nudge_allowed = !guards_disabled
+                        && super::guard::should_nudge_narration(
                         is_narration_reply,
                         narration_nudges,
                         NARRATION_NUDGE_MAX,
                         no_execution_requested,
-                        tool_iteration_count < MAX_TOOL_ITERATIONS - 1,
-                        turn_started_at.elapsed() < turn_wall_clock_budget,
-                    );
+                            tool_iteration_count < MAX_TOOL_ITERATIONS - 1,
+                            turn_started_at.elapsed() < turn_wall_clock_budget,
+                        );
                     if !nudge_allowed && is_narration_reply {
-                        let (outcome, reason) = if no_execution_requested {
+                        let (outcome, reason) = if guards_disabled {
+                            (super::guard::GuardOutcome::Suppressed, "guard_mode_off")
+                        } else if no_execution_requested {
                             (super::guard::GuardOutcome::Suppressed, "plan_only")
                         } else if narration_nudges >= NARRATION_NUDGE_MAX {
                             (super::guard::GuardOutcome::Skipped, "budget_exhausted")
@@ -1974,8 +1996,11 @@ pub async fn process_stream_events_with_safeguards(
                     // promise-shaped reply is the requested output, not a
                     // failed turn.
                     let label_narration = crate::agent::is_narration_without_action(&raw_response);
-                    let label_allowed =
-                        super::guard::should_label_narration(label_narration, no_execution_requested);
+                    let label_allowed = !guards_disabled
+                        && super::guard::should_label_narration(
+                            label_narration,
+                            no_execution_requested,
+                        );
                     if label_narration {
                         guard_ledger.record(
                             super::guard::GuardKind::NarrationLabel,
@@ -1987,6 +2012,8 @@ pub async fn process_stream_events_with_safeguards(
                             tool_iteration_count + 1,
                             if label_allowed {
                                 "turn_ends_on_promise"
+                            } else if guards_disabled {
+                                "guard_mode_off"
                             } else {
                                 "plan_only"
                             },
@@ -2004,6 +2031,9 @@ pub async fn process_stream_events_with_safeguards(
                         yield AgentEvent::system_note(note.clone());
                         turn_system_notes.push(note);
                     } else if let Some(note) = {
+                        if guards_disabled {
+                            None
+                        } else {
                         // === TURN-END ACTION-COMPLETENESS NOTE ===
                         // Live incident: a 400s turn ended with the requested
                         // "add to dashboard" NEVER executed (files written,
@@ -2023,6 +2053,7 @@ pub async fn process_stream_events_with_safeguards(
                             &cmds,
                             &successful_mutations,
                         )
+                        }
                     } {
                         guard_ledger.record(
                             super::guard::GuardKind::IncompleteActionNote,

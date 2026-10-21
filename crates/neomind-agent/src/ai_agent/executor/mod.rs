@@ -1829,12 +1829,13 @@ pub(crate) const ERROR_PROBE_MAX_SECS: i64 = 3600;
 /// Backoff before the next probe: 5min, 10, 20, 40, capped at 1h. A broken
 /// agent costs at most ~24 probe attempts/day once the backoff saturates.
 pub(crate) fn error_probe_backoff_secs(failures: u32) -> i64 {
-    let shift = failures.min(4) as u32; // 300·2⁴ = 4800 > 3600, so 4 saturates
+    let shift = failures.min(4); // 300·2⁴ = 4800 > 3600, so 4 saturates
     (ERROR_PROBE_BASE_SECS << shift).min(ERROR_PROBE_MAX_SECS)
 }
 
-static ERROR_PROBE_STATE: std::sync::OnceLock<parking_lot::RwLock<HashMap<String, ErrorProbeEntry>>> =
-    std::sync::OnceLock::new();
+static ERROR_PROBE_STATE: std::sync::OnceLock<
+    parking_lot::RwLock<HashMap<String, ErrorProbeEntry>>,
+> = std::sync::OnceLock::new();
 
 /// Access the process-wide probe state (listener gate + spawn outcome path).
 pub(crate) fn global_error_probe_state(
@@ -1847,12 +1848,13 @@ pub(crate) fn global_error_probe_state(
 /// that just tripped the breaker isn't re-probed by the very next event.
 pub(crate) fn seed_error_probe(agent_id: &str) {
     let now = chrono::Utc::now().timestamp();
-    global_error_probe_state()
-        .write()
-        .insert(agent_id.to_string(), ErrorProbeEntry {
+    global_error_probe_state().write().insert(
+        agent_id.to_string(),
+        ErrorProbeEntry {
             last_attempt: now,
             consecutive_failures: 0,
-        });
+        },
+    );
 }
 
 impl Drop for InFlightGuard {
