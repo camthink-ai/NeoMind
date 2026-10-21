@@ -243,13 +243,18 @@ jobs:
             --ignore RUSTSEC-2026-0098 \
             --ignore RUSTSEC-2026-0099 \
             --ignore RUSTSEC-2026-0049 \
+            --ignore RUSTSEC-2026-0382 \
             --ignore RUSTSEC-2024-0437 \
             --ignore RUSTSEC-2026-0002 \
             --ignore RUSTSEC-2026-0367 \
             --ignore RUSTSEC-2026-0368 \
             --ignore RUSTSEC-2026-0369
-          # webpki 0.102 (0104/0098/0099/0049): upstream-blocked — rumqttc 0.25.1
-          #   pins webpki 0.102; re-check on each rumqttc release.
+          # webpki 0.102 (0104/0098/0099/0049/0382): upstream-blocked — rumqttc
+          #   0.25.1 pins webpki 0.102 and is itself the latest 0.x; re-check on
+          #   each rumqttc release. 0382 (distrusted intermediates accepted) only
+          #   bites MQTT-over-TLS client verification; the platform's default
+          #   broker is plain TCP on localhost. The rustls 0.23 line used by
+          #   reqwest was updated to webpki 0.103.16 in the same commit.
           # protobuf RUSTSEC-2024-0437: prometheus output-only (encodes, never
           #   parses external protobuf) -> unexploitable; re-check if we parse untrusted input.
           # lru RUSTSEC-2026-0002 (unsound IterMut under Stacked Borrows):
