@@ -441,7 +441,8 @@ impl AgentExecutor {
                     ));
                     messages.push(Message::new(
                         MessageRole::User,
-                        Content::text(crate::agent::NARRATION_NUDGE_PROMPT),
+                        // Same language as the narration being corrected.
+                        Content::text(crate::agent::narration_nudge_prompt(&remaining_text)),
                     ));
                     round += 1;
                     continue;

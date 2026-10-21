@@ -708,17 +708,31 @@ pub(crate) fn promise_tracker_step(
 /// The mid-turn directive for a repeatedly promised, never executed
 /// command. Advisory in tone and actionable: re-run the exact command the
 /// model itself stated, or name what is missing — never a bare "do it".
-pub(crate) fn build_unkept_promise_directive(cmd: &str, rounds: usize) -> String {
-    format!(
-        "⚠️ STATED-INTENT MISMATCH: your last {rounds} replies each said you would run \
-         `{cmd}` — but it was never executed, while other tools ran instead. Either run \
-         `{cmd}` NOW with the `shell` tool (re-use the exact full command you already \
-         stated, including its identifiers), or reply with ONE sentence naming the \
-         identifier/information that is missing. Do not restate the plan and do not \
-         run other tools first.\n\
-         你的最近 {rounds} 轮回复都说明要执行 `{cmd}`，但它从未被执行。现在就用 shell 工具执行它\
-         （直接复用你陈述过的完整命令），或用一句话说明缺少哪个标识/信息。不要再次复述计划。"
-    )
+///
+/// ONE language per call (`language_hint` = the narration that stated the
+/// promise): a directive that states everything twice, once per language,
+/// makes small models drift into the language they read last.
+pub(crate) fn build_unkept_promise_directive(
+    cmd: &str,
+    rounds: usize,
+    language_hint: &str,
+) -> String {
+    if crate::agent::text_prefers_chinese(language_hint) {
+        format!(
+            "⚠️ 你最近 {rounds} 轮回复都说明要执行 `{cmd}`，但它从未被执行，反而运行了其他工具。\
+             现在就用 shell 工具执行它（直接复用你陈述过的完整命令，包含其中的标识符），\
+             或用一句话说明缺少哪个标识/信息。不要再次复述计划，也不要先运行其他工具。"
+        )
+    } else {
+        format!(
+            "⚠️ STATED-INTENT MISMATCH: your last {rounds} replies each said you would run \
+             `{cmd}` — but it was never executed, while other tools ran instead. Either run \
+             `{cmd}` NOW with the `shell` tool (re-use the exact full command you already \
+             stated, including its identifiers), or reply with ONE sentence naming the \
+             identifier/information that is missing. Do not restate the plan and do not \
+             run other tools first."
+        )
+    }
 }
 
 #[cfg(test)]
@@ -1265,8 +1279,32 @@ mod tests {
             promised_commands("use the neomind widget install frontend-components/x step"),
             vec!["neomind widget install".to_string()]
         );
-        let directive = build_unkept_promise_directive("neomind dashboard add-components", 2);
+        let directive = build_unkept_promise_directive(
+            "neomind dashboard add-components",
+            2,
+            "I will run the command now.",
+        );
         assert!(directive.contains("STATED-INTENT MISMATCH"), "{directive}");
         assert!(directive.contains("add-components"), "{directive}");
+        // No mixed-language instruction: the directive is English-only for
+        // an English narration...
+        assert!(
+            !directive
+                .chars()
+                .any(|c| matches!(c, '\u{4e00}'..='\u{9fff}')),
+            "no CJK in the English directive: {directive}"
+        );
+        // ...and Chinese-only for a Chinese one.
+        let zh = build_unkept_promise_directive(
+            "neomind dashboard add-components",
+            2,
+            "我现在就运行这个命令。",
+        );
+        assert!(zh.contains("add-components"), "{zh}");
+        assert!(zh.contains("轮回复"), "{zh}");
+        assert!(
+            !zh.contains("STATED-INTENT MISMATCH"),
+            "no English sentence in the Chinese directive: {zh}"
+        );
     }
 }

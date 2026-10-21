@@ -326,20 +326,50 @@ pub fn is_narration_without_action(text: &str) -> bool {
     ACTION_PROMISE_PATTERNS.iter().any(|p| lower.contains(p))
 }
 
+/// True when `text` contains Chinese text — the language selector for
+/// model-facing guard prompts.
+///
+/// Any CJK ideograph counts: Chinese conversations routinely embed English
+/// identifiers (`neomind dashboard add-components`), while English
+/// conversations essentially never embed CJK, so "contains CJK" is the
+/// reliable discriminator. One prompt language per turn matters: a prompt
+/// that states the instruction in BOTH languages makes small models drift
+/// into the language they read LAST (observed as English replies to Chinese
+/// questions after the old bilingual nudge).
+pub fn text_prefers_chinese(text: &str) -> bool {
+    text.chars()
+        .any(|c| matches!(c, '\u{3400}'..='\u{4dbf}' | '\u{4e00}'..='\u{9fff}'))
+}
+
 /// The one-shot nudge injected when narration collapse is detected.
-/// Bilingual: the failure is observed mostly on small bilingual edge models.
+///
 /// Decision-first: small models follow the FIRST imperative they see, so the
 /// old prompt (which led with "output the tool calls as a JSON array") got
 /// literal compliance — a bare `[]` — whenever no tool was actually needed
 /// (live 2026-10-20: the complete capability-list answer was replaced by
 /// `[]`). The branch order and the explicit empty-array ban exist so the
 /// model must judge before it emits anything.
-pub const NARRATION_NUDGE_PROMPT: &str = "你上一条回复承诺了要执行操作，但没有发出任何工具调用——这不是最终答复。请先判断：\n\
+///
+/// ONE language per call, chosen from the narration being corrected (see
+/// [`narration_nudge_prompt`]) — never both at once.
+const NARRATION_NUDGE_PROMPT_ZH: &str = "你上一条回复承诺了要执行操作，但没有发出任何工具调用——这不是最终答复。请先判断：\n\
 1. 如果确实需要工具才能完成用户的需求，现在立即只输出工具调用 JSON 数组：[{\"name\":\"工具名\",\"arguments\":{...}}]，不要输出其他文字。\n\
-2. 如果不需要任何工具，就不要输出 JSON 数组（绝对不要输出空数组 []），直接用文字给用户完整的最终答复。\n\
-Your previous reply promised an action but emitted no tool call — that is not a final answer. Decide first:\n\
+2. 如果不需要任何工具，就不要输出 JSON 数组（绝对不要输出空数组 []），直接用文字给用户完整的最终答复。";
+
+const NARRATION_NUDGE_PROMPT_EN: &str = "Your previous reply promised an action but emitted no tool call — that is not a final answer. Decide first:\n\
 1. If a tool is genuinely required, output ONLY the tool-call JSON array now: [{\"name\":\"...\",\"arguments\":{...}}] — no other text.\n\
 2. If no tool is needed, do NOT output a JSON array (never an empty array \"[]\") — give the user the complete final answer as plain text.";
+
+/// Pick the nudge prompt in the same language as `language_hint` (the
+/// narration that triggered the guard), so the model continues in the
+/// conversation's language.
+pub fn narration_nudge_prompt(language_hint: &str) -> &'static str {
+    if text_prefers_chinese(language_hint) {
+        NARRATION_NUDGE_PROMPT_ZH
+    } else {
+        NARRATION_NUDGE_PROMPT_EN
+    }
+}
 
 /// Strip images from every user message older than the most recent
 /// [`KEEP_IMAGES_ON_RECENT_USER_MSGS`] image-bearing ones, leaving a short
@@ -998,5 +1028,39 @@ mod narration_tests {
         assert!(is_narration_without_action(
             "Sure! I can help with that. Let me check your devices first."
         ));
+    }
+
+    /// The nudge prompt must be ONE language, matching the narration being
+    /// corrected. A bilingual instruction made small models drift into the
+    /// language they read last (English replies to Chinese questions).
+    #[test]
+    fn nudge_prompt_is_single_language() {
+        let zh = narration_nudge_prompt("我现在使用 shell 工具执行命令。");
+        assert!(zh.contains("请先判断"), "{zh}");
+        assert!(
+            !zh.contains("Your previous reply"),
+            "no English sentence in the Chinese nudge: {zh}"
+        );
+        // Chinese conversations embed English identifiers — still Chinese.
+        assert_eq!(
+            zh,
+            narration_nudge_prompt("我用 neomind dashboard add-components 来添加组件。")
+        );
+
+        let en = narration_nudge_prompt("Let me run the command now.");
+        assert!(en.contains("Decide first"), "{en}");
+        assert!(
+            !en.chars().any(|c| matches!(c, '\u{4e00}'..='\u{9fff}')),
+            "no CJK in the English nudge: {en}"
+        );
+    }
+
+    #[test]
+    fn language_selector_detects_cjk() {
+        assert!(text_prefers_chinese("你好"));
+        assert!(text_prefers_chinese("混合 English 文本"));
+        assert!(!text_prefers_chinese("hello world"));
+        assert!(!text_prefers_chinese("neomind device list --json"));
+        assert!(!text_prefers_chinese(""));
     }
 }

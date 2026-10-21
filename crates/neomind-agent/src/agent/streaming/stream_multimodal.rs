@@ -729,7 +729,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                 };
                 let nudge_result = llm_interface
                     .chat_stream_with_history_thinking(
-                        crate::agent::NARRATION_NUDGE_PROMPT,
+                        crate::agent::narration_nudge_prompt(&raw_response),
                         &nudge_history,
                         None,
                     )

@@ -1535,6 +1535,7 @@ pub async fn process_stream_events_with_safeguards(
                                     super::intent::build_unkept_promise_directive(
                                         &cmd,
                                         promise_rounds,
+                                        &narration,
                                     ),
                                 );
                             }
@@ -1810,7 +1811,12 @@ pub async fn process_stream_events_with_safeguards(
                             .await
                             .push_message(AgentMessage::assistant(&said));
                         tool_iteration_count += 1;
-                        narration_nudge_pending = Some(crate::agent::NARRATION_NUDGE_PROMPT.to_string());
+                        // One language per turn: the nudge is written in the
+                        // narration's language (a bilingual instruction made
+                        // small models drift into the language read last).
+                        narration_nudge_pending = Some(
+                            crate::agent::narration_nudge_prompt(&raw_response).to_string(),
+                        );
                         yield AgentEvent::IntermediateEnd;
                         continue 'multi_round_loop;
                     }

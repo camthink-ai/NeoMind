@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The instructional-question gate was position-blind: "帮我删除这个设备，不知道怎么操作" (a genuine request with filler) was demoted to a question and lost its completeness guard. Markers now only demote when they LEAD the first action verb.
 - No-tool-results executor turns ending in `[]` kept it as the conclusion (the Phase-2 path needs tool results); the final fallback now also triggers on degenerate text.
 
+### Fixed — model-facing guard prompts were bilingual in one instruction
+- The narration nudge and the stated-intent mismatch directive each stated the whole instruction twice, once in Chinese and once in English. Small models drift into the language they read LAST, so a Chinese turn could get nudged in a mixed prompt and answer in English. Both prompts now pick ONE language from the narration being corrected (CJK present → Chinese, else English); tests assert neither variant contains the other language's sentences.
+- Verified on the real minicpm5-2b: a promise-led Chinese turn nudged three times (budget), stayed in Chinese throughout, produced no `[]`, and ended with the progress-report note.
+
 ### Known sharp edge (not changed this pass)
 - `detect_json_tool_calls` accepts any array with a string "name" field as a tool call, so a model reply that IS a JSON data array with name-bearing rows can be executed as phantom tool calls ("unknown tool Demo" errors instead of displaying the list). Tightening detection to require "arguments" risks breaking real argument-less calls (`{"name":"get_time"}`) that currently execute; it needs its own change validated against the eval baselines.
 
