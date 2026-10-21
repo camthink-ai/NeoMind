@@ -1,0 +1,31 @@
+{
+  "id": "extension-status-diagnose",
+  "lang": "en",
+  "category": "extension",
+  "workflow": "extension",
+  "scenario_type": "single_turn",
+  "description": "Extension ops diagnosis: user reports an extension seems broken. Correct behavior: probe the observability surface (`neomind extension status`, then logs/list as needed) instead of guessing or reinstalling blindly.",
+  "setup": {
+    "fixture": "seed-empty"
+  },
+  "turns": [
+    {
+      "user": "The weather-forecast extension doesn't seem to be working lately. Look into what's wrong with it."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: run `neomind extension status weather-forecast` (and/or extension list / logs) to probe actual state; report the grounded finding — including 'not installed' if that is what the probe says — instead of assuming it is broken"
+    ],
+    "overall": "Diagnosis is grounded in status/logs/list output; no blind reinstall or fabricated conclusions"
+  },
+  "expect": {
+    "tools": ["shell"],
+    "commands": ["neomind extension status"]
+  }
+}

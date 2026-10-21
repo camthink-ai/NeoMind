@@ -1,0 +1,31 @@
+{
+  "id": "extension-status-diagnose",
+  "lang": "zh",
+  "category": "extension",
+  "workflow": "extension",
+  "scenario_type": "single_turn",
+  "description": "扩展运维诊断:用户报告扩展疑似故障。正确行为:探测可观测面(`neomind extension status`,必要时 logs/list),而不是瞎猜或盲目重装。",
+  "setup": {
+    "fixture": "seed-empty"
+  },
+  "turns": [
+    {
+      "user": "weather-forecast 扩展最近好像一直没在工作,帮我查查是哪里的问题。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: 跑 `neomind extension status weather-forecast`(和/或 extension list / logs)探测真实状态;基于探测结果回答——包括探测显示「未安装」时如实说——而不是假设它坏了"
+    ],
+    "overall": "诊断落在 status/logs/list 的输出上;不盲目重装、不编造结论"
+  },
+  "expect": {
+    "tools": ["shell"],
+    "commands": ["neomind extension status"]
+  }
+}

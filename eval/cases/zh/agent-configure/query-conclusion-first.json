@@ -1,0 +1,43 @@
+{
+  "id": "agent-query-conclusion-first",
+  "lang": "zh",
+  "category": "agent",
+  "workflow": "agent-configure",
+  "scenario_type": "single_turn",
+  "description": "边界规则 v2(任务分类协议):对于「X 还好吗 / agent 盯的东西现在什么状态」类问题,必须先调 query_conclusion(即时、免费)——而不是 shell 查 neomind agent,也不是 run_now。",
+  "setup": {
+    "fixture": "seed-empty",
+    "extras": {
+      "agents": [
+        {
+          "name": "coldroom-watch",
+          "user_prompt": "检查冷库温度并总结",
+          "schedule": {
+            "schedule_type": "interval",
+            "interval_seconds": 60
+          },
+          "execution_mode": "free"
+        }
+      ]
+    }
+  },
+  "turns": [
+    {
+      "user": "冷库现在还好吗?"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: 把「冷库」对应到 coldroom-watch 这个 agent,先调 query_conclusion(agent 按自己的排程跑过,结论即时可得);只有确实需要新看一眼时才 run_now"
+    ],
+    "overall": "状态回答必须落在 agent 的结论上(或明确说还没有结论),绝不能凭空编造"
+  },
+  "expect": {
+    "tools": ["query_conclusion"]
+  }
+}

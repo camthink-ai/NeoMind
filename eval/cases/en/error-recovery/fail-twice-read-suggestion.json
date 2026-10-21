@@ -1,0 +1,31 @@
+{
+  "id": "fail-twice-read-suggestion",
+  "lang": "en",
+  "category": "rule",
+  "workflow": "error-recovery",
+  "scenario_type": "single_turn",
+  "description": "Boundary rules v2 (execution protocol, stop varying blindly): when a command fails on an unsupported capability, re-read the error suggestion and ground the next step in real data (`neomind device get`) instead of retrying invented variants; end by reporting the limitation or asking one concise question.",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Create a rule named loud-alarm: notify me when front-door-camera's sound_level exceeds 60 dB."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "response_quality",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: the rule create fails (camera has no sound_level metric); the agent re-reads the error suggestion and grounds the follow-up in `neomind device get` (the real metric list) — no blind argument variation, no fabricated metric; it ends by stating the limitation or asking one concise question"
+    ],
+    "overall": "Recovery is data-grounded (device get/list before any conclusion); no rule is created on an invented metric"
+  },
+  "expect": {
+    "tools": ["shell"],
+    "commands": ["neomind device get"]
+  }
+}

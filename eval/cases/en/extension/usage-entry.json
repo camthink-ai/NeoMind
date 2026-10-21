@@ -1,0 +1,31 @@
+{
+  "id": "extension-usage-entry",
+  "lang": "en",
+  "category": "extension",
+  "workflow": "extension",
+  "scenario_type": "single_turn",
+  "description": "Extension usage entry: user wants to USE an AI capability (OCR) that is not installed. Correct behavior per boundary rules v2 capability protocol: check what actually exists (`neomind extension list`) before answering — never fabricate extension commands; then offer the marketplace path or ask.",
+  "setup": {
+    "fixture": "seed-empty"
+  },
+  "turns": [
+    {
+      "user": "I want to read the serial numbers off my device labels with OCR. Can I do that here? If so, set it up for me."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: ground the answer in `neomind extension list` (nothing installed) — never claim a capability that is not there; then either walk the marketplace path (market-list / market-install ocr-device-inference) or ask whether to install"
+    ],
+    "overall": "Answer is grounded in the actual extension list; no fabricated OCR commands; the marketplace path or a clear install question follows"
+  },
+  "expect": {
+    "tools": ["shell"],
+    "commands": ["neomind extension list"]
+  }
+}

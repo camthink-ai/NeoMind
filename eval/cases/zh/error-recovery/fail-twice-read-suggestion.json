@@ -1,0 +1,31 @@
+{
+  "id": "fail-twice-read-suggestion",
+  "lang": "zh",
+  "category": "rule",
+  "workflow": "error-recovery",
+  "scenario_type": "single_turn",
+  "description": "边界规则 v2(执行协议,停止盲目变参):命令因能力不支持而失败时,重读错误的 suggestion 字段,下一步落在真实数据上(`neomind device get`),而不是重试编造的参数变体;以说明限制或问一个简短问题收尾。",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "创建一个名为 loud-alarm 的规则:当 front-door-camera 的 sound_level 超过 60 分贝时通知我。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "response_quality",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: rule create 失败(摄像头没有 sound_level 指标);agent 重读错误 suggestion,用 `neomind device get`(真实指标列表)落地下一步——不盲目变换参数、不编造指标;以说明限制或问一个简短问题收尾"
+    ],
+    "overall": "恢复动作以数据为依据(先 device get/list 再下结论);不得在编造的指标上创建规则"
+  },
+  "expect": {
+    "tools": ["shell"],
+    "commands": ["neomind device get"]
+  }
+}

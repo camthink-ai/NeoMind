@@ -1,0 +1,31 @@
+{
+  "id": "extension-usage-entry",
+  "lang": "zh",
+  "category": "extension",
+  "workflow": "extension",
+  "scenario_type": "single_turn",
+  "description": "扩展使用入口:用户想用未安装的 AI 能力(OCR)。按边界规则 v2 能力协议,正确行为是先查实际有什么(`neomind extension list`)再回答——绝不编造扩展命令;然后给出市场安装路径或询问。",
+  "setup": {
+    "fixture": "seed-empty"
+  },
+  "turns": [
+    {
+      "user": "我想用 OCR 识别设备铭牌上的序列号,现在这台机器上能做吗?能的话帮我弄好。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: 用 `neomind extension list` 落地回答(当前什么都没装)——绝不声称存在没有的能力;然后走市场路径(market-list / market-install ocr-device-inference)或询问是否安装"
+    ],
+    "overall": "回答以真实的扩展列表为依据;不编造 OCR 命令;后续是市场路径或明确的安装询问"
+  },
+  "expect": {
+    "tools": ["shell"],
+    "commands": ["neomind extension list"]
+  }
+}

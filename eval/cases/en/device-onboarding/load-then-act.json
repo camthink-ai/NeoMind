@@ -1,0 +1,38 @@
+{
+  "id": "onboarding-load-then-act",
+  "lang": "en",
+  "category": "device",
+  "workflow": "device-onboarding",
+  "scenario_type": "single_turn",
+  "description": "Boundary rules v2 (execution protocol, load means act): a complex workflow (device onboarding) must load the skill guide AND execute the real command in the SAME turn — loading a guide without acting is an incomplete response.",
+  "setup": {
+    "fixture": "seed-empty"
+  },
+  "turns": [
+    {
+      "user": "Connect a new MQTT temperature-humidity sensor for the greenhouse; call it greenhouse-sensor, and give me what I need to wire it up."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: skill load device-onboarding, then in the SAME turn create the device via `neomind device create` with adapter-type mqtt, and hand over the MQTT topic / connection info"
+    ],
+    "overall": "Device created and connection info delivered in turn 1 — a skill load without the real command is not a complete answer"
+  },
+  "expect": {
+    "tools": ["skill", "shell"],
+    "commands": ["neomind device create"]
+  },
+  "state_queries": [
+    {
+      "type": "device_exists",
+      "params": { "id": "greenhouse-sensor" },
+      "expected": true
+    }
+  ]
+}

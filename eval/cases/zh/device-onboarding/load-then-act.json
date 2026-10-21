@@ -1,0 +1,38 @@
+{
+  "id": "onboarding-load-then-act",
+  "lang": "zh",
+  "category": "device",
+  "workflow": "device-onboarding",
+  "scenario_type": "single_turn",
+  "description": "边界规则 v2(执行协议,load 即执行):复杂工作流(设备接入)必须在同一轮里先 skill load 指南、再执行真实命令——只加载指南不执行是不完整的回答。",
+  "setup": {
+    "fixture": "seed-empty"
+  },
+  "turns": [
+    {
+      "user": "帮我接入一个 MQTT 温湿度传感器,温室用的,就叫 greenhouse-sensor,并把接线需要的连接信息给我。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: 先 skill load device-onboarding,然后在同一轮内用 `neomind device create`(adapter-type mqtt)创建设备,并把 MQTT topic / 连接信息交给用户"
+    ],
+    "overall": "第一轮内完成设备创建和连接信息交付——只 load skill 而不执行真实命令不算完成"
+  },
+  "expect": {
+    "tools": ["skill", "shell"],
+    "commands": ["neomind device create"]
+  },
+  "state_queries": [
+    {
+      "type": "device_exists",
+      "params": { "id": "greenhouse-sensor" },
+      "expected": true
+    }
+  ]
+}

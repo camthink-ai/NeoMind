@@ -1,0 +1,43 @@
+{
+  "id": "agent-query-conclusion-first",
+  "lang": "en",
+  "category": "agent",
+  "workflow": "agent-configure",
+  "scenario_type": "single_turn",
+  "description": "Boundary rules v2 (task-category protocol): for 'is X ok / status of what agent Y watches', call query_conclusion FIRST — instant and free — not shell/neomind agent queries, not run_now.",
+  "setup": {
+    "fixture": "seed-empty",
+    "extras": {
+      "agents": [
+        {
+          "name": "coldroom-watch",
+          "user_prompt": "Check the cold room temperature and summarize",
+          "schedule": {
+            "schedule_type": "interval",
+            "interval_seconds": 60
+          },
+          "execution_mode": "free"
+        }
+      ]
+    }
+  },
+  "turns": [
+    {
+      "user": "Is the cold room OK right now?"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: resolve 'cold room' to the coldroom-watch agent and call query_conclusion FIRST (the agent already ran on its own schedule — its conclusion is instant and free); run_now only if a fresh look is genuinely needed"
+    ],
+    "overall": "Status answer grounded in the agent's conclusion (or an explicit no-conclusion-yet), never fabricated from thin air"
+  },
+  "expect": {
+    "tools": ["query_conclusion"]
+  }
+}

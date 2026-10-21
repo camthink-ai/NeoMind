@@ -1,0 +1,42 @@
+{
+  "id": "device-offline-no-data",
+  "lang": "zh",
+  "category": "device",
+  "workflow": "system-diagnostics",
+  "scenario_type": "single_turn",
+  "description": "设备运维诊断(边缘产品的高频支持场景):已注册设备从未上报数据。正确行为:双探针——`neomind device get`(在线状态 / last_seen)+ `neomind device history`(确认零遥测),然后给有依据的结论(离线 vs 主题配错),绝不凭记忆回答。",
+  "setup": {
+    "fixture": "seed-empty",
+    "extras": {
+      "devices": [
+        {
+          "device_id": "pump-station-1",
+          "name": "Pump Station 1",
+          "device_type": "ne101_camera",
+          "adapter_type": "mqtt",
+          "connection_config": {}
+        }
+      ]
+    }
+  },
+  "turns": [
+    {
+      "user": "pump-station-1 接上之后一条数据都没报过,是掉线了吗?帮我查一下。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: 跑 `neomind device get pump-station-1`(在线状态 / last_seen)和 `neomind device history`(确认零遥测);基于探针结果下结论——离线状态、从未上报、以及下一步该查什么(topic / 载荷格式 / 设备侧)"
+    ],
+    "overall": "结论落在 device get + history 的输出上;不编造原因;给用户可执行的下一步"
+  },
+  "expect": {
+    "tools": ["shell"],
+    "commands": ["neomind device get", "neomind device history"]
+  }
+}

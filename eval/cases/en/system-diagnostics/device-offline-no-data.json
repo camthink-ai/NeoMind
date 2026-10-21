@@ -1,0 +1,42 @@
+{
+  "id": "device-offline-no-data",
+  "lang": "en",
+  "category": "device",
+  "workflow": "system-diagnostics",
+  "scenario_type": "single_turn",
+  "description": "Device ops diagnosis (the high-frequency edge support scenario): a registered device has never reported data. Correct behavior: probe BOTH `neomind device get` (online status / last_seen) and `neomind device history` (no telemetry points), then give a grounded conclusion (offline vs misconfigured topic) — never answer from memory.",
+  "setup": {
+    "fixture": "seed-empty",
+    "extras": {
+      "devices": [
+        {
+          "device_id": "pump-station-1",
+          "name": "Pump Station 1",
+          "device_type": "ne101_camera",
+          "adapter_type": "mqtt",
+          "connection_config": {}
+        }
+      ]
+    }
+  },
+  "turns": [
+    {
+      "user": "pump-station-1 has not reported a single data point since it was connected. Is it offline? Look into it for me."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: run `neomind device get pump-station-1` (online status / last_seen) and `neomind device history` (confirm zero telemetry); conclude from the probes — offline status, never-reported, and what to check next (topic / payload format / device side)"
+    ],
+    "overall": "Conclusion grounded in device get + history output; no fabricated causes; actionable next step for the user"
+  },
+  "expect": {
+    "tools": ["shell"],
+    "commands": ["neomind device get", "neomind device history"]
+  }
+}
