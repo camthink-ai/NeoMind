@@ -137,14 +137,23 @@ impl AgentExecutor {
             // in the same instant used to fire N CONCURRENT runs for
             // Free/Focused agents (debounce was Structured-only) — concurrent
             // runs of one agent race its journal read-modify-write and burn
-            // the concurrency budget. Structured keeps its OperatorConfig
-            // window; Free/Focused track the cooldown, floored at 1s so a
-            // multi-metric report still folds into one admission even in
-            // on-demand (cooldown 0) setups.
+            // the concurrency budget. Free/Focused track the cooldown,
+            // floored at 1s. Structured keeps its OperatorConfig window —
+            // EXCEPT when an explicit cooldown is set: the user who set
+            // event_cooldown_secs stated their pacing intent, and a stale
+            // debounce default must not silently override it (cooldown 0 +
+            // the default 30s debounce kept image agents on a 30s cadence
+            // while their UI said "on-demand"). The cap only fires on an
+            // explicit cooldown, and no pre-existing agent can have one —
+            // the field shipped with the cooldown feature itself.
             let cooldown_secs = op_cfg.effective_event_cooldown_secs();
             let debounce_secs = match agent.execution_mode {
                 neomind_storage::agents::ExecutionMode::Structured => {
-                    op_cfg.debounce_secs as i64
+                    match op_cfg.event_cooldown_secs {
+                        None => op_cfg.debounce_secs as i64,
+                        Some(cooldown) => (op_cfg.debounce_secs as i64)
+                            .min(cooldown.max(MIN_BURST_MERGE_SECS as u32) as i64),
+                    }
                 }
                 _ => DEFAULT_FREE_EVENT_DEBOUNCE_SECS
                     .min(cooldown_secs)
@@ -370,7 +379,8 @@ impl AgentExecutor {
                                     .write()
                                     .entry(agent_id_for_log.clone())
                                     .and_modify(|e| {
-                                        e.consecutive_failures = e.consecutive_failures.saturating_add(1)
+                                        e.consecutive_failures =
+                                            e.consecutive_failures.saturating_add(1)
                                     })
                                     .or_insert(super::ErrorProbeEntry {
                                         last_attempt: timestamp,
@@ -396,7 +406,8 @@ impl AgentExecutor {
                                 .write()
                                 .entry(agent_id_for_log.clone())
                                 .and_modify(|e| {
-                                    e.consecutive_failures = e.consecutive_failures.saturating_add(1)
+                                    e.consecutive_failures =
+                                        e.consecutive_failures.saturating_add(1)
                                 });
                         }
                     }
@@ -965,8 +976,7 @@ impl AgentExecutor {
                         neomind_storage::ScheduleType::Event
                     ) && matches!(
                         a.status,
-                        neomind_storage::AgentStatus::Active
-                            | neomind_storage::AgentStatus::Error
+                        neomind_storage::AgentStatus::Active | neomind_storage::AgentStatus::Error
                     )
                 })
                 .map(|a| (a.id.clone(), a))

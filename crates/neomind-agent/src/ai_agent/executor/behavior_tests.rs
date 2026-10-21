@@ -815,6 +815,51 @@ async fn on_demand_free_agent_admits_after_the_burst_floor() {
     );
 }
 
+/// The trap that bit the field deployment: a Structured agent with the
+/// DEFAULT 30s debounce and an explicit cooldown of 0 — the debounce
+/// silently overrode the cooldown, keeping an "on-demand" image agent on a
+/// 30s cadence. An explicit cooldown now caps the debounce (floored at the
+/// 1s burst merge), so the agent's own saved config heals without an edit.
+#[tokio::test]
+async fn explicit_cooldown_caps_the_structured_debounce() {
+    let (executor, mut agent) = build_event_agent(ExecutionMode::Structured, Some(30)).await;
+    let mut op = crate::ai_agent::executor::structured::default_operator_config();
+    op.debounce_secs = 30; // the untouched default that used to win
+    op.event_cooldown_secs = Some(0);
+    with_operator_config(&executor, &mut agent, op).await;
+
+    fire_event(&executor, "device", "dev-a", "temp").await;
+    let runs = drain_event_tasks(&executor).await;
+    // Debounce capped at the 1s burst floor, not the configured 30s.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    fire_event(&executor, "device", "dev-b", "temp").await;
+    let runs = runs + drain_event_tasks(&executor).await;
+
+    assert_eq!(
+        runs, 2,
+        "cooldown 0 + default debounce 30 must behave as on-demand (1s merge \
+         floor), not as a 30s-paced agent"
+    );
+}
+
+/// Without an explicit cooldown the Structured debounce keeps its historical
+/// meaning — long merges set before the cooldown existed still hold.
+#[tokio::test]
+async fn structured_debounce_without_cooldown_is_unchanged() {
+    let (executor, _agent) = build_event_agent(ExecutionMode::Structured, Some(300)).await;
+
+    fire_event(&executor, "device", "dev-a", "temp").await;
+    let runs = drain_event_tasks(&executor).await;
+    // Well inside the 300s window: must merge, exactly as before.
+    fire_event(&executor, "device", "dev-b", "temp").await;
+    let runs = runs + drain_event_tasks(&executor).await;
+
+    assert_eq!(
+        runs, 1,
+        "no explicit cooldown means the debounce semantics are untouched"
+    );
+}
+
 /// A short configured cooldown both paces admissions AND shrinks the
 /// Free/Focused merge window to match — otherwise the fixed 30s merge would
 /// silently override a 2s cooldown and the setting would do nothing.
@@ -867,7 +912,10 @@ async fn busy_event_admission_drops_without_the_retry_backoff() {
     let (executor, agent) = build_event_agent(ExecutionMode::Free, None).await;
     // Occupy the process-global in-flight set without running anything, so
     // execute_agent rejects with "already executing".
-    super::in_flight_agents().lock().unwrap().insert(agent.id.clone());
+    super::in_flight_agents()
+        .lock()
+        .unwrap()
+        .insert(agent.id.clone());
 
     let event = super::context::EventTriggerData {
         source: super::context::DataSourceRef {
@@ -879,7 +927,8 @@ async fn busy_event_admission_drops_without_the_retry_backoff() {
         timestamp: 0,
     };
     let started = std::time::Instant::now();
-    let out = AgentExecutor::execute_with_retry(&executor, agent.clone(), event, 1, &agent.id).await;
+    let out =
+        AgentExecutor::execute_with_retry(&executor, agent.clone(), event, 1, &agent.id).await;
     super::in_flight_agents().lock().unwrap().remove(&agent.id);
 
     assert!(out.is_ok(), "busy is a drop, not an error: {out:?}");
@@ -933,7 +982,9 @@ async fn breaker_demotes_only_after_consecutive_threshold() {
     }
     // Demotion seeds the recovery clock for the event path.
     assert!(
-        super::global_error_probe_state().read().contains_key(&agent.id),
+        super::global_error_probe_state()
+            .read()
+            .contains_key(&agent.id),
         "Active→Error must seed the recovery-probe clock"
     );
     super::global_error_probe_state().write().remove(&agent.id);
@@ -954,27 +1005,41 @@ async fn error_agent_probes_on_events_and_recovers() {
     // Demote by hand and age the probe clock past its backoff.
     executor
         .store()
-        .update_agent_status(&agent.id, neomind_storage::AgentStatus::Error, Some("test demotion".into()))
+        .update_agent_status(
+            &agent.id,
+            neomind_storage::AgentStatus::Error,
+            Some("test demotion".into()),
+        )
         .await
         .unwrap();
     let old = chrono::Utc::now().timestamp() - 3600;
     super::global_error_probe_state().write().insert(
         agent.id.clone(),
-        super::ErrorProbeEntry { last_attempt: old, consecutive_failures: 2 },
+        super::ErrorProbeEntry {
+            last_attempt: old,
+            consecutive_failures: 2,
+        },
     );
 
     fire_event(&executor, "device", "dev-a", "temp").await;
     let runs = drain_event_tasks(&executor).await;
 
     assert_eq!(runs, 1, "an aged-backoff Error agent must admit the probe");
-    let stored = executor.store().get_agent(&agent.id).await.unwrap().unwrap();
+    let stored = executor
+        .store()
+        .get_agent(&agent.id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(
         stored.status,
         neomind_storage::AgentStatus::Active,
         "a successful probe must restore Active"
     );
     assert!(
-        !super::global_error_probe_state().read().contains_key(&agent.id),
+        !super::global_error_probe_state()
+            .read()
+            .contains_key(&agent.id),
         "recovery must clear the backoff ladder"
     );
 }
@@ -991,13 +1056,20 @@ async fn error_agent_in_backoff_skips_events() {
 
     executor
         .store()
-        .update_agent_status(&agent.id, neomind_storage::AgentStatus::Error, Some("test demotion".into()))
+        .update_agent_status(
+            &agent.id,
+            neomind_storage::AgentStatus::Error,
+            Some("test demotion".into()),
+        )
         .await
         .unwrap();
     let now = chrono::Utc::now().timestamp();
     super::global_error_probe_state().write().insert(
         agent.id.clone(),
-        super::ErrorProbeEntry { last_attempt: now, consecutive_failures: 0 },
+        super::ErrorProbeEntry {
+            last_attempt: now,
+            consecutive_failures: 0,
+        },
     );
 
     fire_event(&executor, "device", "dev-a", "temp").await;
@@ -1025,26 +1097,41 @@ async fn failed_probe_climbs_the_backoff_ladder() {
 
     executor
         .store()
-        .update_agent_status(&agent.id, neomind_storage::AgentStatus::Error, Some("test demotion".into()))
+        .update_agent_status(
+            &agent.id,
+            neomind_storage::AgentStatus::Error,
+            Some("test demotion".into()),
+        )
         .await
         .unwrap();
     let old = chrono::Utc::now().timestamp() - 3600;
     super::global_error_probe_state().write().insert(
         agent.id.clone(),
-        super::ErrorProbeEntry { last_attempt: old, consecutive_failures: 0 },
+        super::ErrorProbeEntry {
+            last_attempt: old,
+            consecutive_failures: 0,
+        },
     );
 
     fire_event(&executor, "device", "dev-a", "temp").await;
     let runs = drain_event_tasks(&executor).await;
 
     assert_eq!(runs, 1, "aged backoff admits the probe");
-    let stored = executor.store().get_agent(&agent.id).await.unwrap().unwrap();
+    let stored = executor
+        .store()
+        .get_agent(&agent.id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(
         stored.status,
         neomind_storage::AgentStatus::Error,
         "a failed probe keeps the agent demoted"
     );
-    let entry = super::global_error_probe_state().read().get(&agent.id).copied();
+    let entry = super::global_error_probe_state()
+        .read()
+        .get(&agent.id)
+        .copied();
     super::global_error_probe_state().write().remove(&agent.id);
     let entry = entry.expect("probe outcome must be recorded");
     assert!(
