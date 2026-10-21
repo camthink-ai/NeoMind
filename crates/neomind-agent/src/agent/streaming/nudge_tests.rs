@@ -101,10 +101,55 @@ fn joined_content(events: &[AgentEvent]) -> String {
         .collect()
 }
 
-/// Text chat path: narration round → nudge → recovered tool call → final
-/// answer. The narration must NOT be the turn's last word.
+/// Text chat DEFAULT POLICY: a promise-shaped reply ends the turn with a
+/// LABEL — no behavioural retry (the 2026-10-21 A/B showed no lift and false
+/// labels were the observable cost). One LLM call, one SystemNote.
 #[tokio::test]
-async fn text_path_narration_nudge_recovers_tool_call() {
+async fn text_path_chat_policy_labels_promise_without_extra_round() {
+    let narration = "好的，我现在使用 echo 工具来处理。";
+    let rt = MockLlmRuntime::new(vec![MockResponse::text(narration)]);
+    let (iface, state, registry) = harness(&rt);
+
+    let stream = crate::agent::streaming::process_stream_events_with_safeguards(
+        iface,
+        state.clone(),
+        registry,
+        "帮我处理",
+        super::StreamSafeguards::default(),
+        None,
+        None,
+    )
+    .await
+    .expect("stream");
+    let events = collect(stream).await;
+
+    assert_eq!(
+        rt.call_count(),
+        1,
+        "chat policy must not launch a behavioural retry round"
+    );
+    assert!(!has_tool_call_start(&events, "echo"));
+    assert!(
+        joined_content(&events).contains("我现在使用 echo"),
+        "the narration itself must reach the user"
+    );
+    let guard = state.read().await;
+    let last = guard.memory.last().expect("final message persisted");
+    assert_eq!(&*last.content, narration);
+    assert_eq!(
+        last.system_notes.as_ref().map(|n| n.len()).unwrap_or(0),
+        1,
+        "a promise-shaped chat reply carries the progress-report label"
+    );
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, AgentEvent::SystemNote { .. })));
+}
+
+/// The latent behavioural path stays tested (and re-enableable): with the
+/// opt-in, narration → nudge → recovered tool call → final answer.
+#[tokio::test]
+async fn text_path_opt_in_behavioral_guards_still_recover_tool_call() {
     let rt = MockLlmRuntime::new(vec![
         MockResponse::text("好的，我现在使用 echo 工具来处理。"),
         MockResponse::tool_call("echo", serde_json::json!({ "msg": "recovered" })),
@@ -117,7 +162,7 @@ async fn text_path_narration_nudge_recovers_tool_call() {
         state,
         registry,
         "帮我处理",
-        super::StreamSafeguards::default(),
+        super::StreamSafeguards::default().with_behavioral_guards(true),
         None,
         None,
     )
@@ -127,11 +172,7 @@ async fn text_path_narration_nudge_recovers_tool_call() {
     let events = collect(stream).await;
     assert!(
         has_tool_call_start(&events, "echo"),
-        "nudge must recover the promised tool call; events: {:?}",
-        events
-            .iter()
-            .map(|e| format!("{:?}", std::mem::discriminant(e)))
-            .collect::<Vec<_>>()
+        "opt-in nudge must recover the promised tool call"
     );
     let content = joined_content(&events);
     assert!(
@@ -209,7 +250,7 @@ async fn plan_only_request_suppresses_nudge_and_label() {
         state.clone(),
         registry,
         "先不要执行，只告诉我你打算怎么检查设备状态。",
-        super::StreamSafeguards::default(),
+        super::StreamSafeguards::default().with_behavioral_guards(true),
         None,
         None,
     )
@@ -262,7 +303,7 @@ async fn later_round_degenerate_output_does_not_resurrect_stale_narration() {
         state.clone(),
         registry,
         "检查仪表盘绑定状态",
-        super::StreamSafeguards::default(),
+        super::StreamSafeguards::default().with_behavioral_guards(true),
         None,
         None,
     )
@@ -306,7 +347,7 @@ async fn nudge_round_answering_empty_array_restores_the_narration() {
         state.clone(),
         registry,
         "检查仪表盘绑定状态",
-        super::StreamSafeguards::default(),
+        super::StreamSafeguards::default().with_behavioral_guards(true),
         None,
         None,
     )

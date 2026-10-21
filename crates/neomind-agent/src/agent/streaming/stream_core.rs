@@ -75,6 +75,18 @@ pub struct StreamSafeguards {
     /// Optional interrupt signal - when set, stream should stop gracefully
     /// This allows users to interrupt long thinking processes
     pub interrupt_signal: Option<tokio::sync::watch::Receiver<bool>>,
+
+    /// Whether the BEHAVIOURAL guards (narration nudge, list-only coercion,
+    /// explore recovery) may run on this path. Default **false**: interactive
+    /// chat keeps only zero-cost labels (promise backstop, completeness note).
+    ///
+    /// Evidence (2026-10-21 A/B, 10 cases x 2 rounds, guards on vs off): no
+    /// measurable lift, a weak harm signal (the one coercion-fired case timed
+    /// out in both rounds while the off arm produced a verdict), and false
+    /// labels were the observable cost. Interactive users can say "continue";
+    /// the scheduled-agent executor (tool_loop) keeps its own nudge because
+    /// nobody is there to. Re-enable only with new evidence.
+    pub behavioral_guards: bool,
 }
 
 impl Default for StreamSafeguards {
@@ -106,6 +118,9 @@ impl Default for StreamSafeguards {
 
             // No interrupt signal by default
             interrupt_signal: None,
+
+            // Chat policy: labels only. See the field docs.
+            behavioral_guards: false,
         }
     }
 }
@@ -115,6 +130,14 @@ impl StreamSafeguards {
     /// Returns a sender that can be used to trigger the interrupt
     pub fn with_interrupt_signal(mut self, rx: tokio::sync::watch::Receiver<bool>) -> Self {
         self.interrupt_signal = Some(rx);
+        self
+    }
+
+    /// Opt INTO the behavioural guards (nudge / coercion / explore recovery).
+    /// Chat leaves this off; it exists so the latent path stays testable and
+    /// can be re-enabled with evidence.
+    pub fn with_behavioral_guards(mut self, enabled: bool) -> Self {
+        self.behavioral_guards = enabled;
         self
     }
 }
@@ -449,6 +472,8 @@ pub async fn process_stream_events_with_safeguards(
             let guards_disabled = super::guard::guards_disabled(
                 std::env::var("NEOMIND_GUARD_MODE").ok().as_deref(),
             );
+            // Chat policy: labels only (see StreamSafeguards::behavioral_guards).
+            let behavioral_guards = safeguards.behavioral_guards;
             // True while processing the round launched by the narration
             // nudge — its output is held to stricter JSON-array suspicion
             // (see might_be_json_start) and degenerate results are restored.
@@ -489,6 +514,13 @@ pub async fn process_stream_events_with_safeguards(
                     super::guard::GuardOutcome::Suppressed,
                     0,
                     "guard_mode_off",
+                );
+            } else if !behavioral_guards {
+                guard_ledger.record(
+                    super::guard::GuardKind::BehavioralGuardsOff,
+                    super::guard::GuardOutcome::Suppressed,
+                    0,
+                    "chat_policy",
                 );
             }
 
@@ -567,7 +599,10 @@ pub async fn process_stream_events_with_safeguards(
                         // At most once per turn (see list_only_dead_end_injected).
                         let commands_ref: Vec<&str> = recently_executed_commands.iter().map(|s| s.as_str()).collect();
 
-                        let dead_end_msg = if guards_disabled || list_only_dead_end_injected {
+                        let dead_end_msg = if guards_disabled
+                            || !behavioral_guards
+                            || list_only_dead_end_injected
+                        {
                             None
                         } else {
                             build_list_only_dead_end_prompt(
@@ -587,7 +622,8 @@ pub async fn process_stream_events_with_safeguards(
                                 "only_read_only_commands",
                             );
                             dead_end_msg
-                        } else if !guards_disabled
+                        } else if behavioral_guards
+                            && !guards_disabled
                             && post_dead_end_read_only_rounds >= 2
                             && !explore_recovery_nudged
                         {
@@ -1873,7 +1909,8 @@ pub async fn process_stream_events_with_safeguards(
                     // through and is accepted as the final answer.
                     let is_narration_reply =
                         crate::agent::is_narration_without_action(&raw_response);
-                    let nudge_allowed = !guards_disabled
+                    let nudge_allowed = behavioral_guards
+                        && !guards_disabled
                         && super::guard::should_nudge_narration(
                         is_narration_reply,
                         narration_nudges,

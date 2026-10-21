@@ -44,6 +44,9 @@ pub enum GuardKind {
     /// The whole action-guard family muted by the ablation switch
     /// (`NEOMIND_GUARD_MODE=off`) — eval A/B only.
     GuardsDisabled,
+    /// Behavioural guards (nudge / coercion / explore recovery) disabled by
+    /// the chat policy; labels still run.
+    BehavioralGuardsOff,
 }
 
 impl GuardKind {
@@ -60,6 +63,7 @@ impl GuardKind {
             GuardKind::DegenerateSuppressed => "degenerate_suppressed",
             GuardKind::PlanOnlySuppression => "plan_only_suppression",
             GuardKind::GuardsDisabled => "guards_disabled",
+            GuardKind::BehavioralGuardsOff => "behavioral_guards_off",
         }
     }
 }
