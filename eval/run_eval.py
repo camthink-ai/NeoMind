@@ -42,6 +42,7 @@ sys.path.insert(0, str(Path(__file__).parent / "lib"))
 import fallback  # noqa: E402
 import hard_signal  # noqa: E402
 import judge  # noqa: E402
+import model_identity  # noqa: E402
 import preflight  # noqa: E402
 import report  # noqa: E402
 import seed  # noqa: E402
@@ -545,6 +546,32 @@ def _select_cases(root: Path, lang: str, workflows: list[str] | None, case_id: s
     return out
 
 
+def _check_model_identity(run_dir: Path, allow_mismatch: bool) -> int:
+    """Refuse to run when the endpoint serves a DIFFERENT model than requested.
+
+    A run on the wrong model produces plausible numbers that invalidate every
+    conclusion (2026-10-21: an A/B silently ran on lfm25 because 29375 had
+    been swapped). Unknown identity (proxy) is advisory only.
+    """
+    backend_type = os.environ.get("AGENT_LLM_BACKEND_TYPE", "openai")
+    endpoint = os.environ.get("AGENT_LLM_ENDPOINT", "")
+    model = os.environ.get("AGENT_LLM_MODEL", "")
+    api_key = os.environ.get("AGENT_LLM_API_KEY")
+    status, msg = model_identity.check_served_model(
+        backend_type, endpoint, api_key, model
+    )
+    print(f"   served-model check: {msg}", file=sys.stderr)
+    model_identity.record_identity(run_dir, backend_type, endpoint, api_key, model)
+    if status == "mismatch" and not allow_mismatch:
+        print(
+            "   !! Refusing to run on the wrong model "
+            "(pass --allow-model-mismatch to override).",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
 def _run_preflight() -> int:
     """Fail-fast if the agent's LLM endpoint is misconfigured.
 
@@ -612,6 +639,9 @@ def cmd_run(args):
         run_dir.mkdir(parents=True, exist_ok=True)
 
     cases_jsonl_path = run_dir / "cases.jsonl"
+    if _check_model_identity(run_dir, getattr(args, "allow_model_mismatch", False)) != 0:
+        return 1
+
     scores_jsonl_path = run_dir / "scores.jsonl"
 
     # Config snapshot — the 2026-08-17 official-params experiment could not be
@@ -811,6 +841,10 @@ def cmd_regression(args):
 
     run_dir = Path(args.run_dir or f"eval/runs/regression-{time.strftime('%Y%m%d-%H%M%S')}")
     run_dir.mkdir(parents=True, exist_ok=True)
+    if _check_model_identity(
+        run_dir, getattr(args, "allow_model_mismatch", False)
+    ) != 0:
+        return 1
     scores_path = run_dir / "scores.jsonl"
 
     # Per-case wall-clock cap. A wedged agent (e.g. stuck in a thinking loop
@@ -992,6 +1026,8 @@ def main():
                    help="skip LLM-endpoint pre-flight (for confirmed cloud/versioned endpoints)")
     p.add_argument("--skip-multimodal", action="store_true",
                    help="exclude requires_multimodal cases (non-multimodal backend config)")
+    p.add_argument("--allow-model-mismatch", action="store_true",
+                   help="proceed even when the served model differs from AGENT_LLM_MODEL")
     p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("report", help="aggregate scores.jsonl → grade-card.md")
@@ -1025,6 +1061,8 @@ def main():
                    help="skip LLM-endpoint pre-flight (for confirmed cloud/versioned endpoints)")
     p.add_argument("--skip-multimodal", action="store_true",
                    help="exclude requires_multimodal cases (non-multimodal backend config)")
+    p.add_argument("--allow-model-mismatch", action="store_true",
+                   help="proceed even when the served model differs from AGENT_LLM_MODEL")
     p.set_defaults(func=cmd_regression)
 
     args = ap.parse_args()

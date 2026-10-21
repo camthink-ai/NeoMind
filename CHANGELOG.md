@@ -68,6 +68,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--case-id` bypassed `--lang`/`--workflow` (the filters sat in an `else`), so `run --lang zh --case-id X` also ran the en mirror of X (the zh/en sets share ids by design). Every filter now applies; `test_select_cases.py` covers it.
 - Wedged turns lost their guard ledger: the turn-error path returned before parsing the logs, so timeout/agent-error cases — exactly where the ledger explains the wedge — recorded nothing. The ledger is now captured before `srv.shutdown()`; verified with a forced 60s timeout (recorded `list_only_coercion=fired`).
 
+### Added — eval model-identity guard
+- `run` / `regression` now ask the server what it is actually serving (llama.cpp `/props` → `model_path`, else `/models` ids) and **refuse to start** when it does not match `AGENT_LLM_MODEL`; `--allow-model-mismatch` overrides, and an unknowable identity (proxy) stays advisory. Each run writes `served_model.json` for provenance.
+- Why: a 2026-10-21 A/B silently ran on `lfm25-2.6b` because port 29375 had been swapped by another process; the only hint was `max_ctx=128000` in the arm logs. A run on the wrong model produces plausible numbers that invalidate every conclusion.
+
 ### Added — guard ablation switch (eval A/B)
 - `NEOMIND_GUARD_MODE=off` disables the five post-hoc action guards (narration nudge, narration label, promise directive, list-only coercion, incomplete-action note) so an A/B run can measure their net lift against the same cases. Output sanitizers (degenerate `[]` recovery) and safety caps (loop break, dedup, iteration/wall-clock bounds) stay active — they are correctness/safety, not action guards.
 - The turn records `guards_disabled` in the ledger so an off-arm run is self-identifying. Verified: a case that normally fires `incomplete_action_note` records only `guards_disabled` with the switch off.
