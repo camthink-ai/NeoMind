@@ -15,7 +15,12 @@ use crate::error::Result;
 fn code_block_array_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r#"```(?:json)?\s*\n?\s*(\[\s*\{[\s\S]*?"name"[\s\S]*?\}\s*\])\s*\n?\s*```"#)
+        // "name" AND "arguments" both required (same class of over-broad
+        // match as the 2026-10-20 narration incident): a fenced DATA array
+        // — e.g. a device list ```json [{"id","name","online"}] ``` quoted
+        // in an answer — carries "name" fields but no "arguments"; the old
+        // name-only pattern deleted the entire data block from the reply.
+        Regex::new(r#"```(?:json)?\s*\n?\s*(\[\s*\{[\s\S]*?"name"[\s\S]*?"arguments"[\s\S]*?\}\s*\])\s*\n?\s*```"#)
             .expect("code block tool call regex is a compile-time constant")
     })
 }
@@ -656,6 +661,28 @@ fn parse_invoke_element(invoke_section: &str) -> Option<ToolCall> {
     })
 }
 
+/// A JSON object shaped like a tool call: a string `name`/`tool`/`function`
+/// PLUS an `arguments`/`params`/`parameters` field. Data objects — a device
+/// row `{"id","name","online"}`, a push target `{"name","url"}` — carry
+/// "name" but no arguments; they are ANSWERS, not calls (same over-broad
+/// pattern-match family as the 2026-10-20 narration incident).
+fn is_tool_call_shaped(value: &Value) -> bool {
+    let obj = match value.as_object() {
+        Some(o) => o,
+        None => return false,
+    };
+    let named = obj
+        .get("name")
+        .or_else(|| obj.get("tool"))
+        .or_else(|| obj.get("function"))
+        .and_then(Value::as_str)
+        .is_some_and(|s| !s.trim().is_empty());
+    let has_args = obj.contains_key("arguments")
+        || obj.contains_key("params")
+        || obj.contains_key("parameters");
+    named && has_args
+}
+
 /// Remove tool call markers from response for memory storage.
 pub fn remove_tool_calls_from_response(response: &str) -> String {
     let mut result = response.to_string();
@@ -666,8 +693,13 @@ pub fn remove_tool_calls_from_response(response: &str) -> String {
     // Also remove ```json ... ``` with single object tool calls
     result = code_block_obj_re().replace_all(&result, "").to_string();
 
-    // Remove JSON array format
-    while let Some(start) = result.find('[') {
+    // Remove JSON array format. Scan-advance: an EARLIER span that parses
+    // but isn't a tool call is data ("trend: [1,2,3]") and must not blind
+    // the pass to a LATER real call array — the same first-'['-anchor
+    // disease the detector's scan-advance fix addressed (see tool_detect).
+    let mut search_from = 0usize;
+    while let Some(rel) = result[search_from..].find('[') {
+        let start = search_from + rel;
         let mut bracket_count = 0;
         let mut end = start;
 
@@ -685,19 +717,34 @@ pub fn remove_tool_calls_from_response(response: &str) -> String {
             }
         }
 
-        if end > start {
-            let json_str = &result[start..end];
-            if let Ok(array) = serde_json::from_str::<Vec<Value>>(json_str) {
-                if array
-                    .iter()
-                    .any(|v| v.get("name").is_some() || v.get("tool").is_some())
-                {
-                    result.replace_range(start..end, "");
-                    continue;
-                }
-            }
+        if end <= start {
+            // No matching close in the remainder — nothing further can close.
+            break;
         }
-        break;
+
+        let json_str = &result[start..end];
+        // A span INSIDE a ``` code fence is display-formatted content: the
+        // regex pass above already handles fenced tool-call JSON (it now
+        // requires "arguments"), so a fenced name-only array here is DATA
+        // the model formatted for the user (device list, widget list) —
+        // keep it. Unfenced name-only arrays keep the legacy strip.
+        let inside_fence = result[..start].matches("```").count() % 2 == 1;
+        let is_call_array = !inside_fence
+            && serde_json::from_str::<Vec<Value>>(json_str)
+                .ok()
+                .map(|array| {
+                    array
+                        .iter()
+                        .any(|v| v.get("name").is_some() || v.get("tool").is_some())
+                })
+                .unwrap_or(false);
+
+        if is_call_array {
+            result.replace_range(start..end, "");
+            // Bytes before `start` are untouched, so `search_from` stays valid.
+        } else {
+            search_from = end;
+        }
     }
 
     // Remove JSON object format
@@ -730,7 +777,11 @@ pub fn remove_tool_calls_from_response(response: &str) -> String {
         if end > start {
             let json_str = &result[start..end];
             if let Ok(value) = serde_json::from_str::<Value>(json_str) {
-                if value.get("name").is_some() || value.get("tool").is_some() {
+                // Tool-call SHAPED only (name AND arguments — see
+                // [`is_tool_call_shaped`]). A leading {"name","url"} data
+                // object with no arguments is an answer, not a call: the old
+                // name-only check deleted it and left an empty reply.
+                if is_tool_call_shaped(&value) {
                     result.replace_range(start..end, "");
                     continue;
                 }
@@ -1167,6 +1218,52 @@ mod tests {
         assert!(cleaned.contains("Checking..."));
         assert!(cleaned.contains("done"));
         assert!(!cleaned.contains("call_1"));
+    }
+
+    /// Same over-broad-match family as the 2026-10-20 narration incident: a
+    /// fenced DATA array (device list) carries "name" fields but no
+    /// "arguments" — the old name-only patterns deleted the whole block from
+    /// the reply.
+    #[test]
+    fn fenced_data_array_with_name_fields_is_preserved() {
+        let reply = "设备列表：\n```json\n[{\"id\":\"demo-001\",\"name\":\"Demo\",\"online\":true}]\n```\n以上共 1 台。";
+        let cleaned = remove_tool_calls_from_response(reply);
+        assert!(
+            cleaned.contains("demo-001"),
+            "fenced device-list data must survive cleanup: {cleaned}"
+        );
+        assert!(cleaned.contains("以上共 1 台"));
+    }
+
+    /// A leading data OBJECT without arguments is an answer, not a call.
+    #[test]
+    fn leading_name_only_object_is_data_not_stripped() {
+        let reply = "{\"name\":\"obs-target\",\"url\":\"https://example.com/hook\"}";
+        let cleaned = remove_tool_calls_from_response(reply);
+        assert_eq!(cleaned, reply, "data object with no arguments must survive");
+    }
+
+    /// An early DATA array must not blind the pass to a later real call
+    /// array (scan-advance, mirroring the detector fix in tool_detect).
+    #[test]
+    fn early_data_array_does_not_block_later_tool_call_strip() {
+        let reply = "趋势 [1, 2, 3]，现在调用：[{\"name\":\"echo\",\"arguments\":{}}]";
+        let cleaned = remove_tool_calls_from_response(reply);
+        assert!(
+            cleaned.contains("[1, 2, 3]"),
+            "data array preserved: {cleaned}"
+        );
+        assert!(!cleaned.contains("echo"), "later real call array stripped");
+    }
+
+    /// Real call arrays (name + arguments) still stripped, fenced and bare.
+    #[test]
+    fn fenced_and_bare_call_arrays_still_stripped() {
+        let fenced =
+            "调用如下：\n```json\n[{\"name\":\"shell\",\"arguments\":{\"command\":\"ls\"}}]\n```";
+        assert!(!remove_tool_calls_from_response(fenced).contains("shell"));
+        let bare = "好的。[{\"name\":\"shell\",\"arguments\":{\"command\":\"ls\"}}]";
+        assert!(!remove_tool_calls_from_response(bare).contains("shell"));
     }
 }
 

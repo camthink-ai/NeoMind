@@ -20,8 +20,7 @@ use super::stream_core::StreamSafeguards;
 use super::tool_detect::detect_json_tool_calls;
 use super::tool_exec::execute_tool_with_retry;
 use crate::agent::tool_parser::{
-    is_degenerate_fence_only_output, is_degenerate_final_output, parse_tool_calls,
-    remove_tool_calls_from_response,
+    is_degenerate_final_output, parse_tool_calls, remove_tool_calls_from_response,
 };
 use crate::agent::types::{
     AgentEvent, AgentInternalState, AgentMessage, AgentMessageImage, ToolCall,
@@ -660,8 +659,9 @@ pub async fn process_multimodal_stream_events_with_safeguards(
             }
 
             // Fallback to formatted tool results if summary is empty OR degenerate
-            // (e.g. DeepSeek emitting just "```" as the summary).
-            if is_degenerate_fence_only_output(&final_content) {
+            // (fence-only "```", or a bare empty JSON container `[]`/`{}` —
+            // small models answer format directives literally).
+            if is_degenerate_final_output(&final_content) {
                 let deduped_results = deduplicate_tool_results(&tool_call_results);
                 let formatted = format_tool_results(&deduped_results);
                 final_content = formatted.clone();
@@ -914,7 +914,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                             }
                         }
                     }
-                    if is_degenerate_fence_only_output(&final_content) {
+                    if is_degenerate_final_output(&final_content) {
                         let deduped = deduplicate_tool_results(&nudge_tool_results);
                         final_content = format_tool_results(&deduped);
                         yield AgentEvent::content(final_content.clone());
@@ -927,11 +927,12 @@ pub async fn process_multimodal_stream_events_with_safeguards(
             // Turn completed by the nudge recovery skips this plain save
             // path — its content is already recorded and yielded above.
             if !handled_by_nudge {
-            // Detect degenerate fence-only output (e.g. DeepSeek "```") and
-            // substitute a safe non-empty fallback so the user/judge never sees
-            // a content-less reply. The streamed "```" is already out, but the
-            // persisted assistant_message uses this cleaned value.
-            let degenerate = is_degenerate_fence_only_output(&raw_response);
+            // Detect degenerate output (fence-only "```", bare empty JSON
+            // container) and substitute a safe non-empty fallback so the
+            // user/judge never sees a content-less reply. The streamed
+            // degenerate text is already out, but the persisted
+            // assistant_message uses this cleaned value.
+            let degenerate = is_degenerate_final_output(&raw_response);
             let response_to_save = if degenerate {
                 tracing::warn!(
                     orig_len = raw_response.len(),

@@ -1666,7 +1666,11 @@ pub async fn process_stream_events_with_safeguards(
                     });
                     // The preamble "Let me check..." is NOT a final answer.
                     // Force summary when tool errors exist, regardless of content_before_tools.
-                    let content_is_preamble = content_before_tools.trim().len() < 200;
+                    // Chars, not bytes: `.len()` counted ~3 bytes per CJK
+                    // char, so a 100-char Chinese preamble (300 bytes) read
+                    // as a substantial answer and skipped the forced summary.
+                    let content_is_preamble =
+                        content_before_tools.trim().chars().count() < 200;
 
                     if content_before_tools.is_empty() || (last_round_has_errors && content_is_preamble) {
 

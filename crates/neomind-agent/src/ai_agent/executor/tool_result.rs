@@ -336,7 +336,11 @@ impl AgentExecutor {
             Ok(output) => {
                 let text = output.text.trim().to_string();
                 let response_len = text.len();
-                if !text.is_empty() {
+                // Degenerate summaries (bare `[]`/`{}` — small models answer
+                // format directives literally) carry no analysis value; treat
+                // them as failure so the caller falls back to tool results.
+                if !text.is_empty() && !crate::agent::tool_parser::is_degenerate_final_output(&text)
+                {
                     tracing::debug!(
                         agent_id = %agent.id,
                         response_len,
@@ -344,6 +348,11 @@ impl AgentExecutor {
                     );
                     Some(text)
                 } else {
+                    tracing::warn!(
+                        agent_id = %agent.id,
+                        response_len,
+                        "Phase 2 analysis degenerate/empty — falling back to tool results"
+                    );
                     None
                 }
             }
