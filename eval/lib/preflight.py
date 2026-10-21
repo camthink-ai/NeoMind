@@ -16,23 +16,29 @@ from __future__ import annotations
 import requests
 
 
-def _probe_url(backend_type: str, endpoint: str) -> str:
-    """Return the models-list URL for the backend.
+def _probe_urls(backend_type: str, endpoint: str) -> list[str]:
+    """Return candidate models-list URLs, most likely first.
 
     - ollama: native ``/api/tags``. The backend tolerates a trailing ``/v1``
       in the endpoint, but ``/api/tags`` does not live under ``/v1``, so strip
       it before probing.
-    - llamacpp / openai / cloud (OpenAI-compatible): ``{endpoint}/v1/models``.
-      The backend appends ``/v1`` itself, so ``AGENT_LLM_ENDPOINT`` must be a
-      base URL without ``/v1`` — a doubly-pathed endpoint 404s here, which is
-      exactly the misconfig we want to catch.
+    - llamacpp / openai / cloud (OpenAI-compatible): the runtime passes the
+      instance endpoint STRAIGHT THROUGH as its base URL and appends only
+      ``/chat/completions`` — so the working convention is an endpoint that
+      already includes ``/v1`` (default OpenAI URLs do too). Older builds
+      appended ``/v1`` themselves, which is why the 2026-08-12 scar saw a
+      doubly-pathed URL. Both conventions are probed so neither false-blocks;
+      a genuinely dead or doubly-pathed endpoint still fails every candidate.
     """
     endpoint = endpoint.rstrip("/")
     if backend_type == "ollama":
         if endpoint.endswith("/v1"):
             endpoint = endpoint[: -len("/v1")]
-        return f"{endpoint}/api/tags"
-    return f"{endpoint}/v1/models"
+        return [f"{endpoint}/api/tags"]
+    urls = [f"{endpoint}/models"]
+    if not endpoint.endswith("/v1"):
+        urls.append(f"{endpoint}/v1/models")
+    return urls
 
 
 def _extract_models(backend_type: str, payload) -> list:
@@ -51,30 +57,43 @@ def probe_llm_endpoint(backend_type, endpoint, model, api_key=None, timeout=5):
       because ``/v1/models`` id formats vary across servers and we refuse to
       introduce a new false-block on top of an uncertain signal.
     """
-    url = _probe_url(backend_type, endpoint)
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-    try:
-        resp = requests.get(url, headers=headers, timeout=timeout)
-    except requests.RequestException as e:
-        return False, (
-            f"cannot reach LLM endpoint {url} ({e.__class__.__name__}: {e}). "
-            f"Is the server running and host/port correct?"
-        )
-    if resp.status_code != 200:
-        hint = ""
-        if resp.status_code == 404 and backend_type != "ollama":
-            hint = (
-                " 404 at /v1/models usually means AGENT_LLM_ENDPOINT includes "
-                "'/v1' — the backend appends /v1 itself; give a base URL without it."
+    last_error = ""
+    payload = None
+    url = ""
+    for candidate in _probe_urls(backend_type, endpoint):
+        url = candidate
+        try:
+            resp = requests.get(url, headers=headers, timeout=timeout)
+        except requests.RequestException as e:
+            last_error = (
+                f"cannot reach LLM endpoint {url} ({e.__class__.__name__}: {e}). "
+                f"Is the server running and host/port correct?"
             )
-        return False, f"LLM endpoint {url} returned HTTP {resp.status_code}.{hint}"
-    try:
-        payload = resp.json()
-    except ValueError:
-        snippet = (resp.text or "")[:120]
-        return False, (
-            f"LLM endpoint {url} returned non-JSON (HTTP 200). snippet: {snippet!r}"
-        )
+            continue
+        if resp.status_code != 200:
+            hint = ""
+            if resp.status_code == 404 and backend_type != "ollama":
+                hint = (
+                    " 404 on the models list usually means the endpoint is "
+                    "misconfigured — check that it includes the API prefix "
+                    "(`/v1` for OpenAI-compatible servers) and that the server "
+                    "exposes `/models`."
+                )
+            last_error = f"LLM endpoint {url} returned HTTP {resp.status_code}.{hint}"
+            continue
+        try:
+            payload = resp.json()
+        except ValueError:
+            snippet = (resp.text or "")[:120]
+            last_error = (
+                f"LLM endpoint {url} returned non-JSON (HTTP 200). "
+                f"snippet: {snippet!r}"
+            )
+            continue
+        break
+    if payload is None:
+        return False, last_error or "LLM endpoint could not be probed."
     models = _extract_models(backend_type, payload)
     if model in models:
         return True, f"LLM endpoint OK: model {model!r} listed at {url}."

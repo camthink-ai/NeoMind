@@ -289,6 +289,10 @@ def run_case(case_path: str) -> dict:
                 salvaged = _salvage_server_history(srv, sid)
                 if salvaged:
                     rec["server_history"] = salvaged
+                # A wedged turn is exactly where the guard ledger matters
+                # (coercion fired → loop, nudge fired → still no action).
+                # Capture it before srv.shutdown() discards the logs.
+                rec["guards"] = _parse_guard_metrics(srv.log_lines())
                 return rec
             elapsed_ms = int((time.monotonic() - t0) * 1000)
             # Use server-reported processing_time_ms when present; fall back to
@@ -518,23 +522,25 @@ def _resume_cases(cases: list[Path], done_keys: set) -> list[Path]:
 def _select_cases(root: Path, lang: str, workflows: list[str] | None, case_id: str | None) -> list[Path]:
     out = []
     for p in _walk_json_files(root):
+        # Every filter applies ALWAYS. `--case-id` used to bypass lang/workflow
+        # (`if case_id: ... else: <filters>`), so `--lang zh --case-id X` ran
+        # the en mirror of X too — the zh/en case sets share ids by design.
+        if lang != "both":
+            # Path shape: eval/cases/<lang>/<workflow>/<case>.json
+            parts = p.relative_to(root).parts
+            if not parts or parts[0] != lang:
+                continue
+        if workflows:
+            parts = p.relative_to(root).parts
+            wf = parts[1] if len(parts) > 2 else ""
+            if wf not in workflows:
+                continue
         if case_id:
             try:
                 if _load_case(p).get("id") != case_id:
                     continue
             except Exception:
                 continue
-        else:
-            if lang != "both":
-                # Path shape: eval/cases/<lang>/<workflow>/<case>.json
-                parts = p.relative_to(root).parts
-                if not parts or parts[0] != lang:
-                    continue
-            if workflows:
-                parts = p.relative_to(root).parts
-                wf = parts[1] if len(parts) > 2 else ""
-                if wf not in workflows:
-                    continue
         out.append(p)
     return out
 

@@ -73,6 +73,34 @@ def test_llamacpp_double_v1_returns_404_fail_fast():
     assert "/v1" in msg  # the base-url hint must surface
 
 
+def test_endpoint_with_v1_passes_when_models_live_under_v1():
+    # The working convention for this codebase: the instance endpoint is used
+    # AS-IS as the runtime base URL, so it includes /v1. The old probe
+    # appended another /v1 and false-failed exactly this correct config.
+    def handler(u):
+        if u == "http://h:8080/v1/models":
+            return FakeResp(200, {"data": [{"id": "m1"}]})
+        return FakeResp(404)
+
+    with _Patch(handler):
+        ok, msg = pf.probe_llm_endpoint("openai", "http://h:8080/v1", "m1")
+    assert ok is True, msg
+    assert "listed" in msg
+
+
+def test_base_endpoint_falls_back_to_v1():
+    # Older convention: base URL without /v1. Probe the second candidate.
+    def handler(u):
+        if u == "http://h:8080/v1/models":
+            return FakeResp(200, {"data": [{"id": "m1"}]})
+        return FakeResp(404)
+
+    with _Patch(handler):
+        ok, msg = pf.probe_llm_endpoint("openai", "http://h:8080", "m1")
+    assert ok is True, msg
+    assert "listed" in msg
+
+
 def test_connection_refused_fail_fast():
     with _Patch(lambda u: None):  # simulate conn refused / dead server
         ok, msg = pf.probe_llm_endpoint("llamacpp", "http://dead:9999", "x")
