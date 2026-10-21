@@ -185,12 +185,11 @@ Scores from the 2026-09 agent eval: 12 scenarios per cycle (Chinese + English, 4
 | **Ling 3.0-tiny** | Q4_K_M | 4.8 GB | 6 GB | 62 | 48 | 45 | Fast MoE; quality cliffs past 8K — short sessions advised. Default 128K (RAM-capped). Needs llama.cpp ≥ b10545. |
 | **Gemma 4 E2B** | QAT q4_0 | 3.1 GB | 4.5 GB | 59* | — | 60 | Long-context-stable; weak resource creation. |
 | **LFM 2.5 2.6B** | QAD Q4_0 | 1.5 GB | 3 GB | 41* | — | 54 | Improves with context; native 128K. |
-| deepseek-v4-flash (cloud) | — | — | — | — | — | 65–75 | Same tier as the best locals, 5× faster per turn. |
 | MiniCPM5-1B / Qwen3.5-0.8B | Q4 | ~1 GB | 2 GB | ~26* | — | — | Below agent threshold; not in the catalog. |
 
-\*Earlier 5-scenario suite at that window. Finalists were measured twice: stable models repeat within ±1 point; deepseek-v4-flash spread 65–75 (investigative style is variance-prone under keyword scoring).
+\*Earlier 5-scenario suite at that window. Finalists were measured twice: stable models repeat within ±1 point.
 
-Under fair scoring the top four are one tier (83–90% tool accuracy) — pick by footprint, latency, and context fit: **MiniCPM5-2B** default, **Qwen 3.5 4B** strongest local agent, **deepseek-v4-flash** cloud fallback.
+Under fair scoring the top three are one tier (83–90% tool accuracy) — pick by footprint, latency, and context fit: **MiniCPM5-2B** default, **Qwen 3.5 4B** strongest local agent.
 
 **2026-10 re-verification (1.2.2 build):** all catalog locals re-ran on the 33-case hard-signal regression gate (thinking on): MiniCPM5-2B 77% at its official sampler point, LFM 2.5 2.6B 72%, Gemma 4 E2B 69% — the one-tier picture holds on the newer suite. The gate has since grown to 40 cases and 1.2.3 changed the chat guard policy (labels-only), so these are 1.2.2 numbers; a 1.2.3 re-run is pending. Full data: [docs/edge-models.md](docs/edge-models.md) · catalog: [NeoMind-Runtimes](https://github.com/camthink-ai/NeoMind-Runtimes).
 

@@ -18,7 +18,7 @@ vision slot stays `LFM2.5-VL-3B`.
 
 | Role | Model | Measured (2026-09 corrected harness) | Why |
 |---|---|---|---|
-| **Agent** (tool calling) | `MiniCPM5-2B` (text) | **64 overall 8K (81% tool accuracy)** — statistically ties cloud deepseek-v4-flash; best-in-class CLI domain selection at 2B and flat across context windows | 1.5 GB (Q4_K_M); native OpenAI-format tool calling incl. parallel calls; ~120 tok/s solo decode on M4 Pro (2026-10). Serve at **128K context** (product default since 2026-10, auto-capped to device RAM) — the harness's 8K optimum assumed a light prompt; the production platform prompt (system+tools+memory) weighs 4-6K tokens and starves anything below 16K (see streaming `effective_history_budget`) |
+| **Agent** (tool calling) | `MiniCPM5-2B` (text) | **64 overall 8K (81% tool accuracy)** — best-in-class CLI domain selection at 2B and flat across context windows | 1.5 GB (Q4_K_M); native OpenAI-format tool calling incl. parallel calls; ~120 tok/s solo decode on M4 Pro (2026-10). Serve at **128K context** (product default since 2026-10, auto-capped to device RAM) — the harness's 8K optimum assumed a light prompt; the production platform prompt (system+tools+memory) weighs 4-6K tokens and starves anything below 16K (see streaming `effective_history_budget`) |
 | **Perception** (vision) | `LFM2.5-VL-3B` (vision) | 10% as an agent (2026-08) — **do not use it as the agent** | Strong vision (ScreenSpot 80.7, OCR-class benchmarks), but the vision training materially degraded its tool calling despite sharing the 2.6B backbone |
 
 Both models speak OpenAI-compatible function calling through llama.cpp's
@@ -33,7 +33,6 @@ Both models speak OpenAI-compatible function calling through llama.cpp's
 | Ling-3.0-tiny | 61.7 (R24) | 47.8 | 44.9 | Cliff between 8K and 16K — keep sessions short. Product default 128K (RAM-capped). |
 | gemma-4-E2B | 59.1* | — | 59.7 | Flat / long-context-stable. |
 | LFM2.5-2.6B | 41.3* | — | 53.5 | Improves with context. |
-| deepseek-v4-flash (cloud, 128K) | — | — | 65.0 / 75.0 | Reference tier. Highest run variance of the field (±5) — investigation style under keyword scoring. |
 
 (* = older 5-scenario suite at that window; R24 = two full cycles, n=222 tool
 judgments. Cross-window comparisons for a model are decision-grade; ≤6-point
@@ -49,11 +48,10 @@ turn (full command 1.0 / exploration 0.5 / substantive direct answer 0.75):
 | Model | Classic domain acc | Fair domain score | Bias delta |
 |---|---|---|---|
 | Qwen3.5-4B 16K | 61.0% | 87.8% | **+26.8pp** |
-| DeepSeek (cloud) | 71.4% | 84.9% | +13.5pp |
 | Ling 8K | 77.9% | 89.6% | +11.7pp |
 | MiniCPM5-2B 8K | 73.4% | 83.1% | +9.7pp |
 
-Under fair judging the four contenders CONVERGE to 83–90% — statistically one
+Under fair judging the three contenders CONVERGE to 83–90% — statistically one
 tier of tool competence. The classic leaderboard's cross-model gaps were
 largely scoring bias, not capability. Selection therefore rests on the real
 differentiators: footprint, latency, context-regime fit, and the outcome
@@ -61,21 +59,19 @@ dimensions (resource creation, memory) — which is exactly what the
 context-response matrix above encodes. (Classic scores remain the primary
 report; the fairness view ships in the harness as a standard second block.)
 
-Bilingual: zh≈en for every contender (MiniCPM5 60/64, Ling 61/58, Qwen16K 55/64,
-DeepSeek 51/49) — English parity is not a differentiator. Long-horizon (40-turn)
+Bilingual: zh≈en for every contender (MiniCPM5 60/64, Ling 61/58, Qwen16K 55/64)
+— English parity is not a differentiator. Long-horizon (40-turn)
 memory: 0% for ALL models at ALL windows — the ceiling is the platform-side
 extraction/window budget, not model choice. Non-shell tool breadth (file/web/skill/
 memory selection): 33–67% everywhere — a shared weak spot.
 
 Selection: **MiniCPM5-2B 32K** = default (1.5 GB, 3 GB floor, Apache-2.0, robust);
 **Qwen3.5-4B 16K** = strongest agent when 4 GB+ RAM and 16K ctx fit; **Ling 8K** =
-fast short-burst MoE (6 GB+); **gemma 32K** = long-session stability; cloud =
-deepseek-v4-flash.
+fast short-burst MoE (6 GB+); **gemma 32K** = long-session stability.
 
 Memory-recall caveat: the score depends on both the context window and the
 model's own fact-extraction quality (the extractor is the model under test).
-At 8K, planted facts are the first casualty of history trimming; DeepSeek's
-50% is largely free 128K-context reading. A platform-side dedicated extractor
+At 8K, planted facts are the first casualty of history trimming. A platform-side dedicated extractor
 is the highest-leverage fix.
 
 ## 2026-10 regression-gate re-verification
