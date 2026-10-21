@@ -47,7 +47,18 @@ def probe_identity(backend_type: str, endpoint: str, api_key: str | None = None,
             d = r.json()
             ident = d.get("model_path") or d.get("model_alias") or ""
             if ident:
-                return {"identity": ident, "source": f"{base}/props"}
+                # Per-slot context (`default_generation_settings.n_ctx`) and the
+                # server's slot count. Recorded with every run so a score can
+                # never be separated from the context it was measured at —
+                # the 2026-10 gate's context was unrecorded and could not be
+                # reconciled with the README's 8K/16K/32K grid.
+                dgs = d.get("default_generation_settings") or {}
+                return {
+                    "identity": ident,
+                    "source": f"{base}/props",
+                    "n_ctx": dgs.get("n_ctx"),
+                    "total_slots": d.get("total_slots"),
+                }
     except (requests.RequestException, ValueError):
         pass
 
@@ -62,7 +73,8 @@ def probe_identity(backend_type: str, endpoint: str, api_key: str | None = None,
                 return {"identity": ",".join(ids), "source": url}
         except (requests.RequestException, ValueError):
             continue
-    return {"identity": None, "source": "no /props or /models identity"}
+    return {"identity": None, "source": "no /props or /models identity",
+            "n_ctx": None, "total_slots": None}
 
 
 def check_served_model(backend_type: str, endpoint: str, api_key: str | None,
@@ -77,9 +89,13 @@ def check_served_model(backend_type: str, endpoint: str, api_key: str | None,
             f"requested {requested!r} — proceeding (unknown is not a mismatch)",
         )
     if _norm(requested) and _norm(requested) in _norm(ident):
+        ctx = ""
+        if info.get("n_ctx"):
+            slots = info.get("total_slots")
+            ctx = f", n_ctx={info['n_ctx']}" + (f", slots={slots}" if slots else "")
         return (
             "ok",
-            f"served model matches {requested!r} ({info['source']}: {ident})",
+            f"served model matches {requested!r} ({info['source']}: {ident}{ctx})",
         )
     return (
         "mismatch",
@@ -94,7 +110,8 @@ def record_identity(run_dir, backend_type: str, endpoint: str, api_key: str | No
     """Write the served-model provenance into the run dir (best effort)."""
     info = probe_identity(backend_type, endpoint, api_key)
     rec = {"requested": requested, "served_identity": info.get("identity"),
-           "source": info.get("source"), "endpoint": endpoint}
+           "source": info.get("source"), "endpoint": endpoint,
+           "n_ctx": info.get("n_ctx"), "total_slots": info.get("total_slots")}
     try:
         from pathlib import Path
         (Path(run_dir) / "served_model.json").write_text(

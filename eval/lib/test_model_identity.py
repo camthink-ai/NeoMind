@@ -42,11 +42,17 @@ class _Patch:
 def test_props_identity_matches_requested_model():
     def h(u):
         if u.endswith("/props"):
-            return FakeResp(200, {"model_path": "/m/minicpm5-2b/minicpm5-2b-q4_k_m.gguf"})
+            return FakeResp(200, {
+                "model_path": "/m/minicpm5-2b/minicpm5-2b-q4_k_m.gguf",
+                "default_generation_settings": {"n_ctx": 65536},
+                "total_slots": 2,
+            })
         return FakeResp(404)
     with _Patch(h):
         st, msg = mi.check_served_model("openai", "http://h:29375/v1", "k", "minicpm5-2b")
     assert st == "ok", msg
+    assert "n_ctx=65536" in msg, msg
+    assert "slots=2" in msg, msg
 
 
 def test_props_identity_mismatch_is_fatal():

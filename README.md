@@ -178,16 +178,16 @@ Pick a catalog model in **Settings → LLM Backends** (or the first-run wizard) 
 
 Scores from the 2026-09 agent eval: 12 scenarios per cycle (Chinese + English, 40-turn long-horizon, tools-breadth), executed against a seeded sandbox platform under identical conditions. Finalists ran two cycles.
 
-| Model | Size (min RAM) | Best window | Score | Best for |
-|-------|----------------|-------------|-------|----------|
-| **MiniCPM5-2B** ⭐ | 1.5 GB (3 GB) | 8K–32K, flat | **64** | Default pick; most robust across windows, 81% tool accuracy |
-| **Qwen 3.5 4B** | 2.7 GB (4 GB) | 16K | **70** | Strongest local agent; weak at 8K |
-| **Ling 3.0-tiny** | 4.8 GB (6 GB) | 8K | 62 | Fast MoE; keep sessions short |
-| **Gemma 4 E2B** | 3.1 GB (4.5 GB) | 32K | 60 | Long-context stable; weak resource creation |
-| **LFM 2.5 2.6B** | 1.5 GB (3 GB) | 32K | 54 | Small footprint; improves with context |
-| MiniCPM5-1B / Qwen3.5-0.8B | ~1 GB (2 GB) | — | ~26 | Below the agent threshold; not in the catalog |
+| Model | Size (min RAM) | Score @32K | Product ctx | Best for |
+|-------|----------------|------------|-------------|----------|
+| **MiniCPM5-2B** ⭐ | 1.5 GB (3 GB) | ~68* | 128K | Default pick; most robust across windows, 81% tool accuracy |
+| **Qwen 3.5 4B** | 2.7 GB (4 GB) | 65.8 | 128K | Strongest local agent; weak at 8K |
+| **Ling 3.0-tiny** | 4.8 GB (6 GB) | 44.9 | 128K | Fast MoE; keep sessions short |
+| **Gemma 4 E2B** | 3.1 GB (4.5 GB) | 59.7 | 128K | Long-context stable; weak resource creation |
+| **LFM 2.5 2.6B** | 1.5 GB (3 GB) | 53.5 | 128K | Small footprint; improves with context |
+| MiniCPM5-1B / Qwen3.5-0.8B | ~1 GB (2 GB) | — | — | Below the agent threshold; not in the catalog |
 
-Score = the model's best window in that eval; the 1B row is from the earlier 5-scenario suite. All catalog models default to 128K context (RAM-capped). Per-window scores: [docs/edge-models.md](docs/edge-models.md).
+All scores are the SAME window (32K) so models are comparable; *MiniCPM5-2B's 32K cell is from the earlier 5-scenario suite (its 12-scenario cells are 64 @8K / 61.4 @16K). ≤6-point cross-model gaps are statistical ties. Product context is 128K, RAM-capped; no same-suite 128K scores exist yet — the 2026-10 gate's context was not recorded. Per-window matrix: [docs/edge-models.md](docs/edge-models.md).
 
 Under fair scoring the top three are one tier (83–90% tool accuracy) — pick by footprint, latency, and context fit: **MiniCPM5-2B** default, **Qwen 3.5 4B** strongest local agent.
 

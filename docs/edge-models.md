@@ -24,7 +24,7 @@ vision slot stays `LFM2.5-VL-3B`.
 Both models speak OpenAI-compatible function calling through llama.cpp's
 `--jinja` chat-template path, verified end-to-end against NeoMind's agent loop.
 
-### Final 2026-09 context-response matrix (12-scenario suite: zh+en mirrors, 40-turn long-horizon, tools-breadth; seeded sandbox; every cell same protocol)
+### Final 2026-09 context-response matrix (12-scenario suite: zh+en mirrors, 40-turn long-horizon, tools-breadth; seeded sandbox; every UNSTARRED cell the same protocol — starred cells are the older 5-scenario suite at that window)
 
 | Model | 8K | 16K | 32K | Context response profile |
 |---|---|---|---|---|
