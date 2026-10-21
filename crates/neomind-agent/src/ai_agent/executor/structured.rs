@@ -568,6 +568,7 @@ pub(super) fn default_operator_config() -> neomind_storage::OperatorConfig {
         max_calls_per_day: None,
         timeout_secs: 60,
         consecutive_failure_threshold: 3,
+        event_cooldown_secs: None,
     }
 }
 

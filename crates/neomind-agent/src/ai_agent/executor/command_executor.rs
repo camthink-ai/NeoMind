@@ -659,12 +659,23 @@ impl AgentExecutor {
     /// Explicit per-agent notification routing: deliver the run outcome to
     /// exactly the configured channels, when the configured trigger fires.
     /// `None` config = legacy keyword path (see send_alert_for_decision).
+    /// `is_probe` marks a recovery probe of an already-Error agent — those
+    /// are silent (the demotion already notified; probes repeat at backoff
+    /// intervals and would ping all day otherwise).
     pub(crate) async fn dispatch_agent_notifications(
         &self,
         agent_id: &str,
         agent_name: &str,
         record: &neomind_storage::AgentExecutionRecord,
+        is_probe: bool,
     ) {
+        if is_probe {
+            tracing::debug!(
+                agent_id = %agent_id,
+                "Recovery probe run — notifications suppressed"
+            );
+            return;
+        }
         let Some(agent) = self.store.get_agent(agent_id).await.ok().flatten() else {
             return;
         };

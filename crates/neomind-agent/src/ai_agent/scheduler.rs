@@ -676,8 +676,16 @@ impl AgentScheduler {
                                             "Scheduled agent execution completed"
                                         );
 
-                                        // Reset consecutive failures on success
-                                        if consecutive > 0 {
+                                        // Reset consecutive failures on success.
+                                        // Completed only — the executor counts
+                                        // FAILED runs toward the breaker now, and
+                                        // resetting on any Ok record erased that
+                                        // count after every failure (the breaker
+                                        // could never trip for scheduled agents).
+                                        if record.status
+                                            == neomind_storage::ExecutionStatus::Completed
+                                            && consecutive > 0
+                                        {
                                             if let Err(e) = executor
                                                 .store()
                                                 .update_agent_consecutive_failures(&agent_id, 0)

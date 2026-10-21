@@ -303,6 +303,8 @@ export interface OperatorConfig {
   max_calls_per_day?: number
   timeout_secs?: number
   consecutive_failure_threshold?: number
+  /** Event-trigger cooldown in seconds (undefined = platform default 60; 0 = on-demand) */
+  event_cooldown_secs?: number
 }
 
 export type AgentExecutionMode = 'focused' | 'free' | 'structured'

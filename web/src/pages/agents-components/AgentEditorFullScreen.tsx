@@ -2015,6 +2015,7 @@ export function AgentEditorFullScreen({
                           })
                         : tAgent('creator.structured.guardrailSummaryEveryRun', {
                             timeout: operatorConfig.timeout_secs ?? 60,
+                            threshold: operatorConfig.consecutive_failure_threshold ?? 3,
                             cap: operatorConfig.max_calls_per_day ?? '∞',
                           })}
                     </span>
@@ -2022,10 +2023,11 @@ export function AgentEditorFullScreen({
                   </CollapsibleTrigger>
                   <CollapsibleContent>
                 <div className={cn("grid grid-cols-1 gap-2 pt-1", isStructuredMode ? "md:grid-cols-4" : "md:grid-cols-2")}>
-                  {/* Debounce and the breaker are L0 semantics — merging input
-                      bursts into one inference, and tripping on repeated
-                      inference failures. A reasoning agent has neither, so it
-                      gets the two that apply to every run: timeout and cap. */}
+                  {/* Debounce is an L0 semantic (merging input bursts into
+                      one inference). The breaker and the caps apply to every
+                      run of every mode: N consecutive permanent failures
+                      demote the agent to Error, where event triggers probe
+                      it at backoff intervals until a run completes. */}
                   {isStructuredMode && (
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">{tAgent('creator.structured.debounce')}</Label>
@@ -2034,6 +2036,26 @@ export function AgentEditorFullScreen({
                       value={operatorConfig.debounce_secs ?? 30}
                       onChange={(e) =>
                         setOperatorConfig({ ...operatorConfig, debounce_secs: Number(e.target.value) || 30 })
+                      }
+                    />
+                  </div>
+                  )}
+                  {/* Event-trigger pacing — shown for reactive agents of every
+                      mode. Empty = platform default (60s); 0 = on-demand
+                      (idle agent fires on the next event; the executor's
+                      one-run-at-a-time guard is the only backpressure). */}
+                  {scheduleType === 'reactive' && (
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">{tAgent('creator.structured.eventCooldown')}</Label>
+                    <Input
+                      type="number"
+                      placeholder="60"
+                      value={operatorConfig.event_cooldown_secs ?? ''}
+                      onChange={(e) =>
+                        setOperatorConfig({
+                          ...operatorConfig,
+                          event_cooldown_secs: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value) || 0),
+                        })
                       }
                     />
                   </div>
@@ -2048,7 +2070,6 @@ export function AgentEditorFullScreen({
                       }
                     />
                   </div>
-                  {isStructuredMode && (
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">{tAgent('creator.structured.threshold')}</Label>
                     <Input
@@ -2062,7 +2083,6 @@ export function AgentEditorFullScreen({
                       }
                     />
                   </div>
-                  )}
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">{tAgent('creator.structured.dailyCap')}</Label>
                     <Input

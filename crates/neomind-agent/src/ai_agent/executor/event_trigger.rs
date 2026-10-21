@@ -10,23 +10,42 @@ use super::*;
 /// OperatorConfig value instead.
 const DEFAULT_FREE_EVENT_DEBOUNCE_SECS: i64 = 30;
 
+/// Floor for the Free/Focused burst-merge window. One physical report often
+/// fans out to N per-metric events on the bus; with an on-demand cooldown
+/// (0s) and no floor, each of those would spawn its own admission task and
+/// race the in-flight guard. One second collapses the fan-out into the run
+/// that actually processes it.
+const MIN_BURST_MERGE_SECS: i64 = 1;
+
+/// How long an admission timestamp stays in the event dedup map. Must exceed
+/// any cooldown a user can configure for the cooldown check to see it — 1h
+/// covers practical values (beyond that the entry ages out and the window
+/// degrades to "no cooldown", the fail-open direction).
+const EVENT_DEDUP_RETENTION_SECS: i64 = 3600;
+
 impl AgentExecutor {
-    /// Prune stale entries from the event dedup map.
-    /// Entries older than 360 s (6× the 60 s cooldown) are removed.
+    /// Prune stale entries from the event dedup map. Entries older than
+    /// `EVENT_DEDUP_RETENTION_SECS` are removed. Also prunes recovery-probe
+    /// state untouched for a day (deleted agents, long-recovered ones the
+    /// success path already removed).
     async fn cleanup_stale_dedup_entries(&self) {
         let now = chrono::Utc::now().timestamp();
         let mut recent = self.recent_executions.write().await;
-        recent.retain(|_, &mut ts| now - ts < 360);
+        recent.retain(|_, &mut ts| now - ts < EVENT_DEDUP_RETENTION_SECS);
+        drop(recent);
+        super::global_error_probe_state()
+            .write()
+            .retain(|_, e| now - e.last_attempt < 86_400);
     }
 
     /// Mark a manual execution of an event-type agent in the dedup map.
     ///
     /// Without this, `execute_agent_now` runs without registering in
     /// `recent_executions`, so the next real event for any of the agent's
-    /// bound sources can fire within the 60 s cooldown window — yielding a
+    /// bound sources can fire inside the cooldown window — yielding a
     /// duplicate execution (duplicate journal entry, potential duplicate
-    /// notification, wasted LLM tokens). Manual execution should cool the
-    /// same window.
+    /// notification, wasted LLM tokens). Manual execution cools the same
+    /// window.
     ///
     /// For non-event agents this is a no-op (the dedup key is only
     /// consulted by the event-trigger path).
@@ -50,7 +69,7 @@ impl AgentExecutor {
         recent.insert(agent_id.to_string(), now);
 
         // Opportunistic cleanup — mirrors the event-trigger entry path.
-        recent.retain(|_, &mut ts| now - ts < 360);
+        recent.retain(|_, &mut ts| now - ts < EVENT_DEDUP_RETENTION_SECS);
 
         tracing::debug!(
             agent_id = %agent_id,
@@ -106,22 +125,30 @@ impl AgentExecutor {
                 continue;
             }
 
+            // Resolve this agent's operator config once: both pacing knobs
+            // (debounce below, cooldown after) read from it.
+            let op_cfg = agent
+                .operator_config
+                .clone()
+                .unwrap_or_else(super::structured::default_operator_config);
+
             // Burst-merge guardrail for EVERY mode. One physical event can
             // match several of this agent's sources, and N sources reporting
             // in the same instant used to fire N CONCURRENT runs for
             // Free/Focused agents (debounce was Structured-only) — concurrent
             // runs of one agent race its journal read-modify-write and burn
             // the concurrency budget. Structured keeps its OperatorConfig
-            // window; Free/Focused get a fixed 30s merge.
+            // window; Free/Focused track the cooldown, floored at 1s so a
+            // multi-metric report still folds into one admission even in
+            // on-demand (cooldown 0) setups.
+            let cooldown_secs = op_cfg.effective_event_cooldown_secs();
             let debounce_secs = match agent.execution_mode {
                 neomind_storage::agents::ExecutionMode::Structured => {
-                    agent
-                        .operator_config
-                        .clone()
-                        .unwrap_or_else(super::structured::default_operator_config)
-                        .debounce_secs as i64
+                    op_cfg.debounce_secs as i64
                 }
-                _ => DEFAULT_FREE_EVENT_DEBOUNCE_SECS,
+                _ => DEFAULT_FREE_EVENT_DEBOUNCE_SECS
+                    .min(cooldown_secs)
+                    .max(MIN_BURST_MERGE_SECS),
             };
             if debounce_secs > 0 {
                 let last = self
@@ -142,16 +169,18 @@ impl AgentExecutor {
                 }
             }
 
-            // Cooldown: one execution per AGENT per 60s window. The old
-            // per-(agent, source) key let the same agent run once per bound
-            // source in the same instant — N concurrent runs of one agent,
-            // racing each other's journal updates and stats writes.
-            const COOLDOWN_SECS: i64 = 60;
+            // Cooldown: minimum spacing between two ADMITTED runs of this
+            // agent, measured from the previous admission — per-agent via
+            // `OperatorConfig::event_cooldown_secs` (default 60s, 0 =
+            // on-demand). The old hard-coded 60s floor idled fast agents:
+            // a 5s run spent 55s dropping events that had arrived after it
+            // finished. On-demand setups rely on execute_agent's
+            // one-run-at-a-time guard as their only backpressure.
             let dedup_key = agent.id.clone();
             let recent = self.recent_executions.read().await;
             let is_duplicate = recent
                 .get(&dedup_key)
-                .map(|&timestamp| now - timestamp < COOLDOWN_SECS)
+                .map(|&timestamp| now - timestamp < cooldown_secs)
                 .unwrap_or(false);
             drop(recent);
 
@@ -162,9 +191,53 @@ impl AgentExecutor {
                     source_id = %source_id,
                     field = %field,
                     "Skipping data event-triggered execution (cooldown: {}s)",
-                    COOLDOWN_SECS
+                    cooldown_secs
                 );
                 continue;
+            }
+
+            // Recovery probe gate for demoted (Error) agents. A matching
+            // event is a probe OPPORTUNITY, but probes run at backoff
+            // intervals — a broken agent must not burn an LLM call per
+            // event. Placed after the debounce/cooldown gates so only a run
+            // that will actually spawn claims the probe slot; the spawn
+            // records the outcome (recovered → entry cleared, still broken →
+            // next probe one rung further up the backoff ladder).
+            let was_probe = agent.status == neomind_storage::AgentStatus::Error;
+            if was_probe {
+                let backoff_elapsed = {
+                    let probes = super::global_error_probe_state().read();
+                    match probes.get(&agent.id) {
+                        None => true,
+                        Some(entry) => {
+                            now - entry.last_attempt
+                                >= super::error_probe_backoff_secs(entry.consecutive_failures)
+                        }
+                    }
+                };
+                if !backoff_elapsed {
+                    tracing::trace!(
+                        agent_name = %agent.name,
+                        source_id = %source_id,
+                        field = %field,
+                        "Error agent probe still in backoff — skipping"
+                    );
+                    continue;
+                }
+                super::global_error_probe_state()
+                    .write()
+                    .entry(agent.id.clone())
+                    .and_modify(|e| e.last_attempt = now)
+                    .or_insert(super::ErrorProbeEntry {
+                        last_attempt: now,
+                        consecutive_failures: 0,
+                    });
+                tracing::info!(
+                    agent_name = %agent.name,
+                    source_id = %source_id,
+                    field = %field,
+                    "Error agent — admitting recovery probe"
+                );
             }
 
             // Clone dedup_key before it's moved into the recent_executions map;
@@ -270,6 +343,45 @@ impl AgentExecutor {
                                 "Cleared event cooldown after failed execution"
                             );
                         }
+
+                        // Recovery-probe outcome: the agent's stored status is
+                        // the ground truth — execute_agent resets Error →
+                        // Active only on a completed run. Recovered clears
+                        // the ladder; still broken climbs one backoff rung.
+                        if was_probe {
+                            let recovered = executor
+                                .store()
+                                .get_agent(&agent_id_for_log)
+                                .await
+                                .ok()
+                                .flatten()
+                                .map(|a| a.status == neomind_storage::AgentStatus::Active)
+                                .unwrap_or(false);
+                            if recovered {
+                                super::global_error_probe_state()
+                                    .write()
+                                    .remove(&agent_id_for_log);
+                                tracing::info!(
+                                    agent_id = %agent_id_for_log,
+                                    "Recovery probe SUCCEEDED — agent back to Active"
+                                );
+                            } else {
+                                super::global_error_probe_state()
+                                    .write()
+                                    .entry(agent_id_for_log.clone())
+                                    .and_modify(|e| {
+                                        e.consecutive_failures = e.consecutive_failures.saturating_add(1)
+                                    })
+                                    .or_insert(super::ErrorProbeEntry {
+                                        last_attempt: timestamp,
+                                        consecutive_failures: 1,
+                                    });
+                                tracing::info!(
+                                    agent_id = %agent_id_for_log,
+                                    "Recovery probe failed — backoff ladder stepped up"
+                                );
+                            }
+                        }
                     }
                     Err(e) => {
                         tracing::error!(
@@ -279,6 +391,14 @@ impl AgentExecutor {
                         );
                         let mut recent = recent_executions_clone.write().await;
                         recent.remove(&dedup_key_clone);
+                        if was_probe {
+                            super::global_error_probe_state()
+                                .write()
+                                .entry(agent_id_for_log.clone())
+                                .and_modify(|e| {
+                                    e.consecutive_failures = e.consecutive_failures.saturating_add(1)
+                                });
+                        }
                     }
                 }
             });
@@ -486,7 +606,7 @@ impl AgentExecutor {
     /// execution record), or `Err` if all attempts fail — callers should clear
     /// the event cooldown marker on `Err` so transient failures don't lock out
     /// subsequent events.
-    async fn execute_with_retry(
+    pub(super) async fn execute_with_retry(
         executor: &AgentExecutor,
         agent: AiAgent,
         event_data: EventTriggerData,
@@ -567,6 +687,21 @@ impl AgentExecutor {
                             agent_id = %agent_id,
                             error = %e,
                             "Event trigger refused by daily run cap — skipping (not a failure)"
+                        );
+                        return Ok(());
+                    }
+                    // Busy, not broken: "already executing" means another run
+                    // (an earlier admission from the same burst, or a manual
+                    // invoke) holds the agent. Retrying after the 5s backoff
+                    // queued a phantom second run behind it — with an
+                    // on-demand cooldown (0s) every burst turned into a
+                    // back-to-back run queue. Drop instead: the next event
+                    // after the in-flight run finishes re-triggers
+                    // naturally. Mirrors the scheduler's treatment.
+                    if e.to_string().to_lowercase().contains("already executing") {
+                        tracing::debug!(
+                            agent_id = %agent_id,
+                            "Event admission found the agent busy — dropping (in-flight run owns it)"
                         );
                         return Ok(());
                     }
@@ -810,21 +945,28 @@ impl AgentExecutor {
         false
     }
 
-    /// Refresh the cache of event-triggered agents.
+    /// Refresh the cache of event-triggered agents. Loads Active AND Error
+    /// agents: Error agents are invisible to every scheduled probe (their
+    /// `next_execution` is `i64::MAX`), so without loading them here the
+    /// breaker would be a silent death sentence for event agents — the
+    /// probe gate in `check_and_trigger_data_event` is their only way back.
     async fn refresh_event_agents(&self) {
-        let filter = neomind_storage::AgentFilter {
-            status: Some(neomind_storage::AgentStatus::Active),
-            ..Default::default()
-        };
+        // No status filter: paused/stopped are excluded below. Agent counts
+        // are small; the in-memory filter is equivalent to two queries.
+        let filter = neomind_storage::AgentFilter::default();
 
         if let Ok(agents) = self.store.query_agents(filter).await {
-            let total_active = agents.len();
+            let total_loaded = agents.len();
             let event_agents: HashMap<String, AiAgent> = agents
                 .into_iter()
                 .filter(|a| {
                     matches!(
                         a.schedule.schedule_type,
                         neomind_storage::ScheduleType::Event
+                    ) && matches!(
+                        a.status,
+                        neomind_storage::AgentStatus::Active
+                            | neomind_storage::AgentStatus::Error
                     )
                 })
                 .map(|a| (a.id.clone(), a))
@@ -835,7 +977,7 @@ impl AgentExecutor {
             *cache = event_agents;
 
             tracing::debug!(
-                total_active_agents = total_active,
+                total_loaded_agents = total_loaded,
                 event_triggered_agents = cache.len(),
                 previous_count = previous_count,
                 "[EVENT] Refreshed event-triggered agents cache"

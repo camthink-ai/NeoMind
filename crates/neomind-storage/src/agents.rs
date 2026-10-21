@@ -528,7 +528,28 @@ pub struct OperatorConfig {
     /// Consecutive failures before the circuit breaker opens (default 3)
     #[serde(default = "default_operator_failure_threshold")]
     pub consecutive_failure_threshold: u8,
+    /// Event-trigger cooldown: minimum seconds between two admitted
+    /// event-triggered runs of this agent, measured from the previous
+    /// admission. `None` = the platform default (60s); `Some(0)` = on-demand
+    /// (an idle agent admits the next event immediately — the executor's
+    /// one-run-at-a-time guard is the only backpressure). Applies to every
+    /// execution mode; the re-entrancy guard still forbids overlap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_cooldown_secs: Option<u32>,
 }
+
+impl OperatorConfig {
+    /// The cooldown to enforce on the event-trigger path for this config.
+    pub fn effective_event_cooldown_secs(&self) -> i64 {
+        self.event_cooldown_secs
+            .unwrap_or(DEFAULT_EVENT_COOLDOWN_SECS) as i64
+    }
+}
+
+/// Event-trigger cooldown when `OperatorConfig::event_cooldown_secs` is
+/// unset. Historical value: 60s kept agents to one run per minute even when
+/// a run finished in seconds, so fast agents idled while data flowed past.
+pub const DEFAULT_EVENT_COOLDOWN_SECS: u32 = 60;
 
 /// Explicit notification routing (2026-09-23). Replaces the old
 /// keyword-sniffing on decision text: the user picks the channels and when

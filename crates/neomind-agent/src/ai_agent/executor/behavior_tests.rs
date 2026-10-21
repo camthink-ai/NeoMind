@@ -650,6 +650,7 @@ async fn build_event_agent(
         max_calls_per_day: None,
         timeout_secs: 60,
         consecutive_failure_threshold: 3,
+        event_cooldown_secs: None,
     });
     executor
         .store()
@@ -751,6 +752,308 @@ async fn free_event_agent_merges_same_instant_sources() {
         runs, 1,
         "three sources in the same instant must produce ONE run, not three \
          concurrent executions of the same agent"
+    );
+}
+
+/// Re-save an event agent with a full operator config, so a test can pin the
+/// cooldown/debounce pair precisely (the `build_event_agent` helper only
+/// takes a debounce).
+async fn with_operator_config(
+    executor: &AgentExecutor,
+    agent: &mut AiAgent,
+    config: neomind_storage::OperatorConfig,
+) {
+    agent.operator_config = Some(config);
+    executor.store().save_agent(agent).await.expect("re-seed");
+}
+
+/// `event_cooldown_secs: 0` (on-demand): an idle agent must admit the very
+/// next event. The hard-coded 60s floor used to idle fast agents — a 5s run
+/// spent 55s dropping events that had arrived after it finished. Structured
+/// mode with `debounce_secs: 0` leaves every pacing gate open, so this is
+/// the purest form of the regression.
+#[tokio::test]
+async fn on_demand_cooldown_admits_next_event_once_idle() {
+    let (executor, mut agent) = build_event_agent(ExecutionMode::Structured, Some(0)).await;
+    let mut op = crate::ai_agent::executor::structured::default_operator_config();
+    op.debounce_secs = 0;
+    op.event_cooldown_secs = Some(0);
+    with_operator_config(&executor, &mut agent, op).await;
+
+    fire_event(&executor, "device", "dev-a", "temp").await;
+    let runs = drain_event_tasks(&executor).await;
+    fire_event(&executor, "device", "dev-a", "temp").await;
+    let runs = runs + drain_event_tasks(&executor).await;
+
+    assert_eq!(
+        runs, 2,
+        "with cooldown 0 an idle agent must admit the next event immediately — \
+         no fixed one-minute lockout between runs"
+    );
+}
+
+/// Free/Focused keep a 1s burst-merge floor even at cooldown 0 (one physical
+/// report fans out to N per-metric events), but the floor must not become a
+/// pacing gate: an event after the floor has elapsed admits.
+#[tokio::test]
+async fn on_demand_free_agent_admits_after_the_burst_floor() {
+    let (executor, mut agent) = build_event_agent(ExecutionMode::Free, None).await;
+    let mut op = crate::ai_agent::executor::structured::default_operator_config();
+    op.event_cooldown_secs = Some(0);
+    with_operator_config(&executor, &mut agent, op).await;
+
+    fire_event(&executor, "device", "dev-a", "temp").await;
+    let runs = drain_event_tasks(&executor).await;
+    // Free/Focused merge window is clamp(cooldown, 1s..30s) = 1s here.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    fire_event(&executor, "device", "dev-b", "temp").await;
+    let runs = runs + drain_event_tasks(&executor).await;
+
+    assert_eq!(
+        runs, 2,
+        "after the 1s burst floor an idle free agent must admit the next event"
+    );
+}
+
+/// A short configured cooldown both paces admissions AND shrinks the
+/// Free/Focused merge window to match — otherwise the fixed 30s merge would
+/// silently override a 2s cooldown and the setting would do nothing.
+#[tokio::test]
+async fn short_cooldown_paces_and_tracks_the_configured_window() {
+    let (executor, mut agent) = build_event_agent(ExecutionMode::Free, None).await;
+    let mut op = crate::ai_agent::executor::structured::default_operator_config();
+    op.event_cooldown_secs = Some(2);
+    with_operator_config(&executor, &mut agent, op).await;
+
+    fire_event(&executor, "device", "dev-a", "temp").await;
+    let runs = drain_event_tasks(&executor).await;
+
+    fire_event(&executor, "device", "dev-b", "temp").await;
+    let after_burst = runs + drain_event_tasks(&executor).await;
+    assert_eq!(
+        after_burst, runs,
+        "an event inside the 2s window must be paced away, not admitted"
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(2200)).await;
+    fire_event(&executor, "device", "dev-c", "temp").await;
+    let runs = after_burst + drain_event_tasks(&executor).await;
+    assert_eq!(runs, 2, "once the 2s window elapses the next event admits");
+}
+
+/// Agents without an explicit cooldown keep the historical 60s floor: the
+/// default is unchanged for every existing deployment.
+#[tokio::test]
+async fn default_event_cooldown_still_gates_back_to_back_events() {
+    let (executor, _agent) = build_event_agent(ExecutionMode::Structured, None).await;
+
+    fire_event(&executor, "device", "dev-a", "temp").await;
+    let runs = drain_event_tasks(&executor).await;
+    fire_event(&executor, "device", "dev-b", "temp").await;
+    let runs = runs + drain_event_tasks(&executor).await;
+
+    assert_eq!(
+        runs, 1,
+        "no configured cooldown means the 60s default floor, exactly as before"
+    );
+}
+
+/// A busy admission is a DROP, not a retry: "already executing" means another
+/// run owns the agent, and the old 5s-backoff retry queued a phantom second
+/// run behind it. Must return Ok (busy is not a failure — mirrors the
+/// scheduler's treatment) and must not sit through the backoff.
+#[tokio::test]
+async fn busy_event_admission_drops_without_the_retry_backoff() {
+    let (executor, agent) = build_event_agent(ExecutionMode::Free, None).await;
+    // Occupy the process-global in-flight set without running anything, so
+    // execute_agent rejects with "already executing".
+    super::in_flight_agents().lock().unwrap().insert(agent.id.clone());
+
+    let event = super::context::EventTriggerData {
+        source: super::context::DataSourceRef {
+            source_type: "device".into(),
+            source_id: "dev-a".into(),
+            field: "temp".into(),
+        },
+        value: neomind_core::event::MetricValue::Float(1.0),
+        timestamp: 0,
+    };
+    let started = std::time::Instant::now();
+    let out = AgentExecutor::execute_with_retry(&executor, agent.clone(), event, 1, &agent.id).await;
+    super::in_flight_agents().lock().unwrap().remove(&agent.id);
+
+    assert!(out.is_ok(), "busy is a drop, not an error: {out:?}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(3),
+        "must return without the 5s retry backoff (took {:?})",
+        started.elapsed()
+    );
+}
+
+/// The breaker threshold is finally REAL: one permanent-classified failure
+/// keeps the agent Active; only `consecutive_failure_threshold` in a row
+/// demotes it. (The field existed in the editor for months while nothing
+/// compared it — a single small-model glitch killed event agents outright.)
+/// Driven by the silence refusal: a structured run with no observable input
+/// produces a permanent-classified Failed record, deterministically.
+#[tokio::test]
+async fn breaker_demotes_only_after_consecutive_threshold() {
+    let (executor, agent) = build_event_agent(ExecutionMode::Structured, None).await;
+
+    for attempt in 1..=3u32 {
+        let record = executor
+            .execute_agent(agent.clone(), None, None)
+            .await
+            .expect("failure must still be recorded as a run");
+        assert_eq!(
+            record.status,
+            neomind_storage::ExecutionStatus::Failed,
+            "silence refusal is a Failed record"
+        );
+        let stored = executor
+            .store()
+            .get_agent(&agent.id)
+            .await
+            .expect("store")
+            .expect("agent exists");
+        if attempt < 3 {
+            assert_eq!(
+                stored.status,
+                neomind_storage::AgentStatus::Active,
+                "permanent failure {}/3 must NOT demote before the threshold",
+                attempt
+            );
+        } else {
+            assert_eq!(
+                stored.status,
+                neomind_storage::AgentStatus::Error,
+                "the third consecutive permanent failure trips the breaker"
+            );
+        }
+    }
+    // Demotion seeds the recovery clock for the event path.
+    assert!(
+        super::global_error_probe_state().read().contains_key(&agent.id),
+        "Active→Error must seed the recovery-probe clock"
+    );
+    super::global_error_probe_state().write().remove(&agent.id);
+}
+
+/// A demoted event agent is PROBED by matching events once the backoff has
+/// elapsed, and a successful probe restores Active — full self-healing, the
+/// thing the old design could not do at all (Error event agents were only
+/// reachable by hand).
+#[tokio::test]
+async fn error_agent_probes_on_events_and_recovers() {
+    let (executor, mut agent) = build_event_agent(ExecutionMode::Structured, Some(0)).await;
+    let mut op = crate::ai_agent::executor::structured::default_operator_config();
+    op.debounce_secs = 0;
+    op.event_cooldown_secs = Some(0);
+    with_operator_config(&executor, &mut agent, op).await;
+
+    // Demote by hand and age the probe clock past its backoff.
+    executor
+        .store()
+        .update_agent_status(&agent.id, neomind_storage::AgentStatus::Error, Some("test demotion".into()))
+        .await
+        .unwrap();
+    let old = chrono::Utc::now().timestamp() - 3600;
+    super::global_error_probe_state().write().insert(
+        agent.id.clone(),
+        super::ErrorProbeEntry { last_attempt: old, consecutive_failures: 2 },
+    );
+
+    fire_event(&executor, "device", "dev-a", "temp").await;
+    let runs = drain_event_tasks(&executor).await;
+
+    assert_eq!(runs, 1, "an aged-backoff Error agent must admit the probe");
+    let stored = executor.store().get_agent(&agent.id).await.unwrap().unwrap();
+    assert_eq!(
+        stored.status,
+        neomind_storage::AgentStatus::Active,
+        "a successful probe must restore Active"
+    );
+    assert!(
+        !super::global_error_probe_state().read().contains_key(&agent.id),
+        "recovery must clear the backoff ladder"
+    );
+}
+
+/// Inside the backoff window the probe gate holds: matching events are
+/// skipped, no run spawns, the agent stays Error.
+#[tokio::test]
+async fn error_agent_in_backoff_skips_events() {
+    let (executor, mut agent) = build_event_agent(ExecutionMode::Structured, Some(0)).await;
+    let mut op = crate::ai_agent::executor::structured::default_operator_config();
+    op.debounce_secs = 0;
+    op.event_cooldown_secs = Some(0);
+    with_operator_config(&executor, &mut agent, op).await;
+
+    executor
+        .store()
+        .update_agent_status(&agent.id, neomind_storage::AgentStatus::Error, Some("test demotion".into()))
+        .await
+        .unwrap();
+    let now = chrono::Utc::now().timestamp();
+    super::global_error_probe_state().write().insert(
+        agent.id.clone(),
+        super::ErrorProbeEntry { last_attempt: now, consecutive_failures: 0 },
+    );
+
+    fire_event(&executor, "device", "dev-a", "temp").await;
+    let runs = drain_event_tasks(&executor).await;
+
+    assert_eq!(runs, 0, "a probe inside its backoff window must not run");
+    super::global_error_probe_state().write().remove(&agent.id);
+}
+
+/// A FAILED probe steps the backoff ladder up instead of restarting it —
+/// the difference between "broken agent costs ~24 attempts/day" and "it
+/// retries every 5 minutes forever".
+#[tokio::test]
+async fn failed_probe_climbs_the_backoff_ladder() {
+    let (mut executor, mut agent) = build_event_agent(ExecutionMode::Structured, Some(0)).await;
+    let mut op = crate::ai_agent::executor::structured::default_operator_config();
+    op.debounce_secs = 0;
+    op.event_cooldown_secs = Some(0);
+    with_operator_config(&executor, &mut agent, op).await;
+    // Every inference fails: empty script → the exhausted sentinel is not
+    // valid JSON for the structured contract.
+    executor
+        .set_llm_runtime(Arc::new(MockLlmRuntime::new(vec![])))
+        .await;
+
+    executor
+        .store()
+        .update_agent_status(&agent.id, neomind_storage::AgentStatus::Error, Some("test demotion".into()))
+        .await
+        .unwrap();
+    let old = chrono::Utc::now().timestamp() - 3600;
+    super::global_error_probe_state().write().insert(
+        agent.id.clone(),
+        super::ErrorProbeEntry { last_attempt: old, consecutive_failures: 0 },
+    );
+
+    fire_event(&executor, "device", "dev-a", "temp").await;
+    let runs = drain_event_tasks(&executor).await;
+
+    assert_eq!(runs, 1, "aged backoff admits the probe");
+    let stored = executor.store().get_agent(&agent.id).await.unwrap().unwrap();
+    assert_eq!(
+        stored.status,
+        neomind_storage::AgentStatus::Error,
+        "a failed probe keeps the agent demoted"
+    );
+    let entry = super::global_error_probe_state().read().get(&agent.id).copied();
+    super::global_error_probe_state().write().remove(&agent.id);
+    let entry = entry.expect("probe outcome must be recorded");
+    assert!(
+        entry.consecutive_failures >= 1,
+        "a failed probe must climb the ladder (got {entry:?})"
+    );
+    assert!(
+        entry.last_attempt > old,
+        "the failed probe re-arms the clock from its own attempt"
     );
 }
 
@@ -1510,7 +1813,7 @@ async fn an_agent_without_channels_still_records_its_alert_in_app() {
     };
 
     executor
-        .dispatch_agent_notifications(&agent.id, &agent.name, &record)
+        .dispatch_agent_notifications(&agent.id, &agent.name, &record, false)
         .await;
 
     let sent = message_manager.list_messages().await;
@@ -1611,6 +1914,7 @@ async fn a_failed_run_reports_even_without_routing() {
                 "Failed: nothing to work from",
                 Some("agent '数据监控分析' has nothing to work from. All 5 devices and 31 metrics are silent"),
             ),
+            false,
         )
         .await;
 
@@ -1632,6 +1936,7 @@ async fn a_failed_run_reports_even_without_routing() {
                 "冷库温度正常",
                 None,
             ),
+            false,
         )
         .await;
     assert_eq!(
@@ -2021,6 +2326,7 @@ async fn daily_run_cap_applies_to_every_mode() {
         max_calls_per_day: Some(1),
         timeout_secs: 60,
         consecutive_failure_threshold: 3,
+        event_cooldown_secs: None,
     });
     let rt: Arc<dyn LlmRuntime> = Arc::new(
         MockLlmRuntime::new(vec![

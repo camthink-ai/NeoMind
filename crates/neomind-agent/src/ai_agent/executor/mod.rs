@@ -1136,22 +1136,60 @@ impl AgentExecutor {
         // channels and the trigger; route accordingly. Replaces the old
         // intent-keyword sniffing — which still runs for agents WITHOUT a
         // notify config, so legacy behavior is unchanged.
-        self.dispatch_agent_notifications(&agent_id, &agent_name, &record)
-            .await;
+        //
+        // Probe runs are SILENT: a run that starts with the agent already in
+        // Error is the breaker's recovery probe, not a verdict. The failure
+        // that demoted the agent already notified; a broken agent probing at
+        // backoff intervals would otherwise ping every few minutes all day.
+        let is_probe = agent.status == neomind_storage::AgentStatus::Error;
+        if !is_probe {
+            self.dispatch_agent_notifications(&agent_id, &agent_name, &record, false)
+                .await;
+        }
 
         // Reset agent status based on result.
         //
         // For *transient* failures (network, timeout, rate-limit, the global
         // 300s timeout), keep the agent Active so the scheduler will retry it
-        // on the next trigger. Only *permanent* failures (malformed output,
-        // auth errors, model not found) demote the agent to Error, requiring
-        // manual intervention to re-enable.
+        // on the next trigger. *Permanent* failures (malformed output, auth
+        // errors, model not found) count toward the breaker: the agent
+        // demotes to Error only after `consecutive_failure_threshold`
+        // consecutive permanent failures (default 3 — one glitch from a
+        // small model no longer kills an event agent, which has no other
+        // path back to Active). Transient failures neither count nor reset.
         //
         // Disarm the RAII guard — normal completion handles status reset
         status_guard.armed.set(false);
 
+        let breaker_threshold = agent
+            .operator_config
+            .as_ref()
+            .map(|c| c.consecutive_failure_threshold as u32)
+            .unwrap_or(3);
+
         let new_status = if record.status == ExecutionStatus::Completed {
+            // Unconditional reset: the passed-in agent object can be stale
+            // (event cache, manual re-invoke), so comparing its count would
+            // skip resets. One cheap write per successful run.
+            let _ = self
+                .store
+                .update_agent_consecutive_failures(&agent_id, 0)
+                .await;
             neomind_storage::AgentStatus::Active
+        } else if is_probe {
+            // A probe run does not re-litigate the demotion: only a COMPLETED
+            // run recovers the agent. Letting a failed probe fall through to
+            // the threshold logic (or the transient branch) flipped demoted
+            // agents back to Active without evidence — a flaky-network agent
+            // would ping-pong Active/Error, re-notifying on every demotion.
+            // "Still can't tell" keeps Error; the next backoff probe decides.
+            tracing::info!(
+                agent_id = %agent_id,
+                execution_id = %execution_id,
+                error = ?record.error,
+                "Recovery probe did not complete — agent stays Error"
+            );
+            neomind_storage::AgentStatus::Error
         } else if is_transient_failure(record.error.as_deref()) {
             tracing::info!(
                 agent_id = %agent_id,
@@ -1161,7 +1199,50 @@ impl AgentExecutor {
             );
             neomind_storage::AgentStatus::Active
         } else {
-            neomind_storage::AgentStatus::Error
+            // Read the count fresh from the store — the caller's agent
+            // object may predate the previous run's increment.
+            let current = self
+                .store
+                .get_agent(&agent_id)
+                .await
+                .ok()
+                .flatten()
+                .map(|a| a.consecutive_failures)
+                .unwrap_or(0);
+            let new_consecutive = current.saturating_add(1);
+            let _ = self
+                .store
+                .update_agent_consecutive_failures(&agent_id, new_consecutive)
+                .await;
+            if new_consecutive >= breaker_threshold {
+                // Seed the probe clock only on the Active→Error TRANSITION:
+                // a failed probe run lands here too, and re-seeding would
+                // restart the backoff ladder every probe (it would never
+                // grow). The probe's outcome path owns the ladder once the
+                // agent is already Error.
+                if !is_probe {
+                    seed_error_probe(&agent_id);
+                }
+                tracing::warn!(
+                    agent_id = %agent_id,
+                    execution_id = %execution_id,
+                    consecutive_failures = new_consecutive,
+                    threshold = breaker_threshold,
+                    error = ?record.error,
+                    "Circuit breaker OPEN — agent demoted to Error (event triggers will probe at backoff intervals)"
+                );
+                neomind_storage::AgentStatus::Error
+            } else {
+                tracing::warn!(
+                    agent_id = %agent_id,
+                    execution_id = %execution_id,
+                    consecutive_failures = new_consecutive,
+                    threshold = breaker_threshold,
+                    error = ?record.error,
+                    "Permanent-classified failure — breaker not tripped yet, agent stays Active"
+                );
+                neomind_storage::AgentStatus::Active
+            }
         };
 
         // Retry status reset once on failure to prevent agent getting stuck in Executing state
@@ -1724,6 +1805,54 @@ static DAILY_CALL_COUNTS: std::sync::OnceLock<parking_lot::RwLock<HashMap<String
 pub(crate) fn global_daily_call_counts(
 ) -> &'static parking_lot::RwLock<HashMap<String, (String, u32)>> {
     DAILY_CALL_COUNTS.get_or_init(|| parking_lot::RwLock::new(HashMap::new()))
+}
+
+// ========================================================================
+// Error-state recovery probes (event-trigger path)
+// ========================================================================
+
+/// Recovery-probe backoff state for one demoted agent: when the last probe
+/// ran and how many probes have failed since demotion. Process-wide for the
+/// same reason the daily counters are — the event path builds a fresh
+/// executor per trigger.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct ErrorProbeEntry {
+    pub last_attempt: i64,
+    pub consecutive_failures: u32,
+}
+
+/// Base probe spacing after demotion (matches the scheduler's Error
+/// cooldown) and its ceiling.
+pub(crate) const ERROR_PROBE_BASE_SECS: i64 = 300;
+pub(crate) const ERROR_PROBE_MAX_SECS: i64 = 3600;
+
+/// Backoff before the next probe: 5min, 10, 20, 40, capped at 1h. A broken
+/// agent costs at most ~24 probe attempts/day once the backoff saturates.
+pub(crate) fn error_probe_backoff_secs(failures: u32) -> i64 {
+    let shift = failures.min(4) as u32; // 300·2⁴ = 4800 > 3600, so 4 saturates
+    (ERROR_PROBE_BASE_SECS << shift).min(ERROR_PROBE_MAX_SECS)
+}
+
+static ERROR_PROBE_STATE: std::sync::OnceLock<parking_lot::RwLock<HashMap<String, ErrorProbeEntry>>> =
+    std::sync::OnceLock::new();
+
+/// Access the process-wide probe state (listener gate + spawn outcome path).
+pub(crate) fn global_error_probe_state(
+) -> &'static parking_lot::RwLock<HashMap<String, ErrorProbeEntry>> {
+    ERROR_PROBE_STATE.get_or_init(|| parking_lot::RwLock::new(HashMap::new()))
+}
+
+/// Start (or restart) the recovery clock for a demoted agent: the first
+/// probe comes no sooner than the base backoff after demotion, so an agent
+/// that just tripped the breaker isn't re-probed by the very next event.
+pub(crate) fn seed_error_probe(agent_id: &str) {
+    let now = chrono::Utc::now().timestamp();
+    global_error_probe_state()
+        .write()
+        .insert(agent_id.to_string(), ErrorProbeEntry {
+            last_attempt: now,
+            consecutive_failures: 0,
+        });
 }
 
 impl Drop for InFlightGuard {
