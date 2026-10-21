@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import signal
 import sys
 import time
@@ -48,6 +49,53 @@ import server  # noqa: E402
 import simulator  # noqa: E402
 import state_query  # noqa: E402
 import validate  # noqa: E402
+
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+_GUARD_RE = re.compile(
+    r'guard="([^"]+)" outcome="([^"]+)" round=(\d+) reason="([^"]*)"'
+)
+
+
+def _parse_guard_metrics(log_lines: list[str]) -> dict:
+    """Extract the agent's turn-guard ledger from the server's log lines.
+
+    The agent emits one structured line per guard decision:
+        turn guard decision guard="narration_nudge" outcome="fired" round=1 reason="…"
+    and a per-turn summary. The eval reports the per-kind counts plus the
+    nudge effectiveness pair (nudge round acted / still did not act) so guard
+    value can be measured instead of argued about.
+    """
+    events = []
+    for raw in log_lines:
+        line = _ANSI_RE.sub("", raw)
+        if "turn guard decision" not in line:
+            continue
+        m = _GUARD_RE.search(line)
+        if m:
+            events.append(
+                {
+                    "kind": m.group(1),
+                    "outcome": m.group(2),
+                    "round": int(m.group(3)),
+                    "reason": m.group(4),
+                }
+            )
+    fired: dict[str, int] = {}
+    skipped: dict[str, int] = {}
+    suppressed: dict[str, int] = {}
+    for e in events:
+        bucket = {"fired": fired, "skipped": skipped}.get(e["outcome"], suppressed)
+        bucket[e["kind"]] = bucket.get(e["kind"], 0) + 1
+    outcomes = [e for e in events if e["kind"] == "narration_nudge_outcome"]
+    return {
+        "events": events,
+        "fired": fired,
+        "skipped": skipped,
+        "suppressed": suppressed,
+        "nudge_rounds_observed": len(outcomes),
+        "nudge_recovered": sum(1 for e in outcomes if e["outcome"] == "fired"),
+    }
 
 
 def _load_case(path: Path) -> dict:
@@ -362,6 +410,7 @@ def run_case(case_path: str) -> dict:
             "turn_records": turn_records,
             "state_queries": state_results,
             "suspected_fallback": suspected,
+            "guards": _parse_guard_metrics(srv.log_lines()),
             "status": None,
             "error_type": None,
             "message": None,
@@ -600,6 +649,7 @@ def cmd_run(args):
                 "category": case.get("category"),
                 "hard": hard,
                 "suspected_fallback": bool(rec.get("suspected_fallback")),
+                "guards": rec.get("guards") or {},
                 "status": rec.get("status"),
                 "message": rec.get("message", ""),
             }

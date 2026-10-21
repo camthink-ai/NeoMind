@@ -282,6 +282,18 @@ class TestServer:
             time.sleep(0.2)
         return None
 
+    # --- Observability -----------------------------------------------------
+
+    def log_lines(self) -> list[str]:
+        """Snapshot of the server's captured stdout/stderr lines.
+
+        The agent emits its turn-guard ledger as structured lines
+        (`turn guard decision guard=… outcome=…`); the eval reads them from
+        here instead of re-deriving guard behaviour from the HTTP response.
+        """
+        with self._log_lock:
+            return list(self._log_lines)
+
     def shutdown(self):
         if self.process is None:
             return

@@ -1147,6 +1147,15 @@ pub async fn process_stream_events_with_safeguards(
 
                 // === Handle tool calls if detected ===
                 if tool_calls_detected {
+                    // Nudge effectiveness: the retried round actually acted.
+                    if round_is_nudge {
+                        guard_ledger.record(
+                            super::guard::GuardKind::NarrationNudgeOutcome,
+                            super::guard::GuardOutcome::Fired,
+                            tool_iteration_count + 1,
+                            "tool_call_in_nudge_round",
+                        );
+                    }
                     tracing::debug!("Starting tool execution round {}", tool_iteration_count + 1);
 
                     // Send progress event to inform user about tool iteration
@@ -1826,6 +1835,15 @@ pub async fn process_stream_events_with_safeguards(
                     tracing::debug!("ReAct loop completed after {} tool iterations", tool_iteration_count + 1);
                 } else {
                     // No tool calls - save response directly.
+                    // Nudge effectiveness: the retried round STILL did not act.
+                    if round_is_nudge {
+                        guard_ledger.record(
+                            super::guard::GuardKind::NarrationNudgeOutcome,
+                            super::guard::GuardOutcome::Skipped,
+                            tool_iteration_count + 1,
+                            "no_tool_call_in_nudge_round",
+                        );
+                    }
                     let mut raw_response = buffer.clone();
 
                     // === NARRATION-COLLAPSE GUARD ===

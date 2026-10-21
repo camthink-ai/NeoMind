@@ -21,6 +21,10 @@
 pub enum GuardKind {
     /// Narration-collapse retry (an extra LLM round).
     NarrationNudge,
+    /// What the retried (nudge) round did: Fired = it produced a tool call,
+    /// Skipped = it still produced none. This is the measurement that
+    /// decides whether the nudge earns its latency budget.
+    NarrationNudgeOutcome,
     /// Turn-end "progress report, not a result" label.
     NarrationLabel,
     /// Stated-intent mismatch directive (repeated command promise).
@@ -43,6 +47,7 @@ impl GuardKind {
     pub fn as_str(self) -> &'static str {
         match self {
             GuardKind::NarrationNudge => "narration_nudge",
+            GuardKind::NarrationNudgeOutcome => "narration_nudge_outcome",
             GuardKind::NarrationLabel => "narration_label",
             GuardKind::PromiseDirective => "promise_directive",
             GuardKind::ListOnlyCoercion => "list_only_coercion",

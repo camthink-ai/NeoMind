@@ -67,6 +67,12 @@ def aggregate(scores_jsonl: str) -> dict:
         "by_category_hard": defaultdict(
             lambda: {"n": 0, "pass": 0, "wrong": 0, "unasserted": 0}
         ),
+        # turn-guard ledger (parsed from the agent's structured log lines)
+        "guard_fired": defaultdict(int),
+        "guard_skipped": defaultdict(int),
+        "guard_suppressed": defaultdict(int),
+        "nudge_rounds_observed": 0,
+        "nudge_recovered": 0,
     }
 
     for line in (scores_jsonl or "").splitlines():
@@ -103,6 +109,21 @@ def aggregate(scores_jsonl: str) -> dict:
                 if hard.get("wrong_tool"):
                     agg["wrong_tool"] += 1
                     agg["by_category_hard"][cat]["wrong"] += 1
+
+        # --- turn-guard ledger ---
+        guards = s.get("guards") or {}
+        if isinstance(guards, dict):
+            for kind, n in (guards.get("fired") or {}).items():
+                if isinstance(n, int):
+                    agg["guard_fired"][kind] += n
+            for kind, n in (guards.get("skipped") or {}).items():
+                if isinstance(n, int):
+                    agg["guard_skipped"][kind] += n
+            for kind, n in (guards.get("suppressed") or {}).items():
+                if isinstance(n, int):
+                    agg["guard_suppressed"][kind] += n
+            agg["nudge_rounds_observed"] += int(guards.get("nudge_rounds_observed") or 0)
+            agg["nudge_recovered"] += int(guards.get("nudge_recovered") or 0)
 
         # --- soft judge (secondary) ---
         scores = s.get("scores") or {}
@@ -233,6 +254,43 @@ def write_grade_card(agg: dict, out_path: Path):
 
     md.append("")
     md.append(f"Suspected fallback cases: {agg['suspected_fallback']}")
+    md.append("")
+
+    md.append("")
+    md.append("## Turn Guards (observability)")
+    md.append("")
+    if agg["guard_fired"] or agg["guard_skipped"] or agg["guard_suppressed"]:
+        md.append("| Guard | Fired | Skipped | Suppressed |")
+        md.append("|---|---|---|---|")
+        # `narration_nudge_outcome` is the effectiveness measurement, shown
+        # as the ratio below — not a guard of its own.
+        kinds = sorted(
+            (set(agg["guard_fired"])
+             | set(agg["guard_skipped"])
+             | set(agg["guard_suppressed"]))
+            - {"narration_nudge_outcome"}
+        )
+        for kind in kinds:
+            md.append(
+                f"| {kind} | {agg['guard_fired'].get(kind, 0)} "
+                f"| {agg['guard_skipped'].get(kind, 0)} "
+                f"| {agg['guard_suppressed'].get(kind, 0)} |"
+            )
+        md.append("")
+        obs = agg["nudge_rounds_observed"]
+        if obs:
+            pct = 100.0 * agg["nudge_recovered"] / obs
+            md.append(
+                f"Nudge effectiveness: **{agg['nudge_recovered']}/{obs} "
+                f"({pct:.0f}%)** of retried rounds produced a tool call."
+            )
+        else:
+            md.append(
+                "_No nudge rounds this run — the effectiveness ratio needs "
+                "cases where the model narrates without acting._"
+            )
+    else:
+        md.append("_No turn-guard decisions recorded (no guard fired or was suppressed)._")
     md.append("")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
