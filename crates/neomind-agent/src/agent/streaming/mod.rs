@@ -4,6 +4,7 @@
 //! - `stream_core`: text-only streaming with multi-round ReAct loop
 //! - `stream_multimodal`: multimodal (text + images) streaming
 //! - `intent`: user intent detection (list-only dead end)
+//! - `guard`: turn-guard decision table + per-turn guard ledger
 //! - `cache`: tool result caching
 //! - `thinking`: thinking content cleanup
 //! - `tool_detect`: JSON/XML tool call detection
@@ -18,6 +19,7 @@
 mod cache;
 mod context;
 mod dedup;
+mod guard;
 mod intent;
 mod resolve;
 mod result_format;

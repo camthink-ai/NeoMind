@@ -465,6 +465,19 @@ pub async fn process_stream_events_with_safeguards(
             // the reply text (user feedback 2026-10-10).
             let mut turn_system_notes: Vec<String> = Vec::new();
 
+            // Every guard decision lands here as a structured event, so a
+            // turn can be summarized and guard hit rates aggregated instead
+            // of reconstructed from prose logs after an incident.
+            let mut guard_ledger = super::guard::GuardLedger::new();
+            if no_execution_requested {
+                guard_ledger.record(
+                    super::guard::GuardKind::PlanOnlySuppression,
+                    super::guard::GuardOutcome::Suppressed,
+                    0,
+                    "user asked for a plan",
+                );
+            }
+
             // === INTENT & PLAN VISUALIZATION ===
             // Send intent and plan events first to show user what's happening
             yield intent_event;
@@ -553,9 +566,21 @@ pub async fn process_stream_events_with_safeguards(
 
                         if let Some(dead_end_msg) = dead_end_msg {
                             list_only_dead_end_injected = true;
+                            guard_ledger.record(
+                                super::guard::GuardKind::ListOnlyCoercion,
+                                super::guard::GuardOutcome::Fired,
+                                tool_iteration_count + 1,
+                                "only_read_only_commands",
+                            );
                             dead_end_msg
                         } else if post_dead_end_read_only_rounds >= 2 && !explore_recovery_nudged {
                             explore_recovery_nudged = true;
+                            guard_ledger.record(
+                                super::guard::GuardKind::ExploreRecovery,
+                                super::guard::GuardOutcome::Fired,
+                                tool_iteration_count + 1,
+                                "read_only_streak",
+                            );
                             tracing::warn!(
                                 "Read-only explore loop after dead-end continuation \
                                  ({} consecutive rounds) — injecting act-now directive",
@@ -1096,6 +1121,12 @@ pub async fn process_stream_events_with_safeguards(
                     let degenerate_nudge_output =
                         round_is_nudge && is_degenerate_final_output(remaining);
                     if degenerate_nudge_output {
+                        guard_ledger.record(
+                            super::guard::GuardKind::DegenerateSuppressed,
+                            super::guard::GuardOutcome::Fired,
+                            tool_iteration_count + 1,
+                            "bare_empty_container",
+                        );
                         tracing::warn!(
                             len = remaining.len(),
                             "Nudge round produced only a bare empty JSON container — suppressing display; the pre-nudge narration will be restored as the final reply"
@@ -1533,9 +1564,18 @@ pub async fn process_stream_events_with_safeguards(
                             &mut promised_cmd,
                             &mut promise_rounds,
                         );
-                        if promise_rounds >= 2 && !promise_directive_sent {
+                        if super::guard::should_inject_promise_directive(
+                            promise_rounds,
+                            promise_directive_sent,
+                        ) {
                             if let Some(cmd) = promised_cmd.clone() {
                                 promise_directive_sent = true;
+                                guard_ledger.record(
+                                    super::guard::GuardKind::PromiseDirective,
+                                    super::guard::GuardOutcome::Fired,
+                                    tool_iteration_count + 1,
+                                    "repeated_promise",
+                                );
                                 tracing::warn!(
                                     promised = %cmd,
                                     rounds = promise_rounds,
@@ -1794,12 +1834,40 @@ pub async fn process_stream_events_with_safeguards(
                     // said, nudge once, and run another round. Fires only with
                     // round + wall-clock budget left; a second narration falls
                     // through and is accepted as the final answer.
-                    if narration_nudges < NARRATION_NUDGE_MAX
-                        && tool_iteration_count < MAX_TOOL_ITERATIONS - 1
-                        && turn_started_at.elapsed() < turn_wall_clock_budget
-                        && !no_execution_requested
-                        && crate::agent::is_narration_without_action(&raw_response)
-                    {
+                    let is_narration_reply =
+                        crate::agent::is_narration_without_action(&raw_response);
+                    let nudge_allowed = super::guard::should_nudge_narration(
+                        is_narration_reply,
+                        narration_nudges,
+                        NARRATION_NUDGE_MAX,
+                        no_execution_requested,
+                        tool_iteration_count < MAX_TOOL_ITERATIONS - 1,
+                        turn_started_at.elapsed() < turn_wall_clock_budget,
+                    );
+                    if !nudge_allowed && is_narration_reply {
+                        let (outcome, reason) = if no_execution_requested {
+                            (super::guard::GuardOutcome::Suppressed, "plan_only")
+                        } else if narration_nudges >= NARRATION_NUDGE_MAX {
+                            (super::guard::GuardOutcome::Skipped, "budget_exhausted")
+                        } else if tool_iteration_count >= MAX_TOOL_ITERATIONS - 1 {
+                            (super::guard::GuardOutcome::Skipped, "iteration_cap")
+                        } else {
+                            (super::guard::GuardOutcome::Skipped, "wall_clock")
+                        };
+                        guard_ledger.record(
+                            super::guard::GuardKind::NarrationNudge,
+                            outcome,
+                            tool_iteration_count + 1,
+                            reason,
+                        );
+                    }
+                    if nudge_allowed {
+                        guard_ledger.record(
+                            super::guard::GuardKind::NarrationNudge,
+                            super::guard::GuardOutcome::Fired,
+                            tool_iteration_count + 1,
+                            "promise_without_action",
+                        );
                         narration_nudges += 1;
                         tracing::info!(
                             round = tool_iteration_count + 1,
@@ -1863,6 +1931,12 @@ pub async fn process_stream_events_with_safeguards(
                                     degenerate_chars = raw_response.chars().count(),
                                     "Post-nudge round degenerated to an empty JSON container — restoring the pre-nudge narration as the final reply"
                                 );
+                                guard_ledger.record(
+                                    super::guard::GuardKind::DegenerateRestore,
+                                    super::guard::GuardOutcome::Fired,
+                                    tool_iteration_count + 1,
+                                    "nudge_round_degenerate",
+                                );
                                 raw_response = restored;
                             }
                         }
@@ -1881,7 +1955,26 @@ pub async fn process_stream_events_with_safeguards(
                     // Suppressed when the user asked for a plan only: that
                     // promise-shaped reply is the requested output, not a
                     // failed turn.
-                    if !no_execution_requested && crate::agent::is_narration_without_action(&raw_response) {
+                    let label_narration = crate::agent::is_narration_without_action(&raw_response);
+                    let label_allowed =
+                        super::guard::should_label_narration(label_narration, no_execution_requested);
+                    if label_narration {
+                        guard_ledger.record(
+                            super::guard::GuardKind::NarrationLabel,
+                            if label_allowed {
+                                super::guard::GuardOutcome::Fired
+                            } else {
+                                super::guard::GuardOutcome::Suppressed
+                            },
+                            tool_iteration_count + 1,
+                            if label_allowed {
+                                "turn_ends_on_promise"
+                            } else {
+                                "plan_only"
+                            },
+                        );
+                    }
+                    if label_allowed {
                         tracing::warn!(
                             round = tool_iteration_count + 1,
                             nudges = narration_nudges,
@@ -1913,6 +2006,12 @@ pub async fn process_stream_events_with_safeguards(
                             &successful_mutations,
                         )
                     } {
+                        guard_ledger.record(
+                            super::guard::GuardKind::IncompleteActionNote,
+                            super::guard::GuardOutcome::Fired,
+                            tool_iteration_count + 1,
+                            "requested_action_not_delivered",
+                        );
                         tracing::warn!(
                             "Turn ending with the requested ACTION never executed — appending completeness note"
                         );
@@ -2162,6 +2261,10 @@ pub async fn process_stream_events_with_safeguards(
                 // Break the loop after processing
                 break 'multi_round_loop;
             }
+
+            // One structured line summarizing every guard decision this turn
+            // (silent when no guard had anything to say).
+            guard_ledger.emit_summary();
 
             // Read token usage from LLM interface (captured from Ollama backend stream)
             let prompt_tokens = llm_interface.take_last_prompt_tokens().await;
