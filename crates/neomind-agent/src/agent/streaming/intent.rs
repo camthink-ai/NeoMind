@@ -296,7 +296,14 @@ pub(crate) fn build_incomplete_action_note(
         return None;
     }
     let (domain, action) = extract_action_parts(user_message);
-    if domain.is_empty() && action.is_empty() {
+    // Without a recognisable DOMAIN the note cannot tell whether some command
+    // in another domain delivered the ask, and "never executed" becomes an
+    // overclaim on a successful turn. Live 2026-10-21 (eval): "Send it a
+    // set_alarm command" extracted action=write/send + domain empty while a
+    // successful `neomind device control fridge-3 set_alarm` (exit 0) ran —
+    // the note labelled it a failure. The note is a safety label; an
+    // unprovable claim is worse than silence.
+    if domain.is_empty() {
         return None;
     }
     let delivered = successful_mutations
@@ -835,6 +842,23 @@ mod tests {
         assert!(build_list_only_dead_end_prompt(msg, &["neomind device list"], &[], 3,).is_none());
         // The same request WITHOUT the plan-only clause still flags.
         assert!(build_incomplete_action_note("帮我创建设备", &[], &[]).is_some());
+    }
+
+    /// Live 2026-10-21: "Send it a set_alarm command" extracts action=write/send
+    /// with NO domain, while `device control fridge-3 set_alarm` succeeded.
+    /// A domain-less ask must not be labelled "not executed".
+    #[test]
+    fn domain_less_ask_never_gets_a_completeness_note() {
+        let msg = "fridge-3's temperature is 8.2\u{00b0}C - it violates the cold-chain limit, \
+                   food-safety risk. Send it a set_alarm command to turn the alarm on.";
+        let cmd = "neomind device control fridge-3 set_alarm 2>&1";
+        assert_eq!(
+            extract_action_parts(msg).0,
+            "",
+            "fixture must have no domain"
+        );
+        assert!(build_incomplete_action_note(msg, &[cmd], &[cmd.to_string()]).is_none());
+        assert!(build_incomplete_action_note(msg, &[], &[]).is_none());
     }
 
     /// Live 2026-10-21: "use its stop command to shut it down" + a successful
