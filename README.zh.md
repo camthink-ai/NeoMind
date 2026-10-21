@@ -182,7 +182,7 @@ docker run -d --name neomind \
 
 公平评分下前四名同处一档(工具命中 83–90%)——按体积、延迟、上下文适配选型:**MiniCPM5-2B** 默认首选,**Qwen 3.5 4B** 最强本地智能体,**deepseek-v4-flash** 云端备选。
 
-**2026-10 复核:** 目录内本地模型全部在当前平台构建上重跑了 33 例硬信号回归门禁(思考开启):MiniCPM5-2B 在其官方采样参数点 77%,LFM 2.5 2.6B 72%,Gemma 4 E2B 69%——同档格局与 9 月一致。完整数据:[docs/edge-models.md](docs/edge-models.md) · 模型目录:[NeoMind-Runtimes](https://github.com/camthink-ai/NeoMind-Runtimes)。
+**2026-10 复核(1.2.2 构建):** 目录内本地模型全部在 1.2.2 构建上重跑了 33 例硬信号回归门禁(思考开启):MiniCPM5-2B 在其官方采样参数点 77%,LFM 2.5 2.6B 72%,Gemma 4 E2B 69%——同档格局与 9 月一致。门禁其后扩到 40 例,且 1.2.3 改了聊天守卫策略(只保留标注),所以这些是 1.2.2 的数据,1.2.3 的复核待跑。完整数据:[docs/edge-models.md](docs/edge-models.md) · 模型目录:[NeoMind-Runtimes](https://github.com/camthink-ai/NeoMind-Runtimes)。
 
 ### 开发
 

@@ -192,7 +192,7 @@ Scores from the 2026-09 agent eval: 12 scenarios per cycle (Chinese + English, 4
 
 Under fair scoring the top four are one tier (83–90% tool accuracy) — pick by footprint, latency, and context fit: **MiniCPM5-2B** default, **Qwen 3.5 4B** strongest local agent, **deepseek-v4-flash** cloud fallback.
 
-**2026-10 re-verification:** all catalog locals re-ran on the 33-case hard-signal regression gate (current platform build, thinking on): MiniCPM5-2B 77% at its official sampler point, LFM 2.5 2.6B 72%, Gemma 4 E2B 69% — the one-tier picture holds on the newer suite. Full data: [docs/edge-models.md](docs/edge-models.md) · catalog: [NeoMind-Runtimes](https://github.com/camthink-ai/NeoMind-Runtimes).
+**2026-10 re-verification (1.2.2 build):** all catalog locals re-ran on the 33-case hard-signal regression gate (thinking on): MiniCPM5-2B 77% at its official sampler point, LFM 2.5 2.6B 72%, Gemma 4 E2B 69% — the one-tier picture holds on the newer suite. The gate has since grown to 40 cases and 1.2.3 changed the chat guard policy (labels-only), so these are 1.2.2 numbers; a 1.2.3 re-run is pending. Full data: [docs/edge-models.md](docs/edge-models.md) · catalog: [NeoMind-Runtimes](https://github.com/camthink-ai/NeoMind-Runtimes).
 
 ### Development
 

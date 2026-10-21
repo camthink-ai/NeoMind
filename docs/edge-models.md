@@ -80,9 +80,12 @@ is the highest-leverage fix.
 
 ## 2026-10 regression-gate re-verification
 
-All models re-ran against the current platform build on a shared llama-server
+All models re-ran against the **1.2.2** platform build on a shared llama-server
 (request sampler temp 0.6 / top_p 0.85, thinking on, 33-case hard-signal
-regression gate, one round per case — single-round noise floor ±7pp):
+regression gate, one round per case — single-round noise floor ±7pp). The gate
+has since grown to 40 cases, and 1.2.3 changed the chat guard policy
+(labels-only), so the numbers below are 1.2.2 measurements; a 1.2.3 re-run is
+pending:
 
 | Model | Pass | Notes |
 |---|---|---|
@@ -153,9 +156,9 @@ Non-negotiable settings (MiniCPM5):
   which overrides it — both were validated working.
 - **`--min-p 0 --repeat-penalty 1.05`** — the official card's anti-repetition
   pair (OpenBMB #374: llama.cpp's 0.05 min_p default causes runaway loops).
-  Validated 2026-10 on the 33-case regression gate: **77% — the model's best
-  measured sampler point**. Do not crank the penalty higher: a 1.15 recipe
-  degraded structured tool-call output (39%, 2026-10).
+  Validated 2026-10 on the 33-case regression gate (1.2.2 build): **77% — the
+  model's best measured sampler point**. Do not crank the penalty higher: a
+  1.15 recipe degraded structured tool-call output (39%, 2026-10).
 
 Quantization: Q4_K_M is the sweet spot measured here. Q6_K was not observed to
 matter (test aborted — effect below noise for the effort).
