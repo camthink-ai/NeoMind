@@ -195,6 +195,48 @@ async fn complete_reply_with_tail_politeness_closing_never_enters_round_two() {
     );
 }
 
+/// A user who explicitly asks for a PLAN only must not be nudged into
+/// executing it, and the promise-shaped reply must not be labelled as a
+/// failed turn — both would contradict the instruction.
+#[tokio::test]
+async fn plan_only_request_suppresses_nudge_and_label() {
+    let plan = "我现在使用 shell 工具执行 neomind device list 来检查设备状态。";
+    let rt = MockLlmRuntime::new(vec![MockResponse::text(plan)]);
+    let (iface, state, registry) = harness(&rt);
+
+    let stream = crate::agent::streaming::process_stream_events_with_safeguards(
+        iface,
+        state.clone(),
+        registry,
+        "先不要执行，只告诉我你打算怎么检查设备状态。",
+        super::StreamSafeguards::default(),
+        None,
+        None,
+    )
+    .await
+    .expect("stream");
+    let events = collect(stream).await;
+
+    assert_eq!(
+        rt.call_count(),
+        1,
+        "plan-only request must not launch a nudge round"
+    );
+    let guard = state.read().await;
+    let last = guard.memory.last().expect("final message persisted");
+    assert_eq!(&*last.content, plan);
+    assert!(
+        last.system_notes.is_none(),
+        "a requested plan is not a failed turn"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, AgentEvent::SystemNote { .. })),
+        "no progress-report callout for a requested plan"
+    );
+}
+
 /// A LATER round (after the nudge recovered real tool calls and they ran)
 /// ending degenerate must NOT resurrect the round-1 narration: that would
 /// discard the tool results and re-surface a promise as the final answer.

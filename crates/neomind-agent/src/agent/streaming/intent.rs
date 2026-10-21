@@ -158,6 +158,11 @@ pub(crate) fn build_list_only_dead_end_prompt(
     if !user_message_requires_action(user_message) {
         return None;
     }
+    // The user asked for a plan/explanation only — coercing an execution
+    // now would contradict the instruction.
+    if crate::agent::user_requested_no_execution(user_message) {
+        return None;
+    }
 
     // === COERCION EVIDENCE GATE (live 2026-10-19) ===
     // This prompt is a STRONG model-facing directive ("You MUST execute X
@@ -284,6 +289,10 @@ pub(crate) fn build_incomplete_action_note(
     successful_mutations: &[String],
 ) -> Option<String> {
     if !user_message_requires_action(user_message) {
+        return None;
+    }
+    // Plan-only request: the reply is not a failed action.
+    if crate::agent::user_requested_no_execution(user_message) {
         return None;
     }
     let (domain, action) = extract_action_parts(user_message);
@@ -791,6 +800,19 @@ mod tests {
         assert!(user_message_requires_action(
             "delete the stale rule, I don't remember how to do it"
         ));
+    }
+
+    /// "先不要执行，只告诉我步骤" contains an action verb but asks for a
+    /// PLAN: both the completeness note and the dead-end coercion must stay
+    /// silent — coercing execution would contradict the user.
+    #[test]
+    fn plan_only_requests_skip_action_guards() {
+        let msg = "帮我创建设备，先不要执行，只告诉我步骤";
+        assert!(user_message_requires_action(msg));
+        assert!(build_incomplete_action_note(msg, &[], &[]).is_none());
+        assert!(build_list_only_dead_end_prompt(msg, &["neomind device list"], &[], 3,).is_none());
+        // The same request WITHOUT the plan-only clause still flags.
+        assert!(build_incomplete_action_note("帮我创建设备", &[], &[]).is_some());
     }
 
     #[test]

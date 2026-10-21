@@ -411,6 +411,7 @@ impl AgentExecutor {
                 // branch uses — and only when round budget remains.
                 if !narration_nudged
                     && round + 1 < max_rounds
+                    && !crate::agent::user_requested_no_execution(&agent.user_prompt)
                     && crate::agent::is_narration_without_action(&remaining_text)
                 {
                     narration_nudged = true;

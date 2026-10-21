@@ -37,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The narration nudge and the stated-intent mismatch directive each stated the whole instruction twice, once in Chinese and once in English. Small models drift into the language they read LAST, so a Chinese turn could get nudged in a mixed prompt and answer in English. Both prompts now pick ONE language from the narration being corrected (CJK present → Chinese, else English); tests assert neither variant contains the other language's sentences.
 - Verified on the real minicpm5-2b: a promise-led Chinese turn nudged three times (budget), stayed in Chinese throughout, produced no `[]`, and ended with the progress-report note.
 
+### Changed — narration guard tuned (one retry, and never against the user's explicit "don't execute")
+- Nudge budget 3 → 1. The old budget came from a session where extra rounds didn't help, and a 2026-10-21 run reproduced that: three nudges, the model repeated the same promise three times, tens of seconds per round wasted. This guard is a SEMANTIC guess over prose (unlike Aider/Cline's structural "no edit block / no tool call" retries), so it gets one attempt; beyond that the turn-end label is the safety net.
+- A user who asks for a plan only ("先不要执行，只告诉我…", "don't run it, just tell me…") now suppresses the narration nudge, the promise backstop label, the turn-end completeness note, and the list-only coercion for that turn. Previously a promise-shaped plan could be nudged into executing — contradicting the instruction — or labelled as a failed turn. Applies to all three loops; verified by a MockLlmRuntime test that fails without the suppression.
+
 ### Known sharp edge (not changed this pass)
 - `detect_json_tool_calls` accepts any array with a string "name" field as a tool call, so a model reply that IS a JSON data array with name-bearing rows can be executed as phantom tool calls ("unknown tool Demo" errors instead of displaying the list). Tightening detection to require "arguments" risks breaking real argument-less calls (`{"name":"get_time"}`) that currently execute; it needs its own change validated against the eval baselines.
 

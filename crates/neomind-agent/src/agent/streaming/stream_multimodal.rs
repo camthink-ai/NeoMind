@@ -701,8 +701,13 @@ pub async fn process_multimodal_stream_events_with_safeguards(
             // site, no loop-back — the guard fires at most once by
             // construction.
             let mut handled_by_nudge = false;
-            if crate::agent::is_narration_without_action(&raw_response) {
-                tracing::info!(chars = raw_response.len(), "Multimodal narration without tool call — nudging once");
+            if !crate::agent::user_requested_no_execution(&user_message)
+                && crate::agent::is_narration_without_action(&raw_response)
+            {
+                tracing::info!(
+                    chars = raw_response.chars().count(),
+                    "Multimodal narration without tool call — nudging once"
+                );
                 yield AgentEvent::progress(
                     "Retrying — promised action was not executed...".to_string(),
                     "executing",

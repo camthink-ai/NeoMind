@@ -341,6 +341,53 @@ pub fn text_prefers_chinese(text: &str) -> bool {
         .any(|c| matches!(c, '\u{3400}'..='\u{4dbf}' | '\u{4e00}'..='\u{9fff}'))
 }
 
+/// Phrases with which a user explicitly asks for a PLAN or EXPLANATION only —
+/// "先不要执行", "只告诉我怎么做", "don't run it, just tell me". When one is
+/// present the narration guard is suppressed for the turn: a promise-shaped
+/// reply IS the requested output, and nudging the model into executing would
+/// contradict the user's instruction (and the progress-report label would
+/// mislabel a perfectly good plan as a failed turn).
+const NO_EXECUTION_PATTERNS: &[&str] = &[
+    // Chinese
+    "不要执行",
+    "别执行",
+    "不要运行",
+    "别运行",
+    "不要调用",
+    "不要操作",
+    "不要动手",
+    "只告诉我",
+    "只需要告诉我",
+    "只说明",
+    "仅说明",
+    "只解释",
+    "先说明",
+    "先告诉我",
+    // English
+    "do not execute",
+    "don't execute",
+    "do not run",
+    "don't run",
+    "do not call",
+    "don't call",
+    "without executing",
+    "just tell me",
+    "only tell me",
+    "just explain",
+    "only explain",
+    "don't actually",
+    "do not actually",
+    "no need to execute",
+];
+
+/// True when the user's message asks for a plan/explanation WITHOUT running
+/// anything. Suppresses the narration nudge, the promise backstop, the
+/// turn-end completeness note, and the list-only coercion for that turn.
+pub fn user_requested_no_execution(msg: &str) -> bool {
+    let lower = msg.to_lowercase();
+    NO_EXECUTION_PATTERNS.iter().any(|p| lower.contains(p))
+}
+
 /// The one-shot nudge injected when narration collapse is detected.
 ///
 /// Decision-first: small models follow the FIRST imperative they see, so the
@@ -1062,5 +1109,27 @@ mod narration_tests {
         assert!(!text_prefers_chinese("hello world"));
         assert!(!text_prefers_chinese("neomind device list --json"));
         assert!(!text_prefers_chinese(""));
+    }
+
+    /// A user who asks for a PLAN must not be nudged into executing it.
+    #[test]
+    fn detects_plan_only_requests() {
+        assert!(user_requested_no_execution(
+            "先不要执行，只告诉我你打算怎么做"
+        ));
+        assert!(user_requested_no_execution("帮我创建设备，但先说明步骤"));
+        assert!(user_requested_no_execution("只告诉我怎么删除规则"));
+        assert!(user_requested_no_execution(
+            "Don't run anything yet, just tell me your plan."
+        ));
+        assert!(user_requested_no_execution(
+            "Just explain how to create a device."
+        ));
+        // Genuine execution requests are NOT suppressed.
+        assert!(!user_requested_no_execution("帮我创建设备"));
+        assert!(!user_requested_no_execution("create a device for me"));
+        assert!(!user_requested_no_execution("检查一下设备状态"));
+        // Past-tense report is not an instruction not to execute.
+        assert!(!user_requested_no_execution("刚才没有执行成功"));
     }
 }

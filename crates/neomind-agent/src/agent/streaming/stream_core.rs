@@ -416,16 +416,21 @@ pub async fn process_stream_events_with_safeguards(
             // 20 minutes). See the coercion evidence gates in intent.rs.
             let mut consecutive_read_only_rounds: u32 = 0;
 
-            // === NARRATION-COLLAPSE GUARD (bounded: a few retries per turn) ===
+            // === NARRATION-COLLAPSE GUARD (one retry per turn) ===
             // Small models sometimes narrate a promised action ("我现在使用
             // image_edit 工具…") WITHOUT emitting any tool call. Ending the turn
             // there hands the user a promise instead of a result (observed:
-            // 0.3s turn end, then "你没有使用工具"). The 2026-10-08 widget-task
-            // session showed once-per-turn is too few: the model collapsed FIVE
-            // consecutive nudged turns the same way and the user read it as the
-            // task being "interrupted". Budgeted retries now; beyond the budget
-            // the narration is accepted as the final answer.
-            const NARRATION_NUDGE_MAX: usize = 3;
+            // 0.3s turn end, then "你没有使用工具").
+            //
+            // Budget is ONE. The old budget of three came from the 2026-10-08
+            // session (five consecutive collapses), but that showed extra
+            // rounds do NOT fix a model that will not act — my 2026-10-21 run
+            // reproduced it: three nudges, the model repeated the same promise
+            // three times, tens of seconds per round wasted. This check is a
+            // SEMANTIC guess over prose, unlike Aider/Cline's structural
+            // "no edit block / no tool call" retries, so one attempt is all it
+            // gets; beyond that the turn-end backstop LABELS the reply.
+            const NARRATION_NUDGE_MAX: usize = 1;
             let mut narration_nudges = 0usize;
             let mut narration_nudge_pending: Option<String> = None;
             // Cleaned narration from the round that triggered the nudge —
@@ -433,6 +438,11 @@ pub async fn process_stream_events_with_safeguards(
             // post-nudge degenerate guard near the final save). Always the
             // LATEST narration: a second nudge overwrites it.
             let mut nudge_saved_narration: Option<String> = None;
+            // The user explicitly asked for a plan/explanation only ("先不要
+            // 执行", "just tell me"): a promise-shaped reply IS the requested
+            // output, so neither the nudge nor the progress-report label may
+            // fire — forcing execution would contradict the instruction.
+            let no_execution_requested = crate::agent::user_requested_no_execution(&user_message);
             // True while processing the round launched by the narration
             // nudge — its output is held to stricter JSON-array suspicion
             // (see might_be_json_start) and degenerate results are restored.
@@ -1787,6 +1797,7 @@ pub async fn process_stream_events_with_safeguards(
                     if narration_nudges < NARRATION_NUDGE_MAX
                         && tool_iteration_count < MAX_TOOL_ITERATIONS - 1
                         && turn_started_at.elapsed() < turn_wall_clock_budget
+                        && !no_execution_requested
                         && crate::agent::is_narration_without_action(&raw_response)
                     {
                         narration_nudges += 1;
@@ -1866,7 +1877,11 @@ pub async fn process_stream_events_with_safeguards(
                     // Emitted as a SystemNote event (rendered as a callout,
                     // persisted on the message) — NOT merged into the reply
                     // text (user feedback 2026-10-10).
-                    if crate::agent::is_narration_without_action(&raw_response) {
+                    //
+                    // Suppressed when the user asked for a plan only: that
+                    // promise-shaped reply is the requested output, not a
+                    // failed turn.
+                    if !no_execution_requested && crate::agent::is_narration_without_action(&raw_response) {
                         tracing::warn!(
                             round = tool_iteration_count + 1,
                             nudges = narration_nudges,
