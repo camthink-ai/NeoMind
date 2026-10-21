@@ -1826,14 +1826,28 @@ pub async fn process_stream_events_with_safeguards(
                     // answer instead of a 2-char `[]`. Runs BEFORE the
                     // promise backstop so a restored promise-shaped narration
                     // still gets its progress label.
-                    if is_degenerate_final_output(&raw_response) {
+                    //
+                    // Scoped to the NUDGE round only: a LATER round (after the
+                    // nudge recovered real tool calls and they executed) can
+                    // also end degenerate, and restoring the round-1 narration
+                    // there would discard the tool results and resurrect a
+                    // promise as the final answer — the exact failure the
+                    // guard exists to prevent. Later rounds go through the
+                    // no-thinking retry / summary paths instead.
+                    if round_is_nudge && is_degenerate_final_output(&raw_response) {
                         if let Some(restored) = nudge_saved_narration.take() {
-                            tracing::warn!(
-                                restored_chars = restored.chars().count(),
-                                degenerate_chars = raw_response.chars().count(),
-                                "Post-nudge round degenerated to an empty JSON container — restoring the pre-nudge narration as the final reply"
-                            );
-                            raw_response = restored;
+                            if restored.trim().is_empty() {
+                                tracing::warn!(
+                                    "Post-nudge round degenerated, but the saved narration cleaned to empty — falling through to the retry path"
+                                );
+                            } else {
+                                tracing::warn!(
+                                    restored_chars = restored.chars().count(),
+                                    degenerate_chars = raw_response.chars().count(),
+                                    "Post-nudge round degenerated to an empty JSON container — restoring the pre-nudge narration as the final reply"
+                                );
+                                raw_response = restored;
+                            }
                         }
                     }
 

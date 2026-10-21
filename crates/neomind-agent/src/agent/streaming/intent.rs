@@ -83,15 +83,25 @@ const INSTRUCTIONAL_QUESTION_PATTERNS: &[&str] = &[
 ];
 
 /// Check if the user message requests a mutation/action (not just a query).
+///
+/// Position-sensitive: instructional markers only demote a message from
+/// REQUEST to QUESTION when they LEAD the first action verb ("如何创建…",
+/// "how do I create…"). The same words AFTER the verb are filler inside a
+/// genuine request ("帮我删除这个设备，不知道怎么操作") and must not
+/// silence the guard.
 pub(crate) fn user_message_requires_action(msg: &str) -> bool {
     let msg_lower = msg.to_lowercase();
+    let Some(verb_pos) = ACTION_VERBS.iter().filter_map(|v| msg_lower.find(v)).min() else {
+        return false;
+    };
     if INSTRUCTIONAL_QUESTION_PATTERNS
         .iter()
-        .any(|p| msg_lower.contains(p))
+        .filter_map(|p| msg_lower.find(p))
+        .any(|pos| pos < verb_pos)
     {
         return false;
     }
-    ACTION_VERBS.iter().any(|verb| msg_lower.contains(verb))
+    true
 }
 
 /// Check if ALL executed tool calls so far were read-only (list/get/query).
@@ -759,6 +769,14 @@ mod tests {
             "Can you create a device for me?"
         ));
         assert!(build_incomplete_action_note("你能帮我创建一个设备吗？", &[], &[]).is_some());
+        // Position matters: a marker AFTER the verb is filler inside a real
+        // request, not a question about it.
+        assert!(user_message_requires_action(
+            "帮我删除这个设备，不知道怎么操作"
+        ));
+        assert!(user_message_requires_action(
+            "delete the stale rule, I don't remember how to do it"
+        ));
     }
 
     #[test]

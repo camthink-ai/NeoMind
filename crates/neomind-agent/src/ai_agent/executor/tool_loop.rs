@@ -91,6 +91,11 @@ impl AgentExecutor {
         // The narration that triggered the nudge — restore source when the
         // nudged round degenerates to a bare empty JSON container.
         let mut nudge_saved_narration: Option<String> = None;
+        // Armed only while the NUDGE round itself is being evaluated. A later
+        // round that recovers real tool calls must not resurrect the stale
+        // narration when IT ends degenerate (that would discard the tool
+        // results and re-surface a promise as the final answer).
+        let mut nudge_restore_armed = false;
 
         // Get context window for token-aware compaction
         let context_window = llm_runtime.max_context_length();
@@ -429,6 +434,7 @@ impl AgentExecutor {
                     // the restore source in case the nudged round degenerates
                     // (bare `[]` compliance with the JSON-array directive).
                     nudge_saved_narration = Some(remaining_text.clone());
+                    nudge_restore_armed = true;
                     messages.push(Message::new(
                         MessageRole::Assistant,
                         Content::text(&remaining_text),
@@ -445,20 +451,28 @@ impl AgentExecutor {
                 // literally (bare empty JSON container, live 2026-10-20
                 // shape). The recorded narration is the real reply — keep it
                 // instead of a 2-char `[]` as the agent's final analysis.
-                if is_degenerate_final_output(&remaining_text) {
+                // Only while THIS round is the nudged one; later rounds fall
+                // through to the Phase-2 tool-result summary below.
+                if nudge_restore_armed && is_degenerate_final_output(&remaining_text) {
                     if let Some(restored) = nudge_saved_narration.take() {
-                        tracing::warn!(
-                            agent_id = %agent.id,
-                            restored_chars = restored.chars().count(),
-                            "Post-nudge round degenerated to an empty JSON container — restoring the pre-nudge narration as the final text"
-                        );
-                        final_text = restored;
-                        break;
+                        if !restored.trim().is_empty() {
+                            tracing::warn!(
+                                agent_id = %agent.id,
+                                restored_chars = restored.chars().count(),
+                                "Post-nudge round degenerated to an empty JSON container — restoring the pre-nudge narration as the final text"
+                            );
+                            final_text = restored;
+                            break;
+                        }
                     }
                 }
                 final_text = remaining_text;
                 break;
             }
+
+            // This round produced real tool calls — the nudge round (if any)
+            // succeeded; disarm the stale-narration restore.
+            nudge_restore_armed = false;
 
             // --- Per-round tool call cap ---
             // Prevent single-round explosion (e.g. 17 parallel device queries).
@@ -901,7 +915,11 @@ impl AgentExecutor {
             }
         }
 
-        if final_text.is_empty() {
+        // Degenerate finals (bare `[]`/`{}`, fence-only) are as empty as ""
+        // for the agent's analysis — never hand them to the user as the
+        // conclusion. When there are tool results, Phase 2 already rebuilt
+        // the text above; this catches the no-tool-results case.
+        if final_text.is_empty() || is_degenerate_final_output(&final_text) {
             final_text = "Completed tool execution rounds.".to_string();
         }
 

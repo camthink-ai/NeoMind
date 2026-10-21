@@ -195,6 +195,56 @@ async fn complete_reply_with_tail_politeness_closing_never_enters_round_two() {
     );
 }
 
+/// A LATER round (after the nudge recovered real tool calls and they ran)
+/// ending degenerate must NOT resurrect the round-1 narration: that would
+/// discard the tool results and re-surface a promise as the final answer.
+/// The restore is scoped to the nudge round; later rounds go through the
+/// no-thinking retry instead.
+#[tokio::test]
+async fn later_round_degenerate_output_does_not_resurrect_stale_narration() {
+    let narration = "我来检查仪表盘和组件的当前状态，确认是否正确绑定。";
+    let rt = MockLlmRuntime::new(vec![
+        // Round 1: promise-led narration → nudge.
+        MockResponse::text(narration),
+        // The NUDGE round recovers and emits a real tool call.
+        MockResponse::tool_call("echo", serde_json::json!({ "msg": "checked" })),
+        // A LATER round degenerates.
+        MockResponse::text("[]"),
+        // The no-thinking retry produces the real conclusion.
+        MockResponse::text("检查完成：绑定正常。"),
+    ]);
+    let (iface, state, registry) = harness(&rt);
+
+    let stream = crate::agent::streaming::process_stream_events_with_safeguards(
+        iface,
+        state.clone(),
+        registry,
+        "检查仪表盘绑定状态",
+        super::StreamSafeguards::default(),
+        None,
+        None,
+    )
+    .await
+    .expect("stream");
+    let _events = collect(stream).await;
+
+    assert!(
+        rt.call_count() >= 4,
+        "narration → nudge(tool) → degenerate round → retry; got {} calls",
+        rt.call_count()
+    );
+    let guard = state.read().await;
+    let last = guard.memory.last().expect("final message persisted");
+    assert_ne!(
+        &*last.content, narration,
+        "the stale pre-nudge narration must NOT be restored after the tools ran"
+    );
+    assert_eq!(
+        &*last.content, "检查完成：绑定正常。",
+        "the retry's real conclusion must be the final message"
+    );
+}
+
 /// The nudge CAN still fire for a real promise-led collapse — and when the
 /// nudged round answers the JSON-array directive with a bare `[]` (the
 /// small-model literal-compliance failure), the pre-nudge narration must be

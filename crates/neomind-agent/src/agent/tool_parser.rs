@@ -683,6 +683,43 @@ fn is_tool_call_shaped(value: &Value) -> bool {
     named && has_args
 }
 
+/// Byte offset just past the bracket that closes the one at `start`.
+/// STRING-AWARE: a bracket inside a JSON string argument — `ls foo[1].txt`,
+/// a regex, or `grep 'a]b'` — must not close the span. Mirrors the scanners
+/// in [`try_parse_json_array`] and the streaming detector (`tool_detect.rs`)
+/// which were fixed for the same class; this cleanup pass was the remaining
+/// non-string-aware copy. `None` when the span never balances.
+fn matching_close(text: &str, start: usize, open: char, close: char) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (i, c) in text[start..].char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if in_string {
+            if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        if c == '"' {
+            in_string = true;
+        } else if c == open {
+            depth += 1;
+        } else if c == close {
+            depth = depth.saturating_sub(1);
+            if depth == 0 {
+                return Some(start + i + close.len_utf8());
+            }
+        }
+    }
+    None
+}
+
 /// Remove tool call markers from response for memory storage.
 pub fn remove_tool_calls_from_response(response: &str) -> String {
     let mut result = response.to_string();
@@ -700,27 +737,11 @@ pub fn remove_tool_calls_from_response(response: &str) -> String {
     let mut search_from = 0usize;
     while let Some(rel) = result[search_from..].find('[') {
         let start = search_from + rel;
-        let mut bracket_count = 0;
-        let mut end = start;
 
-        for (i, c) in result[start..].char_indices() {
-            match c {
-                '[' => bracket_count += 1,
-                ']' => {
-                    bracket_count -= 1;
-                    if bracket_count == 0 {
-                        end = start + i + 1;
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        if end <= start {
-            // No matching close in the remainder — nothing further can close.
+        let Some(end) = matching_close(&result, start, '[', ']') else {
+            // No balanced close in the remainder — nothing further can close.
             break;
-        }
+        };
 
         let json_str = &result[start..end];
         // A span INSIDE a ``` code fence is display-formatted content: the
@@ -757,34 +778,20 @@ pub fn remove_tool_calls_from_response(response: &str) -> String {
         if !result[..start].trim().is_empty() {
             break;
         }
-        let mut brace_count = 0;
-        let mut end = start;
 
-        for (i, c) in result[start..].char_indices() {
-            match c {
-                '{' => brace_count += 1,
-                '}' => {
-                    brace_count -= 1;
-                    if brace_count == 0 {
-                        end = start + i + 1;
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
+        let Some(end) = matching_close(&result, start, '{', '}') else {
+            break;
+        };
 
-        if end > start {
-            let json_str = &result[start..end];
-            if let Ok(value) = serde_json::from_str::<Value>(json_str) {
-                // Tool-call SHAPED only (name AND arguments — see
-                // [`is_tool_call_shaped`]). A leading {"name","url"} data
-                // object with no arguments is an answer, not a call: the old
-                // name-only check deleted it and left an empty reply.
-                if is_tool_call_shaped(&value) {
-                    result.replace_range(start..end, "");
-                    continue;
-                }
+        let json_str = &result[start..end];
+        if let Ok(value) = serde_json::from_str::<Value>(json_str) {
+            // Tool-call SHAPED only (name AND arguments — see
+            // [`is_tool_call_shaped`]). A leading {"name","url"} data
+            // object with no arguments is an answer, not a call: the old
+            // name-only check deleted it and left an empty reply.
+            if is_tool_call_shaped(&value) {
+                result.replace_range(start..end, "");
+                continue;
             }
         }
         break;
@@ -1264,6 +1271,23 @@ mod tests {
         assert!(!remove_tool_calls_from_response(fenced).contains("shell"));
         let bare = "好的。[{\"name\":\"shell\",\"arguments\":{\"command\":\"ls\"}}]";
         assert!(!remove_tool_calls_from_response(bare).contains("shell"));
+    }
+
+    /// String-aware span matching in the CLEANUP pass: an UNBALANCED bracket
+    /// inside a string argument (`grep 'a]b'`) used to close the span early,
+    /// fail the JSON parse, and leak the whole call as visible text.
+    #[test]
+    fn cleanup_span_ignores_brackets_inside_string_arguments() {
+        let reply = r#"运行 [{"name":"shell","arguments":{"command":"grep 'a]b' f"}}] 完成"#;
+        let cleaned = remove_tool_calls_from_response(reply);
+        assert!(
+            !cleaned.contains("shell"),
+            "call must be stripped: {cleaned}"
+        );
+        assert!(cleaned.contains("完成"));
+        // Same for a brace inside a string in the leading-object form.
+        let obj = r#"{"name":"shell","arguments":{"command":"awk '{print $1}' f"}}"#;
+        assert_eq!(remove_tool_calls_from_response(obj), "");
     }
 }
 

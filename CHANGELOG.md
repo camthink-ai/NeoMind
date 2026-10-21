@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `cleanup_thinking_content` gated on BYTES (<200), so a 100-char Chinese reasoning block (300 bytes) got the repetition rewrite; it now counts characters.
 - API memory-write logs reported `chars` as bytes (the same mislabel that muddied the narration-guard investigation); they now report character counts, matching the response payload.
 
+### Fixed — self-review of the guard fixes (regressions the fix itself could introduce)
+- The post-nudge restore was NOT scoped to the nudge round: if the nudged round recovered real tool calls and a LATER round ended degenerate (`[]`), the round-1 narration would be restored — discarding the tool results and resurrecting a promise as the final answer, exactly what the guard exists to prevent. Restore now requires the current round to be the nudge round (streaming) / an armed flag disarmed by any round that produces tool calls (executor); the executor also replaces a degenerate final with the completed-rounds message when there are no tool results to summarize. Pinned by a MockLlmRuntime test (narration → nudge+tool → `[]` → retry) that fails without the gate.
+- The cleanup span matcher was the last non-string-aware bracket scanner: an UNBALANCED bracket inside a shell argument (`grep 'a]b' f`) closed the span early, failed the JSON parse, and leaked the whole tool call as visible text. Now string-aware like the parser and the streaming detector.
+- The instructional-question gate was position-blind: "帮我删除这个设备，不知道怎么操作" (a genuine request with filler) was demoted to a question and lost its completeness guard. Markers now only demote when they LEAD the first action verb.
+- No-tool-results executor turns ending in `[]` kept it as the conclusion (the Phase-2 path needs tool results); the final fallback now also triggers on degenerate text.
+
 ### Known sharp edge (not changed this pass)
 - `detect_json_tool_calls` accepts any array with a string "name" field as a tool call, so a model reply that IS a JSON data array with name-bearing rows can be executed as phantom tool calls ("unknown tool Demo" errors instead of displaying the list). Tightening detection to require "arguments" risks breaking real argument-less calls (`{"name":"get_time"}`) that currently execute; it needs its own change validated against the eval baselines.
 
