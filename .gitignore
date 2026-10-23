@@ -160,3 +160,4 @@ log/
 .smoke/
 .ui-audit
 __pycache__/
+eval/sft/
