@@ -1128,7 +1128,7 @@ mod tests {
     fn mutation_relevance_not_occurrence() {
         // Scaffold success on ANOTHER domain does not deliver a dashboard add.
         assert!(!mutation_satisfies_action(
-            "neomind widget create \"番茄时钟\" --widget-type gauge",
+            "neomind widget create \"番茄时钟\" --widget-type pomodoro-clock",
             "dashboard",
             "add",
         ));
@@ -1196,10 +1196,10 @@ mod tests {
         let note = build_incomplete_action_note(
             msg,
             &[
-                "neomind widget create \"番茄时钟\" --widget-type gauge",
+                "neomind widget create \"番茄时钟\" --widget-type pomodoro-clock",
                 "neomind widget install gauge-3832",
             ],
-            &["neomind widget create \"番茄时钟\" --widget-type gauge".to_string()],
+            &["neomind widget create \"番茄时钟\" --widget-type pomodoro-clock".to_string()],
         )
         .expect("a widget-domain create must NOT satisfy a dashboard add");
         assert!(note.contains("add"), "{note}");

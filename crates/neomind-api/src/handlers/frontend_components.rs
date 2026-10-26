@@ -36,26 +36,21 @@ fn market_base_url() -> String {
 const MARKET_BRANCH: &str = "main";
 
 /// Component IDs reserved for built-in components — cannot be overwritten.
-const RESERVED_IDS: &[&str] = &[
-    "value-card",
-    "led-indicator",
-    "sparkline",
-    "progress-bar",
-    "line-chart",
-    "area-chart",
-    "bar-chart",
-    "pie-chart",
-    "toggle-switch",
-    "image-display",
-    "image-history",
-    "web-display",
-    "markdown-display",
-    "map-display",
-    "video-display",
-    "custom-layer",
-    "agent-monitor-widget",
-    "ai-analyst",
-];
+/// Component IDs reserved for built-in components — cannot be overwritten
+/// by installs. Derived from `BUILTIN_WIDGET_TYPES` (the single source of
+/// truth shared with the frontend's Renderers builtInTypes) so a new builtin
+/// can never be forgotten here — `counter` and `metric-card` were missing
+/// from the old hand-maintained list, i.e. installable over their builtins.
+/// LEGACY ids stay reserved for downgrade safety.
+fn reserved_component_ids() -> Vec<&'static str> {
+    const LEGACY_RESERVED: &[&str] = &["agent-monitor-widget", "ai-analyst"];
+    let mut ids: Vec<&'static str> = neomind_core::dashboard::BUILTIN_WIDGET_TYPES
+        .iter()
+        .map(|t| t.type_id)
+        .collect();
+    ids.extend_from_slice(LEGACY_RESERVED);
+    ids
+}
 
 // ---------------------------------------------------------------------------
 // Helper functions
@@ -69,7 +64,7 @@ fn validate_component_id(id: &str) -> Result<(), ErrorResponse> {
     if id.is_empty() {
         return Err(ErrorResponse::bad_request("Component ID cannot be empty"));
     }
-    if RESERVED_IDS.contains(&id) {
+    if reserved_component_ids().contains(&id) {
         return Err(ErrorResponse::bad_request(format!(
             "Component ID '{}' is reserved for built-in components",
             id
