@@ -213,6 +213,124 @@ def test_compute_tools_case_passes_when_correct():
     assert hs.pass_for_case(h) is True
 
 
+# ------------------------------------------------- exit-code (P0-1, 2026-10-26)
+
+def test_failed_exit_code_does_not_satisfy_expectation():
+    """A command the CLI rejected (clap error, exit 2) must not count.
+
+    Regression shape: settings set-retention --enabled true was rejected by
+    clap but still matched `neomind settings set-retention` and PASSED.
+    """
+    case = {"expect": {"tools": ["shell"],
+                       "commands": ["neomind settings set-retention"]}}
+    call = {"name": "shell",
+            "arguments": {"command": "neomind settings set-retention --interval-hours 1 --enabled true"},
+            "result": '{"exit_code": 2, "stderr": "unexpected argument \'true\'"}'}
+    rec = {"turn_records": [_turn(call)], "status": None}
+    h = hs.compute(case, rec)
+    assert h["cmd_ok"] is False, "rejected command must not satisfy expectation"
+    assert h["failed_cmds"] == ["neomind settings set-retention"]
+    assert h["tool_match_pass"] is False
+
+
+def test_zero_exit_code_and_legacy_records_still_pass():
+    case = {"expect": {"commands": ["neomind device list"]}}
+    ok = {"name": "shell", "arguments": {"command": "neomind device list"},
+          "result": '{"exit_code": 0, "stdout": "[]"}'}
+    legacy = _shell_call("neomind device list")  # result has no exit_code
+    for call in (ok, legacy):
+        h = hs.compute(case, {"turn_records": [_turn(call)], "status": None})
+        assert h["cmd_ok"] is True
+        assert h["failed_cmds"] == []
+
+
+# ---------------------------------------------------- substrings (P1-7) ----
+
+def test_substrings_assert_arguments():
+    case = {"expect": {"commands": ["neomind settings set-retention"],
+                       "substrings": ["--interval-hours", "168"]}}
+    good = {"name": "shell",
+            "arguments": {"command": "neomind settings set-retention --interval-hours 1 --default-retention 168"},
+            "result": '{"exit_code": 0}'}
+    bad = {"name": "shell",
+           "arguments": {"command": "neomind settings set-retention --interval-hours 24"},
+           "result": '{"exit_code": 0}'}
+    h = hs.compute(case, {"turn_records": [_turn(good)], "status": None})
+    assert h["substrings_ok"] is True and h["tool_match_pass"] is True
+    h2 = hs.compute(case, {"turn_records": [_turn(bad)], "status": None})
+    assert h2["substrings_ok"] is False and h2["tool_match_pass"] is False
+
+
+def test_scoped_substrings_bind_flags_to_their_verb():
+    """Dict shape: a flag must appear on a command matching ITS scope, not on
+    any sibling command of the case."""
+    case = {"expect": {
+        "commands": ["neomind settings retention", "neomind settings set-retention"],
+        "substrings": {"neomind settings set-retention": ["--interval-hours", "168"]}}}
+    right = {"name": "shell",
+             "arguments": {"command": "neomind settings set-retention --interval-hours 1 --default-retention 168"},
+             "result": '{"exit_code": 0}'}
+    # flag present in the case but attached to the WRONG verb -> fail
+    wrong_verb = [
+        {"name": "shell", "arguments": {"command": "neomind settings retention --format json"},
+         "result": '{"exit_code": 0}'},
+        {"name": "shell", "arguments": {"command": "neomind settings cleanup"},
+         "result": '{"exit_code": 0}'},
+    ]
+    h = hs.compute(case, {"turn_records": [_turn(right)], "status": None})
+    assert h["substrings_ok"] is True
+    h2 = hs.compute(case, {"turn_records": [_turn(*wrong_verb)], "status": None})
+    assert h2["substrings_ok"] is False
+
+
+# ------------------------------------------------ product view (P0-2) ----
+
+def test_product_view_counts_agent_failed_as_fail():
+    h = {"agent_failed": True, "has_hard_signal": True,
+         "sq_total": 0, "tool_match_pass": True}
+    assert hs.pass_for_case(h) is None        # diagnostic: excluded
+    assert hs.pass_for_case_product(h) is False  # product: a hung turn failed
+    h2 = {"agent_failed": False, "has_hard_signal": True,
+          "sq_total": 1, "sq_all_pass": True, "tool_match_pass": True}
+    assert hs.pass_for_case_product(h2) is True
+
+
+# ------------------------------------------------ any-of groups (2026-10-26)
+
+def test_any_of_group_matches_any_sibling():
+    """A list entry in expect.commands passes when ANY member matches.
+
+    Read-type asks admit several valid verbs; pinning one sibling false-failed
+    models choosing another (audit found 9 such cases).
+    """
+    case = {"expect": {"commands": [["neomind system info", "neomind device list"]]}}
+    for cmd in ("neomind system info", "neomind device list",
+                "neomind device list --format json"):
+        h = hs.compute(case, {"turn_records": [_turn(_shell_call(cmd))], "status": None})
+        assert h["cmd_ok"] is True, cmd
+    # a sibling NOT in the group still fails
+    h = hs.compute(case, {"turn_records": [_turn(_shell_call("neomind device types"))],
+                          "status": None})
+    assert h["cmd_ok"] is False
+
+
+def test_mixed_required_and_any_of():
+    case = {"expect": {"commands": [
+        "neomind rule create",                       # required
+        ["neomind device get", "neomind device latest"],  # any-of
+    ]}}
+    good = [
+        _shell_call("neomind rule create --name r1"),
+        _shell_call("neomind device latest sensor-001"),
+    ]
+    h = hs.compute(case, {"turn_records": [_turn(*good)], "status": None})
+    assert h["cmd_ok"] is True
+    # required command missing -> fail even though any-of matched
+    h2 = hs.compute(case, {"turn_records": [_turn(_shell_call("neomind device latest"))],
+                           "status": None})
+    assert h2["cmd_ok"] is False
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

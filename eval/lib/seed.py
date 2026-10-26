@@ -90,6 +90,26 @@ def _seed_simple(server, items: list, path: str, kind: str):
             )
 
 
+def _seed_llm_backends(server, items: list):
+    # Dummy backends for cases like llm-delete (the deletion target must
+    # exist). Creation does not activate — the eval-agent backend the runner
+    # configured stays the active one. Non-Ollama creation does not probe the
+    # endpoint, so a dead port is fine.
+    for b in items or []:
+        body = {
+            "name": b.get("name"),
+            "backend_type": b.get("backend_type", "openai"),
+            "endpoint": b.get("endpoint", "http://127.0.0.1:9"),
+            "model": b.get("model", "dummy-model"),
+            "api_key": b.get("api_key", "sk-dummy"),
+        }
+        r = _post(server, "/llm-backends", body)
+        if not r.ok:
+            raise RuntimeError(
+                f"seed llm_backend {b.get('name')} -> {r.status_code}: {r.text}"
+            )
+
+
 def seed_fixture(server, fixture: dict):
     # Register custom device-type templates FIRST — devices below reference
     # them, and a missing template 500s the device POST (see _seed_devices
@@ -102,6 +122,7 @@ def seed_fixture(server, fixture: dict):
     _seed_simple(server, fixture.get("transforms"), "/automations", "transform")
     _seed_simple(server, fixture.get("dashboards"), "/dashboards", "dashboard")
     _seed_simple(server, fixture.get("channels"), "/messages/channels", "channel")
+    _seed_llm_backends(server, fixture.get("llm_backends"))
     # extensions omitted — Tier 1 doesn't ship .nep binaries
 
 

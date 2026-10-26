@@ -70,8 +70,14 @@ def _find_by_name(base: str, key: str, list_path: str, name: str) -> bool:
     if isinstance(v, list):
         items = v
     elif isinstance(v, dict):
+        # Collection-key allowlist per endpoint family. Keep in sync with the
+        # router's envelope shapes — a missing key here silently false-fails
+        # every name-based assertion for that resource (found the hard way:
+        # `connector_exists` vs {"data":{"brokers":[...]}}).
         for k in ("devices", "rules", "agents", "channels", "messages",
-                  "dashboards", "automations", "transforms", "data", "items"):
+                  "dashboards", "automations", "transforms", "data", "items",
+                  "brokers", "extensions", "components", "connectors",
+                  "llm_backends", "backends", "keys", "users"):
             arr = v.get(k)
             if isinstance(arr, list):
                 items = arr
@@ -240,6 +246,27 @@ def run_query(q: dict, base: str, key: str, response: str | None = None) -> dict
         v = _get_with_name_fallback(base, key, "/agents", "/agents/{id}", "agents", params)
         stats = v.get("stats") if isinstance(v, dict) else None
         actual = stats.get("total_executions") if isinstance(stats, dict) else 0
+    elif t == "agent_config":
+        # Field-level assertion on the agent record: schedule_type,
+        # cron_expression, timezone, interval_seconds, event_filter,
+        # execution_mode. The 2026-10 audit found 3 of 4 schedule types and
+        # 2 of 3 execution modes had ZERO case coverage — this query (plus
+        # the cases that use it) pins the config matrix. Values are the
+        # API's lowercase storage forms (probed 2026-10-26): "cron",
+        # "0 8 * * *", "Asia/Shanghai", "focused", "structured", …
+        v = _get_with_name_fallback(base, key, "/agents", "/agents/{id}", "agents", params)
+        field = str(params.get("field", ""))
+        if isinstance(v, dict) and field:
+            if field == "schedule_type":
+                sched = v.get("schedule") or {}
+                actual = sched.get("schedule_type") if isinstance(sched, dict) else None
+            elif field in ("cron_expression", "timezone", "interval_seconds", "event_filter"):
+                sched = v.get("schedule") or {}
+                actual = sched.get(field) if isinstance(sched, dict) else None
+            else:
+                actual = v.get(field)
+        else:
+            actual = None
     elif t == "push_enabled":
         # Need the record's id: support name fallback (list + match by name),
         # since agents create pushes with auto-generated ids.
@@ -310,6 +337,10 @@ def run_query(q: dict, base: str, key: str, response: str | None = None) -> dict
                     break
     elif t == "extension_installed":
         actual = _id_or_name_exists(base, key, "/extensions", "/extensions/{id}", params)
+    elif t == "connector_exists":
+        # Data connectors (mqtt/webhook/http) live under /brokers — the CLI's
+        # `connector` domain maps onto the broker registry.
+        actual = _id_or_name_exists(base, key, "/brokers", "/brokers/{id}", params)
     elif t == "widget_exists":
         actual = _id_or_name_exists(base, key, "/frontend-components",
                                     "/frontend-components/{id}", params)
