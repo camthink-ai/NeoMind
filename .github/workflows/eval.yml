@@ -1,0 +1,206 @@
+name: Eval
+
+# Three distinct purposes. Deliberately NOT one pipeline — running the wrong
+# one wastes GPU time and creates false confidence:
+#
+#  1. eval-harness  (every PR touching eval/cases)  — schema + unit tests +
+#     set integrity. Seconds, no model. Catches broken case JSON and harness
+#     regressions. This is a *test* gate, like cargo test.
+#
+#  2. business-e2e  (nightly + manual)              — MQTT → metric → rule →
+#     notification → data-push, no LLM. ~2 min once the binary is built.
+#     This is the platform-plumbing check ("does device data reach an
+#     operator"), so it belongs near release time; it does not depend on which
+#     model ships.
+#
+#  3. model-eval    (MANUAL ONLY, never release, never schedule) — the 50-case
+#     agent gate. It answers "which model is better at driving this platform",
+#     a product/selection decision that changes when a model changes, not when
+#     platform code changes. At 50 cases it resolves no better than ±10pp, so
+#     it cannot certify a build. Run it when considering a model, and read the
+#     printed confidence interval before writing a ranking down.
+#
+# If you want a pre-release *agent* regression check (did a prompt change break
+# the loop for the model we ship), that is the same command run with the fixed
+# default model against THAT model's baseline — still not a model comparison:
+#   AGENT_LLM_* python3 eval/run_eval.py regression --rounds 1 \
+#       --baseline eval/baselines/regression-<shipped-model>.jsonl
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "eval/**"
+      - "crates/neomind-agent/**"
+      - "crates/neomind-api/**"
+      - "crates/neomind-devices/**"
+      - "crates/neomind-rules/**"
+      - "crates/neomind-messages/**"
+      - "crates/neomind-data-push/**"
+      - ".github/workflows/eval.yml"
+  push:
+    branches: [main]
+    paths:
+      - "eval/**"
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "What to run"
+        type: choice
+        default: "business-e2e"
+        options:
+          - business-e2e
+          - model-eval
+      rounds:
+        description: "model-eval: rounds per case (2 default; 4 for a wider sample)"
+        default: "2"
+      regression_set:
+        description: "model-eval: case-id list"
+        default: "eval/regression_set.txt"
+  schedule:
+    # Nightly business-chain E2E only — plumbing, no LLM, no model ranking.
+    - cron: "0 19 * * *"
+
+jobs:
+  eval-harness:
+    name: Eval harness (schema, unit tests, set integrity)
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install harness deps
+        run: pip install -r eval/requirements.txt
+
+      - name: Compile all harness Python
+        run: python -m compileall -q eval
+
+      - name: Validate every case (schema + references)
+        run: python eval/run_eval.py validate-all --root eval/cases
+
+      - name: Harness unit tests
+        # The harness tests are standalone scripts (each prints "N/N passed"
+        # and exits non-zero on failure), not unittest TestCases.
+        run: |
+          set -e
+          for f in eval/lib/test_*.py; do
+            echo "== $f"
+            python "$f"
+          done
+
+      - name: Regression sets reference real cases
+        # A set entry that matches no case is silently skipped at gate time
+        # (run_eval prints NOT FOUND and moves on) — exactly the kind of
+        # drift this check exists for.
+        run: |
+          python - <<'PY'
+          import glob, json, sys
+          ids = set()
+          for f in glob.glob("eval/cases/**/*.json", recursive=True):
+              ids.add(json.load(open(f))["id"])
+          bad = []
+          for setfile in ("eval/regression_set.txt", "eval/regression_set_core40.txt",
+                          "eval/regression_set_vision.txt"):
+              for line in open(setfile):
+                  cid = line.strip()
+                  if cid and cid not in ids:
+                      bad.append(f"{setfile}: {cid}")
+          if bad:
+              print("set entries with no matching case:")
+              print("\n".join(bad))
+              sys.exit(1)
+          print("all set entries resolve")
+          PY
+
+      - name: zh/en mirrors structurally identical
+        # Asserts expect/state_queries/turn-count parity between language
+        # variants (2026-10 audit found 8 drifted cases, incl. one zh case
+        # asserting an English dashboard name its own turn never mentions).
+        run: python eval/check_mirror.py
+
+      - name: Case expectations match the CLI surface
+        # Checks every expected domain/verb and every substring flag against
+        # the committed CLI manifest. Regenerate deliberately after a CLI
+        # change: python3 eval/check_cli_drift.py --regen
+        run: python eval/check_cli_drift.py
+
+      - name: Gate coverage report
+        # Informational: shows which library categories the gate exercises so
+        # coverage drift is visible in the PR log, not discovered a quarter later.
+        run: python eval/gate_coverage.py
+
+      - name: Gate set must stay big enough to be meaningful
+        # Below ~45 cases the gate's interval exceeds ±12pp and every recorded
+        # model comparison gets less trustworthy.
+        run: |
+          n=$(grep -cve '^[[:space:]]*$' eval/regression_set.txt)
+          echo "regression_set.txt: $n cases"
+          test "$n" -ge 55
+
+  business-e2e:
+    name: Business chain E2E (no LLM)
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.job == 'business-e2e')
+    runs-on: [self-hosted, neomind-eval]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install harness deps
+        run: pip install -r eval/requirements.txt
+
+      - name: Build neomind release binary
+        run: cargo build -p neomind-cli --release
+
+      - name: MQTT → metric → rule → notify → data-push
+        run: python eval/e2e_business.py
+
+  model-eval:
+    name: Model capability eval (manual — not a release gate)
+    if: github.event_name == 'workflow_dispatch' && inputs.job == 'model-eval'
+    runs-on: [self-hosted, neomind-eval]
+    timeout-minutes: 240
+    env:
+      # Point this at whichever model you are evaluating. Never commit either.
+      AGENT_LLM_ENDPOINT: ${{ secrets.AGENT_LLM_ENDPOINT }}
+      AGENT_LLM_MODEL: ${{ secrets.AGENT_LLM_MODEL }}
+      AGENT_LLM_API_KEY: ${{ secrets.AGENT_LLM_API_KEY }}
+      AGENT_LLM_BACKEND_TYPE: ${{ vars.AGENT_LLM_BACKEND_TYPE || 'llamacpp' }}
+      AGENT_LLM_TEMPERATURE: ${{ vars.AGENT_LLM_TEMPERATURE || '0.6' }}
+      AGENT_LLM_TOP_P: ${{ vars.AGENT_LLM_TOP_P || '0.85' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install harness deps
+        run: pip install -r eval/requirements.txt
+
+      - name: Build neomind release binary
+        run: cargo build -p neomind-cli --release
+
+      - name: Agent gate
+        # Prints the Wilson interval. A cross-model gap smaller than ~2x that
+        # half-width is a tie; record the interval with the score.
+        run: |
+          python eval/run_eval.py regression \
+            --rounds "${{ inputs.rounds || '2' }}" \
+            --regression-set "${{ inputs.regression_set || 'eval/regression_set.txt' }}"
+
+      - name: Upload gate artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-eval-${{ github.run_id }}
+          path: eval/runs/
+          retention-days: 90

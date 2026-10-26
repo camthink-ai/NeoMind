@@ -1,0 +1,77 @@
+{
+  "id": "agent-cron-schedule",
+  "lang": "en",
+  "category": "agent",
+  "workflow": "agent-configure",
+  "scenario_type": "single_turn",
+  "description": "Create a cron-scheduled agent with an explicit timezone (covers `neomind agent create --schedule-type cron`).",
+  "setup": {
+    "fixture": "seed-empty"
+  },
+  "turns": [
+    {
+      "user": "Create an agent named 'morning-report' with prompt 'Summarize overnight device alerts' that runs every day at 08:00 Beijing time."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: create the agent with `neomind agent create` using --schedule-type cron, --schedule-config \"0 8 * * *\" and --timezone Asia/Shanghai"
+    ],
+    "overall": "Agent exists with a cron schedule storing expression 0 8 * * * and timezone Asia/Shanghai"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind agent create"
+    ],
+    "substrings": {
+      "neomind agent create": [
+        "--schedule-type",
+        "cron",
+        "0 8 * * *",
+        "--timezone",
+        "Asia/Shanghai"
+      ]
+    }
+  },
+  "state_queries": [
+    {
+      "type": "agent_exists",
+      "params": {
+        "name": "morning-report"
+      },
+      "expected": true
+    },
+    {
+      "type": "agent_config",
+      "params": {
+        "name": "morning-report",
+        "field": "schedule_type"
+      },
+      "expected": "cron"
+    },
+    {
+      "type": "agent_config",
+      "params": {
+        "name": "morning-report",
+        "field": "cron_expression"
+      },
+      "expected": "0 8 * * *"
+    },
+    {
+      "type": "agent_config",
+      "params": {
+        "name": "morning-report",
+        "field": "timezone"
+      },
+      "expected": "Asia/Shanghai"
+    }
+  ]
+}

@@ -5,15 +5,40 @@
   "workflow": "device-onboarding",
   "scenario_type": "single_turn",
   "description": "Update a device's display name",
-  "setup": { "fixture": "seed-default" },
+  "setup": {
+    "fixture": "seed-default"
+  },
   "turns": [
-    { "user": "Rename sensor-001 to 'Living Room Temp/Humidity Sensor'." }
+    {
+      "user": "Rename sensor-001 to 'Living Room Temp/Humidity Sensor'."
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent invokes `neomind device update sensor-001 --name 'Living Room Temp/Humidity Sensor'`"
     ],
     "overall": "Must briefly confirm the rename on success"
-  }
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind device update"
+    ]
+  },
+  "state_queries": [
+    {
+      "type": "device_exists",
+      "params": {
+        "name": "Living Room Temp/Humidity Sensor"
+      },
+      "expected": true
+    }
+  ]
 }

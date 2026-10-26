@@ -29,7 +29,11 @@
       "shell"
     ],
     "commands": [
-      "neomind device get"
+      [
+        "neomind device get",
+        "neomind device history",
+        "neomind device list"
+      ]
     ]
   }
 }

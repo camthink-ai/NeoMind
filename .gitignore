@@ -162,3 +162,4 @@ log/
 __pycache__/
 eval/sft/
 fused_model/
+eval/perception/reports/

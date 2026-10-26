@@ -29,7 +29,10 @@
       "shell"
     ],
     "commands": [
-      "neomind device list"
+      [
+        "neomind system info",
+        "neomind device list"
+      ]
     ]
   }
 }

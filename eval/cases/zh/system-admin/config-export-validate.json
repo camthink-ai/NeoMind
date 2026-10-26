@@ -1,0 +1,41 @@
+{
+  "id": "config-export-validate",
+  "lang": "zh",
+  "category": "system",
+  "workflow": "system-admin",
+  "scenario_type": "single_turn",
+  "description": "Config backup hygiene (covers `neomind config export` + `neomind config validate`).",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "执行 `neomind config export` 把当前系统配置导出到 /tmp/eval-config-backup.json,然后对导出的文件执行 `neomind config validate /tmp/eval-config-backup.json` 校验格式。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: `neomind config export` 到该精确路径,再 `neomind config validate /tmp/eval-config-backup.json`"
+    ],
+    "overall": "完成配置导出并校验了文件"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind config export",
+      "neomind config validate"
+    ],
+    "substrings": {
+      "neomind config validate": [
+        "/tmp/eval-config-backup.json"
+      ]
+    }
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "id": "config-export-validate",
+  "lang": "en",
+  "category": "system",
+  "workflow": "system-admin",
+  "scenario_type": "single_turn",
+  "description": "Config backup hygiene (covers `neomind config export` + `neomind config validate`).",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Run `neomind config export` to export the current system configuration to /tmp/eval-config-backup.json, then run `neomind config validate` on that exported file to check it is well-formed."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: `neomind config export` to the exact path, then `neomind config validate /tmp/eval-config-backup.json`"
+    ],
+    "overall": "Config exported and validation ran against the file"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind config export",
+      "neomind config validate"
+    ],
+    "substrings": {
+      "neomind config validate": [
+        "/tmp/eval-config-backup.json"
+      ]
+    }
+  }
+}

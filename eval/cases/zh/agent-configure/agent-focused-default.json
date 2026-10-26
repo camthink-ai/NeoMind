@@ -1,0 +1,45 @@
+{
+  "id": "agent-focused-default",
+  "lang": "zh",
+  "category": "agent",
+  "workflow": "agent-configure",
+  "scenario_type": "single_turn",
+  "description": "Focused (default) execution mode — single-pass analysis agent (covers `neomind agent create` without free mode).",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "创建一个名为「电量分析」的 agent,提示词「分析 sensor-001 的电量」,每 10 分钟运行一次,使用 focused 单遍分析模式。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: 用 `neomind agent create` 创建;执行模式为 focused(显式或默认)"
+    ],
+    "overall": "Agent stored with execution_mode focused"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind agent create"
+    ]
+  },
+  "state_queries": [
+    {
+      "type": "agent_config",
+      "params": {
+        "name": "电量分析",
+        "field": "execution_mode"
+      },
+      "expected": "focused"
+    }
+  ]
+}

@@ -32,5 +32,15 @@
       },
       "expected": true
     }
-  ]
+  ],
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind push create",
+      "neomind push list"
+    ]
+  },
+  "requires_network": true
 }

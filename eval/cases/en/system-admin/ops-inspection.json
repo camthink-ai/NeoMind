@@ -1,0 +1,49 @@
+{
+  "id": "ops-inspection",
+  "lang": "en",
+  "category": "system",
+  "workflow": "system-admin",
+  "scenario_type": "multi_turn",
+  "description": "Read-only ops inspection: discover data sources and check recent error logs (covers `neomind data list` + `neomind logs`).",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Using the neomind CLI: what data sources exist in the system right now?"
+    },
+    {
+      "user": "Also using the neomind CLI (not the log files directly): have there been any errors in the server logs recently?"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "context_retention",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: `neomind data list` and summarize the sources",
+      "T2: `neomind logs` filtered to errors (e.g. --level ERROR); do NOT read log files directly"
+    ],
+    "overall": "Both answers grounded in real CLI output (data-source inventory may come from `neomind data list` or the per-domain lists; logs via `neomind logs`)"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      [
+        "neomind data list",
+        "neomind device list",
+        "neomind connector list",
+        "neomind transform list"
+      ],
+      [
+        "neomind logs",
+        "neomind system"
+      ]
+    ]
+  }
+}

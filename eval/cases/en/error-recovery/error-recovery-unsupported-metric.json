@@ -29,8 +29,14 @@
       "shell"
     ],
     "commands": [
-      "neomind device get",
-      "neomind rule create"
+      "neomind device get"
     ]
-  }
+  },
+  "state_queries": [
+    {
+      "type": "rule_count",
+      "params": {},
+      "expected": 1
+    }
+  ]
 }

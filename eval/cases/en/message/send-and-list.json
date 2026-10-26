@@ -5,11 +5,20 @@
   "workflow": "message-management",
   "scenario_type": "single_turn",
   "description": "Send a warning alert message via the agent (covers POST /api/messages path, symmetric to create-channel)",
-  "setup": { "fixture": "seed-empty" },
+  "setup": {
+    "fixture": "seed-empty"
+  },
   "turns": [
-    { "user": "Send a warning-severity alert message titled 'Manual test' with body 'verifying the message delivery path'. Use category alert." }
+    {
+      "user": "Send a warning-severity alert message titled 'Manual test' with body 'verifying the message delivery path'. Use category alert."
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "response_quality", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "response_quality",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent calls `neomind message send` (or POST /api/messages) with severity=warning, category=alert"
@@ -17,6 +26,17 @@
     "overall": "Message should land in the message center; agent should not just echo text without dispatching"
   },
   "state_queries": [
-    { "type": "message_count", "expected_min": 1 }
-  ]
+    {
+      "type": "message_count",
+      "expected_min": 1
+    }
+  ],
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind message send"
+    ]
+  }
 }

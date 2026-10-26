@@ -13,7 +13,9 @@
           "name": "rule-battery-low",
           "description": "Pre-seeded disabled rule — agent should enable it.",
           "enabled": false,
-          "trigger": { "trigger_type": "data_change" },
+          "trigger": {
+            "trigger_type": "data_change"
+          },
           "condition": {
             "condition_type": "comparison",
             "source": "device:sensor-001:values.battery",
@@ -21,7 +23,11 @@
             "threshold": 20.0
           },
           "actions": [
-            { "type": "notify", "message": "sensor-001 battery low: {value}%", "severity": "warning" }
+            {
+              "type": "notify",
+              "message": "sensor-001 battery low: {value}%",
+              "severity": "warning"
+            }
           ],
           "cooldown": 60000
         }
@@ -36,14 +42,24 @@
         }
       ],
       "metrics": [
-        { "device_id": "sensor-001", "metric": "values.battery", "value": 75.0 }
+        {
+          "device_id": "sensor-001",
+          "metric": "values.battery",
+          "value": 75.0
+        }
       ]
     }
   },
   "turns": [
-    { "user": "把 rule-battery-low 规则启用" }
+    {
+      "user": "把 rule-battery-low 规则启用"
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent 调用 `neomind rule enable rule-battery-low`（或 status=true 的 update）"
@@ -51,6 +67,20 @@
     "overall": "启用后应确认"
   },
   "state_queries": [
-    { "type": "rule_enabled", "params": { "id": "rule-battery-low" }, "expected": true }
-  ]
+    {
+      "type": "rule_enabled",
+      "params": {
+        "id": "rule-battery-low"
+      },
+      "expected": true
+    }
+  ],
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind rule enable"
+    ]
+  }
 }

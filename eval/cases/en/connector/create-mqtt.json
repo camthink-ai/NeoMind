@@ -5,15 +5,41 @@
   "workflow": "connector-management",
   "scenario_type": "single_turn",
   "description": "Create an MQTT connector and verify (covers `neomind connector create` write path; previously only list was covered).",
-  "setup": { "fixture": "seed-empty" },
+  "setup": {
+    "fixture": "seed-empty"
+  },
   "turns": [
-    { "user": "Add an external MQTT broker: name factory-broker, host 192.168.1.100, port 1883, subscribing to topics 'sensor/#,device/#'. After creating, list connectors to confirm." }
+    {
+      "user": "Add an external MQTT broker: name factory-broker, host 192.168.1.100, port 1883, subscribing to topics 'sensor/#,device/#'. After creating, list connectors to confirm."
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent runs `neomind connector create --type mqtt --name factory-broker --host 192.168.1.100 --port 1883 --topics 'sensor/#,device/#'` (flag order varies, --type defaults to mqtt so may be omitted), then calls `neomind connector list` to verify"
     ],
     "overall": "Must actually execute create + list, not just restate in reply"
-  }
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind connector create",
+      "neomind connector list"
+    ]
+  },
+  "state_queries": [
+    {
+      "type": "connector_exists",
+      "params": {
+        "name": "factory-broker"
+      },
+      "expected": true
+    }
+  ]
 }

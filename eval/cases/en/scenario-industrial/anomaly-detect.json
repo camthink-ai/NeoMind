@@ -31,5 +31,12 @@
     "commands": [
       "neomind device list"
     ]
-  }
+  },
+  "state_queries": [
+    {
+      "type": "response_contains",
+      "params": {},
+      "expected": "pump-A"
+    }
+  ]
 }

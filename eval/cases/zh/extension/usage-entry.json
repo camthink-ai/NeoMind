@@ -25,7 +25,12 @@
     "overall": "回答以真实的扩展列表为依据;不编造 OCR 命令;后续是市场路径或明确的安装询问"
   },
   "expect": {
-    "tools": ["shell"],
-    "commands": ["neomind extension list"]
-  }
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind extension list"
+    ]
+  },
+  "requires_network": true
 }

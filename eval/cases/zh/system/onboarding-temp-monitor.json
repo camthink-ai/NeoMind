@@ -42,7 +42,7 @@
     {
       "type": "dashboard_exists",
       "params": {
-        "id": "Temp Overview"
+        "id": "温度总览"
       },
       "expected": true
     }

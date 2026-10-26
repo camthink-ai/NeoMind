@@ -1,0 +1,64 @@
+{
+  "id": "agent-manual-invoke",
+  "lang": "en",
+  "category": "agent",
+  "workflow": "agent-configure",
+  "scenario_type": "multi_turn",
+  "description": "Manual (on-demand) agent created then run via `neomind agent invoke` — the never-auto-scheduled schedule type.",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Create an on-demand agent named 'spot-check' with prompt 'Summarize current device health'. It must never run on a schedule — only when I ask."
+    },
+    {
+      "user": "Run it now with the question 'anything off with sensor-001?' and tell me what it concluded."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "context_retention",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: create with --schedule-type manual (no interval/cron)",
+      "T2: run via `neomind agent invoke` with the question"
+    ],
+    "overall": "Manual agent exists and has at least one execution recorded"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind agent create",
+      "neomind agent invoke"
+    ],
+    "substrings": {
+      "neomind agent create": [
+        "--schedule-type",
+        "manual"
+      ]
+    }
+  },
+  "state_queries": [
+    {
+      "type": "agent_config",
+      "params": {
+        "name": "spot-check",
+        "field": "schedule_type"
+      },
+      "expected": "manual"
+    },
+    {
+      "type": "agent_execution_count",
+      "params": {
+        "name": "spot-check"
+      },
+      "expected_min": 1
+    }
+  ]
+}

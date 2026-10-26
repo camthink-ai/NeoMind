@@ -1,0 +1,52 @@
+{
+  "id": "fleet-targeted-rule",
+  "lang": "en",
+  "category": "device",
+  "workflow": "device-management",
+  "scenario_type": "single_turn",
+  "description": "Selection pressure at fleet scale: pick the ONE right device among 37 lookalikes and create a rule bound to it (not its zone sibling).",
+  "setup": {
+    "fixture": "fleet-35"
+  },
+  "turns": [
+    {
+      "user": "coldroom-2 is running warm. Create a rule named coldroom2-warm: alert when coldroom-2's sensor 03 temperature exceeds 8 degrees Celsius."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: `neomind rule create` bound to exactly device coldroom-2-sensor-03, metric temperature_c, threshold 8"
+    ],
+    "overall": "Rule coldroom2-warm exists AND references coldroom-2-sensor-03 (not any other sensor)"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind rule create"
+    ]
+  },
+  "state_queries": [
+    {
+      "type": "rule_exists",
+      "params": {
+        "name": "coldroom2-warm"
+      },
+      "expected": true
+    },
+    {
+      "type": "rule_references_source",
+      "params": {
+        "name": "coldroom2-warm",
+        "source": "device:coldroom-2-sensor-03:temperature_c"
+      },
+      "expected": true
+    }
+  ]
+}

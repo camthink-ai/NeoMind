@@ -1,0 +1,66 @@
+{
+  "id": "agent-structured-extract",
+  "lang": "en",
+  "category": "agent",
+  "workflow": "agent-configure",
+  "scenario_type": "multi_turn",
+  "description": "Structured (L0 operator) agent with an output schema, then invoked — schema-validated fields out.",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Create a structured extraction agent named 'risk-checker': on-demand, prompt 'Judge battery risk', output schema: field risk as enum [low, high], field score as number."
+    },
+    {
+      "user": "Invoke it asking about sensor-001's battery and show me the structured result."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "context_retention",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: create with `neomind agent create` --execution-mode structured and --output-schema defining risk(enum low/high) and score(number)",
+      "T2: run via `neomind agent invoke`"
+    ],
+    "overall": "Agent stored as structured mode with schema; at least one execution recorded"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind agent create",
+      "neomind agent invoke"
+    ],
+    "substrings": {
+      "neomind agent create": [
+        "--execution-mode",
+        "structured",
+        "--output-schema",
+        "risk"
+      ]
+    }
+  },
+  "state_queries": [
+    {
+      "type": "agent_config",
+      "params": {
+        "name": "risk-checker",
+        "field": "execution_mode"
+      },
+      "expected": "structured"
+    },
+    {
+      "type": "agent_execution_count",
+      "params": {
+        "name": "risk-checker"
+      },
+      "expected_min": 1
+    }
+  ]
+}

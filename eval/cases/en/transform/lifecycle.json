@@ -67,5 +67,14 @@
       "params": {},
       "expected_min": 0
     }
-  ]
+  ],
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind transform create",
+      "neomind transform delete"
+    ]
+  }
 }

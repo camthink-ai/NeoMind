@@ -1,0 +1,716 @@
+{
+ "name": "fleet-35",
+ "description": "37-device multi-zone fleet: 6 zones x 5 numbered env sensors (zone-local numbering, e.g. coldroom-2-sensor-03), 5 cameras, 2 gateways, plus one high-temp rule per zone on its sensor-04. Selection-pressure fixture: pick the RIGHT device among lookalikes differing by zone suffix and index.",
+ "device_types": [
+  {
+   "device_type": "fleet_env_sensor",
+   "name": "Fleet Environment Sensor",
+   "categories": [
+    "monitoring"
+   ],
+   "metrics": [
+    {
+     "name": "temperature_c",
+     "display_name": "Temperature",
+     "data_type": "Float",
+     "unit": "C"
+    },
+    {
+     "name": "humidity_pct",
+     "display_name": "Humidity",
+     "data_type": "Float",
+     "unit": "%RH"
+    }
+   ]
+  },
+  {
+   "device_type": "fleet_camera",
+   "name": "Fleet Camera",
+   "categories": [
+    "vision"
+   ],
+   "metrics": []
+  },
+  {
+   "device_type": "fleet_gateway",
+   "name": "Fleet Gateway",
+   "categories": [
+    "infra"
+   ],
+   "metrics": []
+  }
+ ],
+ "devices": [
+  {
+   "device_id": "warehouse-A-sensor-01",
+   "name": "warehouse-A sensor 01",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "warehouse-A-sensor-02",
+   "name": "warehouse-A sensor 02",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "warehouse-A-sensor-03",
+   "name": "warehouse-A sensor 03",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "warehouse-A-sensor-04",
+   "name": "warehouse-A sensor 04",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "warehouse-A-sensor-05",
+   "name": "warehouse-A sensor 05",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "warehouse-B-sensor-01",
+   "name": "warehouse-B sensor 01",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "warehouse-B-sensor-02",
+   "name": "warehouse-B sensor 02",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "warehouse-B-sensor-03",
+   "name": "warehouse-B sensor 03",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "warehouse-B-sensor-04",
+   "name": "warehouse-B sensor 04",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "warehouse-B-sensor-05",
+   "name": "warehouse-B sensor 05",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "coldroom-1-sensor-01",
+   "name": "coldroom-1 sensor 01",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "coldroom-1-sensor-02",
+   "name": "coldroom-1 sensor 02",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "coldroom-1-sensor-03",
+   "name": "coldroom-1 sensor 03",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "coldroom-1-sensor-04",
+   "name": "coldroom-1 sensor 04",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "coldroom-1-sensor-05",
+   "name": "coldroom-1 sensor 05",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "coldroom-2-sensor-01",
+   "name": "coldroom-2 sensor 01",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "coldroom-2-sensor-02",
+   "name": "coldroom-2 sensor 02",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "coldroom-2-sensor-03",
+   "name": "coldroom-2 sensor 03",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "coldroom-2-sensor-04",
+   "name": "coldroom-2 sensor 04",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "coldroom-2-sensor-05",
+   "name": "coldroom-2 sensor 05",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "packing-sensor-01",
+   "name": "packing sensor 01",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "packing-sensor-02",
+   "name": "packing sensor 02",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "packing-sensor-03",
+   "name": "packing sensor 03",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "packing-sensor-04",
+   "name": "packing sensor 04",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "packing-sensor-05",
+   "name": "packing sensor 05",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "dock-sensor-01",
+   "name": "dock sensor 01",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "dock-sensor-02",
+   "name": "dock sensor 02",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "dock-sensor-03",
+   "name": "dock sensor 03",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "dock-sensor-04",
+   "name": "dock sensor 04",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "dock-sensor-05",
+   "name": "dock sensor 05",
+   "device_type": "fleet_env_sensor",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "site-cam-01",
+   "name": "Site camera 01",
+   "device_type": "fleet_camera",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "site-cam-02",
+   "name": "Site camera 02",
+   "device_type": "fleet_camera",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "site-cam-03",
+   "name": "Site camera 03",
+   "device_type": "fleet_camera",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "site-cam-04",
+   "name": "Site camera 04",
+   "device_type": "fleet_camera",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "site-cam-05",
+   "name": "Site camera 05",
+   "device_type": "fleet_camera",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "gw-north",
+   "name": "Gateway gw-north",
+   "device_type": "fleet_gateway",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "gw-south",
+   "name": "Gateway gw-south",
+   "device_type": "fleet_gateway",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  }
+ ],
+ "metrics": [
+  {
+   "device_id": "warehouse-A-sensor-01",
+   "metric": "temperature_c",
+   "value": 18.6
+  },
+  {
+   "device_id": "warehouse-A-sensor-01",
+   "metric": "humidity_pct",
+   "value": 31.3
+  },
+  {
+   "device_id": "warehouse-A-sensor-02",
+   "metric": "temperature_c",
+   "value": 9.2
+  },
+  {
+   "device_id": "warehouse-A-sensor-02",
+   "metric": "humidity_pct",
+   "value": 41.2
+  },
+  {
+   "device_id": "warehouse-A-sensor-03",
+   "metric": "temperature_c",
+   "value": 21.1
+  },
+  {
+   "device_id": "warehouse-A-sensor-03",
+   "metric": "humidity_pct",
+   "value": 63.8
+  },
+  {
+   "device_id": "warehouse-A-sensor-04",
+   "metric": "temperature_c",
+   "value": 25.2
+  },
+  {
+   "device_id": "warehouse-A-sensor-04",
+   "metric": "humidity_pct",
+   "value": 34.3
+  },
+  {
+   "device_id": "warehouse-A-sensor-05",
+   "metric": "temperature_c",
+   "value": 13.0
+  },
+  {
+   "device_id": "warehouse-A-sensor-05",
+   "metric": "humidity_pct",
+   "value": 31.5
+  },
+  {
+   "device_id": "warehouse-B-sensor-01",
+   "metric": "temperature_c",
+   "value": 7.7
+  },
+  {
+   "device_id": "warehouse-B-sensor-01",
+   "metric": "humidity_pct",
+   "value": 55.3
+  },
+  {
+   "device_id": "warehouse-B-sensor-02",
+   "metric": "temperature_c",
+   "value": 2.7
+  },
+  {
+   "device_id": "warehouse-B-sensor-02",
+   "metric": "humidity_pct",
+   "value": 39.9
+  },
+  {
+   "device_id": "warehouse-B-sensor-03",
+   "metric": "temperature_c",
+   "value": 18.9
+  },
+  {
+   "device_id": "warehouse-B-sensor-03",
+   "metric": "humidity_pct",
+   "value": 57.2
+  },
+  {
+   "device_id": "warehouse-B-sensor-04",
+   "metric": "temperature_c",
+   "value": 7.7
+  },
+  {
+   "device_id": "warehouse-B-sensor-04",
+   "metric": "humidity_pct",
+   "value": 59.5
+  },
+  {
+   "device_id": "warehouse-B-sensor-05",
+   "metric": "temperature_c",
+   "value": 23.0
+  },
+  {
+   "device_id": "warehouse-B-sensor-05",
+   "metric": "humidity_pct",
+   "value": 30.3
+  },
+  {
+   "device_id": "coldroom-1-sensor-01",
+   "metric": "temperature_c",
+   "value": 23.0
+  },
+  {
+   "device_id": "coldroom-1-sensor-01",
+   "metric": "humidity_pct",
+   "value": 64.9
+  },
+  {
+   "device_id": "coldroom-1-sensor-02",
+   "metric": "temperature_c",
+   "value": 10.8
+  },
+  {
+   "device_id": "coldroom-1-sensor-02",
+   "metric": "humidity_pct",
+   "value": 37.8
+  },
+  {
+   "device_id": "coldroom-1-sensor-03",
+   "metric": "temperature_c",
+   "value": 26.9
+  },
+  {
+   "device_id": "coldroom-1-sensor-03",
+   "metric": "humidity_pct",
+   "value": 46.8
+  },
+  {
+   "device_id": "coldroom-1-sensor-04",
+   "metric": "temperature_c",
+   "value": 4.4
+  },
+  {
+   "device_id": "coldroom-1-sensor-04",
+   "metric": "humidity_pct",
+   "value": 34.8
+  },
+  {
+   "device_id": "coldroom-1-sensor-05",
+   "metric": "temperature_c",
+   "value": 24.0
+  },
+  {
+   "device_id": "coldroom-1-sensor-05",
+   "metric": "humidity_pct",
+   "value": 60.2
+  },
+  {
+   "device_id": "coldroom-2-sensor-01",
+   "metric": "temperature_c",
+   "value": 23.0
+  },
+  {
+   "device_id": "coldroom-2-sensor-01",
+   "metric": "humidity_pct",
+   "value": 66.5
+  },
+  {
+   "device_id": "coldroom-2-sensor-02",
+   "metric": "temperature_c",
+   "value": 15.9
+  },
+  {
+   "device_id": "coldroom-2-sensor-02",
+   "metric": "humidity_pct",
+   "value": 78.7
+  },
+  {
+   "device_id": "coldroom-2-sensor-03",
+   "metric": "temperature_c",
+   "value": 11.8
+  },
+  {
+   "device_id": "coldroom-2-sensor-03",
+   "metric": "humidity_pct",
+   "value": 57.6
+  },
+  {
+   "device_id": "coldroom-2-sensor-04",
+   "metric": "temperature_c",
+   "value": 23.6
+  },
+  {
+   "device_id": "coldroom-2-sensor-04",
+   "metric": "humidity_pct",
+   "value": 60.9
+  },
+  {
+   "device_id": "coldroom-2-sensor-05",
+   "metric": "temperature_c",
+   "value": 24.4
+  },
+  {
+   "device_id": "coldroom-2-sensor-05",
+   "metric": "humidity_pct",
+   "value": 58.9
+  },
+  {
+   "device_id": "packing-sensor-01",
+   "metric": "temperature_c",
+   "value": 20.3
+  },
+  {
+   "device_id": "packing-sensor-01",
+   "metric": "humidity_pct",
+   "value": 32.3
+  },
+  {
+   "device_id": "packing-sensor-02",
+   "metric": "temperature_c",
+   "value": 7.9
+  },
+  {
+   "device_id": "packing-sensor-02",
+   "metric": "humidity_pct",
+   "value": 44.5
+  },
+  {
+   "device_id": "packing-sensor-03",
+   "metric": "temperature_c",
+   "value": 4.1
+  },
+  {
+   "device_id": "packing-sensor-03",
+   "metric": "humidity_pct",
+   "value": 41.6
+  },
+  {
+   "device_id": "packing-sensor-04",
+   "metric": "temperature_c",
+   "value": 4.6
+  },
+  {
+   "device_id": "packing-sensor-04",
+   "metric": "humidity_pct",
+   "value": 43.9
+  },
+  {
+   "device_id": "packing-sensor-05",
+   "metric": "temperature_c",
+   "value": 18.5
+  },
+  {
+   "device_id": "packing-sensor-05",
+   "metric": "humidity_pct",
+   "value": 48.2
+  },
+  {
+   "device_id": "dock-sensor-01",
+   "metric": "temperature_c",
+   "value": 11.6
+  },
+  {
+   "device_id": "dock-sensor-01",
+   "metric": "humidity_pct",
+   "value": 40.5
+  },
+  {
+   "device_id": "dock-sensor-02",
+   "metric": "temperature_c",
+   "value": 8.9
+  },
+  {
+   "device_id": "dock-sensor-02",
+   "metric": "humidity_pct",
+   "value": 76.8
+  },
+  {
+   "device_id": "dock-sensor-03",
+   "metric": "temperature_c",
+   "value": 18.8
+  },
+  {
+   "device_id": "dock-sensor-03",
+   "metric": "humidity_pct",
+   "value": 60.5
+  },
+  {
+   "device_id": "dock-sensor-04",
+   "metric": "temperature_c",
+   "value": 6.4
+  },
+  {
+   "device_id": "dock-sensor-04",
+   "metric": "humidity_pct",
+   "value": 66.5
+  },
+  {
+   "device_id": "dock-sensor-05",
+   "metric": "temperature_c",
+   "value": 6.2
+  },
+  {
+   "device_id": "dock-sensor-05",
+   "metric": "humidity_pct",
+   "value": 49.0
+  }
+ ],
+ "rules": [
+  {
+   "name": "warehouse-A-high-temp",
+   "enabled": true,
+   "condition": {
+    "condition_type": "comparison",
+    "source": "device:warehouse-A-sensor-04:temperature_c",
+    "operator": "greater_than",
+    "threshold": 25.0
+   },
+   "actions": [
+    {
+     "type": "notify",
+     "message": "warehouse-A-sensor-04 hot: {value}C",
+     "severity": "warning"
+    }
+   ],
+   "cooldown": 60000
+  },
+  {
+   "name": "warehouse-B-high-temp",
+   "enabled": true,
+   "condition": {
+    "condition_type": "comparison",
+    "source": "device:warehouse-B-sensor-04:temperature_c",
+    "operator": "greater_than",
+    "threshold": 25.0
+   },
+   "actions": [
+    {
+     "type": "notify",
+     "message": "warehouse-B-sensor-04 hot: {value}C",
+     "severity": "warning"
+    }
+   ],
+   "cooldown": 60000
+  },
+  {
+   "name": "coldroom-1-high-temp",
+   "enabled": true,
+   "condition": {
+    "condition_type": "comparison",
+    "source": "device:coldroom-1-sensor-04:temperature_c",
+    "operator": "greater_than",
+    "threshold": 25.0
+   },
+   "actions": [
+    {
+     "type": "notify",
+     "message": "coldroom-1-sensor-04 hot: {value}C",
+     "severity": "warning"
+    }
+   ],
+   "cooldown": 60000
+  },
+  {
+   "name": "coldroom-2-high-temp",
+   "enabled": true,
+   "condition": {
+    "condition_type": "comparison",
+    "source": "device:coldroom-2-sensor-04:temperature_c",
+    "operator": "greater_than",
+    "threshold": 25.0
+   },
+   "actions": [
+    {
+     "type": "notify",
+     "message": "coldroom-2-sensor-04 hot: {value}C",
+     "severity": "warning"
+    }
+   ],
+   "cooldown": 60000
+  },
+  {
+   "name": "packing-high-temp",
+   "enabled": true,
+   "condition": {
+    "condition_type": "comparison",
+    "source": "device:packing-sensor-04:temperature_c",
+    "operator": "greater_than",
+    "threshold": 25.0
+   },
+   "actions": [
+    {
+     "type": "notify",
+     "message": "packing-sensor-04 hot: {value}C",
+     "severity": "warning"
+    }
+   ],
+   "cooldown": 60000
+  },
+  {
+   "name": "dock-high-temp",
+   "enabled": true,
+   "condition": {
+    "condition_type": "comparison",
+    "source": "device:dock-sensor-04:temperature_c",
+    "operator": "greater_than",
+    "threshold": 25.0
+   },
+   "actions": [
+    {
+     "type": "notify",
+     "message": "dock-sensor-04 hot: {value}C",
+     "severity": "warning"
+    }
+   ],
+   "cooldown": 60000
+  }
+ ]
+}

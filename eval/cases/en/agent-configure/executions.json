@@ -12,22 +12,43 @@
         {
           "name": "demo-agent",
           "user_prompt": "demo",
-          "schedule": { "schedule_type": "interval", "interval_seconds": 60 },
+          "schedule": {
+            "schedule_type": "interval",
+            "interval_seconds": 60
+          },
           "execution_mode": "free"
         }
       ]
     }
   },
   "turns": [
-    { "user": "How many times has demo-agent executed recently, and what were the statuses?" },
-    { "user": "Show me the details of its most recent execution." }
+    {
+      "user": "How many times has demo-agent executed recently, and what were the statuses?"
+    },
+    {
+      "user": "Show me the details of its most recent execution."
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "context_retention", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "context_retention",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent resolves demo-agent's id then runs `neomind agent executions <id>` (or GET /api/agents/<id>/executions)",
       "Turn 2: Agent runs `neomind agent latest-execution <id>` (or executions --limit 1)"
     ],
     "overall": "Empty history is a valid answer, but must be grounded in tool results"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind agent executions",
+      "neomind agent latest-execution"
+    ]
   }
 }
