@@ -221,6 +221,7 @@ impl FullTestContext {
             context_window_size: 10,
             enable_tool_chaining: false,
             max_chain_depth: 3,
+            max_tokens_per_run: None,
         };
 
         self.store.save_agent(&agent).await?;
@@ -306,6 +307,7 @@ impl FullTestContext {
             context_window_size: 10,
             enable_tool_chaining: false,
             max_chain_depth: 3,
+            max_tokens_per_run: None,
         };
 
         self.store.save_agent(&agent).await?;

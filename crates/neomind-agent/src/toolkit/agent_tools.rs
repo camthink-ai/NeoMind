@@ -176,6 +176,11 @@ impl Tool for QueryConclusionTool {
         "query_conclusion"
     }
 
+    /// Read-only — queries another agent's recorded conclusion.
+    fn replay_safety(&self) -> crate::toolkit::tool::ReplaySafety {
+        crate::toolkit::tool::ReplaySafety::Safe
+    }
+
     fn description(&self) -> &str {
         "Ask one of the user's AI agents what it last concluded. Returns the agent's most recent \
          conclusion and how long ago it was reached. Use this FIRST whenever the user asks about \
@@ -466,6 +471,7 @@ mod tests {
                 conclusion: conclusion.into(),
                 confidence: None,
                 stop_reason: String::new(),
+                tokens_used: 0,
             },
             result: None,
             duration_ms: 1,

@@ -297,6 +297,7 @@ impl AgentExecutor {
             conclusion,
             confidence: outcome.confidence,
             stop_reason: "structured".to_string(),
+            tokens_used: 0,
         };
         let execution_result = neomind_storage::ExecutionResult {
             actions_executed: vec![],

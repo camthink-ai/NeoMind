@@ -125,6 +125,17 @@ pub struct AiAgent {
     /// (intent-keyword alerts) untouched.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notify: Option<AgentNotify>,
+    /// Per-run LLM token budget (prompt + completion, summed across every
+    /// LLM call of one execution). `None` = uncapped (historical default).
+    /// When the budget is hit the tool loop stops with stop reason
+    /// `token-budget` and Phase 2 synthesizes a conclusion from the results
+    /// collected so far. Counts backend-reported usage only — backends that
+    /// report no usage never trip it. The other guardrails count the wrong
+    /// units for cost: rounds, seconds and calls-per-day all stay green
+    /// while a cloud-backed event agent burns tokens every cooldown window.
+    /// Tail-appended with serde defaults — existing rows decode unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens_per_run: Option<u64>,
 }
 
 /// Tool configuration for AI Agent function calling mode.
@@ -827,6 +838,12 @@ pub struct DecisionProcess {
     /// the agent can learn from prior stop reasons. Empty when no loop ran.
     #[serde(default)]
     pub stop_reason: String,
+    /// LLM tokens consumed by this run (prompt + completion, summed across
+    /// calls) when the backend reported usage. `0` means unreported, not
+    /// "free" — read alongside the agent's `max_tokens_per_run` for budget
+    /// auditing.
+    #[serde(default)]
+    pub tokens_used: u64,
 }
 
 /// Data collected for decision making.
@@ -1811,6 +1828,7 @@ mod tests {
             operator_config: None,
             memory_mode,
             notify: None,
+            max_tokens_per_run: None,
         }
     }
 
@@ -1892,6 +1910,7 @@ mod tests {
             operator_config: None,
             memory_mode: None,
             notify: None,
+            max_tokens_per_run: None,
         };
 
         store.save_agent(&agent).await.unwrap();
@@ -1942,6 +1961,7 @@ mod tests {
             operator_config: None,
             memory_mode: None,
             notify: None,
+            max_tokens_per_run: None,
         };
 
         store.save_agent(&agent).await.unwrap();
@@ -1972,6 +1992,7 @@ mod tests {
                 conclusion: "No action needed".to_string(),
                 confidence: Some(0.95),
                 stop_reason: String::new(),
+                tokens_used: 0,
             },
             result: None,
             duration_ms: 150,
@@ -2026,6 +2047,7 @@ mod tests {
             operator_config: None,
             memory_mode: None,
             notify: None,
+            max_tokens_per_run: None,
         };
 
         // Save initial agent
@@ -2097,6 +2119,7 @@ mod tests {
             operator_config: None,
             memory_mode: None,
             notify: None,
+            max_tokens_per_run: None,
         };
 
         store.save_agent(&agent).await.unwrap();

@@ -189,6 +189,7 @@ impl AiAgentManager {
             max_chain_depth: 3,          // Default max depth
             tool_config: None,
             execution_mode: Default::default(),
+            max_tokens_per_run: None,
         };
 
         // Save agent to storage

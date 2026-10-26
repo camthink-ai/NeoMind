@@ -145,6 +145,17 @@ impl AgentExecutor {
         let result_cap = TOOL_RESULT_MAX_LEN.min(context_window / 4);
         for result in results {
             all_tool_results.push(result.clone());
+            // Replay safety decides timeout semantics: a replay-UNSAFE tool
+            // (shell `device control`, writes…) that timed out may have
+            // already taken effect — the model must verify state before
+            // re-issuing, not treat it as a plain failure to retry.
+            let replay_safe = self
+                .tool_registry
+                .read()
+                .as_ref()
+                .map(|reg| reg.replay_safety(&result.name))
+                .unwrap_or(crate::toolkit::tool::ReplaySafety::Unsafe)
+                == crate::toolkit::tool::ReplaySafety::Safe;
             let result_text = match &result.result {
                 Ok(output) => {
                     let raw = serde_json::to_string(&output.data)
@@ -179,7 +190,20 @@ impl AgentExecutor {
                     // UTF-8 safe truncation (has fast-path for short strings)
                     // 128KB limit: large enough for compact time-series and multi-device
                     // queries. The compaction layer handles context window limits later.
-                    crate::agent::streaming::truncate_result_utf8(&sanitized, result_cap)
+                    let mut text =
+                        crate::agent::streaming::truncate_result_utf8(&sanitized, result_cap);
+                    // Shell was killed at its timeout cap but the command may
+                    // have already fired its effect — append outcome-unknown
+                    // guidance so the model verifies before re-issuing.
+                    let timed_out = output
+                        .data
+                        .get("timed_out")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    if timed_out && !replay_safe {
+                        text.push_str(crate::toolkit::tool::outcome_unknown_guidance());
+                    }
+                    text
                 }
                 Err(e) => {
                     let err_msg = format!("Error: {}", e);
@@ -202,7 +226,14 @@ impl AgentExecutor {
                     {
                         " Check parameter names and types.".to_string()
                     } else if e.to_string().contains("timed out") {
-                        " The operation took too long. Try a simpler query.".to_string()
+                        if replay_safe {
+                            // Read-only tool: a retry is harmless.
+                            " The operation took too long. Try a simpler query.".to_string()
+                        } else {
+                            // Side-effectful tool: the effect may have landed —
+                            // "try again" advice would double-apply it.
+                            crate::toolkit::tool::outcome_unknown_guidance().to_string()
+                        }
                     } else if e.to_string().contains("Permission denied") {
                         " This action is not allowed. Try an alternative approach.".to_string()
                     } else {
@@ -406,6 +437,7 @@ pub(crate) fn build_tool_result(
         all_tool_results,
         round_data_list_raw,
         last_llm_error: _,
+        tokens_used,
     } = loop_output;
 
     tracing::info!(
@@ -551,6 +583,7 @@ pub(crate) fn build_tool_result(
         // `DecisionProcess::confidence`.
         confidence: Some(final_confidence),
         stop_reason: stop_reason.label().to_string(),
+        tokens_used,
     };
 
     let actions_executed: Vec<neomind_storage::ActionExecuted> = all_tool_results

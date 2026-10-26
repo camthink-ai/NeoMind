@@ -68,6 +68,11 @@ impl Tool for AskUserTool {
         "ask_user"
     }
 
+    /// Interaction only — re-asking is harmless, no world side effects.
+    fn replay_safety(&self) -> crate::toolkit::tool::ReplaySafety {
+        crate::toolkit::tool::ReplaySafety::Safe
+    }
+
     fn description(&self) -> &str {
         r#"Ask the user for missing information. Use this tool when the user request lacks necessary information.
 
@@ -207,6 +212,11 @@ impl Tool for ConfirmActionTool {
         "confirm_action"
     }
 
+    /// Interaction only — re-asking is harmless, no world side effects.
+    fn replay_safety(&self) -> crate::toolkit::tool::ReplaySafety {
+        crate::toolkit::tool::ReplaySafety::Safe
+    }
+
     fn description(&self) -> &str {
         r#"Request user confirmation before executing dangerous or important operations.
 
@@ -320,6 +330,11 @@ impl ClarifyIntentTool {
 impl Tool for ClarifyIntentTool {
     fn name(&self) -> &str {
         "clarify_intent"
+    }
+
+    /// Interaction only — re-asking is harmless, no world side effects.
+    fn replay_safety(&self) -> crate::toolkit::tool::ReplaySafety {
+        crate::toolkit::tool::ReplaySafety::Safe
     }
 
     fn description(&self) -> &str {

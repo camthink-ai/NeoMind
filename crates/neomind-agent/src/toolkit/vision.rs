@@ -438,6 +438,11 @@ impl Tool for VisionTool {
         "vision"
     }
 
+    /// Read-only analysis — re-running after an interruption cannot double-apply.
+    fn replay_safety(&self) -> crate::toolkit::tool::ReplaySafety {
+        crate::toolkit::tool::ReplaySafety::Safe
+    }
+
     fn description(&self) -> &str {
         r#"Analyze images you CANNOT already see, using a vision-language model. Pass an image source and get back a description/analysis.
 

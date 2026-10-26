@@ -129,6 +129,7 @@ async fn build_harness() -> (AgentExecutor, AiAgent, Arc<ToolRegistry>) {
         notify: None,
         enable_tool_chaining: false,
         max_chain_depth: 3,
+        max_tokens_per_run: None,
     };
 
     (executor, agent, registry)
@@ -1893,6 +1894,7 @@ async fn an_agent_without_channels_still_records_its_alert_in_app() {
             conclusion: "冷库温度正常".to_string(),
             confidence: None,
             stop_reason: String::new(),
+            tokens_used: 0,
         },
         result: None,
         duration_ms: 12,
@@ -1985,6 +1987,7 @@ async fn a_failed_run_reports_even_without_routing() {
             conclusion: conclusion.to_string(),
             confidence: None,
             stop_reason: String::new(),
+            tokens_used: 0,
         },
         result: None,
         duration_ms: 12,
@@ -2187,6 +2190,7 @@ async fn two_field_contract_publishes_both_metrics() {
         notify: None,
         enable_tool_chaining: false,
         max_chain_depth: 3,
+        max_tokens_per_run: None,
     };
     executor.store().save_agent(&agent).await.expect("seed");
 

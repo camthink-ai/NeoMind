@@ -243,6 +243,41 @@ pub struct ToolDefinition {
     pub namespace: Option<String>,
 }
 
+/// Whether re-executing this tool after an interrupted call is known-safe.
+///
+/// `Safe` — read-only / idempotent: re-running after a timeout or cancel
+/// cannot double-apply an effect (queries, reads, user interaction), so a
+/// transient failure may be retried as usual.
+/// `Unsafe` — the call may have taken effect before the interruption
+/// (shell commands, device control, writes, triggering runs). An
+/// interruption must be reported to the model as "outcome unknown — verify
+/// current state first" and must NOT be auto-retried: a plain "failed"
+/// invites an immediate re-issue, which double-toggles a device command
+/// that actually landed (the shell tool's own 30s timeout vs a slow device
+/// ACK is the canonical case).
+///
+/// Default is the conservative `Unsafe` — only tools with no external side
+/// effects override to `Safe`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplaySafety {
+    /// Retry after interruption is harmless (no world side effects).
+    Safe,
+    /// Interruption leaves the outcome unknown — verify, don't blind-retry.
+    Unsafe,
+}
+
+/// Model-facing suffix appended when a replay-unsafe tool call was
+/// interrupted (timeout / cancel): the effect may already have been
+/// applied, so the model must verify state before re-issuing. Shared by
+/// the scheduled executor's result processing and the chat agent's
+/// `execute_tool` so both paths say the same thing.
+pub fn outcome_unknown_guidance() -> &'static str {
+    " OUTCOME UNKNOWN: the call was interrupted and may have ALREADY taken \
+     effect. Do NOT blindly re-run it — first verify the current state with \
+     a read-only query (e.g. `neomind device latest` / `device get`), then \
+     re-issue only if needed."
+}
+
 /// Tool trait for function calling.
 ///
 /// Tools are callable functions that LLM agents can invoke.
@@ -259,6 +294,12 @@ pub trait Tool: Send + Sync {
 
     /// Execute the tool with the given arguments.
     async fn execute(&self, args: Value) -> Result<ToolOutput>;
+
+    /// Replay safety of this tool after an interrupted call (see
+    /// [`ReplaySafety`]). Default is the conservative `Unsafe`.
+    fn replay_safety(&self) -> ReplaySafety {
+        ReplaySafety::Unsafe
+    }
 
     /// Get the tool category.
     fn category(&self) -> ToolCategory {

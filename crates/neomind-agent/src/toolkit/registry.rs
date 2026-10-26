@@ -176,6 +176,15 @@ impl ToolRegistry {
         self.disabled.read().contains(name)
     }
 
+    /// Replay safety of a registered tool (see [`ReplaySafety`]). Unknown
+    /// names resolve to the conservative `Unsafe` — callers deciding whether
+    /// an interrupted call may be retried must fail closed.
+    pub fn replay_safety(&self, name: &str) -> super::tool::ReplaySafety {
+        self.get(name)
+            .map(|t| t.replay_safety())
+            .unwrap_or(super::tool::ReplaySafety::Unsafe)
+    }
+
     /// Snapshot of the disabled set (cloned).
     pub fn disabled_names(&self) -> HashSet<String> {
         self.disabled.read().clone()
@@ -741,5 +750,64 @@ mod tests {
 
         let result = registry.execute("test_tool", serde_json::json!({})).await;
         assert!(result.is_ok());
+    }
+}
+
+#[cfg(test)]
+mod replay_safety_tests {
+    use super::*;
+    use crate::toolkit::tool::{ReplaySafety, Tool, ToolOutput};
+    use async_trait::async_trait;
+
+    struct SideEffectTool;
+    struct ReadOnlyTool;
+
+    #[async_trait]
+    impl Tool for SideEffectTool {
+        fn name(&self) -> &str {
+            "side_effect"
+        }
+        fn description(&self) -> &str {
+            "writes things"
+        }
+        fn parameters(&self) -> Value {
+            serde_json::json!({"type": "object", "properties": {}})
+        }
+        async fn execute(&self, _args: Value) -> super::Result<ToolOutput> {
+            Ok(ToolOutput::success("done"))
+        }
+        // No replay_safety override — must default to the conservative Unsafe.
+    }
+
+    #[async_trait]
+    impl Tool for ReadOnlyTool {
+        fn name(&self) -> &str {
+            "read_only"
+        }
+        fn description(&self) -> &str {
+            "reads things"
+        }
+        fn parameters(&self) -> Value {
+            serde_json::json!({"type": "object", "properties": {}})
+        }
+        async fn execute(&self, _args: Value) -> super::Result<ToolOutput> {
+            Ok(ToolOutput::success("data"))
+        }
+        fn replay_safety(&self) -> ReplaySafety {
+            ReplaySafety::Safe
+        }
+    }
+
+    #[test]
+    fn replay_safety_defaults_unsafe_and_looks_up() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(SideEffectTool));
+        registry.register(Arc::new(ReadOnlyTool));
+
+        assert_eq!(registry.replay_safety("read_only"), ReplaySafety::Safe);
+        // No override → conservative default.
+        assert_eq!(registry.replay_safety("side_effect"), ReplaySafety::Unsafe);
+        // Unknown tool names must fail closed.
+        assert_eq!(registry.replay_safety("no_such_tool"), ReplaySafety::Unsafe);
     }
 }
