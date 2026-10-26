@@ -1,0 +1,43 @@
+{
+  "id": "api-key-lifecycle",
+  "lang": "en",
+  "category": "system",
+  "workflow": "system-admin",
+  "scenario_type": "multi_turn",
+  "description": "API key lifecycle: create a named key, list it, then delete it (covers `neomind api-key create/list/delete`).",
+  "setup": {
+    "fixture": "seed-empty"
+  },
+  "turns": [
+    {
+      "user": "Create an API key named eval-key for testing, show me it in the key list, then delete it again."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: `neomind api-key create --name eval-key`, verify via `neomind api-key list`, then `neomind api-key delete eval-key`"
+    ],
+    "overall": "Key created, listed, and deleted via the CLI"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind api-key create",
+      "neomind api-key list",
+      "neomind api-key delete"
+    ],
+    "substrings": {
+      "neomind api-key create": [
+        "--name",
+        "eval-key"
+      ]
+    }
+  }
+}

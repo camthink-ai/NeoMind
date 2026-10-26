@@ -42,5 +42,14 @@
       "neomind llm activate",
       "neomind llm delete"
     ]
-  }
+  },
+  "state_queries": [
+    {
+      "type": "llm_backend_exists",
+      "params": {
+        "name": "dev-ollama"
+      },
+      "expected": true
+    }
+  ]
 }

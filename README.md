@@ -191,7 +191,9 @@ All scores are the SAME window (32K) so models are comparable; *MiniCPM5-2B's 32
 
 Under fair scoring the top three are one tier (83–90% tool accuracy) — pick by footprint, latency, and context fit: **MiniCPM5-2B** default, **Qwen 3.5 4B** strongest local agent.
 
-**2026-10 re-verification (1.2.2 build):** all catalog locals re-ran on the 33-case hard-signal regression gate (thinking on): MiniCPM5-2B 77% at its official sampler point, LFM 2.5 2.6B 72%, Gemma 4 E2B 69% — the one-tier picture holds on the newer suite. The gate has since grown to 40 cases and 1.2.3 changed the chat guard policy (labels-only), so these are 1.2.2 numbers; a 1.2.3 re-run is pending. Full data: [docs/edge-models.md](docs/edge-models.md) · catalog: [NeoMind-Runtimes](https://github.com/camthink-ai/NeoMind-Runtimes).
+**2026-10 re-verification (1.2.2 build):** all catalog locals re-ran on the 33-case hard-signal regression gate (thinking on): MiniCPM5-2B 77% at its official sampler point, LFM 2.5 2.6B 72%, Gemma 4 E2B 69% — the one-tier picture holds on the newer suite. The gate has since grown to 40 cases and 1.2.3 changed the chat guard policy (labels-only), so these are 1.2.2 numbers; a 1.2.3 re-run is pending.
+
+**2026-10-26 additions (1.2.3 build, same 40-case gate, official `pass_for_case` metric):** deepseek-flash (cloud) **93.8%** — the cloud tier measures ~20pp over the best local and ~39pp over the stock 2B; Spark-X2.6-4B **73.8%** and MiniCPM-V 4.7-35B-A3B **70.5%** are a statistical tie at this sample size (±10pp Wilson interval), both 4 GB+/32 GB+ tier candidates — MiniCPM-V also holds its tool calling, making a unified agent+perception slot viable on 32 GB+ hosts (vision quality still untested). Catalog locals' own 1.2.3 re-run is still pending. Full data: [docs/edge-models.md](docs/edge-models.md) · catalog: [NeoMind-Runtimes](https://github.com/camthink-ai/NeoMind-Runtimes).
 
 ### Development
 

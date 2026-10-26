@@ -1,0 +1,52 @@
+{
+  "id": "fleet-targeted-rule",
+  "lang": "zh",
+  "category": "device",
+  "workflow": "device-management",
+  "scenario_type": "single_turn",
+  "description": "车队规模下的选择压力:在 37 台相似设备里选对唯一目标并绑定建规则(而不是同区兄弟设备)。",
+  "setup": {
+    "fixture": "fleet-35"
+  },
+  "turns": [
+    {
+      "user": "coldroom-2 库房在升温。创建一条名为 coldroom2-warm 的规则:coldroom-2 的 03 号传感器温度超过 8 摄氏度就告警。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: `neomind rule create` 精确绑定设备 coldroom-2-sensor-03、指标 temperature_c、阈值 8"
+    ],
+    "overall": "规则 coldroom2-warm 存在且引用的是 coldroom-2-sensor-03(不是其它传感器)"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind rule create"
+    ]
+  },
+  "state_queries": [
+    {
+      "type": "rule_exists",
+      "params": {
+        "name": "coldroom2-warm"
+      },
+      "expected": true
+    },
+    {
+      "type": "rule_references_source",
+      "params": {
+        "name": "coldroom2-warm",
+        "source": "device:coldroom-2-sensor-03:temperature_c"
+      },
+      "expected": true
+    }
+  ]
+}

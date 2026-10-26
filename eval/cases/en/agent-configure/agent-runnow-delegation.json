@@ -1,0 +1,52 @@
+{
+  "id": "agent-runnow-delegation",
+  "lang": "en",
+  "category": "agent",
+  "workflow": "agent-configure",
+  "scenario_type": "single_turn",
+  "description": "Chat-side delegation: ask an existing agent to run now via the run_now tool (not shell, not manual schedule edits).",
+  "setup": {
+    "fixture": "seed-default",
+    "extras": {
+      "agents": [
+        {
+          "name": "coldroom-watch",
+          "user_prompt": "Check the cold room temperature and summarize",
+          "schedule": {
+            "schedule_type": "manual"
+          }
+        }
+      ]
+    }
+  },
+  "turns": [
+    {
+      "user": "Have the coldroom-watch agent run right now and tell me its conclusion."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: delegate via the run_now tool (an unscheduled run), then report the agent's conclusion"
+    ],
+    "overall": "coldroom-watch has at least one execution and the answer reflects its conclusion"
+  },
+  "expect": {
+    "tools": [
+      "run_now"
+    ]
+  },
+  "state_queries": [
+    {
+      "type": "agent_execution_count",
+      "params": {
+        "name": "coldroom-watch"
+      },
+      "expected_min": 1
+    }
+  ]
+}

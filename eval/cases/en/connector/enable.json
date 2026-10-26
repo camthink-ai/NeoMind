@@ -23,5 +23,22 @@
       "Turn 1: Create a connector then enable it (covers `neomind connector enable`)"
     ],
     "overall": "Create a connector then enable it (covers `neomind connector enable`)"
-  }
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind connector enable"
+    ]
+  },
+  "state_queries": [
+    {
+      "type": "connector_exists",
+      "params": {
+        "name": "conn-1"
+      },
+      "expected": true
+    }
+  ]
 }

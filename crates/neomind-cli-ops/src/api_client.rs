@@ -27,6 +27,22 @@ impl ApiClient {
     }
 
     pub fn with_base_url(base_url: &str) -> Self {
+        // The /api-suffix convention has bitten three independent callers
+        // (tauri frontend — CLAUDE.md gotcha #9; this crate's own auth-key
+        // handlers double-prefixed into /api/api/... and 404'd; the eval
+        // harness aligns by hand). Normalize HERE, but DEDUPLICATE ONLY:
+        // an /api-suffixed base collapses to exactly one clean "/api"
+        // (…/api/, …//api → …/api), while a non-/api base (e.g. an OpenAI-
+        // compatible "/v1" gateway) passes through untouched — appending
+        // would break that caller (pinned by test_api_client_base_url_
+        // formatting). Path-side duplicates are stripped at join time
+        // (url_for), so neither side can produce /api/api/... alone.
+        let mut b = base_url.trim().trim_end_matches('/').to_string();
+        if b.ends_with("/api") {
+            let stem = b[..b.len() - 4].trim_end_matches('/');
+            b = format!("{stem}/api");
+        }
+        let base_url = b;
         let api_key = std::env::var("NEOMIND_API_KEY")
             .ok()
             .or_else(crate::auto_auth::read_default_api_key);
@@ -72,9 +88,24 @@ impl ApiClient {
         *self.api_key.write().unwrap() = new_key;
     }
 
+    /// Join base + path with duplicate-/api stripping: a path that still
+    /// carries the "/api" prefix against an "/api"-suffixed base collapses
+    /// to one prefix (the double-prefix 404 class can no longer happen even
+    /// if a handler regresses to "/api/..." paths).
+    fn url_for(&self, path: &str) -> String {
+        if self.base_url.ends_with("/api") {
+            if let Some(stripped) = path.strip_prefix("/api") {
+                if stripped.is_empty() || stripped.starts_with('/') {
+                    return format!("{}{}", self.base_url, stripped);
+                }
+            }
+        }
+        format!("{}{}", self.base_url, path)
+    }
+
     pub async fn get(&self, path: &str) -> Result<serde_json::Value> {
         for attempt in 0..=MAX_RETRIES {
-            let url = format!("{}{}", self.base_url, path);
+            let url = self.url_for(path);
             let resp = self.add_auth(self.client.get(&url)).send().await?;
             let status = resp.status();
             if status.as_u16() == 401 && attempt < MAX_RETRIES {
@@ -103,7 +134,7 @@ impl ApiClient {
 
     pub async fn post(&self, path: &str, body: &serde_json::Value) -> Result<serde_json::Value> {
         for attempt in 0..=MAX_RETRIES {
-            let url = format!("{}{}", self.base_url, path);
+            let url = self.url_for(path);
             let resp = self
                 .add_auth(self.client.post(&url).json(body))
                 .send()
@@ -135,7 +166,7 @@ impl ApiClient {
 
     pub async fn post_raw(&self, path: &str) -> Result<serde_json::Value> {
         for attempt in 0..=MAX_RETRIES {
-            let url = format!("{}{}", self.base_url, path);
+            let url = self.url_for(path);
             let resp = self.add_auth(self.client.post(&url)).send().await?;
             let status = resp.status();
             if status.as_u16() == 401 && attempt < MAX_RETRIES {
@@ -164,7 +195,7 @@ impl ApiClient {
 
     pub async fn put(&self, path: &str, body: &serde_json::Value) -> Result<serde_json::Value> {
         for attempt in 0..=MAX_RETRIES {
-            let url = format!("{}{}", self.base_url, path);
+            let url = self.url_for(path);
             let resp = self
                 .add_auth(self.client.put(&url).json(body))
                 .send()
@@ -196,7 +227,7 @@ impl ApiClient {
 
     pub async fn patch(&self, path: &str, body: &serde_json::Value) -> Result<serde_json::Value> {
         for attempt in 0..=MAX_RETRIES {
-            let url = format!("{}{}", self.base_url, path);
+            let url = self.url_for(path);
             let resp = self
                 .add_auth(self.client.patch(&url).json(body))
                 .send()
@@ -228,7 +259,7 @@ impl ApiClient {
 
     pub async fn delete(&self, path: &str) -> Result<serde_json::Value> {
         for attempt in 0..=MAX_RETRIES {
-            let url = format!("{}{}", self.base_url, path);
+            let url = self.url_for(path);
             let resp = self.add_auth(self.client.delete(&url)).send().await?;
             let status = resp.status();
             if status.as_u16() == 401 && attempt < MAX_RETRIES {
@@ -261,7 +292,7 @@ impl ApiClient {
         body: &serde_json::Value,
     ) -> Result<serde_json::Value> {
         for attempt in 0..=MAX_RETRIES {
-            let url = format!("{}{}", self.base_url, path);
+            let url = self.url_for(path);
             let resp = self
                 .add_auth(self.client.delete(&url).json(body))
                 .send()
@@ -302,7 +333,7 @@ impl ApiClient {
         use std::fs::File;
         use std::io::Read;
 
-        let url = format!("{}{}", self.base_url, path);
+        let url = self.url_for(path);
         let mut file = File::open(file_path)?;
         let file_name = std::path::Path::new(file_path)
             .file_name()
@@ -356,7 +387,7 @@ impl ApiClient {
     ) -> Result<serde_json::Value> {
         use reqwest::multipart;
 
-        let url = format!("{}{}", self.base_url, path);
+        let url = self.url_for(path);
 
         // Clone parts data for retry rebuilds
         let parts_clone: Vec<(String, Vec<u8>, String)> = parts
@@ -457,6 +488,40 @@ fn unauthorized_hint() -> &'static str {
     } else {
         "\nHint: not logged in? Run: neomind login"
     }
+}
+
+
+// ——— base normalization: the /api-suffix single source of truth ———
+// Three callers independently got this wrong before normalization existed
+// (tauri frontend, this crate's auth-key handlers, eval harness); these
+// tests pin the contract so a regression is a red test, not a 404.
+#[test]
+fn base_normalization_accepts_every_caller_convention() {
+    for (input, expected) in [
+        // dedup: exactly one clean /api when the caller already prefixed it
+        ("http://localhost:9375/api", "http://localhost:9375/api"),
+        ("http://localhost:9375/api/", "http://localhost:9375/api"),
+        ("http://host:8080//api//", "http://host:8080/api"),
+        // pass-through: non-/api bases (v1 gateways, bare origins) untouched
+        ("http://localhost:9000/v1", "http://localhost:9000/v1"),
+        ("http://localhost:9375", "http://localhost:9375"),
+    ] {
+        let c = ApiClient::with_base_url(input);
+        assert_eq!(c.base_url, expected, "input {input:?}");
+    }
+}
+
+#[test]
+fn join_strips_duplicate_api_prefix() {
+    // The original bug: base ".../api" + path "/api/auth/keys" → 404.
+    // url_for collapses it; suffix-free paths are unchanged; a /v1 gateway
+    // base keeps /api/... paths intact (they are real routes there).
+    let c = ApiClient::with_base_url("http://localhost:9375/api");
+    assert_eq!(c.url_for("/api/auth/keys"), "http://localhost:9375/api/auth/keys");
+    assert_eq!(c.url_for("/auth/keys"), "http://localhost:9375/api/auth/keys");
+    assert_eq!(c.url_for("/api"), "http://localhost:9375/api");
+    let gw = ApiClient::with_base_url("http://localhost:9000/v1");
+    assert_eq!(gw.url_for("/api/models"), "http://localhost:9000/v1/api/models");
 }
 
 #[cfg(test)]

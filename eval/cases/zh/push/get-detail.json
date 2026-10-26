@@ -23,5 +23,14 @@
       "Turn 1: Create a push config then read it (covers `neomind push get`)"
     ],
     "overall": "Create a push config then read it (covers `neomind push get`)"
-  }
+  },
+  "state_queries": [
+    {
+      "type": "push_enabled",
+      "params": {
+        "name": "push-1"
+      },
+      "expected": true
+    }
+  ]
 }

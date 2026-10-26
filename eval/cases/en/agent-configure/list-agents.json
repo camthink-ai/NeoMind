@@ -12,20 +12,40 @@
         {
           "name": "demo-agent",
           "user_prompt": "demo",
-          "schedule": { "schedule_type": "interval", "interval_seconds": 60 },
+          "schedule": {
+            "schedule_type": "interval",
+            "interval_seconds": 60
+          },
           "execution_mode": "free"
         }
       ]
     }
   },
   "turns": [
-    { "user": "Which agents are currently configured in the system?" }
+    {
+      "user": "Which agents are currently configured in the system?"
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent invokes `neomind agent list` and surfaces the demo-agent entry"
     ],
     "overall": "Must clearly report at least the agent name and status"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      [
+        "neomind agent list",
+        "neomind agent get"
+      ]
+    ]
   }
 }

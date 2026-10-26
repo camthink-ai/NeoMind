@@ -1,0 +1,60 @@
+{
+  "id": "agent-event-trigger",
+  "lang": "zh",
+  "category": "agent",
+  "workflow": "agent-configure",
+  "scenario_type": "single_turn",
+  "description": "Create an event-driven agent bound to one device's data (covers `neomind agent create --schedule-type event --event-filter`).",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "sensor-001 老出问题。创建一个名为「电量盯防」的 agent,提示词「检查电量并总结」,每当 sensor-001 上报新数据时自动运行。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: 用 `neomind agent create` 创建,--schedule-type event,--event-filter 里包含 sensor-001"
+    ],
+    "overall": "Agent exists with schedule_type event and an event filter referencing sensor-001"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind agent create"
+    ],
+    "substrings": {
+      "neomind agent create": [
+        "--schedule-type",
+        "event",
+        "--event-filter",
+        "sensor-001"
+      ]
+    }
+  },
+  "state_queries": [
+    {
+      "type": "agent_exists",
+      "params": {
+        "name": "电量盯防"
+      },
+      "expected": true
+    },
+    {
+      "type": "agent_config",
+      "params": {
+        "name": "电量盯防",
+        "field": "schedule_type"
+      },
+      "expected": "event"
+    }
+  ]
+}

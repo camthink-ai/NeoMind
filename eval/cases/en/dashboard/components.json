@@ -5,13 +5,26 @@
   "workflow": "dashboard-management",
   "scenario_type": "multi_turn",
   "description": "Multi-turn: create dashboard -> add component -> remove component (covers `neomind dashboard add-components` + `remove-components`; high-frequency user scenario).",
-  "setup": { "fixture": "seed-empty" },
+  "setup": {
+    "fixture": "seed-empty"
+  },
   "turns": [
-    { "user": "Create an empty dashboard named Demo Board." },
-    { "user": "Add a text title component to it with content 'Hello World'." },
-    { "user": "Remove that title component." }
+    {
+      "user": "Create an empty dashboard named Demo Board."
+    },
+    {
+      "user": "Add a text title component to it with content 'Hello World'."
+    },
+    {
+      "user": "Remove that title component."
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "context_retention", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "context_retention",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent runs `neomind dashboard create --name 'Demo Board'`, parses id",
@@ -19,5 +32,31 @@
       "Turn 3: Agent runs `neomind dashboard remove-components <id> --components '[<component_id>]'` (or DELETE equivalent), referencing the component id from turn 2"
     ],
     "overall": "Turn 3 must reuse the component id parsed in Turn 2"
-  }
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind dashboard add-components",
+      "neomind dashboard create",
+      "neomind dashboard remove-components"
+    ]
+  },
+  "state_queries": [
+    {
+      "type": "dashboard_exists",
+      "params": {
+        "name": "Demo Board"
+      },
+      "expected": true
+    },
+    {
+      "type": "dashboard_component_count",
+      "params": {
+        "name": "Demo Board"
+      },
+      "expected_min": 1
+    }
+  ]
 }

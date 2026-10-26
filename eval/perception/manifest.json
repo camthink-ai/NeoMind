@@ -1,0 +1,158 @@
+{
+ "description": "Perception-slot eval manifest. Each entry is one still image plus the checks a correct description must satisfy. Add real NE301/NE101 captures here — this set is what decides the vision slot (LFM2.5-VL-3B vs MiniCPM-V 4.7 etc.); the agent gate cannot answer it.",
+ "images": [
+  {
+   "file": "images/red-circle.png",
+   "prompt": "Describe this image: shapes, colors, and their positions. Be concise.",
+   "checks": [
+    {
+     "name": "identifies a circle",
+     "any_of": [
+      "circle",
+      "圆形",
+      "圆"
+     ]
+    },
+    {
+     "name": "identifies red",
+     "any_of": [
+      "red",
+      "红"
+     ]
+    }
+   ]
+  },
+  {
+   "file": "images/blue-square.png",
+   "prompt": "Describe this image: shapes, colors, positions. Be concise.",
+   "checks": [
+    {
+     "name": "square/rect",
+     "any_of": [
+      "square",
+      "rectangle",
+      "矩形",
+      "正方"
+     ]
+    },
+    {
+     "name": "blue",
+     "any_of": [
+      "blue",
+      "蓝"
+     ]
+    }
+   ]
+  },
+  {
+   "file": "images/green-triangle.png",
+   "prompt": "Describe this image: shapes, colors, positions. Be concise.",
+   "checks": [
+    {
+     "name": "triangle",
+     "any_of": [
+      "triangle",
+      "三角"
+     ]
+    },
+    {
+     "name": "green",
+     "any_of": [
+      "green",
+      "绿"
+     ]
+    }
+   ]
+  },
+  {
+   "file": "images/five-red-circles.png",
+   "prompt": "How many circles are in this image? Answer with the count.",
+   "checks": [
+    {
+     "name": "count=5",
+     "regex": "\\b(?:five|5|五个|5\\s*个)\\b"
+    }
+   ],
+   "reference": "Exactly five red circles in a row on white."
+  },
+  {
+   "file": "images/label-neo42c.png",
+   "prompt": "Read out the text shown in this image exactly.",
+   "checks": [
+    {
+     "name": "reads NEO-42C",
+     "any_of": [
+      "NEO-42C",
+      "NEO42C",
+      "neo-42c"
+     ]
+    }
+   ],
+   "reference": "The label reads NEO-42C."
+  },
+  {
+   "file": "images/red-left-blue-right.png",
+   "prompt": "Two objects: what is on the LEFT and what is on the RIGHT?",
+   "checks": [
+    {
+     "name": "left=red circle",
+     "any_of": [
+      "red",
+      "红"
+     ]
+    },
+    {
+     "name": "left/right order stated",
+     "any_of": [
+      "left",
+      "左"
+     ]
+    }
+   ],
+   "reference": "Red circle on the left, blue square on the right."
+  },
+  {
+   "file": "images/orange-circle-purple-square.png",
+   "prompt": "Is there a green triangle anywhere in this image? List every shape and color you actually see.",
+   "checks": [
+    {
+     "name": "no green triangle (absence)",
+     "any_of": [
+      "no green",
+      "not green",
+      "没有绿",
+      "无绿",
+      "no triangle",
+      "没有三角",
+      "两个",
+      "two ",
+      "2 "
+     ]
+    }
+   ],
+   "reference": "Orange circle and purple square only; NO green triangle — the correct answer denies it."
+  },
+  {
+   "file": "images/gauge-75.png",
+   "prompt": "What value is the gauge needle pointing at, approximately?",
+   "checks": [
+    {
+     "name": "reads ~75 (70-80 band)",
+     "regex": "\\b7[0-9]\\b|\\b80\\b"
+    }
+   ],
+   "reference": "Needle at about 75 on a 0-100 half-dial gauge."
+  },
+  {
+   "file": "images/three-people.png",
+   "prompt": "How many people are visible? Answer with the count.",
+   "checks": [
+    {
+     "name": "count=3",
+     "regex": "\\b(?:three|3|三个|3\\s*个)\\b"
+    }
+   ],
+   "reference": "Three person silhouettes against a grey wall."
+  }
+ ]
+}

@@ -1,0 +1,66 @@
+{
+  "id": "agent-structured-extract",
+  "lang": "zh",
+  "category": "agent",
+  "workflow": "agent-configure",
+  "scenario_type": "multi_turn",
+  "description": "Structured (L0 operator) agent with an output schema, then invoked — schema-validated fields out.",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "创建一个结构化抽取 agent,名为「风险判定」:按需运行,提示词「判断电量风险」,输出 schema:risk 字段为枚举 [low, high],score 字段为数字。"
+    },
+    {
+      "user": "调用它评估 sensor-001 的电量,把结构化结果给我看。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "context_retention",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: `neomind agent create` --execution-mode structured,--output-schema 定义 risk(枚举 low/high)与 score(数字)",
+      "T2: 用 `neomind agent invoke` 运行"
+    ],
+    "overall": "Agent stored as structured mode with schema; at least one execution recorded"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind agent create",
+      "neomind agent invoke"
+    ],
+    "substrings": {
+      "neomind agent create": [
+        "--execution-mode",
+        "structured",
+        "--output-schema",
+        "risk"
+      ]
+    }
+  },
+  "state_queries": [
+    {
+      "type": "agent_config",
+      "params": {
+        "name": "风险判定",
+        "field": "execution_mode"
+      },
+      "expected": "structured"
+    },
+    {
+      "type": "agent_execution_count",
+      "params": {
+        "name": "风险判定"
+      },
+      "expected_min": 1
+    }
+  ]
+}

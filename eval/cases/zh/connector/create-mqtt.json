@@ -5,15 +5,41 @@
   "workflow": "connector-management",
   "scenario_type": "single_turn",
   "description": "创建一个 MQTT 连接器并验证（覆盖 `neomind connector create` 写入路径，此前仅覆盖 list）",
-  "setup": { "fixture": "seed-empty" },
+  "setup": {
+    "fixture": "seed-empty"
+  },
   "turns": [
-    { "user": "请帮我接入一个外部 MQTT broker：名字叫 factory-broker，地址 192.168.1.100，端口 1883，订阅主题 'sensor/#,device/#'。建好后列出来确认一下。" }
+    {
+      "user": "请帮我接入一个外部 MQTT broker：名字叫 factory-broker，地址 192.168.1.100，端口 1883，订阅主题 'sensor/#,device/#'。建好后列出来确认一下。"
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent 调用 `neomind connector create --type mqtt --name factory-broker --host 192.168.1.100 --port 1883 --topics 'sensor/#,device/#'`（flag 顺序、--type 默认 mqtt 可省略），随后调用 `neomind connector list` 验证"
     ],
     "overall": "必须实际执行 create + list，不能仅在回复中复述"
-  }
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind connector create",
+      "neomind connector list"
+    ]
+  },
+  "state_queries": [
+    {
+      "type": "connector_exists",
+      "params": {
+        "name": "factory-broker"
+      },
+      "expected": true
+    }
+  ]
 }

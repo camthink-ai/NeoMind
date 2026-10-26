@@ -1,0 +1,49 @@
+{
+  "id": "ops-inspection",
+  "lang": "zh",
+  "category": "system",
+  "workflow": "system-admin",
+  "scenario_type": "multi_turn",
+  "description": "Read-only ops inspection: discover data sources and check recent error logs (covers `neomind data list` + `neomind logs`).",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "用 neomind 命令行查一下:系统里现在有哪些数据源?"
+    },
+    {
+      "user": "同样用 neomind 命令行(不要直接读日志文件):服务端日志最近有没有报错?"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "context_retention",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: `neomind data list` 并总结数据源",
+      "T2: `neomind logs` 过滤错误级别(如 --level ERROR);不要直接读日志文件"
+    ],
+    "overall": "两个回答都基于真实 CLI 输出(数据源清单可来自 `neomind data list` 或各域 list;日志必须用 `neomind logs`)"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      [
+        "neomind data list",
+        "neomind device list",
+        "neomind connector list",
+        "neomind transform list"
+      ],
+      [
+        "neomind logs",
+        "neomind system"
+      ]
+    ]
+  }
+}

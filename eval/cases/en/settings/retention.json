@@ -5,13 +5,26 @@
   "workflow": "settings-management",
   "scenario_type": "multi_turn",
   "description": "Multi-turn: view retention config -> update -> trigger manual cleanup (covers `neomind settings retention` + `set-retention` + `cleanup`; previously 0 coverage).",
-  "setup": { "fixture": "seed-empty" },
+  "setup": {
+    "fixture": "seed-empty"
+  },
   "turns": [
-    { "user": "What is the current telemetry retention policy?" },
-    { "user": "Enable retention cleanup, run every 1 hour, default retention 168 hours." },
-    { "user": "Trigger a manual cleanup right now." }
+    {
+      "user": "What is the current telemetry retention policy?"
+    },
+    {
+      "user": "Enable retention cleanup, run every 1 hour, default retention 168 hours."
+    },
+    {
+      "user": "Trigger a manual cleanup right now."
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "context_retention", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "context_retention",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent runs `neomind settings retention` (or GET /api/settings/retention)",
@@ -19,5 +32,22 @@
       "Turn 3: Agent runs `neomind settings cleanup`"
     ],
     "overall": "Turn 2/3 must actually execute the write action"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind settings retention",
+      "neomind settings set-retention",
+      "neomind settings cleanup"
+    ],
+    "substrings": {
+      "neomind settings set-retention": [
+        "--interval-hours",
+        "--default-retention",
+        "168"
+      ]
+    }
   }
 }

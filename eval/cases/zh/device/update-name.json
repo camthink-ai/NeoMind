@@ -5,15 +5,40 @@
   "workflow": "device-onboarding",
   "scenario_type": "single_turn",
   "description": "更新设备名称",
-  "setup": { "fixture": "seed-default" },
+  "setup": {
+    "fixture": "seed-default"
+  },
   "turns": [
-    { "user": "把 sensor-001 的名称改成 '客厅温湿度传感器'" }
+    {
+      "user": "把 sensor-001 的名称改成 '客厅温湿度传感器'"
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent 应该调用 `neomind device update sensor-001 --name '客厅温湿度传感器'`"
     ],
     "overall": "执行成功后应简短确认"
-  }
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind device update"
+    ]
+  },
+  "state_queries": [
+    {
+      "type": "device_exists",
+      "params": {
+        "name": "客厅温湿度传感器"
+      },
+      "expected": true
+    }
+  ]
 }

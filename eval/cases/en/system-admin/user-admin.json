@@ -1,0 +1,35 @@
+{
+  "id": "user-admin",
+  "lang": "en",
+  "category": "system",
+  "workflow": "system-admin",
+  "scenario_type": "single_turn",
+  "description": "Local user administration (covers `neomind user list`).",
+  "setup": {
+    "fixture": "seed-empty"
+  },
+  "turns": [
+    {
+      "user": "List the platform user accounts managed by NeoMind (the neomind user list command) and tell me each account's role."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: `neomind user list` (platform accounts — NOT OS/system users) and report username + role"
+    ],
+    "overall": "User inventory read from real state"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind user list"
+    ]
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "id": "agent-event-trigger",
+  "lang": "en",
+  "category": "agent",
+  "workflow": "agent-configure",
+  "scenario_type": "single_turn",
+  "description": "Create an event-driven agent bound to one device's data (covers `neomind agent create --schedule-type event --event-filter`).",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "sensor-001 keeps misbehaving. Create an agent named 'battery-watcher' with prompt 'Check the battery and summarize' that runs automatically every time sensor-001 reports new data."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: create with `neomind agent create` using --schedule-type event and an --event-filter naming sensor-001"
+    ],
+    "overall": "Agent exists with schedule_type event and an event filter referencing sensor-001"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind agent create"
+    ],
+    "substrings": {
+      "neomind agent create": [
+        "--schedule-type",
+        "event",
+        "--event-filter",
+        "sensor-001"
+      ]
+    }
+  },
+  "state_queries": [
+    {
+      "type": "agent_exists",
+      "params": {
+        "name": "battery-watcher"
+      },
+      "expected": true
+    },
+    {
+      "type": "agent_config",
+      "params": {
+        "name": "battery-watcher",
+        "field": "schedule_type"
+      },
+      "expected": "event"
+    }
+  ]
+}

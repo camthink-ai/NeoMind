@@ -23,5 +23,23 @@
       "Turn 1: Install an extension from the market (covers `neomind extension market-install`)"
     ],
     "overall": "Install an extension from the market (covers `neomind extension market-install`)"
-  }
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind extension market-install"
+    ]
+  },
+  "state_queries": [
+    {
+      "type": "extension_installed",
+      "params": {
+        "name": "ocr"
+      },
+      "expected": true
+    }
+  ],
+  "requires_network": true
 }

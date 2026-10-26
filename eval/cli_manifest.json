@@ -1,0 +1,937 @@
+{
+ "_meta": {
+  "note": "regenerate with check_cli_drift.py --regen after CLI changes"
+ },
+ "domains": {
+  "agent": {
+   "clear-memory": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "control": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "conversation": [
+    "--format",
+    "--help",
+    "--limit",
+    "--verbose"
+   ],
+   "create": [
+    "--commands",
+    "--context-window-size",
+    "--description",
+    "--device-ids",
+    "--event-filter",
+    "--every",
+    "--execution-mode",
+    "--format",
+    "--help",
+    "--llm-backend",
+    "--max-chain-depth",
+    "--memory-mode",
+    "--metrics",
+    "--name",
+    "--notify",
+    "--output-schema",
+    "--priority",
+    "--prompt",
+    "--resources",
+    "--schedule-config",
+    "--schedule-type",
+    "--system-prompt",
+    "--timezone",
+    "--verbose"
+   ],
+   "delete": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "executions": [
+    "--format",
+    "--help",
+    "--limit",
+    "--offset",
+    "--verbose"
+   ],
+   "get": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "help": [],
+   "invoke": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "latest-execution": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "list": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "memory": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "send-message": [
+    "--format",
+    "--help",
+    "--message-type",
+    "--verbose"
+   ],
+   "update": [
+    "--commands",
+    "--context-window-size",
+    "--description",
+    "--device-ids",
+    "--execution-mode",
+    "--format",
+    "--help",
+    "--llm-backend",
+    "--max-chain-depth",
+    "--memory-mode",
+    "--metrics",
+    "--name",
+    "--notify",
+    "--output-schema",
+    "--priority",
+    "--prompt",
+    "--resources",
+    "--schedule-config",
+    "--schedule-type",
+    "--system-prompt",
+    "--verbose"
+   ]
+  },
+  "api-key": {
+   "create": [
+    "--data-dir",
+    "--format",
+    "--help",
+    "--name",
+    "--verbose"
+   ],
+   "delete": [
+    "--data-dir",
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "help": [],
+   "list": [
+    "--data-dir",
+    "--format",
+    "--help",
+    "--verbose"
+   ]
+  },
+  "chat": {},
+  "check-update": {},
+  "config": {
+   "export": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "help": [],
+   "import": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "validate": [
+    "--format",
+    "--help",
+    "--verbose"
+   ]
+  },
+  "connector": {
+   "create": [
+    "--connector-type",
+    "--format",
+    "--help",
+    "--host",
+    "--name",
+    "--password",
+    "--port",
+    "--tls",
+    "--topics",
+    "--type",
+    "--username",
+    "--verbose"
+   ],
+   "delete": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "disable": [
+    "--disable",
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "enable": [
+    "--disable",
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "get": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "help": [],
+   "list": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "subscribe": [
+    "--format",
+    "--help",
+    "--qos",
+    "--topic",
+    "--verbose"
+   ],
+   "subscriptions": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "test": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "unsubscribe": [
+    "--format",
+    "--help",
+    "--topic",
+    "--verbose"
+   ],
+   "update": [
+    "--disable",
+    "--format",
+    "--help",
+    "--host",
+    "--name",
+    "--password",
+    "--port",
+    "--tls",
+    "--topics",
+    "--username",
+    "--verbose"
+   ]
+  },
+  "dashboard": {
+   "add-components": [
+    "--components",
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "create": [
+    "--components",
+    "--description",
+    "--format",
+    "--help",
+    "--layout",
+    "--name",
+    "--verbose"
+   ],
+   "delete": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "get": [
+    "--components",
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "help": [],
+   "list": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "remove-components": [
+    "--format",
+    "--help",
+    "--ids",
+    "--verbose"
+   ],
+   "share": [
+    "--expires",
+    "--format",
+    "--help",
+    "--public",
+    "--verbose"
+   ],
+   "update": [
+    "--components",
+    "--description",
+    "--format",
+    "--help",
+    "--layout",
+    "--name",
+    "--replace-all",
+    "--verbose"
+   ],
+   "update-component": [
+    "--component-id",
+    "--format",
+    "--help",
+    "--set",
+    "--verbose"
+   ]
+  },
+  "data": {
+   "help": [],
+   "list": [
+    "--format",
+    "--help",
+    "--source-type",
+    "--verbose"
+   ]
+  },
+  "device": {
+   "control": [
+    "--format",
+    "--help",
+    "--param",
+    "--params",
+    "--verbose"
+   ],
+   "create": [
+    "--adapter-type",
+    "--config",
+    "--device-type",
+    "--format",
+    "--help",
+    "--id",
+    "--name",
+    "--verbose"
+   ],
+   "delete": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "drafts": [
+    "--format",
+    "--help",
+    "--name",
+    "--type",
+    "--verbose"
+   ],
+   "get": [
+    "--format",
+    "--help",
+    "--metric",
+    "--verbose"
+   ],
+   "help": [],
+   "history": [
+    "--compress",
+    "--format",
+    "--help",
+    "--limit",
+    "--metric",
+    "--time-range",
+    "--verbose"
+   ],
+   "list": [
+    "--device-type",
+    "--format",
+    "--help",
+    "--status",
+    "--verbose"
+   ],
+   "types": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "update": [
+    "--config",
+    "--format",
+    "--help",
+    "--name",
+    "--verbose"
+   ],
+   "webhook-url": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "write-metric": [
+    "--format",
+    "--help",
+    "--metric",
+    "--timestamp",
+    "--value",
+    "--verbose"
+   ]
+  },
+  "extension": {
+   "build": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "config": [
+    "--format",
+    "--help",
+    "--set",
+    "--verbose"
+   ],
+   "create": [
+    "--extension-type",
+    "--format",
+    "--help",
+    "--output",
+    "--verbose"
+   ],
+   "get": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "help": [],
+   "install": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "list": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "logs": [
+    "--format",
+    "--help",
+    "--lines",
+    "--verbose"
+   ],
+   "market-install": [
+    "--format",
+    "--help",
+    "--verbose",
+    "--version"
+   ],
+   "market-list": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "reload": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "status": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "uninstall": [
+    "--format",
+    "--help",
+    "--verbose",
+    "--yes"
+   ],
+   "validate": [
+    "--format",
+    "--help",
+    "--verbose"
+   ]
+  },
+  "health": {},
+  "help": {},
+  "list-models": {},
+  "llm": {
+   "activate": [
+    "--format",
+    "--help",
+    "--llm-backend",
+    "--verbose"
+   ],
+   "create": [
+    "--api-key",
+    "--endpoint",
+    "--format",
+    "--help",
+    "--model",
+    "--name",
+    "--temperature",
+    "--type",
+    "--verbose"
+   ],
+   "delete": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "get": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "help": [],
+   "list": [
+    "--format",
+    "--help",
+    "--llm-backend",
+    "--verbose"
+   ],
+   "models": [
+    "--endpoint",
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "test": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "update": [
+    "--api-key",
+    "--endpoint",
+    "--format",
+    "--help",
+    "--model",
+    "--name",
+    "--temperature",
+    "--verbose"
+   ]
+  },
+  "login": {},
+  "logout": {},
+  "logs": {},
+  "message": {
+   "channel-create": [
+    "--channel-type",
+    "--config",
+    "--enabled",
+    "--format",
+    "--help",
+    "--name",
+    "--param",
+    "--type",
+    "--verbose"
+   ],
+   "channel-delete": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "channel-get": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "channel-list": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "channel-test": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "channel-type-schema": [
+    "--config",
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "channel-types": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "channel-update": [
+    "--config",
+    "--format",
+    "--help",
+    "--name",
+    "--verbose"
+   ],
+   "delete": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "get": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "help": [],
+   "list": [
+    "--format",
+    "--help",
+    "--limit",
+    "--offset",
+    "--severity",
+    "--status",
+    "--verbose"
+   ],
+   "read": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "send": [
+    "--body",
+    "--format",
+    "--help",
+    "--severity",
+    "--source",
+    "--title",
+    "--verbose"
+   ]
+  },
+  "prompt": {},
+  "push": {
+   "create": [
+    "--config",
+    "--format",
+    "--help",
+    "--name",
+    "--schedule",
+    "--sources",
+    "--type",
+    "--verbose"
+   ],
+   "delete": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "disable": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "enable": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "get": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "help": [],
+   "list": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "logs": [
+    "--format",
+    "--help",
+    "--limit",
+    "--verbose"
+   ],
+   "stats": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "test": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "update": [
+    "--config",
+    "--enabled",
+    "--format",
+    "--help",
+    "--name",
+    "--only-changes",
+    "--schedule",
+    "--sources",
+    "--template",
+    "--verbose"
+   ]
+  },
+  "rule": {
+   "create": [
+    "--body",
+    "--cooldown",
+    "--format",
+    "--help",
+    "--metric",
+    "--name",
+    "--notify",
+    "--operator",
+    "--severity",
+    "--source",
+    "--threshold",
+    "--trigger-device",
+    "--verbose"
+   ],
+   "delete": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "disable": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "enable": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "get": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "help": [],
+   "history": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "list": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "test": [
+    "--format",
+    "--help",
+    "--input",
+    "--verbose"
+   ],
+   "update": [
+    "--body",
+    "--format",
+    "--help",
+    "--id",
+    "--input",
+    "--verbose"
+   ]
+  },
+  "serve": {},
+  "settings": {
+   "cleanup": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "help": [],
+   "retention": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "set-retention": [
+    "--default-retention",
+    "--enabled",
+    "--format",
+    "--help",
+    "--image-retention",
+    "--interval-hours",
+    "--verbose"
+   ],
+   "set-timezone": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "timezone": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "timezones": [
+    "--format",
+    "--help",
+    "--verbose"
+   ]
+  },
+  "system": {
+   "help": [],
+   "info": [
+    "--format",
+    "--help",
+    "--verbose"
+   ]
+  },
+  "transform": {
+   "create": [
+    "--code",
+    "--description",
+    "--enabled",
+    "--format",
+    "--help",
+    "--name",
+    "--output-prefix",
+    "--scope",
+    "--verbose"
+   ],
+   "data-sources": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "delete": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "disable": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "enable": [
+    "--enabled",
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "executions": [
+    "--format",
+    "--help",
+    "--limit",
+    "--verbose"
+   ],
+   "get": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "help": [],
+   "list": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "metrics": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "test-code": [
+    "--code",
+    "--format",
+    "--help",
+    "--input",
+    "--name",
+    "--scope",
+    "--verbose"
+   ],
+   "update": [
+    "--code",
+    "--description",
+    "--enabled",
+    "--format",
+    "--help",
+    "--name",
+    "--output-prefix",
+    "--scope",
+    "--verbose"
+   ]
+  },
+  "uninstall": {},
+  "upgrade": {},
+  "user": {
+   "help": [],
+   "list": [
+    "--data-dir",
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "reset-password": [
+    "--data-dir",
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "set-role": [
+    "--data-dir",
+    "--format",
+    "--help",
+    "--verbose"
+   ]
+  },
+  "whoami": {},
+  "widget": {
+   "bundle": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "create": [
+    "--format",
+    "--help",
+    "--install",
+    "--output",
+    "--verbose",
+    "--widget-type"
+   ],
+   "get": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "help": [],
+   "install": [
+    "--format",
+    "--help",
+    "--install",
+    "--verbose"
+   ],
+   "list": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "market-install": [
+    "--format",
+    "--help",
+    "--verbose",
+    "--version"
+   ],
+   "market-list": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "uninstall": [
+    "--format",
+    "--help",
+    "--verbose"
+   ]
+  }
+ }
+}

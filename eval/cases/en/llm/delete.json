@@ -6,7 +6,18 @@
   "scenario_type": "single_turn",
   "description": "Delete an LLM backend (covers `neomind llm delete`)",
   "setup": {
-    "fixture": "seed-default"
+    "fixture": "seed-default",
+    "extras": {
+      "llm_backends": [
+        {
+          "name": "old-backend",
+          "backend_type": "openai",
+          "endpoint": "http://127.0.0.1:9",
+          "model": "dummy-model",
+          "api_key": "sk-dummy"
+        }
+      ]
+    }
   },
   "turns": [
     {
@@ -23,5 +34,22 @@
       "Turn 1: Delete an LLM backend (covers `neomind llm delete`)"
     ],
     "overall": "Delete an LLM backend (covers `neomind llm delete`)"
-  }
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind llm delete"
+    ]
+  },
+  "state_queries": [
+    {
+      "type": "llm_backend_exists",
+      "params": {
+        "name": "old-backend"
+      },
+      "expected": false
+    }
+  ]
 }

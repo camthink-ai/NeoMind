@@ -31,6 +31,14 @@
         "name": "agri-irrigate-north"
       },
       "expected": true
+    },
+    {
+      "type": "rule_references_source",
+      "params": {
+        "name": "agri-irrigate-north",
+        "source": "device:north-field-probe-01:soil_moisture_pct"
+      },
+      "expected": true
     }
   ],
   "expect": {

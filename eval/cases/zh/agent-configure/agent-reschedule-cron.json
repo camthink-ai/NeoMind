@@ -1,0 +1,72 @@
+{
+  "id": "agent-reschedule-cron",
+  "lang": "zh",
+  "category": "agent",
+  "workflow": "agent-configure",
+  "scenario_type": "single_turn",
+  "description": "Migrate an interval agent to a cron schedule via `neomind agent update`.",
+  "setup": {
+    "fixture": "seed-default",
+    "extras": {
+      "agents": [
+        {
+          "name": "night-patrol",
+          "user_prompt": "Patrol all devices",
+          "schedule": {
+            "schedule_type": "interval",
+            "interval_seconds": 300
+          }
+        }
+      ]
+    }
+  },
+  "turns": [
+    {
+      "user": "别再每 5 分钟跑一次 night-patrol 了——改成每天早上 6 点(UTC)执行。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: `neomind agent update` 改为 schedule-type cron,表达式 0 6 * * *,时区 UTC"
+    ],
+    "overall": "night-patrol stored with cron 0 6 * * * / UTC"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind agent update"
+    ],
+    "substrings": {
+      "neomind agent update": [
+        "--schedule-type",
+        "cron",
+        "--schedule-config"
+      ]
+    }
+  },
+  "state_queries": [
+    {
+      "type": "agent_config",
+      "params": {
+        "name": "night-patrol",
+        "field": "schedule_type"
+      },
+      "expected": "cron"
+    },
+    {
+      "type": "agent_config",
+      "params": {
+        "name": "night-patrol",
+        "field": "cron_expression"
+      },
+      "expected": "0 6 * * *"
+    }
+  ]
+}

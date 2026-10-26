@@ -48,6 +48,7 @@ import report  # noqa: E402
 import seed  # noqa: E402
 import server  # noqa: E402
 import simulator  # noqa: E402
+import stats  # noqa: E402
 import state_query  # noqa: E402
 import validate  # noqa: E402
 
@@ -507,6 +508,24 @@ def _filter_multimodal(cases: list[Path], skip: bool) -> list[Path]:
     return kept
 
 
+def _filter_network(cases: list[Path]) -> list[Path]:
+    """Drop `requires_network` cases when NEOMIND_EVAL_OFFLINE=1.
+
+    Seven gate cases reach the outside world (marketplace = raw.githubuser-
+    content.com, httpbin URLs). Offline they fail for connectivity reasons
+    and report MODEL failures that aren't — the eval would be lying. Tagged
+    cases declare the dependency; offline runs exclude them and say so.
+    """
+    if os.environ.get("NEOMIND_EVAL_OFFLINE", "").lower() not in ("1", "true", "yes"):
+        return cases
+    kept = [p for p in cases if not _load_case(p).get("requires_network")]
+    dropped = [ _load_case(p).get("id") for p in cases if _load_case(p).get("requires_network")]
+    if dropped:
+        print(f"  (offline mode: excluded {len(dropped)} requires_network case(s): "
+              f"{sorted(set(dropped))})", file=sys.stderr)
+    return kept
+
+
 def _resume_cases(cases: list[Path], done_keys: set) -> list[Path]:
     """Filter out cases already recorded in a resume run dir.
 
@@ -815,8 +834,8 @@ def _run_case_timeout(p: Path, cap: int):
 def cmd_regression(args):
     """Fast prompt/agent regression gate on a curated case set.
 
-    Runs the regression set (default eval/regression_set.txt, ~30 stable cases
-    stratified across domains + pass/fail), compares each case's verdict to a
+    Runs the regression set (default eval/regression_set.txt, 50 cases
+    stratified across domains + multi-turn + prompt-injection + pass/fail), compares each case's verdict to a
     committed baseline, and flags PASS->FAIL regressions. Designed to catch
     prompt/agent-change regressions in ~12min (1 round) or ~25min (2 rounds,
     robust against the ~7pp run-to-run noise floor).
@@ -837,7 +856,7 @@ def cmd_regression(args):
         return 2
     case_ids = [l.strip() for l in set_path.read_text().splitlines() if l.strip()]
     rounds = max(1, args.rounds)
-    baseline_path = Path(args.baseline)
+    baseline_path = Path(args.baseline) if args.baseline else None
 
     run_dir = Path(args.run_dir or f"eval/runs/regression-{time.strftime('%Y%m%d-%H%M%S')}")
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -847,6 +866,10 @@ def cmd_regression(args):
         return 1
     scores_path = run_dir / "scores.jsonl"
 
+    if args.update_baseline and not baseline_path:
+        print("--update-baseline needs --baseline <path>", file=sys.stderr)
+        return 2
+
     # Per-case wall-clock cap. A wedged agent (e.g. stuck in a thinking loop
     # after its own 300s timeout fires — the stream-hang-fix class) would
     # otherwise hang the whole gate forever. run_case's `finally: srv.shutdown()`
@@ -854,7 +877,11 @@ def cmd_regression(args):
     cap = max(30, int(args.case_timeout))
     old_handler = signal.signal(signal.SIGALRM, _on_alarm)
     timed_out: list[str] = []
+    # key = "<case_id>[<lang>]": with --lang both every case runs its en AND
+    # zh variant (previously only paths[0] — always en — ran, so "both" was
+    # silently "en" and zh/en spread never entered model rankings).
     results: dict[str, list] = {}
+    results_prod: dict[str, list] = {}
     try:
         with scores_path.open("w") as sf:
             for cid in case_ids:
@@ -863,44 +890,124 @@ def cmd_regression(args):
                 if not paths:
                     print(f"  {cid}: NOT FOUND in {root}", file=sys.stderr)
                     continue
-                case = _load_case(paths[0])
-                vds = []
-                for ridx in range(rounds):
-                    signal.alarm(cap)
-                    try:
-                        rec = run_case(str(paths[0]))
-                    except _CaseTimeout:
-                        # Server already killed by run_case's finally. Record a
-                        # timeout so the case counts as agent_failed (verdict None
-                        # → noisy bucket, reported separately in the summary).
-                        rec = _error_record(
-                            case, "timeout",
-                            f"exceeded {cap}s wall-clock — agent likely wedged")
-                        if cid not in timed_out:
-                            timed_out.append(cid)
-                    finally:
-                        signal.alarm(0)
-                    hard = hard_signal.compute(case, rec)
-                    sf.write(json.dumps({"case_id": cid, "lang": case.get("lang"),
-                                         "hard": hard,
-                                         "guards": rec.get("guards") or {},
-                                         "round": ridx}, ensure_ascii=False) + "\n")
-                    sf.flush()
-                    vds.append(hard_signal.pass_for_case(hard))
-                results[cid] = vds
-                tag = ("PASS" if all(v is True for v in vds)
-                       else "FAIL" if all(v is False for v in vds) else "SPLIT")
-                print(f"  {cid:36s} {tag:5s} rounds={vds}", file=sys.stderr)
+                paths = _filter_network(paths)
+                for case_path in paths:
+                    case = _load_case(case_path)
+                    lang = case.get("lang") or "en"
+                    key = f"{cid}[{lang}]"
+                    vds = []
+                    vds_prod = []
+                    for ridx in range(rounds):
+                        signal.alarm(cap)
+                        try:
+                            rec = run_case(str(case_path))
+                        except _CaseTimeout:
+                            # Server already killed by run_case's finally. Record
+                            # a timeout: product view counts it as a fail, the
+                            # diagnostic view excludes it (both printed below).
+                            rec = _error_record(
+                                case, "timeout",
+                                f"exceeded {cap}s wall-clock — agent likely wedged")
+                            if key not in timed_out:
+                                timed_out.append(key)
+                        finally:
+                            signal.alarm(0)
+                        hard = hard_signal.compute(case, rec)
+                        latency_ms = sum(
+                            (t.get("processing_time_ms") or 0)
+                            for t in (rec.get("turn_records") or []))
+                        sf.write(json.dumps({"case_id": cid, "lang": lang,
+                                             "hard": hard,
+                                             "guards": rec.get("guards") or {},
+                                             "latency_ms": latency_ms,
+                                             "round": ridx}, ensure_ascii=False) + "\n")
+                        sf.flush()
+                        vds.append(hard_signal.pass_for_case(hard))
+                        vds_prod.append(hard_signal.pass_for_case_product(hard))
+                    results[key] = vds
+                    results_prod[key] = vds_prod
+                    tag = ("PASS" if all(v is True for v in vds)
+                           else "FAIL" if all(v is False for v in vds) else "SPLIT")
+                    print(f"  {key:44s} {tag:5s} rounds={vds}", file=sys.stderr)
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, old_handler)
 
     if args.update_baseline:
         baseline_path.parent.mkdir(parents=True, exist_ok=True)
-        # Strip the per-round field + keep one record per (case_id, round) — baseline
-        # is just the scores.jsonl; aggregate compares verdicts recomputed from hard.
+        # Baseline is just the scores.jsonl; aggregate compares verdicts
+        # recomputed from hard on both sides — same rule.
         baseline_path.write_text(scores_path.read_text())
-        print(f"\nbaseline written: {baseline_path} ({len(results)} cases, {rounds} round(s))")
+        print(f"\nbaseline written: {baseline_path} "
+              f"({len(results)} case-variants, {rounds} round(s))")
+        return 0
+
+    # ---- rates: product + diagnostic views, per language ----
+    def _lang_of(key: str) -> str:
+        return key.rsplit("[", 1)[-1].rstrip("]") if "[" in key else "?"
+
+    def rates_for(rmap: dict[str, list]) -> list[str]:
+        """Per-language `p/t = pct` strings for a per-round verdict map."""
+        agg: dict[str, list] = {}
+        for key, vds in rmap.items():
+            agg.setdefault(_lang_of(key), []).extend(vds)
+        out = []
+        for lang in sorted(agg):
+            vs = [v for v in agg[lang] if v is not None]
+            if not vs:
+                continue
+            p = sum(1 for v in vs if v is True)
+            out.append(f"{lang} {p}/{len(vs)} = {p/len(vs):.1%}")
+        return out
+
+    print(f"\n=== Regression gate: {len(results)} case-variants × {rounds} round(s) ===")
+    print("  pass rate [product, timeouts=fail]:      " + "  |  ".join(rates_for(results_prod)))
+    print("  pass rate [diagnostic, timeouts excl.]:  " + "  |  ".join(rates_for(results)))
+
+    # Wall-clock per variant — the axis the score never shows. A 2B at 120 t/s
+    # and a 35B at 50 t/s can tie on verdicts and feel nothing alike; ranking
+    # without this column is how "same tier" models get mis-sold on speed.
+    lats: list[tuple[str, int]] = []
+    try:
+        for l in scores_path.read_text().splitlines():
+            if not l.strip():
+                continue
+            r = json.loads(l)
+            lm = r.get("latency_ms")
+            if isinstance(lm, (int, float)) and lm >= 0:
+                lats.append((f"{r['case_id']}[{r.get('lang','en')}]", int(lm)))
+        if lats:
+            vals = sorted(v for _, v in lats)
+            med = vals[len(vals)//2] / 1000
+            slow = sorted(((v/1000, k) for k, v in lats), reverse=True)[:3]
+            slow_s = ", ".join(f"{k} {t:.0f}s" for t, k in slow)
+            print(f"  latency: median {med:.0f}s/variant | slowest: {slow_s}")
+    except FileNotFoundError:
+        pass
+
+    if timed_out:
+        print(f"  timed out (agent wedged):    {len(timed_out):2d}  {timed_out}")
+
+    # Statistical power, printed next to the verdict. A gate run is a sample:
+    # at 100 verdicts a 75% pass rate carries a ±8.5pp interval, so a 3-5pp
+    # "ranking" between models is not a ranking at all.
+    all_vds = [v for vds in results.values() for v in vds if v is not None]
+    if all_vds:
+        passes = sum(1 for v in all_vds if v is True)
+        total = len(all_vds)
+        lo, hi = stats.wilson_interval(passes, total)
+        half = stats.resolution_pp(passes, total)
+        p = passes / total
+        need = stats.rounds_for(p, 5.0)
+        print(f"  pass rate: {passes}/{total} = {p:.1%} "
+              f"(95% CI {lo:.1%}–{hi:.1%}, ±{half:.1f}pp)")
+        print(f"  resolution: gaps under ~{2 * half:.1f}pp are within this run's noise; "
+              f"±5pp needs ~{need} rounds")
+
+    if not baseline_path:
+        print("\n(model-eval mode — no --baseline given. Pass one for same-model "
+              "regression comparison; comparing against ANOTHER model's baseline "
+              "produces meaningless improvements/regressions.)")
         return 0
 
     # Compare to baseline (recompute verdicts from hard on both sides — same rule).
@@ -915,32 +1022,32 @@ def cmd_regression(args):
             continue
         r = json.loads(l)
         # If multiple rounds in baseline, take robust (all agree) verdict.
-        cid = r["case_id"]; v = hard_signal.pass_for_case(r.get("hard", {}))
-        if cid in base_verdict:
+        key = f"{r['case_id']}[{r.get('lang', 'en')}]"
+        v = hard_signal.pass_for_case(r.get("hard", {}))
+        if key in base_verdict:
             # multi-round baseline: demote to None if rounds disagree
-            if base_verdict[cid] != v:
-                base_verdict[cid] = None
+            if base_verdict[key] != v:
+                base_verdict[key] = None
         else:
-            base_verdict[cid] = v
+            base_verdict[key] = v
 
     flips, regressions, noisy = [], [], []
-    for cid, vds in results.items():
+    for key, vds in results.items():
         robust = (True if all(v is True for v in vds)
                   else False if all(v is False for v in vds) else None)
-        bv = base_verdict.get(cid)
+        bv = base_verdict.get(key)
         if bv is True and robust is False:
-            regressions.append(cid)
+            regressions.append(key)
         elif bv is False and robust is True:
-            flips.append(cid)
+            flips.append(key)
         elif robust is None:
-            noisy.append(cid)
+            noisy.append(key)
 
-    print(f"\n=== Regression gate: {len(results)} cases × {rounds} round(s) vs {baseline_path.name} ===")
+    print(f"\n  vs baseline {baseline_path.name} (same model expected):")
     print(f"  FAIL->PASS (improvements):   {len(flips):2d}  {flips}")
     print(f"  PASS->FAIL (REGRESSIONS):    {len(regressions):2d}  {regressions}")
     print(f"  noisy (split across rounds): {len(noisy):2d}  {noisy}")
-    if timed_out:
-        print(f"  timed out (agent wedged):    {len(timed_out):2d}  {timed_out}")
+
     if rounds < 2 and (regressions or flips):
         print("  (single-round — rerun with --rounds 2 to confirm signal isn't noise)",
               file=sys.stderr)
@@ -1043,14 +1150,22 @@ def main():
     p.set_defaults(func=cmd_compare)
 
     p = sub.add_parser("regression",
-                       help="fast prompt/agent regression gate on a curated case set")
+                       help="agent gate: pass rate + optional baseline comparison")
     p.add_argument("--root", default="eval/cases")
-    p.add_argument("--lang", choices=["zh", "en", "both"], default="en")
+    p.add_argument("--lang", choices=["zh", "en", "both"], default="both",
+                   help="both = run the en AND zh variant of every case and report "
+                        "per-language rates (the product is bilingual; en-only "
+                        "comparisons hid up to 9pp zh/en spread)")
     p.add_argument("--regression-set", default=None,
                    help="case_id list (default eval/regression_set.txt)")
-    p.add_argument("--baseline", default="eval/baselines/regression-qwen35-4b.jsonl")
-    p.add_argument("--rounds", type=int, default=1,
-                   help="runs per case: 1=fast (~12min), 2=robust (~25min, beats noise floor)")
+    p.add_argument("--baseline", default=None,
+                   help="baseline scores.jsonl for SAME-model regression comparison. "
+                        "No default: without it the run is a model-eval (rates + CI "
+                        "only, no improvements/regressions — those only make sense "
+                        "against the same model's own reference)")
+    p.add_argument("--rounds", type=int, default=2,
+                   help="runs per case: 2=robust (default; beats the ~7pp single-round "
+                        "noise floor), 1=fast smoke only")
     p.add_argument("--case-timeout", type=int, default=600,
                    help="per-case wall-clock cap in seconds (default 600); a wedged agent "
                         "is killed and marked timed-out instead of hanging the gate")

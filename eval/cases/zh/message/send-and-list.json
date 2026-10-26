@@ -5,11 +5,20 @@
   "workflow": "message-management",
   "scenario_type": "single_turn",
   "description": "通过 agent 发送一条告警消息（覆盖 POST /api/messages 路径，对称 create-channel）",
-  "setup": { "fixture": "seed-empty" },
+  "setup": {
+    "fixture": "seed-empty"
+  },
   "turns": [
-    { "user": "帮我发一条 warning 级别的告警消息，标题 'Manual test'，内容 '验证消息下发链路'，分类用 alert" }
+    {
+      "user": "帮我发一条 warning 级别的告警消息，标题 'Manual test'，内容 '验证消息下发链路'，分类用 alert"
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "response_quality", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "response_quality",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent 调用 `neomind message send`（或 POST /api/messages），severity=warning, category=alert"
@@ -17,6 +26,17 @@
     "overall": "消息应进入消息中心；不应只回复文本而不下发"
   },
   "state_queries": [
-    { "type": "message_count", "expected_min": 1 }
-  ]
+    {
+      "type": "message_count",
+      "expected_min": 1
+    }
+  ],
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind message send"
+    ]
+  }
 }

@@ -5,13 +5,26 @@
   "workflow": "dashboard-management",
   "scenario_type": "multi_turn",
   "description": "多轮：创建仪表盘 → 添加组件 → 移除组件（覆盖 `neomind dashboard add-components` + `remove-components`，用户高频场景，此前未覆盖）",
-  "setup": { "fixture": "seed-empty" },
+  "setup": {
+    "fixture": "seed-empty"
+  },
   "turns": [
-    { "user": "新建一个空仪表盘，名字 Demo Board。" },
-    { "user": "给它添加一个文本标题组件，内容 'Hello World'。" },
-    { "user": "把这个标题组件移除掉。" }
+    {
+      "user": "新建一个空仪表盘，名字 Demo Board。"
+    },
+    {
+      "user": "给它添加一个文本标题组件，内容 'Hello World'。"
+    },
+    {
+      "user": "把这个标题组件移除掉。"
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "context_retention", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "context_retention",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent 调用 `neomind dashboard create --name 'Demo Board'`，解析 id",
@@ -19,5 +32,31 @@
       "Turn 3: Agent 调用 `neomind dashboard remove-components <id> --components '[<component_id>]'`（或 DELETE 等价 API），引用上一轮添加的组件 id"
     ],
     "overall": "Turn 3 必须复用 Turn 2 解析出的组件 id"
-  }
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind dashboard add-components",
+      "neomind dashboard create",
+      "neomind dashboard remove-components"
+    ]
+  },
+  "state_queries": [
+    {
+      "type": "dashboard_exists",
+      "params": {
+        "name": "Demo Board"
+      },
+      "expected": true
+    },
+    {
+      "type": "dashboard_component_count",
+      "params": {
+        "name": "Demo Board"
+      },
+      "expected_min": 1
+    }
+  ]
 }

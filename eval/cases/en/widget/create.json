@@ -5,15 +5,31 @@
   "workflow": "widget-management",
   "scenario_type": "single_turn",
   "description": "Scaffold a new custom widget via CLI (covers `neomind widget create`; previously only list was covered).",
-  "setup": { "fixture": "seed-empty" },
+  "setup": {
+    "fixture": "seed-empty"
+  },
   "turns": [
-    { "user": "Scaffold a new custom widget named Custom Gauge, type gauge, output to /tmp/eval-widget." }
+    {
+      "user": "Scaffold a new custom widget named Custom Gauge, type gauge, output to /tmp/eval-widget."
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent runs `neomind widget create 'Custom Gauge' --widget-type gauge --output /tmp/eval-widget`, and confirms manifest.json + bundle.js generation"
     ],
     "overall": "Must actually execute create, not just restate"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind widget create"
+    ]
   }
 }

@@ -1,0 +1,64 @@
+{
+  "id": "agent-manual-invoke",
+  "lang": "zh",
+  "category": "agent",
+  "workflow": "agent-configure",
+  "scenario_type": "multi_turn",
+  "description": "Manual (on-demand) agent created then run via `neomind agent invoke` — the never-auto-scheduled schedule type.",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "创建一个按需运行的 agent,名为「临检」,提示词「总结当前设备健康状态」。绝不能按时间表自动跑,只在我要求时运行。"
+    },
+    {
+      "user": "现在就运行它,问一句「sensor-001 有没有异常?」,把结论告诉我。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "context_retention",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: 用 --schedule-type manual 创建(不带 interval/cron)",
+      "T2: 用 `neomind agent invoke` 带着问题运行"
+    ],
+    "overall": "Manual agent exists and has at least one execution recorded"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind agent create",
+      "neomind agent invoke"
+    ],
+    "substrings": {
+      "neomind agent create": [
+        "--schedule-type",
+        "manual"
+      ]
+    }
+  },
+  "state_queries": [
+    {
+      "type": "agent_config",
+      "params": {
+        "name": "临检",
+        "field": "schedule_type"
+      },
+      "expected": "manual"
+    },
+    {
+      "type": "agent_execution_count",
+      "params": {
+        "name": "临检"
+      },
+      "expected_min": 1
+    }
+  ]
+}

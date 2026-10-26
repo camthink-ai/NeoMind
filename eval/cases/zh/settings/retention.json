@@ -5,13 +5,26 @@
   "workflow": "settings-management",
   "scenario_type": "multi_turn",
   "description": "多轮：查看数据留存策略 → 更新 → 立即触发一次清理（覆盖 `neomind settings retention` + `set-retention` + `cleanup`，此前 0 覆盖）",
-  "setup": { "fixture": "seed-empty" },
+  "setup": {
+    "fixture": "seed-empty"
+  },
   "turns": [
-    { "user": "现在遥测数据的留存策略是什么？" },
-    { "user": "把留存清理启用，每 1 小时跑一次，默认保留 168 小时。" },
-    { "user": "现在立刻手动触发一次清理。" }
+    {
+      "user": "现在遥测数据的留存策略是什么？"
+    },
+    {
+      "user": "把留存清理启用，每 1 小时跑一次，默认保留 168 小时。"
+    },
+    {
+      "user": "现在立刻手动触发一次清理。"
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "context_retention", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "context_retention",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent 调用 `neomind settings retention`（或 GET /api/settings/retention）",
@@ -19,5 +32,22 @@
       "Turn 3: Agent 调用 `neomind settings cleanup`"
     ],
     "overall": "Turn 2/3 必须实际执行写动作"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind settings retention",
+      "neomind settings set-retention",
+      "neomind settings cleanup"
+    ],
+    "substrings": {
+      "neomind settings set-retention": [
+        "--interval-hours",
+        "--default-retention",
+        "168"
+      ]
+    }
   }
 }

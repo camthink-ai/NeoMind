@@ -35,6 +35,14 @@
         "name": "ctx-correct-rule"
       },
       "expected": true
+    },
+    {
+      "type": "rule_references_source",
+      "params": {
+        "name": "ctx-correct-rule",
+        "source": "device:sensor-002:values.battery"
+      },
+      "expected": true
     }
   ],
   "expect": {

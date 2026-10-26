@@ -1,0 +1,45 @@
+{
+  "id": "agent-focused-default",
+  "lang": "en",
+  "category": "agent",
+  "workflow": "agent-configure",
+  "scenario_type": "single_turn",
+  "description": "Focused (default) execution mode — single-pass analysis agent (covers `neomind agent create` without free mode).",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Create an agent named 'battery-analyst' with prompt 'Analyze sensor-001 battery level' that runs every 10 minutes in focused single-pass mode."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: create with `neomind agent create`; execution mode focused (explicitly or by default)"
+    ],
+    "overall": "Agent stored with execution_mode focused"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind agent create"
+    ]
+  },
+  "state_queries": [
+    {
+      "type": "agent_config",
+      "params": {
+        "name": "battery-analyst",
+        "field": "execution_mode"
+      },
+      "expected": "focused"
+    }
+  ]
+}

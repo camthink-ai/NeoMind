@@ -25,7 +25,12 @@
     "overall": "Answer is grounded in the actual extension list; no fabricated OCR commands; the marketplace path or a clear install question follows"
   },
   "expect": {
-    "tools": ["shell"],
-    "commands": ["neomind extension list"]
-  }
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind extension list"
+    ]
+  },
+  "requires_network": true
 }
