@@ -1366,7 +1366,7 @@ pub async fn run_api_key_cmd(key_cmd: ApiKeyCommand) -> Result<(CliResponse, Out
     let resp = match key_cmd {
         ApiKeyCommand::Create { name, .. } => {
             let out = client
-                .post("/api/auth/keys", &serde_json::json!({ "name": name }))
+                .post("/auth/keys", &serde_json::json!({ "name": name }))
                 .await?;
             CliResponse::success(
                 serde_json::json!({
@@ -1378,14 +1378,14 @@ pub async fn run_api_key_cmd(key_cmd: ApiKeyCommand) -> Result<(CliResponse, Out
             )
         }
         ApiKeyCommand::List { .. } => {
-            let out = client.get("/api/auth/keys").await?;
+            let out = client.get("/auth/keys").await?;
             CliResponse::success(
                 out.get("keys").cloned().unwrap_or_default(),
                 "API keys listed".to_string(),
             )
         }
         ApiKeyCommand::Delete { name, .. } => {
-            let out = client.get("/api/auth/keys").await?;
+            let out = client.get("/auth/keys").await?;
             let matches: Vec<&serde_json::Value> = out
                 .get("keys")
                 .and_then(|k| k.as_array())
@@ -1403,7 +1403,7 @@ pub async fn run_api_key_cmd(key_cmd: ApiKeyCommand) -> Result<(CliResponse, Out
                 ),
                 [first, rest @ ..] => {
                     let id = first.get("id").and_then(|i| i.as_str()).unwrap_or_default();
-                    client.delete(&format!("/api/auth/keys/{id}")).await?;
+                    client.delete(&format!("/auth/keys/{id}")).await?;
                     let note = if rest.is_empty() {
                         String::new()
                     } else {

@@ -25,17 +25,36 @@ export const resetToDefault = _resetToDefault
 export const buildWsUrl = _buildWsUrl
 
 /**
+ * Normalize any caller-supplied base to exactly one canonical form:
+ * `<origin>/api` (no trailing slash).
+ *
+ * The /api-suffix convention has bitten three independent callers (this
+ * frontend — CLAUDE.md gotcha #9 — the in-process Rust CLI, which
+ * double-prefixed into /api/api/... and 404'd, and the eval harness).
+ * Normalizing HERE means every source below — dynamic override, env var,
+ * Tauri default, relative path — yields the same contract: paths passed to
+ * fetch are suffix-free (e.g. `/settings/retention`).
+ */
+function normalizeApiBase(base: string): string {
+  let b = base.trim().replace(/\/+$/, '')
+  if (!b.endsWith('/api')) {
+    b += '/api'
+  }
+  return b
+}
+
+/**
  * Get API base URL based on environment.
  * Supports runtime switching via setApiBase().
  */
 export function getApiBase(): string {
   // Dynamic override takes priority (set by InstanceSlice)
   const dynamicBase = _dynamicApiBase
-  if (dynamicBase) return dynamicBase
+  if (dynamicBase) return normalizeApiBase(dynamicBase)
 
   // Check for explicit environment variable
   const envApiBase = import.meta.env.VITE_API_BASE_URL
-  if (envApiBase) return envApiBase
+  if (envApiBase) return normalizeApiBase(envApiBase)
 
   // Tauri desktop: direct connection
   if (isTauriEnv()) return 'http://localhost:9375/api'
