@@ -113,6 +113,91 @@ with `--parallel 1` so the foreground stream gets full throughput, and warm the
 model with a request or two before the first case (cold-start costs ~5× on the
 first generation).
 
+## 2026-10-26 gate additions (1.2.3 build, official metric)
+
+Three new rows on the **40-case** gate, **two rounds per case**, run on the
+**1.2.3** build (partially closing the pending re-run above). Scores use the
+harness's own `pass_for_case` rule (`tool_match_pass` + `sq_all_pass`;
+`agent_failed` rounds excluded from the denominator) — same rule as the frozen
+baselines. Frozen files:
+`eval/baselines/regression-{spark-x26-4b,minicpmv47-35b-a3b,deepseek-flash}.jsonl`.
+(A raw-cmd_ok read of the same files runs ~4pp high for Spark and ~8pp high
+for MiniCPM5-2B stock — emitting the right command is not the same as passing
+the tool/signal match. Use `pass_for_case`.)
+
+| Model | Official pass | excl. | Conditions |
+|---|---|---|---|
+| deepseek-flash (V4.1, cloud) | 75/80 (93.8%) | 0 | official agentic point temp 1.0 / top_p 0.95, thinking on (effort=high), openai backend |
+| Spark-X2.6-4B Q4_K_M (~3 GB) | 59/80 (73.8%) | 0 | frozen baseline 2026-10-22, official card sampler |
+| MiniCPM-V-4.7-35B-A3B Q4_K_M (21.7 GB) | 55/78 (70.5%) | 2 | llama.cpp b11669, official card temp 0.7 / top_p 0.95 / top_k 100 / rep 1.03, `--parallel 1` |
+| MiniCPM5-2B stock Q4_K_M | 36/66 (54.5%) | 0 | 33-case subset of the gate |
+
+Readings (same-metric rows only):
+
+- **Statistical resolution first.** 80 verdicts carry a Wilson 95% interval of
+  roughly ±10pp (printed by the gate since 2026-10-26). The three local rows
+  (73.8 / 70.5 / 54.5) are therefore **two tiers, not a ranking**: Spark and
+  MiniCPM-V-4.7 are a statistical tie; both are clearly above stock 2B. Reading
+  a 3pp gap as a ranking is the error this line exists to prevent.
+- **The gate's ceiling is ~94%, not ~80%** — the earlier "caps at 80%" read was
+  the local-capability band, not the test's limit. Cloud beats the best local
+  by ~20pp and the stock 2B by ~39pp; the cloud-optional tiering is now
+  quantified.
+- **deepseek-flash explores first** (`neomind --help` / `llm list` before
+  acting) — the exact behavior MiniCPM-V-4.7 lacks; writing that habit into
+  the system prompt is the cheapest local-model uplift.
+- **MiniCPM-V-4.7-35B-A3B survives VL training as an agent** (70.5% vs
+  LFM2.5-VL-3B's 10%-as-agent): the `qwen35moe` backbone (256×2.6B experts,
+  read from the GGUF header) makes a **unified agent+perception slot viable on
+  32 GB+ hosts**. Profile: wins the hardest multi-step deployments
+  (agriculture-irrigation-solution-deploy 100% vs Spark 0%), loses the
+  exploration class (command-discovery 0% vs Spark 100%). ~50 t/s decode.
+  **Vision quality still unmeasured** — run `eval/perception_eval.py` on a
+  shared image set against LFM2.5-VL-3B before any catalog decision; the agent
+  gate cannot answer it.
+- **Spark-X2.6-4B is the nominal local leader** (dense; needs llama.cpp ≥
+  b10828; three thinking-intensity modes), tied with MiniCPM-V at this sample
+  size. At roughly half the 2B's decode speed it slots as the 4 GB+ tier, not
+  the default.
+
+**Gate grew to 50 cases (2026-10-26).** Added 5 multi-turn cases
+(correction/threshold-change/guided mqtt+webhook onboarding/dashboard tweak),
+2 prompt-injection cases (untrusted device name, untrusted telemetry text),
+and one case each for message / data-push / memory-tool — three categories
+that previously had zero gate coverage. Vision cases live in a separate set (`regression_set_vision.txt`)
+because they need a backend whose capabilities report `supports_multimodal`.
+The 40-case baselines above still compare cleanly — cases present in the set
+but absent from a baseline simply don't affect its verdict.
+
+**This gate is a model-selection instrument, not a release gate.** Its score
+moves when the model changes, its 95% interval at 50 cases is ~±10pp, and it
+certifies nothing about a build. Run it when choosing a model; read the
+printed interval before writing a ranking down. What belongs near release time
+is the LLM-free business chain plus, optionally, the shipped model compared
+against its own frozen baseline (a PASS→FAIL flip there is the real signal).
+
+**Business-chain E2E added (`eval/e2e_business.py`, 12 steps).** MQTT publish
+→ metric stored → rule fires → webhook notification → data-push delivery,
+asserted against real state without an LLM. First run surfaced two operational
+facts: the internal MQTT adapter subscribes ~16s after `/health` (earlier
+publishes are dropped), and only `device/{type}/{id}/uplink` topics take the
+JSON-payload extraction path.
+
+**Case audit (2026-10-26):** `llm-delete` was defective — its fixture seeded
+no backend named `old-backend` (and the extras schema had no way to seed
+one), so the honest recovery path (list → report "no such backend") failed
+the hard signal by design while blind deleters passed. **Fixed the same
+day**: `seed_fixture` now seeds `extras.llm_backends` (dummy, non-activated,
+non-probed backend), the en+zh case files seed `old-backend`, and a
+deepseek-flash spot re-run passes 2/2 via the honest list→delete path. The
+frozen baselines above predate the fix (their llm-delete rounds were scored
+under the defective case). All other audited hard cases
+(`agent-query-conclusion-first`, `error-recovery-unsupported-metric`,
+`extension-market-install`) held up: the first is a legitimate
+boundary-rules protocol probe, the second's command-pair expectation is a
+reasonable recovery-path spec, the third's 1-round deepseek miss was a
+skill-path choice, not an environment failure.
+
 ## Serving (llama.cpp)
 
 ```bash
