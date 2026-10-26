@@ -180,6 +180,11 @@ impl Tool for SkillTool {
         "skill"
     }
 
+    /// Read-only — retrieves skill documentation, no world side effects.
+    fn replay_safety(&self) -> crate::toolkit::tool::ReplaySafety {
+        crate::toolkit::tool::ReplaySafety::Safe
+    }
+
     fn description(&self) -> &str {
         r##"Load operation guides (skills) on demand — step-by-step CLI instructions, command examples, error solutions. Skills are NOT in your system prompt; load BEFORE unfamiliar operations.
 

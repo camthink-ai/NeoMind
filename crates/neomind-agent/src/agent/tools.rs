@@ -279,6 +279,13 @@ impl Agent {
 
         let mut last_error = String::new();
         let mut last_attempt = 0u32;
+        // Replay safety gates the auto-retry below: a transient timeout on a
+        // replay-UNSAFE tool (shell `device control`, writes…) may have
+        // already taken effect on the device — auto-retrying would double-
+        // apply it. Unsafe tools fail through to the model with
+        // outcome-unknown guidance instead.
+        let replay_safe =
+            self.tools.replay_safety(&real_tool_name) == crate::toolkit::tool::ReplaySafety::Safe;
 
         for attempt in 0..=MAX_RETRIES {
             match self.tools.execute(&real_tool_name, exec_args.clone()).await {
@@ -302,6 +309,23 @@ impl Agent {
                             error_category = "tool_execution_failed",
                             "Tool execution returned failure"
                         );
+
+                        // Shell timeout: the command was KILLED at the cap but
+                        // may have already fired its effect (slow device ACK).
+                        // Report outcome-unknown instead of a plain failure —
+                        // a plain "failed" invites an immediate blind re-issue.
+                        let timed_out = output
+                            .data
+                            .get("timed_out")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        if timed_out && !replay_safe {
+                            return Ok(format!(
+                                "Tool {} timed out; the command MAY have already taken effect.{}",
+                                real_tool_name,
+                                crate::toolkit::tool::outcome_unknown_guidance()
+                            ));
+                        }
 
                         // Don't retry on logical errors (like invalid input)
                         return Ok(format!(
@@ -371,11 +395,28 @@ impl Agent {
                         "Tool execution error"
                     );
 
-                    if is_transient && attempt < MAX_RETRIES {
+                    if is_transient && replay_safe && attempt < MAX_RETRIES {
                         // Exponential backoff: 100ms, 200ms
                         let delay_ms = 100 * (2_u64.pow(attempt));
                         tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
                         continue;
+                    }
+
+                    // Replay-unsafe tool hit a transient (timeout/network)
+                    // error: do NOT auto-retry — the effect may have landed.
+                    // Fall through with outcome-unknown guidance attached.
+                    if is_transient && !replay_safe {
+                        tracing::warn!(
+                            session_id = %self.session_id,
+                            tool = %real_tool_name,
+                            error_category = %error_category,
+                            "Skipping auto-retry for replay-unsafe tool (outcome unknown)"
+                        );
+                        last_error = format!(
+                            "{}{}",
+                            last_error,
+                            crate::toolkit::tool::outcome_unknown_guidance()
+                        );
                     }
 
                     // Non-transient errors: fail immediately, no retry

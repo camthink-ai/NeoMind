@@ -220,6 +220,7 @@ impl SimulationContext {
             enable_tool_chaining: false,
             max_chain_depth: 3,
             tool_config: None,
+            max_tokens_per_run: None,
         };
 
         self.store.save_agent(&agent).await?;

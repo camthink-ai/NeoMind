@@ -100,6 +100,11 @@ impl AgentExecutor {
         // Get context window for token-aware compaction
         let context_window = llm_runtime.max_context_length();
 
+        // Per-run token budget accumulator (backend-reported usage only —
+        // see ToolLoopOutput::tokens_used). Checked after every LLM call.
+        let token_budget = agent.max_tokens_per_run;
+        let mut tokens_used: u64 = 0;
+
         let mut round: usize = 0;
 
         loop {
@@ -260,6 +265,29 @@ impl AgentExecutor {
                 Some(o) => o,
                 None => break, // LLM generation failed
             };
+
+            // --- Per-run token budget ---
+            // Round/timeout/call caps count the wrong units for cost; this is
+            // the only guardrail in tokens. Phase 2 below still runs on a
+            // budget stop (one bounded call) so the run produces a usable
+            // conclusion instead of dying mid-thought — same shape as the
+            // max-rounds stop.
+            if let Some(usage) = &output.usage {
+                tokens_used += usage.total_tokens as u64;
+            }
+            if let Some(cap) = token_budget {
+                if tokens_used >= cap {
+                    tracing::warn!(
+                        agent_id = %agent.id,
+                        tokens_used,
+                        cap,
+                        round = round + 1,
+                        "Per-run token budget exceeded — stopping tool loop"
+                    );
+                    stop_reason = StopReason::TokenBudget;
+                    break;
+                }
+            }
 
             // Priority: native tool_calls from API → parse from text → thinking field fallback
             let mut tool_calls = if let Some(ref native) = output.tool_calls {
@@ -934,6 +962,7 @@ impl AgentExecutor {
                 .map(|rd| (rd.thought, rd.tool_calls))
                 .collect(),
             last_llm_error,
+            tokens_used,
         }
     }
 }

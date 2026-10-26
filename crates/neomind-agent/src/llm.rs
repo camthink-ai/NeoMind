@@ -729,7 +729,7 @@ impl LlmInterface {
     /// Per-part prompt overhead: (system prompt tokens, tool-definition tokens).
     pub async fn estimate_prompt_breakdown(&self) -> (usize, usize) {
         // System prompt: build it and measure
-        let system_prompt = self.build_system_prompt_with_tools(None).await;
+        let system_prompt = self.build_stable_system_prompt().await;
         let prompt_tokens = crate::agent::tokenizer::estimate_tokens(&system_prompt);
 
         // Tool definitions: serialize to the actual API JSON shape and measure.
@@ -1117,6 +1117,140 @@ impl LlmInterface {
         // Inject time LAST (see the comment at the top of this builder) —
         // everything above the time block is now prefix-cache stable.
         self.inject_time_placeholders(prompt, None).await
+    }
+
+    /// Stable system prompt for the STREAMING chat paths: no per-turn
+    /// content. Time and intent add-ons move to
+    /// [`Self::build_turn_context_footer`] on the trailing user message —
+    /// the system prompt precedes the whole history in the request, so any
+    /// per-request variance inside it (time changes every call, the intent
+    /// add-on changes every message) invalidated the KV/prompt cache for
+    /// the ENTIRE history below it on every round.
+    pub(crate) async fn build_stable_system_prompt(&self) -> String {
+        let prompt = self.build_system_prompt_with_tools(None).await;
+        let (stripped, removed) = Self::strip_time_block(&prompt);
+        if removed {
+            // Time block removed — point the model at where time lives now.
+            let mut out = stripped;
+            out.push_str(
+                "\n## Environment\n- Current date/time: provided in the \
+                 [Context] footer at the end of each user message.\n",
+            );
+            out
+        } else {
+            // Unexpected template shape — resolve time in place rather than
+            // leaking raw placeholders to the model.
+            self.inject_time_placeholders(prompt, None).await
+        }
+    }
+
+    /// Per-request context footer appended to the trailing user message on
+    /// the streaming paths. Carries everything that legitimately changes
+    /// per call: current time, and (on tool-enabled turns only — matching
+    /// the old system-prompt path, where the simple no-tools constant never
+    /// carried an add-on) the intent add-on for the message. Riding the
+    /// tail of the request keeps the system prompt and history byte-stable
+    /// for prefix caching.
+    pub(crate) async fn build_turn_context_footer(
+        &self,
+        user_message: Option<&str>,
+        include_intent_addon: bool,
+    ) -> String {
+        let (utc, local, tz) = self.current_time_strings().await;
+        let mut footer = format!(
+            "\n\n[Context] Current Time (UTC): {} | Local Time: {} | Timezone: {}",
+            utc, local, tz
+        );
+        if let (Some(msg), true) = (user_message, include_intent_addon) {
+            let intent = self.intent_classifier.classify(msg);
+            let task_type = match intent.category {
+                crate::agent::staged::IntentCategory::Device => "device",
+                crate::agent::staged::IntentCategory::Data => "data",
+                crate::agent::staged::IntentCategory::Rule => "rule",
+                _ => "general",
+            };
+            use crate::prompts::PromptBuilder;
+            let addon = PromptBuilder::new().get_intent_prompt_addon(task_type);
+            if !addon.is_empty() {
+                footer.push('\n');
+                footer.push_str(&addon);
+            }
+        }
+        footer
+    }
+
+    /// (utc, local-with-context, timezone) strings shared by the in-prompt
+    /// injector and the per-turn footer.
+    async fn current_time_strings(&self) -> (String, String, String) {
+        let now = chrono::Utc::now();
+        let current_time_utc = now.format("%Y-%m-%d %H:%M:%S UTC").to_string();
+
+        let effective_timezone = self
+            .global_timezone
+            .read()
+            .await
+            .clone()
+            .unwrap_or_else(|| "Asia/Shanghai".to_string());
+
+        let tz = effective_timezone
+            .parse::<chrono_tz::Tz>()
+            .unwrap_or(chrono_tz::Tz::Asia__Shanghai);
+
+        let local_time = now
+            .with_timezone(&tz)
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        let day_of_week = now.with_timezone(&tz).format("%A").to_string();
+        let date_str = now.with_timezone(&tz).format("%B %d, %Y").to_string();
+        let hour: u32 = now
+            .with_timezone(&tz)
+            .format("%H")
+            .to_string()
+            .parse()
+            .unwrap_or(12);
+        let time_period = match hour {
+            5..=11 => "Morning",
+            12..=13 => "Noon",
+            14..=17 => "Afternoon",
+            18..=22 => "Evening",
+            _ => "Night",
+        };
+        let local_with_context = format!(
+            "{} {} ({}{})",
+            date_str, local_time, time_period, day_of_week
+        );
+        (current_time_utc, local_with_context, effective_timezone)
+    }
+
+    /// Remove the template's volatile `## Environment` time block (KV-CACHE
+    /// BOUNDARY marker through the Timezone bullet) from an assembled
+    /// system prompt. Returns the stripped prompt and whether the block was
+    /// found and removed; on an unexpected shape the caller falls back to
+    /// resolving the placeholders in place.
+    fn strip_time_block(prompt: &str) -> (String, bool) {
+        use crate::prompts::{CURRENT_TIME_PLACEHOLDER, LOCAL_TIME_PLACEHOLDER};
+        if !prompt.contains(CURRENT_TIME_PLACEHOLDER) && !prompt.contains(LOCAL_TIME_PLACEHOLDER) {
+            return (prompt.to_string(), false);
+        }
+        let start = prompt
+            .find("<!-- KV-CACHE BOUNDARY")
+            .or_else(|| prompt.find("## Environment"));
+        let end = prompt.find("- Timezone:").and_then(|i| {
+            prompt[i..]
+                .find('\n')
+                .map(|n| i + n + 1)
+                .or(Some(prompt.len()))
+        });
+        match (start, end) {
+            (Some(s), Some(e)) if e > s => {
+                let mut out = String::with_capacity(prompt.len());
+                out.push_str(prompt[..s].trim_end());
+                out.push_str("\n\n");
+                out.push_str(&prompt[e..]);
+                (out, true)
+            }
+            _ => (prompt.to_string(), false),
+        }
     }
 
     /// Replace the base prompt's time placeholders with current values.
@@ -1738,13 +1872,34 @@ impl LlmInterface {
     ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<(String, bool)>> + Send>>> {
         // Check early before user_message is moved into the messages vec.
         let has_user_images = user_message.has_images();
+
+        // Per-turn context footer (time) rides the message tail so the
+        // system prompt + history stay prefix-stable for KV/prompt caching.
+        // Skipped for EMPTY content: the is_message_empty filter below must
+        // still see (and drop) empty messages — a footer-only payload is
+        // not a user turn.
+        let was_empty = match &user_message.content {
+            neomind_core::message::Content::Text(s) => s.is_empty(),
+            neomind_core::message::Content::Parts(parts) => parts.is_empty(),
+        };
+        let mut user_message = user_message;
+        if !was_empty {
+            let turn_footer = self.build_turn_context_footer(None, include_tools).await;
+            match &mut user_message.content {
+                neomind_core::message::Content::Text(s) => s.push_str(&turn_footer),
+                neomind_core::message::Content::Parts(parts) => {
+                    parts.push(neomind_core::message::ContentPart::Text { text: turn_footer })
+                }
+            }
+        }
+
         let model_arc = Arc::clone(&self.model);
         let max_ctx = self.max_context_length().await;
         let _prompt_budget = (max_ctx * 50) / 100;
 
         // Build system prompt (with or without tools based on phase)
         let system_prompt = if include_tools {
-            self.build_system_prompt_with_tools(None).await
+            self.build_stable_system_prompt().await
         } else {
             // Simple system prompt for non-tool calls
             "You are NeoMind, a helpful IoT assistant. Answer questions concisely and accurately."
@@ -1950,6 +2105,20 @@ impl LlmInterface {
     ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<(String, bool)>> + Send>>> {
         let user_message = user_message.into();
 
+        // Per-turn context footer (time + intent add-on) rides the user
+        // message tail so the system prompt + history stay prefix-stable
+        // for KV/prompt caching. Empty messages get no footer (an empty
+        // user turn stays empty for downstream filters). The intent add-on
+        // only applies to tool-enabled turns — the old no-tools path
+        // (summary calls) used a bare constant prompt with no add-on.
+        let turn_footer = if user_message.trim().is_empty() {
+            String::new()
+        } else {
+            self.build_turn_context_footer(Some(&user_message), include_tools)
+                .await
+        };
+        let user_message = format!("{user_message}{turn_footer}");
+
         let model_arc = Arc::clone(&self.model);
 
         // Check model context capacity for adaptive prompt sizing
@@ -1985,8 +2154,7 @@ impl LlmInterface {
                  Keep responses brief."
                     .to_string()
             } else {
-                self.build_system_prompt_with_tools(Some(&user_message))
-                    .await
+                self.build_stable_system_prompt().await
             }
         } else {
             // Simple system prompt for non-tool calls
@@ -2451,6 +2619,46 @@ pub struct ChatResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strip_time_block_removes_volatile_environment_section() {
+        let prompt = "## Rules\n- Be terse.\n\n<!-- KV-CACHE BOUNDARY: do not move. -->\n## Environment\n- Current Time (UTC): {{CURRENT_TIME}}\n- Local Time: {{LOCAL_TIME}}\n- Timezone: {{TIMEZONE}}\n\n## After\n- more content";
+        let (stripped, removed) = LlmInterface::strip_time_block(prompt);
+        assert!(removed, "block should be detected and removed");
+        assert!(
+            !stripped.contains("{{CURRENT_TIME}}"),
+            "no raw placeholder may leak"
+        );
+        assert!(!stripped.contains("KV-CACHE BOUNDARY"));
+        assert!(!stripped.contains("## Environment"));
+        assert!(
+            stripped.contains("## Rules"),
+            "content above the block survives"
+        );
+        assert!(
+            stripped.contains("## After"),
+            "content below the block survives"
+        );
+    }
+
+    #[test]
+    fn strip_time_block_without_placeholders_is_noop() {
+        // Already-resolved or absent time block: not removed (caller decides).
+        let prompt = "## Rules\n- Be terse.";
+        let (out, removed) = LlmInterface::strip_time_block(prompt);
+        assert!(!removed);
+        assert_eq!(out, prompt);
+    }
+
+    #[test]
+    fn strip_time_block_missing_tail_marker_falls_back() {
+        // Placeholders present but the block shape is unexpected → NOT
+        // stripped (caller falls back to resolving, never leaks raw).
+        let prompt = "time is {{CURRENT_TIME}}";
+        let (out, removed) = LlmInterface::strip_time_block(prompt);
+        assert!(!removed);
+        assert_eq!(out, prompt);
+    }
 
     #[test]
     fn test_chat_config_default() {

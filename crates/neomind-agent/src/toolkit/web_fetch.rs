@@ -173,6 +173,11 @@ impl Tool for WebFetchTool {
         "web_fetch"
     }
 
+    /// Read-only fetch — re-running after an interruption cannot double-apply.
+    fn replay_safety(&self) -> crate::toolkit::tool::ReplaySafety {
+        crate::toolkit::tool::ReplaySafety::Safe
+    }
+
     fn description(&self) -> &str {
         r#"Fetch content from a URL and return cleaned text.
 

@@ -265,6 +265,10 @@ struct AgentDetailDto {
     /// Notification routing (None = legacy keyword behavior)
     #[serde(skip_serializing_if = "Option::is_none")]
     notify: Option<neomind_storage::AgentNotify>,
+    /// Per-run LLM token budget (None = uncapped). Stop reason becomes
+    /// `token-budget` when exceeded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens_per_run: Option<u64>,
 }
 
 /// Agent resource for API responses.
@@ -506,6 +510,10 @@ pub struct CreateAgentRequest {
     #[serde(default)]
     #[schema(value_type = Option<AgentToolConfigMirror>)]
     pub tool_config: Option<neomind_storage::AgentToolConfig>,
+    /// Per-run LLM token budget (None = uncapped). When exceeded the run
+    /// stops with reason `token-budget` and synthesizes a conclusion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens_per_run: Option<u64>,
 }
 
 /// Resource request in the new unified format.
@@ -603,6 +611,9 @@ pub struct UpdateAgentRequest {
     /// Notification routing override
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notify: Option<neomind_storage::AgentNotify>,
+    /// Per-run LLM token budget override (None in the body = leave unchanged)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens_per_run: Option<u64>,
     /// Tool scoping override. Send an object to set/replace it; omit to leave
     /// unchanged. Set `allowed_tools: []` to mean "all tools".
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -757,6 +768,7 @@ impl From<&AiAgent> for AgentDetailDto {
             operator_config: agent.operator_config.clone(),
             memory_mode: agent.memory_mode,
             notify: agent.notify.clone(),
+            max_tokens_per_run: agent.max_tokens_per_run,
         }
     }
 }
@@ -1282,6 +1294,7 @@ pub async fn create_agent(
             .unwrap_or(neomind_storage::DEFAULT_MAX_CHAIN_DEPTH),
         tool_config: request.tool_config,
         execution_mode,
+        max_tokens_per_run: request.max_tokens_per_run,
     };
 
     // Save to storage
@@ -1554,6 +1567,10 @@ pub async fn update_agent(
     }
     if let Some(notify) = request.notify {
         agent.notify = Some(notify);
+    }
+    // Token budget: Some replaces; omit leaves unchanged.
+    if let Some(max_tokens_per_run) = request.max_tokens_per_run {
+        agent.max_tokens_per_run = Some(max_tokens_per_run);
     }
     if let Some(status_str) = request.status {
         agent.status = match status_str.as_str() {
@@ -2105,6 +2122,7 @@ pub async fn test_agent_preview(
         operator_config: request.operator_config,
         memory_mode: None,
         notify: None,
+        max_tokens_per_run: None,
         // Mode follows the request; structured stays the default so the
         // original dry-run contract is unchanged for existing callers.
         execution_mode: match request.execution_mode.as_deref() {

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added — replay safety: interrupted side-effectful tool calls report "outcome unknown", never invite a blind retry
+- New `Tool::replay_safety()` (`Safe` | `Unsafe`, default the conservative `Unsafe`) marks whether re-running a tool after an interruption can double-apply an effect. Read-only/interaction tools (`file_read`, `web_fetch`, `vision`, `skill`, `ask_user`, `confirm_action`, `clarify_intent`, `query_conclusion`) override to `Safe`; everything else — `shell` (device control included), writes, `memory`, `run_now`, extension tools — stays `Unsafe`.
+- The chat path's auto-retry loop (`execute_tool`, 2 retries on timeout/network) retried replay-UNSAFE tools too: a `device control` toggle killed at the shell's 30s cap while the device was already acting on it got silently re-issued by the platform — the canonical double-toggle. Unsafe tools no longer auto-retry; the failure returns to the model with outcome-unknown guidance ("may have ALREADY taken effect — verify with a read-only query first"), and a timed-out shell result carries the same note.
+- The scheduled executor's timeout hint ("The operation took too long. Try a simpler query.") said the same thing to Free-mode agents; for Unsafe tools it is replaced by the same verify-first guidance. Safe tools keep the retry-friendly hint.
+
+### Added — per-run token budget (`max_tokens_per_run`) + usage telemetry
+- Agents gain an optional per-run LLM token budget (prompt + completion, summed across every call of one execution; API create/update field, `None` = uncapped historical default). The other guardrails count the wrong units for cost — rounds, seconds, and calls-per-day all stay green while a cloud-backed event agent burns tokens every cooldown window. On a budget hit the tool loop stops with new stop reason `token-budget` and Phase 2 synthesizes a conclusion from collected results (same shape as `max-rounds`).
+- Every tool-loop run now records backend-reported tokens in `DecisionProcess.tokens_used` (0 = backend reported nothing, not "free") — visible in execution records for cost auditing, next to the existing `stop_reason`.
+
+### Changed — streaming chat prompts are prefix-cache stable: time + intent add-on moved to a per-turn footer
+- The streaming system prompt embedded the current time (resolved per request — changes every call) and a per-message intent add-on ABOVE the conversation history, so on local backends (Ollama/llama.cpp KV cache) and cloud prompt caches the ENTIRE history re-prefilled on every round. The system prompt is now stable for the session (base + suffix + pinned skills + memory; the template's `## Environment` time block is stripped and points at the footer), and time + intent guidance ride a small `[Context]` footer appended to the trailing user message each turn. The model sees the same information; only its position changed. Non-streaming/legacy paths keep the old layout.
+
+---
+
 ## [1.2.3] - 2026-10-21 — on-demand event triggers, self-healing agent breakers, and narration-guard hardening
 
 ### Added — Error agents self-heal: real breaker threshold + backoff recovery probes

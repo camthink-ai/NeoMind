@@ -110,6 +110,11 @@ impl Tool for FileReadTool {
         "file_read"
     }
 
+    /// Read-only — re-running after an interruption cannot double-apply.
+    fn replay_safety(&self) -> crate::toolkit::tool::ReplaySafety {
+        crate::toolkit::tool::ReplaySafety::Safe
+    }
+
     fn description(&self) -> &str {
         r#"Read a file with LINE NUMBERS (the reference for constructing file_edit old_strings). Default window: first 400 lines — use offset/limit for large files (result says when more lines exist). Result carries `state: {mtime_ms, size}`: pass it back as `expected` on file_edit/file_write to guarantee the file did not change underneath you (stale → the edit is refused with the fresh state). Binary files are rejected. Prefer this over `shell cat` for files you plan to edit. Allowed dirs only (data dir + NEOMIND_ALLOWED_WRITE_DIRS). Max 10MB."#
     }

@@ -55,6 +55,9 @@ pub(crate) enum StopReason {
     NaturalCompletion,
     /// Hit the round budget (`max_rounds`); Phase 2 synthesized a summary.
     MaxRounds,
+    /// Hit the per-run token budget (`AiAgent::max_tokens_per_run`);
+    /// Phase 2 synthesizes a summary, same as MaxRounds.
+    TokenBudget,
     /// Every tool call this round was a cross-round duplicate (results in hand).
     AllDuplicate,
     /// LLM generation failed (after transient retries).
@@ -69,6 +72,7 @@ impl StopReason {
         match self {
             StopReason::NaturalCompletion => "natural-completion",
             StopReason::MaxRounds => "max-rounds",
+            StopReason::TokenBudget => "token-budget",
             StopReason::AllDuplicate => "all-duplicate",
             StopReason::LlmError => "llm-error",
             StopReason::Cancelled => "cancelled",
@@ -87,6 +91,10 @@ pub(crate) struct ToolLoopOutput {
     /// Used by `execute_with_tools` to surface the real error cause instead
     /// of a generic "tool-calling failed" message.
     pub(crate) last_llm_error: Option<neomind_core::llm::backend::LlmError>,
+    /// Backend-reported LLM tokens (prompt + completion) summed across the
+    /// run's calls. 0 when the backend reported no usage — an unreported
+    /// run, not a free one. Threaded into `DecisionProcess::tokens_used`.
+    pub(crate) tokens_used: u64,
 }
 
 /// Outcome of intra-round + cross-round deduplication.
@@ -1112,6 +1120,7 @@ impl AgentExecutor {
                         // 0.0 would read as "0% sure", which is a different claim.
                         confidence: None,
                         stop_reason: String::new(),
+                        tokens_used: 0,
                     },
                     result: None,
                     duration_ms,
@@ -1420,6 +1429,7 @@ impl AgentExecutor {
                 conclusion: "Execution skipped: event data was recognized as an image metric but image extraction failed. Check device data format and field names.".to_string(),
                 confidence: None,
                 stop_reason: String::new(),
+                tokens_used: 0,
             };
             let exec_result = neomind_storage::ExecutionResult {
                 actions_executed: vec![],
@@ -1753,6 +1763,7 @@ impl AgentExecutor {
                     conclusion,
                     confidence,
                     stop_reason: String::new(),
+                    tokens_used: 0,
                 };
 
                 let success_rate = if actions_executed.is_empty() {

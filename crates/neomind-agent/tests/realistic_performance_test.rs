@@ -174,6 +174,7 @@ impl RealPerfTestContext {
             context_window_size: 10,
             enable_tool_chaining: false,
             max_chain_depth: 3,
+            max_tokens_per_run: None,
         };
 
         self.store.save_agent(&agent).await?;
@@ -403,6 +404,7 @@ async fn test_llm_vs_mock_comparison() -> anyhow::Result<()> {
         context_window_size: 10,
         enable_tool_chaining: false,
         max_chain_depth: 3,
+        max_tokens_per_run: None,
     };
 
     ctx.store.save_agent(&agent).await.ok();
