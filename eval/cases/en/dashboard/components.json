@@ -13,7 +13,7 @@
       "user": "Create an empty dashboard named Demo Board."
     },
     {
-      "user": "Add a text title component to it with content 'Hello World'."
+      "user": "Add a markdown-display title component to it with content 'Hello World'."
     },
     {
       "user": "Remove that title component."

@@ -13,7 +13,7 @@
       "user": "新建一个空仪表盘，名字 Demo Board。"
     },
     {
-      "user": "给它添加一个文本标题组件，内容 'Hello World'。"
+      "user": "给它添加一个 markdown-display 标题组件，内容 'Hello World'。"
     },
     {
       "user": "把这个标题组件移除掉。"

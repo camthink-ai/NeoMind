@@ -121,7 +121,10 @@ impl ApiClient {
                     if status == reqwest::StatusCode::UNAUTHORIZED {
                         unauthorized_hint()
                     } else if status == reqwest::StatusCode::NOT_FOUND {
-                        "\nHint: is the server running? Try: neomind health"
+                        // The server ANSWERED — a 404 is not a connectivity
+                        // problem. The old "is the server running?" hint here
+                        // sent users and LLM agents on wasted health checks.
+                        "\nHint: not found — check the id/spelling (e.g. `neomind device list`)"
                     } else {
                         ""
                     }
@@ -153,7 +156,10 @@ impl ApiClient {
                     if status == reqwest::StatusCode::UNAUTHORIZED {
                         unauthorized_hint()
                     } else if status == reqwest::StatusCode::NOT_FOUND {
-                        "\nHint: is the server running? Try: neomind health"
+                        // The server ANSWERED — a 404 is not a connectivity
+                        // problem. The old "is the server running?" hint here
+                        // sent users and LLM agents on wasted health checks.
+                        "\nHint: not found — check the id/spelling (e.g. `neomind device list`)"
                     } else {
                         ""
                     }
@@ -182,7 +188,10 @@ impl ApiClient {
                     if status == reqwest::StatusCode::UNAUTHORIZED {
                         unauthorized_hint()
                     } else if status == reqwest::StatusCode::NOT_FOUND {
-                        "\nHint: is the server running? Try: neomind health"
+                        // The server ANSWERED — a 404 is not a connectivity
+                        // problem. The old "is the server running?" hint here
+                        // sent users and LLM agents on wasted health checks.
+                        "\nHint: not found — check the id/spelling (e.g. `neomind device list`)"
                     } else {
                         ""
                     }
@@ -214,7 +223,10 @@ impl ApiClient {
                     if status == reqwest::StatusCode::UNAUTHORIZED {
                         unauthorized_hint()
                     } else if status == reqwest::StatusCode::NOT_FOUND {
-                        "\nHint: is the server running? Try: neomind health"
+                        // The server ANSWERED — a 404 is not a connectivity
+                        // problem. The old "is the server running?" hint here
+                        // sent users and LLM agents on wasted health checks.
+                        "\nHint: not found — check the id/spelling (e.g. `neomind device list`)"
                     } else {
                         ""
                     }
@@ -246,7 +258,10 @@ impl ApiClient {
                     if status == reqwest::StatusCode::UNAUTHORIZED {
                         unauthorized_hint()
                     } else if status == reqwest::StatusCode::NOT_FOUND {
-                        "\nHint: is the server running? Try: neomind health"
+                        // The server ANSWERED — a 404 is not a connectivity
+                        // problem. The old "is the server running?" hint here
+                        // sent users and LLM agents on wasted health checks.
+                        "\nHint: not found — check the id/spelling (e.g. `neomind device list`)"
                     } else {
                         ""
                     }
@@ -275,7 +290,10 @@ impl ApiClient {
                     if status == reqwest::StatusCode::UNAUTHORIZED {
                         unauthorized_hint()
                     } else if status == reqwest::StatusCode::NOT_FOUND {
-                        "\nHint: is the server running? Try: neomind health"
+                        // The server ANSWERED — a 404 is not a connectivity
+                        // problem. The old "is the server running?" hint here
+                        // sent users and LLM agents on wasted health checks.
+                        "\nHint: not found — check the id/spelling (e.g. `neomind device list`)"
                     } else {
                         ""
                     }
@@ -311,7 +329,10 @@ impl ApiClient {
                     if status == reqwest::StatusCode::UNAUTHORIZED {
                         unauthorized_hint()
                     } else if status == reqwest::StatusCode::NOT_FOUND {
-                        "\nHint: is the server running? Try: neomind health"
+                        // The server ANSWERED — a 404 is not a connectivity
+                        // problem. The old "is the server running?" hint here
+                        // sent users and LLM agents on wasted health checks.
+                        "\nHint: not found — check the id/spelling (e.g. `neomind device list`)"
                     } else {
                         ""
                     }
@@ -367,7 +388,10 @@ impl ApiClient {
                     if status == reqwest::StatusCode::UNAUTHORIZED {
                         unauthorized_hint()
                     } else if status == reqwest::StatusCode::NOT_FOUND {
-                        "\nHint: is the server running? Try: neomind health"
+                        // The server ANSWERED — a 404 is not a connectivity
+                        // problem. The old "is the server running?" hint here
+                        // sent users and LLM agents on wasted health checks.
+                        "\nHint: not found — check the id/spelling (e.g. `neomind device list`)"
                     } else {
                         ""
                     }
@@ -417,7 +441,10 @@ impl ApiClient {
                     if status == reqwest::StatusCode::UNAUTHORIZED {
                         unauthorized_hint()
                     } else if status == reqwest::StatusCode::NOT_FOUND {
-                        "\nHint: is the server running? Try: neomind health"
+                        // The server ANSWERED — a 404 is not a connectivity
+                        // problem. The old "is the server running?" hint here
+                        // sent users and LLM agents on wasted health checks.
+                        "\nHint: not found — check the id/spelling (e.g. `neomind device list`)"
                     } else {
                         ""
                     }

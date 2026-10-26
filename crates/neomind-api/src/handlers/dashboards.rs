@@ -149,6 +149,11 @@ impl Default for LayoutBreakpoints {
     }
 }
 
+/// Fallback grid tile for components submitted without an explicit position.
+fn default_component_position() -> ComponentPosition {
+    ComponentPosition { x: 0, y: 0, w: 6, h: 4, min_w: None, min_h: None, max_w: None, max_h: None }
+}
+
 /// Component position on the grid
 #[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize)]
 pub struct ComponentPosition {
@@ -173,6 +178,10 @@ pub struct DashboardComponent {
     /// Widget type: `value-card` | `line-chart` | `bar-chart` | `gauge` | `markdown-display`
     #[serde(alias = "type", rename = "type")]
     pub component_type: String,
+    /// Omitted in hand-written JSON (models, API-first users) -> a sane
+    /// default tile instead of a 400. The old hard requirement made the
+    /// CLI help's own example fail against the API.
+    #[serde(default = "default_component_position")]
     pub position: ComponentPosition,
     #[serde(
         skip_serializing_if = "Option::is_none",
@@ -254,6 +263,10 @@ pub struct CreateDashboardComponent {
     /// Widget type: `value-card` | `line-chart` | `bar-chart` | `gauge` | `markdown-display`
     #[serde(alias = "type", rename = "type")]
     pub component_type: String,
+    /// Omitted in hand-written JSON (models, API-first users) -> a sane
+    /// default tile instead of a 400. The old hard requirement made the
+    /// CLI help's own example fail against the API.
+    #[serde(default = "default_component_position")]
     pub position: ComponentPosition,
     #[serde(
         skip_serializing_if = "Option::is_none",
@@ -752,7 +765,19 @@ pub async fn add_components_handler(
                      [{{\"id\":\"my-card\",\"type\":\"{name}\",\"position\":{{\"x\":0,\"y\":0,\"w\":4,\"h\":3}}}}]"
                 ));
             }
-            serde_json::from_value::<StoredComponent>(c.clone()).map_err(|e| {
+            // Hand-written JSON (models, API-first users) routinely omits
+            // position — the CLI help's own example does. Inject a default
+            // tile instead of 400ing; explicit positions pass through intact.
+            let mut value = c.clone();
+            if let Some(obj) = value.as_object_mut() {
+                if !obj.contains_key("position") {
+                    obj.insert(
+                        "position".to_string(),
+                        serde_json::json!({"x": 0, "y": 0, "w": 6, "h": 4}),
+                    );
+                }
+            }
+            serde_json::from_value::<StoredComponent>(value).map_err(|e| {
                 format!("component[{}]: {}", i, e)
             })
         })
