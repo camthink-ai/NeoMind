@@ -933,5 +933,25 @@
     "--verbose"
    ]
   }
- }
+ },
+ "widget_types": [
+  "area-chart",
+  "bar-chart",
+  "counter",
+  "custom-layer",
+  "image-display",
+  "image-history",
+  "led-indicator",
+  "line-chart",
+  "map-display",
+  "markdown-display",
+  "metric-card",
+  "pie-chart",
+  "progress-bar",
+  "sparkline",
+  "toggle-switch",
+  "value-card",
+  "video-display",
+  "web-display"
+ ]
 }

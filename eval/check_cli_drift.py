@@ -39,6 +39,57 @@ def _bin() -> str | None:
     return str(repo) if repo.exists() else None
 
 
+CORE_WIDGETS = HERE.parent / "crates" / "neomind-core" / "src" / "dashboard.rs"
+RENDERERS = HERE.parent / "web" / "src" / "pages" / "dashboard-components" / "Renderers.tsx"
+
+
+def extract_core_widget_types() -> list[str]:
+    """type_id literals from BUILTIN_WIDGET_TYPES — the single source of truth."""
+    src = CORE_WIDGETS.read_text()
+    return sorted(set(__import__("re").findall(r'type_id:\s*"([a-z-]+)"', src)))
+
+
+def extract_frontend_widget_types() -> list[str]:
+    """builtInTypes from Renderers.tsx — the frontend's copy of the same list."""
+    src = RENDERERS.read_text()
+    start = src.find("builtInTypes")
+    # exact array span: builtInTypes ... ] — a wide window once matched the
+    # bare word 'undefined' and false-alarmed the gate
+    end = src.find("]", start)
+    seg = src[start:end if end > 0 else start + 2000]
+    return sorted(set(__import__("re").findall(r"['\"]([a-z][a-z-]+)['\"]", seg)))
+
+
+def check_widget_type_sources(manifest: dict) -> list[str]:
+    """Core source, frontend copy, and frozen manifest must all agree.
+
+    Three drift incidents (gauge in API hints, gauge in agent intent
+    examples, counter/metric-card missing from RESERVED_IDS) all traced to
+    hand-maintained copies of this list. Any side changing without the
+    others now fails CI here.
+    """
+    problems: list[str] = []
+    core = extract_core_widget_types()
+    front = extract_frontend_widget_types()
+    frozen = manifest.get("widget_types")
+    if frozen is None:
+        problems.append("manifest missing widget_types — regenerate with --regen")
+        return problems
+    if front != core:
+        only_front = sorted(set(front) - set(core))
+        only_core = sorted(set(core) - set(front))
+        problems.append(
+            f"widget types: Renderers.tsx != core BUILTIN_WIDGET_TYPES "
+            f"(only-frontend={only_front}, only-core={only_core})")
+    if sorted(frozen) != core:
+        problems.append(
+            f"widget types: manifest (frozen) != core source — regenerate "
+            f"with --regen after an INTENTIONAL list change "
+            f"(manifest-only={sorted(set(frozen) - set(core))}, "
+            f"core-only={sorted(set(core) - set(frozen))})")
+    return problems
+
+
 def generate() -> dict:
     binary = _bin()
     if not binary:
@@ -57,7 +108,8 @@ def generate() -> dict:
             flags = sorted(set(FLAG_RE.findall(vout)))
             manifest[dom][verb] = flags
     return {"_meta": {"note": "regenerate with check_cli_drift.py --regen after CLI changes"},
-            "domains": manifest}
+            "domains": manifest,
+            "widget_types": extract_core_widget_types()}
 
 
 def _iter_expected():
@@ -150,8 +202,12 @@ def main() -> int:
             if flag not in union:
                 problems.append(f"{cid}: case-wide substring flag {flag} "
                                 f"not taken by any expected command")
+    problems.extend(check_widget_type_sources(json.loads(MANIFEST.read_text())))
+
     print(f"checked {n_cmds} domain/verb expectations, {n_flags} substring flags "
-          f"against {len(domains)} CLI domains")
+          f"against {len(domains)} CLI domains; "
+          f"{len(json.loads(MANIFEST.read_text()).get('widget_types', []))} widget types "
+          f"(core==frontend==manifest)")
     if problems:
         print("\nCLI drift:")
         for p in problems:

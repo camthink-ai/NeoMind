@@ -121,6 +121,20 @@ jobs:
         # asserting an English dashboard name its own turn never mentions).
         run: python eval/check_mirror.py
 
+      - name: Widget-type sources agree (core == Renderers == manifest)
+        # check_cli_drift includes this gate; this step surfaces it in the
+        # PR log by name so a widget-list drift is readable at a glance.
+        run: |
+          python3 - <<'PY'
+          import sys, json
+          sys.path.insert(0, 'eval')
+          from check_cli_drift import check_widget_type_sources, MANIFEST
+          problems = check_widget_type_sources(json.loads(MANIFEST.read_text()))
+          if problems:
+              print(*problems, sep='\n'); sys.exit(1)
+          print('widget types: core == frontend == manifest')
+          PY
+
       - name: Case expectations match the CLI surface
         # Checks every expected domain/verb and every substring flag against
         # the committed CLI manifest. Regenerate deliberately after a CLI
