@@ -20,8 +20,7 @@ import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
-import { Badge } from '@/components/ui/badge'
-import { AlertCircle, Check, Download, Loader2, Rocket, Server } from 'lucide-react'
+import { AlertCircle, Check, Download, Loader2, Server } from 'lucide-react'
 import { UnifiedFormDialog } from '@/components/dialog/UnifiedFormDialog'
 import { useEvents } from '@/hooks/useEvents'
 import { api, type ServerUpgradeCheck, type ServerUpgradePhase } from '@/lib/api'
@@ -29,6 +28,7 @@ import type { SystemUpgradeProgressEvent } from '@/lib/events'
 import { notifySuccess } from '@/lib/notify'
 import type { Components } from 'react-markdown'
 import { cn } from '@/lib/utils'
+import { releaseNotesProse } from './releaseNotesProse'
 
 // Lazy: keeps the markdown/highlight vendor chunk out of the initial graph
 // (same chunk UpdateDialog shares).
@@ -253,17 +253,20 @@ export function ServerUpgradeDialog({ open, onClose }: ServerUpgradeDialogProps)
 
   const getDescription = () => {
     switch (stage) {
-      case 'checking':
-        return t('settings:checkingForUpdates')
       case 'upgrading':
-      case 'restarting':
+        // Sub-step detail (download / verify / staged) the title can't carry.
         return phaseMessage()
       case 'done':
+        // Explains the imminent reload the title doesn't mention.
         return t('settings:serverUpgradeCompleteDesc')
-      case 'error':
-        return errorMsg ?? t('settings:serverUpgradeFailed')
       default:
-        return t('settings:serverUpgradeDesc')
+        // Checking/restarting/error/idle: the title plus the body cards
+        // already say everything — a header description only repeated them.
+        // The restart warning shows under the progress bar when it happens.
+        if (stage === 'idle' && check && !check.available) {
+          return t('settings:alreadyUpToDate')
+        }
+        return undefined
     }
   }
 
@@ -301,69 +304,60 @@ export function ServerUpgradeDialog({ open, onClose }: ServerUpgradeDialogProps)
 
   const upgradable = !!check?.available && check.supported
   const showHint = !!check && !check.supported
+  // Checking and the final reload need no actions: the header already states
+  // the state, so an extra disabled button (plus its divider) was pure noise.
+  const hideFooter = stage === 'checking' || stage === 'done'
 
-  const footerContent =
-    stage === 'checking' ? (
-      <Button disabled variant="secondary">
-        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-        {t('settings:checkingForUpdates')}
+  const footerContent = busy ? (
+    <Button disabled variant="secondary">
+      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+      {t('settings:updating')}
+    </Button>
+  ) : stage === 'error' ? (
+    <>
+      <Button variant="outline" onClick={onClose}>
+        {t('common:close')}
       </Button>
-    ) : busy ? (
-      <Button disabled variant="secondary">
-        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-        {t('settings:updating')}
+      <Button
+        variant="default"
+        onClick={() => {
+          // Re-run the open-effect by cycling through checking state.
+          setStage('checking')
+          api
+            .checkServerUpgrade(true)
+            .then((result) => {
+              setCheck(result)
+              startedRef.current = false
+              setStage('idle')
+            })
+            .catch((e) => {
+              setErrorMsg(e instanceof Error ? e.message : String(e))
+              setStage('error')
+            })
+        }}
+      >
+        {t('common:retry')}
       </Button>
-    ) : stage === 'done' ? (
-      // The reload fires ~1.5s after the version flip; without this branch
-      // that window fell through to the idle footer and briefly flashed
-      // "Remind Me Later / Update Now" on an already-completed upgrade.
-      <Button disabled variant="secondary">
-        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-        {t('settings:serverUpgradeCompleteDesc')}
-      </Button>
-    ) : stage === 'error' ? (
-      <>
-        <Button variant="outline" onClick={onClose}>
-          {t('common:close')}
-        </Button>
-        <Button
-          variant="default"
-          onClick={() => {
-            // Re-run the open-effect by cycling through checking state.
-            setStage('checking')
-            api
-              .checkServerUpgrade(true)
-              .then((result) => {
-                setCheck(result)
-                startedRef.current = false
-                setStage('idle')
-              })
-              .catch((e) => {
-                setErrorMsg(e instanceof Error ? e.message : String(e))
-                setStage('error')
-              })
-          }}
-        >
-          {t('common:retry')}
-        </Button>
-      </>
-    ) : (
-      <>
+    </>
+  ) : (
+    <>
+      {upgradable && (
         <Button variant="ghost" onClick={onClose} className="text-muted-foreground">
           {t('settings:remindLater')}
         </Button>
-        {upgradable ? (
-          <Button onClick={handleUpgrade} className="gap-2">
-            <Download className="w-4 h-4" />
-            {t('settings:updateNow')}
-          </Button>
-        ) : (
-          <Button variant="outline" onClick={onClose}>
-            {t('common:close')}
-          </Button>
-        )}
-      </>
-    )
+      )}
+      {upgradable ? (
+        <Button onClick={handleUpgrade} className="gap-2">
+          <Download className="w-4 h-4" />
+          {t('settings:updateNow')}
+        </Button>
+      ) : (
+        <Button variant="outline" onClick={onClose}>
+          {t('common:close')}
+        </Button>
+      )}
+    </>
+  )
 
   return (
     <UnifiedFormDialog
@@ -385,23 +379,22 @@ export function ServerUpgradeDialog({ open, onClose }: ServerUpgradeDialogProps)
       // / cancel paths (defense in depth on top of the canClose check in
       // onOpenChange below, which stays the authoritative gate).
       isSubmitting={busy}
+      hideFooter={hideFooter}
       footer={footerContent}
     >
-      <div className="space-y-4">
-        {/* Version line */}
+      <div className="space-y-3">
+        {/* Version line — one quiet line, two tones. Two pills plus a
+            "target version" label used to out-shout the notes and the CTA. */}
         {check && (
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            <span className="text-muted-foreground">{t('settings:currentVersion')}</span>
-            <Badge variant="secondary" className="font-mono">
-              v{check.current_version}
-            </Badge>
+          <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
+            <span>{t('settings:currentVersion')}</span>
+            <span className="tabular-nums text-foreground">{`v${check.current_version}`}</span>
             {check.latest_version && (
               <>
-                <span className="text-muted-foreground">→</span>
-                <span className="text-muted-foreground">{t('settings:targetVersion')}</span>
-                <Badge variant={check.available ? 'default' : 'secondary'} className="font-mono">
-                  v{check.latest_version}
-                </Badge>
+                <span aria-hidden="true">→</span>
+                <span className="tabular-nums font-medium text-foreground">
+                  {`v${check.latest_version}`}
+                </span>
               </>
             )}
           </div>
@@ -409,65 +402,59 @@ export function ServerUpgradeDialog({ open, onClose }: ServerUpgradeDialogProps)
 
         {/* Deployment hint (docker / unsupported / helper missing) */}
         {showHint && stage === 'idle' && check?.notes && (
-          <div className="flex items-start gap-2 p-3 rounded-md bg-muted border">
-            <AlertCircle className="w-5 h-5 text-info mt-0.5 shrink-0" />
-            <p className="text-sm whitespace-pre-line">{check.notes}</p>
+          <div className="flex items-start gap-2 rounded-lg bg-muted px-3 py-2.5">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+            <p className="text-body whitespace-pre-line">{check.notes}</p>
           </div>
         )}
 
-        {/* Release notes */}
+        {/* Release notes — plain text, no bordered inner scroll box: the
+            "box in a box" edge was the loudest line in the dialog, and the
+            dialog body already scrolls under the pinned header/footer. */}
         {upgradable && stage === 'idle' && check?.release_notes && (
-          <div className="max-h-[40vh] overflow-y-auto rounded-md border p-3 text-sm">
-            <div className="prose prose-sm dark:prose-invert max-w-none">
-              <Suspense fallback={null}>
-                <ReleaseNotes
-                  body={check.release_notes}
-                  components={releaseNotesComponents}
-                />
-              </Suspense>
-            </div>
+          <div className={releaseNotesProse}>
+            <Suspense fallback={null}>
+              <ReleaseNotes body={check.release_notes} components={releaseNotesComponents} />
+            </Suspense>
           </div>
         )}
 
-        {/* Progress bar */}
+        {/* Progress bar — the header description already names the phase,
+            so only the byte counter sits under the bar. */}
         {(stage === 'upgrading' || stage === 'restarting') && (
           <div className="space-y-2">
-            <Progress value={getProgressPercent()} className="h-2" />
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>{stage === 'restarting' ? t('settings:serverRestartingDesc') : phaseMessage()}</span>
-              {stage === 'upgrading' && total > 0 && (
+            <Progress value={getProgressPercent()} className="h-1.5" />
+            {stage === 'upgrading' && total > 0 && (
+              <div className="flex justify-end text-xs tabular-nums text-muted-foreground">
                 <span className="whitespace-nowrap">
-                  {formatBytes(downloaded)} / {formatBytes(total)} ({getProgressPercent()}%)
+                  {formatBytes(downloaded)} / {formatBytes(total)} · {getProgressPercent()}%
                 </span>
-              )}
-            </div>
+              </div>
+            )}
+            {stage === 'restarting' && (
+              <p className="text-xs text-muted-foreground">
+                {t('settings:serverRestartingDesc')}
+              </p>
+            )}
           </div>
         )}
 
         {/* Success card */}
         {stage === 'done' && (
-          <div className="flex items-center gap-2 p-3 rounded-md bg-success-light border border-success-light dark:border-success-light">
-            <Check className="w-5 h-5 text-success" />
-            <p className="text-sm text-success">{t('settings:updateCompleteMessage')}</p>
+          <div className="flex items-center gap-2 rounded-lg bg-success-light px-3 py-2.5">
+            <Check className="h-4 w-4 shrink-0 text-success" />
+            <p className="text-body text-success">{t('settings:updateCompleteMessage')}</p>
           </div>
         )}
 
         {/* Error card */}
         {stage === 'error' && (
-          <div className="flex items-start gap-2 p-3 rounded-md bg-error-light border border-error">
-            <AlertCircle className="w-5 h-5 text-error mt-0.5" />
-            <p className="text-sm text-error break-all">
+          <div className="flex items-start gap-2 rounded-lg bg-error-light px-3 py-2.5">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-error" />
+            <p className="whitespace-pre-line break-all text-body text-error">
               {errorMsg ?? t('settings:serverUpgradeFailed')}
             </p>
           </div>
-        )}
-
-        {/* Small hint under the confirm button context */}
-        {upgradable && stage === 'idle' && (
-          <p className="text-xs text-muted-foreground flex items-center gap-1">
-            <Rocket className="w-3 h-3" />
-            {t('settings:serverRestartingDesc')}
-          </p>
         )}
       </div>
     </UnifiedFormDialog>

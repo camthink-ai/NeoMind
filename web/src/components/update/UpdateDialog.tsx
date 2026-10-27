@@ -9,7 +9,6 @@ import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
-import { Badge } from '@/components/ui/badge'
 import { Check, Download, AlertCircle, Loader2, Rocket } from 'lucide-react'
 import { useUpdateCheck } from '@/hooks/useUpdateCheck'
 import { useAppStore } from '@/store'
@@ -22,6 +21,7 @@ const ReleaseNotes = lazy(() =>
   import('./ReleaseNotes').then((m) => ({ default: m.ReleaseNotes }))
 )
 import { cn } from '@/lib/utils'
+import { releaseNotesProse } from './releaseNotesProse'
 
 // react-markdown overrides for the release-notes panel. Links open in a new
 // tab so the GitHub release page opens in the browser instead of navigating
@@ -165,22 +165,9 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
     }
   }
 
-  const getDescription = () => {
-    switch (installStatus) {
-      case 'idle':
-        return t('settings:updateAvailableDesc')
-      case 'downloading':
-        return t('settings:downloadingUpdateDesc')
-      case 'installing':
-        return t('settings:installingUpdateDesc')
-      case 'done':
-        return t('settings:updateReadyDesc')
-      case 'error':
-        return getStatusMessage()
-      default:
-        return ''
-    }
-  }
+  // No header description: every state's title plus its body (version line,
+  // progress bar, success/error card) already carries the content — a header
+  // sentence under the title only restated it.
 
   // Dynamic icon with colored background
   const dialogIcon = (
@@ -234,63 +221,53 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
         onClose()
       }}
       title={getTitle()}
-      description={getDescription()}
       icon={dialogIcon}
       width="sm"
       preventCloseOnSubmit={false}
       isSubmitting={installStatus === 'downloading' || installStatus === 'installing'}
       footer={footerContent}
     >
-      <div className="space-y-4">
-        {/* Version badge + release notes.
-            [density] The badge used to sit alone in a full block row and the
-            notes container carried its own border INSIDE the dialog content
-            (a visible second edge line) while reserving up to 40vh — together
-            they pushed the dialog toward its 85vh cap for medium-sized
-            notes. Badge now hugs the notes header row; the notes box uses a
-            muted wash instead of a border and a tighter 32vh cap. */}
-        {currentUpdateInfo?.body && installStatus === 'idle' && (
-          <div className="space-y-2">
-            {currentUpdateInfo?.version && (
-              <Badge variant="secondary" className="text-xs">
-                v{updateInfo?.version}
-              </Badge>
-            )}
-            <div className="max-h-[32vh] overflow-y-auto rounded-md bg-muted-30 p-3 text-sm">
-              <div className="prose prose-sm dark:prose-invert max-w-none">
-                <Suspense fallback={null}>
-                  <ReleaseNotes body={updateInfo?.body ?? ''} components={releaseNotesComponents} />
-                </Suspense>
-              </div>
-            </div>
+      <div className="space-y-3">
+        {/* Version line, then release notes as plain text. The floating
+            version badge and the bordered, height-capped notes box added two
+            extra visual layers; the dialog body scrolls under the pinned
+            footer instead of nesting a scroll area. */}
+        {installStatus === 'idle' && currentUpdateInfo?.version && (
+          <div className="flex items-baseline gap-1.5 text-xs text-muted-foreground">
+            <span>{t('settings:version')}</span>
+            <span className="tabular-nums font-medium text-foreground">
+              v{currentUpdateInfo.version}
+            </span>
           </div>
         )}
-        {!currentUpdateInfo?.body && currentUpdateInfo?.version && installStatus === 'idle' && (
-          <Badge variant="secondary" className="text-xs">
-            v{updateInfo?.version}
-          </Badge>
+        {installStatus === 'idle' && currentUpdateInfo?.body && (
+          <div className={releaseNotesProse}>
+            <Suspense fallback={null}>
+              <ReleaseNotes body={currentUpdateInfo.body} components={releaseNotesComponents} />
+            </Suspense>
+          </div>
         )}
 
         {/* Progress Bar */}
         {(installStatus === 'downloading' || installStatus === 'installing') && (
           <div className="space-y-2">
-            <Progress value={getProgressPercent()} className="h-2" />
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>{getStatusMessage()}</span>
-              {currentProgress && (
-                <span>
-                  {formatBytes(currentProgress.current)} / {formatBytes(currentProgress.total)} ({Math.round(getProgressPercent())}%)
+            <Progress value={getProgressPercent()} className="h-1.5" />
+            {currentProgress && (
+              <div className="flex justify-end text-xs tabular-nums text-muted-foreground">
+                <span className="whitespace-nowrap">
+                  {formatBytes(currentProgress.current)} / {formatBytes(currentProgress.total)} ·{' '}
+                  {Math.round(getProgressPercent())}%
                 </span>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         )}
 
         {/* Success Message */}
         {installStatus === 'done' && (
-          <div className="flex items-center gap-2 p-3 rounded-md bg-success-light">
-            <Check className="w-5 h-5 text-success" />
-            <p className="text-sm text-success">
+          <div className="flex items-center gap-2 rounded-lg bg-success-light px-3 py-2.5">
+            <Check className="h-4 w-4 shrink-0 text-success" />
+            <p className="text-body text-success">
               {t('settings:updateCompleteMessage')}
             </p>
           </div>
@@ -298,9 +275,9 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
 
         {/* Error Message */}
         {installStatus === 'error' && (
-          <div className="flex items-start gap-2 p-3 rounded-md bg-error-light">
-            <AlertCircle className="w-5 h-5 text-error mt-0.5" />
-            <p className="text-sm text-error">
+          <div className="flex items-start gap-2 rounded-lg bg-error-light px-3 py-2.5">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-error" />
+            <p className="whitespace-pre-line break-words text-body text-error">
               {getStatusMessage()}
             </p>
           </div>
