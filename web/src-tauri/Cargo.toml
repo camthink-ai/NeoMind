@@ -1,6 +1,6 @@
 [package]
 name = "neomind-tauri"
-version = "1.2.3"
+version = "1.2.4"
 description = "NeoMind Edge AI Platform"
 authors = ["NeoMind Team"]
 license = "MIT"

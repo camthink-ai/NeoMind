@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [1.2.4] - 2026-10-27 — chat-turn wedge hardening, GPU offload auto-sizing, replay-safe tool retries, and per-run token budgets
 
 ### Fixed — chat turn wedge: thinking-only stall + duplicate-call loop always end in a user-visible reply
 - Live incident (2026-10-27, minicpm5-2b via builtin llama.cpp): a 2B model repeated an identical `skill search` call three rounds straight (the `_duplicate` advisory was ignored twice), then the final round streamed **thinking-only for ~8 minutes with zero content** (`orig_len=0`); the no-thinking recovery retry fired but inherited the main path's 2400s per-chunk idle timeout with **no total cap** — the user never got any reply. Three independent gaps, all fixed:
