@@ -106,7 +106,23 @@ pub fn effective_success(name: &str, out: &ToolOutput) -> bool {
             return false;
         }
         if let Some(code) = out.data.get("exit_code").and_then(|v| v.as_i64()) {
-            return code == 0;
+            if code != 0 {
+                return false;
+            }
+            // Pipeline masking: `badcmd 2>&1 | head -40` exits 0 (head's
+            // status) while the shell printed "command not found" into the
+            // captured output. Treat that as a failure so the
+            // failure-strike breaker arms and the duplicate advisory never
+            // counts it a success (live 2026-10-27: an invented
+            // `web_fetch … | head` came back exit 0 + "command not found").
+            let shell_said_not_found = ["stdout", "stderr"].iter().any(|k| {
+                out.data
+                    .get(k)
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_lowercase().contains("command not found"))
+                    .unwrap_or(false)
+            });
+            return !shell_said_not_found;
         }
     }
     true
@@ -131,6 +147,43 @@ mod effective_success_tests {
         assert!(effective_success("file_write", &w));
         let e = ToolOutput::error("nope");
         assert!(!effective_success("web_fetch", &e));
+    }
+
+    #[test]
+    fn shell_pipeline_masked_not_found_is_failure() {
+        // zsh flavor (observed live): command fails into stdout via 2>&1,
+        // pipeline exits 0.
+        let zsh = ToolOutput::success(serde_json::json!({
+            "exit_code": 0,
+            "stdout": "zsh:1: command not found: web_fetch",
+            "stderr": ""
+        }));
+        assert!(
+            !effective_success("shell", &zsh),
+            "exit 0 + 'command not found' in stdout is a masked failure"
+        );
+        // bash flavor: error lands in stderr.
+        let bash = ToolOutput::success(serde_json::json!({
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "bash: web_fetch: command not found"
+        }));
+        assert!(!effective_success("shell", &bash));
+        // Accepted cost: a genuinely successful command whose output merely
+        // DISCUSSES the phrase (e.g. grepping docs for it) also counts as
+        // failure. The phrase in exit-0 output is ambiguous and we take the
+        // failure side — strike miscounts are recoverable (vary the command
+        // or proceed to the answer), masked failures are not.
+        let phrasey = ToolOutput::success(serde_json::json!({
+            "exit_code": 0,
+            "stdout": "grep found: 'command not found' in guide.md"
+        }));
+        assert!(!effective_success("shell", &phrasey));
+        // exit != 0 without the phrase still fails (unchanged behavior).
+        let plain_fail = ToolOutput::success(serde_json::json!({
+            "exit_code": 2, "stdout": "usage: …"
+        }));
+        assert!(!effective_success("shell", &plain_fail));
     }
 }
 

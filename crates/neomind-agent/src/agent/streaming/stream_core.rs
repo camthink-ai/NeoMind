@@ -340,6 +340,18 @@ pub async fn process_stream_events_with_safeguards(
             let mut thinking_start_time: Option<Instant> = None;
             let mut thinking_timeout_warned = false;
             const THINKING_TIMEOUT_SECS: u64 = 300;
+            // Hard cut for a pure-thinking stall in ONE stream: zero content
+            // and zero tool calls for this many seconds means the model is
+            // wedged in a think-tag repetition loop. The per-chunk idle
+            // timeout (max_stream_duration) never fires in that state
+            // because chunks keep arriving every few seconds — there is no
+            // TOTAL cap without this. (live 2026-10-27: minicpm5-2b final
+            // round, 478s of thinking-only chunks, orig_len=0; llama.cpp
+            // ignores request-side thinking toggles, so the model burned
+            // its whole generation budget in the think channel.) Breaking
+            // the consume loop funnels into the existing empty-content
+            // no-thinking retry, so the user still gets an answer.
+            const THINKING_STALL_ABORT_SECS: u64 = 300;
 
             // === SAFEGUARD: Track recently executed tools for multi-round context ===
             let mut recently_executed_tools: VecDeque<String> = VecDeque::new();
@@ -390,6 +402,22 @@ pub async fn process_stream_events_with_safeguards(
             //     returned; a note is prepended for the model to read.
             let mut last_round_success_sigs: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
+            // #3b duplicate hard-break: signatures that were ALREADY
+            // duplicates last round (advisory fired, call re-executed).
+            // One more identical round is a degenerate fixation — the 3rd
+            // consecutive identical call is refused pre-execution instead
+            // of nagged (live 2026-10-27: 3× identical `skill search`,
+            // `_duplicate` advisory ignored twice by a 2B model). Same
+            // legitimacy constraints as the advisory: consecutive rounds
+            // only, succeeded-only — check→write→verify never matches.
+            let mut last_round_dup_sigs: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            // Once refused by the duplicate break, an identical call stays
+            // refused for the rest of the turn (sticky: a fixated small
+            // model will otherwise keep re-asking every round).
+            let refused_dup_sigs: std::sync::Arc<
+                std::sync::Mutex<std::collections::HashSet<String>>,
+            > = std::sync::Arc::new(std::collections::HashSet::new().into());
             let executed_tool_signatures: std::sync::Arc<
                 std::sync::Mutex<std::collections::HashMap<String, String>>,
             > = std::sync::Arc::new(std::collections::HashMap::new().into());
@@ -777,6 +805,17 @@ pub async fn process_stream_events_with_safeguards(
                     yielded_up_to = 0;
                     tool_calls.clear();
                     content_before_tools = String::new();
+                    // Per-round stream state: the thinking-stall clock (and
+                    // the progress stage hints) must measure THIS round's
+                    // stream. The old cross-round accumulation made the 300s
+                    // warning fire 300s after the TURN's first thinking
+                    // chunk (live 2026-10-27: warned at R5+133s while that
+                    // stream itself was only 2m13s old), and the hard abort
+                    // below inherits the same per-round semantics.
+                    thinking_start_time = None;
+                    thinking_timeout_warned = false;
+                    has_thinking = false;
+                    has_content = false;
                     // Reset repetition tracking for the new round to prevent
                     // carry-over from previous rounds causing false positives
                     recent_chunks.clear();
@@ -924,6 +963,31 @@ pub async fn process_stream_events_with_safeguards(
                                             "The model is taking longer than expected to think. This may indicate a complex query or the model getting stuck. Please wait...".to_string()
                                         );
                                         thinking_timeout_warned = true;
+                                    }
+
+                                    // Hard abort: a pure-thinking stall in THIS
+                                    // stream (see THINKING_STALL_ABORT_SECS).
+                                    // The gate excludes any stream that has
+                                    // produced content or a tool call — only a
+                                    // wedged think-loop reaches this. Breaks the
+                                    // chunk-consume loop; the empty buffer then
+                                    // flows into the empty-content no-thinking
+                                    // retry below, so the turn still answers.
+                                    if !has_content
+                                        && !tool_calls_detected
+                                        && thinking_elapsed
+                                            > Duration::from_secs(THINKING_STALL_ABORT_SECS)
+                                    {
+                                        tracing::warn!(
+                                            elapsed_secs = thinking_elapsed.as_secs(),
+                                            thinking_chars =
+                                                thinking_content.chars().count(),
+                                            "Thinking-only stall: aborting the stream, falling through to the no-thinking retry"
+                                        );
+                                        yield AgentEvent::warning(
+                                            "The model is stuck in a thinking loop — cutting it off and retrying without thinking. / 模型陷入思考循环，正在切断并以禁用思考的方式重试。".to_string()
+                                        );
+                                        break;
                                     }
                                 }
 
@@ -1261,12 +1325,25 @@ pub async fn process_stream_events_with_safeguards(
 
                     let reuse_map = executed_tool_signatures.clone();
                     let failed_map = failed_tool_signatures.clone();
+                    // Read-only snapshots for the duplicate hard-break: at
+                    // dispatch time these hold the PREVIOUS round's sets
+                    // (swapped at the end of each round's result loop).
+                    let prev_round_success = std::sync::Arc::new(
+                        last_round_success_sigs.clone(),
+                    );
+                    let prev_round_dup = std::sync::Arc::new(
+                        last_round_dup_sigs.clone(),
+                    );
+                    let refused_dup_map = refused_dup_sigs.clone();
 
                     let tool_futures = futures::stream::iter(tool_inputs.into_iter().map(|(i, name, arguments)| {
                         let tools_clone = tools.clone();
                         let cache_clone = cache.clone();
                         let reuse_map = reuse_map.clone();
                         let failed_map = failed_map.clone();
+                        let prev_round_success = prev_round_success.clone();
+                        let prev_round_dup = prev_round_dup.clone();
+                        let refused_dup_map = refused_dup_map.clone();
 
                         async move {
                             // Shell policy check — same deny-list as Loop A (tool_loop.rs).
@@ -1308,6 +1385,42 @@ pub async fn process_stream_events_with_safeguards(
                                         _name: name.clone(),
                                         arguments: arguments.clone(),
                                         result: Err(crate::toolkit::error::ToolError::Execution(msg)),
+                                    });
+                                }
+                            }
+
+                            // === DUPLICATE BREAK (see last_round_dup_sigs) ===
+                            // Sticky: refused once this turn → always refused.
+                            // New refusal: identical signature succeeded AND was
+                            // already a duplicate last round → this would be the
+                            // 3rd consecutive identical execution. Advisory-only
+                            // nagging is not enough for small models (live
+                            // 2026-10-27: `_duplicate` hint ignored twice).
+                            if !reusable {
+                                let third_consecutive = prev_round_success.contains(&sig)
+                                    && prev_round_dup.contains(&sig);
+                                // Hoist the lock: std Mutex is non-reentrant,
+                                // so keep the guard's lifetime visibly short
+                                // of the insert below.
+                                let already_refused =
+                                    refused_dup_map.lock().unwrap().contains(&sig);
+                                if third_consecutive || already_refused {
+                                    if third_consecutive {
+                                        refused_dup_map
+                                            .lock()
+                                            .unwrap()
+                                            .insert(sig.clone());
+                                        tracing::warn!(
+                                            tool = %name,
+                                            "Duplicate break: identical successful call already ran twice consecutively — refusing to re-execute"
+                                        );
+                                    }
+                                    return (i, name.clone(), ToolExecutionResult {
+                                        _name: name.clone(),
+                                        arguments: arguments.clone(),
+                                        result: Err(crate::toolkit::error::ToolError::Execution(
+                                            duplicate_break_message(),
+                                        )),
                                     });
                                 }
                             }
@@ -1409,6 +1522,8 @@ pub async fn process_stream_events_with_safeguards(
                     let mut tool_call_results: Vec<(String, String)> = Vec::new();
                     let mut this_round_success_sigs: std::collections::HashSet<String> =
                         std::collections::HashSet::new();
+                    let mut this_round_dup_sigs: std::collections::HashSet<String> =
+                        std::collections::HashSet::new();
 
                     for (_, name, execution) in tool_results_executed {
                         // Use arguments from the execution result (preserves per-call arguments for same-name tools)
@@ -1451,7 +1566,13 @@ pub async fn process_stream_events_with_safeguards(
                         match execution.result {
                             Ok(output) => {
                                 if crate::toolkit::tool::effective_success(&name, &output) {
-                                    this_round_success_sigs.insert(dup_sig);
+                                    this_round_success_sigs.insert(dup_sig.clone());
+                                    // Only SUCCESSFUL duplicates arm the hard
+                                    // break — retrying a failed call stays
+                                    // legitimate (see failed_tool_signatures).
+                                    if was_dup {
+                                        this_round_dup_sigs.insert(dup_sig);
+                                    }
                                 }
                                 let mut result_value = if output.success {
                                     output.data.clone()
@@ -1550,6 +1671,7 @@ pub async fn process_stream_events_with_safeguards(
                     }
 
                     last_round_success_sigs = this_round_success_sigs;
+                    last_round_dup_sigs = this_round_dup_sigs;
                     // Update recently executed tools list (for multi-round context)
                     all_round_tool_results.extend(tool_call_results.iter().cloned());
                     for (name, _result) in &tool_call_results {
@@ -2242,9 +2364,34 @@ pub async fn process_stream_events_with_safeguards(
                             Ok(retry_stream) => {
                                 let mut retry_content = String::new();
                                 let mut pin = Box::pin(retry_stream);
+                                // Dedicated bounds for the recovery retry. It
+                                // must NOT inherit the main path's 2400s
+                                // per-chunk idle: that timeout only fires on a
+                                // SILENT stream, and there is no total cap at
+                                // all — a wedged backend held the turn
+                                // indefinitely while the user watched nothing
+                                // (live 2026-10-27: retry sent 15:38:44, no
+                                // reply ever rendered). This call has thinking
+                                // forced off and a compact history, so 120s
+                                // idle (still covers the single-slot llama.cpp
+                                // queue+prefill first-chunk wait, ~62s
+                                // observed) and a 180s total budget are ample.
+                                const RETRY_IDLE_TIMEOUT: std::time::Duration =
+                                    std::time::Duration::from_secs(120);
+                                const RETRY_TOTAL_BUDGET: std::time::Duration =
+                                    std::time::Duration::from_secs(180);
+                                let retry_started = std::time::Instant::now();
                                 while let Some(chunk) =
-                                    next_chunk_or_timeout(&mut pin, safeguards.max_stream_duration).await
+                                    next_chunk_or_timeout(&mut pin, RETRY_IDLE_TIMEOUT).await
                                 {
+                                    if retry_started.elapsed() >= RETRY_TOTAL_BUDGET {
+                                        tracing::warn!(
+                                            chars_so_far =
+                                                retry_content.chars().count(),
+                                            "No-thinking retry exceeded its total budget — using whatever arrived"
+                                        );
+                                        break;
+                                    }
                                     match chunk {
                                         Ok((text, _)) => {
                                             retry_content.push_str(&text);
@@ -2418,6 +2565,13 @@ pub(crate) fn loop_break_message(failures: u32, last_err: &str) -> Option<String
     ))
 }
 
+/// Refusal text for the duplicate hard-break (see `last_round_dup_sigs`):
+/// unlike the advisory, this lands as a tool ERROR so even a tiny model
+/// cannot read it as a normal result to repeat against.
+pub(crate) fn duplicate_break_message() -> String {
+    "DUPLICATE BREAK: you already ran this EXACT call (same tool + arguments) twice in a row and both succeeded — it will NOT run again. Do NOT repeat it. Produce your final answer to the user NOW using the results you already have. / 你已连续两次执行完全相同的调用且均已成功，系统拒绝再次执行。请立即基于已有结果给出最终回答，不要再重复调用。".to_string()
+}
+
 #[cfg(test)]
 mod history_budget_tests {
     use super::*;
@@ -2446,6 +2600,23 @@ mod history_budget_tests {
         assert!(crate::toolkit::tool::effective_success("file_write", &w));
         let e = ToolOutput::error("nope");
         assert!(!crate::toolkit::tool::effective_success("web_fetch", &e));
+    }
+
+    /// The duplicate hard-break refusal must demand a FINAL ANSWER in both
+    /// languages — a 2B model reading only one still gets the instruction.
+    #[test]
+    fn duplicate_break_message_demands_final_answer() {
+        let msg = duplicate_break_message();
+        assert!(msg.contains("DUPLICATE BREAK"), "{msg}");
+        assert!(
+            msg.contains("NOT run again"),
+            "must state the refusal: {msg}"
+        );
+        assert!(
+            msg.contains("final answer"),
+            "must redirect to answering: {msg}"
+        );
+        assert!(msg.contains("最终回答"), "bilingual instruction: {msg}");
     }
 
     /// Loop-break state machine: one failure never breaks; the refusal
