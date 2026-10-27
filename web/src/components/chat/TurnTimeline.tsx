@@ -149,7 +149,7 @@ export function TurnTimeline({
       open={isExpanded}
       onOpenChange={setIsExpanded}
       data-testid="turn-timeline"
-      className="mx-3 mb-4 overflow-hidden rounded-xl border border-chat-card-border bg-muted-20"
+      className="mb-4 min-w-0 overflow-hidden rounded-xl border border-chat-card-border bg-muted-20"
     >
       <CollapsibleTrigger asChild>
         <button

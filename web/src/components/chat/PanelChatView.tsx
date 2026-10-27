@@ -99,6 +99,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
   // post-end reconciliation against the server's canonical history.
   const {
     isStreaming,
+    hasReceivedEvent,
     isStreamingRef,
     streamingMessageId,
     streamingContent,
@@ -182,6 +183,34 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
 
   const [input, setInput] = useState("")
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const [sendPhase, setSendPhase] = useState<"idle" | "preparing" | "waiting">("idle")
+  const [sendElapsedSeconds, setSendElapsedSeconds] = useState(0)
+  const sendInProgressRef = useRef(false)
+  const sendEpochRef = useRef(0)
+  const sendStartedAtRef = useRef<number | null>(null)
+  const pendingAssistantMessageIdRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (sendPhase === "idle") {
+      setSendElapsedSeconds(0)
+      sendStartedAtRef.current = null
+      pendingAssistantMessageIdRef.current = null
+      return
+    }
+    const timer = window.setInterval(() => {
+      if (sendStartedAtRef.current !== null) {
+        setSendElapsedSeconds(Math.floor((Date.now() - sendStartedAtRef.current) / 1000))
+      }
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [sendPhase])
+
+  useEffect(() => {
+    if (sendPhase === "waiting" && !isStreaming) {
+      setSendPhase("idle")
+      sendInProgressRef.current = false
+    }
+  }, [isStreaming, sendPhase])
 
   // Page context — reactive, only read when sending first message.
   // The page-scoped assistant specializes the panel per route: its
@@ -251,8 +280,8 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
 
   // Sync streaming state to parent
   useEffect(() => {
-    onStreamingChangeRef.current(isStreaming)
-  }, [isStreaming])
+    onStreamingChangeRef.current(isStreaming || sendPhase !== "idle")
+  }, [isStreaming, sendPhase])
 
   const handlePanelScroll = useCallback(() => {
     const el = scrollContainerRef.current
@@ -361,10 +390,12 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
         ws.setSessionId(result.sessionId)
         isPinnedRef.current = true
         setShowScrollPill(false)
-        setPanelMessages([])
+        setIsHistoryLoading(false)
+        return result.sessionId as string
       }
-    } catch { /* ignore — panel just won't work until backend is available */ }
+    } catch { /* handled by the caller; the panel can retry on the next send */ }
     setIsHistoryLoading(false)
+    return null
   }, [assistant, baseAssistant])
 
   // Initialize/re-init the panel for the current page. Runs on mount AND on
@@ -381,6 +412,9 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     // including a resumed poll: keyed to the OLD page's session, it would
     // re-inject that conversation's content into the new page's panel.
     panelSessionIdRef.current = null
+    sendEpochRef.current += 1
+    sendInProgressRef.current = false
+    setSendPhase("idle")
     isPinnedRef.current = true
     setShowScrollPill(false)
     setPanelMessages([])
@@ -446,7 +480,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
 
   // New conversation handler — resets the CURRENT page's bucket
   const handleNewConversation = useCallback(async () => {
-    if (isStreaming) return
+    if (isStreaming || sendInProgressRef.current) return
     localStorage.removeItem(panelSessionKey(currentPageKeyRef.current))
     panelSessionIdRef.current = null
     isPinnedRef.current = true
@@ -539,7 +573,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
   // Send message — ensure session is ready before sending
   const handleSend = useCallback(async () => {
     const text = input.trim()
-    if ((!text && attachedImages.length === 0) || isStreaming) return
+    if ((!text && attachedImages.length === 0) || isStreaming || sendInProgressRef.current || isHistoryLoading) return
 
     // Images need a vision-capable backend
     if (attachedImages.length > 0 && !imagesAllowed) {
@@ -547,30 +581,52 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
       return
     }
 
-    // Ensure we have a session before sending
-    if (!panelSessionIdRef.current) {
-      await createPanelSession()
-    }
-
+    // Echo the user's message immediately. Session setup happens in the
+    // background, with a streaming placeholder shown until the request starts.
+    const pendingUserMessageId = generateId()
+    const pendingAssistantMessageId = generateId()
+    pendingAssistantMessageIdRef.current = pendingAssistantMessageId
+    const sendEpoch = sendEpochRef.current
+    const sentImages = attachedImages.length > 0 ? [...attachedImages] : undefined
+    sendInProgressRef.current = true
+    sendStartedAtRef.current = Date.now()
+    setSendElapsedSeconds(0)
+    setSendPhase("preparing")
     addPanelMessage({
-      id: generateId(),
+      id: pendingUserMessageId,
       role: "user",
       content: text || "[Image]",
       timestamp: Math.floor(Date.now() / 1000),
-      images: attachedImages.length > 0 ? [...attachedImages] : undefined,
+      images: sentImages,
     })
 
-    const sentImages = attachedImages.length > 0 ? [...attachedImages] : undefined
     setAttachedImages([])
     setInput("")
     if (inputRef.current) inputRef.current.style.height = "auto"
-    beginTurn()
+
+    // Ensure we have a session before sending. This await used to happen
+    // before any UI feedback, making the first message feel unresponsive.
+    let sessionId = panelSessionIdRef.current
+    if (!sessionId) sessionId = await createPanelSession()
+    if (sendEpoch !== sendEpochRef.current) return
+    if (!sessionId) {
+      setPanelMessages(prev => prev.filter(message => message.id !== pendingUserMessageId))
+      setInput(text)
+      setAttachedImages(sentImages || [])
+      setSendPhase("idle")
+      sendInProgressRef.current = false
+      toast({ title: t("errors.sendMessage"), variant: "destructive" })
+      return
+    }
+
+    beginTurn(pendingAssistantMessageId)
+    setSendPhase("waiting")
     // Page-matched skills ride every send (backend pins them per message);
     // the page's system focus already lives in the session's system prompt.
     const skillIds = matchedSkillIdsRef.current.length > 0 ? [...matchedSkillIdsRef.current] : undefined
     ws.sendMessage(text, sentImages, skillIds, undefined)
     requestAnimationFrame(() => inputRef.current?.focus())
-  }, [input, attachedImages, isStreaming, addPanelMessage, createPanelSession, imagesAllowed, toast, t, beginTurn])
+  }, [input, attachedImages, isStreaming, isHistoryLoading, addPanelMessage, createPanelSession, imagesAllowed, toast, t, beginTurn])
 
   const filteredMessages = useMemo(() => filterPartialMessages(panelMessages), [panelMessages])
 
@@ -643,11 +699,21 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
           <div className="w-8 h-8 rounded-lg bg-info-light flex items-center justify-center">
             <Bot className="h-4 w-4 text-info" />
           </div>
-          <div>
+          <div className="flex min-w-0 flex-col gap-0.5">
             <span className="text-sm font-semibold leading-tight">{t("panelTitle")}</span>
-            {isStreaming && (
-              <span className="ml-2 inline-flex items-center gap-1 text-xs text-muted-foreground">
-                <span className="w-1.5 h-1.5 rounded-full bg-info animate-pulse" />
+            {(sendPhase !== "idle" || isStreaming) && (
+              <span className="inline-flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground" role="status" aria-live="polite">
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-info animate-pulse" />
+                {(sendPhase === "preparing" || hasReceivedEvent) && (
+                  <span className="truncate">
+                    {sendPhase === "preparing"
+                      ? t("panelStatus.preparing")
+                      : t("panelStatus.responding")}
+                  </span>
+                )}
+                {sendPhase !== "idle" && !hasReceivedEvent && (
+                  <span className="shrink-0" aria-hidden="true">· {sendElapsedSeconds}s</span>
+                )}
               </span>
             )}
           </div>
@@ -657,7 +723,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
             variant="ghost"
             size="icon"
             onClick={handleNewConversation}
-            disabled={isStreaming}
+            disabled={isStreaming || sendPhase !== "idle"}
             className="h-8 w-8 rounded-lg text-muted-foreground hover:text-foreground"
             aria-label={t("newChat", "New conversation")}
           >
@@ -680,7 +746,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
         <div
           ref={scrollContainerRef}
           onScroll={handlePanelScroll}
-          className="h-full overflow-y-auto px-4 py-5"
+          className="h-full min-w-0 overflow-x-hidden overflow-y-auto px-5 py-5 sm:px-6"
         >
         {!llmBackendLoading && (!llmBackends || llmBackends.length === 0) ? (
             <div className="flex flex-col items-center justify-center h-full gap-3 px-4">
@@ -787,14 +853,15 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
             <ChatMessages
               messages={filteredMessages}
               user={user}
-              isStreaming={isStreaming && !(streamingMessageId && filteredMessages.some(m => m.id === streamingMessageId))}
+              isStreaming={(isStreaming || sendPhase !== "idle") && !(streamingMessageId && filteredMessages.some(m => m.id === streamingMessageId))}
               streamingContent={streamingContent}
               streamingThinking={streamingThinking}
               streamingRoundThinking={streamingRoundThinking}
               streamingToolCalls={streamingToolCalls}
               roundContents={roundContents}
               currentRound={currentRound}
-              streamingMessageId={streamingMessageId}
+              streamingMessageId={pendingAssistantMessageIdRef.current || streamingMessageId}
+              streamingPlaceholder={sendPhase === "preparing" ? t("panelStatus.preparing") : undefined}
               endRef={messagesEndRef}
             />
           )}
@@ -804,7 +871,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
         </div>
         <ChatScrollPill
           visible={showScrollPill}
-          hasNewContent={isStreaming}
+          hasNewContent={isStreaming || sendPhase !== "idle"}
           onClick={scrollPanelToBottom}
         />
       </div>
@@ -825,6 +892,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
           textareaRef={inputRef}
           placeholder={t("input.placeholder")}
           isStreaming={isStreaming}
+          disabled={isHistoryLoading || sendPhase !== "idle"}
           onCancel={handleCancelRequest}
           attachments={attachedImages}
           onAttachmentsChange={setAttachedImages}

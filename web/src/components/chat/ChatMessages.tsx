@@ -12,10 +12,10 @@
 
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react"
 import { useTranslation } from "react-i18next"
-import { Loader2, Sparkles, Info } from "lucide-react"
+import { Loader2, Info } from "lucide-react"
 import type { ChatImage, Message, UserInfo } from "@/types"
 import { cn } from "@/lib/utils"
-import { textMini, textNano } from "@/design-system/tokens/typography"
+import { textMini } from "@/design-system/tokens/typography"
 import { formatTimestamp, formatElapsedMs } from "@/lib/utils/format"
 import { cleanToolCallJson, mergeMessagesForDisplay, dropInFlightTurn } from "@/lib/messageUtils"
 import { getServerOrigin } from "@/lib/api"
@@ -25,7 +25,6 @@ import { ThinkingBlock } from "./ThinkingBlock"
 import { TurnTimeline } from "./TurnTimeline"
 import { CopyMessageButton } from "./CopyMessageButton"
 import { ZoomableImage } from "@/components/shared/ZoomableImage"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 
 interface ChatMessagesProps {
   /** Raw (filtered) messages — merged here for display. */
@@ -43,6 +42,8 @@ interface ChatMessagesProps {
   currentRound: number
   /** Id the streaming message will keep once persisted (smooth transition). */
   streamingMessageId?: string | null
+  /** Optional local status shown before the first server event arrives. */
+  streamingPlaceholder?: string
   endRef?: RefObject<HTMLDivElement>
   /** Older history exists beyond the loaded window — renders the
    *  "load earlier" affordance at the top of the list. */
@@ -80,7 +81,6 @@ function MessageImages({ images }: { images: ChatImage[] }) {
 
 export function ChatMessages({
   messages,
-  user,
   isStreaming,
   streamingContent,
   streamingThinking,
@@ -89,13 +89,13 @@ export function ChatMessages({
   roundContents,
   currentRound,
   streamingMessageId,
+  streamingPlaceholder,
   endRef,
   hasEarlierHistory,
   loadingEarlier,
   onLoadEarlier,
 }: ChatMessagesProps) {
   const { t } = useTranslation("chat")
-  const getUserInitials = (username: string) => username.slice(0, 2).toUpperCase()
 
   // Announce turn boundaries, not every streamed chunk. Screen readers get
   // "generating" once when a turn starts and "ready" when it ends; the log
@@ -164,7 +164,7 @@ export function ChatMessages({
       role="log"
       aria-busy={isStreaming}
       data-testid="messages-container"
-      className="max-w-3xl mx-auto space-y-4 sm:space-y-6 @container"
+      className="mx-auto w-full min-w-0 max-w-3xl space-y-4 sm:space-y-6 @container"
     >
       <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
         {announcement}
@@ -216,32 +216,19 @@ export function ChatMessages({
           <div
             key={message.id || `msg-${idx}`}
             data-testid={message.role === "assistant" ? "assistant-message" : message.role === "user" ? "user-message" : undefined}
-            className={`group flex gap-2 sm:gap-3 animate-fade-in-up ${message.role === "user" ? "justify-end" : "justify-start"}`}
+            className={`group flex min-w-0 gap-2 sm:gap-3 animate-fade-in-up ${message.role === "user" ? "justify-end" : "justify-start"}`}
           >
-            {message.role === "assistant" && (
-              <div className="flex-shrink-0 w-6 h-6 sm:w-8 sm:h-8 rounded-lg bg-foreground flex items-center justify-center">
-                <Sparkles className={cn(
-                  "h-4 w-4 sm:h-4 sm:w-4 text-background",
-                  isCurrentlyStreaming && "animate-pulse"
-                )} />
-              </div>
-            )}
-
             {/* User bubbles hug their content (right-aligned). Assistant
                 messages span the FULL column: the thinking/tool cards inside
                 size to the widest sibling, so a content-hugging max-width
                 made their width jump (short during early streaming, wide
                 once long text/tables arrive) — a fixed full width keeps the
-                card geometry stable through the whole turn.
-
-                On a wide chat column, mirror the left avatar gutter on the
-                right so the assistant block is centred under the composer.
-                The container query leaves the narrow floating panel alone. */}
+                card geometry stable through the whole turn. */}
             <div
               className={
                 message.role === "user"
-                  ? "order-1 max-w-[85%] sm:max-w-[80%]"
-                  : "w-full @[36rem]:pr-11"
+                  ? "order-1 min-w-0 max-w-[85%] sm:max-w-[80%]"
+                  : "w-full min-w-0"
               }
             >
               <div
@@ -318,9 +305,9 @@ export function ChatMessages({
                             finalContent={displayContent}
                           />
                           {displayContent ? (
-                            <MarkdownMessage content={displayContent} variant="assistant" className="px-3" isStreaming={isCurrentlyStreaming} />
+                            <MarkdownMessage content={displayContent} variant="assistant" isStreaming={isCurrentlyStreaming} />
                           ) : isCurrentlyStreaming ? (
-                            <div className="flex items-center gap-1 px-3 py-1">
+                            <div className="flex items-center gap-1 py-1">
                               <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground opacity-40 animate-bounce" style={{ animationDelay: '0ms' }} />
                               <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground opacity-40 animate-bounce" style={{ animationDelay: '150ms' }} />
                               <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground opacity-40 animate-bounce" style={{ animationDelay: '300ms' }} />
@@ -341,12 +328,15 @@ export function ChatMessages({
                           />
                         )}
                         {displayContent ? (
-                          <MarkdownMessage content={displayContent} variant="assistant" className="px-3" isStreaming={isCurrentlyStreaming} />
+                          <MarkdownMessage content={displayContent} variant="assistant" isStreaming={isCurrentlyStreaming} />
                         ) : isCurrentlyStreaming ? (
-                          <div className="flex items-center gap-1 px-3 py-1">
-                            <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground opacity-40 animate-bounce" style={{ animationDelay: '0ms' }} />
-                            <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground opacity-40 animate-bounce" style={{ animationDelay: '150ms' }} />
-                            <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground opacity-40 animate-bounce" style={{ animationDelay: '300ms' }} />
+                          <div className="flex items-center gap-2 py-1 text-xs text-muted-foreground">
+                            <span className="flex items-center gap-1">
+                              <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground opacity-40 animate-bounce" style={{ animationDelay: '0ms' }} />
+                              <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground opacity-40 animate-bounce" style={{ animationDelay: '150ms' }} />
+                              <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground opacity-40 animate-bounce" style={{ animationDelay: '300ms' }} />
+                            </span>
+                            {streamingPlaceholder && <span>{streamingPlaceholder}</span>}
                           </div>
                         ) : null}
                       </>
@@ -356,7 +346,7 @@ export function ChatMessages({
                       spent): system callouts, clearly not model speech —
                       single-language, styled apart from the content. */}
                   {message.role === 'assistant' && message.systemNotes && message.systemNotes.length > 0 && (
-                    <div className="mt-2 px-3 flex flex-col gap-1.5">
+                    <div className="mt-2 flex flex-col gap-1.5">
                       {message.systemNotes.map((note, i) => (
                         <div
                           key={i}
@@ -371,7 +361,7 @@ export function ChatMessages({
                 </div>
               </div>
 
-              <div className="mt-1.5 flex items-center gap-2 px-3">
+              <div className="mt-1.5 flex items-center gap-2">
                 <time
                   title={statsTitle}
                   className="text-xs text-muted-foreground tabular-nums"
@@ -392,13 +382,6 @@ export function ChatMessages({
               </div>
             </div>
 
-            {message.role === "user" && user && (
-              <Avatar className="h-6 w-6 sm:h-8 sm:w-8 order-2">
-                <AvatarFallback className={cn("bg-muted text-muted-foreground", textNano, "sm:text-xs")}>
-                  {getUserInitials(user.username)}
-                </AvatarFallback>
-              </Avatar>
-            )}
           </div>
         )
       })}

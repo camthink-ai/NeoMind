@@ -3,6 +3,10 @@
   "closePanel": "Close",
   "resizePanel": "Drag to resize chat panel",
   "panelTitle": "AI Chat",
+  "panelStatus": {
+    "preparing": "Preparing conversation",
+    "responding": "AI is responding"
+  },
   "streamInProgress": "Stream in progress, closing after completion...",
   "title": "Smart IoT Assistant",
   "welcome": {

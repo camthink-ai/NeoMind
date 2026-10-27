@@ -108,6 +108,9 @@ export function useChatStream(options: UseChatStreamOptions) {
   useEffect(() => { optionsRef.current = options })
 
   const [isStreaming, setIsStreaming] = useState(false)
+  // True after the first server event for the active turn. The panel uses
+  // this to distinguish local/session setup from waiting on the backend.
+  const [hasReceivedEvent, setHasReceivedEvent] = useState(false)
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null)
   // Flushed at most once per frame (see scheduleFlush)
   const [streamingContent, setStreamingContent] = useState("")
@@ -173,6 +176,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     streamingMessageIdRef.current = null
     isStreamingRef.current = false
     setIsStreaming(false)
+    setHasReceivedEvent(false)
     setStreamingMessageId(null)
     setStreamingContent("")
     setStreamingThinking("")
@@ -184,10 +188,10 @@ export function useChatStream(options: UseChatStreamOptions) {
 
   /** Start a turn — call right before ws.sendMessage. Returns the id the
    *  finished message will keep (pass to nothing; it rides the result). */
-  const beginTurn = useCallback((): string => {
+  const beginTurn = useCallback((messageId?: string): string => {
     hardReset()
     interruptedRef.current = false // fresh turn — accumulator is continuous
-    const id = generateId()
+    const id = messageId || generateId()
     streamingMessageIdRef.current = id
     isStreamingRef.current = true
     setIsStreaming(true)
@@ -206,6 +210,7 @@ export function useChatStream(options: UseChatStreamOptions) {
   ) => {
     isStreamingRef.current = true
     setIsStreaming(true)
+    setHasReceivedEvent(!!(content || thinking || extras?.toolCalls?.length))
     interruptedRef.current = true // reattached turn: the end event will be partial
     accRef.current.content = content
     // The snapshot's thinking is the WHOLE turn's accumulation (the server
@@ -268,6 +273,7 @@ export function useChatStream(options: UseChatStreamOptions) {
 
   const markStreamStart = () => {
     if (streamStartRef.current === null) streamStartRef.current = Date.now()
+    setHasReceivedEvent(true)
     if (!isStreamingRef.current) {
       isStreamingRef.current = true
       setIsStreaming(true)
@@ -459,6 +465,7 @@ export function useChatStream(options: UseChatStreamOptions) {
   return {
     // state
     isStreaming,
+    hasReceivedEvent,
     isStreamingRef,
     streamingMessageId,
     streamingContent,

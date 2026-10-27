@@ -106,7 +106,9 @@ function dedupeRepeatedContent(content: string): string {
 function CodeBlock({ children, className: _className, ...props }: React.ComponentProps<'pre'>) {
   const preRef = useRef<HTMLPreElement>(null)
   const [copied, setCopied] = useState(false)
-  const [wrapped, setWrapped] = useState(false)
+  // Prefer wrapping in the compact floating panel; users can still switch to
+  // horizontal scrolling when preserving code line shape is more useful.
+  const [wrapped, setWrapped] = useState(true)
   const [expanded, setExpanded] = useState(false)
   const [lineCount, setLineCount] = useState(0)
   const { t } = useTranslation("chat")
@@ -260,7 +262,7 @@ const MARKDOWN_COMPONENTS = {
     return <ZoomableImage src={resolved} alt={alt ?? ''} />
   },
   // Tables scroll horizontally WITHIN the message instead of pushing the
-  // whole chat panel into horizontal scroll (float chat is only 380-400px).
+  // whole chat panel into horizontal scroll on compact floating layouts.
   table: ({ node: _node, children, ...props }) => (
     <div className="my-3 overflow-x-auto">
       <table
@@ -320,7 +322,9 @@ export const MarkdownMessage = React.memo<MarkdownMessageProps>(
           "prose-pre:prose-code:bg-transparent prose-pre:prose-code:p-0 prose-pre:prose-code:text-foreground",
           "prose-blockquote:border-l-2 prose-blockquote:border-muted-foreground prose-blockquote:bg-muted-30 prose-blockquote:pl-3 prose-blockquote:pr-3 prose-blockquote:py-1 prose-blockquote:rounded-r-md prose-blockquote:italic",
           "prose-ul:my-1 prose-ul:pl-4 prose-ul:list-disc",
-          "prose-ol:my-1 prose-ol:pl-4 prose-ol:list-decimal",
+          // Ordered markers hang outside the list's text box; give multi-digit
+          // numbers enough gutter so they stay inside narrow chat columns.
+          "prose-ol:my-1 prose-ol:pl-6 prose-ol:list-decimal",
           "prose-li:my-1 prose-li:marker:text-muted-foreground",
           "prose-table:my-3 prose-table:text-body",
           "prose-th:px-2 prose-th:py-1.5 prose-th:border-b prose-th:border-border prose-th:bg-muted-50 prose-th:font-semibold",

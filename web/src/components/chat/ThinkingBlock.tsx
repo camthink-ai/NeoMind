@@ -58,7 +58,7 @@ export function ThinkingBlock({
       className={cn(
         inline
           ? ""
-          : "mx-3 mb-3 overflow-hidden rounded-xl border border-chat-card-border bg-muted-20"
+          : "mb-3 min-w-0 overflow-hidden rounded-xl border border-chat-card-border bg-muted-20"
       )}
     >
       <CollapsibleTrigger asChild>

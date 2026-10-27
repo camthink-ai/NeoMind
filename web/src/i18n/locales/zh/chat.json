@@ -3,6 +3,10 @@
   "closePanel": "关闭",
   "resizePanel": "拖动调整对话面板宽度",
   "panelTitle": "AI 对话",
+  "panelStatus": {
+    "preparing": "正在准备对话",
+    "responding": "AI 正在回复"
+  },
   "streamInProgress": "正在响应中，完成后自动关闭...",
   "title": "智能物联网助手",
   "welcome": {

@@ -3,7 +3,7 @@
  *
  * Shows a FAB on all non-chat pages. Clicking opens the panel:
  * - WIDE (>=1280px): a DOCKED right column — full height, resizable width
- *   (default 400px, drag its left edge), in-flow beside the page content
+ *   (default 480px, drag its left edge), in-flow beside the page content
  *   (which squeezes).
  * - NARROW: a floating window anchored bottom-right, scale-up animation.
  *
@@ -29,9 +29,10 @@ type PanelState = "closed" | "opening" | "open" | "closing"
 // Resizable panel width (both the docked column and the floating window).
 // Right-anchored, so dragging the left edge leftward widens.
 const CHAT_WIDTH_KEY = "neomind_chat_width"
-const CHAT_WIDTH_MIN = 320
-const CHAT_WIDTH_MAX = 720
-const CHAT_WIDTH_DEFAULT = 400
+const CHAT_WIDTH_MIN = 360
+const CHAT_WIDTH_MAX = 800
+const CHAT_WIDTH_DEFAULT = 480
+const CHAT_WIDTH_LEGACY_DEFAULT = 400
 
 function useChatWidth() {
   const [width, setWidth] = useState(() => {
@@ -39,6 +40,9 @@ function useChatWidth() {
     const raw = window.localStorage.getItem(CHAT_WIDTH_KEY)
     const n = raw ? Number.parseInt(raw, 10) : NaN
     if (Number.isNaN(n)) return CHAT_WIDTH_DEFAULT
+    // 400px was the previous default; upgrade that untouched default so the
+    // panel has enough room for regular chat content after this UI update.
+    if (n === CHAT_WIDTH_LEGACY_DEFAULT) return CHAT_WIDTH_DEFAULT
     return Math.min(CHAT_WIDTH_MAX, Math.max(CHAT_WIDTH_MIN, n))
   })
   useEffect(() => {
