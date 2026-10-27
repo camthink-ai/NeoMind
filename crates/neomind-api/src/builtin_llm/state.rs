@@ -202,7 +202,7 @@ pub async fn bootstrap(
                 // silently rewrite a raised ctx back down (and the agent's
                 // history budget shrank to match the phantom smaller window).
                 updated.capabilities.max_context =
-                    super::handlers::guarded_ctx(cfg, def.default_ctx, Some(def));
+                    super::handlers::guarded_ctx(cfg, cfg.port, def.default_ctx, Some(def));
                 let _ = manager.upsert_instance(updated).await;
             }
         }
@@ -273,7 +273,8 @@ pub async fn bootstrap(
     // spawn + healthy — ctx: explicit override (NEOMIND_BUILTIN_LLM_CTX /
     // restart API) picks the starting point, the RAM guard caps what the
     // device can fund (128K defaults on small edge devices would OOM).
-    let effective_ctx = super::handlers::guarded_ctx(cfg, def.default_ctx, Some(&def));
+    let effective_ctx =
+        super::handlers::guarded_ctx(cfg, cfg.port, def.default_ctx, Some(&def));
     // Vision projector (same resolution rules as spawn_builtin_server):
     // manifest records it + file present; a model_path override opts out.
     let mmproj = if cfg.model_path.is_some() {

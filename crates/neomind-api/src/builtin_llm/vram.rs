@@ -262,10 +262,55 @@ pub fn plan_gpu_layers(i: &GpuBudgetInputs) -> OffloadPlan {
     }
 }
 
+/// The last spawn's offload decision, recorded per port for the status API.
+/// The 2026-10-27 T4 incident was diagnosable only from inside a shell
+/// session (`ps` for the flag, `nvidia-smi` for the why); this record makes
+/// the next one visible from the API/UI.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LastNglDecision {
+    /// Effective `-ngl` of the last spawn. `null` = no flag passed
+    /// (llama-server default — full offload — or auto-sizing skipped).
+    pub ngl: Option<u16>,
+    pub total_layers: Option<u32>,
+    /// Free VRAM at decision time (MiB); `null` when no probe ran or it
+    /// failed.
+    pub free_mib: Option<u64>,
+    /// VRAM the replaced same-port server freed (MiB).
+    pub reclaim_mib: u64,
+    pub ctx: usize,
+    /// Why: "pinned by config" | the plan's arithmetic | the skip reason.
+    pub note: String,
+}
+
+/// Decisions keyed by llama-server port (main 29375 / companion 29385 in
+/// the default layout): the companion spawns after the main model, so a
+/// single slot would always show the companion's decision under the main
+/// status block. A Vec — two entries max in practice, and HashMap::new is
+/// not const-initializable in a static.
+static DECISIONS: std::sync::Mutex<Vec<(u16, LastNglDecision)>> = std::sync::Mutex::new(Vec::new());
+
+fn record_decision(port: u16, d: LastNglDecision) {
+    let mut guard = DECISIONS.lock().unwrap_or_else(|e| e.into_inner());
+    guard.retain(|(p, _)| *p != port);
+    guard.push((port, d));
+}
+
+/// The most recent offload decision for the llama-server on `port`
+/// (`None` = no spawn since process start).
+pub fn last_decision_on(port: u16) -> Option<LastNglDecision> {
+    DECISIONS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .find(|(p, _)| *p == port)
+        .map(|(_, d)| d.clone())
+}
+
 /// The spawn-site query: an explicit pin wins; otherwise auto-size when the
 /// binary can honor it, a discrete NVIDIA GPU answers the probe, and the
 /// GGUF header reports its layer count. Any miss → `None` = pass no flag =
-/// llama-server's own default, the exact pre-auto behavior.
+/// llama-server's own default, the exact pre-auto behavior. Every path
+/// records its decision for the status API.
 pub struct NglQuery<'a> {
     /// `NEOMIND_BUILTIN_MODEL_NGL` / `NEOMIND_BUILTIN_VLM_NGL` (after the
     /// companion-override merge in `spawn_companion_server`).
@@ -287,18 +332,53 @@ pub struct NglQuery<'a> {
 pub fn resolve_spawn_ngl(q: &NglQuery<'_>) -> Option<u16> {
     if let Some(n) = q.explicit {
         tracing::debug!(ngl = n, "builtin llm: ngl pinned by config — auto-sizing skipped");
+        record_decision(
+            q.port,
+            LastNglDecision {
+                ngl: Some(n),
+                total_layers: parse_gguf(q.model_path).ok().and_then(|m| m.block_count),
+                // Best-effort observability only — a probe failure must not
+                // second-guess the operator's pin.
+                free_mib: probe_gpu_memory().map(|m| m.free_bytes / MIB),
+                reclaim_mib: 0,
+                ctx: q.ctx,
+                note: "pinned by config (NEOMIND_BUILTIN_MODEL_NGL / _VLM_NGL)".into(),
+            },
+        );
         return Some(n);
     }
+    let skip = |note: String| {
+        record_decision(
+            q.port,
+            LastNglDecision {
+                ngl: None,
+                total_layers: None,
+                free_mib: None,
+                reclaim_mib: 0,
+                ctx: q.ctx,
+                note,
+            },
+        );
+    };
     if !binary_gpu_capable(q.binary) {
+        skip("cpu/vulkan/jetson build — no GPU offload sizing (llama-server default)".into());
         return None;
     }
-    let mem = probe_gpu_memory()?;
-    let total_layers = parse_gguf(q.model_path)
+    let Some(mem) = probe_gpu_memory() else {
+        skip("no nvidia-smi / probe failed — llama-server default (full offload)".into());
+        return None; // CPU box, Jetson, or a wedged driver
+    };
+    let Some(total_layers) = parse_gguf(q.model_path)
         .ok()
         .and_then(|m| m.block_count)
-        .filter(|l| *l > 0)?;
+        .filter(|l| *l > 0)
+    else {
+        skip("GGUF header lacks block_count — auto sizing skipped (llama-server default)".into());
+        return None;
+    };
     let weights = std::fs::metadata(q.model_path).map(|m| m.len()).ok()?;
     if weights == 0 {
+        skip("model file empty — auto sizing skipped".into());
         return None;
     }
     let mmproj_bytes = q
@@ -325,6 +405,17 @@ pub fn resolve_spawn_ngl(q: &NglQuery<'_>) -> Option<u16> {
         ctx = q.ctx,
         "builtin llm: auto GPU offload sized ({})",
         plan.note
+    );
+    record_decision(
+        q.port,
+        LastNglDecision {
+            ngl: Some(plan.ngl),
+            total_layers: Some(plan.total_layers),
+            free_mib: Some(mem.free_bytes / MIB),
+            reclaim_mib: reclaim / MIB,
+            ctx: q.ctx,
+            note: plan.note,
+        },
     );
     Some(plan.ngl)
 }
@@ -430,6 +521,38 @@ mod tests {
         assert_eq!(parse_compute_apps_csv(csv, &[999]), 0, "foreign pids ignored");
         // The unparseable row belongs to a foreign pid anyway; ours parses.
         assert_eq!(parse_compute_apps_csv("870990, 798", &[870_990]), 798 * MIB);
+    }
+
+    #[test]
+    fn decisions_are_recorded_per_port() {
+        // The companion spawns after the main model — a single global slot
+        // would always show the companion's decision under the main status.
+        record_decision(
+            29375,
+            LastNglDecision {
+                ngl: Some(34),
+                total_layers: Some(34),
+                free_mib: Some(8000),
+                reclaim_mib: 0,
+                ctx: 32768,
+                note: "test-main".into(),
+            },
+        );
+        record_decision(
+            29385,
+            LastNglDecision {
+                ngl: None,
+                total_layers: None,
+                free_mib: None,
+                reclaim_mib: 0,
+                ctx: 8192,
+                note: "test-companion".into(),
+            },
+        );
+        assert_eq!(last_decision_on(29375).unwrap().note, "test-main");
+        assert_eq!(last_decision_on(29375).unwrap().ngl, Some(34));
+        assert_eq!(last_decision_on(29385).unwrap().note, "test-companion");
+        assert!(last_decision_on(29999).is_none(), "unspawned port has no record");
     }
 
     #[test]

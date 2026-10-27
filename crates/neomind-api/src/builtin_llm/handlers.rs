@@ -296,17 +296,20 @@ fn resolve_quant(
 /// without a KV cost model (Ling, catalog-only imports) pass through
 /// uncapped.
 ///
-/// Every spawn REPLACES the single live llama-server, so the available-RAM
-/// clamp adds the live instance's RSS back (it frees on replacement) —
-/// without this, a status poll or respawn evaluated while the old server
-/// held ~1.2 GB floored the window to 8192 (2026-10-15 incident). Status
-/// polling uses [`guarded_ctx_quiet`] so the cap doesn't warn every poll.
+/// A spawn REPLACES the llama-server on `port`, so the available-RAM clamp
+/// adds that server's live RSS back (it frees on replacement) — without
+/// this, a status poll or respawn evaluated while the old server held
+/// ~1.2 GB floored the window to 8192 (2026-10-15 incident). Servers on
+/// other ports (the vision companion during a main respawn) stay out of
+/// the add-back. Status polling uses [`guarded_ctx_quiet`] so the cap
+/// doesn't warn every poll.
 pub(crate) fn guarded_ctx(
     cfg: &BuiltinConfig,
+    port: u16,
     default_ctx: u32,
     def: Option<&BuiltinModelDef>,
 ) -> usize {
-    guarded_ctx_ex(cfg, default_ctx, def, true)
+    guarded_ctx_ex(cfg, port, default_ctx, def, true)
 }
 
 /// Default context budget by device RAM tier, applied only when no explicit
@@ -330,14 +333,16 @@ fn tier_default_ctx(total_ram_mb: u64) -> usize {
 /// actual spawns only.
 pub(crate) fn guarded_ctx_quiet(
     cfg: &BuiltinConfig,
+    port: u16,
     default_ctx: u32,
     def: Option<&BuiltinModelDef>,
 ) -> usize {
-    guarded_ctx_ex(cfg, default_ctx, def, false)
+    guarded_ctx_ex(cfg, port, default_ctx, def, false)
 }
 
 fn guarded_ctx_ex(
     cfg: &BuiltinConfig,
+    port: u16,
     default_ctx: u32,
     def: Option<&BuiltinModelDef>,
     warn_on_cap: bool,
@@ -367,9 +372,13 @@ fn guarded_ctx_ex(
     } else {
         kv_per_token
     };
-    // Replacement semantics: the live server's RSS frees when the new spawn
-    // takes over, so count it as available for the budget.
-    let live_rss = super::server::live_llama_rss_bytes();
+    // Replacement semantics: the live server ON THIS PORT frees when the new
+    // spawn takes over, so count its RSS as available. Port-scoped: the
+    // vision companion keeps running through a main respawn — its memory is
+    // not about-to-free, and counting it inflated the budget on every
+    // companion-box respawn (the RAM analogue of the VRAM planner's
+    // per-port reclaim).
+    let live_rss = super::server::live_llama_rss_bytes_on_port(port);
     // Resident weights include the vision projector when the model ships one
     // (~0.7–1 GB) — a budget that ignores it green-lights spawns that OOM
     // the moment llama-server mmaps the mtmd adapter.
@@ -990,7 +999,7 @@ async fn import_gguf_from_path(
     }
     // The ctx the server will actually run with (env override wins, RAM
     // guard caps) — registry id if the import names one, else uncapped.
-    let spawn_ctx = guarded_ctx(&cfg, import_default_ctx(&dest), model_def(&id));
+    let spawn_ctx = guarded_ctx(&cfg, cfg.port, import_default_ctx(&dest), model_def(&id));
 
     let spawned_endpoint = match get_instance_manager() {
         Ok(manager) => match spawn_builtin_server(&state.data_dir, &cfg, &manager, Some(&id)).await
@@ -1116,6 +1125,9 @@ pub async fn status_handler(
                     // (the companion is deliberately single-slot).
                     "kv_cache": if cfg.vlm_kv_quant.unwrap_or(cfg.kv_quant) { "q8_0" } else { "f16" },
                     "parallel": 1,
+                    // Last spawn's offload decision for the companion's own
+                    // port (null before its first spawn in this process).
+                    "gpu_offload": super::vram::last_decision_on(cfg.vlm_port),
                 })
             }
             None => serde_json::Value::Null,
@@ -1171,7 +1183,7 @@ pub async fn status_handler(
         .map(|(d, _)| d.default_ctx)
         .unwrap_or(0);
     let effective_ctx =
-        guarded_ctx_quiet(&cfg, model_def_ctx, installed_pair.as_ref().map(|(d, _)| d));
+        guarded_ctx_quiet(&cfg, cfg.port, model_def_ctx, installed_pair.as_ref().map(|(d, _)| d));
     let (total_mb, available_mb) = memory_snapshot_mb();
     let min_ram_mb = installed_pair
         .as_ref()
@@ -1200,6 +1212,10 @@ pub async fn status_handler(
         // Slot count the current spawn uses; null = flag omitted (upstream
         // default, 4 slots on current builds).
         "parallel": cfg.parallel,
+        // Last spawn's GPU offload decision for the main port (ngl, layer
+        // count, free VRAM at decision time, and WHY — the 2026-10-27 T4
+        // "why is the builtin slow" was answerable only over ssh).
+        "gpu_offload": super::vram::last_decision_on(cfg.port),
         "default_ctx": model_def_ctx,
         "memory_ok": available_mb >= min_ram_mb,
         "min_ram_mb": min_ram_mb,
@@ -1840,7 +1856,7 @@ async fn spawn_builtin_server(
     // (NEOMIND_BUILTIN_LLM_CTX / restart ?ctx=) picks the starting point
     // but the guard still applies.
     let def = model_def(&installed.manifest.id);
-    let ctx = guarded_ctx(cfg, installed.default_ctx, def);
+    let ctx = guarded_ctx(cfg, cfg.port, installed.default_ctx, def);
     // Vision projector: the manifest must record it AND the file must be
     // present — a deleted/failed projector degrades to a text-only spawn,
     // never a failed model. An explicit NEOMIND_BUILTIN_MODEL_PATH override
@@ -2074,6 +2090,7 @@ async fn spawn_companion_server(
     }
     let ctx = guarded_ctx(
         &ccfg,
+        cfg.vlm_port,
         installed.default_ctx,
         model_def(&installed.manifest.id),
     );

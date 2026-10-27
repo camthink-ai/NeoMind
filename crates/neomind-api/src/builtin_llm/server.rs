@@ -137,16 +137,16 @@ pub fn live_llama_pids_on_port(port: u16) -> Vec<u32> {
         .collect()
 }
 
-/// Total resident memory of the LIVE llama-server(s). Exactly one server is
-/// ever intended (the builtin spawn is single-instance), and every spawn
-/// path REPLACES it — so a ctx budget computed "now" must add this back:
-/// the old instance's RSS frees on replacement. Without this, a status poll
-/// or respawn evaluated while the old server was alive saw an
-/// available-starved budget and floored the window to 8192 (2026-10-15
-/// incident: 3-second warn spam + a would-be respawn shrunk from 32768).
-pub fn live_llama_rss_bytes() -> u64 {
+/// Resident memory of the LIVE llama-server(s) this process spawned on
+/// `port`. The RAM-guard replacement add-back must scope to the server
+/// being REPLACED: a main-model respawn frees only the main port's RSS,
+/// and the still-running vision companion's memory is NOT about-to-free.
+/// (The pre-companion version summed every server — an overestimate that
+/// grew the ctx budget on every respawn of a companion-box, the same class
+/// of mistake the VRAM planner avoids via `live_llama_pids_on_port`.)
+pub fn live_llama_rss_bytes_on_port(port: u16) -> u64 {
     let guard = LLAMA_SERVERS.lock().unwrap_or_else(|e| e.into_inner());
-    guard.iter().map(|s| s.rss_bytes()).sum()
+    guard.iter().filter(|s| s.port == port).map(|s| s.rss_bytes()).sum()
 }
 
 fn page_size_bytes() -> u64 {
@@ -543,7 +543,8 @@ mod tests {
     fn replacement_adds_old_server_rss_back() {
         // The 2026-10-15 incident shape: 7.4GB box, 2.6GB free with the old
         // llama-server holding 1.2GB RSS. A REPLACEMENT spawn frees that RSS
-        // (guarded_ctx adds live_llama_rss_bytes back), so the effective
+        // (guarded_ctx adds the replaced port's live RSS back), so the
+        // effective
         // available is 3.8GB — the window must not floor. Callers that
         // spawn WITHOUT replacing (none today — the builtin is
         // single-instance) would use the raw available figure.
@@ -580,7 +581,7 @@ mod tests {
     fn live_rss_is_zero_with_no_servers() {
         // No llama-server registered in THIS test process — the reader must
         // degrade to 0, never panic.
-        assert_eq!(live_llama_rss_bytes(), 0);
+        assert_eq!(live_llama_rss_bytes_on_port(29375), 0);
     }
 
     #[test]
