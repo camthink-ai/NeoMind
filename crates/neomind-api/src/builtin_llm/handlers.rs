@@ -1839,11 +1839,8 @@ async fn spawn_builtin_server(
     // guard capping what the device can fund; an explicit override
     // (NEOMIND_BUILTIN_LLM_CTX / restart ?ctx=) picks the starting point
     // but the guard still applies.
-    let ctx = guarded_ctx(
-        cfg,
-        installed.default_ctx,
-        model_def(&installed.manifest.id),
-    );
+    let def = model_def(&installed.manifest.id);
+    let ctx = guarded_ctx(cfg, installed.default_ctx, def);
     // Vision projector: the manifest must record it AND the file must be
     // present — a deleted/failed projector degrades to a text-only spawn,
     // never a failed model. An explicit NEOMIND_BUILTIN_MODEL_PATH override
@@ -1866,12 +1863,25 @@ async fn spawn_builtin_server(
     // Captured before the config consumes the path (the capability stamp
     // below needs "did we attach a projector", not the path itself).
     let mmproj_attached = mmproj.is_some();
+    // GPU offload sizing — same contract as bootstrap: explicit pin wins,
+    // auto-size to free VRAM on discrete NVIDIA GPUs, None elsewhere.
+    let ngl = super::vram::resolve_spawn_ngl(&super::vram::NglQuery {
+        explicit: cfg.ngl,
+        binary: &binary,
+        model_path: &model_path,
+        mmproj: mmproj.as_deref(),
+        ctx,
+        port: cfg.port,
+        kv_bytes_per_token_f16: def.and_then(|d| d.kv_bytes_per_token),
+        kv_const_bytes: def.and_then(|d| d.kv_const_bytes),
+        kv_quant: cfg.kv_quant,
+    });
     let server_cfg = LlamaServerConfig {
         binary,
         model: model_path,
         port: cfg.port,
         ctx,
-        ngl: cfg.ngl,
+        ngl,
         threads: None,
         temperature: installed.temperature,
         top_p: installed.top_p,
@@ -2080,12 +2090,27 @@ async fn spawn_companion_server(
         None => None,
     };
     let mmproj_attached = mmproj.is_some();
+    // GPU offload sizing with the COMPANION's own scope: its port (reclaim
+    // must not count the still-running main server's VRAM as freeing) and
+    // the merged cfg (dedicated VLM_NGL/KV overrides applied above).
+    let ngl = super::vram::resolve_spawn_ngl(&super::vram::NglQuery {
+        explicit: ccfg.ngl,
+        binary: &binary,
+        model_path: &model_path,
+        mmproj: mmproj.as_deref(),
+        ctx,
+        port: cfg.vlm_port,
+        kv_bytes_per_token_f16: model_def(&installed.manifest.id)
+            .and_then(|d| d.kv_bytes_per_token),
+        kv_const_bytes: model_def(&installed.manifest.id).and_then(|d| d.kv_const_bytes),
+        kv_quant: ccfg.kv_quant,
+    });
     let server_cfg = LlamaServerConfig {
         binary,
         model: model_path,
         port: cfg.vlm_port,
         ctx,
-        ngl: ccfg.ngl,
+        ngl,
         threads: None,
         temperature: installed.temperature,
         top_p: installed.top_p,

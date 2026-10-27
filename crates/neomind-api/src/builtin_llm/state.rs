@@ -292,12 +292,27 @@ pub async fn bootstrap(
         }
     };
     let mmproj_attached = mmproj.is_some();
+    // GPU offload sizing: an explicit NGL pin wins; otherwise auto-size to
+    // the free VRAM a discrete NVIDIA GPU actually has (a full-offload
+    // default on a shared GPU dies on its first cudaMalloc). None
+    // elsewhere preserves the llama-server default exactly.
+    let ngl = super::vram::resolve_spawn_ngl(&super::vram::NglQuery {
+        explicit: cfg.ngl,
+        binary: &binary,
+        model_path: &model_path,
+        mmproj: mmproj.as_deref(),
+        ctx: effective_ctx,
+        port: cfg.port,
+        kv_bytes_per_token_f16: def.kv_bytes_per_token,
+        kv_const_bytes: def.kv_const_bytes,
+        kv_quant: cfg.kv_quant,
+    });
     let server_cfg = LlamaServerConfig {
         binary,
         model: model_path,
         port: cfg.port,
         ctx: effective_ctx,
-        ngl: cfg.ngl,
+        ngl,
         threads: None,
         // Per-model sampling defaults → server-side --temp/--top-p/--top-k
         // (plus --min-p/--repeat-penalty where the official card demands).

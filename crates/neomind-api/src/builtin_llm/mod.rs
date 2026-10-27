@@ -3,6 +3,7 @@
 //! - `download`: resumable GGUF downloads with SHA256 verification.
 //! - `runtime`:  on-demand llama-server (bundled first, else official prebuilt).
 //! - `server`:   spawn + health-poll the bundled llama-server.
+//! - `vram`:     spawn-time GPU offload sizing (discrete NVIDIA GPUs).
 
 pub mod catalog;
 pub mod config;
@@ -12,3 +13,4 @@ pub mod handlers;
 pub mod runtime;
 pub mod server;
 pub mod state;
+pub mod vram;

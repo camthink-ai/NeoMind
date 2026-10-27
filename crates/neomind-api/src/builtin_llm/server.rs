@@ -124,6 +124,19 @@ pub fn any_llama_server_alive() -> bool {
     guard.iter_mut().any(|s| s.is_alive())
 }
 
+/// Pids of live llama-servers this process spawned that listen on `port`.
+/// The VRAM replacement-reclaim query (vram.rs) needs exactly the process
+/// being replaced — servers on OTHER ports (the vision companion during a
+/// main-model respawn) keep running, and their VRAM must not be counted as
+/// about-to-free.
+pub fn live_llama_pids_on_port(port: u16) -> Vec<u32> {
+    let mut guard = LLAMA_SERVERS.lock().unwrap_or_else(|e| e.into_inner());
+    guard
+        .iter_mut()
+        .filter_map(|s| (s.port == port && s.is_alive()).then_some(s.pid).flatten())
+        .collect()
+}
+
 /// Total resident memory of the LIVE llama-server(s). Exactly one server is
 /// ever intended (the builtin spawn is single-instance), and every spawn
 /// path REPLACES it — so a ctx budget computed "now" must add this back:

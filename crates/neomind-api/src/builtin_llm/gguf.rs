@@ -14,6 +14,9 @@ use std::path::Path;
 pub struct GgufMeta {
     pub name: Option<String>,
     pub context_length: Option<u64>,
+    /// Decoder layer count (`<arch>.block_count`) — feeds the spawn-time
+    /// GPU offload sizing (`vram.rs`).
+    pub block_count: Option<u32>,
     /// Human quant label derived from `general.file_type` (may be unknown).
     pub quant: Option<String>,
     pub architecture: Option<String>,
@@ -189,6 +192,7 @@ pub fn parse_gguf(path: &Path) -> Result<GgufMeta, String> {
     let mut meta = GgufMeta {
         name: None,
         context_length: None,
+        block_count: None,
         quant: None,
         architecture: None,
     };
@@ -232,6 +236,12 @@ pub fn parse_gguf(path: &Path) -> Result<GgufMeta, String> {
                     meta.quant = file_type_quant(code).map(str::to_string);
                 }
             }
+            // Layer count is arch-generic: every llama.cpp arch publishes
+            // "<arch>.block_count", so match on the suffix rather than
+            // enumerating arches.
+            _ if key.ends_with(".block_count") => {
+                meta.block_count = u32_of(&value).or_else(|| u64_of(&value).map(|v| v as u32));
+            }
             _ => {}
         }
     }
@@ -271,7 +281,7 @@ mod tests {
         buf.extend_from_slice(b"GGUF");
         buf.extend_from_slice(&3u32.to_le_bytes()); // version
         buf.extend_from_slice(&1u64.to_le_bytes()); // tensor_count (nonzero)
-        buf.extend_from_slice(&4u64.to_le_bytes()); // kv_count
+        buf.extend_from_slice(&5u64.to_le_bytes()); // kv_count
         write_kv(
             &mut buf,
             "general.name",
@@ -290,6 +300,7 @@ mod tests {
             T_UINT32,
             &32768u32.to_le_bytes(),
         );
+        write_kv(&mut buf, "qwen2.block_count", T_UINT32, &34u32.to_le_bytes());
         write_kv(
             &mut buf,
             "general.file_type",
@@ -319,6 +330,7 @@ mod tests {
         assert_eq!(m.name.as_deref(), Some("My Test Model"));
         assert_eq!(m.architecture.as_deref(), Some("qwen2"));
         assert_eq!(m.context_length, Some(32768));
+        assert_eq!(m.block_count, Some(34));
         assert_eq!(m.quant.as_deref(), Some("q4_k"));
         let _ = std::fs::remove_file(&p);
     }
@@ -336,6 +348,7 @@ mod tests {
         let m = parse_gguf(&p).expect("parse");
         assert!(m.name.is_none());
         assert!(m.quant.is_none());
+        assert!(m.block_count.is_none());
         let _ = std::fs::remove_file(&p);
     }
 

@@ -11,6 +11,12 @@ pub struct BuiltinConfig {
     /// `ctx` param — the spawn sites honor this; previously the field existed
     /// but was silently ignored at spawn.
     pub ctx: Option<usize>,
+    /// GPU layer override (`NEOMIND_BUILTIN_MODEL_NGL`). `None` (default):
+    /// the spawn path auto-sizes the offload to the free VRAM on discrete
+    /// NVIDIA GPUs (see `vram.rs` — CUDA-OOM-safe on shared GPUs, full
+    /// offload on empty ones, CPU-only `-ngl 0` on saturated ones); on
+    /// CPU/Jetson hosts `None` keeps llama-server's own default. An
+    /// explicit value always wins and is never second-guessed.
     pub ngl: Option<u16>,
     pub model_path: Option<PathBuf>,
     pub quant_override: Option<String>,
@@ -39,8 +45,8 @@ pub struct BuiltinConfig {
     /// Companion KV-quant override (`NEOMIND_BUILTIN_VLM_KV`); None = follow
     /// the shared `kv_quant`.
     pub vlm_kv_quant: Option<bool>,
-    /// Companion GPU-layer override (`NEOMIND_BUILTIN_VLM_NGL`); None = follow
-    /// the shared `ngl`.
+    /// Companion GPU-layer override (`NEOMIND_BUILTIN_VLM_NGL`); None =
+    /// follow the shared `ngl` (and thus the same VRAM auto-sizing).
     pub vlm_ngl: Option<u16>,
 }
 
