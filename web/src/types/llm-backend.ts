@@ -125,6 +125,19 @@ export interface BuiltinModelDef {
   custom?: boolean
 }
 
+/** Last spawn's GPU offload decision, from the backend's vram record —
+ * `ngl: null` means no `-ngl` flag was passed (llama-server default /
+ * auto-sizing skipped). Served on the status API; the note carries the
+ * why (pin / plan arithmetic / skip reason). */
+export interface GpuOffloadDecision {
+  ngl: number | null
+  total_layers: number | null
+  free_mib: number | null
+  reclaim_mib: number
+  ctx: number
+  note: string
+}
+
 export interface BuiltinLlmStatus {
   /** Whether the model GGUF is present on disk. */
   installed: boolean
@@ -138,6 +151,9 @@ export interface BuiltinLlmStatus {
   kv_cache?: 'q8_0' | 'f16'
   /** Slot count of the current spawn; null = --parallel omitted (upstream default). */
   parallel?: number | null
+  /** GPU offload facts of the main engine's last spawn (null before the
+   *  first spawn in the backend process). */
+  gpu_offload?: GpuOffloadDecision | null
   /** Registry display name of the installed model (newer backends; the
    * frontend keeps an id→name fallback map for older ones). */
   model_name?: string | null
@@ -170,6 +186,7 @@ export interface BuiltinLlmStatus {
     ctx?: number | null
     kv_cache?: string
     parallel?: number
+    gpu_offload?: GpuOffloadDecision | null
   } | null
   downloaded_bytes: number | null
   total_bytes: number | null

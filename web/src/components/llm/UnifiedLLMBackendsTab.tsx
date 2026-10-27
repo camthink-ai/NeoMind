@@ -47,6 +47,7 @@ import type {
   PluginConfigSchema,
   BackendCapabilities,
   BuiltinLlmStatus,
+  GpuOffloadDecision,
 } from '@/types'
 
 type View = 'list' | 'detail'
@@ -626,6 +627,15 @@ export function UnifiedLLMBackendsTab({
     // "131,072" at a glance in a card this dense.
     const fmtCtx = (n: number | null | undefined) =>
       n == null ? '—' : n >= 1024 ? `${Math.round(n / 1024)}K` : String(n)
+    // GPU offload facts of the last spawn: a compact "GPU 8/34" rides the
+    // engine row (hidden when no flag was passed); the decision's why
+    // (pin / budget arithmetic / skip reason) rides the row's hover title.
+    const gpuSeg = (g?: GpuOffloadDecision | null) =>
+      g && g.ngl != null
+        ? ` · GPU ${g.ngl}${g.total_layers != null ? `/${g.total_layers}` : ''}`
+        : ''
+    const gpuTitle = (g?: GpuOffloadDecision | null) =>
+      g ? `${g.note}${g.free_mib != null ? ` — free ${g.free_mib} MiB` : ''}` : undefined
     const BUILTIN_MODEL_NAMES: Record<string, string> = {
       'minicpm5-2b': 'MiniCPM5-2B',
       'lfm25-2.6b': 'LFM2.5-2.6B',
@@ -713,10 +723,14 @@ export function UnifiedLLMBackendsTab({
                 <span className="w-28 shrink-0 truncate text-xs font-medium">
                   {t('plugins:llm.builtinMainEngine')}
                 </span>
-                <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                <span
+                  className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
+                  title={gpuTitle(builtinStatus.gpu_offload)}
+                >
                   {installedModelName ?? builtinStatus.model_id} · ctx {fmtCtx(builtinStatus.ctx ?? builtinStatus.default_ctx)}
                   {builtinStatus.kv_cache && ` · KV ${builtinStatus.kv_cache}`}
                   {builtinStatus.parallel != null && ` · ×${builtinStatus.parallel}`}
+                  {gpuSeg(builtinStatus.gpu_offload)}
                 </span>
                 {/* Same status pill template as the companion row below. */}
                 <span
@@ -754,10 +768,14 @@ export function UnifiedLLMBackendsTab({
                   <span className="w-28 shrink-0 truncate text-xs font-medium">
                     {t('plugins:llm.companionLabel')}
                   </span>
-                  <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                  <span
+                    className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
+                    title={gpuTitle(builtinStatus.companion.gpu_offload)}
+                  >
                     {builtinStatus.companion.name} · ctx {fmtCtx(builtinStatus.companion.ctx)}
                     {builtinStatus.companion.kv_cache && ` · KV ${builtinStatus.companion.kv_cache}`}
                     {builtinStatus.companion.parallel != null && ` · ×${builtinStatus.companion.parallel}`}
+                    {gpuSeg(builtinStatus.companion.gpu_offload)}
                   </span>
                   <span
                     className={cn(
