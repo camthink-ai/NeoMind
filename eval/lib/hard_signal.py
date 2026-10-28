@@ -370,9 +370,19 @@ def compute(case: dict, record: dict) -> dict:
     else:
         tool_match_pass = None
 
+    # Partial credit (informational, does NOT affect pass/fail)
+    cmd_partial = None
+    if exp_cmds and actual_cmds:
+        matched = sum(1 for e in exp_cmds
+                      if any(a == e or a.startswith(e + " ") for a in actual_cmds))
+        cmd_partial = round(matched / len(exp_cmds), 2)
+    sq_partial = round(sq_pass / sq_total, 2) if sq_total else None
+
     has_hard_signal = (sq_total > 0) or bool(exp_tools or exp_cmds or exp_substrings)
 
     return {
+        "cmd_partial": cmd_partial,
+        "sq_partial": sq_partial,
         "sq_total": sq_total,
         "sq_pass": sq_pass,
         "sq_all_pass": sq_all_pass,
