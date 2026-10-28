@@ -146,7 +146,11 @@ pub fn live_llama_pids_on_port(port: u16) -> Vec<u32> {
 /// of mistake the VRAM planner avoids via `live_llama_pids_on_port`.)
 pub fn live_llama_rss_bytes_on_port(port: u16) -> u64 {
     let guard = LLAMA_SERVERS.lock().unwrap_or_else(|e| e.into_inner());
-    guard.iter().filter(|s| s.port == port).map(|s| s.rss_bytes()).sum()
+    guard
+        .iter()
+        .filter(|s| s.port == port)
+        .map(|s| s.rss_bytes())
+        .sum()
 }
 
 fn page_size_bytes() -> u64 {

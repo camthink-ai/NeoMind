@@ -273,8 +273,7 @@ pub async fn bootstrap(
     // spawn + healthy — ctx: explicit override (NEOMIND_BUILTIN_LLM_CTX /
     // restart API) picks the starting point, the RAM guard caps what the
     // device can fund (128K defaults on small edge devices would OOM).
-    let effective_ctx =
-        super::handlers::guarded_ctx(cfg, cfg.port, def.default_ctx, Some(&def));
+    let effective_ctx = super::handlers::guarded_ctx(cfg, cfg.port, def.default_ctx, Some(&def));
     // Vision projector (same resolution rules as spawn_builtin_server):
     // manifest records it + file present; a model_path override opts out.
     let mmproj = if cfg.model_path.is_some() {

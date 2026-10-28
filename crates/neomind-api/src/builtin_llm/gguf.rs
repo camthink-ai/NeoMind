@@ -300,7 +300,12 @@ mod tests {
             T_UINT32,
             &32768u32.to_le_bytes(),
         );
-        write_kv(&mut buf, "qwen2.block_count", T_UINT32, &34u32.to_le_bytes());
+        write_kv(
+            &mut buf,
+            "qwen2.block_count",
+            T_UINT32,
+            &34u32.to_le_bytes(),
+        );
         write_kv(
             &mut buf,
             "general.file_type",

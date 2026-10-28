@@ -161,7 +161,16 @@ impl Default for LayoutBreakpoints {
 
 /// Fallback grid tile for components submitted without an explicit position.
 fn default_component_position() -> ComponentPosition {
-    ComponentPosition { x: 0, y: 0, w: 6, h: 4, min_w: None, min_h: None, max_w: None, max_h: None }
+    ComponentPosition {
+        x: 0,
+        y: 0,
+        w: 6,
+        h: 4,
+        min_w: None,
+        min_h: None,
+        max_w: None,
+        max_h: None,
+    }
 }
 
 /// Component position on the grid

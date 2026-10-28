@@ -223,7 +223,11 @@ pub fn plan_gpu_layers(i: &GpuBudgetInputs) -> OffloadPlan {
     // what is actually allocated, same convention as guarded_ctx.
     let kv_tok = i.kv_bytes_per_token_f16.map(|k| {
         let k = u64::from(k);
-        if i.kv_quant { k / 2 } else { k }
+        if i.kv_quant {
+            k / 2
+        } else {
+            k
+        }
     });
     let kv_full = match kv_tok {
         Some(t) => t.saturating_mul(i.ctx as u64) + i.kv_const_bytes.unwrap_or(0),
@@ -331,7 +335,10 @@ pub struct NglQuery<'a> {
 
 pub fn resolve_spawn_ngl(q: &NglQuery<'_>) -> Option<u16> {
     if let Some(n) = q.explicit {
-        tracing::debug!(ngl = n, "builtin llm: ngl pinned by config — auto-sizing skipped");
+        tracing::debug!(
+            ngl = n,
+            "builtin llm: ngl pinned by config — auto-sizing skipped"
+        );
         record_decision(
             q.port,
             LastNglDecision {
@@ -462,7 +469,12 @@ mod tests {
         // ~2.5 GiB free: full cost (~2.7 GiB) doesn't fit, but most layers
         // do — partial offload, not all-or-nothing.
         let p = plan_gpu_layers(&inputs(2_560 * MIB));
-        assert!(p.ngl > 0 && p.ngl < 34, "expected partial, got {}: {}", p.ngl, p.note);
+        assert!(
+            p.ngl > 0 && p.ngl < 34,
+            "expected partial, got {}: {}",
+            p.ngl,
+            p.note
+        );
     }
 
     #[test]
@@ -518,7 +530,11 @@ mod tests {
     fn compute_apps_csv_filters_pids_and_skips_unparseable() {
         let csv = "326984, 5912\n870990, 798\n1076618, [Not Supported]\n";
         assert_eq!(parse_compute_apps_csv(csv, &[870_990]), 798 * MIB);
-        assert_eq!(parse_compute_apps_csv(csv, &[999]), 0, "foreign pids ignored");
+        assert_eq!(
+            parse_compute_apps_csv(csv, &[999]),
+            0,
+            "foreign pids ignored"
+        );
         // The unparseable row belongs to a foreign pid anyway; ours parses.
         assert_eq!(parse_compute_apps_csv("870990, 798", &[870_990]), 798 * MIB);
     }
@@ -552,7 +568,10 @@ mod tests {
         assert_eq!(last_decision_on(29375).unwrap().note, "test-main");
         assert_eq!(last_decision_on(29375).unwrap().ngl, Some(34));
         assert_eq!(last_decision_on(29385).unwrap().note, "test-companion");
-        assert!(last_decision_on(29999).is_none(), "unspawned port has no record");
+        assert!(
+            last_decision_on(29999).is_none(),
+            "unspawned port has no record"
+        );
     }
 
     #[test]
@@ -564,8 +583,14 @@ mod tests {
         let vulkan = Path::new("/x/b11609-vulkan/llama-server");
         assert!(!binary_gpu_capable(vulkan));
         let jetson = Path::new("/x/b11609-jetson/llama-server");
-        assert!(!binary_gpu_capable(jetson), "unified memory — RAM guard owns it");
+        assert!(
+            !binary_gpu_capable(jetson),
+            "unified memory — RAM guard owns it"
+        );
         let bundled = Path::new("/usr/local/bin/neomind-llama-server");
-        assert!(binary_gpu_capable(bundled), "variant unknown — probe decides");
+        assert!(
+            binary_gpu_capable(bundled),
+            "variant unknown — probe decides"
+        );
     }
 }

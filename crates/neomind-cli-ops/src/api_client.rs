@@ -517,7 +517,6 @@ fn unauthorized_hint() -> &'static str {
     }
 }
 
-
 // ——— base normalization: the /api-suffix single source of truth ———
 // Three callers independently got this wrong before normalization existed
 // (tauri frontend, this crate's auth-key handlers, eval harness); these
@@ -544,11 +543,20 @@ fn join_strips_duplicate_api_prefix() {
     // url_for collapses it; suffix-free paths are unchanged; a /v1 gateway
     // base keeps /api/... paths intact (they are real routes there).
     let c = ApiClient::with_base_url("http://localhost:9375/api");
-    assert_eq!(c.url_for("/api/auth/keys"), "http://localhost:9375/api/auth/keys");
-    assert_eq!(c.url_for("/auth/keys"), "http://localhost:9375/api/auth/keys");
+    assert_eq!(
+        c.url_for("/api/auth/keys"),
+        "http://localhost:9375/api/auth/keys"
+    );
+    assert_eq!(
+        c.url_for("/auth/keys"),
+        "http://localhost:9375/api/auth/keys"
+    );
     assert_eq!(c.url_for("/api"), "http://localhost:9375/api");
     let gw = ApiClient::with_base_url("http://localhost:9000/v1");
-    assert_eq!(gw.url_for("/api/models"), "http://localhost:9000/v1/api/models");
+    assert_eq!(
+        gw.url_for("/api/models"),
+        "http://localhost:9000/v1/api/models"
+    );
 }
 
 #[cfg(test)]

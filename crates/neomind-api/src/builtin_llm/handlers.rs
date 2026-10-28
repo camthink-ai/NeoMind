@@ -1182,8 +1182,12 @@ pub async fn status_handler(
         .as_ref()
         .map(|(d, _)| d.default_ctx)
         .unwrap_or(0);
-    let effective_ctx =
-        guarded_ctx_quiet(&cfg, cfg.port, model_def_ctx, installed_pair.as_ref().map(|(d, _)| d));
+    let effective_ctx = guarded_ctx_quiet(
+        &cfg,
+        cfg.port,
+        model_def_ctx,
+        installed_pair.as_ref().map(|(d, _)| d),
+    );
     let (total_mb, available_mb) = memory_snapshot_mb();
     let min_ram_mb = installed_pair
         .as_ref()
