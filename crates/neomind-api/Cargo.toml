@@ -121,8 +121,11 @@ semver = { workspace = true }
 # Cron expression validation
 cron = "0.12"
 
-# ZIP archive support
-zip = "2"
+# ZIP archive support. default-features = false drops zstd/bzip2/lzma/aes
+# from the tree (match neomind-core's declaration): every read/write path
+# here uses deflate via SimpleFileOptions::default(), and the zstd family
+# carried 4 open advisories (RUSTSEC-2026-0391/0398/0403/0410) as dead code.
+zip = { version = "2.1", default-features = false, features = ["deflate"] }
 tar = "0.4"
 flate2 = "1"
 
