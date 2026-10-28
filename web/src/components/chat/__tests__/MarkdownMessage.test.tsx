@@ -8,8 +8,13 @@ describe('MarkdownMessage', () => {
   it('renders a code block with language, wrap, and copy controls', () => {
     render(<MarkdownMessage content={'```ts\nconst x = 1\n```'} />)
     expect(screen.getByText('ts')).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'code.wrap' })).toBeTruthy()
+    // Code blocks start wrapped (d86283fc), so the control offers the
+    // unwrap action and reports pressed=true; clicking flips both.
+    const wrapToggle = screen.getByRole('button', { name: 'code.unwrap' })
+    expect(wrapToggle.getAttribute('aria-pressed')).toBe('true')
     expect(screen.getByRole('button', { name: 'code.copy' })).toBeTruthy()
+    fireEvent.click(wrapToggle)
+    expect(screen.getByRole('button', { name: 'code.wrap' })).toBeTruthy()
   })
 
   it('offers expand/collapse for a long code block', () => {
