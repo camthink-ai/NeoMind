@@ -9,6 +9,6 @@ Runs: Spark-1.7B off/think · Spark-4B off · LFM3-1.7B off · LFM2.5-2.6B off
 counterfactual / think · Gemma-E2B off/think · GLM-5.3 (off) · DeepSeek-flash
 (off) · r11 SFT (regression-20261027-171122).
 
-Pending at snapshot time: LFM3-1.7B think, MiniCPM5-2B think, Spark-4B think
-(running on T4, dirs rerun-lfm3-17b-think-t4 / minicpm5-2b-think-t4 /
-spark-x26-4b-think-t4 — copy in when final).
+Included: LFM3-1.7B think (47.1%) and MiniCPM5-2B think (45.7%), both from T4
+(v0.8.0 CUDA build), dirs rerun-lfm3-17b-think-t4 / minicpm5-2b-think-t4.
+Not run: Spark-4B think (cancelled per user; model staged on T4).
