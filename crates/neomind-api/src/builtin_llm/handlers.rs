@@ -143,6 +143,7 @@ fn builtin_to_catalog(def: &BuiltinModelDef) -> super::catalog::CatalogModel {
         quant: def.manifest.quant.clone(),
         format: def.manifest.format.clone(),
         target_hardware: None,
+        min_runtime: None,
         hf_repo: def.hf_repo.to_string(),
         hf_file: def.hf_file.to_string(),
         size_bytes: def.size_bytes,
@@ -427,6 +428,117 @@ fn guarded_ctx_ex(
 /// Returns the *on-disk* manifest (its `file_name` is the real file — e.g.
 /// Docker may pre-bundle QAD under the QAD name) plus the registry def (for
 /// ctx/name/thinking flags).
+/// Static parts of a CATALOG-ONLY model, leaked once per process. The
+/// registry (`BuiltinModelDef`) is `&'static str`-shaped; catalog-only ids
+/// synthesize into it via these memoized strings (bounded: one leak per id).
+struct CatalogOnlyInfo {
+    display_name: &'static str,
+    hf_repo: &'static str,
+    hf_file: &'static str,
+    notes: &'static str,
+    role: Option<&'static str>,
+    mmproj: Option<neomind_core::builtin_llm::manifest::MmprojSource>,
+    temperature: Option<f32>,
+    top_p: Option<f32>,
+    top_k: Option<u32>,
+    min_p: Option<f32>,
+    repeat_penalty: Option<f32>,
+    default_ctx: u32,
+    max_ctx: u32,
+    size_bytes: u64,
+    min_ram_mb: u64,
+    default_thinking: bool,
+}
+
+fn leak_str(s: &str) -> &'static str {
+    Box::leak(s.to_string().into_boxed_str())
+}
+
+fn catalog_only_info(id: &str) -> Option<&'static CatalogOnlyInfo> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<String, Option<&'static CatalogOnlyInfo>>>> =
+        OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(hit) = cache.lock().unwrap_or_else(|e| e.into_inner()).get(id) {
+        return *hit;
+    }
+    // Registry ids never take this path (their defs are already static).
+    let computed: Option<Box<CatalogOnlyInfo>> = (|| {
+        if BUILTIN_MODELS.iter().any(|d| d.manifest.id == id) {
+            return None;
+        }
+        let cat =
+            super::catalog::cached_catalog().and_then(|c| c.into_iter().find(|m| m.id == id))?;
+        let default_ctx = cat.default_ctx;
+        Some(Box::new(CatalogOnlyInfo {
+            display_name: leak_str(&cat.display_name),
+            hf_repo: leak_str(&cat.hf_repo),
+            hf_file: leak_str(&cat.hf_file),
+            notes: leak_str(&cat.notes),
+            role: cat.role.as_deref().map(leak_str),
+            mmproj: cat.mmproj.clone(),
+            temperature: cat.temperature,
+            top_p: cat.top_p,
+            top_k: cat.top_k,
+            min_p: cat.min_p,
+            repeat_penalty: cat.repeat_penalty,
+            default_ctx,
+            max_ctx: cat.max_ctx.unwrap_or(default_ctx),
+            size_bytes: cat.size_bytes,
+            min_ram_mb: u64::from(cat.min_ram_mb),
+            default_thinking: cat.default_thinking,
+        }))
+    })();
+    // Leak once per id — the &'static return keeps downstream signatures
+    // (&'static str fields) unchanged; bounded by the catalog size.
+    let leaked: Option<&'static CatalogOnlyInfo> = computed.map(|b| &*Box::leak(b));
+    cache
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(id.to_string(), leaked);
+    leaked
+}
+
+/// Synthesize a registry-shaped def for a CATALOG-ONLY model from its
+/// on-disk manifest + the cached catalog. Bootstrap and restart validation
+/// are registry-shaped; without this a catalog-only active model vanishes
+/// on cold boot (state's ModelMissing) and restart?model= 400s. The KV
+/// fields stay None — the RAM guard skips unknown models by design (the
+/// GGUF-header cost model is a separate workstream). Returns None for
+/// registry ids (they take the registry path) and models without a
+/// manifest on disk.
+pub(crate) fn catalog_only_def(mdir: &Path, id: &str) -> Option<BuiltinModelDef> {
+    let info = catalog_only_info(id)?;
+    let manifest = load_manifest(mdir, id).ok().flatten()?;
+    if !manifest.model_path(mdir).exists() {
+        return None;
+    }
+    Some(BuiltinModelDef {
+        manifest,
+        display_name: info.display_name,
+        hf_repo: info.hf_repo,
+        hf_file: info.hf_file,
+        size_bytes: info.size_bytes,
+        default_ctx: info.default_ctx,
+        max_ctx: info.max_ctx,
+        kv_bytes_per_token: None,
+        kv_const_bytes: None,
+        temperature: info.temperature,
+        top_p: info.top_p,
+        top_k: info.top_k,
+        min_p: info.min_p,
+        repeat_penalty: info.repeat_penalty,
+        notes: info.notes,
+        recommended: false,
+        default_thinking: info.default_thinking,
+        thinking_is_integral: false,
+        min_ram_mb: info.min_ram_mb,
+        mmproj: info.mmproj.clone(),
+        role: info.role,
+    })
+}
+
 pub fn installed_model(mdir: &Path) -> Option<(BuiltinModelDef, ModelManifest)> {
     // Active pointer wins: downloaded model files are kept across switches
     // (multi-model coexistence — switching must never re-download, the
@@ -447,13 +559,58 @@ pub fn installed_model(mdir: &Path) -> Option<(BuiltinModelDef, ModelManifest)> 
             "builtin llm: active-model pointer stale (model missing) — falling back to scan"
         );
     }
-    BUILTIN_MODELS.iter().find_map(|def| {
-        let manifest = load_manifest(mdir, &def.manifest.id).ok().flatten()?;
-        manifest
-            .model_path(mdir)
-            .exists()
-            .then(|| (def.clone(), manifest))
-    })
+    BUILTIN_MODELS
+        .iter()
+        .find_map(|def| {
+            let manifest = load_manifest(mdir, &def.manifest.id).ok().flatten()?;
+            manifest
+                .model_path(mdir)
+                .exists()
+                .then(|| (def.clone(), manifest))
+        })
+        // Catalog-only fallback (models added via the remote catalog): newest
+        // on-disk manifest whose id isn't in the registry, synthesized into a
+        // registry-shaped def. Without this a catalog-only active model
+        // vanishes on cold boot (bootstrap's ModelMissing).
+        .or_else(|| {
+            let builtin: std::collections::HashSet<&str> = BUILTIN_MODELS
+                .iter()
+                .map(|d| d.manifest.id.as_str())
+                .collect();
+            let mut best: Option<(BuiltinModelDef, ModelManifest, std::time::SystemTime)> = None;
+            let Ok(rd) = std::fs::read_dir(mdir) else {
+                return None;
+            };
+            for entry in rd.flatten() {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                let id = entry.file_name().to_string_lossy().into_owned();
+                if builtin.contains(id.as_str()) {
+                    continue;
+                }
+                let Ok(manifest) = load_manifest(mdir, &id) else {
+                    continue;
+                };
+                let Some(manifest) = manifest else {
+                    continue;
+                };
+                if !manifest.model_path(mdir).exists() {
+                    continue;
+                }
+                let mtime = entry
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                if best.as_ref().is_none_or(|(_, _, best_t)| mtime >= *best_t) {
+                    if let Some(def) = catalog_only_def(mdir, &id) {
+                        best = Some((def, manifest, mtime));
+                    }
+                }
+            }
+            best.map(|(d, m, _)| (d, m))
+        })
 }
 
 // ---------------------------------------------------------------------------
@@ -482,7 +639,7 @@ pub fn clear_active_model(mdir: &Path) {
 
 /// Every builtin model whose files are on disk (for the status/picker UI).
 pub fn installed_model_ids(mdir: &Path) -> Vec<String> {
-    BUILTIN_MODELS
+    let mut ids: Vec<String> = BUILTIN_MODELS
         .iter()
         .filter(|def| {
             load_manifest(mdir, &def.manifest.id)
@@ -491,7 +648,26 @@ pub fn installed_model_ids(mdir: &Path) -> Vec<String> {
                 .is_some_and(|m| m.model_path(mdir).exists())
         })
         .map(|def| def.manifest.id.clone())
-        .collect()
+        .collect();
+    // Catalog-only installs: manifest dirs whose id isn't in the registry.
+    // Without these, restart?model=<catalog-id> 400s "not downloaded" even
+    // though the files are on disk and the spawn path handles them fine.
+    if let Ok(rd) = std::fs::read_dir(mdir) {
+        for entry in rd.flatten() {
+            let id = entry.file_name().to_string_lossy().into_owned();
+            if ids.iter().any(|v| v == &id) || id.starts_with('.') {
+                continue;
+            }
+            let is_installed = load_manifest(mdir, &id)
+                .ok()
+                .flatten()
+                .is_some_and(|m| m.model_path(mdir).exists());
+            if is_installed {
+                ids.push(id);
+            }
+        }
+    }
+    ids
 }
 
 /// Default context for an imported GGUF: the header's context_length capped
@@ -639,12 +815,24 @@ pub fn installed_model_by_id(mdir: &Path, id: &str) -> Option<InstalledModel> {
     // Catalog-only model? Try the cached catalog for its sampling point
     // (sync read of the last fetch; a cold process falls back to the global
     // defaults until the next /models refresh warms the cache).
-    let (temperature, top_p, top_k, min_p, repeat_penalty) = super::catalog::cached_catalog()
-        .and_then(|c| c.into_iter().find(|m| m.id == id))
+    let cat = super::catalog::cached_catalog().and_then(|c| c.into_iter().find(|m| m.id == id));
+    let (temperature, top_p, top_k, min_p, repeat_penalty) = cat
+        .as_ref()
         .map(|m| (m.temperature, m.top_p, m.top_k, m.min_p, m.repeat_penalty))
         .unwrap_or((None, None, None, None, None));
+    // Display name and thinking default come from the catalog too — the
+    // slug + `false` fallback made every catalog-only model show its id and
+    // lose its thinking default on this path.
+    let display_name = cat
+        .as_ref()
+        .map(|m| m.display_name.clone())
+        .unwrap_or_else(|| id.to_string());
+    let default_thinking = cat
+        .as_ref()
+        .map(|m| m.default_thinking)
+        .unwrap_or_else(|| neomind_core::llm::capability::detect_thinking(id));
     Some(InstalledModel {
-        display_name: id.to_string(),
+        display_name,
         default_ctx: ctx,
         max_ctx: max,
         temperature,
@@ -652,7 +840,7 @@ pub fn installed_model_by_id(mdir: &Path, id: &str) -> Option<InstalledModel> {
         top_k,
         min_p,
         repeat_penalty,
-        default_thinking: false,
+        default_thinking,
         // If this id names a registry model (importing an LFM/Ling GGUF
         // under its real id), keep that model's integral-thinking property —
         // otherwise the import recreates the "toggle that does nothing"
@@ -1323,6 +1511,9 @@ pub async fn models_handler(
                 // wizard can already display them.
                 "format": d.format,
                 "target_hardware": d.target_hardware,
+                // Minimum llama.cpp runtime tag (wizard badge + download
+                // gate); null = no floor.
+                "min_runtime": d.min_runtime,
                 "size_bytes": d.size_bytes,
                 "default_ctx": d.default_ctx,
                 // Native ceiling for display; null on older catalogs (the
@@ -1482,6 +1673,18 @@ pub async fn download_handler(
     // (resolve_model consults the process-local cache only).
     let _ = super::catalog::fetch_catalog().await;
     let def = resolve_model(model_id.as_deref())?;
+    // Runtime floor (e.g. LFM3 needs >= b11960): refuse with guidance while
+    // the active runtime is older — the error points at the upgrade dialog.
+    if let Some(min_runtime) = def
+        .min_runtime
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        let active = super::runtime_manager::active_runtime_tag(&state.data_dir).await;
+        super::runtime_manager::runtime_gate(active.as_deref(), min_runtime)
+            .map_err(ErrorResponse::conflict)?;
+    }
     let (url, sha, file_name) = resolve_source(&cfg, &def);
     // Vision projector source (quant-override independent — see
     // resolve_mmproj_source). None = text-only model.
@@ -3408,6 +3611,7 @@ mod quant_override_tests {
             quant: "q4_k_m".to_string(),
             format: "gguf".to_string(),
             target_hardware: None,
+            min_runtime: None,
             hf_repo: "r/x".to_string(),
             hf_file: "x.gguf".to_string(),
             size_bytes: 1,

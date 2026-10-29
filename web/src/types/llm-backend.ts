@@ -130,6 +130,10 @@ export interface BuiltinModelDef {
    * ["rk3588","rk3572"]); absent/empty = runs anywhere the format is
    * supported. Display-only until the eligibility filter ships. */
   target_hardware?: string[]
+  /** Minimum llama.cpp runtime tag (e.g. "b11960") — the wizard shows a
+   * badge and the download endpoint refuses with guidance while the active
+   * runtime is older. Absent = no floor. */
+  min_runtime?: string | null
 
 }
 

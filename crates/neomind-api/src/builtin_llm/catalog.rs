@@ -56,6 +56,11 @@ pub struct CatalogModel {
     /// with the first hardware-specific model.
     #[serde(default)]
     pub target_hardware: Option<Vec<String>>,
+    /// Minimum llama.cpp runtime tag (e.g. "b11960") — downloads are
+    /// refused with guidance while the active runtime is older. `None` = no
+    /// floor. Compared with `tag_cmp` (b-prefixed numeric ordering).
+    #[serde(default)]
+    pub min_runtime: Option<String>,
     pub hf_repo: String,
     pub hf_file: String,
     pub size_bytes: u64,

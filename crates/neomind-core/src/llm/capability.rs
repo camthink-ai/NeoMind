@@ -85,6 +85,12 @@ pub fn detect_thinking(model: &str) -> bool {
     if name_lower.contains("lfm2.5") || name_lower.contains("lfm25") {
         return true;
     }
+    // LFM3 (LiquidAI, 2026-10): thinks in a leading <think> block before
+    // answering (card: "the model first produces a <think>...</think>
+    // reasoning block, then responds"). Covers lfm3 and lfm3-vl.
+    if name_lower.contains("lfm3") {
+        return true;
+    }
     // Reasoning families
     if name_lower.contains("qwq")
         || name_lower.contains("glm-z1")
@@ -176,6 +182,9 @@ mod tests {
         assert!(detect_thinking("minicpm4-8b"));
         assert!(detect_thinking("lfm2.5-2.6b:latest"));
         assert!(detect_thinking("lfm25-2.6b"));
+        // LFM3 (and lfm3-vl): reasoning-first generation.
+        assert!(detect_thinking("lfm3-1.7b"));
+        assert!(detect_thinking("lfm3-vl-2b"));
         // Older MiniCPM / LFM2 (pre-thinking generations) stay non-thinking.
         assert!(!detect_thinking("minicpm3-4b"));
         assert!(!detect_thinking("lfm2-1.2b"));

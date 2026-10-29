@@ -651,6 +651,14 @@ export function BuiltinModelWizard({
                               {t('plugins:llm.customModel')}
                             </span>
                           )}
+                          {m.min_runtime && (
+                            <span
+                              className="shrink-0 rounded-full bg-warning-light px-1.5 py-0.5 text-[10px] font-medium text-warning"
+                              title={t('plugins:llm.builtinMinRuntimeHint', { tag: m.min_runtime })}
+                            >
+                              {t('plugins:llm.builtinMinRuntime', { tag: m.min_runtime })}
+                            </span>
+                          )}
                         </div>
                         {/* Fixed 2-line description: capped AND floored so
                             every card is exactly the same height regardless

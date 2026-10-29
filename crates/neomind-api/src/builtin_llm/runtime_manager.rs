@@ -428,6 +428,26 @@ pub fn last_download_error() -> Option<String> {
         .clone()
 }
 
+/// The runtime tag resolution would hand to a spawn right now — the public
+/// form used by the model-download gate (`min_runtime`). `None` = active
+/// runtime has no parseable version (never blocks: gate on known data only).
+pub async fn active_runtime_tag(data_dir: &Path) -> Option<String> {
+    let variant = effective_variant();
+    current_active_tag(data_dir, variant).await
+}
+
+/// Pure gate: does the active runtime satisfy a model's `min_runtime`?
+/// `None` active = unknown version → allowed (never block on unknown data).
+pub(crate) fn runtime_gate(active: Option<&str>, min_runtime: &str) -> Result<(), String> {
+    match active {
+        Some(active) if tag_cmp(active, min_runtime) == std::cmp::Ordering::Less => Err(format!(
+            "this model requires llama.cpp >= {min_runtime} but the active runtime is {active} — \
+             upgrade it in Settings → LLM Backends → Built-in → llama.cpp runtime first"
+        )),
+        _ => Ok(()),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Update channel (runtimes.json)
 // ---------------------------------------------------------------------------
@@ -1280,6 +1300,22 @@ mod tests {
             r#"{{"recommended":"b11960","recommended_by_platform":{{"{os}/{arch}":"../escape"}}}}"#
         ));
         assert!(resolve_upgrade_target(&d3, RuntimeVariant::Cpu).is_err());
+    }
+
+    // ---- min_runtime gate ----------------------------------------------------
+
+    #[test]
+    fn runtime_gate_matrix() {
+        use super::runtime_gate as gate;
+        // Active older than the floor → refused, message names both tags.
+        let err = gate(Some("b11609"), "b11960").unwrap_err();
+        assert!(err.contains("b11960") && err.contains("b11609"), "{err}");
+        // Active at/above the floor → OK. Numeric (b10 > b2) not string order.
+        assert!(gate(Some("b11960"), "b11960").is_ok());
+        assert!(gate(Some("b11972"), "b11960").is_ok());
+        assert!(gate(Some("b12000"), "b11960").is_ok());
+        // Unknown active version → permissive (never block on unknown data).
+        assert!(gate(None, "b11960").is_ok());
     }
 
     // ---- cache enumeration ---------------------------------------------------

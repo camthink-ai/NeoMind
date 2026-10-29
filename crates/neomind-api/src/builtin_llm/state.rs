@@ -172,7 +172,17 @@ pub async fn bootstrap(
         // max_context (4096) from before this instance existed.
         if let Some(inst) = manager.get_instance(BUILTIN_INSTANCE_ID) {
             let mut updated = inst;
-            if let Some(def) = model_def(&updated.model).or_else(|| Some(default_model_def())) {
+            // Catalog-only active model: synthesize from manifest + cached
+            // catalog BEFORE the LFM2.5 default — stamping the default model's
+            // name/thinking onto a different active model was a silent lie.
+            let def: BuiltinModelDef = model_def(&updated.model)
+                .map(|d| d.clone())
+                .or_else(|| {
+                    let mdir = super::handlers::models_dir(data_dir);
+                    super::handlers::catalog_only_def(&mdir, &updated.model)
+                })
+                .unwrap_or_else(|| default_model_def().clone());
+            {
                 updated.capabilities.supports_streaming = true;
                 updated.capabilities.supports_tools = true;
                 updated.capabilities.supports_thinking = def.default_thinking;
@@ -202,7 +212,7 @@ pub async fn bootstrap(
                 // silently rewrite a raised ctx back down (and the agent's
                 // history budget shrank to match the phantom smaller window).
                 updated.capabilities.max_context =
-                    super::handlers::guarded_ctx(cfg, cfg.port, def.default_ctx, Some(def));
+                    super::handlers::guarded_ctx(cfg, cfg.port, def.default_ctx, Some(&def));
                 let _ = manager.upsert_instance(updated).await;
             }
         }

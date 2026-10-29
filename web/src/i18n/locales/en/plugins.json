@@ -228,7 +228,6 @@
     "builtinImported": "Imported {{name}}",
     "builtinImportLocalPrompt": "Absolute path of the GGUF file on the server",
     "builtinNetworkHint": "Network restricted? Configure a mirror download source, or use the offline import/upload above.",
-    "runtimeSourcesTitle": "Download sources (mirrors)",
     "runtimeSourcesHint": "The default hosts are unreachable from some networks (huggingface.co / github). Mirror example: https://hf-mirror.com. Empty resets to default. Applies to the next request.",
     "runtimeSourceHf": "Model downloads (HuggingFace)",
     "runtimeSourceCatalog": "Model catalog",
@@ -239,7 +238,10 @@
     "builtinEngineError": "Engine failed to start: {{message}}",
     "runtimeChecking": "Checking for updates…",
     "runtimeStatusUpdate": "Update {{tag}} available",
-    "runtimeRowCurrent": "Current"
+    "runtimeRowCurrent": "Current",
+    "builtinMinRuntime": "runtime ≥ {{tag}}",
+    "builtinMinRuntimeHint": "This model requires llama.cpp runtime >= {{tag}}; on older runtimes the download is refused with guidance to upgrade first (Settings → LLM Backends → Built-in → runtime).",
+    "runtimeAdvanced": "Advanced"
   },
   "yes": "Yes",
   "no": "No",

@@ -60,7 +60,18 @@ pub fn parse_tool_calls(text: &str) -> Result<(String, Vec<ToolCall>)> {
         return result;
     }
 
-    // === PRIORITY 4: Hermes format ===
+    // === PRIORITY 4: qwen3_coder-style XML ===
+    // LFM3's native protocol (LiquidAI, 0.8.x era): singular `<tool_call>`
+    // blocks with attribute-less `<function=name>` / `<parameter=key>` tags —
+    // a superset of the qwen3_coder shape. MUST run before Hermes: the
+    // Hermes matcher's fast path keys on `<function` and would silently
+    // strip these spans without emitting a call (its name extraction
+    // requires `name="`). See try_parse_qwen_coder.
+    if let Some(result) = try_parse_qwen_coder(text) {
+        return result;
+    }
+
+    // === PRIORITY 5: Hermes format ===
     // Fallback for Hermes-finetuned models (e.g. MiniCPM5-1B-Agentic-Tooluse) that
     // write the tool call into the response text instead of producing structured
     // `tool_calls`. Without this the call is shown to the user as plain text.
@@ -68,7 +79,7 @@ pub fn parse_tool_calls(text: &str) -> Result<(String, Vec<ToolCall>)> {
         return result;
     }
 
-    // === PRIORITY 5: Pythonic format ===
+    // === PRIORITY 6: Pythonic format ===
     // LFM2.5's native protocol (LiquidAI): `[tool_name(key='value', ...)]` —
     // a Python-style call list, emitted after the model's <think> block.
     // rkNN-converted LFM deployments reply in exactly this shape.
@@ -462,6 +473,117 @@ fn try_parse_xml(text: &str) -> Option<Result<(String, Vec<ToolCall>)>> {
     }
 
     Some(Ok((content.trim().to_string(), tool_calls)))
+}
+
+/// Try to parse qwen3_coder-style XML tool calls (LFM3 native protocol).
+///
+/// Format (LiquidAI LFM3 card):
+/// ```text
+/// <tool_call>
+/// <function=get_weather>
+/// <parameter=city>
+/// Paris
+/// </parameter>
+/// </function>
+/// </tool_call>
+/// ```
+///
+/// Differences from the plural-`<tool_calls>` XML format above: singular
+/// wrapper, `=` attribute syntax without quotes, `</parameter>` closers
+/// optional-tolerant multiline values. Several `<tool_call>` blocks are
+/// parallel calls; text outside the blocks is preserved as content.
+fn try_parse_qwen_coder(text: &str) -> Option<Result<(String, Vec<ToolCall>)>> {
+    if !text.contains("<tool_call>") {
+        return None;
+    }
+
+    let mut tool_calls = Vec::new();
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    let mut cursor = 0usize;
+
+    while cursor < text.len() {
+        let Some(rel) = text[cursor..].find("<tool_call>") else {
+            break;
+        };
+        let block_start = cursor + rel;
+        let body_start = block_start + "<tool_call>".len();
+        let Some(close_rel) = text[body_start..].find("</tool_call>") else {
+            break;
+        };
+        let block_end = body_start + close_rel + "</tool_call>".len();
+        let block = &text[body_start..body_start + close_rel];
+        spans.push((block_start, block_end));
+
+        // Tool name: `<function=NAME>` (whitespace/newline tolerant).
+        if let Some(func_rel) = block.find("<function=") {
+            let name_start = func_rel + "<function=".len();
+            let name_end_rel = block[name_start..].find('>')?;
+            let name = block[name_start..name_start + name_end_rel]
+                .trim()
+                .to_string();
+            if !name.is_empty() {
+                let args = parse_qwen_coder_params(&block[name_start + name_end_rel + 1..]);
+                tool_calls.push(ToolCall {
+                    name,
+                    id: Uuid::new_v4().to_string(),
+                    arguments: Value::Object(args),
+                    result: None,
+                    round: None,
+                });
+            }
+        }
+
+        cursor = block_end;
+    }
+
+    if tool_calls.is_empty() {
+        return None;
+    }
+
+    let mut content = String::with_capacity(text.len());
+    let mut prev = 0usize;
+    for (start, end) in &spans {
+        content.push_str(&text[prev..*start]);
+        prev = *end;
+    }
+    content.push_str(&text[prev..]);
+
+    Some(Ok((content.trim().to_string(), tool_calls)))
+}
+
+/// `<parameter=KEY>value</parameter>` pairs of one qwen3_coder block.
+/// Values are kept as strings (trimmed) — same policy as Hermes params.
+/// A missing `</parameter>` closer ends the value at the block end.
+fn parse_qwen_coder_params(body: &str) -> serde_json::Map<String, Value> {
+    let mut args = serde_json::Map::new();
+    let mut cursor = 0usize;
+
+    while cursor < body.len() {
+        let Some(rel) = body[cursor..].find("<parameter=") else {
+            break;
+        };
+        let key_start = cursor + rel + "<parameter=".len();
+        let Some(key_end_rel) = body[key_start..].find('>') else {
+            break;
+        };
+        let key = body[key_start..key_start + key_end_rel].trim().to_string();
+        if key.is_empty() {
+            break;
+        }
+        let val_start = key_start + key_end_rel + 1;
+        let close_rel = body[val_start..].find("</parameter>").map(|r| r);
+        let (value, next) = match close_rel {
+            Some(r) => (
+                body[val_start..val_start + r].trim().to_string(),
+                val_start + r + "</parameter>".len(),
+            ),
+            None => (body[val_start..].trim().to_string(), body.len()),
+        };
+        args.insert(key, Value::String(value));
+        cursor = next;
+    }
+
+    args
 }
 
 /// Try to parse Hermes-style tool calls emitted as *text* (rather than
@@ -883,6 +1005,59 @@ pub fn is_degenerate_final_output(content: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- qwen3_coder XML (LFM3 native protocol) ----
+
+    #[test]
+    fn qwen_coder_parses_the_lfm3_card_sample() {
+        // Verbatim shape from the LiquidAI LFM3 tool-calling docs.
+        let text = "Let me check the weather.\n<tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>\n</tool_call>";
+        let (content, calls) = parse_tool_calls(text).expect("parses");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "get_weather");
+        assert_eq!(calls[0].arguments["city"], "Paris");
+        assert_eq!(content, "Let me check the weather.");
+    }
+
+    #[test]
+    fn qwen_coder_parses_multiple_calls_and_inline_values() {
+        let text = "<tool_call>\n<function=a>\n<parameter=x>1</parameter>\n<parameter=y>two words</parameter>\n</function>\n</tool_call>\nmiddle\n<tool_call>\n<function=b>\n<parameter=z>\nmulti\nline\n</parameter>\n</function>\n</tool_call>";
+        let (content, calls) = parse_tool_calls(text).expect("parses");
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].name, "a");
+        assert_eq!(calls[0].arguments["x"], "1");
+        assert_eq!(calls[0].arguments["y"], "two words");
+        assert_eq!(calls[1].name, "b");
+        assert_eq!(calls[1].arguments["z"], "multi\nline");
+        assert!(content.contains("middle"));
+        assert!(!content.contains("<tool_call>"));
+    }
+
+    #[test]
+    fn hermes_quoted_attr_format_still_parses_after_the_new_arm() {
+        // The Hermes shape keys on name="..." — the qwen_coder arm must NOT
+        // claim it (fast path is singular <tool_call> only).
+        let text = "<function name=\"get_weather\"><param name=\"city\">Paris</param></function>";
+        let (_, calls) = parse_tool_calls(text).expect("parses");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "get_weather");
+        assert_eq!(calls[0].arguments["city"], "Paris");
+    }
+
+    #[test]
+    fn plural_tool_calls_xml_still_parses_after_the_new_arm() {
+        let text = "<tool_calls><invoke name=\"t\"><parameter name=\"k\">v</parameter></invoke></tool_calls>";
+        let (_, calls) = parse_tool_calls(text).expect("parses");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "t");
+    }
+
+    #[test]
+    fn plain_text_never_yields_qwen_coder_calls() {
+        let (_, calls) =
+            parse_tool_calls("Just talking about <function=x> shapes.").expect("parses");
+        assert!(calls.is_empty());
+    }
 
     #[test]
     fn test_degenerate_fence_only_single_marker() {

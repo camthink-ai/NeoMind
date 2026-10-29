@@ -228,7 +228,6 @@
     "builtinImported": "已导入 {{name}}",
     "builtinImportLocalPrompt": "输入服务器上 GGUF 文件的绝对路径",
     "builtinNetworkHint": "网络受限？可配置镜像下载源，或改用下方“导入/上传模型文件”离线安装。",
-    "runtimeSourcesTitle": "下载源（镜像）",
     "runtimeSourcesHint": "默认源在部分网络环境不可达（huggingface.co / github）。镜像示例：https://hf-mirror.com。留空恢复默认。修改立即生效于下次请求。",
     "runtimeSourceHf": "模型下载源（HuggingFace）",
     "runtimeSourceCatalog": "模型目录源",
@@ -239,7 +238,10 @@
     "builtinEngineError": "引擎启动失败：{{message}}",
     "runtimeChecking": "正在检查更新…",
     "runtimeStatusUpdate": "发现可用更新 {{tag}}",
-    "runtimeRowCurrent": "当前版本"
+    "runtimeRowCurrent": "当前版本",
+    "builtinMinRuntime": "需运行时 ≥ {{tag}}",
+    "builtinMinRuntimeHint": "此模型要求 llama.cpp 运行时不低于 {{tag}}；低于该版本时下载会被拦截并提示先升级运行时（设置 → LLM 后端 → 内置卡片 → 运行时）。",
+    "runtimeAdvanced": "高级"
   },
   "yes": "是",
   "no": "否",

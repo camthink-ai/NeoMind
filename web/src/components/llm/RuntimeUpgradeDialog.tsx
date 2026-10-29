@@ -352,54 +352,59 @@ export function RuntimeUpgradeDialog({ open, onClose, runtime, onChanged }: Runt
           </div>
         )}
 
-        {/* Variant — segmented control, not five bordered buttons. */}
+        {/* Advanced (collapsed by default): the variant override and mirror
+            sources are both troubleshooting config — auto-detection covers
+            ~every host, so neither belongs in the primary surface. */}
         <div className="space-y-1.5">
-          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            {t('plugins:llm.runtimeVariantLabel')}
-          </p>
-          <div className="inline-flex overflow-hidden rounded-md border border-border">
-            {VARIANT_CHOICES.map((v) => {
-              const isCurrent =
-                v === 'auto' ? !info?.override_variant : info?.override_variant === v
-              return (
-                <button
-                  key={v}
-                  disabled={busy}
-                  onClick={() => setVariant(v === 'auto' ? '' : v)}
-                  className={cn(
-                    'h-7 px-2.5 text-xs transition-colors disabled:opacity-50',
-                    'border-r border-border last:border-r-0',
-                    isCurrent
-                      ? 'bg-primary text-primary-foreground'
-                      : 'text-muted-foreground hover:bg-accent',
-                  )}
-                >
-                  {v === 'auto' ? t('plugins:llm.runtimeVariantAuto') : v.toUpperCase()}
-                </button>
-              )
-            })}
-          </div>
-          <p className="text-xs leading-snug text-muted-foreground">
-            {t('plugins:llm.runtimeVariantHint')}
-          </p>
-        </div>
-
-        {/* Download sources (mirrors) — collapsed by default: advanced config. */}
-        {sources && (
-          <div className="space-y-1.5">
-            <button
-              className="flex w-full items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground"
-              onClick={() => setSourcesOpen((o) => !o)}
-            >
-              {sourcesOpen ? (
-                <ChevronDown className="h-3.5 w-3.5" />
-              ) : (
-                <ChevronRight className="h-3.5 w-3.5" />
-              )}
-              {t('plugins:llm.runtimeSourcesTitle')}
-            </button>
-            {sourcesOpen && (
-              <div className="space-y-2 rounded-md border border-border p-3">
+          <button
+            className="flex w-full items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground"
+            onClick={() => setSourcesOpen((o) => !o)}
+          >
+            {sourcesOpen ? (
+              <ChevronDown className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5" />
+            )}
+            {t('plugins:llm.runtimeAdvanced')}
+          </button>
+          {sourcesOpen && (
+            <div className="space-y-3 rounded-md border border-border p-3">
+              {/* Variant (moved here from the primary surface): auto-detect
+                  picks per platform; the override exists for the failure
+                  modes (Vulkan is deliberately not auto-detected; broken
+                  CUDA driver → force CPU to rescue boot). */}
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium">
+                  {t('plugins:llm.runtimeVariantLabel')}
+                </p>
+                <div className="inline-flex overflow-hidden rounded-md border border-border">
+                  {VARIANT_CHOICES.map((v) => {
+                    const isCurrent =
+                      v === 'auto' ? !info?.override_variant : info?.override_variant === v
+                    return (
+                      <button
+                        key={v}
+                        disabled={busy}
+                        onClick={() => setVariant(v === 'auto' ? '' : v)}
+                        className={cn(
+                          'h-7 px-2.5 text-xs transition-colors disabled:opacity-50',
+                          'border-r border-border last:border-r-0',
+                          isCurrent
+                            ? 'bg-primary text-primary-foreground'
+                            : 'text-muted-foreground hover:bg-accent',
+                        )}
+                      >
+                        {v === 'auto' ? t('plugins:llm.runtimeVariantAuto') : v.toUpperCase()}
+                      </button>
+                    )
+                  })}
+                </div>
+                <p className="text-xs leading-snug text-muted-foreground">
+                  {t('plugins:llm.runtimeVariantHint')}
+                </p>
+              </div>
+              {sources && (
+              <div className="space-y-2">
                 <p className="text-xs leading-snug text-muted-foreground">
                   {t('plugins:llm.runtimeSourcesHint')}
                 </p>
@@ -440,9 +445,10 @@ export function RuntimeUpgradeDialog({ open, onClose, runtime, onChanged }: Runt
                   </div>
                 ))}
               </div>
-            )}
-          </div>
-        )}
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </UnifiedFormDialog>
   )
