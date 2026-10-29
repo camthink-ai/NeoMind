@@ -154,8 +154,13 @@ export async function fetchAPI<T>(
     ...fetchOptions
   } = options
 
+  // FormData bodies must NOT get a JSON content-type — the browser needs to
+  // set multipart/form-data with its own boundary (GGUF upload broke
+  // otherwise).
+  const isFormData =
+    typeof FormData !== 'undefined' && fetchOptions.body instanceof FormData
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
     ...(fetchOptions.headers as Record<string, string> || {}),
   }
 

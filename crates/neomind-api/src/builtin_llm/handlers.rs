@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use axum::extract::{Json, Query, State};
+use axum::extract::{Extension, Json, Query, State};
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -56,6 +56,22 @@ static DOWNLOAD_LOCK: OnceLock<Arc<tokio::sync::Mutex<()>>> = OnceLock::new();
 /// state, updated even across the tiny window between lock acquisition and
 /// the background task actually starting.)
 static DL_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Whether a builtin model download is in flight — the runtime upgrade
+/// refuses to start while this is true (mutual exclusion, the other
+/// direction being `runtime::runtime_download_active`).
+pub(crate) fn model_download_active() -> bool {
+    DL_ACTIVE.load(Ordering::SeqCst)
+}
+
+/// Cross-module test serializer for the builtin-LLM process-globals
+/// (download lock, UPGRADE_ACTIVE, DL_ACTIVE). Tests touching those must
+/// hold this guard for their whole body.
+#[cfg(test)]
+pub(crate) fn builtin_llm_test_serial() -> &'static std::sync::Mutex<()> {
+    static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
 
 /// Latest progress values reported by the download callback (0 = unknown).
 static DL_DOWNLOADED: AtomicU64 = AtomicU64::new(0);
@@ -125,6 +141,8 @@ fn builtin_to_catalog(def: &BuiltinModelDef) -> super::catalog::CatalogModel {
         file_name: def.manifest.file_name.clone(),
         sha256: def.manifest.sha256.clone(),
         quant: def.manifest.quant.clone(),
+        format: def.manifest.format.clone(),
+        target_hardware: None,
         hf_repo: def.hf_repo.to_string(),
         hf_file: def.hf_file.to_string(),
         size_bytes: def.size_bytes,
@@ -661,20 +679,13 @@ fn resolve_source(
 ) -> (String, String, String) {
     if let Ok(Some(quant)) = resolve_quant(cfg, def) {
         return (
-            format!(
-                "https://huggingface.co/{}/resolve/main/{}",
-                def.hf_repo,
-                quant_file_name(&def.id, quant)
-            ),
+            super::sources::hf_file_url(&def.hf_repo, &quant_file_name(&def.id, quant)),
             quant_sha256(&def.id, quant).to_string(),
             quant_local_file_name(&def.id, quant),
         );
     }
     (
-        format!(
-            "https://huggingface.co/{}/resolve/main/{}",
-            def.hf_repo, def.hf_file
-        ),
+        super::sources::hf_file_url(&def.hf_repo, &def.hf_file),
         def.sha256.clone(),
         def.file_name.clone(),
     )
@@ -687,10 +698,7 @@ fn resolve_source(
 fn resolve_mmproj_source(def: &super::catalog::CatalogModel) -> Option<(String, String, String)> {
     let mm = def.mmproj.as_ref()?;
     Some((
-        format!(
-            "https://huggingface.co/{}/resolve/main/{}",
-            mm.hf_repo, mm.hf_file
-        ),
+        super::sources::hf_file_url(&mm.hf_repo, &mm.hf_file),
         mm.sha256.clone(),
         mm.file_name.clone(),
     ))
@@ -964,6 +972,9 @@ async fn import_gguf_from_path(
             file_name: file_name.clone(),
             sha256: sha,
             quant,
+            // The import pipeline is GGUF-only today; an RKNN/other-format
+            // import gets its own validated path when such models ship.
+            format: neomind_core::builtin_llm::manifest::MODEL_FORMAT_GGUF.to_string(),
             // Imported GGUFs carry no projector (imports are rejected for
             // clip-arch files); vision is a catalog-download feature.
             mmproj: None,
@@ -1076,6 +1087,10 @@ pub async fn status_handler(
 ) -> HandlerResult<serde_json::Value> {
     let cfg = BuiltinConfig::from_env();
 
+    // Runtime layer (variant/tag/channel) — additive block consumed by the
+    // settings card; peek-only, never fetches (cheap for the 3s poll).
+    let runtime = super::runtime_manager::runtime_snapshot(&state.data_dir).await;
+
     // manifest + model_path + installed, independent of download state so the
     // "downloading" branch below can still report `installed` truthfully.
     let mdir = models_dir(&state.data_dir);
@@ -1148,6 +1163,7 @@ pub async fn status_handler(
             "model_id": dl_id,
             "server_state": "downloading",
             "companion": companion,
+            "runtime": runtime,
             "downloaded_bytes": downloaded,
             "total_bytes": if total > 0 { json!(total) } else { serde_json::Value::Null },
         }));
@@ -1159,6 +1175,7 @@ pub async fn status_handler(
             "model_id": serde_json::Value::Null,
             "server_state": "not_configured",
             "companion": companion,
+            "runtime": runtime,
             "downloaded_bytes": serde_json::Value::Null,
             "total_bytes": serde_json::Value::Null,
         }));
@@ -1168,8 +1185,14 @@ pub async fn status_handler(
         .and_then(|p| std::fs::metadata(&p).ok())
         .map(|m| m.len())
         .unwrap_or(0);
+    let bootstrap_err = super::runtime_manager::bootstrap_error();
     let server_state = if health_check(cfg.port).await {
         "running"
+    } else if bootstrap_err.is_some() {
+        // Bootstrap (incl. runtime download) failed and the server never
+        // came up — "stopped" hid the reason; the frontend's existing
+        // error-pill branch renders it once `error` is present.
+        "error"
     } else {
         "stopped"
     };
@@ -1207,6 +1230,8 @@ pub async fn status_handler(
         // registry (e.g. MiniCPM missing entirely).
         "model_name": installed_pair.as_ref().map(|(d, _)| d.display_name),
         "server_state": server_state,
+        "error": if server_state == "error" { bootstrap_err } else { None },
+        "runtime": runtime,
         "downloaded_bytes": file_size,
         "total_bytes": file_size,
         "ctx": effective_ctx,
@@ -1264,6 +1289,7 @@ pub async fn models_handler(
     // Source of truth: the REMOTE catalog when reachable (new models ship as
     // a JSON edit), else the compiled-in curated set. A network failure must
     // never degrade the list — offline fallback is the full builtin default.
+    let mut catalog_fallback = false;
     let mut base: Vec<super::catalog::CatalogModel> = match super::catalog::fetch_catalog().await {
         Some(catalog) => {
             tracing::debug!(
@@ -1274,6 +1300,7 @@ pub async fn models_handler(
         }
         None => {
             tracing::debug!("builtin llm: catalog unreachable — using compiled-in curated models");
+            catalog_fallback = true;
             BUILTIN_MODELS.iter().map(builtin_to_catalog).collect()
         }
     };
@@ -1291,6 +1318,11 @@ pub async fn models_handler(
                 "name": d.display_name,
                 "file_name": d.file_name,
                 "quant": d.quant,
+                // Model package format + hardware constraints — consumed by
+                // the eligibility filter once non-gguf formats ship; the
+                // wizard can already display them.
+                "format": d.format,
+                "target_hardware": d.target_hardware,
                 "size_bytes": d.size_bytes,
                 "default_ctx": d.default_ctx,
                 // Native ceiling for display; null on older catalogs (the
@@ -1366,7 +1398,14 @@ pub async fn models_handler(
             }));
         }
     }
-    ok(json!({ "models": models, "default_model_id": BUILTIN_MODEL_ID }))
+    // `catalog_fallback`: the remote catalog was unreachable and this list is
+    // the compiled-in curated set — the wizard shows an "offline catalog"
+    // badge instead of silently pretending this is the live catalog.
+    ok(json!({
+        "models": models,
+        "default_model_id": BUILTIN_MODEL_ID,
+        "catalog_fallback": catalog_fallback,
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -1414,6 +1453,14 @@ pub async fn download_handler(
     if !cfg.enabled {
         return Err(ErrorResponse::bad_request(
             "builtin LLM disabled (NEOMIND_BUILTIN_LLM=off)",
+        ));
+    }
+    // Mutual exclusion with the runtime upgrade (the other direction is in
+    // upgrade_runtime): a model download's post-download spawn could race
+    // the upgrade's stop/respawn otherwise.
+    if super::runtime_manager::upgrade_active() {
+        return Err(ErrorResponse::conflict(
+            "a llama.cpp runtime upgrade is in flight — retry after it finishes",
         ));
     }
 
@@ -1565,6 +1612,7 @@ pub async fn download_handler(
                 url,
                 sha,
                 quant: quant_task,
+                format: def.format.clone(),
                 mmproj_src: mmproj_src_task,
                 companion: is_vlm,
             },
@@ -1588,6 +1636,8 @@ struct DownloadJob {
     url: String,
     sha: String,
     quant: String,
+    /// Model package format (catalog entry; written into the manifest).
+    format: String,
     mmproj_src: Option<(String, String, String)>,
     companion: bool,
 }
@@ -1604,6 +1654,7 @@ async fn run_builtin_download(
         url,
         sha,
         quant,
+        format: model_format,
         mmproj_src,
         companion,
     } = job;
@@ -1710,6 +1761,7 @@ async fn run_builtin_download(
                     .unwrap_or_else(|| model_id.to_string()),
                 sha256: sha.to_string(),
                 quant: quant.to_string(),
+                format: model_format.clone(),
                 mmproj: mmproj_installed,
             };
             save_manifest(&mdir, &manifest)?;
@@ -1744,6 +1796,7 @@ async fn run_builtin_download(
             // server runtime on first use) then runs without keeping the UI
             // frozen at 100%.
             drop(_active);
+            super::runtime_manager::record_download_error(None);
 
             if let Some(bus) = &bus {
                 bus.publish_sync(NeoMindEvent::ModelDownloadProgress {
@@ -1785,6 +1838,11 @@ async fn run_builtin_download(
             Ok(())
         }
         Err(e) => {
+            // Remember the failure text (status `sources.last_download_error`)
+            // unless the user cancelled — a cancel is not a network problem.
+            if !super::download::download_cancel_requested() {
+                super::runtime_manager::record_download_error(Some(e.to_string()));
+            }
             if let Some(bus) = &bus {
                 let cancelled = super::download::download_cancel_requested();
                 bus.publish_sync(NeoMindEvent::ModelDownloadProgress {
@@ -2483,6 +2541,14 @@ pub async fn restart_handler(
             "builtin LLM disabled (NEOMIND_BUILTIN_LLM=off)",
         ));
     }
+    // Mutual exclusion with the runtime upgrade (completes the pair with
+    // download_handler's guard): a mid-upgrade restart would race the
+    // upgrade's own stop/respawn step.
+    if super::runtime_manager::upgrade_active() {
+        return Err(ErrorResponse::conflict(
+            "a llama.cpp runtime upgrade is in flight — retry after it finishes",
+        ));
+    }
 
     // A healthy server is normally left alone — EXCEPT when a ctx override
     // was requested that differs from the running server's actual n_ctx:
@@ -2842,6 +2908,228 @@ fn get_manager() -> Result<Arc<LlmBackendInstanceManager>, ErrorResponse> {
     get_instance_manager().map_err(|e| ErrorResponse::internal(e.to_string()))
 }
 
+// ---------------------------------------------------------------------------
+// Runtime management (standalone llama.cpp upgrades — see runtime_manager)
+// ---------------------------------------------------------------------------
+
+/// Stop + respawn the builtin engine (main + companion) so a newly
+/// installed/reverted runtime actually takes effect. Skipped (Ok) when no
+/// model is installed — nothing to spawn. Mirrors the tail of
+/// `restart_handler` (dual kill, session-backend re-push, companion
+/// restore).
+async fn restart_builtin_engine(state: &crate::server::types::ServerState) -> Result<(), String> {
+    let mdir = models_dir(&state.data_dir);
+    if installed_model(&mdir).is_none() {
+        return Ok(()); // nothing installed — the next spawn picks the new runtime up
+    }
+    let cfg = BuiltinConfig::from_env();
+    crate::builtin_llm::server::stop_all_llama_servers();
+    kill_process_on_port(cfg.port);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let manager = get_manager().map_err(|e| e.message)?;
+    match spawn_builtin_server(&state.data_dir, &cfg, &manager, None).await {
+        Ok(_) => {
+            // The builtin may be the ACTIVE chat backend — re-push so its
+            // session-manager snapshot (endpoint/capabilities) refreshes.
+            let builtin_active = manager
+                .get_active_instance()
+                .map(|i| i.id == BUILTIN_INSTANCE_ID)
+                .unwrap_or(false);
+            if builtin_active {
+                if let Some(instance) = manager.get_instance(BUILTIN_INSTANCE_ID) {
+                    let backend = LlmBackend::LlamaCpp {
+                        endpoint: instance.endpoint.clone().unwrap_or_default(),
+                        model: instance.model.clone(),
+                        capabilities: Some(convert_capabilities(&instance.capabilities)),
+                    };
+                    if let Err(e) = state.agents.session_manager.set_llm_backend(backend).await {
+                        tracing::warn!(error = %e, "Failed to refresh session backend after runtime change");
+                    }
+                }
+            }
+            match ensure_companion(&state.data_dir, &cfg, &manager).await {
+                Ok(ep) => {
+                    tracing::info!(endpoint = %ep, "builtin llm: companion restored after runtime change")
+                }
+                Err(skip) => {
+                    tracing::info!(reason = %skip, "builtin llm: companion not restored")
+                }
+            }
+            Ok(())
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+fn publish_runtime_event(
+    bus: &Option<Arc<neomind_core::eventbus::EventBus>>,
+    phase: &str,
+    target_tag: Option<&str>,
+    error: Option<&str>,
+) {
+    if let Some(bus) = bus {
+        let _ = bus.publish_sync(NeoMindEvent::RuntimeUpgradeProgress {
+            phase: phase.to_string(),
+            variant: Some(
+                super::runtime_manager::variant_name(&super::runtime_manager::effective_variant())
+                    .to_string(),
+            ),
+            target_tag: target_tag.map(str::to_string),
+            current_tag: None,
+            downloaded: None,
+            total: None,
+            message: None,
+            error: error.map(str::to_string),
+        });
+    }
+}
+
+/// GET /api/builtin-llm/runtime — resolved/installed runtimes, the bundled
+/// identity, and the channel recommendation (`update_available`).
+#[utoipa::path(
+    get,
+    path = "/api/builtin-llm/runtime",
+    tag = "builtin-llm",
+    responses(
+        (status = 200, description = "llama.cpp runtime status + channel recommendation"),
+    )
+)]
+pub async fn runtime_status_handler(
+    State(state): State<crate::server::types::ServerState>,
+) -> HandlerResult<serde_json::Value> {
+    ok(super::runtime_manager::runtime_snapshot(&state.data_dir).await)
+}
+
+/// POST /api/builtin-llm/runtime/check — force a channel refresh (admin).
+#[utoipa::path(
+    post,
+    path = "/api/builtin-llm/runtime/check",
+    tag = "builtin-llm",
+    responses(
+        (status = 200, description = "Channel re-fetched; snapshot returned"),
+    )
+)]
+pub async fn runtime_check_handler(
+    State(state): State<crate::server::types::ServerState>,
+    Extension(admin): Extension<crate::auth_users::SessionInfo>,
+) -> HandlerResult<serde_json::Value> {
+    if admin.role != crate::auth_users::UserRole::Admin {
+        return Err(ErrorResponse::bad_request("Admin access required"));
+    }
+    let _ = super::runtime_manager::fetch_channel(true).await;
+    ok(super::runtime_manager::runtime_snapshot(&state.data_dir).await)
+}
+
+/// POST /api/builtin-llm/runtime/variant — persist (or clear, "auto"/"")
+/// the runtime variant override (admin). Effective on the next spawn.
+#[utoipa::path(
+    post,
+    path = "/api/builtin-llm/runtime/variant",
+    tag = "builtin-llm",
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Override persisted"),
+    )
+)]
+pub async fn runtime_variant_handler(
+    Extension(admin): Extension<crate::auth_users::SessionInfo>,
+    payload: Option<Json<serde_json::Value>>,
+) -> HandlerResult<serde_json::Value> {
+    if admin.role != crate::auth_users::UserRole::Admin {
+        return Err(ErrorResponse::bad_request("Admin access required"));
+    }
+    let value = payload
+        .and_then(|Json(v)| {
+            v.get("variant")
+                .and_then(|x| x.as_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_default();
+    super::runtime_manager::set_persisted_variant(&value).map_err(ErrorResponse::bad_request)?;
+    ok(json!({ "saved": value }))
+}
+
+/// POST /api/builtin-llm/runtime/upgrade — install the channel-recommended
+/// runtime (admin). Returns immediately; progress flows via
+/// `RuntimeUpgradeProgress` events and `GET /api/builtin-llm/runtime`.
+#[utoipa::path(
+    post,
+    path = "/api/builtin-llm/runtime/upgrade",
+    tag = "builtin-llm",
+    responses(
+        (status = 200, description = "Upgrade started"),
+    )
+)]
+pub async fn runtime_upgrade_handler(
+    State(state): State<crate::server::types::ServerState>,
+    Extension(admin): Extension<crate::auth_users::SessionInfo>,
+) -> HandlerResult<serde_json::Value> {
+    if admin.role != crate::auth_users::UserRole::Admin {
+        return Err(ErrorResponse::bad_request("Admin access required"));
+    }
+    if super::runtime_manager::upgrade_active() {
+        return ok(json!({ "started": false, "already_running": true }));
+    }
+    if model_download_active() {
+        return Err(ErrorResponse::conflict(
+            "a model download is in flight — retry after it finishes",
+        ));
+    }
+    let task_state = state.clone();
+    let bus = state.event_bus();
+    tokio::spawn(async move {
+        let data_dir = task_state.data_dir.clone();
+        match super::runtime_manager::upgrade_runtime(&data_dir, bus.clone()).await {
+            Ok((_from, to)) => {
+                publish_runtime_event(&bus, "restarting", Some(&to), None);
+                match restart_builtin_engine(&task_state).await {
+                    Ok(()) => {
+                        tracing::info!(tag = %to, "builtin llm: runtime upgraded to {to}");
+                        publish_runtime_event(&bus, "done", Some(&to), None);
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "builtin llm: restart after runtime upgrade failed");
+                        publish_runtime_event(&bus, "error", Some(&to), Some(&e));
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "builtin llm: runtime upgrade failed");
+                publish_runtime_event(&bus, "error", None, Some(&e));
+            }
+        }
+    });
+    ok(json!({ "started": true, "already_running": false }))
+}
+
+/// POST /api/builtin-llm/runtime/revert — delete the NEWEST cached runtime
+/// (admin); resolution falls back to the previous cache / the bundled
+/// binary, then the engine restarts onto it.
+#[utoipa::path(
+    post,
+    path = "/api/builtin-llm/runtime/revert",
+    tag = "builtin-llm",
+    responses(
+        (status = 200, description = "Newest runtime cache removed"),
+    )
+)]
+pub async fn runtime_revert_handler(
+    State(state): State<crate::server::types::ServerState>,
+    Extension(admin): Extension<crate::auth_users::SessionInfo>,
+) -> HandlerResult<serde_json::Value> {
+    if admin.role != crate::auth_users::UserRole::Admin {
+        return Err(ErrorResponse::bad_request("Admin access required"));
+    }
+    let removed =
+        super::runtime_manager::revert_runtime(&state.data_dir).map_err(ErrorResponse::conflict)?;
+    let bus = state.event_bus();
+    publish_runtime_event(&bus, "restarting", None, None);
+    restart_builtin_engine(&state)
+        .await
+        .map_err(ErrorResponse::internal)?;
+    ok(json!({ "reverted": true, "removed_tag": removed }))
+}
+
 #[cfg(test)]
 // Several tests hold the `test_serial()` std guard and the tokio download
 // lock across the whole test body ON PURPOSE — that serialization (and, for
@@ -2885,8 +3173,11 @@ mod tests {
     /// test. Serialize all of them through one mutex (same pattern as
     /// config.rs's env_lock).
     fn test_serial() -> &'static std::sync::Mutex<()> {
-        static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+        // Shared with runtime_manager's integration test via the pub(crate)
+        // helper below: the upgrade orchestration and these handler tests
+        // mutate the same process-globals (UPGRADE_ACTIVE, DL_ACTIVE, the
+        // download lock) and must not run concurrently.
+        builtin_llm_test_serial()
     }
 
     /// Pin the builtin port to a just-freed ephemeral port for the duration
@@ -2969,6 +3260,7 @@ mod tests {
                 file_name: "lfm25-2.6b-q4_k_m.gguf".to_string(),
                 sha256: "abc".to_string(),
                 quant: "q4_k_m".to_string(),
+                format: neomind_core::builtin_llm::manifest::MODEL_FORMAT_GGUF.to_string(),
                 mmproj: None,
             },
         )
@@ -3114,6 +3406,8 @@ mod quant_override_tests {
             file_name: "x.gguf".to_string(),
             sha256: "deadbeef".to_string(),
             quant: "q4_k_m".to_string(),
+            format: "gguf".to_string(),
+            target_hardware: None,
             hf_repo: "r/x".to_string(),
             hf_file: "x.gguf".to_string(),
             size_bytes: 1,

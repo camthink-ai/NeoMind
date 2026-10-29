@@ -215,6 +215,7 @@ pub async fn bootstrap(
                 tracing::info!(reason = %skip, "builtin llm: vision companion not running")
             }
         }
+        super::runtime_manager::record_bootstrap_error(None);
         return BootstrapOutcome::ServerAlreadyRunning;
     }
 
@@ -260,7 +261,12 @@ pub async fn bootstrap(
 
     let binary = match ensure_llama_server(data_dir).await {
         Ok(b) => b,
-        Err(e) => return BootstrapOutcome::Failed(format!("llama-server unavailable: {}", e)),
+        Err(e) => {
+            super::runtime_manager::record_bootstrap_error(Some(format!(
+                "llama-server unavailable: {e}"
+            )));
+            return BootstrapOutcome::Failed(format!("llama-server unavailable: {}", e));
+        }
     };
     let model_path = cfg
         .model_path
@@ -327,10 +333,14 @@ pub async fn bootstrap(
     };
     let mut proc = match LlamaServerProcess::spawn(&server_cfg) {
         Ok(p) => p,
-        Err(e) => return BootstrapOutcome::Failed(format!("spawn failed: {}", e)),
+        Err(e) => {
+            super::runtime_manager::record_bootstrap_error(Some(format!("spawn failed: {e}")));
+            return BootstrapOutcome::Failed(format!("spawn failed: {}", e));
+        }
     };
     if let Err(e) = proc.wait_healthy(Duration::from_secs(60)).await {
         let _ = proc.stop().await;
+        super::runtime_manager::record_bootstrap_error(Some(format!("server unhealthy: {e}")));
         return BootstrapOutcome::Failed(format!("server unhealthy: {}", e));
     }
     // wait_healthy 只证明端口有 /health 响应——可能是占用该端口的其他服务
@@ -338,6 +348,10 @@ pub async fn bootstrap(
     // 会指向别人的服务器,且 kill_process_on_port 会误杀无关进程。
     if !proc.is_alive() {
         let _ = proc.stop().await;
+        super::runtime_manager::record_bootstrap_error(Some(format!(
+            "port {} in use — llama-server exited after bind",
+            cfg.port
+        )));
         return BootstrapOutcome::Failed(format!(
             "port {} in use — llama-server exited after bind (another server on that port?)",
             cfg.port
@@ -401,6 +415,7 @@ pub async fn bootstrap(
         Err(skip) => tracing::info!(reason = %skip, "builtin llm: vision companion not running"),
     }
 
+    super::runtime_manager::record_bootstrap_error(None);
     BootstrapOutcome::ServerReady { endpoint }
 }
 

@@ -15,11 +15,66 @@ use std::path::PathBuf;
 /// the ubuntu-x64 asset on a 22.04 host). The official ubuntu-CUDA builds
 /// moved to a newer base (require glibc 2.38) and are therefore NOT used —
 /// linux-x64 CUDA stays OUR self-hosted gcc-11 build (see
-/// `LINUX_CUDA_RUNTIME_ASSET`). Bump the pin and
-/// `scripts/build-llama-server.sh`'s `LLAMA_CPP_TAG` together, and rebuild
-/// both self-hosted assets (Jetson via the Runtimes CI workflow, linux-cuda
-/// via the on-device recipe) for the new tag.
+/// `linux_cuda_runtime_asset`).
+///
+/// # Bump runbook (all steps, in order)
+///
+/// 1. Bump this pin — CI's `llama-pin-sync` gate
+///    (scripts/check_llama_pin_sync.py) also requires
+///    `scripts/build-llama-server.sh`'s `LLAMA_CPP_TAG` and
+///    `scripts/install.sh`'s `LLAMA_VERSION` defaults to move with it.
+/// 2. Build + publish the `runtime-<tag>` release assets on
+///    camthink-ai/NeoMind-Runtimes (Jetson via its CI workflow — keep
+///    `-DGGML_NATIVE=OFF -DGGML_CPU_ARM_ARCH=armv8.2-a`; linux-cuda via
+///    the on-device T4 recipe).
+/// 3. Backfill `JETSON_RUNTIME_SHA256` / `LINUX_CUDA_RUNTIME_SHA256` here.
+/// 4. Update `runtimes.json` in NeoMind-Runtimes (the standalone-upgrade
+///    channel: `recommended` + per-variant `tag`/`asset`/`sha256`) — AFTER
+///    the assets exist — then release NeoMind.
+///
+/// Runtime updates beyond this pin reach deployed customers through that
+/// channel (see `builtin_llm::runtime_manager` in neomind-api), not through
+/// compiled changes. Adding a new VARIANT (e.g. RKNN) splits into two very
+/// different bills of work: the SERVER-BINARY layer (variant arm + asset
+/// mapping + channel entry + build pipeline — the upgrade/revert/resolution
+/// flow is variant-agnostic, and rkllm3-server is OpenAI-compatible so the
+/// health/props surface fits) versus the MODEL layer, which is NOT: RKNN
+/// models are chip-specific multi-file packages (.rkllm+.rknn+tokenizer),
+/// not GGUF — catalog.json needs format/target_hardware fields,
+/// `manifest.rs` must move in lockstep, and the GGUF-centric download/
+/// import/spawn-arg paths need per-format arms (see runtimes/rknn/README.md
+/// and its redistribution gate before any of that starts). Mirror/air-gap
+/// deployments override the channel via `NEOMIND_RUNTIME_CHANNEL_URL`.
 pub const LLAMA_CPP_VERSION: &str = "b11609";
+
+/// Is this a well-formed llama.cpp release tag (`b` + 4-7 digits)?
+///
+/// Tags sourced from the remote runtime channel end up in cache-dir names
+/// and download URLs — anything that doesn't match this shape is rejected
+/// outright (path-injection guard: `../x`, `b12;rm`, padded/space variants).
+pub fn validate_tag(tag: &str) -> bool {
+    let digits = match tag.strip_prefix('b') {
+        Some(d) => d,
+        None => return false,
+    };
+    (4..=7).contains(&digits.len()) && digits.bytes().all(|b| b.is_ascii_digit())
+}
+
+fn tag_number(tag: &str) -> Option<u64> {
+    tag.strip_prefix('b').and_then(|n| n.parse::<u64>().ok())
+}
+
+/// Order llama.cpp release tags. Numeric when both sides are `bNNNN` (so
+/// `b10` > `b2`); a non-numeric side sorts below numeric ones, and two
+/// non-numeric tags fall back to string order. Never panics.
+pub fn tag_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    match (tag_number(a), tag_number(b)) {
+        (Some(x), Some(y)) => x.cmp(&y),
+        (Some(_), None) => std::cmp::Ordering::Greater,
+        (None, Some(_)) => std::cmp::Ordering::Less,
+        (None, None) => a.cmp(b),
+    }
+}
 
 /// Accelerated-runtime selection for the on-demand download.
 ///
@@ -209,8 +264,13 @@ pub fn nvidia_probe_prefers_cuda(probe: &NvidiaGpuProbe) -> bool {
 /// files (whole archive must be extracted together), $ORIGIN RUNPATH.
 pub const JETSON_RUNTIME_BASE_URL: &str =
     "https://github.com/camthink-ai/NeoMind-Runtimes/releases/download";
-pub const JETSON_RUNTIME_ASSET: &str = "llama-server-b11609-linux-aarch64-jetson.tar.gz";
-/// SHA-256 of the above (executable download — hard pin, no slack).
+/// Asset filename for our Jetson runtime at a given llama.cpp tag. Built
+/// from the tag (not hardcoded) so a pin bump can never leave a stale
+/// filename behind — CI's `check_llama_pin_sync.py` guards the pin itself.
+pub fn jetson_runtime_asset(tag: &str) -> String {
+    format!("llama-server-{tag}-linux-aarch64-jetson.tar.gz")
+}
+/// SHA-256 of the asset for the CURRENT `LLAMA_CPP_VERSION` pin.
 /// Refilled per llama.cpp pin bump from the Runtimes build output.
 /// b11609 rebuild (2026-10-14): the first CI build (ubuntu-22.04-arm,
 /// Neoverse/ARMv9 host, GGML_NATIVE left on) carried SVE instructions in
@@ -230,14 +290,27 @@ pub const JETSON_RUNTIME_SHA256: &str =
 /// the CUDA runtime libs (cudart/cublas/cublasLt) bundled next to the
 /// thin-wrapper llama-server ($ORIGIN RUNPATH) — no CUDA toolkit needed on
 /// the host, an NVIDIA driver alone works.
-pub const LINUX_CUDA_RUNTIME_ASSET: &str = "llama-server-b11609-linux-x64-cuda.tar.gz";
-/// SHA-256 of the above (executable download — hard pin, no slack).
-/// Artifact: on-device build on a real Tesla T4 host (Ubuntu 22.04, CUDA
-/// 12.4 toolkit, gcc-11; CUDA backend init + CPU-mode generation verified
-/// there 2026-10-14 — GPU-mode was VRAM-blocked by co-tenants that day).
-/// Our build exists because the OFFICIAL ubuntu-cuda assets moved to a
-/// glibc-2.38 base — this gcc-11 build keeps the 22.04 floor while
-/// tracking the current `LLAMA_CPP_VERSION`.
+/// Asset filename for our Linux x64 CUDA runtime at a given llama.cpp tag
+/// (not an official llama.cpp release — they ship CPU/Vulkan-only tarballs
+/// for linux-x64). Same hosting model as the Jetson asset: built with the
+/// CUDA 12.4 toolkit (broadest driver floor — same choice as the official
+/// Windows CUDA asset, so a ≥550 driver suffices), archs 75/80/86/89
+/// (Turing→Ada: T4, A100, A10, RTX 30xx, L40S, RTX 40xx), gcc-11. The
+/// tarball carries the whole `bin/` tree with the CUDA runtime libs
+/// (cudart/cublas/cublasLt) bundled next to the thin-wrapper llama-server
+/// ($ORIGIN RUNPATH) — no CUDA toolkit needed on the host, an NVIDIA driver
+/// alone works.
+pub fn linux_cuda_runtime_asset(tag: &str) -> String {
+    format!("llama-server-{tag}-linux-x64-cuda.tar.gz")
+}
+/// SHA-256 of the asset for the CURRENT `LLAMA_CPP_VERSION` pin (executable
+/// download — hard pin, no slack). Artifact: on-device build on a real Tesla
+/// T4 host (Ubuntu 22.04, CUDA 12.4 toolkit, gcc-11; CUDA backend init +
+/// CPU-mode generation verified there 2026-10-14 — GPU-mode was VRAM-blocked
+/// by co-tenants that day). Our build exists because the OFFICIAL
+/// ubuntu-cuda assets moved to a glibc-2.38 base — this gcc-11 build keeps
+/// the 22.04 floor while tracking the current `LLAMA_CPP_VERSION`. SHA for
+/// any OTHER tag comes from the runtime channel (runtimes.json), not here.
 pub const LINUX_CUDA_RUNTIME_SHA256: &str =
     "c1fcbf65aba46210ae6085a98175033a0b4cfc4adf6581bcb18beeafea560103";
 
@@ -275,27 +348,44 @@ pub fn llama_asset_name(os: &str, arch: &str, variant: RuntimeVariant) -> Option
     }
 }
 
-/// Release URL for the resolved asset. The Jetson asset is OURS (hosted on
-/// our GitHub Releases under the runtime tag, SHA-pinned); everything else is
-/// the official llama.cpp release archive.
+/// Release URL for the resolved asset at the CURRENT pin. See
+/// [`try_llama_server_url_for_tag`] for the tag-parameterized form used by
+/// the standalone runtime upgrade (channel-sourced tags).
 pub fn llama_server_url_for(os: &str, arch: &str, variant: RuntimeVariant) -> String {
+    try_llama_server_url_for_tag(LLAMA_CPP_VERSION, os, arch, variant).unwrap_or_default()
+}
+
+/// Tag-parameterized release URL, `None` when the platform has no prebuilt
+/// asset at all. The Jetson asset is OURS (hosted on our GitHub Releases
+/// under the runtime tag, SHA-pinned); everything else is the official
+/// llama.cpp release archive. `tag` MUST already be [`validate_tag`]-checked
+/// by the caller when it comes from the runtime channel.
+pub fn try_llama_server_url_for_tag(
+    tag: &str,
+    os: &str,
+    arch: &str,
+    variant: RuntimeVariant,
+) -> Option<String> {
     let asset = llama_asset_name(os, arch, variant);
     // Our self-hosted assets (Jetson, linux-x64 CUDA): one release tag per
-    // llama.cpp version in NeoMind-Runtimes, SHA-pinned above/below.
+    // llama.cpp version in NeoMind-Runtimes.
     if variant == RuntimeVariant::Jetson {
         // {base}/releases/download/<runtime-<tag>>/<asset>
-        format!(
-            "{}/runtime-{}/{JETSON_RUNTIME_ASSET}",
-            JETSON_RUNTIME_BASE_URL, LLAMA_CPP_VERSION
-        )
+        Some(format!(
+            "{}/runtime-{}/{}",
+            JETSON_RUNTIME_BASE_URL,
+            tag,
+            jetson_runtime_asset(tag)
+        ))
     } else if asset == Some("linux-x64-cuda") {
-        format!(
-            "{}/runtime-{}/{LINUX_CUDA_RUNTIME_ASSET}",
-            JETSON_RUNTIME_BASE_URL, LLAMA_CPP_VERSION
-        )
+        Some(format!(
+            "{}/runtime-{}/{}",
+            JETSON_RUNTIME_BASE_URL,
+            tag,
+            linux_cuda_runtime_asset(tag)
+        ))
     } else {
-        let asset = asset.unwrap_or_default();
-        llama_server_url(asset)
+        asset.map(|a| llama_server_url_tagged(tag, a))
     }
 }
 
@@ -319,9 +409,14 @@ pub fn llama_asset_is_zip(asset: &str) -> bool {
     asset.starts_with("win-")
 }
 
-/// Release archive URL for an asset (e.g. `ubuntu-arm64` → tar.gz,
-/// `win-cpu-x64` → zip).
+/// Release archive URL for an asset at the CURRENT pin (e.g. `ubuntu-arm64`
+/// → tar.gz, `win-cpu-x64` → zip).
 pub fn llama_server_url(asset: &str) -> String {
+    llama_server_url_tagged(LLAMA_CPP_VERSION, asset)
+}
+
+/// Tag-parameterized form of [`llama_server_url`].
+pub fn llama_server_url_tagged(tag: &str, asset: &str) -> String {
     let ext = if llama_asset_is_zip(asset) {
         "zip"
     } else {
@@ -329,7 +424,7 @@ pub fn llama_server_url(asset: &str) -> String {
     };
     format!(
         "https://github.com/ggml-org/llama.cpp/releases/download/{}/llama-{}-bin-{}.{}",
-        LLAMA_CPP_VERSION, LLAMA_CPP_VERSION, asset, ext
+        tag, tag, asset, ext
     )
 }
 
@@ -338,12 +433,17 @@ pub fn llama_server_url(asset: &str) -> String {
 /// `llama-server.exe` — with the bundle, a plain NVIDIA driver suffices
 /// (no CUDA toolkit install). CPU assets have none.
 pub fn llama_cudart_url(asset: &str) -> Option<String> {
+    llama_cudart_url_tagged(LLAMA_CPP_VERSION, asset)
+}
+
+/// Tag-parameterized form of [`llama_cudart_url`].
+pub fn llama_cudart_url_tagged(tag: &str, asset: &str) -> Option<String> {
     if !asset.starts_with("win-cuda") {
         return None;
     }
     Some(format!(
         "https://github.com/ggml-org/llama.cpp/releases/download/{}/cudart-llama-bin-{}.zip",
-        LLAMA_CPP_VERSION, asset
+        tag, asset
     ))
 }
 
@@ -372,12 +472,38 @@ pub fn llama_server_cache_name() -> &'static str {
     }
 }
 
-/// Cache dir for a downloaded runtime (versioned so a pin bump re-downloads;
-/// variant-suffixed so cpu/cuda never mix).
+/// Cache dir for a downloaded runtime at the CURRENT pin (versioned so a
+/// pin bump re-downloads; variant-suffixed so cpu/cuda never mix).
 pub fn llama_server_cache_dir(data_dir: &std::path::Path, variant: RuntimeVariant) -> PathBuf {
+    llama_server_cache_dir_for_tag(data_dir, LLAMA_CPP_VERSION, variant)
+}
+
+/// Tag-parameterized form of [`llama_server_cache_dir`] — the standalone
+/// runtime upgrade installs channel tags into their own versioned dir.
+pub fn llama_server_cache_dir_for_tag(
+    data_dir: &std::path::Path,
+    tag: &str,
+    variant: RuntimeVariant,
+) -> PathBuf {
     data_dir
         .join("llama-server")
-        .join(format!("{}{}", LLAMA_CPP_VERSION, variant.cache_suffix()))
+        .join(format!("{}{}", tag, variant.cache_suffix()))
+}
+
+/// Inverse of the cache-dir naming: parse a `data/llama-server/` entry name
+/// back into `(tag, variant)`. `None` for temp dirs, unknown suffixes, or
+/// malformed tags (safe to ignore/prune those).
+pub fn parse_runtime_cache_name(name: &str) -> Option<(String, RuntimeVariant)> {
+    let (tag, variant) = if let Some(t) = name.strip_suffix("-jetson") {
+        (t, RuntimeVariant::Jetson)
+    } else if let Some(t) = name.strip_suffix("-cuda") {
+        (t, RuntimeVariant::Cuda)
+    } else if let Some(t) = name.strip_suffix("-vulkan") {
+        (t, RuntimeVariant::Vulkan)
+    } else {
+        (name, RuntimeVariant::Cpu)
+    };
+    validate_tag(tag).then(|| (tag.to_string(), variant))
 }
 
 #[cfg(test)]
@@ -396,7 +522,10 @@ mod tests {
             url.contains(&format!("/releases/download/runtime-{LLAMA_CPP_VERSION}/")),
             "url missing runtime tag segment: {url}"
         );
-        assert!(url.ends_with(JETSON_RUNTIME_ASSET), "url: {url}");
+        assert!(
+            url.ends_with(&jetson_runtime_asset(LLAMA_CPP_VERSION)),
+            "url: {url}"
+        );
         // Non-Jetson linux-aarch64 must keep the official asset URL.
         let cpu = llama_server_url_for("linux", "aarch64", RuntimeVariant::Cpu);
         assert!(cpu.starts_with("https://github.com/ggml-org/llama.cpp/"));
@@ -575,7 +704,10 @@ mod tests {
             url.contains(&format!("/releases/download/runtime-{LLAMA_CPP_VERSION}/")),
             "url missing runtime tag segment: {url}"
         );
-        assert!(url.ends_with(LINUX_CUDA_RUNTIME_ASSET), "url: {url}");
+        assert!(
+            url.ends_with(&linux_cuda_runtime_asset(LLAMA_CPP_VERSION)),
+            "url: {url}"
+        );
         // Self-hosted ⇒ SHA-pinned; aarch64 CUDA has no asset ⇒ no pin.
         assert_eq!(
             llama_runtime_expected_sha("linux", "x86_64", RuntimeVariant::Cuda),
@@ -630,6 +762,102 @@ mod tests {
             llama_server_cache_dir(root, RuntimeVariant::Cuda),
             PathBuf::from(format!("/data/llama-server/{LLAMA_CPP_VERSION}-cuda"))
         );
+    }
+
+    #[test]
+    fn tagged_builders_accept_arbitrary_tags_and_parse_round_trips() {
+        // Channel-sourced tags must flow through every builder unchanged.
+        for tag in ["b10000", "b99999"] {
+            let dir = llama_server_cache_dir_for_tag(
+                std::path::Path::new("/data"),
+                tag,
+                RuntimeVariant::Jetson,
+            );
+            assert!(dir.to_string_lossy().ends_with(&format!("{tag}-jetson")));
+            let (parsed_tag, parsed_variant) =
+                parse_runtime_cache_name(&format!("{tag}-jetson")).expect("parses");
+            assert_eq!(
+                (parsed_tag.as_str(), parsed_variant),
+                (tag, RuntimeVariant::Jetson)
+            );
+
+            let jetson =
+                try_llama_server_url_for_tag(tag, "linux", "aarch64", RuntimeVariant::Jetson)
+                    .expect("jetson url");
+            assert!(jetson.ends_with(&jetson_runtime_asset(tag)), "{jetson}");
+
+            let cpu = try_llama_server_url_for_tag(tag, "linux", "x86_64", RuntimeVariant::Cpu)
+                .expect("cpu url");
+            assert!(
+                cpu.contains(&format!("/{tag}/llama-{tag}-bin-ubuntu-x64.tar.gz")),
+                "{cpu}"
+            );
+            let cudart = llama_cudart_url_tagged(tag, "win-cuda-12.4-x64").expect("cudart");
+            assert!(cudart.contains(&format!("/{tag}/cudart-llama-bin-win-cuda-12.4-x64.zip")));
+        }
+        // Unsupported platform → None (legacy wrapper degrades to "").
+        assert!(
+            try_llama_server_url_for_tag("b10000", "freebsd", "x86_64", RuntimeVariant::Cpu)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn parse_runtime_cache_name_rejects_garbage() {
+        // Temp/partial dirs and malformed tags are ignorable, not parseable.
+        for bad in [
+            "",
+            ".tmp-download",
+            "b12",
+            "b12345678",
+            "b1160a",
+            "../escape",
+            "-cuda",
+        ] {
+            assert!(parse_runtime_cache_name(bad).is_none(), "{bad:?}");
+        }
+        // Plain (cpu) names parse to the Cpu variant.
+        assert_eq!(
+            parse_runtime_cache_name("b11609"),
+            Some(("b11609".to_string(), RuntimeVariant::Cpu))
+        );
+    }
+
+    #[test]
+    fn tag_cmp_is_numeric_for_b_tags() {
+        use std::cmp::Ordering;
+        assert_eq!(tag_cmp("b10", "b2"), Ordering::Greater);
+        assert_eq!(tag_cmp("b2", "b10"), Ordering::Less);
+        assert_eq!(tag_cmp("b11609", "b11609"), Ordering::Equal);
+        assert_eq!(tag_cmp("b99999", "b11609"), Ordering::Greater);
+        // Non-numeric sides sort below numeric ones, then by string.
+        assert_eq!(tag_cmp("b1", "weird"), Ordering::Greater);
+        assert_eq!(tag_cmp("weird", "b1"), Ordering::Less);
+        assert_eq!(tag_cmp("alpha", "beta"), Ordering::Less);
+    }
+
+    #[test]
+    fn validate_tag_blocks_injection_and_malformed() {
+        for good in ["b1054", "b11609", "b9999999"] {
+            assert!(validate_tag(good), "{good}");
+        }
+        for bad in [
+            "",
+            "b",
+            "b12",
+            "b12345678",
+            "B11609",
+            "b11609 ",
+            " b11609",
+            "b1160a",
+            "../x",
+            "b12;rm",
+            "b/11609",
+            "11609",
+            "b11609\n",
+        ] {
+            assert!(!validate_tag(bad), "{bad:?}");
+        }
     }
 
     #[test]

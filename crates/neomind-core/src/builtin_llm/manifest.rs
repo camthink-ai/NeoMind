@@ -33,6 +33,21 @@ pub struct MmprojSource {
     pub size_bytes: u64,
 }
 
+/// The model format this manifest was installed as. Open string, NOT an
+/// enum: vendor model packages keep appearing (gguf today; rkllm for
+/// Rockchip NPU, further vendor formats later) and each must not require a
+/// platform-code change to be *described*. Consumers branch on it only
+/// where behavior truly differs (import validation, spawn dialect); the
+/// value is written at install time so historical manifests never need a
+/// migration guess. Rules: lowercase ascii/digits/hyphen, 2-16 chars, and
+/// a vendor that breaks package compatibility versions its string
+/// ("rkllm" → "rkllm2") rather than redefining it.
+pub const MODEL_FORMAT_GGUF: &str = "gguf";
+
+fn default_model_format() -> String {
+    MODEL_FORMAT_GGUF.to_string()
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ModelManifest {
     pub id: String,
@@ -40,6 +55,10 @@ pub struct ModelManifest {
     pub file_name: String,
     pub sha256: String,
     pub quant: String,
+    /// Format of the installed package (see [`MODEL_FORMAT_GGUF`]). Absent
+    /// on pre-format manifests → "gguf" (everything older is gguf).
+    #[serde(default = "default_model_format")]
+    pub format: String,
     /// Vision projector, when the model was installed with one. Absent on
     /// text-only models AND on pre-mmproj manifests (serde default keeps
     /// those parsing).
@@ -152,6 +171,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
                 sha256: "ec2d5801640099e97d8d7e8003ad4d81f336e757811f03a26173dddf386602fd"
                     .to_string(),
                 quant: "q4_k_m".to_string(),
+            format: MODEL_FORMAT_GGUF.to_string(),
                 mmproj: None,
             },
             display_name: "MiniCPM5-2B",
@@ -203,6 +223,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
                 sha256: "a247afd6414918eac8e520a9e6137dc271235461ecbe1180462221d5b8d40b03"
                     .to_string(),
                 quant: "qad_q4_0".to_string(),
+                format: MODEL_FORMAT_GGUF.to_string(),
                 mmproj: None,
             },
             display_name: "LFM2.5-2.6B",
@@ -242,6 +263,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
                 sha256: "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4"
                     .to_string(),
                 quant: "q4_k_m".to_string(),
+            format: MODEL_FORMAT_GGUF.to_string(),
                 mmproj: None,
             },
             display_name: "Qwen3.5-4B",
@@ -290,6 +312,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
                 sha256: "fa401b55b07ee70a54c6dae3903c783a6e65064312529ea57175cb5f8dec6634"
                     .to_string(),
                 quant: "qat_q4_0".to_string(),
+                format: MODEL_FORMAT_GGUF.to_string(),
                 mmproj: None,
             },
             display_name: "Gemma4-E2B",
@@ -335,6 +358,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
                 sha256: "9842cce7c1a07ad4adefd2b79a1035710ff196576d89128eade29351b79c8e68"
                     .to_string(),
                 quant: "q4_k_m".to_string(),
+            format: MODEL_FORMAT_GGUF.to_string(),
                 mmproj: None,
             },
             display_name: "Ling-3.0-tiny",
@@ -381,6 +405,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
                 sha256: "588c6c94c82f756b86dba35c42ed9ba9ec187d65824eb52f039c347df563e63d"
                     .to_string(),
                 quant: "q4_k_m".to_string(),
+            format: MODEL_FORMAT_GGUF.to_string(),
                 mmproj: None,
             },
             display_name: "MiniCPM-V-4.7-1B",
@@ -543,6 +568,7 @@ mod tests {
             file_name: "lfm25-2.6b-q4_k_m.gguf".to_string(),
             sha256: "abc123".to_string(),
             quant: "q4_k_m".to_string(),
+            format: MODEL_FORMAT_GGUF.to_string(),
             mmproj: None,
         };
         save_manifest(&dir, &m).expect("save");
@@ -594,6 +620,7 @@ mod tests {
             file_name: "gemma-4-E2B_q4_0-it.qat.gguf".to_string(),
             sha256: "fa401b55".to_string(),
             quant: "qat_q4_0".to_string(),
+            format: MODEL_FORMAT_GGUF.to_string(),
             mmproj: Some(MmprojFile {
                 file_name: "gemma-4-E2B-it-mmproj.gguf".to_string(),
                 sha256: "021059cc".to_string(),
@@ -686,6 +713,37 @@ mod tests {
         let dir = temp_dir("missing");
         let _ = std::fs::remove_dir_all(&dir);
         assert!(load_manifest(&dir, BUILTIN_MODEL_ID).unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pre_format_manifest_loads_as_gguf() {
+        // The format field postdates deployed installs — a manifest written
+        // before it existed must parse with format == "gguf" (everything
+        // older IS gguf), never fail, never need a migration.
+        let dir = temp_dir("legacy");
+        let _ = std::fs::remove_dir_all(&dir);
+        let legacy = r#"{
+        "id": "legacy-model",
+        "version": "1.0",
+        "file_name": "legacy-q4_0.gguf",
+        "sha256": "deadbeef",
+        "quant": "q4_0"
+    }"#;
+        let mdir = dir.join("legacy-model");
+        std::fs::create_dir_all(&mdir).unwrap();
+        std::fs::write(mdir.join("manifest.json"), legacy).unwrap();
+        let m = load_manifest(&dir, "legacy-model")
+            .expect("load")
+            .expect("some");
+        assert_eq!(m.format, MODEL_FORMAT_GGUF);
+        // And a fresh save now persists the field for the future.
+        save_manifest(&dir, &m).expect("save");
+        let raw = std::fs::read_to_string(mdir.join("manifest.json")).unwrap();
+        assert!(
+            raw.contains("\"format\": \"gguf\""),
+            "format persisted: {raw}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

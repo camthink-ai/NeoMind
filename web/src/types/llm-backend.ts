@@ -123,6 +123,14 @@ export interface BuiltinModelDef {
   role?: string | null
   /** Locally imported GGUF (open catalog local channel). */
   custom?: boolean
+  /** Model package format — open string ("gguf" today; "rkllm"/vendor
+   * formats when hardware-specific models ship). Absent on older backends. */
+  format?: string
+  /** SoC/board constraints for hardware-specific formats (e.g.
+   * ["rk3588","rk3572"]); absent/empty = runs anywhere the format is
+   * supported. Display-only until the eligibility filter ships. */
+  target_hardware?: string[]
+
 }
 
 /** Last spawn's GPU offload decision, from the backend's vram record —
@@ -136,6 +144,33 @@ export interface GpuOffloadDecision {
   reclaim_mib: number
   ctx: number
   note: string
+}
+
+
+// ---- llama.cpp runtime layer (standalone upgrades) ------------------------
+
+/** One installed/resolvable runtime (bundled binary or a versioned cache dir). */
+export interface BuiltinRuntimeEntry {
+  variant: string
+  tag: string
+  source: 'bundled' | 'cache' | 'pin-download'
+  path?: string | null
+  note?: string | null
+}
+
+/** The `runtime` block of GET /api/builtin-llm/status and GET /api/builtin-llm/runtime. */
+export interface BuiltinRuntimeInfo {
+  active: BuiltinRuntimeEntry
+  bundled: { present: boolean; tag: string | null; usable: boolean; path: string | null }
+  installed: BuiltinRuntimeEntry[]
+  detected_variant: string
+  override_variant: string | null
+  pin: string
+  recommended: { tag: string; notes_zh?: string | null; notes_en?: string | null } | null
+  update_available: boolean
+  channel: 'ok' | 'unreachable'
+  channel_error?: string | null
+  upgrading: boolean
 }
 
 export interface BuiltinLlmStatus {
@@ -166,6 +201,12 @@ export interface BuiltinLlmStatus {
    * - `error`          — manifest unreadable
    */
   server_state: 'not_configured' | 'downloading' | 'running' | 'stopped' | 'error'
+  /** Failure reason when `server_state === 'error'` (bootstrap/runtime
+   *  download failure) — null otherwise. Newer backends only. */
+  error?: string | null
+  /** llama.cpp runtime layer (variant/tag/channel) — newer backends only;
+   * absent on older servers (treat as feature-missing and hide the row). */
+  runtime?: BuiltinRuntimeInfo
   /** Effective context size (override if set, else per-model default). */
   ctx?: number
   /** Explicit override from env / restart API (null = per-model default). */

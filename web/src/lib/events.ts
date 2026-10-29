@@ -36,6 +36,7 @@ export type EventType =
   | 'DataChanged'
   | 'ModelDownloadProgress'
   | 'SystemUpgradeProgress'
+  | 'RuntimeUpgradeProgress'
   | 'Custom'
 
 export interface DataChangedEvent extends NeoMindEvent {
@@ -131,6 +132,23 @@ export interface SystemUpgradeProgressEvent extends NeoMindEvent {
     phase: 'checking' | 'downloading' | 'verifying' | 'staged' | 'applying' | 'restarting' | 'done' | 'error'
     current_version: string
     target_version?: string | null
+    downloaded?: number | null
+    total?: number | null
+    message?: string | null
+    error?: string | null
+  }
+}
+
+// Standalone llama.cpp runtime upgrade progress (builtin-LLM settings card
+// → runtime upgrade dialog). Same delivery model as SystemUpgradeProgress:
+// unfiltered 'all' stream, optional fields may be absent or null.
+export interface RuntimeUpgradeProgressEvent extends NeoMindEvent {
+  type: 'RuntimeUpgradeProgress'
+  data: {
+    phase: 'checking' | 'downloading' | 'verifying' | 'restarting' | 'done' | 'error'
+    variant?: string | null
+    target_tag?: string | null
+    current_tag?: string | null
     downloaded?: number | null
     total?: number | null
     message?: string | null

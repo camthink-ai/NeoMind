@@ -49,6 +49,7 @@ import {
   Zap,
   AlertTriangle,
 } from 'lucide-react'
+import { notifySuccess } from '@/lib/notify'
 import { api, isTauriEnv } from '@/lib/api'
 import { useEvents } from '@/hooks/useEvents'
 import type { ModelDownloadProgressEvent } from '@/lib/events'
@@ -82,6 +83,9 @@ function detectPlatformHint(): PlatformHintKey {
 }
 
 const STATUS_POLL_MS = 2000
+/** Error text that smells like a restricted/unreachable network — guides the
+ * user toward mirrors or the offline import path instead of a blind retry. */
+const NETWORK_ERROR_RE = /dns|timed? out|timeout|connection|connect|refused|unreachable|tls|proxy|network/i
 
 type WizardPhase = 'loading' | 'idle' | 'downloading' | 'starting' | 'activating' | 'ready' | 'error'
 
@@ -144,6 +148,9 @@ export function BuiltinModelWizard({
   const [phase, setPhase] = useState<WizardPhase>('loading')
   const [status, setStatus] = useState<BuiltinLlmStatus | null>(null)
   const [models, setModels] = useState<BuiltinModelDef[]>([])
+  const [catalogFallback, setCatalogFallback] = useState(false)
+  const [importBusy, setImportBusy] = useState(false)
+  const importFileRef = useRef<HTMLInputElement | null>(null)
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null)
   // Model the ready-phase tiles describe: the installed one, else selection.
   const shownModel = models.find((m) => m.id === (status?.model_id ?? selectedModelId))
@@ -291,6 +298,7 @@ export function BuiltinModelWizard({
       .getBuiltinModels()
       .then((r) => {
         setModels(r.models)
+        setCatalogFallback(r.catalog_fallback === true)
         // Pre-select: already-installed → recommended → default id → first.
         const preferred =
           r.models.find((m) => m.installed) ??
@@ -308,6 +316,49 @@ export function BuiltinModelWizard({
       window.clearInterval(timer)
     }
   }, [open])
+
+  // Re-fetch the model list (the empty state's retry button — the list is
+  // otherwise fetched once per wizard open).
+  const reloadModels = useCallback(() => {
+    api
+      .getBuiltinModels()
+      .then((r) => {
+        setModels(r.models)
+        setCatalogFallback(r.catalog_fallback === true)
+      })
+      .catch(() => {})
+  }, [])
+
+  // Offline paths: import a GGUF already on the server, or upload one. Both
+  // run the shared validated pipeline (GGUF header check, rollback on spawn
+  // failure) and leave the engine running on the imported model.
+  const importLocalModel = useCallback(async () => {
+    const path = window.prompt(t('plugins:llm.builtinImportLocalPrompt'))
+    if (!path || !path.trim()) return
+    setImportBusy(true)
+    try {
+      const r = await api.importBuiltinModelLocal(path.trim())
+      notifySuccess(t('plugins:llm.builtinImported', { name: r.name }))
+      reloadModels()
+    } catch (e) {
+      failWith('download', e)
+    } finally {
+      setImportBusy(false)
+    }
+  }, [t, reloadModels])
+
+  const uploadModelFile = useCallback(async (file: File) => {
+    setImportBusy(true)
+    try {
+      const r = await api.uploadBuiltinModel(file)
+      notifySuccess(t('plugins:llm.builtinImported', { name: r.name }))
+      reloadModels()
+    } catch (e) {
+      failWith('download', e)
+    } finally {
+      setImportBusy(false)
+    }
+  }, [t, reloadModels])
 
   // Derive phase + progress from the polled status.
   useEffect(() => {
@@ -546,10 +597,20 @@ export function BuiltinModelWizard({
                     download (installed model is marked and pre-selected).
                     Vision companions (role=vlm) group apart: they run
                     alongside the main model, never replace it. */}
+                {catalogFallback && models.length > 0 && (
+                  <div className="flex items-center gap-1.5 rounded bg-warning-light px-2 py-1 text-xs text-warning">
+                    <WifiOff className="h-3.5 w-3.5 shrink-0" />
+                    {t('plugins:llm.builtinCatalogFallback')}
+                  </div>
+                )}
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {models.length === 0 && (
-                    <div className="col-span-full text-xs text-muted-foreground text-center py-2">
-                      {t('plugins:llm.builtinWizardNoModels')}
+                    <div className="col-span-full flex flex-col items-center gap-2 py-2 text-xs text-muted-foreground">
+                      <span>{t('plugins:llm.builtinWizardNoModels')}</span>
+                      <Button size="sm" variant="outline" onClick={reloadModels}>
+                        <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                        {t('common:retry')}
+                      </Button>
                     </div>
                   )}
                   {models.filter((m) => m.role !== 'vlm').map((m) => {
@@ -747,15 +808,49 @@ export function BuiltinModelWizard({
                     )
                   }
                   return (
-                    <Button
-                      size="lg"
-                      className="w-full"
-                      disabled={!selectedModelId}
-                      onClick={() => handleStartDownload(selectedModelId ?? undefined)}
-                    >
-                      <Download className="mr-2 h-4 w-4" />
-                      {t('plugins:llm.builtinWizardStart')}
-                    </Button>
+                    <div className="space-y-2">
+                      <Button
+                        size="lg"
+                        className="w-full"
+                        disabled={!selectedModelId}
+                        onClick={() => handleStartDownload(selectedModelId ?? undefined)}
+                      >
+                        <Download className="mr-2 h-4 w-4" />
+                        {t('plugins:llm.builtinWizardStart')}
+                      </Button>
+                      {/* Offline paths — the network-restricted escape hatch:
+                          import a GGUF already on the server, or upload one. */}
+                      <div className="flex items-center justify-center gap-3 text-xs">
+                        <button
+                          className="text-muted-foreground underline-offset-2 hover:underline disabled:opacity-50"
+                          disabled={importBusy}
+                          onClick={() => void importLocalModel()}
+                        >
+                          {t('plugins:llm.builtinImportLocal')}
+                        </button>
+                        <span className="text-border">·</span>
+                        <button
+                          className="text-muted-foreground underline-offset-2 hover:underline disabled:opacity-50"
+                          disabled={importBusy}
+                          onClick={() => importFileRef.current?.click()}
+                        >
+                          {importBusy
+                            ? t('plugins:llm.builtinImportBusy')
+                            : t('plugins:llm.builtinImportUpload')}
+                        </button>
+                        <input
+                          ref={importFileRef}
+                          type="file"
+                          accept=".gguf"
+                          className="hidden"
+                          onChange={(e) => {
+                            const f = e.target.files?.[0]
+                            e.target.value = ''
+                            if (f) void uploadModelFile(f)
+                          }}
+                        />
+                      </div>
+                    </div>
                   )
                 })()}
               </div>
@@ -850,6 +945,12 @@ export function BuiltinModelWizard({
                     {errorMsg && (
                       <p className="mt-1 text-xs text-muted-foreground break-words">
                         {t('plugins:llm.builtinWizardErrorDesc', { message: errorMsg })}
+                      </p>
+                    )}
+                    {errorMsg && NETWORK_ERROR_RE.test(errorMsg) && (
+                      <p className="mt-1.5 flex items-center gap-1.5 text-xs text-warning">
+                        <WifiOff className="h-3.5 w-3.5 shrink-0" />
+                        {t('plugins:llm.builtinNetworkHint')}
                       </p>
                     )}
                   </div>

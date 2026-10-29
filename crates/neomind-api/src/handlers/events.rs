@@ -332,6 +332,30 @@ fn extract_event_data(event: &NeoMindEvent) -> Value {
                 "error": error,
             })
         }
+        // RuntimeUpgradeProgress: standalone llama.cpp runtime upgrade
+        // (builtin-LLM settings card → upgrade dialog). Struct shape minus
+        // `type`, snake_case like its siblings.
+        NeoMindEvent::RuntimeUpgradeProgress {
+            phase,
+            variant,
+            target_tag,
+            current_tag,
+            downloaded,
+            total,
+            message,
+            error,
+        } => {
+            serde_json::json!({
+                "phase": phase,
+                "variant": variant,
+                "target_tag": target_tag,
+                "current_tag": current_tag,
+                "downloaded": downloaded,
+                "total": total,
+                "message": message,
+                "error": error,
+            })
+        }
         // Custom events: flatten the custom event_type alongside the payload data
         // so the frontend can filter by custom_type and inspect the inner event_type
         NeoMindEvent::Custom { event_type, data } => {

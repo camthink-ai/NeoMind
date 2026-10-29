@@ -1190,6 +1190,12 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/builtin-llm/activate",
             post(crate::builtin_llm::handlers::activate_handler),
         )
+        // Runtime status is read-only (settings-card badge) — hybrid auth
+        // like the siblings; the mutating runtime endpoints are admin-only.
+        .route(
+            "/api/builtin-llm/runtime",
+            get(crate::builtin_llm::handlers::runtime_status_handler),
+        )
         // Instances API (remote backend management)
         .route("/api/instances", get(instances::list_instances_handler))
         .route("/api/instances", post(instances::create_instance_handler))
@@ -1272,6 +1278,36 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         .route(
             "/api/settings/market",
             put(settings::update_market_source_handler),
+        )
+        // Builtin LLM download sources (admin): HF/catalog/runtime-channel
+        // mirror configuration for restricted networks.
+        .route(
+            "/api/settings/llm-sources",
+            get(settings::get_llm_sources_handler),
+        )
+        .route(
+            "/api/settings/llm-sources",
+            put(settings::update_llm_sources_handler),
+        )
+        // Standalone llama.cpp runtime management (admin only for the
+        // mutating endpoints — they download and swap executables, the same
+        // sensitivity class as the self-upgrade above; the read-only
+        // GET /runtime lives in protected_routes for the settings badge).
+        .route(
+            "/api/builtin-llm/runtime/check",
+            post(crate::builtin_llm::handlers::runtime_check_handler),
+        )
+        .route(
+            "/api/builtin-llm/runtime/variant",
+            post(crate::builtin_llm::handlers::runtime_variant_handler),
+        )
+        .route(
+            "/api/builtin-llm/runtime/upgrade",
+            post(crate::builtin_llm::handlers::runtime_upgrade_handler),
+        )
+        .route(
+            "/api/builtin-llm/runtime/revert",
+            post(crate::builtin_llm::handlers::runtime_revert_handler),
         )
         // Server self-upgrade (admin only): release check + staged trigger +
         // progress. Replaces the running binary — the most sensitive write

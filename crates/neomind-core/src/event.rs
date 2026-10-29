@@ -122,6 +122,33 @@ pub enum NeoMindEvent {
         error: Option<String>,
     },
 
+    /// Standalone llama.cpp runtime upgrade progress (builtin-LLM settings
+    /// card → the runtime upgrade dialog). Same delivery model as
+    /// `SystemUpgradeProgress`: no `is_*_event()` category — subscribe on
+    /// the unfiltered stream (`category=all`).
+    RuntimeUpgradeProgress {
+        /// "checking" | "downloading" | "verifying" | "restarting"
+        /// | "done" | "error"
+        phase: String,
+        /// cpu | cuda | vulkan | jetson
+        #[serde(skip_serializing_if = "Option::is_none")]
+        variant: Option<String>,
+        /// llama.cpp tag being installed (e.g. "b11700").
+        #[serde(skip_serializing_if = "Option::is_none")]
+        target_tag: Option<String>,
+        /// Tag the upgrade started from.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        current_tag: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        downloaded: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        total: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+
     // ========== Rule Events ==========
     /// Rule condition was evaluated
     RuleEvaluated {
@@ -533,6 +560,7 @@ impl NeoMindEvent {
             Self::DeviceDiscovered { .. } => "DeviceDiscovered",
             Self::ModelDownloadProgress { .. } => "ModelDownloadProgress",
             Self::SystemUpgradeProgress { .. } => "SystemUpgradeProgress",
+            Self::RuntimeUpgradeProgress { .. } => "RuntimeUpgradeProgress",
             Self::RuleEvaluated { .. } => "RuleEvaluated",
             Self::RuleTriggered { .. } => "RuleTriggered",
             Self::RuleExecuted { .. } => "RuleExecuted",
@@ -631,6 +659,10 @@ impl NeoMindEvent {
             }
             Self::SystemUpgradeProgress { .. } => {
                 // Upgrade progress has no timestamp field, use current time
+                chrono::Utc::now().timestamp()
+            }
+            Self::RuntimeUpgradeProgress { .. } => {
+                // Runtime upgrade progress has no timestamp field either
                 chrono::Utc::now().timestamp()
             }
         }

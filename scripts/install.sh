@@ -11,7 +11,10 @@
 #   NO_SERVICE     - Skip service installation (default: false)
 #   WITH_LLM      - Install the llama.cpp runtime (neomind-llama-server) from
 #                   official prebuilt binaries (default: true)
-#   LLAMA_VERSION - llama.cpp release tag for the runtime (default: b10545)
+#   LLAMA_VERSION - llama.cpp release tag for the runtime (default: b11609).
+#                   Must stay in sync with LLAMA_CPP_VERSION in
+#                   crates/neomind-core/src/builtin_llm/runtime.rs — enforced
+#                   by scripts/check_llama_pin_sync.py in CI.
 #   BUILTIN_MODEL - Pre-download a builtin model GGUF + manifest into DATA_DIR:
 #                   lfm25-2.6b | qwen3.5-4b | gemma4-e2b | none (default: none —
 #                   the in-app wizard offers the same choices)
@@ -39,7 +42,7 @@ NO_SERVICE="${NO_SERVICE:-false}"
 USE_NGINX="${USE_NGINX:-false}"
 PORT="${PORT:-9375}"
 WITH_LLM="${WITH_LLM:-true}"
-LLAMA_VERSION="${LLAMA_VERSION:-b10545}"
+LLAMA_VERSION="${LLAMA_VERSION:-b11609}"
 BUILTIN_MODEL="${BUILTIN_MODEL:-none}"
 
 status() { echo "${BLUE}[INFO]${NC} $*"; }

@@ -1741,6 +1741,31 @@ pub static ROUTES: &[RouteDoc] = &[
     },
     RouteDoc {
         method: "GET",
+        path: "/api/builtin-llm/runtime",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
+        method: "POST",
+        path: "/api/builtin-llm/runtime/check",
+        auth: "jwt-only",
+    },
+    RouteDoc {
+        method: "POST",
+        path: "/api/builtin-llm/runtime/variant",
+        auth: "jwt-only",
+    },
+    RouteDoc {
+        method: "POST",
+        path: "/api/builtin-llm/runtime/upgrade",
+        auth: "jwt-only",
+    },
+    RouteDoc {
+        method: "POST",
+        path: "/api/builtin-llm/runtime/revert",
+        auth: "jwt-only",
+    },
+    RouteDoc {
+        method: "GET",
         path: "/api/instances",
         auth: "jwt-or-api-key",
     },
@@ -1842,6 +1867,16 @@ pub static ROUTES: &[RouteDoc] = &[
     RouteDoc {
         method: "PUT",
         path: "/api/settings/market",
+        auth: "jwt-only",
+    },
+    RouteDoc {
+        method: "GET",
+        path: "/api/settings/llm-sources",
+        auth: "jwt-only",
+    },
+    RouteDoc {
+        method: "PUT",
+        path: "/api/settings/llm-sources",
         auth: "jwt-only",
     },
     RouteDoc {

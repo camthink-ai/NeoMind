@@ -924,3 +924,78 @@ pub async fn update_market_source_handler(
         "saved_url": trimmed,
     }))
 }
+
+// ---------------------------------------------------------------------------
+// Builtin LLM download sources (mirror config, admin)
+// ---------------------------------------------------------------------------
+
+/// GET /api/settings/llm-sources (admin): the three builtin-LLM download
+/// sources + whether each is a custom override. The default hosts are
+/// unreachable from many networks (huggingface.co / raw.githubusercontent);
+/// admins point them at mirrors (e.g. https://hf-mirror.com).
+#[utoipa::path(
+    get,
+    path = "/api/settings/llm-sources",
+    tag = "settings",
+    responses(
+        (status = 200, description = "Effective builtin-LLM download sources"),
+    )
+)]
+pub async fn get_llm_sources_handler(
+    State(_state): State<ServerState>,
+    axum::extract::Extension(admin): axum::extract::Extension<crate::auth_users::SessionInfo>,
+) -> HandlerResult<serde_json::Value> {
+    if admin.role != crate::auth_users::UserRole::Admin {
+        return Err(ErrorResponse::bad_request("Admin access required"));
+    }
+    let snap = crate::builtin_llm::sources::snapshot();
+    ok(json!({
+        "hf_base_url": snap.hf_base_url,
+        "hf_custom": snap.hf_custom,
+        "hf_default_url": crate::builtin_llm::sources::HF_BASE_DEFAULT,
+        "catalog_url": snap.catalog_url,
+        "catalog_custom": snap.catalog_custom,
+        "catalog_default_url": crate::builtin_llm::catalog::CATALOG_URL,
+        "runtime_channel_url": snap.runtime_channel_url,
+        "runtime_channel_custom": snap.runtime_channel_custom,
+        "runtime_channel_default_url": crate::builtin_llm::runtime_manager::RUNTIME_CHANNEL_URL,
+        "last_download_error": crate::builtin_llm::runtime_manager::last_download_error(),
+    }))
+}
+
+#[derive(utoipa::ToSchema, Debug, serde::Deserialize)]
+pub struct LlmSourceRequest {
+    /// One of: hf_base_url | catalog_url | runtime_channel_url.
+    pub kind: String,
+    /// The mirror URL — empty string resets to the default chain.
+    pub url: String,
+}
+
+/// PUT /api/settings/llm-sources (admin): set or reset ONE builtin-LLM
+/// download source. Applies to the next fetch/download. Trust boundary:
+/// after switching, bytes come from the MIRROR — GGUF downloads still
+/// SHA-verify against the catalog; the catalog/channel themselves are
+/// trusted-by-URL exactly like the defaults.
+#[utoipa::path(
+    put,
+    path = "/api/settings/llm-sources",
+    tag = "settings",
+    request_body = LlmSourceRequest,
+    responses(
+        (status = 200, description = "Source saved"),
+    )
+)]
+pub async fn update_llm_sources_handler(
+    State(_state): State<ServerState>,
+    axum::extract::Extension(admin): axum::extract::Extension<crate::auth_users::SessionInfo>,
+    Json(req): Json<LlmSourceRequest>,
+) -> HandlerResult<serde_json::Value> {
+    if admin.role != crate::auth_users::UserRole::Admin {
+        return Err(ErrorResponse::bad_request("Admin access required"));
+    }
+    let effective = crate::builtin_llm::sources::set_override(&req.kind, &req.url)
+        .map_err(ErrorResponse::bad_request)?;
+    tracing::info!(admin = %admin.username, kind = %req.kind, url = %effective,
+        "builtin llm download source updated");
+    ok(json!({ "kind": req.kind, "url": effective }))
+}

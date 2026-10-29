@@ -1,7 +1,8 @@
 name: CI Checks
 
 # Continuous-integration quality gates: frontend lint/typecheck/unit tests,
-# Rust fmt/clippy/tests, skill↔CLI drift, desktop compile check, cargo-audit.
+# Rust fmt/clippy/tests, skill↔CLI drift, llama.cpp pin sync, desktop compile
+# check, cargo-audit.
 # Runs standalone on every PR and push to main, and — via workflow_call — as
 # the first stage of the release pipelines (build.yml, docker.yml), so no
 # compilation starts until every gate passes.
@@ -101,6 +102,19 @@ jobs:
           NEOMIND_SKILL_MANIFEST: /tmp/skill_manifest.json
         run: |
           cargo test -p neomind-cli-ops --test skill_cli_drift -- --nocapture --test-threads=1
+
+  llama-pin-sync:
+    name: llama.cpp pin sync check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Check llama.cpp version pins are in sync
+        run: python3 scripts/check_llama_pin_sync.py
 
   skill-parser-tests:
     name: Skill parser / matcher tests

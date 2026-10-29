@@ -1,6 +1,6 @@
 /** llm api — split from api.ts 2026-09. */
 import type { LlmBackendInstance, CreateLlmBackendRequest, UpdateLlmBackendRequest, LlmBackendListResponse, BuiltinLlmStatus, BuiltinModelDef, BackendTypeDefinition, BackendTestResult } from '@/types'
-import type { ReasoningCapabilities } from '@/types/llm-backend'
+import type { ReasoningCapabilities, BuiltinRuntimeInfo} from '@/types/llm-backend'
 import { fetchAPI } from "./client"
 
 export const llmApi = {
@@ -158,7 +158,7 @@ export const llmApi = {
    * GET /api/builtin-llm/models
    */
   getBuiltinModels: () =>
-    fetchAPI<{ models: BuiltinModelDef[]; default_model_id: string }>('/builtin-llm/models'),
+    fetchAPI<{ models: BuiltinModelDef[]; default_model_id: string; catalog_fallback?: boolean }>('/builtin-llm/models'),
 
   /**
    * Delete the downloaded model files (stops the server first).
@@ -209,5 +209,73 @@ export const llmApi = {
     fetchAPI<{ id: string; message: string }>('/builtin-llm/activate', {
       method: 'POST',
     }),
+
+  // ========== Builtin LLM runtime (standalone llama.cpp upgrades) ==========
+  /** GET /api/builtin-llm/runtime — resolved/installed runtimes + channel. */
+  getBuiltinRuntime: () =>
+    fetchAPI<BuiltinRuntimeInfo>('/builtin-llm/runtime'),
+
+  /** POST /api/builtin-llm/runtime/check — force a channel refresh (admin). */
+  checkBuiltinRuntimeUpdate: () =>
+    fetchAPI<BuiltinRuntimeInfo>('/builtin-llm/runtime/check', { method: 'POST' }),
+
+  /** POST /api/builtin-llm/runtime/upgrade — install the recommended runtime
+   *  (admin). Progress arrives via RuntimeUpgradeProgress events + polling. */
+  upgradeBuiltinRuntime: () =>
+    fetchAPI<{ started: boolean; already_running: boolean }>('/builtin-llm/runtime/upgrade', {
+      method: 'POST',
+    }),
+
+  /** POST /api/builtin-llm/runtime/revert — drop the newest cached runtime,
+   *  falling back to the previous cache / the bundled binary (admin). */
+  revertBuiltinRuntime: () =>
+    fetchAPI<{ reverted: boolean; removed_tag: string }>('/builtin-llm/runtime/revert', {
+      method: 'POST',
+    }),
+
+  /** POST /api/builtin-llm/runtime/variant — persist ('cpu'|'cuda'|'vulkan'|
+   *  'jetson') or clear ('auto'/'') the variant override (admin). */
+  setBuiltinRuntimeVariant: (variant: string) =>
+    fetchAPI<{ saved: string }>('/builtin-llm/runtime/variant', {
+      method: 'POST',
+      body: JSON.stringify({ variant }),
+    }),
+
+  // ========== Builtin LLM download sources (mirror config, admin) ==========
+  /** GET /api/settings/llm-sources — effective HF/catalog/channel URLs. */
+  getLlmSources: () =>
+    fetchAPI<{
+      hf_base_url: string; hf_custom: boolean; hf_default_url: string
+      catalog_url: string; catalog_custom: boolean; catalog_default_url: string
+      runtime_channel_url: string; runtime_channel_custom: boolean; runtime_channel_default_url: string
+      last_download_error?: string | null
+    }>('/settings/llm-sources'),
+
+  /** PUT /api/settings/llm-sources — set (or reset, empty url) one source. */
+  putLlmSource: (kind: 'hf_base_url' | 'catalog_url' | 'runtime_channel_url', url: string) =>
+    fetchAPI<{ kind: string; url: string }>('/settings/llm-sources', {
+      method: 'PUT',
+      body: JSON.stringify({ kind, url }),
+    }),
+
+  /** POST /api/builtin-llm/import-local — import a GGUF already on the
+   *  server's filesystem (offline path; validated, rolled back on spawn
+   *  failure). */
+  importBuiltinModelLocal: (path: string) =>
+    fetchAPI<{ success: boolean; model_id: string; name: string }>('/builtin-llm/import-local', {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    }),
+
+  /** POST /api/builtin-llm/upload-model — multipart GGUF upload (offline
+   *  path; streamed server-side, 12 GiB cap). */
+  uploadBuiltinModel: (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return fetchAPI<{ success: boolean; model_id: string; name: string }>(
+      '/builtin-llm/upload-model',
+      { method: 'POST', body: form },
+    )
+  },
 
 }

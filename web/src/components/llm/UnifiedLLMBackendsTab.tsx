@@ -30,6 +30,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Progress } from '@/components/ui/progress'
 import { badgeSize } from '@/design-system/tokens/typography'
 import { UnifiedFormDialog } from '@/components/dialog/UnifiedFormDialog'
+import { RuntimeUpgradeDialog } from '@/components/llm/RuntimeUpgradeDialog'
 import { FormField } from '@/components/ui/field'
 import { EmptyState, LoadingState, ListToolbar } from '@/components/shared'
 import { cn } from '@/lib/utils'
@@ -348,6 +349,7 @@ export function UnifiedLLMBackendsTab({
 
   // First-run wizard (empty-state strong guidance)
   const [wizardOpen, setWizardOpen] = useState(false)
+  const [runtimeDialogOpen, setRuntimeDialogOpen] = useState(false)
   // The card's 切换模型 button opens the wizard straight at the model
   // picker; first-run CTAs (banner / empty state) use the default entry.
   const [wizardStartInPicker, setWizardStartInPicker] = useState(false)
@@ -702,6 +704,14 @@ export function UnifiedLLMBackendsTab({
               <p className="text-xs text-muted-foreground">{builtinInfo.text}</p>
             </div>
           )}
+          {builtinStatus.server_state === 'error' && builtinStatus.error && (
+            <div className="flex items-start gap-2 rounded-md bg-error-light px-3 py-2 text-error">
+              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+              <span className="text-xs leading-snug break-all" title={builtinStatus.error}>
+                {t('plugins:llm.builtinEngineError', { message: builtinStatus.error })}
+              </span>
+            </div>
+          )}
           {builtinStatus.installed && builtinStatus.memory_ok === false && (
             <div className="flex items-start gap-2 rounded-md bg-warning-light px-3 py-2 text-warning">
               <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
@@ -806,6 +816,50 @@ export function UnifiedLLMBackendsTab({
             </div>
           )}
 
+          {/* ── Zone 2b · llama.cpp runtime row (newer backends; absent on
+              old servers — the row simply doesn't render). Same row template
+              as the engines list above. */}
+          {builtinStatus.runtime && (
+            <div className="rounded-md border border-border divide-y divide-border">
+              <div className="flex h-9 items-center gap-2 px-3">
+                <Cpu className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <span className="w-28 shrink-0 truncate text-xs font-medium">
+                  {t('plugins:llm.runtimeLabel')}
+                </span>
+                <span
+                  className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
+                  title={builtinStatus.runtime.active.path ?? undefined}
+                >
+                  {(builtinStatus.runtime.override_variant ?? builtinStatus.runtime.detected_variant).toUpperCase()}
+                  {' · '}
+                  <span className="font-mono">{builtinStatus.runtime.active.tag}</span>
+                  {builtinStatus.runtime.channel === 'unreachable' && ` · ${t('plugins:llm.runtimeChannelUnreachableShort')}`}
+                </span>
+                {builtinStatus.runtime.upgrading ? (
+                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
+                ) : builtinStatus.runtime.update_available ? (
+                  <button
+                    className={cn(
+                      badgeSize.small,
+                      'flex shrink-0 items-center gap-1 rounded bg-primary px-1.5 py-0.5 font-medium text-primary-foreground hover:opacity-90',
+                    )}
+                    onClick={() => setRuntimeDialogOpen(true)}
+                  >
+                    <Download className="h-3 w-3" />
+                    {t('plugins:llm.runtimeUpdateBadge')}
+                  </button>
+                ) : null}
+                <button
+                  className="grid h-6 w-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+                  title={t('plugins:llm.runtimeSettings')}
+                  onClick={() => setRuntimeDialogOpen(true)}
+                >
+                  <Settings2 className="h-3 w-3" />
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* ── Zone 3 · actions: navigation left, state + destructive right. */}
           <div className="flex flex-wrap items-center gap-2">
             {builtinStatus.server_state === 'downloading' ? (
@@ -867,9 +921,21 @@ export function UnifiedLLMBackendsTab({
       </Card>
     ) : null
 
+    // Runtime upgrade dialog (opened from the runtime row / its badge).
+    const runtimeDialogElement = (
+      <RuntimeUpgradeDialog
+        open={runtimeDialogOpen}
+        onClose={() => setRuntimeDialogOpen(false)}
+        runtime={builtinStatus?.runtime ?? null}
+        onChanged={() => { void refreshBuiltinStatus() }}
+      />
+    )
+
     // First-run wizard. Mounted in the list view so it survives the
     // empty-state ↔ provider-grid branch switch (a quiet reload after
     // activation may finally populate backendTypes). open={false} hides it.
+
+
     const wizardElement = (
       <BuiltinModelWizard
         open={wizardOpen}
@@ -914,6 +980,7 @@ export function UnifiedLLMBackendsTab({
             </Button>
           </div>
         {wizardElement}
+        {runtimeDialogElement}
         {/* This branch returns early — the shared dialogs below must be
             duplicated here, or "Add your own API backend" sets state for a
             dialog that is never mounted (click does nothing). */}
@@ -1276,6 +1343,7 @@ export function UnifiedLLMBackendsTab({
         </UnifiedFormDialog>
 
         {wizardElement}
+        {runtimeDialogElement}
       </>
     )
   }

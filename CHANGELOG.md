@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased] — standalone llama.cpp runtime upgrade + runtime observability
+
+### Added — multi-vendor model format contract (reserved schema)
+- `ModelManifest.format` (persisted at install; serde default `gguf` so every pre-format deployed manifest parses unchanged — no migration) and catalog entries gain optional `format` + `target_hardware`. **Open strings, not enums**: vendor packages keep appearing (rkllm for Rockchip NPU, further vendors later) and describing one must not require a platform-code change. Rules: lowercase ascii/digits/hyphen, 2-16 chars, version the string on compatibility breaks (`rkllm` → `rkllm2`). Unknown-but-wellformed formats parse fine (forward-compat "unsupported here" entries); only malformed strings drop, alone, with a warn. `GET /builtin-llm/models` exposes both fields; the TS type carries them. Host-eligibility filtering, per-format import validation and multi-file (`files: [{name, sha256}]`) packages arrive with the first hardware-specific model — the schema slots are reserved now because persisted-state and remote-catalog contracts are the expensive kind to retrofit.
+
+### Added — builtin llama.cpp runtime can now be upgraded independently of platform releases
+- New "runtime" layer in the builtin-LLM settings card: variant + llama.cpp tag + update-available badge, fed by a new `runtime` block on `GET /api/builtin-llm/status` (additive; old fields untouched) and a dedicated `GET /api/builtin-llm/runtime`.
+- **Update channel** (`runtimes.json` in camthink-ai/NeoMind-Runtimes, overridable via `NEOMIND_RUNTIME_CHANNEL_URL` for mirrors): recommends a llama.cpp tag per variant — `recommended` for official-asset platforms, per-variant `tag`/`asset`/`sha256` for our self-hosted Jetson / linux-x64-CUDA builds (SHA mandatory for those; `min_platform` gates; per-entry `url` and top-level `official_base` support mirrors). 5-min cached, offline-tolerant ("cannot check", the compiled pin keeps working).
+- **Standalone upgrade** (`POST /api/builtin-llm/runtime/upgrade`, admin): installs the recommended runtime into a versioned cache dir under the data directory — no root, no install-dir writes, works under systemd/docker/bare-serve/desktop alike — then restarts the builtin engine automatically. Progress via new `RuntimeUpgradeProgress` WS/SSE events (checking→downloading→verifying→restarting→done/error) + 3s status polling. `POST …/runtime/revert` drops the newest cache (falls back to the previous cache / bundled binary). Both directions mutually exclude with model downloads/restarts (409).
+- **RuntimeUpgradeDialog** in the settings tab (mirrors the server self-upgrade dialog: version line, progress + byte counter, revert, variant override auto/cpu/cuda/vulkan/jetson persisted via `POST …/runtime/variant` and applied on next spawn; 403 for non-admins surfaces as a toast).
+- **Resolution order is now "newest valid wins"** instead of bundled-always-wins: among the bundled binary and pin-floored cache dirs, the highest tag wins (ties → cache; unknown bundled tag yields; the compiled pin is the cache floor so an old cache can never block the pin's own download; offline falls back to the older bundled binary — zero regression). Cache picks are exec-verified once per process; a failing cache is ejected and resolution retries with the next candidate. Old below-pin caches are pruned on sight; after upgrades only the active + newest previous cache are kept.
+- **Variant resolution** is now env > persisted setting (`builtin_runtime_variant`) > auto-detect; the CUDA/Vulkan failure downgrade became a process-local flag instead of the old sticky env write (which would have overridden the user's persisted choice).
+- **Security**: channel-sourced tags are strictly validated (`^b\d{4,7}$`) before touching paths/URLs (injection guard); self-hosted downloads are SHA-256-pinned from the channel; non-https URLs refused except explicit loopback (local mirrors/fixtures); mutating endpoints are admin-only.
+
+### Fixed — llama.cpp pin drift + upgrade-path gaps
+- `scripts/install.sh` shipped `LLAMA_VERSION=b10545` while the code pinned `b11609` — fresh installs downloaded an older runtime than the cache keys expected. Now b11609, and a new CI gate (`scripts/check_llama_pin_sync.py`, `llama-pin-sync` job in ci.yml) fails any PR where the three pin sites or the self-hosted asset names drift apart.
+- Web self-upgrades never refreshed the llama runtime (the old bundled binary kept winning resolution) — standalone upgrades now close that loop for every deployment kind.
+
 ## [1.2.4] - 2026-10-27 — chat-turn wedge hardening, GPU offload auto-sizing, replay-safe tool retries, and per-run token budgets
 
 ### Fixed — chat turn wedge: thinking-only stall + duplicate-call loop always end in a user-visible reply

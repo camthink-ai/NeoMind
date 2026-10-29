@@ -253,6 +253,11 @@ route index (including not-yet-schematized endpoints): /api/docs/routes.json."
         crate::builtin_llm::handlers::delete_model_handler,
         crate::builtin_llm::handlers::restart_handler,
         crate::builtin_llm::handlers::activate_handler,
+        crate::builtin_llm::handlers::runtime_status_handler,
+        crate::builtin_llm::handlers::runtime_check_handler,
+        crate::builtin_llm::handlers::runtime_variant_handler,
+        crate::builtin_llm::handlers::runtime_upgrade_handler,
+        crate::builtin_llm::handlers::runtime_revert_handler,
         // ---- instances ----
         crate::handlers::instances::list_instances_handler,
         crate::handlers::instances::create_instance_handler,
@@ -412,6 +417,8 @@ route index (including not-yet-schematized endpoints): /api/docs/routes.json."
         crate::handlers::settings::update_device_defaults,
         crate::handlers::settings::get_market_source_handler,
         crate::handlers::settings::update_market_source_handler,
+        crate::handlers::settings::get_llm_sources_handler,
+        crate::handlers::settings::update_llm_sources_handler,
         // ---- backups ----
         crate::handlers::settings::create_backup_handler,
         crate::handlers::settings::list_backups_handler,

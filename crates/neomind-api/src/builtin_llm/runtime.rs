@@ -1,5 +1,12 @@
-//! On-demand llama-server runtime: bundled binary first, else download the
-//! official llama.cpp prebuilt for the platform into a versioned cache.
+//! On-demand llama-server runtime resolution and installation.
+//!
+//! Resolution is "newest valid wins" (see `runtime_manager::pick_runtime`):
+//! among the bundled binary and the pin-floored cache dirs under
+//! `data/llama-server/`, the highest llama.cpp tag wins — with the compiled
+//! `LLAMA_CPP_VERSION` as the floor and an offline fallback to the bundled
+//! binary. The standalone upgrade (`runtime_manager::upgrade_runtime`)
+//! installs channel-recommended tags through the same `install_runtime`
+//! path used by boot.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -7,92 +14,226 @@ use std::sync::{Arc, OnceLock};
 
 use neomind_core::builtin_llm::find::find_llama_server;
 use neomind_core::builtin_llm::runtime::{
-    llama_asset_is_zip, llama_asset_name, llama_cudart_marker, llama_cudart_url,
-    llama_runtime_expected_sha, llama_server_bin_name, llama_server_cache_dir,
-    llama_server_url_for, RuntimeVariant, LLAMA_CPP_VERSION,
+    llama_asset_is_zip, llama_asset_name, llama_cudart_marker, llama_cudart_url_tagged,
+    llama_runtime_expected_sha, llama_server_bin_name, llama_server_cache_dir_for_tag,
+    try_llama_server_url_for_tag, RuntimeVariant, LLAMA_CPP_VERSION,
 };
 
+use super::runtime_manager::{self, Decision};
+
 /// Single-flight gate so concurrent ensure_llama_server calls don't download
-/// the runtime twice.
+/// the runtime twice (shared with the standalone upgrade flow).
 static RUNTIME_DL: OnceLock<Arc<tokio::sync::Mutex<()>>> = OnceLock::new();
 static RUNTIME_DL_ACTIVE: AtomicBool = AtomicBool::new(false);
 
-fn runtime_lock() -> Arc<tokio::sync::Mutex<()>> {
+pub(crate) fn runtime_lock() -> Arc<tokio::sync::Mutex<()>> {
     RUNTIME_DL
         .get_or_init(|| Arc::new(tokio::sync::Mutex::new(())))
         .clone()
 }
 
-/// Resolve a runnable `neomind-llama-server`:
-/// 1. bundled binary (next to the executable, or PATH) — always wins;
-/// 2. previously downloaded cache (`data/llama-server/<version>[-cuda]/`);
-/// 3. download the runtime for this platform (and variant) — the official
-///    llama.cpp prebuilt, or OUR self-hosted build where llama.cpp ships
-///    none (Jetson, linux-x64 CUDA) — extract `llama-server`, cache it, and
-///    return it.
+/// Resolve a runnable `neomind-llama-server` (newest-valid-wins matrix —
+/// see the module doc and `runtime_manager::pick_runtime`):
 ///
-/// Variant selection auto-detects: Jetson via `/etc/nv_tegra_release`, and
-/// Linux x64 with a qualifying NVIDIA GPU (`nvidia-smi` probe: compute cap
-/// 7.5–8.9, driver ≥525) gets OUR self-hosted CUDA build (CUDA runtime libs
-/// bundled in the tarball — driver-only hosts). Windows x64 needs the env
-/// opt-in (`NEOMIND_BUILTIN_RUNTIME_VARIANT=cuda`) for the official CUDA
-/// build + cudart DLL bundle. Unsupported GPUs / platforms without a CUDA
-/// asset stay on the CPU build; a CUDA download or exec failure falls back
-/// to CPU, so auto-detection can never break boot.
+/// 1. newest pin-floored cache dir for the effective variant (ties vs the
+///    bundled binary go to the cache; an unknown bundled tag yields);
+/// 2. bundled binary when its tag is >= the pin (e.g. right after a
+///    platform upgrade);
+/// 3. bundled older than the pin → try the pin download first, fall back to
+///    the bundled binary when offline (identical to the old behavior);
+/// 4. no bundled binary → download the pin runtime (bare `neomind serve`).
+///
+/// A cache pick is exec-verified once per process; a failure ejects that
+/// cache dir and resolution retries with the next candidate. Variant
+/// selection: env > persisted setting > auto-detect (Jetson via
+/// `/etc/nv_tegra_release`, Linux x64 + qualifying NVIDIA GPU → our
+/// self-hosted CUDA build). A CUDA/Vulkan download or exec failure degrades
+/// the PROCESS to the CPU build — never persisted, so the user's variant
+/// choice survives a transient driver failure.
 pub async fn ensure_llama_server(data_dir: &Path) -> Result<PathBuf, String> {
-    // Fast path — bundled binary, no network.
-    if let Ok(b) = find_llama_server() {
-        // On Jetson hosts a PATH/bundled binary may be the OFFICIAL
-        // ubuntu-arm64 build, which requires gcc-13 libstdc++
-        // (GLIBCXX_3.4.32) — JetPack 6 ships gcc-11, so it fails to exec
-        // (verified on a real 0.9.19 install on Orin Nano 8GB). Don't trust
-        // it; exec-check and fall through to our Jetson download instead.
-        if RuntimeVariant::detect() == RuntimeVariant::Jetson {
-            if exec_check(&b).await.is_ok() {
-                return Ok(b);
-            }
-            tracing::warn!(
-                bin = %b.display(),
-                "builtin llm: found llama-server on PATH but it fails to exec on this Jetson \
-                 (official ubuntu-arm64 build needs gcc-13?) — downloading the Jetson runtime"
-            );
-        } else {
-            return Ok(b);
-        }
-    }
+    let mut allow_eject = true;
+    loop {
+        let variant = runtime_manager::effective_variant();
 
-    let mut variant = RuntimeVariant::detect();
-    match ensure_runtime_variant(data_dir, variant).await {
-        Ok(bin) => Ok(bin),
-        // CUDA/Vulkan are opt-in, but a dead backend helps nobody — degrade
-        // to the CPU build (always available) instead of failing the boot.
-        // Sticky via env so a restart doesn't re-download and hit the same
-        // wall (same override pattern as port/ctx).
-        Err(err) if matches!(variant, RuntimeVariant::Cuda | RuntimeVariant::Vulkan) => {
-            tracing::warn!(
-                error = %err,
-                "builtin llm: {} runtime unusable — falling back to the CPU build for this process; unset NEOMIND_BUILTIN_RUNTIME_VARIANT or fix the driver/loader to retry",
-                if llama_asset_name(std::env::consts::OS, std::env::consts::ARCH, variant).is_some() {
-                    "download or exec failed"
+        // Bundled candidate. On Jetson hosts a PATH/bundled binary may be
+        // the OFFICIAL ubuntu-arm64 build, which requires gcc-13 libstdc++
+        // (GLIBCXX_3.4.32) — JetPack 6 ships gcc-11, so it fails to exec.
+        // Don't trust it; exec-check and drop to the cache/download path.
+        let bundled = match find_llama_server() {
+            Ok(b) => {
+                if variant == RuntimeVariant::Jetson && exec_check(&b).await.is_err() {
+                    tracing::warn!(
+                        bin = %b.display(),
+                        "builtin llm: found llama-server on PATH but it fails to exec on this \
+                         Jetson (official ubuntu-arm64 build needs gcc-13?) — using the \
+                         Jetson runtime instead"
+                    );
+                    None
                 } else {
-                    "no prebuilt for this platform"
+                    let tag = runtime_manager::bundled_tag(&b).await;
+                    Some((b, tag))
                 }
-            );
-            std::env::set_var("NEOMIND_BUILTIN_RUNTIME_VARIANT", "cpu");
-            variant = RuntimeVariant::Cpu;
-            ensure_runtime_variant(data_dir, variant).await
+            }
+            Err(_) => None,
+        };
+
+        let best = runtime_manager::entries_for_variant(data_dir, variant)
+            .into_iter()
+            .next();
+
+        // Reduce the matrix to either "use this binary" or "download the
+        // pin runtime" — verification/ejection of cache picks happens below.
+        enum Picked {
+            Bin { path: PathBuf, from_cache: bool },
+            DownloadPin,
         }
-        Err(err) => Err(err),
+        let picked = match runtime_manager::pick_runtime(best, bundled) {
+            Decision::Cache { path: dir, .. } => match find_runtime_binary(&dir) {
+                Some(b) => Picked::Bin {
+                    path: b,
+                    from_cache: true,
+                },
+                None if allow_eject => {
+                    // Incomplete cache (binary missing) — eject and retry
+                    // with the next candidate / the pin download.
+                    allow_eject = false;
+                    tracing::warn!(
+                        dir = %dir.display(),
+                        "builtin llm: cache dir has no llama-server binary — ejecting"
+                    );
+                    let _ = std::fs::remove_dir_all(&dir);
+                    runtime_manager::invalidate_resolution_caches();
+                    continue;
+                }
+                None => {
+                    return Err(format!(
+                        "cache dir {} is incomplete and no fallback remains",
+                        dir.display()
+                    ))
+                }
+            },
+            Decision::Bundled(path) => Picked::Bin {
+                path,
+                from_cache: false,
+            },
+            Decision::TryPinThenBundled(path) => {
+                match ensure_runtime_variant(data_dir, variant).await {
+                    Ok(bin) => Picked::Bin {
+                        path: bin,
+                        from_cache: false,
+                    },
+                    // Offline (or the pin asset is gone): the older bundled
+                    // binary still beats failing the boot — zero regression
+                    // vs. the old bundled-first behavior.
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "builtin llm: pin runtime unavailable — falling back to the older \
+                             bundled binary"
+                        );
+                        Picked::Bin {
+                            path,
+                            from_cache: false,
+                        }
+                    }
+                }
+            }
+            Decision::TryPin => Picked::DownloadPin,
+        };
+
+        if let Picked::Bin { path, from_cache } = picked {
+            // Cache picks are exec-verified once per process (bundled ones
+            // were either Jetson-gated above or ship with the platform).
+            if !from_cache || runtime_manager::is_verified(&path) {
+                return Ok(path);
+            }
+            match exec_check(&path).await {
+                Ok(()) => {
+                    runtime_manager::mark_verified(&path);
+                    return Ok(path);
+                }
+                Err(e) if allow_eject => {
+                    allow_eject = false;
+                    tracing::warn!(
+                        bin = %path.display(),
+                        error = %e,
+                        "builtin llm: cached llama-server failed its exec check — ejecting \
+                         the cache dir and retrying with the next candidate"
+                    );
+                    if let Some(dir) = path.parent() {
+                        let _ = std::fs::remove_dir_all(dir);
+                    }
+                    let _ = std::fs::remove_file(&path);
+                    runtime_manager::invalidate_resolution_caches();
+                    continue;
+                }
+                Err(e) => return Err(format!("cached llama-server failed its exec check: {e}")),
+            }
+        }
+
+        // Picked::DownloadPin — bare `neomind serve` path.
+        return match ensure_runtime_variant(data_dir, variant).await {
+            Ok(bin) => Ok(bin),
+            // CUDA/Vulkan are opt-in, but a dead backend helps nobody —
+            // degrade this PROCESS to the CPU build instead of failing
+            // the boot. Not persisted (the env/setting overrides stay
+            // untouched), so a restart retries the accelerated path.
+            Err(err) if matches!(variant, RuntimeVariant::Cuda | RuntimeVariant::Vulkan) => {
+                tracing::warn!(
+                    error = %err,
+                    "builtin llm: {} runtime unusable — falling back to the CPU build for \
+                     this process; unset the variant override or fix the driver/loader to \
+                     retry",
+                    if llama_asset_name(std::env::consts::OS, std::env::consts::ARCH, variant)
+                        .is_some()
+                    {
+                        "download or exec failed"
+                    } else {
+                        "no prebuilt for this platform"
+                    }
+                );
+                runtime_manager::degrade_to_cpu_for_process();
+                ensure_runtime_variant(data_dir, RuntimeVariant::Cpu).await
+            }
+            Err(err) => Err(err),
+        };
     }
 }
 
-/// Download (or reuse from cache) the runtime for ONE variant — the fallback
-/// chain lives in `ensure_llama_server` above.
+/// Download (or reuse from cache) the runtime for ONE variant at the
+/// CURRENT pin — the boot path. The standalone upgrade calls
+/// [`install_runtime`] directly with channel-sourced tags/SHAs.
 async fn ensure_runtime_variant(
     data_dir: &Path,
     variant: RuntimeVariant,
 ) -> Result<PathBuf, String> {
-    let cache_dir = llama_server_cache_dir(data_dir, variant);
+    let expected_sha =
+        llama_runtime_expected_sha(std::env::consts::OS, std::env::consts::ARCH, variant);
+    install_runtime(
+        data_dir,
+        variant,
+        LLAMA_CPP_VERSION,
+        expected_sha,
+        None,
+        None,
+    )
+    .await
+}
+
+/// Install (or reuse) the runtime for ONE variant at an arbitrary tag.
+///
+/// `expected_sha` hard-pins executable downloads (our self-hosted assets);
+/// `url_override` bypasses the tag-derived URL (channel mirrors / tests);
+/// `on_progress` receives streamed byte counts for progress events.
+pub(crate) async fn install_runtime(
+    data_dir: &Path,
+    variant: RuntimeVariant,
+    tag: &str,
+    expected_sha: Option<&str>,
+    url_override: Option<&str>,
+    on_progress: Option<&mut (dyn FnMut(u64, Option<u64>) + Send)>,
+) -> Result<PathBuf, String> {
+    let cache_dir = llama_server_cache_dir_for_tag(data_dir, tag, variant);
     // A CUDA cache is only complete with its cudart DLLs — a partial one
     // (crashed between the two downloads) must not short-circuit. (Our
     // linux-x64 CUDA tarball bundles the libs, but the marker is written
@@ -134,13 +275,21 @@ async fn ensure_runtime_variant(
                 )
             }
         })?;
-    let url = llama_server_url_for(std::env::consts::OS, std::env::consts::ARCH, variant);
-    // Executable download — our self-hosted assets (Jetson, linux-x64 CUDA)
-    // are hard SHA-pinned; official llama.cpp assets move only when our pin
-    // (LLAMA_CPP_VERSION) moves.
-    let expected_sha =
-        llama_runtime_expected_sha(std::env::consts::OS, std::env::consts::ARCH, variant);
-    tracing::info!(url = %url, variant = ?variant, "builtin llm: downloading llama-server runtime");
+    let url = match url_override {
+        Some(u) => u.to_string(),
+        None => {
+            try_llama_server_url_for_tag(tag, std::env::consts::OS, std::env::consts::ARCH, variant)
+                .unwrap_or_default()
+        }
+    };
+    if url.is_empty() {
+        return Err(format!(
+            "no runtime URL for {}/{} at {tag}",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        ));
+    }
+    tracing::info!(url = %url, variant = ?variant, tag = %tag, "builtin llm: downloading llama-server runtime");
 
     RUNTIME_DL_ACTIVE.store(true, Ordering::SeqCst);
     // Fresh cache for the primary archive; a cudart bundle (if any) then
@@ -151,14 +300,15 @@ async fn ensure_runtime_variant(
         llama_asset_is_zip(asset),
         true,
         expected_sha,
+        on_progress,
     )
     .await;
     let result = match result {
-        Ok(bin) => match llama_cudart_url(asset) {
+        Ok(bin) => match llama_cudart_url_tagged(tag, asset) {
             // CUDA builds dlopen cudart/cublas DLLs — the bundle puts them
             // next to llama-server.exe so a driver-only host just works.
             Some(cudart_url) => {
-                match download_runtime(&cudart_url, &cache_dir, true, false, None).await {
+                match download_runtime(&cudart_url, &cache_dir, true, false, None, None).await {
                     Ok(_) => {
                         // A CUDA build with no (or too old) NVIDIA driver
                         // fails to load cudart/cublas DLLs — detect that HERE
@@ -213,25 +363,28 @@ async fn ensure_runtime_variant(
     result
 }
 
-/// Whether a runtime download is in flight (for diagnostics).
+/// Whether a runtime download is in flight (for diagnostics + mutual
+/// exclusion with model downloads / restarts).
 pub fn runtime_download_active() -> bool {
     RUNTIME_DL_ACTIVE.load(Ordering::SeqCst)
 }
 
 /// `wipe` clears the cache dir first — true for the primary archive, false
 /// for the cudart bundle (it must land in the freshly populated dir).
-async fn download_runtime(
+/// Streams with per-chunk progress (SHA updated incrementally).
+pub(crate) async fn download_runtime(
     url: &str,
     cache_dir: &Path,
     is_zip: bool,
     wipe: bool,
     expected_sha: Option<&str>,
+    on_progress: Option<&mut (dyn FnMut(u64, Option<u64>) + Send)>,
 ) -> Result<PathBuf, String> {
-    let client = reqwest::Client::new();
-    let tmp = std::env::temp_dir().join(format!("neomind-llama-runtime-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).map_err(|e| format!("create tmp dir: {e}"))?;
+    use futures::StreamExt;
+    use sha2::{Digest, Sha256};
 
+    let mut on_progress = on_progress;
+    let client = reqwest::Client::new();
     let resp = client
         .get(url)
         .send()
@@ -243,19 +396,22 @@ async fn download_runtime(
             resp.status()
         ));
     }
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| format!("read llama.cpp runtime: {e}"))?;
+    let total = resp.content_length();
+    let mut stream = resp.bytes_stream();
+    let mut hasher = Sha256::new();
+    let mut bytes: Vec<u8> = Vec::with_capacity(32 * 1024 * 1024);
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("read llama.cpp runtime: {e}"))?;
+        hasher.update(&chunk);
+        bytes.extend_from_slice(&chunk);
+        if let Some(cb) = on_progress.as_mut() {
+            cb(bytes.len() as u64, total);
+        }
+    }
 
     if let Some(want) = expected_sha {
-        let got = {
-            use sha2::{Digest, Sha256};
-            let mut h = Sha256::new();
-            h.update(&bytes);
-            let out = h.finalize();
-            out.iter().map(|b| format!("{b:02x}")).collect::<String>()
-        };
+        let out = hasher.finalize();
+        let got = out.iter().map(|b| format!("{b:02x}")).collect::<String>();
         if !got.eq_ignore_ascii_case(want) {
             return Err(format!(
                 "runtime SHA-256 mismatch: expected {want}, got {got} — refusing to install a \
@@ -280,7 +436,6 @@ async fn download_runtime(
         let perms = std::fs::Permissions::from_mode(0o755);
         std::fs::set_permissions(&bin, perms).map_err(|e| format!("chmod runtime: {e}"))?;
     }
-    let _ = std::fs::remove_dir_all(&tmp);
 
     tracing::info!(dest = %bin.display(), "builtin llm: llama-server runtime ready");
     Ok(bin)
@@ -289,7 +444,7 @@ async fn download_runtime(
 /// Fast exec sanity check — `<binary> --version` must exit 0 within 10s.
 /// Catches missing/old NVIDIA drivers (cudart DLL load failure) at download
 /// time instead of at first spawn.
-async fn exec_check(bin: &Path) -> Result<(), String> {
+pub(crate) async fn exec_check(bin: &Path) -> Result<(), String> {
     use tokio::time::{timeout, Duration};
     let out = tokio::process::Command::new(bin)
         .arg("--version")
@@ -312,7 +467,7 @@ async fn exec_check(bin: &Path) -> Result<(), String> {
 }
 
 /// Recursively locate the llama-server binary inside the cache dir.
-fn find_runtime_binary(dir: &Path) -> Option<PathBuf> {
+pub(crate) fn find_runtime_binary(dir: &Path) -> Option<PathBuf> {
     let name = llama_server_bin_name();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
@@ -370,7 +525,11 @@ mod tests {
 
     #[test]
     fn cache_dir_is_versioned() {
-        let d = llama_server_cache_dir(std::path::Path::new("/tmp/data"), RuntimeVariant::Cpu);
+        let d = llama_server_cache_dir_for_tag(
+            std::path::Path::new("/tmp/data"),
+            LLAMA_CPP_VERSION,
+            RuntimeVariant::Cpu,
+        );
         let s = d.to_string_lossy();
         assert!(s.contains("llama-server"));
         assert!(s.ends_with(LLAMA_CPP_VERSION));
