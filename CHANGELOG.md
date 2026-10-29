@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Variant resolution** is now env > persisted setting (`builtin_runtime_variant`) > auto-detect; the CUDA/Vulkan failure downgrade became a process-local flag instead of the old sticky env write (which would have overridden the user's persisted choice).
 - **Security**: channel-sourced tags are strictly validated (`^b\d{4,7}$`) before touching paths/URLs (injection guard); self-hosted downloads are SHA-256-pinned from the channel; non-https URLs refused except explicit loopback (local mirrors/fixtures); mutating endpoints are admin-only.
 
+### Added — llama.cpp 0.8.x readiness
+- Bundled-binary version parsing handles the new llama.cpp banner (`version: 0.8.0 (build 11960, commit …)` — no `b` prefix): a `(build NNNN)` group now synthesizes the canonical `bNNNNN` tag, so resolution/observability keep working across the format change.
+- The runtime channel gains `recommended_by_platform` overrides (keyed `"<os>/<arch>"`): upstream floors move per-arch — the 0.8.x (b11960) official ubuntu-**arm64** builds require glibc 2.38 (verified by symbol scan) while ubuntu-x64 stays at 2.34 — a single global `recommended` cannot hold arm64 back while x64 moves forward.
+
 ### Fixed — llama.cpp pin drift + upgrade-path gaps
 - `scripts/install.sh` shipped `LLAMA_VERSION=b10545` while the code pinned `b11609` — fresh installs downloaded an older runtime than the cache keys expected. Now b11609, and a new CI gate (`scripts/check_llama_pin_sync.py`, `llama-pin-sync` job in ci.yml) fails any PR where the three pin sites or the self-hosted asset names drift apart.
 - Web self-upgrades never refreshed the llama runtime (the old bundled binary kept winning resolution) — standalone upgrades now close that loop for every deployment kind.

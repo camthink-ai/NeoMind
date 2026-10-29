@@ -293,6 +293,17 @@ async fn exec_version_tag(bin: &Path) -> Option<String> {
 
 /// First well-formed `bNNNN` substring — manual scan (no regex dep).
 pub(crate) fn first_tag_in(text: &str) -> Option<String> {
+    if let Some(t) = first_b_tag_in(text) {
+        return Some(t);
+    }
+    // llama.cpp 0.8.x changed the banner to `version: 0.8.0 (build 11960,
+    // commit ...)` — no `b` prefix on the build number. Synthesize the
+    // canonical b-tag from a `(build NNNN)` group so bundled-binary version
+    // parsing keeps working across the format change.
+    build_number_in(text).map(|n| format!("b{n}"))
+}
+
+fn first_b_tag_in(text: &str) -> Option<String> {
     let bytes = text.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
@@ -309,6 +320,24 @@ pub(crate) fn first_tag_in(text: &str) -> Option<String> {
         } else {
             i += 1;
         }
+    }
+    None
+}
+
+/// The `build NNNN` (4-7 digits) group of a 0.8.x banner.
+fn build_number_in(text: &str) -> Option<String> {
+    let lower = text.to_ascii_lowercase();
+    let mut rest = lower.as_str();
+    while let Some(idx) = rest.find("build ") {
+        let after = &rest[idx + 6..];
+        let end = after
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(after.len());
+        let digits = &after[..end];
+        if (4..=7).contains(&digits.len()) && digits.bytes().all(|b| b.is_ascii_digit()) {
+            return Some(digits.to_string());
+        }
+        rest = &rest[idx + 6..];
     }
     None
 }
@@ -432,6 +461,13 @@ pub struct RuntimeChannelDoc {
     /// Recommended tag for official-asset variants (cpu/vulkan/mac/win).
     #[serde(default)]
     pub recommended: Option<String>,
+    /// Per-platform recommended overrides — the key is `"<os>/<arch>"`
+    /// (e.g. "linux/aarch64"). Wins over `recommended` for that platform;
+    /// needed because upstream floors move per-arch (the 0.8.x official
+    /// ubuntu-arm64 builds jumped to glibc 2.38 while x64 stayed at 2.34 —
+    /// 22.04 arm64 hosts must hold back while x64 moves forward).
+    #[serde(default)]
+    pub recommended_by_platform: HashMap<String, String>,
     #[serde(default)]
     pub variants: HashMap<String, ChannelVariantEntry>,
     #[serde(default)]
@@ -605,8 +641,12 @@ pub fn resolve_upgrade_target(
             sha256: Some(sha),
         })
     } else {
+        let platform_key = format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH);
         let tag = doc
-            .recommended
+            .recommended_by_platform
+            .get(&platform_key)
+            .cloned()
+            .or_else(|| doc.recommended.clone())
             .as_deref()
             .map(str::trim)
             .filter(|t| !t.is_empty())
@@ -1129,6 +1169,22 @@ mod tests {
         );
     }
 
+    #[test]
+    fn first_tag_parses_the_08x_banner() {
+        // llama.cpp >= 0.8.0: `version: %s (build %d, commit %s)`.
+        assert_eq!(
+            first_tag_in("version: 0.8.0 (build 11960, commit 3f2a1bc)"),
+            Some("b11960".to_string())
+        );
+        // An explicit b-tag still wins over a synthesized one.
+        assert_eq!(
+            first_tag_in("version: 0.8.0 (b11960) built with gcc"),
+            Some("b11960".to_string())
+        );
+        // Random "build 12"/"build 12345678" noise must not synthesize.
+        assert_eq!(first_tag_in("rebuild 12 times; built 12345678 units"), None);
+    }
+
     // ---- strict variant parse ----------------------------------------------
 
     #[test]
@@ -1195,6 +1251,35 @@ mod tests {
         // Injection-shaped tags → refused.
         let evil = doc(r#"{"recommended":"../escape","variants":{}}"#);
         assert!(resolve_upgrade_target(&evil, RuntimeVariant::Cpu).is_err());
+    }
+
+    #[test]
+    fn channel_platform_override_wins_for_this_host_only() {
+        let os = std::env::consts::OS;
+        let arch = std::env::consts::ARCH;
+        let d = doc(&format!(
+            r#"{{"recommended":"b11960","recommended_by_platform":{{"{os}/{arch}":"b11609"}}}}"#
+        ));
+        // This host's override wins…
+        let t = resolve_upgrade_target(&d, RuntimeVariant::Cpu).expect("target");
+        assert_eq!(t.tag, "b11609");
+        // …and an override for a DIFFERENT platform does not apply.
+        let other = if format!("{os}/{arch}") == "linux/x86_64" {
+            "linux/aarch64"
+        } else {
+            "linux/x86_64"
+        };
+        let d2 = doc(&format!(
+            r#"{{"recommended":"b11960","recommended_by_platform":{{"{other}":"b11609"}}}}"#
+        ));
+        let t2 = resolve_upgrade_target(&d2, RuntimeVariant::Cpu).expect("target");
+        assert_eq!(t2.tag, "b11960");
+        // An invalid platform override fails loudly (authoring bug — same
+        // policy as an invalid global recommendation).
+        let d3 = doc(&format!(
+            r#"{{"recommended":"b11960","recommended_by_platform":{{"{os}/{arch}":"../escape"}}}}"#
+        ));
+        assert!(resolve_upgrade_target(&d3, RuntimeVariant::Cpu).is_err());
     }
 
     // ---- cache enumeration ---------------------------------------------------
