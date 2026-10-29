@@ -8,7 +8,7 @@ use std::sync::LazyLock;
 /// the default. Note this CONTRADICTS the 2026-09 harness eval (which
 /// preferred MiniCPM at 81% tool accuracy) — the recorded call is
 /// real-world usage over the harness.
-pub const BUILTIN_MODEL_ID: &str = "lfm25-2.6b";
+pub const BUILTIN_MODEL_ID: &str = "sparkx2.6-1.7b";
 
 /// On-disk record of an installed vision projector (mmproj). Lives inside
 /// `ModelManifest` so presence checks (`mmproj_path().exists()`) double as
@@ -217,6 +217,42 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
         },
         BuiltinModelDef {
             manifest: ModelManifest {
+                id: "sparkx2.6-1.7b".to_string(),
+                version: "1.0".to_string(),
+                file_name: "sparkx2.6-1.7b-q4_k_m.gguf".to_string(),
+                sha256: "7abd9859c10924be3c583945456fa9b25d0569484876105a7b7376f7938fffb7"
+                    .to_string(),
+                quant: "q4_k_m".to_string(),
+                format: MODEL_FORMAT_GGUF.to_string(),
+                mmproj: None,
+            },
+            display_name: "Spark-X2.6-1.7B",
+            temperature: Some(1.0),
+            top_p: Some(0.95),
+            // Official point: top_k off.
+            top_k: Some(0),
+            min_p: None,
+            repeat_penalty: Some(1.0),
+            hf_repo: "XHToken/Spark-X2.6-1.7B-GGUF",
+            hf_file: "Spark-X2.6-1.7B-Q4_K_M.gguf",
+            size_bytes: 1_768_720_512,
+            default_ctx: 131_072,
+            max_ctx: 1_048_576,
+            // Hybrid 3:1 sliding/full attention — no measured per-token cost
+            // model yet, so the spawn RAM guard skips this entry (same
+            // treatment as custom imports; ctx still tiers by RAM).
+            kv_bytes_per_token: None,
+            kv_const_bytes: None,
+            notes: "Apache-2.0 zh+en; hybrid attention, 1M native ctx (RAM-capped); controllable thinking",
+            recommended: true,
+            default_thinking: true,
+            thinking_is_integral: false,
+            min_ram_mb: 4_096,
+            mmproj: None,
+            role: None,
+        },
+        BuiltinModelDef {
+            manifest: ModelManifest {
                 id: "lfm25-2.6b".to_string(),
                 version: "1.0".to_string(),
                 file_name: "lfm25-2.6b-qad_q4_0.gguf".to_string(),
@@ -248,7 +284,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             kv_bytes_per_token: Some(20_480),
             kv_const_bytes: Some(0),
             notes: "默认模型(2026-10 实测首选) — 原生 128K 上下文(hybrid KV 很省),thinking 常开;2026-09 评测 67% 工具命中",
-            recommended: true,
+            recommended: false,
             default_thinking: true,
             thinking_is_integral: true,
             min_ram_mb: 3_072,
@@ -565,7 +601,7 @@ mod tests {
         let m = ModelManifest {
             id: BUILTIN_MODEL_ID.to_string(),
             version: "1.0".to_string(),
-            file_name: "lfm25-2.6b-q4_k_m.gguf".to_string(),
+            file_name: "roundtrip-probe.gguf".to_string(),
             sha256: "abc123".to_string(),
             quant: "q4_k_m".to_string(),
             format: MODEL_FORMAT_GGUF.to_string(),
@@ -579,7 +615,7 @@ mod tests {
         assert_eq!(loaded.sha256, "abc123");
         assert_eq!(
             m.model_path(&dir),
-            dir.join(BUILTIN_MODEL_ID).join("lfm25-2.6b-q4_k_m.gguf")
+            dir.join(BUILTIN_MODEL_ID).join("roundtrip-probe.gguf")
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -721,7 +757,7 @@ mod tests {
         // The format field postdates deployed installs — a manifest written
         // before it existed must parse with format == "gguf" (everything
         // older IS gguf), never fail, never need a migration.
-        let dir = temp_dir("legacy");
+        let dir = temp_dir("legacy-no-format");
         let _ = std::fs::remove_dir_all(&dir);
         let legacy = r#"{
         "id": "legacy-model",

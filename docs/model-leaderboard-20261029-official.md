@@ -36,29 +36,35 @@ not-passed" signal. Older Mac runs predate the field.
 
 | Model | OFF | ON | Δ |
 |-------|-----|-----|---|
-| Spark-X2.6-1.7B | 43.5% | (pending) | — |
+| **Spark-X2.6-1.7B** | 43.5% | **63.8%** | **+20.3pp** |
 | LFM3-1.7B | 42.8% | (pending) | — |
 | Qwen3.5-4B | 41.3% | **55.1%** | **+13.8pp** |
 | LFM2.5-2.6B QAD | 36.2% | 37.7% | +1.5pp |
 | Gemma-4-E2B | 26.1% | 27.5% | +1.4pp |
+| MiniCPM5-2B | 33.3% | (pending) | — |
 | Nanbeige4.2-3B | — | 55.6% (n=9 preview) | — |
 
-Thinking is a large, model-specific lever: Qwen3.5's hybrid thinking roughly
-doubles its multi-step rate (17.5% → 41.4%). LFM2.5/Gemma gain marginally.
-Spark's `<think>` template works in llama-server (props `supports_thinking`
-under-reports; verified empirically). Spark-4B has no separate ON row (same
-sweep config). GLM-5.3-think and DeepSeek-think cancelled per user.
+**Spark-X2.6-1.7B + thinking is the strongest edge configuration measured**
+(63.8%, zh 58.0 / en 69.6 / multi-step 50.0 / cmd-hit 82.1%, 0 af): it beats
+Qwen3.5-4B-think by 8.7pp with ~40% of the parameters. Thinking is a large,
+model-specific lever: Qwen3.5's hybrid thinking roughly doubles its multi-step
+rate (17.5% → 41.4%); Spark's nearly doubles it too (27.5% → 50.0%). LFM2.5/
+Gemma gain marginally. Spark's `<think>` template works in llama-server (props
+`supports_thinking` under-reports; verified empirically). Spark-4B has no
+separate ON row (same sweep config). GLM-5.3-think and DeepSeek-think
+cancelled per user.
 
 ## Spark-1.7B vs LFM3-1.7B — the catalog 1.7B duel
 
 | Dimension | Spark-X2.6-1.7B | LFM3-1.7B |
 |-----------|-----------------|-----------|
 | Overall (off) | **43.5%** | 42.8% |
-| Overall (think) | (pending) | (pending) |
+| Overall (think) | **63.8%** | (pending) |
 | Multi-step (off) | **27.5%** | 17.5% |
+| Multi-step (think) | **50.0%** | (pending) |
 | Simple (off) | 50.0% | **53.1%** |
-| cmd-hit | **63.9%** | 56.9% |
-| zh / en balance | even | even |
+| Simple (think) | 69.4% | (pending) |
+| cmd-hit (think) | **82.1%** | (pending) |
 | Thinking cost | moderate chains | **1500-5400 tok/round — impractical on edge** |
 | Official params | 1.0 / 0.95 (min_p 0) | 0.1 / k50 / rp1.1 |
 | Wrong-params sensitivity | — | 20% (1.0/0.95) → 42.8% official (+23pp) |

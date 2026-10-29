@@ -16,8 +16,9 @@
 #                   crates/neomind-core/src/builtin_llm/runtime.rs — enforced
 #                   by scripts/check_llama_pin_sync.py in CI.
 #   BUILTIN_MODEL - Pre-download a builtin model GGUF + manifest into DATA_DIR:
-#                   lfm25-2.6b | qwen3.5-4b | gemma4-e2b | none (default: none —
-#                   the in-app wizard offers the same choices)
+#                   sparkx2.6-1.7b (recommended) | lfm25-2.6b | qwen3.5-4b |
+#                   gemma4-e2b | none (default: none — the in-app wizard
+#                   offers the same choices)
 #   USE_NGINX      - Configure nginx reverse proxy (default: false)
 #   PORT           - Backend API port (default: 9375)
 
@@ -692,6 +693,10 @@ install_builtin_model() {
     [ "$BUILTIN_MODEL" = "none" ] && return 0
     local id="$BUILTIN_MODEL" repo file local sha quant dir
     case "$id" in
+        sparkx2.6-1.7b)
+            repo="XHToken/Spark-X2.6-1.7B-GGUF"; file="Spark-X2.6-1.7B-Q4_K_M.gguf"
+            local="sparkx2.6-1.7b-q4_k_m.gguf"
+            sha="7abd9859c10924be3c583945456fa9b25d0569484876105a7b7376f7938fffb7"; quant="q4_k_m" ;;
         lfm25-2.6b)
             repo="LiquidAI/LFM2.5-2.6B-GGUF"; file="LFM2.5-2.6B-QAD-Q4_0.gguf"
             local="lfm25-2.6b-qad_q4_0.gguf"
@@ -704,7 +709,7 @@ install_builtin_model() {
             repo="google/gemma-4-E2B-it-qat-q4_0-gguf"; file="gemma-4-E2B_q4_0-it.gguf"
             local="gemma-4-E2B_q4_0-it.qat.gguf"
             sha="fa401b55b07ee70a54c6dae3903c783a6e65064312529ea57175cb5f8dec6634"; quant="qat_q4_0" ;;
-        *) error "Unknown BUILTIN_MODEL: ${id} (lfm25-2.6b | qwen3.5-4b | gemma4-e2b | none)" ;;
+        *) error "Unknown BUILTIN_MODEL: ${id} (sparkx2.6-1.7b | lfm25-2.6b | qwen3.5-4b | gemma4-e2b | none)" ;;
     esac
     dir="${DATA_DIR}/models/${id}"
     $SUDO mkdir -p "$dir"
