@@ -45,7 +45,7 @@ use std::path::PathBuf;
 /// import/spawn-arg paths need per-format arms (see runtimes/rknn/README.md
 /// and its redistribution gate before any of that starts). Mirror/air-gap
 /// deployments override the channel via `NEOMIND_RUNTIME_CHANNEL_URL`.
-pub const LLAMA_CPP_VERSION: &str = "b11609";
+pub const LLAMA_CPP_VERSION: &str = "b11960";
 
 /// Is this a well-formed llama.cpp release tag (`b` + 4-7 digits)?
 ///
@@ -279,7 +279,7 @@ pub fn jetson_runtime_asset(tag: &str) -> String {
 /// Future CI bumps must keep -DGGML_NATIVE=OFF -DGGML_CPU_ARM_ARCH=armv8.2-a
 /// (fixed in NeoMind-Runtimes 26c9b92).
 pub const JETSON_RUNTIME_SHA256: &str =
-    "60bc22258cb34796f2d1eb3900c3a6ca90a21df922c3a8e4f37f89e270720b4d";
+    "6bb6ff396a93ad3a481d233d6179bedcdcece4e5c618cf803aaa015e6a808f28";
 
 /// Our Linux x64 CUDA runtime asset (not an official llama.cpp release —
 /// they ship CPU/Vulkan-only tarballs for linux-x64). Same hosting model as
@@ -312,7 +312,7 @@ pub fn linux_cuda_runtime_asset(tag: &str) -> String {
 /// the 22.04 floor while tracking the current `LLAMA_CPP_VERSION`. SHA for
 /// any OTHER tag comes from the runtime channel (runtimes.json), not here.
 pub const LINUX_CUDA_RUNTIME_SHA256: &str =
-    "c1fcbf65aba46210ae6085a98175033a0b4cfc4adf6581bcb18beeafea560103";
+    "bfdbe9d54af279074e66aed4f5ba2971f50414b63fe4885ab9d8cf20ff739200";
 
 /// Official release asset name for an OS/arch/variant, if one ships. Windows
 /// ships `win-cpu-*` / `win-cuda-*` archives (zip); macos/linux ship `-bin-*`
