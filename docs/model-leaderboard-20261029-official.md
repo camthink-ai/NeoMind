@@ -34,15 +34,15 @@ not-passed" signal. Older Mac runs predate the field.
 
 ## Reasoning-ON matrix (thinking enabled, official params)
 
-| Model | OFF | ON | Δ |
-|-------|-----|-----|---|
-| **Spark-X2.6-1.7B** | 43.5% | **63.8%** | **+20.3pp** |
-| LFM3-1.7B | 42.8% | (pending) | — |
-| Qwen3.5-4B | 41.3% | **55.1%** | **+13.8pp** |
-| LFM2.5-2.6B QAD | 36.2% | 37.7% | +1.5pp |
-| Gemma-4-E2B | 26.1% | 27.5% | +1.4pp |
-| MiniCPM5-2B | 33.3% | (pending) | — |
-| Nanbeige4.2-3B | — | 55.6% (n=9 preview) | — |
+| Model | OFF | ON | Δ | ON: zh/en | ON: multi/simple |
+|-------|-----|-----|---|-----------|------------------|
+| **Spark-X2.6-1.7B** | 43.5% | **63.8%** | **+20.3pp** | 58.0 / 69.6 | 50.0 / 69.4 |
+| LFM3-1.7B | 42.8% | (pending) | — | — | — |
+| Qwen3.5-4B | 41.3% | **55.1%** | **+13.8pp** | 54.1 / 47.4 | 41.4 / 56.5 |
+| MiniCPM5-2B | 33.3% | **45.7%** | **+12.4pp** | 49.3 / 42.0 | 15.0 / 58.2 |
+| LFM2.5-2.6B QAD | 36.2% | 37.7% | +1.5pp | 36.2 / 39.1 | 10.0 / 49.0 |
+| Gemma-4-E2B | 26.1% | 27.5% | +1.4pp | 30.4 / 24.6 | 15.0 / 32.7 |
+| Nanbeige4.2-3B | — | 55.6% (n=9 preview) | — | — | — |
 
 **Spark-X2.6-1.7B + thinking is the strongest edge configuration measured**
 (63.8%, zh 58.0 / en 69.6 / multi-step 50.0 / cmd-hit 82.1%, 0 af): it beats
