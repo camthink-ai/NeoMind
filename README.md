@@ -34,6 +34,13 @@
 <br/>
 
 <div align="center">
+  <img src="https://resources.camthink.ai/NeoMind/llm-image-solution/site-demo-v7.gif" alt="Dashboard site tour" width="800" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);" />
+  <br/><sub><b>Dashboard tour — build, query, and monitor in one place</b></sub>
+</div>
+
+<br/>
+
+<div align="center">
   <table>
     <tr>
       <td align="center">
