@@ -415,23 +415,28 @@ export function RuntimeUpgradeDialog({ open, onClose, runtime, onChanged }: Runt
                     ['runtime_channel_url', 'runtimeSourceChannel', sources.runtime_channel_url, sources.runtime_channel_custom],
                   ] as const
                 ).map(([kind, labelKey, value, custom]) => (
-                  <div key={kind} className="flex items-center gap-2">
-                    <span className="w-32 shrink-0 truncate text-xs text-muted-foreground">
-                      {t(`plugins:llm.${labelKey}`)}
-                    </span>
+                  // Stacked label-over-input: long zh labels don't truncate
+                  // (w-32 column clipped 模型下载源（HuggingFace）) and the
+                  // full-width input fits long mirror URLs.
+                  <div key={kind} className="space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="text-xs text-muted-foreground">
+                        {t(`plugins:llm.${labelKey}`)}
+                      </label>
+                      {custom && (
+                        <span className="rounded bg-warning-light px-1.5 py-0.5 text-[10px] text-warning">
+                          {t('plugins:llm.runtimeSourceCustom')}
+                        </span>
+                      )}
+                    </div>
                     <input
-                      className="h-8 min-w-0 flex-1 rounded border border-border bg-background px-2 font-mono text-xs"
+                      className="h-8 w-full rounded border border-border bg-background px-2 font-mono text-xs"
                       defaultValue={value}
                       disabled={busy}
                       onBlur={(e) => {
                         if (e.target.value.trim() !== value) void saveSource(kind, e.target.value)
                       }}
                     />
-                    {custom && (
-                      <span className="shrink-0 rounded bg-warning-light px-1.5 py-0.5 text-[10px] text-warning">
-                        {t('plugins:llm.runtimeSourceCustom')}
-                      </span>
-                    )}
                   </div>
                 ))}
               </div>
