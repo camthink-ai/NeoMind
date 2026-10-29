@@ -199,16 +199,16 @@ pub fn entries_for_variant(data_dir: &Path, variant: RuntimeVariant) -> Vec<(Str
 /// switch back should not force a re-download).
 pub fn prune_cache(data_dir: &Path, variant: RuntimeVariant, keep_tag: &str) {
     let entries = entries_for_variant(data_dir, variant);
+    // entries are sorted newest-first. Keep the newest (normally == keep_tag)
+    // and the second-newest as the revert target; drop everything older.
+    // `keep_tag` is therefore informational only — the index already encodes
+    // the retention rule.
     for (i, (tag, path)) in entries.iter().enumerate() {
-        let keep = tag == keep_tag || (i == 1 && tag != keep_tag);
-        // entries are sorted newest-first: index 0 is the newest. Keep the
-        // newest (usually == keep_tag) and the second-newest as the revert
-        // target; drop everything older.
-        let is_newest_or_second = i <= 1;
-        if keep || is_newest_or_second {
+        if i <= 1 {
             continue;
         }
-        tracing::info!(dir = %path.display(), "builtin llm: pruning old runtime cache");
+        tracing::info!(dir = %path.display(), tag = %tag, keep = %keep_tag,
+            "builtin llm: pruning old runtime cache");
         let _ = std::fs::remove_dir_all(path);
     }
 }
@@ -273,10 +273,17 @@ pub async fn bundled_tag(path: &Path) -> Option<String> {
 /// Run `<bin> --version` and pull the first `b\d{4,7}` token out of its
 /// output. Official and our builds both print e.g. `version: 5668 (b11609)`.
 async fn exec_version_tag(bin: &Path) -> Option<String> {
+    // kill_on_drop is load-bearing: a binary that does NOT answer --version
+    // by exiting (a wrapper that starts serving anyway, a hung loader, our
+    // integration tests' fake server) would otherwise survive the timeout as
+    // an orphan holding the model port — the next real spawn then fails to
+    // bind. 3s is generous for a real `llama-server --version` (exits in ms).
     let out = tokio::time::timeout(
-        Duration::from_secs(10),
+        Duration::from_secs(3),
         tokio::process::Command::new(bin)
             .arg("--version")
+            .kill_on_drop(true)
+            .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .output(),

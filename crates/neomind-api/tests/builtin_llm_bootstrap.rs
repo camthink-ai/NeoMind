@@ -424,10 +424,26 @@ async fn already_running_refresh_honors_ctx_override() {
         "healthy + instance record must short-circuit, got {outcome:?}"
     );
     let inst = fx.manager.get_instance(BUILTIN_INSTANCE_ID).unwrap();
-    assert_eq!(
-        inst.capabilities.max_context, 65536,
-        "refresh must stamp cfg.effective_ctx (override), not the bare default"
+    // Contract: the refresh stamps the OVERRIDE run through the host-RAM
+    // guard — not the bare per-model default. Assert against the guard's own
+    // answer: on a memory-tight host BOTH the override and the bare default
+    // clamp to the 8192 floor, so a hard-coded 65536 made this test flap
+    // with whatever else the machine was running.
+    let def = neomind_core::builtin_llm::manifest::model_def("minicpm5-2b")
+        .expect("minicpm5-2b is a registry model");
+    let expected = neomind_api::builtin_llm::handlers::guarded_ctx_quiet(
+        &cfg,
+        port,
+        def.default_ctx,
+        Some(def),
     );
+    assert_eq!(
+        inst.capabilities.max_context, expected,
+        "refresh must stamp the guarded effective ctx (override 65536, RAM-capped), \
+         not the bare default; expected {expected}"
+    );
+    // The stale 4096 must never survive the refresh either.
+    assert_ne!(inst.capabilities.max_context, 4096);
 
     let _ = child.kill();
     let _ = child.wait();

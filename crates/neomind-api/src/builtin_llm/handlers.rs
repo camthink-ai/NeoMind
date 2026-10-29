@@ -350,7 +350,7 @@ fn tier_default_ctx(total_ram_mb: u64) -> usize {
 /// [`guarded_ctx`] without the cap WARN — for status/display paths that
 /// compute a hypothetical spawn every UI poll (3s); the warn belongs to
 /// actual spawns only.
-pub(crate) fn guarded_ctx_quiet(
+pub fn guarded_ctx_quiet(
     cfg: &BuiltinConfig,
     port: u16,
     default_ctx: u32,
