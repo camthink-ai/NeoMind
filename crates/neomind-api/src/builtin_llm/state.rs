@@ -176,7 +176,7 @@ pub async fn bootstrap(
             // catalog BEFORE the LFM2.5 default — stamping the default model's
             // name/thinking onto a different active model was a silent lie.
             let def: BuiltinModelDef = model_def(&updated.model)
-                .map(|d| d.clone())
+                .cloned()
                 .or_else(|| {
                     let mdir = super::handlers::models_dir(data_dir);
                     super::handlers::catalog_only_def(&mdir, &updated.model)

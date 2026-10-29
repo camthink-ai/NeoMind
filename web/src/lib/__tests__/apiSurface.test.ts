@@ -64,9 +64,14 @@ describe('api surface (post-split composition)', () => {
   // the context-card actions added `compactSession` and `clearSessionHistory`
   // (manual compaction endpoints backing the usage ring). 272 -> 273 when
   // multi-model coexistence added `switchBuiltinModel` (restart?model=, the
-  // instant switch to a downloaded builtin model).
-  it('member count grows only by deliberate additions (273)', () => {
+  // instant switch to a downloaded builtin model). 273 -> 282 when the
+  // standalone llama.cpp runtime upgrade added five members (getBuiltinRuntime,
+  // checkBuiltinRuntimeUpdate, upgradeBuiltinRuntime, revertBuiltinRuntime,
+  // setBuiltinRuntimeVariant), the mirror layer two (getLlmSources,
+  // putLlmSource), and the offline model paths two (importBuiltinModelLocal,
+  // uploadBuiltinModel) — all consumed by the LLM tab / runtime dialog.
+  it('member count grows only by deliberate additions (282)', () => {
     const keys = Object.keys(api)
-    expect(keys.length).toBe(273)
+    expect(keys.length).toBe(282)
   })
 })

@@ -1150,7 +1150,9 @@ mod tests {
     #[test]
     fn matrix_newer_bundled_beats_older_cache() {
         // Platform upgrade shipped a bundled runtime newer than the cache.
-        let d = pick_runtime(cache("b11609"), bundled(Some("b11700")));
+        // Pin-relative so a pin bump can't silently flip the fixture's
+        // meaning (b11700 < pin b11960 made this assert TryPinThenBundled).
+        let d = pick_runtime(cache("b10000"), bundled(Some(LLAMA_CPP_VERSION)));
         assert!(matches!(d, Decision::Bundled(_)));
     }
 
@@ -1167,7 +1169,7 @@ mod tests {
     fn matrix_no_bundled_downloads_pin() {
         assert!(matches!(pick_runtime(None, None), Decision::TryPin));
         assert!(matches!(
-            pick_runtime(None, bundled(Some("b11609"))),
+            pick_runtime(None, bundled(Some(LLAMA_CPP_VERSION))),
             Decision::Bundled(_)
         ));
     }

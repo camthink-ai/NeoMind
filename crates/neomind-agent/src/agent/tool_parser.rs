@@ -571,7 +571,7 @@ fn parse_qwen_coder_params(body: &str) -> serde_json::Map<String, Value> {
             break;
         }
         let val_start = key_start + key_end_rel + 1;
-        let close_rel = body[val_start..].find("</parameter>").map(|r| r);
+        let close_rel = body[val_start..].find("</parameter>");
         let (value, next) = match close_rel {
             Some(r) => (
                 body[val_start..val_start + r].trim().to_string(),
