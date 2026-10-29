@@ -71,9 +71,9 @@ describe('RuntimeUpgradeDialog', () => {
     await waitFor(() => {
       expect(screen.getByText(/runtimeUpToDate/)).toBeTruthy()
     })
-    // No update → the upgrade button renders but is disabled.
-    const upgrade = screen.getByText(/runtimeUpgradeTo/).closest('button')
-    expect(upgrade?.hasAttribute('disabled')).toBe(true)
+    // No update → no upgrade CTA in the footer (a Close takes its place);
+    // Revert stays reachable but disabled without cache entries.
+    expect(screen.queryByText(/runtimeUpgradeTo/)).toBeNull()
     // No cache entry → revert disabled.
     const revert = screen.getByText(/runtimeRevert/).closest('button')
     expect(revert?.hasAttribute('disabled')).toBe(true)

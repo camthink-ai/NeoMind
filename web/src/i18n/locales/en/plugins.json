@@ -239,9 +239,7 @@
     "builtinEngineError": "Engine failed to start: {{message}}",
     "runtimeChecking": "Checking for updates…",
     "runtimeStatusUpdate": "Update {{tag}} available",
-    "runtimeRowCurrent": "Current",
-    "runtimeRowRecommended": "Recommended",
-    "runtimeRowVariant": "Variant"
+    "runtimeRowCurrent": "Current"
   },
   "yes": "Yes",
   "no": "No",

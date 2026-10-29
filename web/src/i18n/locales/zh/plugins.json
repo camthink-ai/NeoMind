@@ -239,9 +239,7 @@
     "builtinEngineError": "引擎启动失败：{{message}}",
     "runtimeChecking": "正在检查更新…",
     "runtimeStatusUpdate": "发现可用更新 {{tag}}",
-    "runtimeRowCurrent": "当前版本",
-    "runtimeRowRecommended": "推荐版本",
-    "runtimeRowVariant": "运行变体"
+    "runtimeRowCurrent": "当前版本"
   },
   "yes": "是",
   "no": "否",

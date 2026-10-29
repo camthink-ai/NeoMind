@@ -236,132 +236,128 @@ export function RuntimeUpgradeDialog({ open, onClose, runtime, onChanged }: Runt
       title={t('plugins:llm.runtimeDialogTitle')}
       className="z-[110]"
       footer={
-        <div className="flex w-full flex-wrap items-center gap-2">
-          {stage === 'idle' && (
-            <>
-              <Button
-                size="sm"
-                onClick={startUpgrade}
-                disabled={busy || !info?.update_available}
-              >
-                {busy ? (
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Download className="mr-1.5 h-3.5 w-3.5" />
-                )}
+        stage === 'error' ? (
+          <>
+            <Button variant="outline" onClick={onClose}>{t('common:close')}</Button>
+            <Button onClick={() => { setStage('checking'); refresh(true).then(() => setStage('idle')).catch((e) => { setErrorMsg(e instanceof Error ? e.message : String(e)); setStage('error') }) }}>
+              {t('common:retry')}
+            </Button>
+          </>
+        ) : stage === 'idle' ? (
+          <>
+            <Button variant="outline" onClick={doRevert} disabled={busy || !canRevert}>
+              <History className="h-4 w-4" />
+              {t('plugins:llm.runtimeRevert')}
+            </Button>
+            {info?.update_available ? (
+              <Button onClick={startUpgrade} disabled={busy}>
+                <Download className="h-4 w-4" />
                 {t('plugins:llm.runtimeUpgradeTo', { tag: rec?.tag ?? '' })}
               </Button>
-              <Button size="sm" variant="outline" onClick={doRevert} disabled={busy || !canRevert}>
-                <History className="mr-1.5 h-3.5 w-3.5" />
-                {t('plugins:llm.runtimeRevert')}
-              </Button>
+            ) : (
+              <Button variant="secondary" onClick={onClose}>{t('common:close')}</Button>
+            )}
+          </>
+        ) : null
+      }
+      hideFooter={stage === 'checking' || stage === 'upgrading' || stage === 'restarting' || stage === 'done'}
+    >
+      <div className="space-y-3">
+        {/* Status line — icon + one sentence, quiet (house style: no box). */}
+        <div className="flex items-center gap-2 text-sm font-medium">
+          {stage === 'checking' ? (
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+          ) : stage === 'error' ? (
+            <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
+          ) : info?.channel === 'unreachable' ? (
+            <AlertTriangle className="h-4 w-4 shrink-0 text-warning" />
+          ) : info?.update_available ? (
+            <Download className="h-4 w-4 shrink-0 text-primary" />
+          ) : (
+            <Check className="h-4 w-4 shrink-0 text-success" />
+          )}
+          <span className="min-w-0 flex-1">
+            {stage === 'checking'
+              ? t('plugins:llm.runtimeChecking')
+              : stage === 'error'
+                ? t('plugins:llm.runtimeUpgradeFailed')
+                : stage === 'upgrading'
+                  ? t('plugins:llm.runtimePhaseDownloading')
+                  : stage === 'restarting'
+                    ? t('plugins:llm.runtimePhaseRestarting')
+                    : stage === 'done'
+                      ? t('plugins:llm.runtimeUpgraded', { tag: currentTag })
+                      : info?.channel === 'unreachable'
+                        ? t('plugins:llm.runtimeChannelUnreachableShort')
+                        : info?.update_available
+                          ? t('plugins:llm.runtimeStatusUpdate', { tag: rec?.tag ?? '' })
+                          : t('plugins:llm.runtimeUpToDate')}
+          </span>
+        </div>
+
+        {/* Version line — one quiet line, two tones (ServerUpgrade pattern). */}
+        <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
+          <span>{t('plugins:llm.runtimeRowCurrent')}</span>
+          <span className="font-mono tabular-nums text-foreground">{currentTag}</span>
+          {info?.update_available && rec && (
+            <>
+              <span aria-hidden="true">→</span>
+              <span className="font-mono font-medium tabular-nums text-foreground">{rec.tag}</span>
             </>
           )}
-          {(stage === 'upgrading' || stage === 'restarting') && (
-            <span className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              {stage === 'upgrading'
-                ? t('plugins:llm.runtimePhaseDownloading')
-                : t('plugins:llm.runtimePhaseRestarting')}
-            </span>
-          )}
-          <Button size="sm" variant="secondary" onClick={onClose} className="ml-auto">
-            {t('common:close')}
-          </Button>
+          <span aria-hidden="true">·</span>
+          <span className="font-mono">
+            {info?.override_variant
+              ? info.override_variant.toUpperCase()
+              : `${t('plugins:llm.runtimeVariantAuto')} ${effectiveVariant.toUpperCase()}`}
+          </span>
         </div>
-      }
-    >
-      <div className="space-y-4">
-        {/* Status panel: icon + one-line status, then label:value rows. */}
-        <div className="rounded-md border border-border">
-          <div className="flex h-10 items-center gap-2 px-3">
-            {stage === 'checking' ? (
-              <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
-            ) : stage === 'error' ? (
-              <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
-            ) : info?.channel === 'unreachable' ? (
-              <AlertTriangle className="h-4 w-4 shrink-0 text-warning" />
-            ) : info?.update_available ? (
-              <Download className="h-4 w-4 shrink-0 text-primary" />
-            ) : (
-              <Check className="h-4 w-4 shrink-0 text-success" />
-            )}
-            <span className="min-w-0 flex-1 truncate text-sm font-medium">
-              {stage === 'checking'
-                ? t('plugins:llm.runtimeChecking')
-                : stage === 'error'
-                  ? (errorMsg ?? t('plugins:llm.runtimeUpgradeFailed'))
-                  : stage === 'upgrading'
-                    ? t('plugins:llm.runtimePhaseDownloading')
-                    : stage === 'restarting'
-                      ? t('plugins:llm.runtimePhaseRestarting')
-                      : stage === 'done'
-                        ? t('plugins:llm.runtimeUpgraded', { tag: currentTag })
-                        : info?.channel === 'unreachable'
-                          ? t('plugins:llm.runtimeChannelUnreachableShort')
-                          : info?.update_available
-                            ? t('plugins:llm.runtimeStatusUpdate', { tag: rec?.tag ?? '' })
-                            : t('plugins:llm.runtimeUpToDate')}
-            </span>
-          </div>
-          <div className="space-y-1.5 border-t border-border px-3 py-2.5">
-            <div className="flex items-center justify-between gap-3 text-xs">
-              <span className="text-muted-foreground">{t('plugins:llm.runtimeRowCurrent')}</span>
-              <span className="font-mono">{currentTag}</span>
-            </div>
-            {info?.update_available && rec && (
-              <div className="flex items-center justify-between gap-3 text-xs">
-                <span className="text-muted-foreground">{t('plugins:llm.runtimeRowRecommended')}</span>
-                <span className="font-mono text-primary">{rec.tag}</span>
-              </div>
-            )}
-            <div className="flex items-center justify-between gap-3 text-xs">
-              <span className="text-muted-foreground">{t('plugins:llm.runtimeRowVariant')}</span>
-              <span className="font-mono">
-                {info?.override_variant
-                  ? info.override_variant.toUpperCase()
-                  : `${t('plugins:llm.runtimeVariantAuto')} · ${effectiveVariant.toUpperCase()}`}
+
+        {info?.channel === 'unreachable' && (
+          <p className="text-xs leading-snug text-muted-foreground">
+            {t('plugins:llm.runtimeChannelUnreachable')}
+          </p>
+        )}
+        {info?.update_available && rec && (rec.notes_zh || rec.notes_en) && (
+          <p className="text-xs leading-snug text-muted-foreground">
+            {rec.notes_zh || rec.notes_en}
+          </p>
+        )}
+
+        {/* Progress — slim bar, right-aligned byte counter. */}
+        {(stage === 'upgrading' || stage === 'restarting') && (
+          <div className="space-y-1.5">
+            <Progress value={stage === 'restarting' ? 100 : pct} className="h-1.5" />
+            <div className="flex justify-end text-xs tabular-nums text-muted-foreground">
+              <span className="whitespace-nowrap">
+                {stage === 'restarting'
+                  ? t('plugins:llm.runtimePhaseRestarting')
+                  : `${fmtBytes(downloaded)} / ${fmtBytes(total)}`}
               </span>
             </div>
-            {info?.channel === 'unreachable' && (
-              <p className="pt-1 text-xs leading-snug text-muted-foreground">
-                {t('plugins:llm.runtimeChannelUnreachable')}
-              </p>
-            )}
-            {info?.update_available && rec && (rec.notes_zh || rec.notes_en) && (
-              <p className="pt-1 text-xs leading-snug text-muted-foreground">
-                {rec.notes_zh || rec.notes_en}
-              </p>
-            )}
-          </div>
-        </div>
-
-        {/* Progress */}
-        {(stage === 'upgrading' || stage === 'restarting') && (
-          <div className="space-y-1">
-            <Progress value={stage === 'restarting' ? 100 : pct} />
-            <p className="text-xs text-muted-foreground">
-              {stage === 'restarting'
-                ? t('plugins:llm.runtimePhaseRestarting')
-                : `${fmtBytes(downloaded)} / ${fmtBytes(total)}`}
-            </p>
           </div>
         )}
 
-        {/* Done card (error lives in the status panel header) */}
+        {/* Success / error cards. */}
         {stage === 'done' && (
-          <div className="flex items-center gap-2 rounded-md bg-success-light px-3 py-2 text-success">
-            <Check className="h-4 w-4 shrink-0" />
-            <span className="text-xs">{t('plugins:llm.runtimeUpgraded', { tag: currentTag })}</span>
+          <div className="flex items-center gap-2 rounded-lg bg-success-light px-3 py-2.5">
+            <Check className="h-4 w-4 shrink-0 text-success" />
+            <p className="text-sm text-success">{t('plugins:llm.runtimeUpgraded', { tag: currentTag })}</p>
+          </div>
+        )}
+        {stage === 'error' && errorMsg && (
+          <div className="flex items-start gap-2 rounded-lg bg-error-light px-3 py-2.5">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-error" />
+            <p className="break-all text-sm text-error">{errorMsg}</p>
           </div>
         )}
 
-        {/* Variant override */}
+        {/* Variant — segmented control, not five bordered buttons. */}
         <div className="space-y-1.5">
           <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
             {t('plugins:llm.runtimeVariantLabel')}
           </p>
-          <div className="flex flex-wrap gap-1.5">
+          <div className="inline-flex overflow-hidden rounded-md border border-border">
             {VARIANT_CHOICES.map((v) => {
               const isCurrent =
                 v === 'auto' ? !info?.override_variant : info?.override_variant === v
@@ -371,10 +367,11 @@ export function RuntimeUpgradeDialog({ open, onClose, runtime, onChanged }: Runt
                   disabled={busy}
                   onClick={() => setVariant(v === 'auto' ? '' : v)}
                   className={cn(
-                    'rounded border px-2 py-1 text-xs transition-colors disabled:opacity-50',
+                    'h-7 px-2.5 text-xs transition-colors disabled:opacity-50',
+                    'border-r border-border last:border-r-0',
                     isCurrent
-                      ? 'border-primary bg-primary text-primary-foreground'
-                      : 'border-border bg-background text-muted-foreground hover:bg-accent',
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-muted-foreground hover:bg-accent',
                   )}
                 >
                   {v === 'auto' ? t('plugins:llm.runtimeVariantAuto') : v.toUpperCase()}
@@ -382,7 +379,9 @@ export function RuntimeUpgradeDialog({ open, onClose, runtime, onChanged }: Runt
               )
             })}
           </div>
-          <p className="text-xs text-muted-foreground">{t('plugins:llm.runtimeVariantHint')}</p>
+          <p className="text-xs leading-snug text-muted-foreground">
+            {t('plugins:llm.runtimeVariantHint')}
+          </p>
         </div>
 
         {/* Download sources (mirrors) — collapsed by default: advanced config. */}
