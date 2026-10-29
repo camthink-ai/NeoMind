@@ -1,0 +1,8 @@
+{
+ "requested": "deepseek-flash",
+ "served_identity": "deepseek-flash,deepseek-v4-pro",
+ "source": "https://api.deepseek.com/v1/models",
+ "endpoint": "https://api.deepseek.com/v1",
+ "n_ctx": null,
+ "total_slots": null
+}
