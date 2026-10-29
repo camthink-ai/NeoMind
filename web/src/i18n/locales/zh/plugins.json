@@ -210,7 +210,6 @@
     "runtimeUpdateAvailable": "发现可用更新 {{tag}}。{{notes}}",
     "runtimeUpToDate": "运行时已是推荐版本。",
     "runtimeDialogTitle": "llama.cpp 运行时",
-    "runtimeDialogDesc": "独立于平台版本升级内置推理运行时；升级会自动重启内置 LLM 服务。",
     "runtimeUpgradeTo": "升级到 {{tag}}",
     "runtimeRevert": "回退上一版",
     "runtimePhaseDownloading": "下载运行时…",
@@ -237,7 +236,12 @@
     "runtimeSourceCustom": "自定义",
     "runtimeSourceSaved": "下载源已更新",
     "runtimeLastDownloadError": "最近一次下载失败：{{error}}",
-    "builtinEngineError": "引擎启动失败：{{message}}"
+    "builtinEngineError": "引擎启动失败：{{message}}",
+    "runtimeChecking": "正在检查更新…",
+    "runtimeStatusUpdate": "发现可用更新 {{tag}}",
+    "runtimeRowCurrent": "当前版本",
+    "runtimeRowRecommended": "推荐版本",
+    "runtimeRowVariant": "运行变体"
   },
   "yes": "是",
   "no": "否",

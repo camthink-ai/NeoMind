@@ -210,7 +210,6 @@
     "runtimeUpdateAvailable": "Update {{tag}} available. {{notes}}",
     "runtimeUpToDate": "The runtime is already the recommended version.",
     "runtimeDialogTitle": "llama.cpp runtime",
-    "runtimeDialogDesc": "Upgrade the builtin inference runtime independently of platform releases; the builtin LLM service restarts automatically.",
     "runtimeUpgradeTo": "Upgrade to {{tag}}",
     "runtimeRevert": "Revert",
     "runtimePhaseDownloading": "Downloading runtime…",
@@ -237,7 +236,12 @@
     "runtimeSourceCustom": "custom",
     "runtimeSourceSaved": "Download source updated",
     "runtimeLastDownloadError": "Last download failed: {{error}}",
-    "builtinEngineError": "Engine failed to start: {{message}}"
+    "builtinEngineError": "Engine failed to start: {{message}}",
+    "runtimeChecking": "Checking for updates…",
+    "runtimeStatusUpdate": "Update {{tag}} available",
+    "runtimeRowCurrent": "Current",
+    "runtimeRowRecommended": "Recommended",
+    "runtimeRowVariant": "Variant"
   },
   "yes": "Yes",
   "no": "No",

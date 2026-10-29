@@ -20,7 +20,16 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
-import { AlertCircle, ArrowUpRight, Check, Cpu, Download, History, Loader2 } from 'lucide-react'
+import {
+  AlertCircle,
+  AlertTriangle,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Download,
+  History,
+  Loader2,
+} from 'lucide-react'
 import { UnifiedFormDialog } from '@/components/dialog/UnifiedFormDialog'
 import { useEvents } from '@/hooks/useEvents'
 import { api } from '@/lib/api'
@@ -28,7 +37,6 @@ import type { BuiltinRuntimeInfo } from '@/types/llm-backend'
 import type { RuntimeUpgradeProgressEvent } from '@/lib/events'
 import { notifySuccess } from '@/lib/notify'
 import { cn } from '@/lib/utils'
-import { badgeSize } from '@/design-system/tokens/typography'
 
 const STATUS_POLL_MS = 3000
 
@@ -61,6 +69,7 @@ export function RuntimeUpgradeDialog({ open, onClose, runtime, onChanged }: Runt
   const [targetTag, setTargetTag] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const doneRef = useRef(false)
+  const [sourcesOpen, setSourcesOpen] = useState(false)
   const [sources, setSources] = useState<{
     hf_base_url: string; hf_custom: boolean
     catalog_url: string; catalog_custom: boolean
@@ -225,7 +234,6 @@ export function RuntimeUpgradeDialog({ open, onClose, runtime, onChanged }: Runt
       open={open}
       onOpenChange={(o) => !o && onClose()}
       title={t('plugins:llm.runtimeDialogTitle')}
-      description={t('plugins:llm.runtimeDialogDesc')}
       className="z-[110]"
       footer={
         <div className="flex w-full flex-wrap items-center gap-2">
@@ -264,36 +272,69 @@ export function RuntimeUpgradeDialog({ open, onClose, runtime, onChanged }: Runt
       }
     >
       <div className="space-y-4">
-        {/* Version line: current → recommended */}
-        <div className="flex items-center gap-2 text-sm">
-          <Cpu className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <span className="font-mono">{currentTag}</span>
-          {info?.update_available && rec && (
-            <>
-              <ArrowUpRight className="h-3.5 w-3.5 text-muted-foreground" />
-              <span className="font-mono text-primary">{rec.tag}</span>
-            </>
-          )}
-          <span className={cn(badgeSize.small, 'rounded bg-muted px-1.5 py-0.5 text-muted-foreground')}>
-            {effectiveVariant.toUpperCase()}
-          </span>
+        {/* Status panel: icon + one-line status, then label:value rows. */}
+        <div className="rounded-md border border-border">
+          <div className="flex h-10 items-center gap-2 px-3">
+            {stage === 'checking' ? (
+              <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+            ) : stage === 'error' ? (
+              <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
+            ) : info?.channel === 'unreachable' ? (
+              <AlertTriangle className="h-4 w-4 shrink-0 text-warning" />
+            ) : info?.update_available ? (
+              <Download className="h-4 w-4 shrink-0 text-primary" />
+            ) : (
+              <Check className="h-4 w-4 shrink-0 text-success" />
+            )}
+            <span className="min-w-0 flex-1 truncate text-sm font-medium">
+              {stage === 'checking'
+                ? t('plugins:llm.runtimeChecking')
+                : stage === 'error'
+                  ? (errorMsg ?? t('plugins:llm.runtimeUpgradeFailed'))
+                  : stage === 'upgrading'
+                    ? t('plugins:llm.runtimePhaseDownloading')
+                    : stage === 'restarting'
+                      ? t('plugins:llm.runtimePhaseRestarting')
+                      : stage === 'done'
+                        ? t('plugins:llm.runtimeUpgraded', { tag: currentTag })
+                        : info?.channel === 'unreachable'
+                          ? t('plugins:llm.runtimeChannelUnreachableShort')
+                          : info?.update_available
+                            ? t('plugins:llm.runtimeStatusUpdate', { tag: rec?.tag ?? '' })
+                            : t('plugins:llm.runtimeUpToDate')}
+            </span>
+          </div>
+          <div className="space-y-1.5 border-t border-border px-3 py-2.5">
+            <div className="flex items-center justify-between gap-3 text-xs">
+              <span className="text-muted-foreground">{t('plugins:llm.runtimeRowCurrent')}</span>
+              <span className="font-mono">{currentTag}</span>
+            </div>
+            {info?.update_available && rec && (
+              <div className="flex items-center justify-between gap-3 text-xs">
+                <span className="text-muted-foreground">{t('plugins:llm.runtimeRowRecommended')}</span>
+                <span className="font-mono text-primary">{rec.tag}</span>
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-3 text-xs">
+              <span className="text-muted-foreground">{t('plugins:llm.runtimeRowVariant')}</span>
+              <span className="font-mono">
+                {info?.override_variant
+                  ? info.override_variant.toUpperCase()
+                  : `${t('plugins:llm.runtimeVariantAuto')} · ${effectiveVariant.toUpperCase()}`}
+              </span>
+            </div>
+            {info?.channel === 'unreachable' && (
+              <p className="pt-1 text-xs leading-snug text-muted-foreground">
+                {t('plugins:llm.runtimeChannelUnreachable')}
+              </p>
+            )}
+            {info?.update_available && rec && (rec.notes_zh || rec.notes_en) && (
+              <p className="pt-1 text-xs leading-snug text-muted-foreground">
+                {rec.notes_zh || rec.notes_en}
+              </p>
+            )}
+          </div>
         </div>
-
-        {/* Channel state */}
-        {info?.channel === 'unreachable' && (
-          <p className="text-xs text-muted-foreground">{t('plugins:llm.runtimeChannelUnreachable')}</p>
-        )}
-        {info?.update_available && rec && (
-          <p className="text-xs text-muted-foreground">
-            {t('plugins:llm.runtimeUpdateAvailable', {
-              tag: rec.tag,
-              notes: rec.notes_zh || rec.notes_en || '',
-            })}
-          </p>
-        )}
-        {stage === 'idle' && !info?.update_available && info?.channel === 'ok' && (
-          <p className="text-xs text-muted-foreground">{t('plugins:llm.runtimeUpToDate')}</p>
-        )}
 
         {/* Progress */}
         {(stage === 'upgrading' || stage === 'restarting') && (
@@ -307,23 +348,19 @@ export function RuntimeUpgradeDialog({ open, onClose, runtime, onChanged }: Runt
           </div>
         )}
 
-        {/* Done / error cards */}
+        {/* Done card (error lives in the status panel header) */}
         {stage === 'done' && (
           <div className="flex items-center gap-2 rounded-md bg-success-light px-3 py-2 text-success">
             <Check className="h-4 w-4 shrink-0" />
             <span className="text-xs">{t('plugins:llm.runtimeUpgraded', { tag: currentTag })}</span>
           </div>
         )}
-        {stage === 'error' && errorMsg && (
-          <div className="flex items-start gap-2 rounded-md bg-destructive/10 px-3 py-2 text-destructive">
-            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-            <span className="text-xs leading-snug break-all">{errorMsg}</span>
-          </div>
-        )}
 
         {/* Variant override */}
         <div className="space-y-1.5">
-          <p className="text-xs font-medium">{t('plugins:llm.runtimeVariantLabel')}</p>
+          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            {t('plugins:llm.runtimeVariantLabel')}
+          </p>
           <div className="flex flex-wrap gap-1.5">
             {VARIANT_CHOICES.map((v) => {
               const isCurrent =
@@ -348,42 +385,58 @@ export function RuntimeUpgradeDialog({ open, onClose, runtime, onChanged }: Runt
           <p className="text-xs text-muted-foreground">{t('plugins:llm.runtimeVariantHint')}</p>
         </div>
 
-        {/* Download sources (mirrors) — the restricted-network escape hatch. */}
+        {/* Download sources (mirrors) — collapsed by default: advanced config. */}
         {sources && (
-          <div className="space-y-1.5 border-t border-border pt-3">
-            <p className="text-xs font-medium">{t('plugins:llm.runtimeSourcesTitle')}</p>
-            {sources.last_download_error && (
-              <p className="text-xs text-warning break-all">
-                {t('plugins:llm.runtimeLastDownloadError', { error: sources.last_download_error })}
-              </p>
-            )}
-            <p className="text-xs text-muted-foreground">{t('plugins:llm.runtimeSourcesHint')}</p>
-            {(
-              [
-                ['hf_base_url', 'runtimeSourceHf', sources.hf_base_url, sources.hf_custom],
-                ['catalog_url', 'runtimeSourceCatalog', sources.catalog_url, sources.catalog_custom],
-                ['runtime_channel_url', 'runtimeSourceChannel', sources.runtime_channel_url, sources.runtime_channel_custom],
-              ] as const
-            ).map(([kind, labelKey, value, custom]) => (
-              <div key={kind} className="flex items-center gap-2">
-                <span className="w-32 shrink-0 truncate text-xs text-muted-foreground">
-                  {t(`plugins:llm.${labelKey}`)}
-                </span>
-                <input
-                  className="h-8 min-w-0 flex-1 rounded border border-border bg-background px-2 font-mono text-xs"
-                  defaultValue={value}
-                  disabled={busy}
-                  onBlur={(e) => {
-                    if (e.target.value.trim() !== value) void saveSource(kind, e.target.value)
-                  }}
-                />
-                {custom && (
-                  <span className="shrink-0 rounded bg-warning-light px-1.5 py-0.5 text-[10px] text-warning">
-                    {t('plugins:llm.runtimeSourceCustom')}
-                  </span>
+          <div className="space-y-1.5">
+            <button
+              className="flex w-full items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground"
+              onClick={() => setSourcesOpen((o) => !o)}
+            >
+              {sourcesOpen ? (
+                <ChevronDown className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5" />
+              )}
+              {t('plugins:llm.runtimeSourcesTitle')}
+            </button>
+            {sourcesOpen && (
+              <div className="space-y-2 rounded-md border border-border p-3">
+                <p className="text-xs leading-snug text-muted-foreground">
+                  {t('plugins:llm.runtimeSourcesHint')}
+                </p>
+                {sources.last_download_error && (
+                  <p className="text-xs leading-snug text-warning break-all">
+                    {t('plugins:llm.runtimeLastDownloadError', { error: sources.last_download_error })}
+                  </p>
                 )}
+                {(
+                  [
+                    ['hf_base_url', 'runtimeSourceHf', sources.hf_base_url, sources.hf_custom],
+                    ['catalog_url', 'runtimeSourceCatalog', sources.catalog_url, sources.catalog_custom],
+                    ['runtime_channel_url', 'runtimeSourceChannel', sources.runtime_channel_url, sources.runtime_channel_custom],
+                  ] as const
+                ).map(([kind, labelKey, value, custom]) => (
+                  <div key={kind} className="flex items-center gap-2">
+                    <span className="w-32 shrink-0 truncate text-xs text-muted-foreground">
+                      {t(`plugins:llm.${labelKey}`)}
+                    </span>
+                    <input
+                      className="h-8 min-w-0 flex-1 rounded border border-border bg-background px-2 font-mono text-xs"
+                      defaultValue={value}
+                      disabled={busy}
+                      onBlur={(e) => {
+                        if (e.target.value.trim() !== value) void saveSource(kind, e.target.value)
+                      }}
+                    />
+                    {custom && (
+                      <span className="shrink-0 rounded bg-warning-light px-1.5 py-0.5 text-[10px] text-warning">
+                        {t('plugins:llm.runtimeSourceCustom')}
+                      </span>
+                    )}
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
         )}
       </div>
