@@ -1,7 +1,7 @@
 # NeoMind 边缘模型评测完整报告(2026-10-28 ~ 10-30)
 
 > 批次代号:`2026-10-29-official-params` · 22 个跑次(21 有效 + 1 作废)
-> 数据快照:`eval/baselines/2026-10-29-official-params/`(git)+ HF `CamThink-AI/neomind-agent-eval`
+> 数据快照:HF `CamThink-AI/neomind-agent-eval`(私有仓)+ 本地 `~/Desktop/neomind-eval-20261029-complete.zip`(运行数据不入本仓库,见 `eval/baselines/README.md`)
 > 相关文档:[docs/model-leaderboard-20261029-official.md](model-leaderboard-20261029-official.md) · [docs/edge-models.md](edge-models.md)
 
 ---
@@ -263,12 +263,14 @@ r11(40.6%)< Spark-1.7B 零样本 off(43.5%)≪ think(63.8%)。上一代结论"�
 
 ## 九、备份清单(三层)
 
+运行数据**不入 NeoMind 仓库**(2026-10-30 起的政策,`eval/baselines/` 已 gitignore),存放于:
+
 | 层 | 内容 | 位置 |
 |---|---|---|
-| git | 20 个跑次 scores.jsonl + served_model.json + README | `eval/baselines/2026-10-29-official-params/`(随各 commit 入库) |
-| git | 过程日志:T4 全部 gate/server 日志(6.4M)+ Mac 日志(8.2M) | 同目录 `logs-t4.tar.gz` / `logs-mac.tar.gz` |
-| HF 异地 | 上述全部打包(14.6M)+ 排行榜文档 | `CamThink-AI/neomind-agent-eval` → `batches/2026-10-29-official-params/batch.tar.gz`(私有仓) |
-| repo | 排行榜 / 本报告 / README 双语 | `docs/` + 根目录 |
+| HF 私有仓(权威) | 20 个跑次 scores.jsonl + served_model.json + 过程日志打包 | `CamThink-AI/neomind-agent-eval` → `batches/2026-10-29-official-params/batch.tar.gz` + `full-report.md` |
+| 本地完整包 | Mac + T4 全部原始跑批、双机日志、全部文档 | `~/Desktop/neomind-eval-20261029-complete.zip`(15M,239 文件) |
+| 本地工作副本 | 原始跑批目录(含作废隔离与分片源) | Mac `eval/runs/` · T4 `~/llm-eval/eval/runs/` |
+| repo(仅文档) | 排行榜 / 本报告 / README 双语 / baselines 指引 | `docs/` + 根目录 + `eval/baselines/README.md` |
 
 ---
 

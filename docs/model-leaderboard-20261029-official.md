@@ -130,6 +130,11 @@ Divergences worth noting:
 
 ## Run provenance
 
+Raw scores live OUTSIDE this repo (policy 2026-10-30): HF private
+`CamThink-AI/neomind-agent-eval` → `batches/2026-10-29-official-params/`,
+plus the local complete zip on the eval Mac. Local working copies: `eval/runs/`
+(Mac) and `~/llm-eval/eval/runs/` (T4). Original listing for reference:
+
 Mac (`eval/runs/`): mini-spark-x26-17b, mini-lfm3-17b, mini-gemma4-e2b-official,
 mini-gemma4-e2b-think, mini-qwen35-4b, mini-lfm25-26b, mini-spark-x26,
 regression-20261027-171122 (r11), mini-spark-x26-17b-think (pending),

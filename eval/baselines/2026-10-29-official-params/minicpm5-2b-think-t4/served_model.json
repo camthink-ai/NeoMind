@@ -1,8 +1,0 @@
-{
- "requested": "minicpm5-2b-q4_k_m.gguf",
- "served_identity": "/var/lib/neomind/data/models/minicpm5-2b/minicpm5-2b-q4_k_m.gguf",
- "source": "http://127.0.0.1:8095/props",
- "endpoint": "http://127.0.0.1:8095",
- "n_ctx": 32768,
- "total_slots": 4
-}
