@@ -191,6 +191,7 @@
     "compactFailed": "Compact failed",
     "compactConfirmTitle": "Compact context?",
     "compactConfirmDesc": "Earlier messages are replaced by a summary to free context space. History stays visible in the UI; only later requests are affected.",
+    "historyTruncated": "The context is full; older messages are no longer sent to the model (they remain visible here). Use Compact context to free space.",
     "clear": "Clear",
     "clearDone": "Conversation history cleared",
     "clearFailed": "Clear failed",

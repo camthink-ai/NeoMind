@@ -691,7 +691,13 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
             {
                 let bg_state_for_builtin = bg_state.clone();
                 tokio::spawn(async move {
-                    let cfg = crate::builtin_llm::config::BuiltinConfig::from_env();
+                    // API-owned engine knobs persist here and win over the
+                    // systemd env on service restart (2026-10-30: ctx 32768
+                    // reverted to 8192 and every turn failed).
+                    crate::builtin_llm::config::set_engine_overrides_path(
+                        bg_state_for_builtin.data_dir.join("builtin_engine.json"),
+                    );
+                    let mut cfg = crate::builtin_llm::config::BuiltinConfig::from_env();
                     let data_dir = bg_state_for_builtin.data_dir.clone();
                     // 镜像 auto_register 守卫:get_instance_manager 启动初期可能暂不可用,
                     // 重试到可用(与上面 llama.cpp 块相同的 12×5s 节奏)。
@@ -740,6 +746,14 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                     // (5 min unresponsive) gets the kill-then-respawn
                     // escalation.
                     let mut wedged_cycles: u32 = 0;
+                    // Consecutive failed starts while an operator pin is in
+                    // effect. A pin that cannot start is a proven-impossible
+                    // configuration, not a transient; retrying it forever was
+                    // the 2026-10-30 crash loop. After 2 failures this process
+                    // drops the pin so the auto-sizer can degrade (partial
+                    // offload / CPU) — the systemd file is NOT modified, so a
+                    // service restart still honors the operator's pin.
+                    let mut pinned_failures: u32 = 0;
                     loop {
                         tokio::time::sleep(poll).await;
                         if !cfg.enabled {
@@ -797,13 +811,34 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                                     endpoint = %endpoint,
                                     "builtin llm watchdog: llama-server revived"
                                 );
+                                pinned_failures = 0;
                                 backoff = Duration::from_secs(30);
                             }
                             crate::builtin_llm::state::BootstrapOutcome::ServerAlreadyRunning => {
                                 // Someone else (restart API / race) fixed it.
+                                pinned_failures = 0;
                                 backoff = Duration::from_secs(30);
                             }
                             crate::builtin_llm::state::BootstrapOutcome::Failed(e) => {
+                                if cfg.ngl.is_some() || cfg.vlm_ngl.is_some() {
+                                    pinned_failures = pinned_failures.saturating_add(1);
+                                    if pinned_failures >= 2 {
+                                        tracing::error!(
+                                            pinned_ngl = ?cfg.ngl,
+                                            pinned_vlm_ngl = ?cfg.vlm_ngl,
+                                            failures = pinned_failures,
+                                            error = %e,
+                                            "builtin llm watchdog: pinned NGL failed repeated starts — \
+                                             clearing the pin for respawns in THIS process so the \
+                                             auto-sizer can degrade; the systemd config is unchanged \
+                                             (remove NEOMIND_BUILTIN_MODEL_NGL/_VLM_NGL to fix it \
+                                             permanently)"
+                                        );
+                                        cfg.ngl = None;
+                                        cfg.vlm_ngl = None;
+                                        pinned_failures = 0;
+                                    }
+                                }
                                 tracing::warn!(
                                     error = %e,
                                     next_backoff_secs = backoff.as_secs(),

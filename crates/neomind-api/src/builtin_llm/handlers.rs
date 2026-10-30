@@ -509,33 +509,57 @@ fn catalog_only_info(id: &str) -> Option<&'static CatalogOnlyInfo> {
 /// registry ids (they take the registry path) and models without a
 /// manifest on disk.
 pub(crate) fn catalog_only_def(mdir: &Path, id: &str) -> Option<BuiltinModelDef> {
-    let info = catalog_only_info(id)?;
+    // Registry ids are served by their static def, never this path.
+    if BUILTIN_MODELS.iter().any(|d| d.manifest.id == id) {
+        return None;
+    }
     let manifest = load_manifest(mdir, id).ok().flatten()?;
     if !manifest.model_path(mdir).exists() {
         return None;
     }
+    // Catalog info when the remote catalog is warm; otherwise fall back to a
+    // manifest-derived def so a cold boot can still run the active model
+    // (2026-10-30: active pointer lfm3-1.7b was unusable until /models had
+    // warmed the process cache, so the scan ran minicpm5-2b instead).
+    let info = catalog_only_info(id);
+    let ctx = info.map(|i| i.default_ctx).unwrap_or_else(|| {
+        // Conservative offline default: never let a 1M-native GGUF become the
+        // spawn default just because the catalog was cold. The user can raise
+        // ctx explicitly; the RAM guard caps it further.
+        let native = super::gguf::parse_gguf(&manifest.model_path(mdir))
+            .ok()
+            .and_then(|g| g.context_length)
+            .and_then(|c| u32::try_from(c).ok())
+            .unwrap_or(32_768);
+        native.clamp(8_192, 32_768)
+    });
+    let size_bytes = info.map(|i| i.size_bytes).unwrap_or_else(|| {
+        std::fs::metadata(manifest.model_path(mdir))
+            .map(|m| m.len())
+            .unwrap_or(0)
+    });
     Some(BuiltinModelDef {
         manifest,
-        display_name: info.display_name,
-        hf_repo: info.hf_repo,
-        hf_file: info.hf_file,
-        size_bytes: info.size_bytes,
-        default_ctx: info.default_ctx,
-        max_ctx: info.max_ctx,
+        display_name: info.map(|i| i.display_name).unwrap_or_else(|| leak_str(id)),
+        hf_repo: info.map(|i| i.hf_repo).unwrap_or(""),
+        hf_file: info.map(|i| i.hf_file).unwrap_or(""),
+        size_bytes,
+        default_ctx: ctx,
+        max_ctx: info.map(|i| i.max_ctx).unwrap_or(ctx),
         kv_bytes_per_token: None,
         kv_const_bytes: None,
-        temperature: info.temperature,
-        top_p: info.top_p,
-        top_k: info.top_k,
-        min_p: info.min_p,
-        repeat_penalty: info.repeat_penalty,
-        notes: info.notes,
+        temperature: info.and_then(|i| i.temperature),
+        top_p: info.and_then(|i| i.top_p),
+        top_k: info.and_then(|i| i.top_k),
+        min_p: info.and_then(|i| i.min_p),
+        repeat_penalty: info.and_then(|i| i.repeat_penalty),
+        notes: info.map(|i| i.notes).unwrap_or(""),
         recommended: false,
-        default_thinking: info.default_thinking,
+        default_thinking: info.map(|i| i.default_thinking).unwrap_or(false),
         thinking_is_integral: false,
-        min_ram_mb: info.min_ram_mb,
-        mmproj: info.mmproj.clone(),
-        role: info.role,
+        min_ram_mb: info.map(|i| i.min_ram_mb).unwrap_or(0),
+        mmproj: info.and_then(|i| i.mmproj.clone()),
+        role: info.and_then(|i| i.role),
     })
 }
 
@@ -547,10 +571,21 @@ pub fn installed_model(mdir: &Path) -> Option<(BuiltinModelDef, ModelManifest)> 
     // the registry-order scan for single-model installs predating the
     // pointer file.
     if let Some(active) = read_active_model(mdir) {
-        if let Some(def) = BUILTIN_MODELS.iter().find(|d| d.manifest.id == active) {
+        // The pointer may name a model that is NOT in the compiled registry:
+        // remote-catalog models (LFM3 etc.) install under their catalog id and
+        // must remain switchable/active. Resolving only against BUILTIN_MODELS
+        // treated a perfectly valid catalog-only pointer as stale and fell
+        // back to the first installed compiled model (2026-10-30: pointer
+        // lfm3-1.7b silently ran minicpm5-2b, and the picker kept that name).
+        let def = BUILTIN_MODELS
+            .iter()
+            .find(|d| d.manifest.id == active)
+            .cloned()
+            .or_else(|| catalog_only_def(mdir, &active));
+        if let Some(def) = def {
             if let Ok(Some(manifest)) = load_manifest(mdir, &def.manifest.id) {
                 if manifest.model_path(mdir).exists() {
-                    return Some((def.clone(), manifest));
+                    return Some((def, manifest));
                 }
             }
         }
@@ -1536,11 +1571,19 @@ pub async fn models_handler(
         })
         .collect();
 
-    // Open catalog local channel: every imported GGUF (id not in the builtin
-    // registry) is listed so the picker shows it alongside the curated three.
+    // Open catalog local channel: every imported GGUF whose id is not
+    // represented by the catalog/registry above is listed so the picker shows
+    // it alongside the curated set.
     let builtin_ids: std::collections::HashSet<&str> = BUILTIN_MODELS
         .iter()
         .map(|d| d.manifest.id.as_str())
+        .collect();
+    // Ids already represented by the catalog-derived list. Without this a
+    // remote-catalog model (LFM3) is listed TWICE: once as its catalog card
+    // and once as a "本地导入" card (2026-10-30).
+    let listed_ids: std::collections::HashSet<String> = models
+        .iter()
+        .filter_map(|m| m.get("id").and_then(|v| v.as_str()).map(str::to_string))
         .collect();
     if let Ok(entries) = std::fs::read_dir(&mdir) {
         for entry in entries.flatten() {
@@ -1555,7 +1598,7 @@ pub async fn models_handler(
             if id.starts_with('.') {
                 continue;
             }
-            if builtin_ids.contains(id.as_str()) {
+            if builtin_ids.contains(id.as_str()) || listed_ids.contains(&id) {
                 continue;
             }
             let Ok(Some(m)) = load_manifest(&mdir, &id) else {
@@ -2716,6 +2759,11 @@ pub async fn restart_handler(
     // the process env so subsequent bootstraps keep it (matches the port
     // override pattern). Validated to a sane window; 0/garbage → 400.
     let mut cfg = BuiltinConfig::from_env();
+    // API-owned engine knobs are persisted beside the models so a service
+    // restart cannot silently revert them (ctx 32768 -> 8192 on 2026-10-30).
+    let overrides_path = state.data_dir.join("builtin_engine.json");
+    let mut overrides = super::config::EngineOverrides::load(&overrides_path);
+    let mut overrides_dirty = false;
     // The installed model's own default — used to give `?ctx=<default>` a
     // "reset to default" meaning (clears the override instead of pinning it).
     let model_default_ctx: Option<u32> =
@@ -2727,9 +2775,13 @@ pub async fn restart_handler(
                     // Requested == the model default → clear any override.
                     std::env::remove_var("NEOMIND_BUILTIN_LLM_CTX");
                     cfg.ctx = None;
+                    overrides.ctx = None;
+                    overrides_dirty = true;
                 } else {
                     std::env::set_var("NEOMIND_BUILTIN_LLM_CTX", n.to_string());
                     cfg.ctx = Some(n);
+                    overrides.ctx = Some(n);
+                    overrides_dirty = true;
                 }
             }
             _ => {
@@ -2768,11 +2820,15 @@ pub async fn restart_handler(
                 engine_change_requested |= cfg.parallel.is_some();
                 std::env::set_var("NEOMIND_BUILTIN_LLM_PARALLEL", "0");
                 cfg.parallel = None;
+                overrides.parallel = Some(0);
+                overrides_dirty = true;
             }
             Ok(n) if (1..=16).contains(&n) => {
                 engine_change_requested |= cfg.parallel != Some(n);
                 std::env::set_var("NEOMIND_BUILTIN_LLM_PARALLEL", n.to_string());
                 cfg.parallel = Some(n);
+                overrides.parallel = Some(n);
+                overrides_dirty = true;
             }
             _ => {
                 return Err(ErrorResponse::bad_request(
@@ -2787,14 +2843,46 @@ pub async fn restart_handler(
                 engine_change_requested |= !cfg.kv_quant;
                 std::env::remove_var("NEOMIND_BUILTIN_LLM_KV");
                 cfg.kv_quant = true;
+                overrides.kv_quant = Some(true);
+                overrides_dirty = true;
             }
             "f16" | "off" => {
                 engine_change_requested |= cfg.kv_quant;
                 std::env::set_var("NEOMIND_BUILTIN_LLM_KV", "f16");
                 cfg.kv_quant = false;
+                overrides.kv_quant = Some(false);
+                overrides_dirty = true;
             }
             _ => {
                 return Err(ErrorResponse::bad_request("invalid kv (expected q8_0|f16)"));
+            }
+        }
+    }
+
+    // Optional GPU offload pin (?ngl=N or ?ngl=auto). `auto` clears the pin
+    // so the VRAM planner sizes the offload; N passes an explicit -ngl.
+    if let Some(v) = params.get("ngl") {
+        let v = v.trim();
+        if v.eq_ignore_ascii_case("auto") || v.is_empty() {
+            engine_change_requested = true;
+            std::env::remove_var("NEOMIND_BUILTIN_MODEL_NGL");
+            cfg.ngl = None;
+            overrides.ngl = None;
+            overrides_dirty = true;
+        } else {
+            match v.parse::<u16>() {
+                Ok(n) => {
+                    engine_change_requested |= cfg.ngl != Some(n);
+                    std::env::set_var("NEOMIND_BUILTIN_MODEL_NGL", n.to_string());
+                    cfg.ngl = Some(n);
+                    overrides.ngl = Some(n);
+                    overrides_dirty = true;
+                }
+                Err(_) => {
+                    return Err(ErrorResponse::bad_request(
+                        "invalid ngl (expected 0..=65535 or auto)",
+                    ));
+                }
             }
         }
     }
@@ -2809,6 +2897,8 @@ pub async fn restart_handler(
                 vlm_change_requested |= cfg.vlm_ctx != Some(n);
                 std::env::set_var("NEOMIND_BUILTIN_VLM_CTX", n.to_string());
                 cfg.vlm_ctx = Some(n);
+                overrides.vlm_ctx = Some(n);
+                overrides_dirty = true;
             }
             _ => {
                 return Err(ErrorResponse::bad_request(
@@ -2823,17 +2913,58 @@ pub async fn restart_handler(
                 vlm_change_requested |= cfg.vlm_kv_quant != Some(true);
                 std::env::remove_var("NEOMIND_BUILTIN_VLM_KV");
                 cfg.vlm_kv_quant = Some(true);
+                overrides.vlm_kv_quant = Some(true);
+                overrides_dirty = true;
             }
             "f16" | "off" => {
                 vlm_change_requested |= cfg.vlm_kv_quant != Some(false);
                 std::env::set_var("NEOMIND_BUILTIN_VLM_KV", "f16");
                 cfg.vlm_kv_quant = Some(false);
+                overrides.vlm_kv_quant = Some(false);
+                overrides_dirty = true;
             }
             _ => {
                 return Err(ErrorResponse::bad_request(
                     "invalid vlm_kv (expected q8_0|f16)",
                 ));
             }
+        }
+    }
+
+    // Companion GPU-layer override (?vlm_ngl=N | auto).
+    if let Some(v) = params.get("vlm_ngl") {
+        let v = v.trim();
+        if v.eq_ignore_ascii_case("auto") || v.is_empty() {
+            vlm_change_requested = true;
+            std::env::remove_var("NEOMIND_BUILTIN_VLM_NGL");
+            cfg.vlm_ngl = None;
+            overrides.vlm_ngl = None;
+            overrides_dirty = true;
+        } else {
+            match v.parse::<u16>() {
+                Ok(n) => {
+                    vlm_change_requested |= cfg.vlm_ngl != Some(n);
+                    std::env::set_var("NEOMIND_BUILTIN_VLM_NGL", n.to_string());
+                    cfg.vlm_ngl = Some(n);
+                    overrides.vlm_ngl = Some(n);
+                    overrides_dirty = true;
+                }
+                Err(_) => {
+                    return Err(ErrorResponse::bad_request(
+                        "invalid vlm_ngl (expected 0..=65535 or auto)",
+                    ));
+                }
+            }
+        }
+    }
+
+    if overrides_dirty {
+        if let Err(e) = overrides.save(&overrides_path) {
+            tracing::warn!(
+                error = %e,
+                path = %overrides_path.display(),
+                "builtin llm: failed to persist engine overrides"
+            );
         }
     }
 

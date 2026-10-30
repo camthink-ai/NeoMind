@@ -260,6 +260,21 @@ pub async fn process_stream_events_with_safeguards(
         max_context, prompt_overhead, RESERVE_FOR_RESPONSE, effective_max
     );
 
+    // A window that cannot even hold the system prompt + tool definitions is
+    // unusable: the backend rejects every request after burning the whole
+    // prompt. Fail fast with an actionable message instead of letting the
+    // turn die mid-stream (2026-10-30: ctx 8192, prompt overhead 11684).
+    if prompt_overhead >= max_context {
+        let message = format!(
+            "上下文窗口不足：系统提示与工具定义约 {prompt_overhead} tokens，而模型窗口只有 {max_context} tokens。请提高上下文设置（例如 NEOMIND_BUILTIN_LLM_CTX=32768）或减少工具/技能。"
+        );
+        tracing::error!(max_context, prompt_overhead, "{}", message);
+        return Ok(Box::pin(async_stream::stream! {
+            yield AgentEvent::Error { message };
+            yield AgentEvent::end();
+        }));
+    }
+
     let history_for_llm: Vec<neomind_core::Message> = {
         let window = build_context_window_with_summary(
             &history_messages,
@@ -368,6 +383,12 @@ pub async fn process_stream_events_with_safeguards(
             // === SAFEGUARD: Track multi-round tool calling iterations ===
             let mut tool_iteration_count = 0usize;
             const MAX_TOOL_ITERATIONS: usize = 30;
+            // Chat-path loop breaker: a round is a repetition only when its
+            // tool calls are ALL already-seen AND its results are byte-identical
+            // to the previous round. A verification poll whose result changed,
+            // or any new call, resets it. Three consecutive identical-result
+            // rounds = a loop; the 30-round hard cap and wall clock remain.
+            const CHAT_IDENTICAL_ROUNDS_LIMIT: usize = 3;
             // Soft wall-clock budget for the tool loop. The chat WS path has no
             // total-turn timeout (only a 1200s per-event idle cap), so a
             // pathological loop grinds forever with no text answer (observed:
@@ -383,6 +404,12 @@ pub async fn process_stream_events_with_safeguards(
             let turn_started_at = Instant::now();
             // Accumulate ALL tool results across rounds for final summary
             let mut all_round_tool_results: Vec<(String, String)> = Vec::new();
+            // Every (tool + arguments) call executed this turn; a round with
+            // zero NEW signatures is repetition, not exploration.
+            let mut seen_tool_sigs: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            let mut last_round_fingerprint: Option<u64> = None;
+            let mut identical_rounds: usize = 0;
             // [identical-call reuse] Small models re-issue byte-identical calls
             // after a SUCCESS (observed: two identical image_edit calls back to
             // back — each a real execution on a 2.6B model, ~30s of pure waste).
@@ -562,10 +589,15 @@ pub async fn process_stream_events_with_safeguards(
             }
 
             // === MULTI-ROUND TOOL CALLING LOOP ===
-            // Chat path: no loop breaker — the user is watching and can abort.
-            // Safety nets: MAX_TOOL_ITERATIONS (30) + stream timeout (max_stream_duration).
+                // Chat path: no guard-led hard loop breaker — the user is
+                // watching and can abort. Safety nets: a no-new-information
+                // breaker / round budget (below), the 30-round hard cap, and
+                // the stream timeout.
             // (The scheduled-agent path brakes via cross-round dedup → AllDuplicate.)
             'multi_round_loop: loop {
+                // Calls in THIS round whose (tool + arguments) signature has
+                // not been seen yet this turn — the progress signal.
+                let mut round_new_calls: usize = 0;
                 if tool_iteration_count > 0 {
                     tracing::debug!("Starting tool iteration round {}", tool_iteration_count + 1);
 
@@ -695,9 +727,9 @@ pub async fn process_stream_events_with_safeguards(
                             // 添加"). When any prior shell command exited non-zero,
                             // remind the model that lying about it is forbidden and
                             // point at the recovery path.
-                            let has_failed_cmds = all_round_tool_results.iter().any(|(_, r)| {
-                                r.contains("\"exit_code\"") && !r.contains("\"exit_code\":0")
-                            });
+                            let has_failed_cmds = all_round_tool_results
+                                .iter()
+                                .any(|(_, r)| tool_result_is_error(r));
                             let failure_guard = if has_failed_cmds {
                                 "\n\n⚠️ Some earlier command FAILED (exit≠0). You MUST NOT claim failed operations succeeded in your answer. Either fix and retry using the error/suggestion (e.g. resolve the REAL id via `neomind dashboard list` / `device list`), or report the failure honestly with its cause.".to_string()
                             } else {
@@ -708,6 +740,7 @@ pub async fn process_stream_events_with_safeguards(
                                 Previously executed tools (results are in context above):\n{}\n\n\
                                 STOP AND THINK: Do you need MORE tools, or can you answer from the results above?\n\
                                 - If tools above already returned the data you need → give the final response NOW. Do NOT call them again.\n\
+                                - If information that ONLY the user can provide is missing → ask ONE concise clarifying question in your final answer; do not guess and do not keep calling tools to search for it.\n\
                                 - If the original goal is NOT yet verified end-to-end (expected data not returned, created resource not yet readable) → continue with the next tool call now — a plan alone is not a completed task.\n\
                                 - If you need different tools → call them in ONE batch using JSON array: [{{\"name\":\"tool\",\"arguments\":{{...}}}}]\n\
                                 - NEVER call the same tool with the same arguments — results are already in context.{}",
@@ -1528,6 +1561,16 @@ pub async fn process_stream_events_with_safeguards(
                     for (_, name, execution) in tool_results_executed {
                         // Use arguments from the execution result (preserves per-call arguments for same-name tools)
                         let exec_arguments = execution.arguments.clone();
+                        // Novel (tool + arguments) → this round is gaining
+                        // information even if the model stays quiet.
+                        let call_sig = format!(
+                            "{}|{}",
+                            name,
+                            serde_json::to_string(&exec_arguments).unwrap_or_default()
+                        );
+                        if seen_tool_sigs.insert(call_sig) {
+                            round_new_calls += 1;
+                        }
                         yield AgentEvent::tool_call_start_round(&name, exec_arguments.clone(), tool_iteration_count + 1);
 
                         // Mutation-flavored SHELL commands that effectively
@@ -1798,9 +1841,39 @@ pub async fn process_stream_events_with_safeguards(
                             0,
                         );
                     }
+                    // Loop signal: the SAME calls returning BYTE-IDENTICAL
+                    // results across rounds. A verification poll whose result
+                    // changed (online→offline, a new metric) or any new call
+                    // resets the counter — exploration and verify-after-write
+                    // are not loops. Only repeated no-op rounds are.
+                    let round_fingerprint = tool_round_fingerprint(&tool_call_results);
+                    let round_is_repeat = round_new_calls == 0
+                        && last_round_fingerprint == Some(round_fingerprint);
+                    if round_is_repeat {
+                        identical_rounds += 1;
+                    } else {
+                        identical_rounds = 0;
+                    }
+                    last_round_fingerprint = Some(round_fingerprint);
+                    let chat_repeating = identical_rounds >= CHAT_IDENTICAL_ROUNDS_LIMIT;
+                    if chat_repeating {
+                        tracing::warn!(
+                            rounds = tool_iteration_count + 1,
+                            identical_rounds,
+                            new_calls = round_new_calls,
+                            "Chat tool loop detected — same calls AND identical results across \
+                             rounds; forcing the final summary"
+                        );
+                        yield AgentEvent::progress(
+                            "Repeated the same calls with no new information — generating final response..."
+                                .to_string(),
+                            "summarizing",
+                            0,
+                        );
+                    }
                     let should_continue = !wall_clock_exhausted
+                        && !chat_repeating
                         && tool_iteration_count < MAX_TOOL_ITERATIONS - 1;
-
                     // === Save assistant message with tool_calls BEFORE tool results ===
                     let response_to_save = if content_before_tools.is_empty() {
                         String::new()
@@ -1896,11 +1969,13 @@ pub async fn process_stream_events_with_safeguards(
                     // OR when LLM didn't produce content before tools.
                     // Without tool definitions, the model must output text instead of more tool calls.
                     let deduped_results = deduplicate_tool_results(&all_round_tool_results);
-                    let last_round_has_errors = deduped_results.iter().any(|(_, result)| {
-                        let lower = result.to_lowercase();
-                        lower.contains("error") || lower.contains("failed") || lower.contains("invalid")
-                            || lower.contains("unauthorized") || lower.contains("401")
-                    });
+                    // Only the LAST round's structured outcome decides the
+                    // summary prompt. Payload words ("error"/"invalid" as
+                    // device field names) are not failures; scanning all-round
+                    // text misclassified 30 successful reads as tool errors.
+                    let last_round_has_errors = tool_call_results
+                        .iter()
+                        .any(|(_, result)| tool_result_is_error(result));
                     // The preamble "Let me check..." is NOT a final answer.
                     // Force summary when tool errors exist, regardless of content_before_tools.
                     // Chars, not bytes: `.len()` counted ~3 bytes per CJK
@@ -1928,20 +2003,18 @@ pub async fn process_stream_events_with_safeguards(
                         };
 
                         // Detect whether tool results contain errors to tailor the prompt
-                        let has_errors = deduped_results.iter().any(|(_, result)| {
-                            let lower = result.to_lowercase();
-                            lower.contains("error") || lower.contains("failed") || lower.contains("invalid")
-                        });
+                        let has_errors = last_round_has_errors;
 
                         let summary_prompt = if has_errors {
-                            "The tool calls above returned errors. \
-                            Analyze the errors and explain to the user what went wrong in plain language. \
-                            Suggest what the user can do (e.g., provide different parameters, check the device, etc.). \
-                            Do NOT output any tool calls — give a direct text response."
+                            "Some tool calls above returned errors. If the user's question can \
+                            already be answered from the successful results, answer it now. \
+                            Otherwise explain the failure in plain language and suggest what the \
+                            user can do. Do NOT output any tool calls — give a direct text response."
                         } else {
                             "Based on the tool execution results in the conversation above, \
-                            provide a concise analysis and summary. Do NOT output any tool calls — \
-                            give a direct text response to the user's question."
+                            answer the user's question concisely. Do NOT output any tool calls. \
+                            If information that ONLY the user can provide is missing, ask ONE \
+                            concise clarifying question instead of guessing."
                         };
 
                         let summary_result = llm_interface.chat_stream_summary(
@@ -2546,6 +2619,55 @@ pub(crate) fn effective_history_budget(max_context: usize, prompt_overhead: usiz
     effective
 }
 
+/// Whether a tool result represents a FAILED call.
+///
+/// Tool payloads (device JSON, API responses) legitimately contain words like
+/// "error"/"invalid" as FIELD names, so a substring scan over the whole
+/// payload misclassifies successful reads (2026-10-30: 30 rounds of
+/// successful `device list`/`device get` were summarized as "tool errors").
+/// Only the structured outcome counts.
+fn tool_result_is_error(result: &str) -> bool {
+    let trimmed = result.trim();
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if value.get("success").and_then(|s| s.as_bool()) == Some(false) {
+            return true;
+        }
+        if value.get("error").map(|e| !e.is_null()).unwrap_or(false) {
+            return true;
+        }
+        if value.get("timed_out").and_then(|t| t.as_bool()) == Some(true) {
+            return true;
+        }
+        if let Some(code) = value.get("exit_code").and_then(|c| c.as_i64()) {
+            if code != 0 {
+                return true;
+            }
+        }
+        if let Some(code) = value.pointer("/data/exit_code").and_then(|c| c.as_i64()) {
+            if code != 0 {
+                return true;
+            }
+        }
+        return false;
+    }
+    // Plain-text errors: only explicit leading markers, never payload words.
+    let lower = trimmed.to_lowercase();
+    lower.starts_with("error") || lower.starts_with("failed") || lower.starts_with("invalid")
+}
+
+/// Fingerprint of one round's tool results (name + payload). The chat loop
+/// breaker compares consecutive rounds: identical calls with a CHANGED result
+/// are progress (verification/polling), not a loop.
+fn tool_round_fingerprint(results: &[(String, String)]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for (name, result) in results {
+        name.hash(&mut hasher);
+        result.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
 /// Loop-break decision (pure, tested): after `LOOP_BREAK_AFTER_FAILURES`
 /// failures of the EXACT same tool+arguments within one turn, refuse the
 /// next identical call with the last error and a redirect note. Returns the
@@ -2617,6 +2739,38 @@ mod history_budget_tests {
             "must redirect to answering: {msg}"
         );
         assert!(msg.contains("最终回答"), "bilingual instruction: {msg}");
+    }
+
+    /// Successful device/API payloads contain "error"/"invalid" as FIELD
+    /// names; only the structured outcome may count as a failed call.
+    /// 2026-10-30: 30 rounds of successful device reads were summarized as
+    /// "the tool calls above returned errors".
+    #[test]
+    fn tool_result_error_detection_ignores_payload_words() {
+        assert!(!tool_result_is_error(
+            r#"{"devices":[{"id":"a","error":"none","status":"invalid"}],"exit_code":0}"#
+        ));
+        assert!(!tool_result_is_error(r#"{"devices":[],"total":0}"#));
+        assert!(tool_result_is_error(r#"{"exit_code":1,"stderr":"boom"}"#));
+        assert!(tool_result_is_error(r#"{"error":"bad request"}"#));
+        assert!(tool_result_is_error("Error: command not found"));
+    }
+
+    /// The loop breaker must treat a changed tool result as progress
+    /// (verification/polling), not as a repeated round.
+    #[test]
+    fn round_fingerprint_distinguishes_changed_results() {
+        let a = vec![(
+            "shell".to_string(),
+            r#"{"exit_code":0,"stdout":"online"}"#.to_string(),
+        )];
+        let b = a.clone();
+        let changed = vec![(
+            "shell".to_string(),
+            r#"{"exit_code":0,"stdout":"offline"}"#.to_string(),
+        )];
+        assert_eq!(tool_round_fingerprint(&a), tool_round_fingerprint(&b));
+        assert_ne!(tool_round_fingerprint(&a), tool_round_fingerprint(&changed));
     }
 
     /// Loop-break state machine: one failure never breaks; the refusal

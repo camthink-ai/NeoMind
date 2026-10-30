@@ -62,8 +62,35 @@ fn channel_variant_key(variant: RuntimeVariant) -> Option<&'static str> {
 /// permanently override the user's persisted variant choice.
 static VARIANT_DEGRADED_CPU: AtomicBool = AtomicBool::new(false);
 
+/// Process-lifetime cache for auto-detection (`nvidia-smi` probe). Status
+/// polling used to re-run the probe (and log at info) every 3s — the
+/// 2026-10-30 log analysis counted 1806 "NVIDIA GPU detected" lines in 8.5h.
+/// Only explicit invalidation points clear it: variant override changes,
+/// process-local CPU degradation, and runtime upgrades.
+static DETECTED_VARIANT: std::sync::OnceLock<std::sync::RwLock<Option<RuntimeVariant>>> =
+    std::sync::OnceLock::new();
+
+fn detected_variant_cached() -> RuntimeVariant {
+    let lock = DETECTED_VARIANT.get_or_init(|| std::sync::RwLock::new(None));
+    if let Some(v) = *lock.read().unwrap_or_else(|e| e.into_inner()) {
+        return v;
+    }
+    let detected = RuntimeVariant::detect();
+    *lock.write().unwrap_or_else(|e| e.into_inner()) = Some(detected);
+    detected
+}
+
+/// Drop the cached auto-detection result (variant change, degradation,
+/// runtime upgrade/revert, cache ejection).
+pub fn invalidate_variant_cache() {
+    if let Some(lock) = DETECTED_VARIANT.get() {
+        *lock.write().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+}
+
 pub fn degrade_to_cpu_for_process() {
     VARIANT_DEGRADED_CPU.store(true, Ordering::SeqCst);
+    invalidate_variant_cache();
 }
 
 /// The variant this process resolves runtimes for.
@@ -89,7 +116,7 @@ pub fn effective_variant() -> RuntimeVariant {
     if VARIANT_DEGRADED_CPU.load(Ordering::SeqCst) {
         return RuntimeVariant::Cpu;
     }
-    RuntimeVariant::detect()
+    detected_variant_cached()
 }
 
 /// Read the persisted variant override. Empty/absent = auto; unknown values
@@ -134,7 +161,9 @@ pub fn set_persisted_variant(value: &str) -> Result<(), String> {
     let store = crate::config::open_settings_store().map_err(|e| format!("open settings: {e}"))?;
     store
         .save(VARIANT_SETTING_KEY, value.trim())
-        .map_err(|e| format!("save setting: {e}"))
+        .map_err(|e| format!("save setting: {e}"))?;
+    invalidate_variant_cache();
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -248,6 +277,7 @@ pub fn is_verified(path: &Path) -> bool {
 /// Forget memoized bundled-tag/exec-verification state — after an upgrade,
 /// revert, or cache ejection the next resolution must re-derive.
 pub fn invalidate_resolution_caches() {
+    invalidate_variant_cache();
     if let Some(m) = BUNDLED_TAG.get() {
         *m.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }

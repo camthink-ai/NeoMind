@@ -666,6 +666,9 @@ pub enum DeviceCommand {
         /// Filter by status.
         #[arg(short, long)]
         status: Option<String>,
+        /// Counts only (total/online/offline/type_count) — compact output.
+        #[arg(long)]
+        summary: bool,
     },
     /// Get device details (metadata + metrics + commands).
     ///

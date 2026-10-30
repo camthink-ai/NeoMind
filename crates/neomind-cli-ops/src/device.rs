@@ -22,6 +22,7 @@ pub async fn list_devices(
     client: &ApiClient,
     device_type: Option<&str>,
     status: Option<&str>,
+    summary: bool,
 ) -> Result<CliResponse> {
     let mut path = "/devices?limit=100".to_string();
     if let Some(dt) = device_type {
@@ -73,6 +74,23 @@ pub async fn list_devices(
                 ungrouped_devices.push(device.clone());
             }
         }
+    }
+
+    // Optional compact output: counts only, no per-device payload.
+    if summary {
+        let type_count = typed_groups.len() + usize::from(!ungrouped_devices.is_empty());
+        return Ok(CliResponse::success(
+            json!({
+                "summary": {
+                    "total": total,
+                    "online": online_count,
+                    "offline": offline_count,
+                    "type_count": type_count,
+                },
+                "note": "summary only; run without --summary for device IDs and details",
+            }),
+            format!("{total} devices ({online_count} online, {offline_count} offline)"),
+        ));
     }
 
     // Enrich with example metrics if within budget

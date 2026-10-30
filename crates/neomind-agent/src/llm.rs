@@ -295,6 +295,12 @@ pub struct LlmInterface {
     /// Last prompt token count from the most recent stream response.
     /// Updated in-band when the stream completes.
     last_prompt_tokens: Arc<tokio::sync::Mutex<Option<u32>>>,
+    /// Set when the last context build had to drop history messages. Consumed
+    /// at turn end so summarization triggers on ACTUAL truncation instead of
+    /// a percentage of the total window — with a large system prompt/tool
+    /// overhead the old 60%-of-window threshold could be unreachable while
+    /// history was already being truncated every turn (2026-10-30).
+    history_truncated: Arc<std::sync::atomic::AtomicBool>,
     /// Intent classifier for staged processing.
     intent_classifier: IntentClassifier,
     /// Global timezone for time-aware prompts (IANA format, e.g., "Asia/Shanghai").
@@ -414,6 +420,7 @@ impl LlmInterface {
                 neomind_storage::AgentDefaults::get().default_thinking_enabled,
             )), // Use backend default (from storage)
             last_prompt_tokens: Arc::new(tokio::sync::Mutex::new(None)),
+            history_truncated: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             intent_classifier: IntentClassifier::default(),
             global_timezone: Arc::new(RwLock::new(None)), // Will be loaded from settings
             skill_registry: Arc::new(RwLock::new(None)),
@@ -449,6 +456,7 @@ impl LlmInterface {
                 neomind_storage::AgentDefaults::get().default_thinking_enabled,
             )), // Will use instance manager setting
             last_prompt_tokens: Arc::new(tokio::sync::Mutex::new(None)),
+            history_truncated: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             intent_classifier: IntentClassifier::default(),
             global_timezone: Arc::new(RwLock::new(None)), // Will be loaded from settings
             skill_registry: Arc::new(RwLock::new(None)),
@@ -479,6 +487,13 @@ impl LlmInterface {
     /// Returns the value and resets it to None.
     pub async fn take_last_prompt_tokens(&self) -> Option<u32> {
         self.last_prompt_tokens.lock().await.take()
+    }
+
+    /// Whether the last context build dropped history messages. Taking it
+    /// clears the flag so one truncated turn triggers at most one summary.
+    pub fn take_history_truncated(&self) -> bool {
+        self.history_truncated
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Set the global timezone for time-aware prompts.
@@ -1544,6 +1559,8 @@ impl LlmInterface {
                     available_tokens,
                     "Truncated conversation history to fit context window"
                 );
+                self.history_truncated
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
                 msgs.extend(kept);
             }
 
@@ -1736,6 +1753,8 @@ impl LlmInterface {
                     available_tokens,
                     "Truncated conversation history to fit context window"
                 );
+                self.history_truncated
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
                 msgs.extend(kept);
             }
 
@@ -2019,6 +2038,8 @@ impl LlmInterface {
                     available_tokens,
                     "Truncated conversation history to fit context window (multimodal stream)"
                 );
+                self.history_truncated
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
                 msgs.extend(kept);
             }
 
@@ -2376,6 +2397,8 @@ impl LlmInterface {
                     available_tokens,
                     "Truncated conversation history to fit context window (original user message preserved)"
                 );
+                self.history_truncated
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
                 msgs.extend(kept);
             }
 

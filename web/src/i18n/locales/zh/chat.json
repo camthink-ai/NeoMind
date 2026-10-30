@@ -186,6 +186,7 @@
     "compactFailed": "压缩失败",
     "compactConfirmTitle": "压缩上下文？",
     "compactConfirmDesc": "较早的对话将被压缩为摘要以释放上下文空间。界面中的历史消息保留不变，仅影响之后的请求。",
+    "historyTruncated": "上下文已满，较早的消息不再发送给模型（页面仍保留显示）。可在“上下文”里立即压缩以释放空间。",
     "clear": "清空对话",
     "clearDone": "已清空对话历史",
     "clearFailed": "清空失败",

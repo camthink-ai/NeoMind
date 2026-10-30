@@ -117,7 +117,7 @@ export type ServerMessage =
   // Error occurred - sessionId is always included when sent from backend
   | { type: 'Error'; message: string; sessionId: string }
   // Stream ended
-  | { type: 'end'; sessionId: string; tokenUsage?: {
+  | { type: 'end'; sessionId: string; historyTruncated?: boolean; tokenUsage?: {
       promptTokens: number
       systemPromptTokens?: number
       toolTokens?: number

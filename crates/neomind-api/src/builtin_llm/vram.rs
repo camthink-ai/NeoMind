@@ -335,6 +335,22 @@ pub struct NglQuery<'a> {
 
 pub fn resolve_spawn_ngl(q: &NglQuery<'_>) -> Option<u16> {
     if let Some(n) = q.explicit {
+        let free_mib = probe_gpu_memory().map(|m| m.free_bytes / MIB);
+        let model_mib = std::fs::metadata(q.model_path)
+            .map(|m| m.len() / MIB)
+            .unwrap_or(0);
+        if let Some(free) = free_mib {
+            if model_mib > 0 && model_mib > free {
+                tracing::warn!(
+                    ngl = n,
+                    free_mib = free,
+                    model_mib,
+                    "builtin llm: ngl is pinned but the model's FULL weights exceed free \
+                     VRAM — a full-offload start is likely to fail; lower \
+                     NEOMIND_BUILTIN_MODEL_NGL/_VLM_NGL or free device memory"
+                );
+            }
+        }
         tracing::debug!(
             ngl = n,
             "builtin llm: ngl pinned by config — auto-sizing skipped"
@@ -346,7 +362,7 @@ pub fn resolve_spawn_ngl(q: &NglQuery<'_>) -> Option<u16> {
                 total_layers: parse_gguf(q.model_path).ok().and_then(|m| m.block_count),
                 // Best-effort observability only — a probe failure must not
                 // second-guess the operator's pin.
-                free_mib: probe_gpu_memory().map(|m| m.free_bytes / MIB),
+                free_mib,
                 reclaim_mib: 0,
                 ctx: q.ctx,
                 note: "pinned by config (NEOMIND_BUILTIN_MODEL_NGL / _VLM_NGL)".into(),

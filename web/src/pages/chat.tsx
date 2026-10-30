@@ -71,6 +71,9 @@ export function ChatPage() {
   // True once a load has resolved with an empty list — distinguishes the
   // first load (skeleton) from refetches (keep the guide mounted).
   const everLoadedBackendsRef = useRef(false)
+  // One context-truncation notice per session (a long turn truncates every
+  // round; toasting each time would be noise).
+  const historyTruncatedSessionRef = useRef<string | null>(null)
   const activeBackendId = useStore((state) => state.activeBackendId)
   const activateBackend = useStore((state) => state.activateBackend)
   const loadBackends = useStore((state) => state.loadBackends)
@@ -179,6 +182,13 @@ export function ChatPage() {
       // detached-poll before its next 3s tick resurrects a ghost stream.
       setResumedPendingStream(null)
     },
+    onStalled: () => {
+      // No terminal frame arrived (server restart mid-turn / lost end frame).
+      // Settle on history instead of leaving the bubble spinning until the
+      // user switches sessions.
+      setResumedPendingStream(null)
+      void refreshCurrentSession()
+    },
     onEnd: (result) => {
       // Any end stops the detached-turn poll (a live end means the poll's
       // finalize branch would race a possibly-already-started NEXT turn).
@@ -234,6 +244,10 @@ export function ChatPage() {
       }
       addMessage(completeMessage)
       setLastAssistantMessageId(result.id)
+      if (result.historyTruncated && historyTruncatedSessionRef.current !== sessionId) {
+        historyTruncatedSessionRef.current = sessionId
+        toast({ title: t('chat:context.historyTruncated') })
+      }
     },
     onError: (message) => {
       // Render immediately — the backend may still send a fallback summary

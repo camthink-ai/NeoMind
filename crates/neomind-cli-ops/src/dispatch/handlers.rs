@@ -163,8 +163,9 @@ pub async fn run_device_cmd(cmd: DeviceCommand) -> Result<(CliResponse, OutputFo
         DeviceCommand::List {
             device_type,
             status,
+            summary,
         } => (
-            list_devices(&client, device_type.as_deref(), status.as_deref()).await?,
+            list_devices(&client, device_type.as_deref(), status.as_deref(), summary).await?,
             base_format,
         ),
         DeviceCommand::Get { id, metric } => (

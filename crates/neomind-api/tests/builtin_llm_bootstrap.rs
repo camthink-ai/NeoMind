@@ -592,11 +592,11 @@ fn seed_companion(fx: &Fixture) {
     fx.seed_model(
         "minicpm-v-4.7-1b",
         "minicpm-v-4.7-1b-q4_k_m.gguf",
-        "588c6c94c82f756b86dba35c42ed9ba9ec187d65824eb52f039c347df563e63d",
+        "f18f594747e5317ab490cff9c06339c9cfb89acbe2f02ebc48a4e167bc23576d",
     );
     let cdir = fx.data_dir.path().join("models").join("minicpm-v-4.7-1b");
     std::fs::write(
-        cdir.join("minicpm-v-4.7-1b-mmproj-f16.gguf"),
+        cdir.join("minicpm-v-4.7-1b-mmproj-f16-4x.gguf"),
         b"fake-mmproj-bytes",
     )
     .unwrap();
@@ -604,10 +604,10 @@ fn seed_companion(fx: &Fixture) {
     let manifest = serde_json::json!({
         "id": "minicpm-v-4.7-1b", "version": "1.0",
         "file_name": "minicpm-v-4.7-1b-q4_k_m.gguf",
-        "sha256": "588c6c94c82f756b86dba35c42ed9ba9ec187d65824eb52f039c347df563e63d",
+        "sha256": "f18f594747e5317ab490cff9c06339c9cfb89acbe2f02ebc48a4e167bc23576d",
         "quant": "q4_k_m",
-        "mmproj": {"file_name": "minicpm-v-4.7-1b-mmproj-f16.gguf",
-                    "sha256": "fb9cc047a3cdad5317fd8433a4aeda2d22f00f02ca4bd93b34ad84165b25a900"}
+        "mmproj": {"file_name": "minicpm-v-4.7-1b-mmproj-f16-4x.gguf",
+                    "sha256": "1e0ab439877e6896ded59ff24cdd242fdffb236394f6fc4a5b019cbd60bb5f4a"}
     });
     std::fs::write(
         cdir.join("manifest.json"),

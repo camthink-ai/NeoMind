@@ -155,6 +155,7 @@ impl BuiltinConfig {
                 c.vlm_ngl = Some(n);
             }
         }
+        apply_persisted_overrides(&mut c);
         c
     }
 
@@ -162,6 +163,119 @@ impl BuiltinConfig {
     /// an explicit override wins, else the model default.
     pub fn effective_ctx(&self, default_ctx: u32) -> usize {
         self.ctx.unwrap_or(default_ctx as usize)
+    }
+}
+
+/// Engine knobs set through the restart API, persisted beside the model data.
+///
+/// Why: the API used to write only the PROCESS env; a service restart
+/// re-applied the systemd drop-in and silently reverted the change
+/// (2026-10-30: ctx 32768 -> 8192, below the agent's prompt overhead, every
+/// chat turn failed). Precedence: default < env < these overrides. The UI
+/// owns these values; clearing a field removes the override.
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct EngineOverrides {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ctx: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ngl: Option<u16>,
+    /// Some(0) = omit `--parallel` (upstream default); Some(1..=16) = slots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parallel: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kv_quant: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vlm_ctx: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vlm_kv_quant: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vlm_ngl: Option<u16>,
+}
+
+static OVERRIDES_PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+static OVERRIDES_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Point [`BuiltinConfig::from_env`] at the persisted overrides file. Called
+/// once at server startup; callers without a data dir (tests, subcommands)
+/// keep the env-only behavior.
+pub fn set_engine_overrides_path(path: std::path::PathBuf) {
+    let _ = OVERRIDES_PATH.set(path);
+}
+
+pub fn engine_overrides_path() -> Option<std::path::PathBuf> {
+    OVERRIDES_PATH.get().cloned()
+}
+
+impl EngineOverrides {
+    pub fn load(path: &std::path::Path) -> Self {
+        std::fs::read(path)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn save(&self, path: &std::path::Path) -> std::io::Result<()> {
+        let tmp = path.with_file_name(format!(
+            "{}.tmp",
+            path.file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("builtin_engine.json")
+        ));
+        let bytes = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
+        std::fs::write(&tmp, bytes)?;
+        std::fs::rename(&tmp, path)
+    }
+
+    fn apply_to(&self, c: &mut BuiltinConfig) {
+        if let Some(v) = self.ctx {
+            if v >= 1024 {
+                c.ctx = Some(v);
+            }
+        }
+        if let Some(v) = self.ngl {
+            c.ngl = Some(v);
+        }
+        if let Some(v) = self.parallel {
+            c.parallel = match v {
+                0 => None,
+                1..=16 => Some(v),
+                _ => c.parallel,
+            };
+        }
+        if let Some(v) = self.kv_quant {
+            c.kv_quant = v;
+        }
+        if let Some(v) = self.vlm_ctx {
+            if v >= 1024 {
+                c.vlm_ctx = Some(v);
+            }
+        }
+        if let Some(v) = self.vlm_kv_quant {
+            c.vlm_kv_quant = Some(v);
+        }
+        if let Some(v) = self.vlm_ngl {
+            c.vlm_ngl = Some(v);
+        }
+    }
+}
+
+fn apply_persisted_overrides(c: &mut BuiltinConfig) {
+    let Some(path) = OVERRIDES_PATH.get() else {
+        return;
+    };
+    let overrides = EngineOverrides::load(path);
+    if overrides == EngineOverrides::default() {
+        return;
+    }
+    overrides.apply_to(c);
+    if !OVERRIDES_LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        tracing::info!(
+            ctx = ?c.ctx,
+            ngl = ?c.ngl,
+            parallel = ?c.parallel,
+            kv_quant = c.kv_quant,
+            "builtin llm: persisted engine overrides applied (win over systemd/process env)"
+        );
     }
 }
 
@@ -345,5 +459,33 @@ mod tests {
         std::env::set_var("NEOMIND_BUILTIN_LLM_CTX", "not-a-number");
         assert_eq!(BuiltinConfig::from_env().ctx, None);
         std::env::remove_var("NEOMIND_BUILTIN_LLM_CTX");
+    }
+
+    /// Persisted engine overrides round-trip and apply on top of the env
+    /// defaults (the API-set values must survive a service restart).
+    #[test]
+    fn engine_overrides_roundtrip_and_apply() {
+        let dir =
+            std::env::temp_dir().join(format!("neomind-engine-overrides-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("builtin_engine.json");
+        let overrides = EngineOverrides {
+            ctx: Some(32_768),
+            ngl: Some(8),
+            parallel: Some(0),
+            kv_quant: Some(false),
+            ..Default::default()
+        };
+        overrides.save(&path).expect("save overrides");
+        assert_eq!(EngineOverrides::load(&path), overrides);
+
+        let mut cfg = BuiltinConfig::default();
+        EngineOverrides::load(&path).apply_to(&mut cfg);
+        assert_eq!(cfg.ctx, Some(32_768));
+        assert_eq!(cfg.ngl, Some(8));
+        assert_eq!(cfg.parallel, None, "0 = omit --parallel");
+        assert!(!cfg.kv_quant);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

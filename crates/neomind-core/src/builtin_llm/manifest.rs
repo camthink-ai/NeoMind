@@ -436,9 +436,12 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
                 id: "minicpm-v-4.7-1b".to_string(),
                 version: "1.0".to_string(),
                 file_name: "minicpm-v-4.7-1b-q4_k_m.gguf".to_string(),
-                // Official openbmb LFS oid (captured 2026-10-19 via the HF
-                // API tree), same capture discipline as the other pins.
-                sha256: "588c6c94c82f756b86dba35c42ed9ba9ec187d65824eb52f039c347df563e63d"
+                // Official openbmb LFS oid (recaptured 2026-10-30 via the HF
+                // API tree). The repo re-uploaded this file on 2026-10-26
+                // ("add thinking-enabled variants" + chat-template update);
+                // the 2026-10-19 pin went stale and made every download fail
+                // hash verification.
+                sha256: "f18f594747e5317ab490cff9c06339c9cfb89acbe2f02ebc48a4e167bc23576d"
                     .to_string(),
                 quant: "q4_k_m".to_string(),
             format: MODEL_FORMAT_GGUF.to_string(),
@@ -466,19 +469,19 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             max_ctx: 32768,
             kv_bytes_per_token: None,
             kv_const_bytes: None,
-            notes: "视觉伴侣(VLM)— 与主模型并行负责看图(vision 工具与聊天传图委托);官方 openbmb Q4_K_M + F16 投影器,常驻约 1.8 GB",
+            notes: "视觉伴侣(VLM)— 与主模型并行负责看图(vision 工具与聊天传图委托);官方 openbmb Q4_K_M + F16-4x 投影器,常驻约 1.6 GB",
             recommended: false,
             default_thinking: false,
             thinking_is_integral: false,
-            // Weights 672 MB + F16 projector 1110 MB + runtime headroom.
+            // Weights 672 MB + F16-4x projector 901 MB + runtime headroom.
             min_ram_mb: 2_400,
             mmproj: Some(MmprojSource {
-                file_name: "minicpm-v-4.7-1b-mmproj-f16.gguf".to_string(),
-                sha256: "fb9cc047a3cdad5317fd8433a4aeda2d22f00f02ca4bd93b34ad84165b25a900"
+                file_name: "minicpm-v-4.7-1b-mmproj-f16-4x.gguf".to_string(),
+                sha256: "1e0ab439877e6896ded59ff24cdd242fdffb236394f6fc4a5b019cbd60bb5f4a"
                     .to_string(),
                 hf_repo: "openbmb/MiniCPM-V-4.7-1B-GGUF".to_string(),
-                hf_file: "mmproj-model-f16.gguf".to_string(),
-                size_bytes: 1_110_117_984,
+                hf_file: "mmproj-model-f16-4x.gguf".to_string(),
+                size_bytes: 901_033_888,
             }),
             role: Some("vlm"),
         },
@@ -703,7 +706,8 @@ mod tests {
             "cd88edcf8d031894960bb0c9c5b9b7e1fea6abee02b9f7ce925a00d12891f864"
         );
         // The vision companion: main + projector pins (openbmb official,
-        // captured 2026-10-19 via the HF API tree).
+        // recaptured 2026-10-30 via the HF API tree after the 2026-10-26
+        // upstream re-upload).
         let vlm = by_id("minicpm-v-4.7-1b");
         assert_eq!(
             vlm.role,
@@ -712,15 +716,15 @@ mod tests {
         );
         assert_eq!(
             vlm.manifest.sha256,
-            "588c6c94c82f756b86dba35c42ed9ba9ec187d65824eb52f039c347df563e63d"
+            "f18f594747e5317ab490cff9c06339c9cfb89acbe2f02ebc48a4e167bc23576d"
         );
         assert_eq!(vlm.size_bytes, 672_003_680);
         let vmm = vlm.mmproj.as_ref().expect("vlm mmproj");
-        assert_eq!(vmm.hf_file, "mmproj-model-f16.gguf");
-        assert_eq!(vmm.size_bytes, 1_110_117_984);
+        assert_eq!(vmm.hf_file, "mmproj-model-f16-4x.gguf");
+        assert_eq!(vmm.size_bytes, 901_033_888);
         assert_eq!(
             vmm.sha256,
-            "fb9cc047a3cdad5317fd8433a4aeda2d22f00f02ca4bd93b34ad84165b25a900"
+            "1e0ab439877e6896ded59ff24cdd242fdffb236394f6fc4a5b019cbd60bb5f4a"
         );
         assert!(
             vlm.min_ram_mb >= 1_782,

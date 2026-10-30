@@ -269,9 +269,21 @@ async fn process_stream_to_channel(
                         }
 
                         // === Context Summarization ===
-                        // If context usage exceeds 60%, trigger background summarization
-                        if let Some(pt) = prompt_tokens {
-                            let pt_val = *pt; // Copy to owned value for 'static spawn
+                        // Trigger on the normal 60% threshold OR on actual
+                        // history truncation — the latter is the only signal
+                        // that works when prompt/tool overhead makes the 60%
+                        // of-window mark unreachable (2026-10-30).
+                        let history_truncated = match state
+                            .agents
+                            .session_manager
+                            .get_agent_llm(&session_id)
+                            .await
+                        {
+                            Some(llm) => llm.take_history_truncated(),
+                            None => false,
+                        };
+                        if prompt_tokens.is_some() || history_truncated {
+                            let pt_val = (*prompt_tokens).unwrap_or(0);
                             let sum_session_id = session_id.clone();
                             let sum_state = state.clone();
                             tokio::spawn(async move {
@@ -281,6 +293,7 @@ async fn process_stream_to_channel(
                                         &sum_state,
                                         pt_val,
                                         false,
+                                        history_truncated,
                                     )
                                     .await
                                 {
@@ -294,6 +307,10 @@ async fn process_stream_to_channel(
                         let mut end_json = json!({
                             "type": "end",
                             "sessionId": session_id,
+                            // The LLM context dropped history this turn — the
+                            // UI shows a one-shot notice instead of leaving
+                            // the user to wonder why old facts are forgotten.
+                            "historyTruncated": history_truncated,
                         });
                         if let Some(pt) = prompt_tokens {
                             // Context meter denominator: the session model's
@@ -891,7 +908,7 @@ pub async fn compact_session_handler(
 ) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
     // Force mode: threshold and min-message gates bypassed.
     let outcome =
-        crate::handlers::summarization::trigger_summarization(&id, &state, u32::MAX, true)
+        crate::handlers::summarization::trigger_summarization(&id, &state, u32::MAX, true, false)
             .await
             .map_err(ErrorResponse::with_message)?;
 
@@ -1946,23 +1963,24 @@ async fn handle_ws_socket(
                                                 // (inside process_stream_to_channel) never runs here.
                                                 // (json! below moves task_session_id — clone first.)
                                                 let snapshot_cleanup_id = task_session_id.clone();
-                                                let response = match task_state.agents.session_manager.process_message_multimodal_with_backend(
+                                                let (response, terminal_error) = match task_state.agents.session_manager.process_message_multimodal_with_backend(
                                                     &task_session_id,
                                                     &chat_req.message,
                                                     images,
                                                     backend_id_str.as_deref(),
                                                 ).await {
-                                                    Ok(resp) => json!({
+                                                    Ok(resp) => (json!({
                                                         "type": "response",
                                                         "content": resp.message.content,
-                                                        "sessionId": task_session_id,
+                                                        "sessionId": task_session_id.clone(),
                                                         "toolsUsed": resp.tools_used,
                                                         "processingTimeMs": resp.processing_time_ms,
-                                                    }).to_string(),
-                                                    Err(inner_e) => json!({
+                                                    }).to_string(), false),
+                                                    Err(inner_e) => (json!({
                                                         "type": "Error",
                                                         "message": inner_e.to_string(),
-                                                    }).to_string(),
+                                                        "sessionId": task_session_id.clone(),
+                                                    }).to_string(), true),
                                                 };
                                                 let _ = task_state
                                                     .agents
@@ -1972,6 +1990,23 @@ async fn handle_ws_socket(
 
                                                 if socket.send(AxumMessage::Text(response)).await.is_err() {
                                                     break;
+                                                }
+                                                if terminal_error {
+                                                    // Terminal frame: the client only resets on
+                                                    // end/cancelled.
+                                                    let end = json!({
+                                                        "type": "end",
+                                                        "sessionId": task_session_id,
+                                                    }).to_string();
+                                                    if socket.send(AxumMessage::Text(end)).await.is_err() {
+                                                        break;
+                                                    }
+                                                } else {
+                                                    let _ = task_state
+                                                        .agents
+                                                        .session_manager
+                                                        .persist_history(&task_session_id)
+                                                        .await;
                                                 }
                                             }
                                         }
@@ -2057,6 +2092,18 @@ async fn handle_ws_socket(
                                                                     json: json!({
                                                                         "type": "Error",
                                                                         "message": err_str,
+                                                                        "sessionId": task_session_id.clone(),
+                                                                    })
+                                                                    .to_string(),
+                                                                })
+                                                                .await;
+                                                            // Terminal frame: the client stream
+                                                            // machine only resets on end/cancelled;
+                                                            // an Error alone left it spinning.
+                                                            let _ = task_tx
+                                                                .send(StreamEvent {
+                                                                    json: json!({
+                                                                        "type": "end",
                                                                         "sessionId": task_session_id,
                                                                     })
                                                                     .to_string(),
@@ -2071,7 +2118,7 @@ async fn handle_ws_socket(
                                                         // (inside process_stream_to_channel) never runs here.
                                                         // (json! below moves task_session_id — clone first.)
                                                         let snapshot_cleanup_id = task_session_id.clone();
-                                                        let response = match task_state
+                                                        let (response, terminal_error) = match task_state
                                                             .agents
                                                             .session_manager
                                                             .process_message_with_backend(
@@ -2081,23 +2128,47 @@ async fn handle_ws_socket(
                                                             )
                                                             .await
                                                         {
-                                                            Ok(resp) => json!({
+                                                            Ok(resp) => (json!({
                                                                 "type": "response",
                                                                 "content": resp.message.content,
-                                                                "sessionId": task_session_id,
+                                                                "sessionId": task_session_id.clone(),
                                                                 "toolsUsed": resp.tools_used,
                                                                 "processingTimeMs": resp.processing_time_ms,
                                                             })
-                                                            .to_string(),
-                                                            Err(inner_e) => json!({
+                                                            .to_string(), false),
+                                                            Err(inner_e) => (json!({
                                                                 "type": "Error",
                                                                 "message": inner_e.to_string(),
+                                                                "sessionId": task_session_id.clone(),
                                                             })
-                                                            .to_string(),
+                                                            .to_string(), true),
                                                         };
                                                         let _ = task_tx
                                                             .send(StreamEvent { json: response })
                                                             .await;
+                                                        // Terminal frame on failure: the client
+                                                        // only resets on end/cancelled.
+                                                        if terminal_error {
+                                                            let _ = task_tx
+                                                                .send(StreamEvent {
+                                                                    json: json!({
+                                                                        "type": "end",
+                                                                        "sessionId": task_session_id.clone(),
+                                                                    })
+                                                                    .to_string(),
+                                                                })
+                                                                .await;
+                                                        } else {
+                                                            // The non-streaming path does not run
+                                                            // process_stream_to_channel's persist
+                                                            // step; without this the fallback reply
+                                                            // vanished on refresh.
+                                                            let _ = task_state
+                                                                .agents
+                                                                .session_manager
+                                                                .persist_history(&task_session_id)
+                                                                .await;
+                                                        }
                                                         let _ = task_state
                                                             .agents
                                                             .session_manager

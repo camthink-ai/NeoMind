@@ -75,6 +75,8 @@ export interface StreamEndResult {
    *  back, detach/restore) — the fields above are PARTIAL by construction.
    *  The view should finalize from server history instead of this result. */
   interrupted?: boolean
+  /** The server dropped older history this turn to fit the context window. */
+  historyTruncated?: boolean
 }
 
 export interface UseChatStreamOptions {
@@ -99,7 +101,22 @@ export interface UseChatStreamOptions {
   /** Events the machine does not interpret (Progress, Plan,
    *  session_created, session_switched, …). */
   onRawEvent?: (data: ServerMessage) => void
+  /** The turn ended without a terminal frame (lost end/cancelled, or an
+   *  Error whose fallback+end never arrived — e.g. the server restarted
+   *  mid-turn). The view should take server history as the truth. */
+  onStalled?: (reason: string) => void
 }
+
+/** A turn that stops producing events for this long is dead (the server's
+ *  own stream timeout is 1200s; a long tool runs silently between
+ *  ToolCallStart and ToolCallEnd, so this must not undercut legitimate
+ *  multi-minute tools). */
+const STREAM_IDLE_MS = 10 * 60_000
+/** Absolute turn cap — slightly above the backend's 1200s stream timeout. */
+const STREAM_TOTAL_MS = 21 * 60_000
+/** Error frames are followed by a fallback summary + end; give them this
+ *  long before settling the view. */
+const ERROR_GRACE_MS = 30_000
 
 export function useChatStream(options: UseChatStreamOptions) {
   // Keep callbacks in refs so the ws subscription never resubscribes on a
@@ -140,6 +157,12 @@ export function useChatStream(options: UseChatStreamOptions) {
   // -- Throttled flush machinery --
   const epochRef = useRef(0)
   const flushScheduledRef = useRef(false)
+
+  // -- Terminal-frame watchdog --
+  const watchdogRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const lastEventAtRef = useRef(0)
+  const turnStartAtRef = useRef(0)
+  const errorAtRef = useRef<number | null>(null)
 
   /** Completed-round thinking + current round's live thinking. */
   const liveThinking = () =>
@@ -186,6 +209,48 @@ export function useChatStream(options: UseChatStreamOptions) {
     setCurrentRound(1)
   }, [])
 
+  const stopWatchdog = useCallback(() => {
+    if (watchdogRef.current !== null) {
+      clearInterval(watchdogRef.current)
+      watchdogRef.current = null
+    }
+    errorAtRef.current = null
+  }, [])
+
+  /** Start the terminal-frame watchdog for a turn. Every event refreshes
+   *  lastEventAtRef; the interval settles the view if the server goes silent
+   *  (restart mid-turn) or sends Error without ever following with end —
+   *  the spinner that used to require a page refresh/session switch. */
+  const startWatchdog = useCallback(() => {
+    stopWatchdog()
+    turnStartAtRef.current = Date.now()
+    lastEventAtRef.current = Date.now()
+    watchdogRef.current = setInterval(() => {
+      if (!isStreamingRef.current) {
+        stopWatchdog()
+        return
+      }
+      const now = Date.now()
+      if (errorAtRef.current !== null && now - errorAtRef.current > ERROR_GRACE_MS) {
+        stopWatchdog()
+        hardReset()
+        optionsRef.current.onStalled?.("error without terminal event")
+        return
+      }
+      if (now - lastEventAtRef.current > STREAM_IDLE_MS) {
+        stopWatchdog()
+        hardReset()
+        optionsRef.current.onStalled?.("stream idle")
+        return
+      }
+      if (now - turnStartAtRef.current > STREAM_TOTAL_MS) {
+        stopWatchdog()
+        hardReset()
+        optionsRef.current.onStalled?.("stream total timeout")
+      }
+    }, 5000)
+  }, [hardReset, stopWatchdog])
+
   /** Start a turn — call right before ws.sendMessage. Returns the id the
    *  finished message will keep (pass to nothing; it rides the result). */
   const beginTurn = useCallback((messageId?: string): string => {
@@ -196,8 +261,9 @@ export function useChatStream(options: UseChatStreamOptions) {
     isStreamingRef.current = true
     setIsStreaming(true)
     setStreamingMessageId(id)
+    startWatchdog()
     return id
-  }, [hardReset])
+  }, [hardReset, startWatchdog])
 
   /** Restore a detached turn after reconnect (pending-stream recovery).
    *  `extras` carries the snapshot's tool calls and per-round narration —
@@ -238,7 +304,12 @@ export function useChatStream(options: UseChatStreamOptions) {
     }
     streamStartRef.current = Date.now()
     flushNow(epochRef.current)
-  }, [flushNow])
+    // A restored detached turn needs the same terminal-frame guarantee.
+    // Don't restart a running watchdog: restoreIfBehind re-adopts the
+    // snapshot on every poll, and resetting the clocks would let a dead
+    // turn poll forever.
+    if (watchdogRef.current === null) startWatchdog()
+  }, [flushNow, startWatchdog])
 
   /** Pending-stream poll helper: adopt the server snapshot only when it is
    *  AHEAD of the local accumulator. In the re-attached (live) case local
@@ -313,6 +384,9 @@ export function useChatStream(options: UseChatStreamOptions) {
       data.type !== "session_created" && data.type !== "session_switched"
     ) return
 
+    lastEventAtRef.current = Date.now()
+    if (data.type !== "Error") errorAtRef.current = null
+
     switch (data.type) {
       case "Thinking":
         markStreamStart()
@@ -381,6 +455,7 @@ export function useChatStream(options: UseChatStreamOptions) {
       }
 
       case "end": {
+        stopWatchdog()
         if (data.tokenUsage?.promptTokens) {
           optionsRef.current.onTokenUsage?.(
             {
@@ -412,6 +487,7 @@ export function useChatStream(options: UseChatStreamOptions) {
           roundThinking: hasRoundThinking ? { ...roundThinkingAccRef.current } : undefined,
           systemNotes,
           generationMs,
+          historyTruncated: data.historyTruncated || undefined,
           interrupted: interruptedRef.current || undefined,
         }
         hardReset()
@@ -423,16 +499,37 @@ export function useChatStream(options: UseChatStreamOptions) {
         break
       }
 
+      case "response": {
+        // Non-streaming fallback (the streaming call failed — e.g. a context
+        // overflow — and the backend answered via process_message_with_backend).
+        // The reply is persisted server-side, but the stream machine used to
+        // ignore this frame, so it only appeared after a session re-entry.
+        stopWatchdog()
+        const content = data.content || ""
+        const result: StreamEndResult = {
+          id: streamingMessageIdRef.current || generateId(),
+          content,
+          toolCalls: [],
+          generationMs: typeof data.processingTimeMs === "number" ? data.processingTimeMs : undefined,
+        }
+        hardReset()
+        if (content) optionsRef.current.onEnd(result)
+        break
+      }
+
       case "cancelled":
         // No trailing 'end' is guaranteed on this path — reset here or the
         // composer stays locked and the bubble spins forever.
+        stopWatchdog()
         hardReset()
         optionsRef.current.onCancelled?.()
         break
 
       case "Error":
         // Do NOT reset — the backend may send a fallback summary after the
-        // error; `end` finalizes.
+        // error; `end` finalizes. The watchdog gives that fallback a bounded
+        // grace period so a missing end cannot spin forever.
+        errorAtRef.current = Date.now()
         optionsRef.current.onError?.(data.message || "An error occurred during processing")
         break
 
@@ -458,9 +555,10 @@ export function useChatStream(options: UseChatStreamOptions) {
     const unsubscribe = ws.onMessage(handleEvent)
     return () => {
       epochRef.current += 1
+      stopWatchdog()
       void unsubscribe()
     }
-  }, [handleEvent])
+  }, [handleEvent, stopWatchdog])
 
   return {
     // state

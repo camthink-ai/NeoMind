@@ -186,6 +186,7 @@ pub async fn trigger_summarization(
     state: &ServerState,
     prompt_tokens: u32,
     force: bool,
+    truncated: bool,
 ) -> Result<SummarizationOutcome, String> {
     // Get the agent's LLM interface for generating the summary
     let llm_interface = match state.agents.session_manager.get_agent_llm(session_id).await {
@@ -206,7 +207,12 @@ pub async fn trigger_summarization(
     let max_ctx = llm_interface.max_context_length().await;
     let usage_ratio = prompt_tokens as f64 / max_ctx as f64;
 
-    if !force && usage_ratio <= SUMMARIZATION_THRESHOLD {
+    // `truncated` is the signal that history is ALREADY being dropped: the
+    // percentage of the total window can stay below the threshold forever
+    // when the prompt/tool overhead is large, so truncation must trigger a
+    // summary on its own (2026-10-30: 32K window, ~10K overhead, history
+    // truncated every turn, zero summaries).
+    if !force && !truncated && usage_ratio <= SUMMARIZATION_THRESHOLD {
         // Below threshold, not forced — nothing was summarized.
         return Ok(SummarizationOutcome {
             summarized_messages: 0,
