@@ -22,13 +22,13 @@ T4 official release). llama-server b11946 family (T4 LFM3-think row: v0.8.0).
 | 9 | LFM2.5-2.6B QAD | 2.6B | 36.2% | 36.2 | 36.2 | 12.5 | 45.9 | 51.3 |
 | 10 | MiniCPM5-2B zero-shot | 2.5B | 33.3%‡ | 33 | 33 | — | — | 69.0 |
 | 11 | Gemma-4-E2B QAT | ~2.6B | 26.1% | 27.5 | 24.6 | 15.0 | 30.6 | 51.7 |
-| 12 | Nanbeige4.2-3B (partial n=108/138, 32K) | 4.17B | **~60%**†† | 55.6 | 64.8 | 38.9 | 70.8 | 76.8 |
+| 12 | Nanbeige4.2-3B off (partial n=108/138, 32K) | 4.17B | **60.2%**†† | 55.6 | 64.8 | 38.9 | 70.8 | 76.8 |
 
 † not the vendor default — kept because the Qwen attribution experiment (below)
 shows it is the better deployment config for this harness.
 ‡ historical rows from the 2026-10-28 doc, same hard-signal semantics; partial-
 credit fields not present in those run dirs.
-†† partial sample (108/138 complete before an external ~/models wipe on the eval Mac killed the run; the remaining 30 were mixed-difficulty tail — final within ~±5pp of 60%. Think-mode row withdrawn separately (16K ctx, 839 truncations).
+†† partial sample: 108/138 complete before an external ~/models wipe on the eval Mac killed the run; the remaining 30 were mixed-difficulty tail, so the full-138 figure sits within roughly ±5pp of 60.2%. Think-mode row withdrawn separately (ran at 16K ctx due to T4 VRAM contention — 839 prompt truncations make it non-comparable; a valid think row needs a dedicated ~14 GB VRAM window for the dense 32K KV).
 * cmd-hit = mean `cmd_partial` (share of expected commands issued), "close-but-
 not-passed" signal. Older Mac runs predate the field.
 
@@ -43,7 +43,7 @@ not-passed" signal. Older Mac runs predate the field.
 | MiniCPM5-2B | 33.3% | **45.7%** | **+12.4pp** | 49.3 / 42.0 | 15.0 / 58.2 |
 | LFM2.5-2.6B QAD | 36.2% | 37.7% | +1.5pp | 36.2 / 39.1 | 10.0 / 49.0 |
 | Gemma-4-E2B | 26.1% | 27.5% | +1.4pp | 30.4 / 24.6 | 15.0 / 32.7 |
-| Nanbeige4.2-3B | ~60% (n=108) | withdrawn (16K ctx, 839 truncations) | | | |
+| Nanbeige4.2-3B | **60.2%** (n=108) | withdrawn (16K ctx, 839 truncations) | 55.6 / 64.8 | 38.9 / 70.8 |
 
 **Spark-X2.6-1.7B + thinking is the strongest edge configuration measured**
 (63.8%, zh 58.0 / en 69.6 / multi-step 50.0 / cmd-hit 82.1%, 0 af): it beats
