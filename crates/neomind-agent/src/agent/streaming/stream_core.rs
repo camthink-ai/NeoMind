@@ -1571,7 +1571,13 @@ pub async fn process_stream_events_with_safeguards(
                                     }
                                     tracing::info!(tool = %name, "Advisory: identical non-reusable call succeeded last round");
                                 }
-                                let result_str = output.prompt_value().to_string();
+                                // Serialize the value the _duplicate advisory was
+                                // inserted INTO — the old `output.prompt_value()`
+                                // re-serialization dropped the advisory, so the
+                                // model never saw the don't-repeat hint and the
+                                // soft dedup (the only one, post hard-break
+                                // removal) was dead in practice.
+                                let result_str = result_value.to_string();
 
                                 // Slim large strings (image data URLs, big base64) inline:
                                 // walk the JSON tree, store each large value into cache

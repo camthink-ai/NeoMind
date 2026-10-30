@@ -3128,10 +3128,28 @@ pub async fn restart_handler(
         && !model_change_requested
         && !engine_change_requested
     {
+        // A companion knob rode along on an unchanged main (e.g. ctx=32768
+        // while already at 32768 + vlm_ctx=16384). The overrides were saved
+        // above; apply them NOW — the early return used to skip the
+        // companion respawn, so the new value only took effect after the
+        // NEXT restart (review 2026-10-30).
+        if vlm_change_requested {
+            let manager = get_manager()?;
+            if health_check(cfg.vlm_port).await {
+                kill_process_on_port(cfg.vlm_port);
+                tokio::time::sleep(Duration::from_millis(300)).await;
+            }
+            if let Err(skip) = ensure_companion(&state.data_dir, &cfg, &manager).await {
+                return Err(ErrorResponse::internal(format!(
+                    "vision companion restart failed: {skip}"
+                )));
+            }
+        }
         return ok(json!({
             "restarted": true,
             "already_running": true,
             "endpoint": format!("http://127.0.0.1:{}", cfg.port),
+            "companion_restarted": vlm_change_requested.then_some(true),
         }));
     }
 

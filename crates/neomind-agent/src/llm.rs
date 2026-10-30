@@ -1114,25 +1114,45 @@ impl LlmInterface {
             prompt.push('\n');
         }
 
-        // Add intent-specific addon if we can classify the user's message
+        // Add intent-specific addon if we can classify the user's message.
+        // Agent-domain requests are exempt: the keyword classifier has no
+        // Agent category, so "查 demo-agent 的对话历史" matched the bare
+        // "历史/history" keyword, classified as Data, and injected a
+        // "use `neomind device history`" nudge that pulled the model into
+        // the device domain (review 2026-10-30).
         if let Some(msg) = user_message {
-            let intent = self.intent_classifier.classify(msg);
+            let msg_lower = msg.to_lowercase();
+            let agent_domain = [
+                "agent",
+                "代理",
+                "助手",
+                "会话",
+                "对话",
+                "conversation",
+                "cron",
+                "定时任务",
+            ]
+            .iter()
+            .any(|m| msg_lower.contains(m));
+            if !agent_domain {
+                let intent = self.intent_classifier.classify(msg);
 
-            // Get intent addon using legacy PromptBuilder
-            use crate::prompts::PromptBuilder;
+                // Get intent addon using legacy PromptBuilder
+                use crate::prompts::PromptBuilder;
 
-            let task_type = match intent.category {
-                crate::agent::staged::IntentCategory::Device => "device",
-                crate::agent::staged::IntentCategory::Data => "data",
-                crate::agent::staged::IntentCategory::Rule => "rule",
-                _ => "general",
-            };
+                let task_type = match intent.category {
+                    crate::agent::staged::IntentCategory::Device => "device",
+                    crate::agent::staged::IntentCategory::Data => "data",
+                    crate::agent::staged::IntentCategory::Rule => "rule",
+                    _ => "general",
+                };
 
-            // Get intent-specific addon from PromptBuilder
-            let addon = PromptBuilder::new().get_intent_prompt_addon(task_type);
+                // Get intent-specific addon from PromptBuilder
+                let addon = PromptBuilder::new().get_intent_prompt_addon(task_type);
 
-            if !addon.is_empty() {
-                prompt.push_str(&addon);
+                if !addon.is_empty() {
+                    prompt.push_str(&addon);
+                }
             }
         }
 
