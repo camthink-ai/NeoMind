@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.5] - 2026-10-30 — chat context continuity, fresh tool results, and persistent builtin engine settings
+
+### Highlights
+- Keep conversation summaries and current-task skills available across tool rounds and final replies.
+- Read fresh device state during verification, and retain partial evidence from interrupted tool calls.
+- Preserve builtin engine settings and installed model metadata across restarts, including offline cold starts after metadata migration.
+- Recover the chat UI when fallback replies or terminal stream events were previously missed.
+
+### Fixed — chat requests and conversation history
+- Conversation summaries now reach the model in text and image chats, including streaming and non-streaming requests. Tool continuations, final summaries, and recovery requests retain the same turn-level summary and account for it in the context budget without changing stored history indices.
+- Final-summary requests now omit tool definitions when tools are disabled, preventing the backend's tool-format instructions from conflicting with the request for a direct answer.
+- Clear the previous turn's transient skill guides before building the first request. Skills loaded during the current turn remain available to subsequent tool rounds.
+- Restore the streaming system-prompt layout used before 1.2.4: resolve time and task guidance in the system message and preserve the user's text without an appended context footer. Tool-round continuations retain the original request and classify its intent instead of classifying tool output. This removes a prompt-layout regression risk; model-quality recovery still requires a controlled evaluation.
+- Streaming failures send terminal events so the chat composer can settle. Non-streaming fallback replies appear immediately and persist across reloads. A client watchdog handles missing terminal frames; heartbeats alone do not clear its error deadline.
+- Actual history truncation triggers background summarization and a per-session UI notice. Requests whose system/tool overhead already exhausts the model window fail early with context-setting guidance.
+
+### Fixed — tool execution and loop progress
+- Replace the third-identical-successful-call refusal with a no-new-information check over consecutive rounds. Changed results or new calls reset the check; existing failed-call, round, and wall-clock limits remain active.
+- Live CLI queries, file reads, web fetches, and unknown extension tools bypass the session result cache. Repeated status polls and read-after-write verification observe fresh state instead of reusing results for up to five minutes; static skill-guide caching remains available.
+- Apply replay safety to the actual streaming and multimodal tool executor: interrupted side-effectful calls are not automatically repeated and report an unknown outcome with verify-first guidance. Safe tools retain transient-error retries.
+- Preserve partial tool output alongside failure details through model requests and saved tool results. Classify failures from execution status and shell exit/timeout information, rather than business payload fields named `error` or `invalid`.
+
+### Fixed — builtin models and engine lifecycle
+- Active-model selection resolves installed catalog-only models on cold starts, and the model list no longer duplicates them as local imports.
+- Persist catalog runtime metadata with installed weights, bound to the manifest checksum. Cold starts retain sampling defaults, thinking settings, context limits, roles, and projector metadata. Model discovery excludes vision companions; companion recovery and deletion also recognize persisted roles.
+- Persist engine settings across service restarts, including explicit model-default context and automatic GPU-offload choices that override inherited environment pins. A companion explicitly set to automatic offload does not inherit the main model's GPU-layer pin.
+- Validate all restart parameters before saving, serialize engine changes, and atomically replace configuration files. Save failures return errors instead of reporting success. Requests changing both main and companion settings apply both changes.
+- The watchdog reloads current engine settings before respawning. Temporary offload degradation after repeated pinned-start failures no longer freezes later context or KV-setting changes. Cache GPU runtime-variant probes instead of repeatedly launching hardware detection during status polling.
+- Update the MiniCPM-V-4.7-1B weight checksum and F16-4x projector filename, checksum, and size to match the refreshed model package.
+
+### Added
+- `neomind device list --summary` reports total, online, offline, and device-type counts.
+- Restart API GPU-layer options `ngl` and `vlm_ngl` accept a numeric pin or `auto`; these options are not yet exposed as editable controls in the frontend.
+
+### Upgrade notes
+- API-owned engine settings take precedence over inherited environment values. Explicit default/auto selections now survive service restarts.
+- Existing catalog-model installations acquire their local runtime-metadata snapshot on a successful model-catalog refresh or reselection. Installations that have never saved this metadata need that refresh before a fully offline restart can reproduce catalog defaults.
+
+---
+
 ## [1.2.4] - 2026-10-29 — chat-turn wedge hardening, GPU offload auto-sizing, replay-safe tool retries, and per-run token budgets
 
 ### Fixed — chat turn wedge: thinking-only stall + duplicate-call loop always end in a user-visible reply

@@ -89,81 +89,11 @@ impl ToolResultCache {
     }
 }
 
-/// Check whether a tool call is safe to cache.
-///
-/// A call is cacheable when:
-///   * the resolved tool name is not a known mutating tool, AND
-///   * for shell calls, the underlying `neomind` CLI command is read-only
-///     (list/get/history/etc.) — mutating actions (create/delete/control/...)
-///     bypass the cache so their effects are always re-fetched.
-pub(crate) fn is_tool_cacheable(name: &str, arguments: &Value) -> bool {
-    // Resolve through the mapper so CLI domains (device, rule, ...) report as "shell".
-    let resolved = super::resolve::resolve_tool_name(name);
-
-    if resolved == "shell" {
-        // Inspect the command string for mutation actions.
-        let cmd = arguments
-            .get("command")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        return is_read_only_cli_command(cmd);
-    }
-
-    // The `memory` tool is NEVER cacheable. Its files change via `add`/`replace`/
-    // `remove`/`create` actions within the same session, plus background summarization
-    // and user edits. Caching `read`/`list` returns stale templates after writes —
-    // observed in eval as read returning the 34-char template forever after the first
-    // pre-write read, while `list` (different cache key) saw fresh content.
-    if resolved == "memory" {
-        return false;
-    }
-
-    // Other tools (skill, web_fetch, vision, ...) are read-only by default.
-    true
-}
-
-/// Read-only `neomind` CLI action verbs. Anything else mutates state.
-const READ_ONLY_ACTIONS: &[&str] = &[
-    "list",
-    "get",
-    "history",
-    "latest",
-    "types",
-    "models",
-    "status",
-    "logs",
-    "memory",
-    "executions",
-    "latest-execution",
-    "conversation",
-    "data-sources",
-    "metrics",
-    "webhook-url",
-    "channel-list",
-    "channel-get",
-    "channel-types",
-    "test-code",
-    "market-list",
-];
-
-/// Determine whether a `neomind <domain> <action> ...` command is read-only.
-/// Returns `false` (not cacheable) for any unrecognized shape so that
-/// unknown mutation commands are never cached.
-fn is_read_only_cli_command(command: &str) -> bool {
-    let trimmed = command.trim();
-    if !trimmed.starts_with("neomind ") {
-        // Non-neomind shell commands: never cache (could be `rm`, `mv`, etc.).
-        return false;
-    }
-    // `neomind <domain> <action> ...`
-    let parts: Vec<&str> = trimmed.splitn(3, ' ').collect();
-    let action = parts
-        .get(2)
-        .map(|s| s.split_whitespace().next().unwrap_or(""));
-    match action {
-        Some(act) => READ_ONLY_ACTIONS.contains(&act),
-        None => true, // `neomind <domain>` with no action defaults to list
-    }
+/// Cache only immutable skill guides. Read-only does not imply immutable:
+/// device status, file reads and web fetches must observe fresh state, including
+/// after a write in the same turn. Unknown/extension tools fail closed.
+pub(crate) fn is_tool_cacheable(name: &str, _arguments: &Value) -> bool {
+    super::resolve::resolve_tool_name(name) == "skill"
 }
 
 /// Minimum size (bytes) for a result to be considered large enough to strip base64 from.
@@ -190,10 +120,10 @@ mod tests {
 
     #[test]
     fn test_is_tool_cacheable() {
-        // Read-only shell commands are cacheable
+        // Live reads bypass the cache even though they have no side effects.
         let list_args = serde_json::json!({"command": "neomind device list"});
-        assert!(is_tool_cacheable("shell", &list_args));
-        assert!(is_tool_cacheable("device", &list_args));
+        assert!(!is_tool_cacheable("shell", &list_args));
+        assert!(!is_tool_cacheable("device", &list_args));
 
         // Mutating shell commands bypass cache
         let delete_args = serde_json::json!({"command": "neomind device delete abc123"});
@@ -210,7 +140,7 @@ mod tests {
         let rm_args = serde_json::json!({"command": "rm -rf /tmp/foo"});
         assert!(!is_tool_cacheable("shell", &rm_args));
 
-        // Non-shell tools are cacheable
+        // Only static skill guides are cacheable.
         assert!(is_tool_cacheable("skill", &serde_json::json!({})));
 
         // Memory tool is NEVER cacheable — files mutate via add/replace/remove

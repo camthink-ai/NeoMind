@@ -12,9 +12,7 @@ use futures::{Stream, StreamExt};
 
 use super::{next_chunk_or_timeout, next_chunk_or_timeout_or_interrupt, StreamWait};
 
-use super::context::{
-    build_context_window_with_config, build_context_window_with_summary, ToolExecutionResult,
-};
+use super::context::{build_context_window_with_summary, ToolExecutionResult};
 use super::dedup::deduplicate_tool_results;
 use super::intent::{all_tools_were_read_only, build_list_only_dead_end_prompt};
 use super::resolve::resolve_cached_arguments;
@@ -34,7 +32,6 @@ use crate::agent::types::{AgentEvent, AgentInternalState, AgentMessage, ToolCall
 // behind that same dedup.)
 use crate::error::{NeoMindError, Result};
 use crate::llm::LlmInterface;
-use neomind_core::llm::compaction::CompactionConfig;
 
 /// Configuration for stream processing safeguards
 ///
@@ -155,6 +152,11 @@ pub async fn process_stream_events_with_safeguards(
     conversation_summary: Option<String>,
     summary_up_to_index: Option<u64>,
 ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
+    // Clear before building even the first request/overhead estimate. Later
+    // ReAct rounds must retain skills loaded during THIS user turn.
+    llm_interface.clear_skill_context().await;
+    let turn_context =
+        super::context::TurnContext::new(conversation_summary.clone(), summary_up_to_index);
     let user_message = user_message.to_string();
 
     // === INTENT RECOGNITION: Understand user intent before LLM call ===
@@ -323,8 +325,6 @@ pub async fn process_stream_events_with_safeguards(
             let mut content_before_tools = String::new();
             let mut thinking_content = String::new();
 
-            // === SKILL CONTEXT: Clear transient skill context from previous turn ===
-            llm_interface.clear_skill_context().await;
             let mut has_content = false;
             let mut has_thinking = false;
 
@@ -404,12 +404,12 @@ pub async fn process_stream_events_with_safeguards(
             let turn_started_at = Instant::now();
             // Accumulate ALL tool results across rounds for final summary
             let mut all_round_tool_results: Vec<(String, String)> = Vec::new();
+            let mut any_failed_tool_call = false;
             // Every (tool + arguments) call executed this turn; a round with
             // zero NEW signatures is repetition, not exploration.
             let mut seen_tool_sigs: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
-            let mut last_round_fingerprint: Option<u64> = None;
-            let mut identical_rounds: usize = 0;
+            let mut loop_progress = ChatLoopProgress::default();
             // [identical-call reuse] Small models re-issue byte-identical calls
             // after a SUCCESS (observed: two identical image_edit calls back to
             // back — each a real execution on a 2.6B model, ~30s of pure waste).
@@ -429,22 +429,6 @@ pub async fn process_stream_events_with_safeguards(
             //     returned; a note is prepended for the model to read.
             let mut last_round_success_sigs: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
-            // #3b duplicate hard-break: signatures that were ALREADY
-            // duplicates last round (advisory fired, call re-executed).
-            // One more identical round is a degenerate fixation — the 3rd
-            // consecutive identical call is refused pre-execution instead
-            // of nagged (live 2026-10-27: 3× identical `skill search`,
-            // `_duplicate` advisory ignored twice by a 2B model). Same
-            // legitimacy constraints as the advisory: consecutive rounds
-            // only, succeeded-only — check→write→verify never matches.
-            let mut last_round_dup_sigs: std::collections::HashSet<String> =
-                std::collections::HashSet::new();
-            // Once refused by the duplicate break, an identical call stays
-            // refused for the rest of the turn (sticky: a fixated small
-            // model will otherwise keep re-asking every round).
-            let refused_dup_sigs: std::sync::Arc<
-                std::sync::Mutex<std::collections::HashSet<String>>,
-            > = std::sync::Arc::new(std::collections::HashSet::new().into());
             let executed_tool_signatures: std::sync::Arc<
                 std::sync::Mutex<std::collections::HashMap<String, String>>,
             > = std::sync::Arc::new(std::collections::HashMap::new().into());
@@ -608,10 +592,7 @@ pub async fn process_stream_events_with_safeguards(
                     let history_for_llm: Vec<neomind_core::Message> = {
                         // Build context with the same budget-managed context
                         // builder as the initial call.
-                        let config = CompactionConfig::for_context_size(max_context);
-                        let compacted = build_context_window_with_config(
-                            &state_guard.memory, effective_max, &config
-                        );
+                        let compacted = turn_context.build(&state_guard.memory, effective_max);
                         compacted
                         .iter().map(|msg| msg.to_core()).collect::<Vec<_>>()
                     };
@@ -727,9 +708,7 @@ pub async fn process_stream_events_with_safeguards(
                             // 添加"). When any prior shell command exited non-zero,
                             // remind the model that lying about it is forbidden and
                             // point at the recovery path.
-                            let has_failed_cmds = all_round_tool_results
-                                .iter()
-                                .any(|(_, r)| tool_result_is_error(r));
+                            let has_failed_cmds = any_failed_tool_call;
                             let failure_guard = if has_failed_cmds {
                                 "\n\n⚠️ Some earlier command FAILED (exit≠0). You MUST NOT claim failed operations succeeded in your answer. Either fix and retry using the error/suggestion (e.g. resolve the REAL id via `neomind dashboard list` / `device list`), or report the failure honestly with its cause.".to_string()
                             } else {
@@ -743,7 +722,7 @@ pub async fn process_stream_events_with_safeguards(
                                 - If information that ONLY the user can provide is missing → ask ONE concise clarifying question in your final answer; do not guess and do not keep calling tools to search for it.\n\
                                 - If the original goal is NOT yet verified end-to-end (expected data not returned, created resource not yet readable) → continue with the next tool call now — a plan alone is not a completed task.\n\
                                 - If you need different tools → call them in ONE batch using JSON array: [{{\"name\":\"tool\",\"arguments\":{{...}}}}]\n\
-                                - NEVER call the same tool with the same arguments — results are already in context.{}",
+                                - Repeat a read-only call only when fresh state is needed to verify progress; otherwise use the results already in context.{}",
                                 tool_iteration_count + 1,
                                 executed_summary,
                                 failure_guard
@@ -769,7 +748,8 @@ pub async fn process_stream_events_with_safeguards(
                         }
                     };
 
-                    let round_stream_result = llm_interface.chat_stream_with_history_thinking(
+                    let round_stream_result = llm_interface.chat_stream_tool_followup(
+                        &user_message,
                         &context_msg,
                         &history_for_llm,
                         thinking_override
@@ -800,7 +780,7 @@ pub async fn process_stream_events_with_safeguards(
 
                                 let summary_history: Vec<neomind_core::Message> = {
                                     let state_guard = internal_state.read().await;
-                                    let compacted = super::super::compact_tool_results(&state_guard.memory, 2);
+                                    let compacted = turn_context.build(&state_guard.memory, effective_max);
                                     compacted.iter().map(|msg| msg.to_core()).collect()
                                 };
 
@@ -1358,25 +1338,11 @@ pub async fn process_stream_events_with_safeguards(
 
                     let reuse_map = executed_tool_signatures.clone();
                     let failed_map = failed_tool_signatures.clone();
-                    // Read-only snapshots for the duplicate hard-break: at
-                    // dispatch time these hold the PREVIOUS round's sets
-                    // (swapped at the end of each round's result loop).
-                    let prev_round_success = std::sync::Arc::new(
-                        last_round_success_sigs.clone(),
-                    );
-                    let prev_round_dup = std::sync::Arc::new(
-                        last_round_dup_sigs.clone(),
-                    );
-                    let refused_dup_map = refused_dup_sigs.clone();
-
                     let tool_futures = futures::stream::iter(tool_inputs.into_iter().map(|(i, name, arguments)| {
                         let tools_clone = tools.clone();
                         let cache_clone = cache.clone();
                         let reuse_map = reuse_map.clone();
                         let failed_map = failed_map.clone();
-                        let prev_round_success = prev_round_success.clone();
-                        let prev_round_dup = prev_round_dup.clone();
-                        let refused_dup_map = refused_dup_map.clone();
 
                         async move {
                             // Shell policy check — same deny-list as Loop A (tool_loop.rs).
@@ -1418,42 +1384,6 @@ pub async fn process_stream_events_with_safeguards(
                                         _name: name.clone(),
                                         arguments: arguments.clone(),
                                         result: Err(crate::toolkit::error::ToolError::Execution(msg)),
-                                    });
-                                }
-                            }
-
-                            // === DUPLICATE BREAK (see last_round_dup_sigs) ===
-                            // Sticky: refused once this turn → always refused.
-                            // New refusal: identical signature succeeded AND was
-                            // already a duplicate last round → this would be the
-                            // 3rd consecutive identical execution. Advisory-only
-                            // nagging is not enough for small models (live
-                            // 2026-10-27: `_duplicate` hint ignored twice).
-                            if !reusable {
-                                let third_consecutive = prev_round_success.contains(&sig)
-                                    && prev_round_dup.contains(&sig);
-                                // Hoist the lock: std Mutex is non-reentrant,
-                                // so keep the guard's lifetime visibly short
-                                // of the insert below.
-                                let already_refused =
-                                    refused_dup_map.lock().unwrap().contains(&sig);
-                                if third_consecutive || already_refused {
-                                    if third_consecutive {
-                                        refused_dup_map
-                                            .lock()
-                                            .unwrap()
-                                            .insert(sig.clone());
-                                        tracing::warn!(
-                                            tool = %name,
-                                            "Duplicate break: identical successful call already ran twice consecutively — refusing to re-execute"
-                                        );
-                                    }
-                                    return (i, name.clone(), ToolExecutionResult {
-                                        _name: name.clone(),
-                                        arguments: arguments.clone(),
-                                        result: Err(crate::toolkit::error::ToolError::Execution(
-                                            duplicate_break_message(),
-                                        )),
                                     });
                                 }
                             }
@@ -1553,11 +1483,12 @@ pub async fn process_stream_events_with_safeguards(
                     // Process results
                     let mut tool_calls_with_results: Vec<ToolCall> = Vec::new();
                     let mut tool_call_results: Vec<(String, String)> = Vec::new();
+                    // Compare actual outcomes before advisory/cache-reference
+                    // decoration; those annotations are not new information.
+                    let mut round_progress_results: Vec<(String, String)> = Vec::new();
+                    let mut round_has_errors = false;
                     let mut this_round_success_sigs: std::collections::HashSet<String> =
                         std::collections::HashSet::new();
-                    let mut this_round_dup_sigs: std::collections::HashSet<String> =
-                        std::collections::HashSet::new();
-
                     for (_, name, execution) in tool_results_executed {
                         // Use arguments from the execution result (preserves per-call arguments for same-name tools)
                         let exec_arguments = execution.arguments.clone();
@@ -1606,23 +1537,29 @@ pub async fn process_stream_events_with_safeguards(
                         let was_dup = !REUSABLE_TOOLS.contains(&name.as_str())
                             && last_round_success_sigs.contains(&dup_sig);
 
+                        let outcome = match &execution.result {
+                            Ok(output) => serde_json::json!({
+                                "success": output.success,
+                                "data": output.data,
+                                "error": output.error,
+                            }).to_string(),
+                            Err(error) => error.to_string(),
+                        };
+                        let succeeded = execution.result.as_ref().is_ok_and(|output|
+                            crate::toolkit::tool::effective_success(
+                                &crate::tools::resolve_tool_name(&name), output,
+                            )
+                        );
+                        round_has_errors |= !succeeded;
+                        any_failed_tool_call |= !succeeded;
+                        round_progress_results.push((dup_sig.clone(), outcome));
+
                         match execution.result {
                             Ok(output) => {
                                 if crate::toolkit::tool::effective_success(&name, &output) {
                                     this_round_success_sigs.insert(dup_sig.clone());
-                                    // Only SUCCESSFUL duplicates arm the hard
-                                    // break — retrying a failed call stays
-                                    // legitimate (see failed_tool_signatures).
-                                    if was_dup {
-                                        this_round_dup_sigs.insert(dup_sig);
-                                    }
                                 }
-                                let mut result_value = if output.success {
-                                    output.data.clone()
-                                } else {
-                                    output.error.clone().map(|e| serde_json::json!({"error": e}))
-                                        .unwrap_or_else(|| serde_json::json!("Error"))
-                                };
+                                let mut result_value = output.prompt_value();
                                 if was_dup {
                                     if let Some(obj) = result_value.as_object_mut() {
                                         obj.insert(
@@ -1634,11 +1571,7 @@ pub async fn process_stream_events_with_safeguards(
                                     }
                                     tracing::info!(tool = %name, "Advisory: identical non-reusable call succeeded last round");
                                 }
-                                let result_str = if output.success {
-                                    serde_json::to_string(&output.data).unwrap_or_else(|_| "Success".to_string())
-                                } else {
-                                    output.error.clone().unwrap_or_else(|| "Error".to_string())
-                                };
+                                let result_str = output.prompt_value().to_string();
 
                                 // Slim large strings (image data URLs, big base64) inline:
                                 // walk the JSON tree, store each large value into cache
@@ -1714,7 +1647,6 @@ pub async fn process_stream_events_with_safeguards(
                     }
 
                     last_round_success_sigs = this_round_success_sigs;
-                    last_round_dup_sigs = this_round_dup_sigs;
                     // Update recently executed tools list (for multi-round context)
                     all_round_tool_results.extend(tool_call_results.iter().cloned());
                     for (name, _result) in &tool_call_results {
@@ -1846,15 +1778,9 @@ pub async fn process_stream_events_with_safeguards(
                     // changed (online→offline, a new metric) or any new call
                     // resets the counter — exploration and verify-after-write
                     // are not loops. Only repeated no-op rounds are.
-                    let round_fingerprint = tool_round_fingerprint(&tool_call_results);
-                    let round_is_repeat = round_new_calls == 0
-                        && last_round_fingerprint == Some(round_fingerprint);
-                    if round_is_repeat {
-                        identical_rounds += 1;
-                    } else {
-                        identical_rounds = 0;
-                    }
-                    last_round_fingerprint = Some(round_fingerprint);
+                    let identical_rounds = loop_progress.observe(
+                        round_new_calls, &round_progress_results,
+                    );
                     let chat_repeating = identical_rounds >= CHAT_IDENTICAL_ROUNDS_LIMIT;
                     if chat_repeating {
                         tracing::warn!(
@@ -1973,9 +1899,7 @@ pub async fn process_stream_events_with_safeguards(
                     // summary prompt. Payload words ("error"/"invalid" as
                     // device field names) are not failures; scanning all-round
                     // text misclassified 30 successful reads as tool errors.
-                    let last_round_has_errors = tool_call_results
-                        .iter()
-                        .any(|(_, result)| tool_result_is_error(result));
+                    let last_round_has_errors = round_has_errors;
                     // The preamble "Let me check..." is NOT a final answer.
                     // Force summary when tool errors exist, regardless of content_before_tools.
                     // Chars, not bytes: `.len()` counted ~3 bytes per CJK
@@ -1998,7 +1922,7 @@ pub async fn process_stream_events_with_safeguards(
                         // Build compact history for the summary call
                         let summary_history: Vec<neomind_core::Message> = {
                             let state_guard = internal_state.read().await;
-                            let compacted = super::super::compact_tool_results(&state_guard.memory, 2);
+                            let compacted = turn_context.build(&state_guard.memory, effective_max);
                             compacted.iter().map(|msg| msg.to_core()).collect()
                         };
 
@@ -2329,7 +2253,7 @@ pub async fn process_stream_events_with_safeguards(
 
                         let summary_history: Vec<neomind_core::Message> = {
                             let state_guard = internal_state.read().await;
-                            let compacted = super::super::compact_tool_results(&state_guard.memory, 2);
+                            let compacted = turn_context.build(&state_guard.memory, effective_max);
                             compacted.iter().map(|msg| msg.to_core()).collect()
                         };
 
@@ -2403,12 +2327,11 @@ pub async fn process_stream_events_with_safeguards(
                         // Build a compact history for the retry (keep last few messages)
                         let state_guard = internal_state.read().await;
                         let retry_history: Vec<neomind_core::Message> = {
-                            let non_system: Vec<&AgentMessage> = state_guard.memory.iter()
-                                .filter(|m| m.role != "system")
-                                .collect();
+                            let context = turn_context.build(&state_guard.memory, effective_max);
+                            let non_system: Vec<&AgentMessage> = context.iter().collect();
                             // Keep at most last 6 messages to reduce prompt size
                             let keep = non_system.len().saturating_sub(6);
-                            non_system[keep..].iter().map(|m| m.to_core()).collect()
+                            context.iter().filter(|m| m.role == "system").chain(non_system[keep..].iter().copied().filter(|m| m.role != "system")).map(|m| m.to_core()).collect()
                         };
                         drop(state_guard);
 
@@ -2427,7 +2350,8 @@ pub async fn process_stream_events_with_safeguards(
                             )
                         };
 
-                        let retry_result = llm_interface.chat_stream_with_history_thinking(
+                        let retry_result = llm_interface.chat_stream_tool_followup(
+                            &user_message,
                             &retry_prompt,
                             &retry_history,
                             Some(false), // Force disable thinking
@@ -2619,42 +2543,6 @@ pub(crate) fn effective_history_budget(max_context: usize, prompt_overhead: usiz
     effective
 }
 
-/// Whether a tool result represents a FAILED call.
-///
-/// Tool payloads (device JSON, API responses) legitimately contain words like
-/// "error"/"invalid" as FIELD names, so a substring scan over the whole
-/// payload misclassifies successful reads (2026-10-30: 30 rounds of
-/// successful `device list`/`device get` were summarized as "tool errors").
-/// Only the structured outcome counts.
-fn tool_result_is_error(result: &str) -> bool {
-    let trimmed = result.trim();
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
-        if value.get("success").and_then(|s| s.as_bool()) == Some(false) {
-            return true;
-        }
-        if value.get("error").map(|e| !e.is_null()).unwrap_or(false) {
-            return true;
-        }
-        if value.get("timed_out").and_then(|t| t.as_bool()) == Some(true) {
-            return true;
-        }
-        if let Some(code) = value.get("exit_code").and_then(|c| c.as_i64()) {
-            if code != 0 {
-                return true;
-            }
-        }
-        if let Some(code) = value.pointer("/data/exit_code").and_then(|c| c.as_i64()) {
-            if code != 0 {
-                return true;
-            }
-        }
-        return false;
-    }
-    // Plain-text errors: only explicit leading markers, never payload words.
-    let lower = trimmed.to_lowercase();
-    lower.starts_with("error") || lower.starts_with("failed") || lower.starts_with("invalid")
-}
-
 /// Fingerprint of one round's tool results (name + payload). The chat loop
 /// breaker compares consecutive rounds: identical calls with a CHANGED result
 /// are progress (verification/polling), not a loop.
@@ -2666,6 +2554,25 @@ fn tool_round_fingerprint(results: &[(String, String)]) -> u64 {
         result.hash(&mut hasher);
     }
     hasher.finish()
+}
+
+#[derive(Default)]
+struct ChatLoopProgress {
+    previous: Option<u64>,
+    identical_rounds: usize,
+}
+
+impl ChatLoopProgress {
+    fn observe(&mut self, new_calls: usize, results: &[(String, String)]) -> usize {
+        let fingerprint = tool_round_fingerprint(results);
+        self.identical_rounds = if new_calls == 0 && self.previous == Some(fingerprint) {
+            self.identical_rounds + 1
+        } else {
+            0
+        };
+        self.previous = Some(fingerprint);
+        self.identical_rounds
+    }
 }
 
 /// Loop-break decision (pure, tested): after `LOOP_BREAK_AFTER_FAILURES`
@@ -2687,16 +2594,32 @@ pub(crate) fn loop_break_message(failures: u32, last_err: &str) -> Option<String
     ))
 }
 
-/// Refusal text for the duplicate hard-break (see `last_round_dup_sigs`):
-/// unlike the advisory, this lands as a tool ERROR so even a tiny model
-/// cannot read it as a normal result to repeat against.
-pub(crate) fn duplicate_break_message() -> String {
-    "DUPLICATE BREAK: you already ran this EXACT call (same tool + arguments) twice in a row and both succeeded — it will NOT run again. Do NOT repeat it. Produce your final answer to the user NOW using the results you already have. / 你已连续两次执行完全相同的调用且均已成功，系统拒绝再次执行。请立即基于已有结果给出最终回答，不要再重复调用。".to_string()
-}
-
 #[cfg(test)]
 mod history_budget_tests {
     use super::*;
+
+    #[test]
+    fn repeated_poll_can_change_state_on_third_and_later_calls() {
+        let mut progress = ChatLoopProgress::default();
+        let pending = vec![("shell|status".into(), "pending".into())];
+        let ready = vec![("shell|status".into(), "ready".into())];
+        assert_eq!(progress.observe(1, &pending), 0);
+        assert_eq!(progress.observe(0, &pending), 1);
+        assert_eq!(progress.observe(0, &ready), 0);
+        assert_eq!(progress.observe(0, &ready), 1);
+        assert_eq!(progress.observe(0, &pending), 0);
+    }
+
+    #[test]
+    fn repeated_unchanged_rounds_stop_but_new_calls_reset_progress() {
+        let mut progress = ChatLoopProgress::default();
+        let results = vec![("shell|status".into(), "pending".into())];
+        assert_eq!(progress.observe(1, &results), 0);
+        assert_eq!(progress.observe(0, &results), 1);
+        assert_eq!(progress.observe(0, &results), 2);
+        assert_eq!(progress.observe(0, &results), 3);
+        assert_eq!(progress.observe(1, &results), 0);
+    }
 
     /// The shell tool reports success=true with the exit code in DATA —
     /// the guards must read the exit code, or failing shell commands count
@@ -2724,36 +2647,32 @@ mod history_budget_tests {
         assert!(!crate::toolkit::tool::effective_success("web_fetch", &e));
     }
 
-    /// The duplicate hard-break refusal must demand a FINAL ANSWER in both
-    /// languages — a 2B model reading only one still gets the instruction.
-    #[test]
-    fn duplicate_break_message_demands_final_answer() {
-        let msg = duplicate_break_message();
-        assert!(msg.contains("DUPLICATE BREAK"), "{msg}");
-        assert!(
-            msg.contains("NOT run again"),
-            "must state the refusal: {msg}"
-        );
-        assert!(
-            msg.contains("final answer"),
-            "must redirect to answering: {msg}"
-        );
-        assert!(msg.contains("最终回答"), "bilingual instruction: {msg}");
-    }
-
     /// Successful device/API payloads contain "error"/"invalid" as FIELD
     /// names; only the structured outcome may count as a failed call.
     /// 2026-10-30: 30 rounds of successful device reads were summarized as
     /// "the tool calls above returned errors".
     #[test]
     fn tool_result_error_detection_ignores_payload_words() {
-        assert!(!tool_result_is_error(
-            r#"{"devices":[{"id":"a","error":"none","status":"invalid"}],"exit_code":0}"#
+        use crate::toolkit::tool::{effective_success, ToolOutput};
+        let payload = serde_json::json!({"error": "none", "status": "invalid"});
+        assert!(effective_success(
+            "extension_status",
+            &ToolOutput::success(payload)
         ));
-        assert!(!tool_result_is_error(r#"{"devices":[],"total":0}"#));
-        assert!(tool_result_is_error(r#"{"exit_code":1,"stderr":"boom"}"#));
-        assert!(tool_result_is_error(r#"{"error":"bad request"}"#));
-        assert!(tool_result_is_error("Error: command not found"));
+        assert!(effective_success(
+            "shell",
+            &ToolOutput::success(
+                serde_json::json!({"exit_code": 0, "stdout": "error: none, invalid: 0"})
+            )
+        ));
+        assert!(!effective_success(
+            "shell",
+            &ToolOutput::success(serde_json::json!({"exit_code": 1, "stderr": "boom"}))
+        ));
+        assert!(!effective_success(
+            "extension_status",
+            &ToolOutput::error("bad request")
+        ));
     }
 
     /// The loop breaker must treat a changed tool result as progress

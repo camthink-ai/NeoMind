@@ -31,6 +31,16 @@ pub struct ToolOutput {
 }
 
 impl ToolOutput {
+    /// Keep partial evidence on failure; callers apply their usual sanitizing
+    /// and size limits to this value before sending it to a model or UI.
+    pub(crate) fn prompt_value(&self) -> Value {
+        if self.success {
+            self.data.clone()
+        } else {
+            serde_json::json!({"success":false,"error":self.error,"data":self.data})
+        }
+    }
+
     /// Create a successful output.
     pub fn success(data: impl Into<Value>) -> Self {
         Self {

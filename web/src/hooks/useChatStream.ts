@@ -385,7 +385,12 @@ export function useChatStream(options: UseChatStreamOptions) {
     ) return
 
     lastEventAtRef.current = Date.now()
-    if (data.type !== "Error") errorAtRef.current = null
+    // Heartbeats prove connectivity, not recovery from an error. Only real
+    // generation/tool progress may disarm the missing-terminal watchdog.
+    if (
+      ((data.type === "Content" || data.type === "Thinking") && data.content) ||
+      data.type === "ToolCallStart" || data.type === "ToolCallEnd"
+    ) errorAtRef.current = null
 
     switch (data.type) {
       case "Thinking":

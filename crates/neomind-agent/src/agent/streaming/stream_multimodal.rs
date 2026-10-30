@@ -42,6 +42,10 @@ pub async fn process_multimodal_stream_events_with_safeguards(
 ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
     use neomind_core::ContentPart;
 
+    // Clear before the first model request, not when its stream is consumed.
+    llm_interface.clear_skill_context().await;
+    let turn_context =
+        super::context::TurnContext::new(conversation_summary.clone(), summary_up_to_index);
     let user_message = user_message.to_string();
 
     // Build multimodal message content with images
@@ -174,9 +178,6 @@ pub async fn process_multimodal_stream_events_with_safeguards(
         let mut tool_calls_detected = false;
         let mut tool_calls: Vec<ToolCall> = Vec::new();
         let mut content_before_tools = String::new();
-
-        // === SKILL CONTEXT: Clear transient skill context from previous turn ===
-        llm_interface.clear_skill_context().await;
 
         let stream_start = Instant::now();
         let mut last_event_time = Instant::now();
@@ -378,17 +379,8 @@ pub async fn process_multimodal_stream_events_with_safeguards(
 
                 match execution.result {
                     Ok(output) => {
-                        let result_value = if output.success {
-                            output.data.clone()
-                        } else {
-                            output.error.clone().map(|e| serde_json::json!({"error": e}))
-                                .unwrap_or_else(|| serde_json::json!("Error"))
-                        };
-                        let result_str = if output.success {
-                            serde_json::to_string(&output.data).unwrap_or_else(|_| "Success".to_string())
-                        } else {
-                            output.error.clone().unwrap_or_else(|| "Error".to_string())
-                        };
+                        let result_value = output.prompt_value();
+                        let result_str = output.prompt_value().to_string();
 
                         // Slim large strings (image data URLs, big base64) inline
                         // BEFORE display/sanitize: walks JSON, stores each large
@@ -508,12 +500,12 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                 // is already in history as a prior turn)
                 let cont_history: Vec<neomind_core::Message> = {
                     let state_guard = internal_state.read().await;
-                    let compacted = super::super::compact_tool_results(&state_guard.memory, 2);
+                    let compacted = turn_context.build(&state_guard.memory, effective_max);
                     compacted.iter().map(|msg| msg.to_core()).collect()
                 };
 
                 let cont_stream_result = llm_interface
-                    .chat_stream_with_history_thinking(&dead_end_prompt, &cont_history, None)
+                    .chat_stream_tool_followup(&user_message, &dead_end_prompt, &cont_history, None)
                     .await;
 
                 if let Ok(cont_stream) = cont_stream_result {
@@ -581,11 +573,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                             yield AgentEvent::tool_call_start_round(&name, execution.arguments.clone(), 2);
                             match execution.result {
                                 Ok(output) => {
-                                    let result_str = if output.success {
-                                        serde_json::to_string(&output.data).unwrap_or_else(|_| "Success".to_string())
-                                    } else {
-                                        output.error.clone().unwrap_or_else(|| "Error".to_string())
-                                    };
+                                    let result_str = output.prompt_value().to_string();
                                     // Slim large strings inline (see main path above).
                                     let slimmed_str = {
                                         let mut state = internal_state.write().await;
@@ -621,7 +609,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
             // This avoids dumping raw tool JSON to the user
             let summary_history: Vec<neomind_core::Message> = {
                 let state_guard = internal_state.read().await;
-                let compacted = super::super::compact_tool_results(&state_guard.memory, 2);
+                let compacted = turn_context.build(&state_guard.memory, effective_max);
                 compacted.iter().map(|msg| msg.to_core()).collect()
             };
 
@@ -724,17 +712,13 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                 // dead-end continuation above.
                 let nudge_history: Vec<neomind_core::Message> = {
                     let state_guard = internal_state.read().await;
-                    let config = neomind_core::llm::compaction::CompactionConfig::for_context_size(max_context);
-                    let compacted = super::context::build_context_window_with_config(
-                        &state_guard.memory,
-                        effective_max,
-                        &config,
-                    );
+                    let compacted = turn_context.build(&state_guard.memory, effective_max);
                     compacted.iter().map(|m| m.to_core()).collect()
                 };
                 let nudge_result = llm_interface
-                    .chat_stream_with_history_thinking(
-                        crate::agent::narration_nudge_prompt(&raw_response),
+                    .chat_stream_tool_followup(
+                        &user_message,
+                        &crate::agent::narration_nudge_prompt(&raw_response),
                         &nudge_history,
                         None,
                     )
@@ -862,11 +846,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                         yield AgentEvent::tool_call_start_round(&name, execution.arguments.clone(), 2);
                         match execution.result {
                             Ok(output) => {
-                                let result_str = if output.success {
-                                    serde_json::to_string(&output.data).unwrap_or_else(|_| "Success".to_string())
-                                } else {
-                                    output.error.clone().unwrap_or_else(|| "Error".to_string())
-                                };
+                                let result_str = output.prompt_value().to_string();
                                 // Slim + sanitize, same as the main path.
                                 let slimmed_str = {
                                     let mut state = internal_state.write().await;
@@ -897,7 +877,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                     // main tool path).
                     let summary_history: Vec<neomind_core::Message> = {
                         let state_guard = internal_state.read().await;
-                        let compacted = super::super::compact_tool_results(&state_guard.memory, 2);
+                        let compacted = turn_context.build(&state_guard.memory, effective_max);
                         compacted.iter().map(|msg| msg.to_core()).collect()
                     };
                     let summary_prompt = "Based on the tool execution results in the conversation above,                         provide a concise analysis and summary. Do NOT output any tool calls —                         give a direct text response to the user's question.";

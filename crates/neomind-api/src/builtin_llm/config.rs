@@ -48,6 +48,8 @@ pub struct BuiltinConfig {
     /// Companion GPU-layer override (`NEOMIND_BUILTIN_VLM_NGL`); None =
     /// follow the shared `ngl` (and thus the same VRAM auto-sizing).
     pub vlm_ngl: Option<u16>,
+    /// Explicit companion auto must not inherit a main-model NGL pin.
+    pub vlm_ngl_auto: bool,
 }
 
 impl Default for BuiltinConfig {
@@ -73,6 +75,7 @@ impl Default for BuiltinConfig {
             vlm_ctx: None,
             vlm_kv_quant: None,
             vlm_ngl: None,
+            vlm_ngl_auto: false,
         }
     }
 }
@@ -172,9 +175,16 @@ impl BuiltinConfig {
 /// re-applied the systemd drop-in and silently reverted the change
 /// (2026-10-30: ctx 32768 -> 8192, below the agent's prompt overhead, every
 /// chat turn failed). Precedence: default < env < these overrides. The UI
-/// owns these values; clearing a field removes the override.
+/// owns these values; explicit auto/default flags override inherited env pins.
 #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct EngineOverrides {
+    /// Explicit model default / automatic offload override inherited env pins.
+    #[serde(default)]
+    pub ctx_default: bool,
+    #[serde(default)]
+    pub ngl_auto: bool,
+    #[serde(default)]
+    pub vlm_ngl_auto: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ctx: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -207,32 +217,53 @@ pub fn engine_overrides_path() -> Option<std::path::PathBuf> {
 }
 
 impl EngineOverrides {
+    pub fn try_load(path: &std::path::Path) -> std::io::Result<Self> {
+        match std::fs::read(path) {
+            Ok(bytes) => serde_json::from_slice(&bytes).map_err(std::io::Error::other),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(e) => Err(e),
+        }
+    }
     pub fn load(path: &std::path::Path) -> Self {
-        std::fs::read(path)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+        Self::try_load(path).unwrap_or_else(|error| {
+            tracing::warn!(%error, "cannot read engine overrides");
+            Self::default()
+        })
     }
-
     pub fn save(&self, path: &std::path::Path) -> std::io::Result<()> {
-        let tmp = path.with_file_name(format!(
-            "{}.tmp",
-            path.file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("builtin_engine.json")
+        static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        use std::io::Write;
+        let tmp = path.with_extension(format!(
+            "tmp-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
-        let bytes = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
-        std::fs::write(&tmp, bytes)?;
-        std::fs::rename(&tmp, path)
+        let result = (|| {
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&tmp)?;
+            file.write_all(&serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?)?;
+            file.sync_all()?;
+            std::fs::rename(&tmp, path)
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+        result
     }
 
-    fn apply_to(&self, c: &mut BuiltinConfig) {
-        if let Some(v) = self.ctx {
+    pub(crate) fn apply_to(&self, c: &mut BuiltinConfig) {
+        if self.ctx_default {
+            c.ctx = None;
+        } else if let Some(v) = self.ctx {
             if v >= 1024 {
                 c.ctx = Some(v);
             }
         }
-        if let Some(v) = self.ngl {
+        if self.ngl_auto {
+            c.ngl = None;
+        } else if let Some(v) = self.ngl {
             c.ngl = Some(v);
         }
         if let Some(v) = self.parallel {
@@ -253,7 +284,10 @@ impl EngineOverrides {
         if let Some(v) = self.vlm_kv_quant {
             c.vlm_kv_quant = Some(v);
         }
-        if let Some(v) = self.vlm_ngl {
+        c.vlm_ngl_auto = self.vlm_ngl_auto;
+        if self.vlm_ngl_auto {
+            c.vlm_ngl = None;
+        } else if let Some(v) = self.vlm_ngl {
             c.vlm_ngl = Some(v);
         }
     }
@@ -276,6 +310,39 @@ fn apply_persisted_overrides(c: &mut BuiltinConfig) {
             kv_quant = c.kv_quant,
             "builtin llm: persisted engine overrides applied (win over systemd/process env)"
         );
+    }
+}
+
+/// Serializes the complete read/validate/save/restart transaction.
+pub(crate) static ENGINE_CHANGE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Temporary offload degradation must not freeze unrelated persisted knobs.
+pub(crate) struct WatchdogRecovery {
+    pins: (Option<u16>, Option<u16>),
+    degraded: bool,
+}
+impl WatchdogRecovery {
+    pub(crate) fn new(cfg: &BuiltinConfig) -> Self {
+        Self {
+            pins: (cfg.ngl, cfg.vlm_ngl),
+            degraded: false,
+        }
+    }
+    pub(crate) fn degrade(&mut self) {
+        self.degraded = true;
+    }
+    pub(crate) fn refresh(&mut self, mut cfg: BuiltinConfig) -> (BuiltinConfig, bool) {
+        let pins = (cfg.ngl, cfg.vlm_ngl);
+        let changed = pins != self.pins;
+        if changed {
+            self.pins = pins;
+            self.degraded = false;
+        }
+        if self.degraded {
+            cfg.ngl = None;
+            cfg.vlm_ngl = None;
+        }
+        (cfg, changed)
     }
 }
 
@@ -487,5 +554,81 @@ mod tests {
         assert!(!cfg.kv_quant);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod persistence_regressions {
+    use super::*;
+    #[test]
+    fn explicit_defaults_survive_restart_with_old_env_pins() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("engine.json");
+        let overrides = EngineOverrides {
+            ctx_default: true,
+            ngl_auto: true,
+            vlm_ngl_auto: true,
+            ..Default::default()
+        };
+        overrides.save(&path).unwrap();
+        let mut cfg = BuiltinConfig {
+            ctx: Some(8192),
+            ngl: Some(8),
+            vlm_ngl: Some(4),
+            ..Default::default()
+        };
+        EngineOverrides::try_load(&path).unwrap().apply_to(&mut cfg);
+        assert_eq!(cfg.ctx, None);
+        assert_eq!(cfg.ngl, None);
+        assert_eq!(cfg.vlm_ngl, None);
+    }
+    #[test]
+    fn numeric_legacy_overrides_still_load() {
+        let overrides: EngineOverrides = serde_json::from_str(r#"{"ctx":32768,"ngl":8}"#).unwrap();
+        let mut cfg = BuiltinConfig::default();
+        overrides.apply_to(&mut cfg);
+        assert_eq!(cfg.ctx, Some(32768));
+        assert_eq!(cfg.ngl, Some(8));
+    }
+    #[test]
+    fn failed_save_keeps_previous_file_and_reports_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("engine.json");
+        std::fs::create_dir(&path).unwrap();
+        assert!(EngineOverrides::default().save(&path).is_err());
+        assert!(path.is_dir());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+}
+
+#[cfg(test)]
+mod watchdog_regressions {
+    use super::*;
+    #[test]
+    fn watchdog_uses_latest_settings_without_forgetting_temporary_degradation() {
+        let initial = BuiltinConfig {
+            ctx: Some(8192),
+            ngl: Some(8),
+            ..Default::default()
+        };
+        let mut recovery = WatchdogRecovery::new(&initial);
+        recovery.degrade();
+        let updated = BuiltinConfig {
+            ctx: Some(32768),
+            kv_quant: false,
+            ngl: Some(8),
+            ..Default::default()
+        };
+        let (cfg, changed) = recovery.refresh(updated.clone());
+        assert!(!changed);
+        assert_eq!(cfg.ctx, Some(32768));
+        assert!(!cfg.kv_quant);
+        assert_eq!(cfg.ngl, None);
+        let (cfg, changed) = recovery.refresh(BuiltinConfig {
+            ngl: Some(16),
+            ..updated
+        });
+        assert!(changed);
+        assert_eq!(cfg.ngl, Some(16));
     }
 }

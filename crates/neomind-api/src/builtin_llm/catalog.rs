@@ -38,7 +38,7 @@ pub fn format_is_wellformed(f: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, Deserialize)]
 pub struct CatalogModel {
     pub id: String,
     #[serde(rename = "name")]

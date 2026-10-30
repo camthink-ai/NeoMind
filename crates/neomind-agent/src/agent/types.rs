@@ -8,6 +8,9 @@ use neomind_core::{
     Message,
 };
 
+/// Marker for a trusted conversation summary inserted by the context builder.
+pub(crate) const CONVERSATION_SUMMARY_PREFIX: &str = "[Summary of previous conversation]\n";
+
 /// Agent event emitted during streaming processing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]

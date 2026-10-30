@@ -51,7 +51,8 @@ pub(crate) fn build_context_window_with_summary(
     if let Some(summary_text) = summary {
         if !summary_text.is_empty() {
             let summary_msg = AgentMessage::system(format!(
-                "[Summary of previous conversation]\n{}",
+                "{}{}",
+                super::super::types::CONVERSATION_SUMMARY_PREFIX,
                 summary_text
             ));
             // Find insertion point: after system messages, before other messages
@@ -306,6 +307,25 @@ fn compact_tool_results_stream_with_config(
 
     result.reverse();
     result
+}
+
+/// Immutable summary coordinates for an entire user turn. Never insert into
+/// stored history: doing so would shift persisted summary indices.
+pub(crate) struct TurnContext {
+    summary: Option<String>,
+    up_to: Option<u64>,
+}
+impl TurnContext {
+    pub(crate) fn new(summary: Option<String>, up_to: Option<u64>) -> Self {
+        Self { summary, up_to }
+    }
+    pub(crate) fn build(&self, messages: &[AgentMessage], budget: usize) -> Vec<AgentMessage> {
+        let mut messages = messages.to_vec();
+        let drained = crate::agent::apply_chat_history_depth(&mut messages);
+        let up_to = crate::agent::adjust_summary_index_after_drain(self.up_to, drained);
+        crate::agent::strip_stale_images(&mut messages);
+        build_context_window_with_summary(&messages, budget, self.summary.as_deref(), up_to)
+    }
 }
 
 #[cfg(test)]

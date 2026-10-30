@@ -190,12 +190,17 @@ pub(crate) fn is_vlm_model(model_id: &str) -> bool {
             .unwrap_or(false)
 }
 
+fn is_installed_vlm(mdir: &Path, id: &str) -> bool {
+    is_vlm_model(id)
+        || installed_catalog_metadata(mdir, id).is_some_and(|m| m.role.as_deref() == Some("vlm"))
+}
+
 /// The installed vision companion, if any (scan on-disk ids for a vlm role —
-/// main-model discovery deliberately ignores role, this one filters on it).
+/// main-model discovery excludes these entries).
 pub(crate) fn installed_companion(mdir: &Path) -> Option<InstalledModel> {
     let mut companion = installed_model_ids(mdir)
         .into_iter()
-        .find(|id| is_vlm_model(id))
+        .find(|id| is_installed_vlm(mdir, id))
         .and_then(|id| installed_model_by_id(mdir, &id))?;
     // by-id resolution only knows the id — restamp the registry's display
     // name so status/UI show "MiniCPM-V-4.7-1B", not the slug.
@@ -454,13 +459,65 @@ fn leak_str(s: &str) -> &'static str {
     Box::leak(s.to_string().into_boxed_str())
 }
 
-fn catalog_only_info(id: &str) -> Option<&'static CatalogOnlyInfo> {
+fn save_catalog_metadata(mdir: &Path, cat: &super::catalog::CatalogModel) -> std::io::Result<()> {
+    let dir = mdir.join(&cat.id);
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("runtime_catalog.json");
+    let tmp = dir.join(format!("runtime_catalog-{}.tmp", uuid::Uuid::new_v4()));
+    let bytes = serde_json::to_vec_pretty(cat).map_err(std::io::Error::other)?;
+    std::fs::write(&tmp, bytes)?;
+    let result = std::fs::rename(&tmp, path);
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
+/// Freeze runtime defaults with the installed weights, independent of network
+/// cache warmth. A warm lookup migrates pre-sidecar installations.
+fn installed_catalog_metadata(mdir: &Path, id: &str) -> Option<super::catalog::CatalogModel> {
+    let manifest = load_manifest(mdir, id).ok().flatten();
+    if let Ok(bytes) = std::fs::read(mdir.join(id).join("runtime_catalog.json")) {
+        if let Ok(cat) = serde_json::from_slice::<super::catalog::CatalogModel>(&bytes) {
+            if cat.id == id && manifest.as_ref().is_some_and(|m| m.sha256 == cat.sha256) {
+                return Some(cat);
+            }
+        }
+    }
+    let mut cat = super::catalog::cached_catalog()?
+        .into_iter()
+        .find(|m| m.id == id)?;
+    if let Some(manifest) = manifest {
+        cat.sha256 = manifest.sha256;
+        cat.file_name = manifest.file_name;
+        cat.quant = manifest.quant;
+        if let Err(error) = save_catalog_metadata(mdir, &cat) {
+            tracing::warn!(%error, model = id, "cannot persist installed catalog metadata");
+        }
+    }
+    Some(cat)
+}
+
+fn catalog_only_info(mdir: &Path, id: &str) -> Option<&'static CatalogOnlyInfo> {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
     static CACHE: OnceLock<Mutex<HashMap<String, Option<&'static CatalogOnlyInfo>>>> =
         OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Some(hit) = cache.lock().unwrap_or_else(|e| e.into_inner()).get(id) {
+    let cache_key = format!(
+        "{}:{}",
+        mdir.join(id).display(),
+        load_manifest(mdir, id)
+            .ok()
+            .flatten()
+            .map(|m| m.sha256)
+            .unwrap_or_default()
+    );
+    if let Some(hit) = cache
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&cache_key)
+    {
         return *hit;
     }
     // Registry ids never take this path (their defs are already static).
@@ -468,8 +525,7 @@ fn catalog_only_info(id: &str) -> Option<&'static CatalogOnlyInfo> {
         if BUILTIN_MODELS.iter().any(|d| d.manifest.id == id) {
             return None;
         }
-        let cat =
-            super::catalog::cached_catalog().and_then(|c| c.into_iter().find(|m| m.id == id))?;
+        let cat = installed_catalog_metadata(mdir, id)?;
         let default_ctx = cat.default_ctx;
         Some(Box::new(CatalogOnlyInfo {
             display_name: leak_str(&cat.display_name),
@@ -493,10 +549,12 @@ fn catalog_only_info(id: &str) -> Option<&'static CatalogOnlyInfo> {
     // Leak once per id — the &'static return keeps downstream signatures
     // (&'static str fields) unchanged; bounded by the catalog size.
     let leaked: Option<&'static CatalogOnlyInfo> = computed.map(|b| &*Box::leak(b));
-    cache
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(id.to_string(), leaked);
+    if leaked.is_some() {
+        cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(cache_key, leaked);
+    }
     leaked
 }
 
@@ -521,7 +579,7 @@ pub(crate) fn catalog_only_def(mdir: &Path, id: &str) -> Option<BuiltinModelDef>
     // manifest-derived def so a cold boot can still run the active model
     // (2026-10-30: active pointer lfm3-1.7b was unusable until /models had
     // warmed the process cache, so the scan ran minicpm5-2b instead).
-    let info = catalog_only_info(id);
+    let info = catalog_only_info(mdir, id);
     let ctx = info.map(|i| i.default_ctx).unwrap_or_else(|| {
         // Conservative offline default: never let a 1M-native GGUF become the
         // spawn default just because the catalog was cold. The user can raise
@@ -582,7 +640,7 @@ pub fn installed_model(mdir: &Path) -> Option<(BuiltinModelDef, ModelManifest)> 
             .find(|d| d.manifest.id == active)
             .cloned()
             .or_else(|| catalog_only_def(mdir, &active));
-        if let Some(def) = def {
+        if let Some(def) = def.filter(|d| d.role != Some("vlm")) {
             if let Ok(Some(manifest)) = load_manifest(mdir, &def.manifest.id) {
                 if manifest.model_path(mdir).exists() {
                     return Some((def, manifest));
@@ -596,6 +654,7 @@ pub fn installed_model(mdir: &Path) -> Option<(BuiltinModelDef, ModelManifest)> 
     }
     BUILTIN_MODELS
         .iter()
+        .filter(|d| d.role != Some("vlm"))
         .find_map(|def| {
             let manifest = load_manifest(mdir, &def.manifest.id).ok().flatten()?;
             manifest
@@ -639,7 +698,8 @@ pub fn installed_model(mdir: &Path) -> Option<(BuiltinModelDef, ModelManifest)> 
                     .and_then(|m| m.modified())
                     .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
                 if best.as_ref().is_none_or(|(_, _, best_t)| mtime >= *best_t) {
-                    if let Some(def) = catalog_only_def(mdir, &id) {
+                    if let Some(def) = catalog_only_def(mdir, &id).filter(|d| d.role != Some("vlm"))
+                    {
                         best = Some((def, manifest, mtime));
                     }
                 }
@@ -782,7 +842,10 @@ pub fn installed_model_any(mdir: &Path) -> Option<InstalledModel> {
             if id.starts_with('.') {
                 continue;
             }
-            if builtin_ids.contains(id) {
+            if builtin_ids.contains(id)
+                || installed_catalog_metadata(mdir, id)
+                    .is_some_and(|c| c.role.as_deref() == Some("vlm"))
+            {
                 continue;
             }
             let Ok(Some(manifest)) = load_manifest(mdir, id) else {
@@ -850,7 +913,9 @@ pub fn installed_model_by_id(mdir: &Path, id: &str) -> Option<InstalledModel> {
     // Catalog-only model? Try the cached catalog for its sampling point
     // (sync read of the last fetch; a cold process falls back to the global
     // defaults until the next /models refresh warms the cache).
-    let cat = super::catalog::cached_catalog().and_then(|c| c.into_iter().find(|m| m.id == id));
+    let cat = installed_catalog_metadata(mdir, id);
+    let ctx = cat.as_ref().map(|c| c.default_ctx).unwrap_or(ctx);
+    let max = cat.as_ref().and_then(|c| c.max_ctx).or(max);
     let (temperature, top_p, top_k, min_p, repeat_penalty) = cat
         .as_ref()
         .map(|m| (m.temperature, m.top_p, m.top_k, m.min_p, m.repeat_penalty))
@@ -1528,6 +1593,20 @@ pub async fn models_handler(
         }
     };
     inherit_registry_mmproj(&mut base);
+    // One online refresh migrates pre-sidecar installs for future offline boot.
+    for cat in &base {
+        if !mdir.join(&cat.id).join("runtime_catalog.json").exists() {
+            if let Ok(Some(manifest)) = load_manifest(&mdir, &cat.id) {
+                let mut snapshot = cat.clone();
+                snapshot.sha256 = manifest.sha256;
+                snapshot.file_name = manifest.file_name;
+                snapshot.quant = manifest.quant;
+                if let Err(error) = save_catalog_metadata(&mdir, &snapshot) {
+                    tracing::warn!(%error, model = %cat.id, "cannot migrate installed runtime metadata");
+                }
+            }
+        }
+    }
     let mut models: Vec<serde_json::Value> = base
         .iter()
         .map(|d| {
@@ -1740,6 +1819,15 @@ pub async fn download_handler(
     let mdir = models_dir(&state.data_dir);
     let dest = mdir.join(&def.id).join(&file_name);
 
+    if let Ok(Some(manifest)) = load_manifest(&mdir, &def.id) {
+        let mut metadata = def.clone();
+        metadata.sha256 = manifest.sha256;
+        metadata.file_name = manifest.file_name;
+        metadata.quant = manifest.quant;
+        save_catalog_metadata(&mdir, &metadata)
+            .map_err(|e| ErrorResponse::internal(format!("persist model runtime metadata: {e}")))?;
+    }
+
     // Multi-model coexistence: model files are never removed on switch, so
     // "download" of an on-disk model is really a SWITCH — pointer + respawn,
     // zero bytes re-downloaded, never the old fake "downloading 0%"
@@ -1859,6 +1947,7 @@ pub async fn download_handler(
                 sha,
                 quant: quant_task,
                 format: def.format.clone(),
+                runtime_metadata: def.clone(),
                 mmproj_src: mmproj_src_task,
                 companion: is_vlm,
             },
@@ -1877,6 +1966,7 @@ pub async fn download_handler(
 /// Pass-through payload for [`run_builtin_download`] — grouped so the
 /// signature stays clippy-sized while the call site reads as one bundle.
 struct DownloadJob {
+    runtime_metadata: super::catalog::CatalogModel,
     model_id: String,
     dest: PathBuf,
     url: String,
@@ -1895,6 +1985,7 @@ async fn run_builtin_download(
     _active: DownloadActiveGuard,
 ) -> anyhow::Result<()> {
     let DownloadJob {
+        mut runtime_metadata,
         model_id,
         dest,
         url,
@@ -2010,6 +2101,10 @@ async fn run_builtin_download(
                 format: model_format.clone(),
                 mmproj: mmproj_installed,
             };
+            runtime_metadata.sha256 = manifest.sha256.clone();
+            runtime_metadata.file_name = manifest.file_name.clone();
+            runtime_metadata.quant = manifest.quant.clone();
+            save_catalog_metadata(&mdir, &runtime_metadata)?;
             save_manifest(&mdir, &manifest)?;
 
             // Multi-model coexistence: downloaded files are NEVER removed on
@@ -2393,7 +2488,9 @@ async fn spawn_companion_server(
     if let Some(kv) = cfg.vlm_kv_quant {
         ccfg.kv_quant = kv;
     }
-    if let Some(n) = cfg.vlm_ngl {
+    if cfg.vlm_ngl_auto {
+        ccfg.ngl = None;
+    } else if let Some(n) = cfg.vlm_ngl {
         ccfg.ngl = Some(n);
     }
     let ctx = guarded_ctx(
@@ -2528,7 +2625,7 @@ pub(crate) async fn ensure_companion(
             (Some(c), m) => m != c,
             (None, _) => true,
         } || installed_model_by_id(&mdir, &inst.model)
-            .map(|m| !is_vlm_model(&m.manifest.id))
+            .map(|m| !is_installed_vlm(&mdir, &m.manifest.id))
             .unwrap_or(true);
         if stale {
             tracing::info!(instance = %inst.id, "builtin llm: removing stale companion instance");
@@ -2622,7 +2719,7 @@ pub async fn delete_model_handler(
 
     // Companion target: stop ITS port + drop ITS instance; the main model,
     // its instance and the main port are untouched.
-    if is_vlm_model(&model_id) {
+    if is_installed_vlm(&mdir, &model_id) {
         if health_check(cfg.vlm_port).await {
             tracing::info!(
                 port = cfg.vlm_port,
@@ -2729,6 +2826,7 @@ pub async fn restart_handler(
     State(state): State<crate::server::types::ServerState>,
     Query(params): Query<HashMap<String, String>>,
 ) -> HandlerResult<serde_json::Value> {
+    let _engine_change = super::config::ENGINE_CHANGE_LOCK.lock().await;
     // Optional model switch (?model=<id>): multi-model coexistence — model
     // files stay on disk, switching is pointer + respawn, never a
     // re-download. Validated against the downloaded set; unknown/missing →
@@ -2746,10 +2844,12 @@ pub async fn restart_handler(
                     installed_model_ids(&mdir_switch).join(", ")
                 )));
             }
-            let changing = read_active_model(&mdir_switch).as_deref() != Some(want.as_str());
-            if changing {
-                write_active_model(&mdir_switch, &want);
+            if is_installed_vlm(&mdir_switch, &want) {
+                return Err(ErrorResponse::bad_request(
+                    "a vision companion cannot be selected as the main model",
+                ));
             }
+            let changing = read_active_model(&mdir_switch).as_deref() != Some(want.as_str());
             changing
         }
         None => false,
@@ -2762,25 +2862,34 @@ pub async fn restart_handler(
     // API-owned engine knobs are persisted beside the models so a service
     // restart cannot silently revert them (ctx 32768 -> 8192 on 2026-10-30).
     let overrides_path = state.data_dir.join("builtin_engine.json");
-    let mut overrides = super::config::EngineOverrides::load(&overrides_path);
+    let mut overrides = super::config::EngineOverrides::try_load(&overrides_path)
+        .map_err(|e| ErrorResponse::internal(format!("read engine overrides: {e}")))?;
+    overrides.apply_to(&mut cfg);
     let mut overrides_dirty = false;
     // The installed model's own default — used to give `?ctx=<default>` a
     // "reset to default" meaning (clears the override instead of pinning it).
-    let model_default_ctx: Option<u32> =
-        installed_model(&models_dir(&state.data_dir)).map(|(d, _)| d.default_ctx);
+    let model_default_ctx: Option<u32> = params
+        .get("model")
+        .and_then(|id| {
+            model_def(id.trim())
+                .map(|d| d.default_ctx)
+                .or_else(|| catalog_only_def(&mdir_switch, id.trim()).map(|d| d.default_ctx))
+        })
+        .or_else(|| installed_model(&mdir_switch).map(|(d, _)| d.default_ctx));
     if let Some(ctx_str) = params.get("ctx") {
         match ctx_str.trim().parse::<usize>() {
             Ok(n) if (1024..=1_048_576).contains(&n) => {
                 if model_default_ctx == Some(n as u32) {
                     // Requested == the model default → clear any override.
-                    std::env::remove_var("NEOMIND_BUILTIN_LLM_CTX");
+
                     cfg.ctx = None;
                     overrides.ctx = None;
+                    overrides.ctx_default = true;
                     overrides_dirty = true;
                 } else {
-                    std::env::set_var("NEOMIND_BUILTIN_LLM_CTX", n.to_string());
                     cfg.ctx = Some(n);
                     overrides.ctx = Some(n);
+                    overrides.ctx_default = false;
                     overrides_dirty = true;
                 }
             }
@@ -2818,14 +2927,14 @@ pub async fn restart_handler(
         match p_str.trim().parse::<usize>() {
             Ok(0) => {
                 engine_change_requested |= cfg.parallel.is_some();
-                std::env::set_var("NEOMIND_BUILTIN_LLM_PARALLEL", "0");
+
                 cfg.parallel = None;
                 overrides.parallel = Some(0);
                 overrides_dirty = true;
             }
             Ok(n) if (1..=16).contains(&n) => {
                 engine_change_requested |= cfg.parallel != Some(n);
-                std::env::set_var("NEOMIND_BUILTIN_LLM_PARALLEL", n.to_string());
+
                 cfg.parallel = Some(n);
                 overrides.parallel = Some(n);
                 overrides_dirty = true;
@@ -2841,14 +2950,14 @@ pub async fn restart_handler(
         match kv_str.trim().to_ascii_lowercase().as_str() {
             "q8_0" | "q8" => {
                 engine_change_requested |= !cfg.kv_quant;
-                std::env::remove_var("NEOMIND_BUILTIN_LLM_KV");
+
                 cfg.kv_quant = true;
                 overrides.kv_quant = Some(true);
                 overrides_dirty = true;
             }
             "f16" | "off" => {
                 engine_change_requested |= cfg.kv_quant;
-                std::env::set_var("NEOMIND_BUILTIN_LLM_KV", "f16");
+
                 cfg.kv_quant = false;
                 overrides.kv_quant = Some(false);
                 overrides_dirty = true;
@@ -2865,17 +2974,19 @@ pub async fn restart_handler(
         let v = v.trim();
         if v.eq_ignore_ascii_case("auto") || v.is_empty() {
             engine_change_requested = true;
-            std::env::remove_var("NEOMIND_BUILTIN_MODEL_NGL");
+
             cfg.ngl = None;
             overrides.ngl = None;
+            overrides.ngl_auto = true;
             overrides_dirty = true;
         } else {
             match v.parse::<u16>() {
                 Ok(n) => {
                     engine_change_requested |= cfg.ngl != Some(n);
-                    std::env::set_var("NEOMIND_BUILTIN_MODEL_NGL", n.to_string());
+
                     cfg.ngl = Some(n);
                     overrides.ngl = Some(n);
+                    overrides.ngl_auto = false;
                     overrides_dirty = true;
                 }
                 Err(_) => {
@@ -2895,7 +3006,7 @@ pub async fn restart_handler(
         match v.trim().parse::<usize>() {
             Ok(n) if (1024..=1_048_576).contains(&n) => {
                 vlm_change_requested |= cfg.vlm_ctx != Some(n);
-                std::env::set_var("NEOMIND_BUILTIN_VLM_CTX", n.to_string());
+
                 cfg.vlm_ctx = Some(n);
                 overrides.vlm_ctx = Some(n);
                 overrides_dirty = true;
@@ -2911,14 +3022,14 @@ pub async fn restart_handler(
         match kv_str.trim().to_ascii_lowercase().as_str() {
             "q8_0" | "q8" => {
                 vlm_change_requested |= cfg.vlm_kv_quant != Some(true);
-                std::env::remove_var("NEOMIND_BUILTIN_VLM_KV");
+
                 cfg.vlm_kv_quant = Some(true);
                 overrides.vlm_kv_quant = Some(true);
                 overrides_dirty = true;
             }
             "f16" | "off" => {
                 vlm_change_requested |= cfg.vlm_kv_quant != Some(false);
-                std::env::set_var("NEOMIND_BUILTIN_VLM_KV", "f16");
+
                 cfg.vlm_kv_quant = Some(false);
                 overrides.vlm_kv_quant = Some(false);
                 overrides_dirty = true;
@@ -2936,17 +3047,21 @@ pub async fn restart_handler(
         let v = v.trim();
         if v.eq_ignore_ascii_case("auto") || v.is_empty() {
             vlm_change_requested = true;
-            std::env::remove_var("NEOMIND_BUILTIN_VLM_NGL");
+
             cfg.vlm_ngl = None;
+            cfg.vlm_ngl_auto = true;
             overrides.vlm_ngl = None;
+            overrides.vlm_ngl_auto = true;
             overrides_dirty = true;
         } else {
             match v.parse::<u16>() {
                 Ok(n) => {
                     vlm_change_requested |= cfg.vlm_ngl != Some(n);
-                    std::env::set_var("NEOMIND_BUILTIN_VLM_NGL", n.to_string());
+
                     cfg.vlm_ngl = Some(n);
+                    cfg.vlm_ngl_auto = false;
                     overrides.vlm_ngl = Some(n);
+                    overrides.vlm_ngl_auto = false;
                     overrides_dirty = true;
                 }
                 Err(_) => {
@@ -2959,18 +3074,27 @@ pub async fn restart_handler(
     }
 
     if overrides_dirty {
-        if let Err(e) = overrides.save(&overrides_path) {
-            tracing::warn!(
-                error = %e,
-                path = %overrides_path.display(),
-                "builtin llm: failed to persist engine overrides"
-            );
+        overrides
+            .save(&overrides_path)
+            .map_err(|e| ErrorResponse::internal(format!("persist engine overrides: {e}")))?;
+    }
+    // Only publish the model choice after every knob has validated and saved.
+    if model_change_requested {
+        if let Some(want) = params.get("model") {
+            write_active_model(&mdir_switch, want.trim());
+            if read_active_model(&mdir_switch).as_deref() != Some(want.trim()) {
+                return Err(ErrorResponse::internal("failed to persist active model"));
+            }
         }
     }
 
     // Companion knob change alone: respawn ONLY the companion and return —
     // no main-server bounce, no full stop_all (which would kill the main).
-    if vlm_change_requested {
+    if vlm_change_requested
+        && !engine_change_requested
+        && !params.contains_key("ctx")
+        && !model_change_requested
+    {
         let manager = get_manager()?;
         if health_check(cfg.vlm_port).await {
             kill_process_on_port(cfg.vlm_port);
@@ -3252,6 +3376,7 @@ fn get_manager() -> Result<Arc<LlmBackendInstanceManager>, ErrorResponse> {
 /// `restart_handler` (dual kill, session-backend re-push, companion
 /// restore).
 async fn restart_builtin_engine(state: &crate::server::types::ServerState) -> Result<(), String> {
+    let _engine_change = super::config::ENGINE_CHANGE_LOCK.lock().await;
     let mdir = models_dir(&state.data_dir);
     if installed_model(&mdir).is_none() {
         return Ok(()); // nothing installed — the next spawn picks the new runtime up
@@ -3471,6 +3596,90 @@ pub async fn runtime_revert_handler(
 #[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installed_catalog_defaults_survive_cold_start_for_text_and_vision() {
+        for role in [None, Some("vlm")] {
+            let dir = tempfile::tempdir().unwrap();
+            let id = if role.is_some() {
+                "test-cold-vlm"
+            } else {
+                "test-cold-text"
+            };
+            let mut cat = builtin_to_catalog(&BUILTIN_MODELS[0]);
+            cat.id = id.into();
+            cat.temperature = Some(0.13);
+            cat.top_p = Some(0.91);
+            cat.default_thinking = true;
+            cat.default_ctx = 16384;
+            cat.role = role.map(str::to_string);
+            cat.mmproj = Some(neomind_core::builtin_llm::manifest::MmprojSource {
+                file_name: "projector.gguf".into(),
+                sha256: "projector-hash".into(),
+                hf_repo: "test/test".into(),
+                hf_file: "projector.gguf".into(),
+                size_bytes: 10,
+            });
+            let manifest = ModelManifest {
+                id: id.into(),
+                version: "1".into(),
+                file_name: cat.file_name.clone(),
+                sha256: cat.sha256.clone(),
+                quant: cat.quant.clone(),
+                format: "gguf".into(),
+                mmproj: None,
+            };
+            save_manifest(dir.path(), &manifest).unwrap();
+            std::fs::write(manifest.model_path(dir.path()), b"test weights").unwrap();
+            save_catalog_metadata(dir.path(), &cat).unwrap();
+            // No network/catalog warmup: only the installed record is available.
+            let def = catalog_only_def(dir.path(), id).unwrap();
+            assert_eq!(def.temperature, Some(0.13));
+            assert_eq!(def.top_p, Some(0.91));
+            assert_eq!(def.default_ctx, 16384);
+            assert!(def.default_thinking);
+            assert_eq!(def.role, role);
+            assert!(def.mmproj.is_some());
+            let imported = installed_model_by_id(dir.path(), id).unwrap();
+            assert_eq!(imported.temperature, Some(0.13));
+            assert_eq!(imported.default_ctx, 16384);
+            if role.is_some() {
+                assert!(installed_companion(dir.path()).is_some());
+                assert!(installed_model_any(dir.path()).is_none());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn restart_validation_and_save_errors_do_not_change_persisted_settings() {
+        let _serial = test_serial().lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = ServerState::new_for_testing().await;
+        state.data_dir = dir.path().to_path_buf();
+        let path = dir.path().join("builtin_engine.json");
+        let before = super::super::config::EngineOverrides {
+            ctx: Some(16384),
+            ..Default::default()
+        };
+        before.save(&path).unwrap();
+        let params = HashMap::from([
+            ("ctx".into(), "32768".into()),
+            ("kv".into(), "invalid".into()),
+        ]);
+        assert!(restart_handler(State(state.clone()), Query(params))
+            .await
+            .is_err());
+        assert_eq!(super::super::config::EngineOverrides::load(&path), before);
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(restart_handler(
+            State(state),
+            Query(HashMap::from([("ctx".into(), "32768".into())]))
+        )
+        .await
+        .is_err());
+        assert!(path.is_dir());
+    }
 
     #[test]
     fn tier_default_ctx_buckets() {

@@ -57,6 +57,8 @@ pub(crate) async fn execute_with_retry_impl(
 ) -> std::result::Result<crate::toolkit::ToolOutput, crate::toolkit::ToolError> {
     // Map simplified tool name to real tool name
     let real_tool_name = resolve_tool_name(name);
+    let replay_safe =
+        tools.replay_safety(&real_tool_name) == crate::toolkit::tool::ReplaySafety::Safe;
 
     // If mapper resolved a CLI domain name to "shell", convert the structured args
     // into a CLI command string that ShellTool expects: {"command": "neomind <domain> ..."}
@@ -92,15 +94,40 @@ pub(crate) async fn execute_with_retry_impl(
         ))));
 
         match &result {
+            Ok(output)
+                if !replay_safe
+                    && output.data.get("timed_out").and_then(|v| v.as_bool()) == Some(true) =>
+            {
+                let mut output = output.clone();
+                output.success = false;
+                output.error = Some(format!(
+                    "{}{}",
+                    output.error.as_deref().unwrap_or("Tool timed out."),
+                    crate::toolkit::tool::outcome_unknown_guidance()
+                ));
+                // Preserve stdout/stderr and timed_out for the model and UI.
+                return Ok(output);
+            }
             Ok(output) if output.success => return result,
             Err(e) => {
                 let last_error = e.to_string();
-                let is_transient = last_error.contains("timeout")
+                let is_transient = matches!(e, crate::toolkit::ToolError::Timeout)
+                    || last_error.contains("timed out")
+                    || last_error.contains("timeout")
                     || last_error.contains("network")
                     || last_error.contains("connection")
                     || last_error.contains("unavailable");
 
-                if is_transient && attempt < max_retries {
+                if !replay_safe
+                    && (is_transient || matches!(e, crate::toolkit::ToolError::Canceled))
+                {
+                    return Err(crate::toolkit::ToolError::Execution(format!(
+                        "{}{}",
+                        last_error,
+                        crate::toolkit::tool::outcome_unknown_guidance()
+                    )));
+                }
+                if is_transient && replay_safe && attempt < max_retries {
                     let delay_ms = 100u64 * (2_u64.pow(attempt));
                     tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
                     continue;
@@ -114,4 +141,89 @@ pub(crate) async fn execute_with_retry_impl(
     Err(crate::toolkit::ToolError::Execution(
         "Max retries exceeded".to_string(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::toolkit::tool::{ReplaySafety, Tool, ToolOutput};
+    use crate::toolkit::{ToolError, ToolRegistry};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct InterruptedTool {
+        calls: Arc<AtomicUsize>,
+        safety: ReplaySafety,
+        timeout_output: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl Tool for InterruptedTool {
+        fn name(&self) -> &str {
+            "shell"
+        }
+        fn description(&self) -> &str {
+            "test interruption after an effect"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        fn replay_safety(&self) -> ReplaySafety {
+            self.safety
+        }
+        async fn execute(&self, _: serde_json::Value) -> Result<ToolOutput, ToolError> {
+            let previous = self.calls.fetch_add(1, Ordering::SeqCst);
+            if self.timeout_output {
+                return Ok(ToolOutput::success(serde_json::json!({
+                    "timed_out": true, "stdout": "effect already applied"
+                })));
+            }
+            if previous == 0 {
+                Err(ToolError::Execution(
+                    "network connection lost after effect".into(),
+                ))
+            } else {
+                Ok(ToolOutput::success("done"))
+            }
+        }
+    }
+
+    async fn run_interrupted(
+        safety: ReplaySafety,
+        timeout_output: bool,
+    ) -> (Result<ToolOutput, ToolError>, usize) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut tools = ToolRegistry::new();
+        tools.register(Arc::new(InterruptedTool {
+            calls: calls.clone(),
+            safety,
+            timeout_output,
+        }));
+        // The CLI alias must resolve before replay safety is looked up.
+        let result = execute_with_retry_impl(&tools, "device", serde_json::json!({}), 2).await;
+        (result, calls.load(Ordering::SeqCst))
+    }
+
+    #[tokio::test]
+    async fn unsafe_effect_is_not_replayed_after_network_error() {
+        let (result, calls) = run_interrupted(ReplaySafety::Unsafe, false).await;
+        assert_eq!(calls, 1);
+        assert!(result.unwrap_err().to_string().contains("OUTCOME UNKNOWN"));
+    }
+
+    #[tokio::test]
+    async fn safe_tool_still_recovers_from_transient_error() {
+        let (result, calls) = run_interrupted(ReplaySafety::Safe, false).await;
+        assert_eq!(calls, 2);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn shell_timeout_preserves_evidence_and_reports_unknown_outcome() {
+        let (result, calls) = run_interrupted(ReplaySafety::Unsafe, true).await;
+        assert_eq!(calls, 1);
+        let output = result.unwrap();
+        assert!(!output.success);
+        assert_eq!(output.data["stdout"], "effect already applied");
+        assert!(output.error.unwrap().contains("OUTCOME UNKNOWN"));
+    }
 }

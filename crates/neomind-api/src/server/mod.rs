@@ -704,6 +704,9 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                     let mut retry_interval = tokio::time::interval(Duration::from_secs(5));
                     for _ in 0..12 {
                         retry_interval.tick().await;
+                        let _engine_change =
+                            crate::builtin_llm::config::ENGINE_CHANGE_LOCK.lock().await;
+                        cfg = crate::builtin_llm::config::BuiltinConfig::from_env();
                         if let Ok(manager) = neomind_agent::get_instance_manager() {
                             match crate::builtin_llm::state::bootstrap(&data_dir, &cfg, &manager)
                                 .await
@@ -754,8 +757,17 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                     // offload / CPU) — the systemd file is NOT modified, so a
                     // service restart still honors the operator's pin.
                     let mut pinned_failures: u32 = 0;
+                    let mut recovery = crate::builtin_llm::config::WatchdogRecovery::new(&cfg);
                     loop {
                         tokio::time::sleep(poll).await;
+                        let _engine_change =
+                            crate::builtin_llm::config::ENGINE_CHANGE_LOCK.lock().await;
+                        let (latest, pins_changed) =
+                            recovery.refresh(crate::builtin_llm::config::BuiltinConfig::from_env());
+                        cfg = latest;
+                        if pins_changed {
+                            pinned_failures = 0;
+                        }
                         if !cfg.enabled {
                             continue;
                         }
@@ -834,6 +846,7 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                                              (remove NEOMIND_BUILTIN_MODEL_NGL/_VLM_NGL to fix it \
                                              permanently)"
                                         );
+                                        recovery.degrade();
                                         cfg.ngl = None;
                                         cfg.vlm_ngl = None;
                                         pinned_failures = 0;

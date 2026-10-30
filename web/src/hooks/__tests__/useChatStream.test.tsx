@@ -41,6 +41,51 @@ describe('useChatStream', () => {
   })
   afterEach(cleanup)
 
+  it('heartbeats do not hide an error with no terminal frame', () => {
+    vi.useFakeTimers()
+    try {
+      const onStalled = vi.fn()
+      render(<Harness sessionId="s1" onStalled={onStalled} />)
+      act(() => latest.beginTurn())
+      act(() => emit({ type: 'Error', message: 'failed', sessionId: 's1' }))
+      for (let i = 0; i < 4; i++) {
+        act(() => {
+          emit({ type: 'Heartbeat', sessionId: 's1' })
+          vi.advanceTimersByTime(10_000)
+        })
+      }
+      expect(onStalled).toHaveBeenCalledTimes(1)
+      expect(onStalled).toHaveBeenCalledWith('error without terminal event')
+      expect(latest.isStreaming).toBe(false)
+    } finally {
+      cleanup()
+      vi.useRealTimers()
+    }
+  })
+
+  it('actual fallback content clears the error deadline', () => {
+    vi.useFakeTimers()
+    try {
+      const onStalled = vi.fn()
+      const onEnd = vi.fn()
+      render(<Harness sessionId="s1" onStalled={onStalled} onEnd={onEnd} />)
+      act(() => latest.beginTurn())
+      act(() => emit({ type: 'Error', message: 'retrying', sessionId: 's1' }))
+      act(() => {
+        vi.advanceTimersByTime(10_000)
+        emit({ type: 'Content', content: 'recovered', sessionId: 's1' })
+        vi.advanceTimersByTime(40_000)
+      })
+      expect(onStalled).not.toHaveBeenCalled()
+      expect(latest.isStreaming).toBe(true)
+      act(() => emit({ type: 'end', sessionId: 's1' }))
+      expect(onEnd).toHaveBeenCalledTimes(1)
+    } finally {
+      cleanup()
+      vi.useRealTimers()
+    }
+  })
+
   it('runs a complete turn: chunks accumulate, end delivers the assembled message', async () => {
     const onEnd = vi.fn()
     render(<Harness onEnd={onEnd} />)
