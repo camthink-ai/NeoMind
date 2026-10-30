@@ -43,7 +43,7 @@ not-passed" signal. Older Mac runs predate the field.
 | MiniCPM5-2B | 33.3% | **45.7%** | **+12.4pp** | 49.3 / 42.0 | 15.0 / 58.2 |
 | LFM2.5-2.6B QAD | 36.2% | 37.7% | +1.5pp | 36.2 / 39.1 | 10.0 / 49.0 |
 | Gemma-4-E2B | 26.1% | 27.5% | +1.4pp | 30.4 / 24.6 | 15.0 / 32.7 |
-| Nanbeige4.2-3B | (off running) | 55.6% (n=9 preview) | — | — | — |
+| Nanbeige4.2-3B | (running, 32K) | ~~withdrawn~~ 16K-ctx run invalidated (839 prompt truncations — dense-KV model did not fit T4 free VRAM at 32K alongside tenants) | | | |
 
 **Spark-X2.6-1.7B + thinking is the strongest edge configuration measured**
 (63.8%, zh 58.0 / en 69.6 / multi-step 50.0 / cmd-hit 82.1%, 0 af): it beats
