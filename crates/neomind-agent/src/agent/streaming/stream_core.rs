@@ -1561,22 +1561,18 @@ pub async fn process_stream_events_with_safeguards(
                                 }
                                 let mut result_value = output.prompt_value();
                                 if was_dup {
+                                    let advisory = serde_json::json!(
+                                        "you made this EXACT call (same tool + arguments) last round and it already succeeded — if you are verifying a change, state what changed; otherwise do NOT repeat it again / 你上一轮已做过完全相同的调用且已成功；若在验证改动请说明差异，否则不要重复"
+                                    );
                                     if let Some(obj) = result_value.as_object_mut() {
-                                        obj.insert(
-                                            "_duplicate".into(),
-                                            serde_json::json!(
-                                                "you made this EXACT call (same tool + arguments) last round and it already succeeded — if you are verifying a change, state what changed; otherwise do NOT repeat it again / 你上一轮已做过完全相同的调用且已成功；若在验证改动请说明差异，否则不要重复"
-                                            ),
-                                        );
+                                        obj.insert("_duplicate".into(), advisory);
+                                    } else {
+                                        result_value = serde_json::json!({
+                                            "data": result_value, "_duplicate": advisory,
+                                        });
                                     }
                                     tracing::info!(tool = %name, "Advisory: identical non-reusable call succeeded last round");
                                 }
-                                // Serialize the value the _duplicate advisory was
-                                // inserted INTO — the old `output.prompt_value()`
-                                // re-serialization dropped the advisory, so the
-                                // model never saw the don't-repeat hint and the
-                                // soft dedup (the only one, post hard-break
-                                // removal) was dead in practice.
                                 let result_str = result_value.to_string();
 
                                 // Slim large strings (image data URLs, big base64) inline:

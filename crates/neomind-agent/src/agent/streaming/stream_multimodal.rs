@@ -718,7 +718,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                 let nudge_result = llm_interface
                     .chat_stream_tool_followup(
                         &user_message,
-                        &crate::agent::narration_nudge_prompt(&raw_response),
+                        crate::agent::narration_nudge_prompt(&raw_response),
                         &nudge_history,
                         None,
                     )

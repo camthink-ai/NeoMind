@@ -227,3 +227,116 @@ mod tests {
         assert!(output.error.unwrap().contains("OUTCOME UNKNOWN"));
     }
 }
+
+#[cfg(test)]
+mod cache_regressions {
+    use super::*;
+    use crate::toolkit::tool::Tool;
+    use crate::toolkit::{ToolError, ToolOutput, ToolRegistry};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct MutableSkill(Arc<AtomicUsize>);
+    #[async_trait::async_trait]
+    impl Tool for MutableSkill {
+        fn name(&self) -> &str {
+            "skill"
+        }
+        fn description(&self) -> &str {
+            "test skill mutation"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        async fn execute(&self, _: serde_json::Value) -> Result<ToolOutput, ToolError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(ToolOutput::success(serde_json::json!({"id":"my-skill"})))
+        }
+    }
+    #[tokio::test]
+    async fn skill_mutations_are_never_cached() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut tools = ToolRegistry::new();
+        tools.register(Arc::new(MutableSkill(calls.clone())));
+        let cache = Arc::new(RwLock::new(ToolResultCache::new(
+            std::time::Duration::from_secs(300),
+        )));
+        let args = serde_json::json!({"action":"create","id":"my-skill","content":"guide"});
+        execute_tool_with_retry(&tools, &cache, "skill", args.clone())
+            .await
+            .unwrap();
+        execute_tool_with_retry(
+            &tools,
+            &cache,
+            "skill",
+            serde_json::json!({"action":"delete","id":"my-skill"}),
+        )
+        .await
+        .unwrap();
+        execute_tool_with_retry(&tools, &cache, "skill", args)
+            .await
+            .unwrap();
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            3,
+            "create after delete must execute again"
+        );
+    }
+
+    #[tokio::test]
+    async fn skill_load_observes_updates_from_other_sessions_and_recreation() {
+        let shared = Arc::new(RwLock::new(crate::skills::SkillRegistry::new()));
+        let mut tools = ToolRegistry::new();
+        tools.register(Arc::new(crate::toolkit::skill_tool::SkillTool::new(
+            shared.clone(),
+        )));
+        let cache = Arc::new(RwLock::new(ToolResultCache::new(
+            std::time::Duration::from_secs(300),
+        )));
+        let old = "---\nid: my-guide\nname: My Guide\n---\nOLD_GUIDE";
+        let new = "---\nid: my-guide\nname: My Guide\n---\nNEW_GUIDE";
+        let create = serde_json::json!({"action":"create", "content":old});
+        let load = serde_json::json!({"action":"load", "id":"my-guide"});
+        assert!(
+            execute_tool_with_retry(&tools, &cache, "skill", create.clone())
+                .await
+                .unwrap()
+                .success
+        );
+        let first = execute_tool_with_retry(&tools, &cache, "skill", load.clone())
+            .await
+            .unwrap();
+        assert_eq!(first.data["guide"], "OLD_GUIDE");
+        // A registry update from an API/other session bypasses this session's
+        // tool executor, so local write-triggered invalidation is insufficient.
+        shared
+            .write()
+            .await
+            .update_user_skill("my-guide", new)
+            .unwrap();
+        let updated = execute_tool_with_retry(&tools, &cache, "skill", load.clone())
+            .await
+            .unwrap();
+        assert_eq!(updated.data["guide"], "NEW_GUIDE");
+        assert!(
+            execute_tool_with_retry(
+                &tools,
+                &cache,
+                "skill",
+                serde_json::json!({"action":"delete", "id":"my-guide"})
+            )
+            .await
+            .unwrap()
+            .success
+        );
+        assert!(
+            execute_tool_with_retry(&tools, &cache, "skill", create)
+                .await
+                .unwrap()
+                .success
+        );
+        let recreated = execute_tool_with_retry(&tools, &cache, "skill", load)
+            .await
+            .unwrap();
+        assert!(recreated.success);
+        assert_eq!(recreated.data["guide"], "OLD_GUIDE");
+    }
+}

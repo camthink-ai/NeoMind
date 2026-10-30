@@ -533,3 +533,144 @@ async fn read_after_write_never_reuses_pre_write_state() {
         .to_string()
         .contains("STATE_3_SENTINEL"));
 }
+
+#[tokio::test]
+async fn duplicate_advisory_reaches_model_with_narrated_tool_calls() {
+    let call = MockResponse::tool_call(
+        "shell",
+        serde_json::json!({"command":"neomind device list"}),
+    )
+    .with_text("Checking the device list again.");
+    let (iface, requests) = harness(vec![call.clone(), call, MockResponse::text("done")]).await;
+    iface.set_tool_definitions(vec![tool("shell")]).await;
+    let mut registry = crate::toolkit::ToolRegistry::new();
+    registry.register(Arc::new(ReviewShell {
+        calls: Default::default(),
+        timed_out: false,
+    }));
+    let state = Arc::new(tokio::sync::RwLock::new(
+        crate::agent::types::AgentInternalState::new("review-advisory".into()),
+    ));
+    review_run_turn(iface, state, Arc::new(registry), None).await;
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 3);
+    assert!(
+        requests[2]["messages"].to_string().contains("_duplicate"),
+        "duplicate advisory was emitted for display but never sent to the model"
+    );
+}
+
+#[tokio::test]
+async fn agent_conversation_does_not_get_device_history_guidance() {
+    let (iface, requests) = harness(vec![MockResponse::text("done")]).await;
+    drain(
+        iface
+            .chat_stream_with_history("Can I see demo-agent's recent conversation history?", &[])
+            .await
+            .unwrap(),
+    )
+    .await;
+    let requests = requests.lock().unwrap();
+    assert!(
+        !requests[0]["messages"][0]
+            .to_string()
+            .contains("Use `neomind device history"),
+        "agent conversation query received device telemetry instructions in its system prompt"
+    );
+}
+
+#[tokio::test]
+async fn task_guidance_requires_unambiguous_domain_evidence() {
+    let cases = [
+        ("查看 demo-agent 最近的对话历史", None),
+        ("查看代理温度查询的会话历史", None),
+        ("查看助手最近的温度记录", None),
+        ("查看定时任务的数据执行历史", None),
+        ("Show cron temperature query history", None),
+        ("Show message history", None),
+        ("Open the dashboard", None),
+        ("Create a new agent to read temperature", None),
+        ("查询历史", None),
+        ("What is the current configuration?", None),
+        ("Show photosensor metadata", None),
+        ("List devices", Some("Device Management")),
+        ("读取设备历史", Some("Device Management")),
+        ("Read temperature telemetry", Some("Data Analysis")),
+        ("查询温度指标", Some("Data Analysis")),
+        ("Show rule execution history", Some("Rule Management")),
+        (
+            "Create an automation rule when the sensor temperature is high",
+            Some("Rule Management"),
+        ),
+    ];
+    let (iface, requests) = harness(vec![MockResponse::text("done"); cases.len()]).await;
+    for (message, _) in cases {
+        drain(iface.chat_stream_with_history(message, &[]).await.unwrap()).await;
+    }
+    let requests = requests.lock().unwrap();
+    for (request, (message, expected)) in requests.iter().zip(cases) {
+        let system = request["messages"][0].to_string();
+        match expected {
+            Some(task) => assert!(
+                system.contains(&format!("## Current Task: {task}")),
+                "{message}"
+            ),
+            None => assert!(!system.contains("## Current Task:"), "{message}"),
+        }
+    }
+}
+
+struct ProbeResult(serde_json::Value);
+
+#[async_trait::async_trait]
+impl crate::toolkit::tool::Tool for ProbeResult {
+    fn name(&self) -> &str {
+        "probe"
+    }
+    fn description(&self) -> &str {
+        "return a probe payload"
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({"type":"object"})
+    }
+    async fn execute(
+        &self,
+        _: serde_json::Value,
+    ) -> crate::toolkit::Result<crate::toolkit::ToolOutput> {
+        Ok(crate::toolkit::ToolOutput::success(self.0.clone()))
+    }
+}
+
+#[tokio::test]
+async fn duplicate_advisory_preserves_scalar_and_array_results() {
+    for payload in [
+        serde_json::json!("PAYLOAD_SENTINEL"),
+        serde_json::json!(["PAYLOAD_SENTINEL"]),
+    ] {
+        let call =
+            MockResponse::tool_call("probe", serde_json::json!({})).with_text("Checking again.");
+        let (iface, requests) = harness(vec![call.clone(), call, MockResponse::text("done")]).await;
+        iface.set_tool_definitions(vec![tool("probe")]).await;
+        let mut tools = crate::toolkit::ToolRegistry::new();
+        tools.register(Arc::new(ProbeResult(payload.clone())));
+        let state = Arc::new(tokio::sync::RwLock::new(
+            crate::agent::types::AgentInternalState::new("advisory-payload".into()),
+        ));
+        review_run_turn(iface, state, Arc::new(tools), None).await;
+        let requests = requests.lock().unwrap();
+        let result = requests[2]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .rev()
+            .filter_map(|m| m["content"].as_str())
+            .find_map(|s| s.strip_prefix("[Tool: probe returned]\n"))
+            .unwrap();
+        let result: serde_json::Value = serde_json::from_str(result).unwrap();
+        assert_eq!(result["data"], payload);
+        assert!(result["_duplicate"]
+            .as_str()
+            .unwrap()
+            .contains("if you are verifying a change"));
+    }
+}

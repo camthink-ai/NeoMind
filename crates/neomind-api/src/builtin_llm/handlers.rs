@@ -2855,9 +2855,8 @@ pub async fn restart_handler(
         None => false,
     };
 
-    // Optional ctx override (?ctx=N): applied for this spawn and persisted in
-    // the process env so subsequent bootstraps keep it (matches the port
-    // override pattern). Validated to a sane window; 0/garbage → 400.
+    // Optional ctx override (?ctx=N): validated and persisted for future
+    // bootstraps. Invalid values return before any settings are saved.
     let mut cfg = BuiltinConfig::from_env();
     // API-owned engine knobs are persisted beside the models so a service
     // restart cannot silently revert them (ctx 32768 -> 8192 on 2026-10-30).
@@ -2917,9 +2916,8 @@ pub async fn restart_handler(
     // A healthy server is normally left alone — EXCEPT when a ctx override
     // was requested that differs from the running server's actual n_ctx:
     // applying a new context requires a respawn.
-    // Optional engine knobs (?parallel=N, ?kv=q8_0|f16): same env-backed
-    // persistence pattern as ?ctx (process env; survives until a service
-    // restart, where systemd env wins). parallel=0 omits `--parallel`
+    // Optional engine knobs (?parallel=N, ?kv=q8_0|f16) are persisted with
+    // the context setting. parallel=0 omits `--parallel`
     // entirely (upstream default: 4 slots, unified KV); kv=f16 disables
     // the q8_0 KV + flash-attention default.
     let mut engine_change_requested = false;
@@ -3088,13 +3086,17 @@ pub async fn restart_handler(
         }
     }
 
+    let scope = restart_scope(
+        &cfg,
+        params.get("ctx").and_then(|v| v.trim().parse().ok()),
+        engine_change_requested || model_change_requested,
+        vlm_change_requested,
+    )
+    .await;
+
     // Companion knob change alone: respawn ONLY the companion and return —
     // no main-server bounce, no full stop_all (which would kill the main).
-    if vlm_change_requested
-        && !engine_change_requested
-        && !params.contains_key("ctx")
-        && !model_change_requested
-    {
+    if scope == RestartScope::CompanionOnly {
         let manager = get_manager()?;
         if health_check(cfg.vlm_port).await {
             kill_process_on_port(cfg.vlm_port);
@@ -3107,6 +3109,7 @@ pub async fn restart_handler(
                     "already_running": false,
                     "companion_endpoint": ep,
                     "companion_only": true,
+                    "companion_restarted": true,
                 }));
             }
             Err(skip) => {
@@ -3117,39 +3120,11 @@ pub async fn restart_handler(
         }
     }
 
-    let current_n_ctx = query_server_n_ctx(cfg.port).await;
-    let ctx_change_requested = params
-        .get("ctx")
-        .and_then(|v| v.trim().parse::<usize>().ok())
-        .map(|want| current_n_ctx.map(|cur| cur != want).unwrap_or(true))
-        .unwrap_or(false);
-    if health_check(cfg.port).await
-        && !ctx_change_requested
-        && !model_change_requested
-        && !engine_change_requested
-    {
-        // A companion knob rode along on an unchanged main (e.g. ctx=32768
-        // while already at 32768 + vlm_ctx=16384). The overrides were saved
-        // above; apply them NOW — the early return used to skip the
-        // companion respawn, so the new value only took effect after the
-        // NEXT restart (review 2026-10-30).
-        if vlm_change_requested {
-            let manager = get_manager()?;
-            if health_check(cfg.vlm_port).await {
-                kill_process_on_port(cfg.vlm_port);
-                tokio::time::sleep(Duration::from_millis(300)).await;
-            }
-            if let Err(skip) = ensure_companion(&state.data_dir, &cfg, &manager).await {
-                return Err(ErrorResponse::internal(format!(
-                    "vision companion restart failed: {skip}"
-                )));
-            }
-        }
+    if scope == RestartScope::AlreadyRunning {
         return ok(json!({
             "restarted": true,
             "already_running": true,
             "endpoint": format!("http://127.0.0.1:{}", cfg.port),
-            "companion_restarted": vlm_change_requested.then_some(true),
         }));
     }
 
@@ -3311,6 +3286,37 @@ pub(super) async fn query_server_modalities_vision(port: u16) -> Option<bool> {
         .ok()?;
     let v: serde_json::Value = resp.json().await.ok()?;
     v.get("modalities")?.get("vision")?.as_bool()
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum RestartScope {
+    AlreadyRunning,
+    CompanionOnly,
+    MainAndCompanion,
+}
+
+/// A submitted ctx may already match the running engine. Companion changes
+/// must still apply in that case, without unnecessarily bouncing the main.
+async fn restart_scope(
+    cfg: &BuiltinConfig,
+    requested_ctx: Option<usize>,
+    main_settings_changed: bool,
+    companion_settings_changed: bool,
+) -> RestartScope {
+    let ctx_changed = if let Some(want) = requested_ctx {
+        query_server_n_ctx(cfg.port).await != Some(want)
+    } else {
+        false
+    };
+    if !main_settings_changed && !ctx_changed {
+        if companion_settings_changed {
+            return RestartScope::CompanionOnly;
+        }
+        if health_check(cfg.port).await {
+            return RestartScope::AlreadyRunning;
+        }
+    }
+    RestartScope::MainAndCompanion
 }
 
 /// Read the running llama-server's actual context size from /props.
@@ -3614,6 +3620,45 @@ pub async fn runtime_revert_handler(
 #[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn restart_scope_applies_companion_changes_with_unchanged_main_context() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let engine = Router::new()
+            .route("/health", get(|| async { Json(json!({"status": "ok"})) }))
+            .route("/props", get(|| async { Json(json!({"n_ctx": 32768})) }));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, engine).await.unwrap();
+        });
+        let cfg = BuiltinConfig {
+            port,
+            ..Default::default()
+        };
+        let cases = [
+            (None, false, false, RestartScope::AlreadyRunning),
+            (Some(32768), false, false, RestartScope::AlreadyRunning),
+            (Some(32768), false, true, RestartScope::CompanionOnly),
+            (None, false, true, RestartScope::CompanionOnly),
+            (Some(65536), false, true, RestartScope::MainAndCompanion),
+            (Some(32768), true, true, RestartScope::MainAndCompanion),
+            (None, true, false, RestartScope::MainAndCompanion),
+        ];
+        for (ctx, main, companion, expected) in cases {
+            assert_eq!(
+                restart_scope(&cfg, ctx, main, companion).await,
+                expected,
+                "ctx={ctx:?}, main={main}, companion={companion}"
+            );
+        }
+        server.abort();
+        let _ = server.await;
+        assert_eq!(
+            restart_scope(&cfg, Some(32768), false, false).await,
+            RestartScope::MainAndCompanion,
+            "unreachable context probe requires recovery"
+        );
+    }
 
     #[test]
     fn installed_catalog_defaults_survive_cold_start_for_text_and_vision() {

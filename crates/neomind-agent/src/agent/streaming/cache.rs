@@ -89,21 +89,12 @@ impl ToolResultCache {
     }
 }
 
-/// Cache only immutable skill READS (search/load). The skill tool also has
-/// create/update/delete actions — caching those made `create → delete →
-/// create` return the FIRST call's stale success without executing (the
-/// third create silently didn't happen). Read-only does not imply immutable
-/// for anything else either: device status, file reads and web fetches must
-/// observe fresh state, including after a write in the same turn.
-/// Unknown/extension tools fail closed.
-pub(crate) fn is_tool_cacheable(name: &str, arguments: &Value) -> bool {
-    if super::resolve::resolve_tool_name(name) != "skill" {
-        return false;
-    }
-    matches!(
-        arguments.get("action").and_then(|a| a.as_str()),
-        Some("search") | Some("load")
-    )
+/// No current tool provides revisioned, immutable results. Even skill guides
+/// can be updated through another session or the API, so read-only actions
+/// cannot safely reuse a session cache. Keep the policy fail-closed until a
+/// tool supplies a versioned cache contract.
+pub(crate) fn is_tool_cacheable(_name: &str, _arguments: &Value) -> bool {
+    false
 }
 
 /// Minimum size (bytes) for a result to be considered large enough to strip base64 from.
@@ -150,29 +141,13 @@ mod tests {
         let rm_args = serde_json::json!({"command": "rm -rf /tmp/foo"});
         assert!(!is_tool_cacheable("shell", &rm_args));
 
-        // Only static skill READS are cacheable.
-        assert!(is_tool_cacheable(
-            "skill",
-            &serde_json::json!({"action": "search", "query": "device"})
-        ));
-        assert!(is_tool_cacheable(
-            "skill",
-            &serde_json::json!({"action": "load", "id": "device-management"})
-        ));
-        // Skill WRITES must never come from cache: create → delete → create
-        // returned the first call's stale success (review 2026-10-30).
-        assert!(!is_tool_cacheable(
-            "skill",
-            &serde_json::json!({"action": "create", "name": "x"})
-        ));
-        assert!(!is_tool_cacheable(
-            "skill",
-            &serde_json::json!({"action": "update", "id": "x"})
-        ));
-        assert!(!is_tool_cacheable(
-            "skill",
-            &serde_json::json!({"action": "delete", "id": "x"})
-        ));
+        // Skills include mutations and mutable guides/search results.
+        for action in ["load", "search", "create", "update", "delete"] {
+            assert!(!is_tool_cacheable(
+                "skill",
+                &serde_json::json!({"action": action})
+            ));
+        }
 
         // Memory tool is NEVER cacheable — files mutate via add/replace/remove
         // and background summarization. Caching read returned stale templates

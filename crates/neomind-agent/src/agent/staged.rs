@@ -250,6 +250,111 @@ impl Default for IntentClassifier {
 }
 
 impl IntentClassifier {
+    /// System-level task guidance needs explicit domain evidence. Generic
+    /// words such as "history", "query" and "create" are useful for progress
+    /// labels, but must not redirect an agent/message request to device tools.
+    /// Mixed-domain requests are left to the model instead of forcing a route.
+    pub(crate) fn classify_for_prompt(&self, message: &str) -> Option<IntentCategory> {
+        let message = message.to_lowercase();
+        let mentions = |keywords: &[&str]| {
+            keywords.iter().any(|keyword| {
+                message.match_indices(*keyword).any(|(start, _)| {
+                    if !keyword.is_ascii() {
+                        return true;
+                    }
+                    let end = start + keyword.len();
+                    let before = message[..start].chars().next_back();
+                    let after = message[end..].chars().next();
+                    !before.is_some_and(|c| c.is_ascii_alphanumeric())
+                        && !after.is_some_and(|c| c.is_ascii_alphanumeric())
+                })
+            })
+        };
+        if mentions(&[
+            "agent",
+            "agents",
+            "智能体",
+            "代理",
+            "助手",
+            "conversation",
+            "对话",
+            "会话",
+            "cron",
+            "定时任务",
+            "message",
+            "messages",
+            "消息",
+            "dashboard",
+            "dashboards",
+            "仪表盘",
+            "widget",
+            "widgets",
+            "组件",
+            "extension",
+            "extensions",
+            "扩展",
+            "skill",
+            "skills",
+            "技能",
+            "connector",
+            "connectors",
+            "连接器",
+            "memory",
+            "记忆",
+        ]) {
+            return None;
+        }
+        if mentions(&[
+            "rule",
+            "rules",
+            "规则",
+            "automation",
+            "自动化",
+            "transform",
+            "transforms",
+            "数据转换",
+            "数据解析",
+            "数据处理",
+        ]) {
+            return Some(IntentCategory::Rule);
+        }
+        if mentions(&[
+            "telemetry",
+            "遥测",
+            "metric",
+            "metrics",
+            "指标",
+            "temperature",
+            "温度",
+            "humidity",
+            "湿度",
+            "time series",
+            "时间序列",
+        ]) {
+            return Some(IntentCategory::Data);
+        }
+        if mentions(&[
+            "device",
+            "devices",
+            "设备",
+            "sensor",
+            "sensors",
+            "传感器",
+            "light",
+            "lights",
+            "lamp",
+            "fan",
+            "pump",
+            "开关",
+            "灯",
+            "风扇",
+            "水泵",
+        ]) {
+            return Some(IntentCategory::Device);
+        }
+        None
+    }
+
     /// Classify user intent from message.
     pub fn classify(&self, message: &str) -> IntentResult {
         let message_lower = message.to_lowercase();
