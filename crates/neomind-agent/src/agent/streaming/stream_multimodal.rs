@@ -11,22 +11,18 @@ use futures::{Stream, StreamExt};
 
 use super::context::{build_context_window_with_summary, ToolExecutionResult};
 use super::dedup::deduplicate_tool_results;
-use super::intent::build_list_only_dead_end_prompt;
-use super::next_chunk_or_timeout;
 use super::resolve::resolve_cached_arguments;
 use super::result_format::format_tool_results;
 use super::sanitize::sanitize_tool_result_for_prompt;
 use super::stream_core::StreamSafeguards;
-use super::tool_detect::detect_json_tool_calls;
-use super::tool_exec::execute_tool_with_retry;
-use crate::agent::tool_parser::{
-    is_degenerate_final_output, parse_tool_calls, remove_tool_calls_from_response,
-};
+use super::tool_exec::execute_tool_before_deadline;
+use crate::agent::tool_parser::native_tool_calls;
 use crate::agent::types::{
     AgentEvent, AgentInternalState, AgentMessage, AgentMessageImage, ToolCall,
 };
 use crate::error::{NeoMindError, Result};
 use crate::llm::LlmInterface;
+use crate::llm::StreamEvent;
 
 /// Process multimodal message with configurable safeguards.
 #[allow(clippy::too_many_arguments)]
@@ -42,6 +38,13 @@ pub async fn process_multimodal_stream_events_with_safeguards(
 ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
     use neomind_core::ContentPart;
 
+    let turn_started_at = Instant::now();
+    let turn_wall_clock_budget = std::time::Duration::from_secs(
+        neomind_storage::AgentDefaults::get()
+            .chat_turn_timeout_secs
+            .max(1),
+    );
+    let turn_deadline = turn_started_at + turn_wall_clock_budget;
     // Clear before the first model request, not when its stream is consumed.
     llm_interface.clear_skill_context().await;
     let turn_context =
@@ -123,9 +126,12 @@ pub async fn process_multimodal_stream_events_with_safeguards(
 
     // Use regular multimodal chat (with thinking enabled)
     // Thinking helps the model analyze images more thoroughly
-    let stream_result = llm_interface
-        .chat_stream_multimodal_with_history(llm_user_msg, &history_for_llm)
-        .await;
+    let stream_result = super::request_before_deadline(
+        llm_interface.chat_stream_multimodal_with_history(llm_user_msg, &history_for_llm),
+        turn_deadline,
+        safeguards.interrupt_signal.as_ref(),
+    )
+    .await;
 
     let stream = stream_result.map_err(|e| NeoMindError::Llm(e.to_string()))?;
 
@@ -175,6 +181,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
     Ok(Box::pin(async_stream::stream! {
         let mut stream = stream;
         let mut buffer = String::new();
+        let mut thinking_content = String::new();
         let mut tool_calls_detected = false;
         let mut tool_calls: Vec<ToolCall> = Vec::new();
         let mut content_before_tools = String::new();
@@ -190,7 +197,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
 
         // Stream the response — bounded next(): a zero-chunk stall force-breaks
         // the round instead of hanging (same bug fixed in stream_core).
-        while let Some(result) = next_chunk_or_timeout(&mut stream, safeguards.max_stream_duration).await {
+        while let Some(result) = super::next_before_deadline(&mut stream, safeguards.max_stream_duration, turn_deadline, safeguards.interrupt_signal.as_ref()).await {
             let elapsed = stream_start.elapsed();
 
             // [cancellable] Same interrupt check as stream_core — the
@@ -222,12 +229,26 @@ pub async fn process_multimodal_stream_events_with_safeguards(
             }
 
             match result {
-                Ok((text, is_thinking)) => {
+                Ok(event) => {
+                    let (text, is_thinking) = match event {
+                        StreamEvent::ToolCalls(values) => {
+                            let calls = native_tool_calls(values);
+                            tool_calls_detected |= !calls.is_empty();
+                            content_before_tools = buffer.clone();
+                            for call in calls {
+                                if !tool_calls.iter().any(|prev| prev.id == call.id) { tool_calls.push(call); }
+                            }
+                            continue;
+                        }
+                        StreamEvent::Text(text) => (text, false),
+                        StreamEvent::Thinking(text) => (text, true),
+                    };
                     if text.is_empty() {
                         continue;
                     }
 
                     if is_thinking {
+                        thinking_content.push_str(&text);
                         yield AgentEvent::thinking(text.clone());
                         last_event_time = Instant::now();
                         continue;
@@ -236,66 +257,26 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                     buffer.push_str(&text);
                     last_event_time = Instant::now();
 
-                    // Check for tool calls in buffer
-                    let json_tool_check = detect_json_tool_calls(&buffer);
-                    if let Some((json_start, tool_json, _remaining)) = json_tool_check {
-                        let before_tool = &buffer[..json_start];
-                        if !before_tool.is_empty() {
-                            content_before_tools.push_str(before_tool);
-                            yield AgentEvent::content(before_tool);
-                        }
-
-                        if let Ok((_, calls)) = parse_tool_calls(&tool_json) {
-                            tool_calls_detected = true;
-                            tool_calls.extend(calls);
-                        }
-
-                        // Discard remaining hallucinated content after embedded tool calls
-                        buffer.clear();
-                    } else {
-                        // No JSON tool calls detected - check for XML format
-                        if let Some(tool_start) = buffer.find("<tool_calls>") {
-                            let before_tool = &buffer[..tool_start];
-                            if !before_tool.is_empty() {
-                                content_before_tools.push_str(before_tool);
-                                yield AgentEvent::content(before_tool);
-                            }
-
-                            if let Some(tool_end) = buffer.find("</tool_calls>") {
-                                let tool_content = buffer[tool_start..tool_end + 13].to_string();
-                                // Discard remaining hallucinated content after XML tool calls
-                                buffer.clear();
-
-                                if let Ok((_, calls)) = parse_tool_calls(&tool_content) {
-                                    tool_calls_detected = true;
-                                    tool_calls.extend(calls);
-                                }
-                            }
-                        } else {
-                            // No tool calls detected - yield content immediately for real-time streaming
-                            if !text.is_empty() {
-                                yield AgentEvent::content(text.clone());
-                            }
-                        }
-                    }
+                    yield AgentEvent::content(text);
                 }
                 Err(e) => {
                     tracing::error!("Stream error: {}", e);
-                    yield AgentEvent::error(format!("Stream error: {}", e));
-                    // Save partial response on error to maintain conversation context
-                    if !buffer.is_empty() || !content_before_tools.is_empty() {
-                        let partial_content = if content_before_tools.is_empty() {
-                            buffer.clone()
-                        } else {
-                            content_before_tools.clone()
-                        };
-                        let partial_msg = AgentMessage::assistant(&partial_content);
-                        internal_state.write().await.push_message(partial_msg);
-                        tracing::debug!("Saved partial multimodal response on error: {} chars", partial_content.len());
-                    }
+                    yield AgentEvent::warning(format!("Stream interrupted: {}. Recovering available results.", e));
+                    // Finalization below persists the partial response once.
                     break;
                 }
             }
+        }
+
+        if safeguards.interrupt_signal.as_ref().is_some_and(|rx| *rx.borrow()) {
+            if !buffer.is_empty() || !thinking_content.is_empty() {
+                internal_state.write().await.push_message(
+                    AgentMessage::assistant_with_thinking(&buffer, &thinking_content),
+                );
+            }
+            yield AgentEvent::content("\n\n[Interrupted]");
+            yield AgentEvent::end();
+            return;
         }
 
         // Handle tool calls if detected
@@ -324,12 +305,13 @@ pub async fn process_multimodal_stream_events_with_safeguards(
             let tool_futures = futures::stream::iter(tool_inputs.into_iter().map(|(name, arguments)| {
                 let tools_clone = tools.clone();
                 let cache_clone = cache.clone();
+                        let interrupt = safeguards.interrupt_signal.clone();
 
                 async move {
                     (name.clone(), ToolExecutionResult {
                         _name: name.clone(),
                         arguments: arguments.clone(),
-                        result: execute_tool_with_retry(&tools_clone, &cache_clone, &name, arguments.clone()).await,
+                        result: execute_tool_before_deadline(&tools_clone, &cache_clone, &name, arguments.clone(), turn_deadline, interrupt.as_ref()).await,
                     })
                 }
             })).buffer_unordered(6);
@@ -379,6 +361,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
 
                 match execution.result {
                     Ok(output) => {
+                        let succeeded = crate::toolkit::tool::effective_success(&crate::tools::resolve_tool_name(&name), &output);
                         let result_value = output.prompt_value();
                         let result_str = output.prompt_value().to_string();
 
@@ -421,7 +404,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                             round: Some(1),
                         });
 
-                        yield AgentEvent::tool_call_end_round(&name, &display_str, output.success, 1);
+                        yield AgentEvent::tool_call_end_round(&name, &display_str, succeeded, 1);
 
                         tool_call_results.push((name.clone(), sanitized_str));
                     }
@@ -458,150 +441,13 @@ pub async fn process_multimodal_stream_events_with_safeguards(
             // passthrough for small results) computed during the execute loop
             // above — no second `cache.store` needed here.
             for (tool_name, result_str) in &tool_call_results {
-                if tool_name == "skill" {
+                if tool_name == "skill" && serde_json::from_str::<serde_json::Value>(result_str).ok().is_some_and(|v| v.get("guide").is_some_and(serde_json::Value::is_string)) {
                     let skill_id = crate::llm::extract_skill_id_from_result(result_str);
                     llm_interface.set_skill_context(skill_id, result_str.clone()).await;
                 } else {
                     let mut state = internal_state.write().await;
                     let tool_result_msg = AgentMessage::tool_result(tool_name, result_str);
                     state.push_message(tool_result_msg);
-                }
-            }
-
-            // === "LIST-ONLY DEAD END" DETECTION (multimodal path) ===
-            // Symmetric with stream_core.rs: if the user asked for an action but
-            // only read-only tools executed, fire ONE more tool round with a
-            // forced continuation prompt before falling through to the summary.
-            // Without this, multimodal users silently hit the dead end that the
-            // text path was fixed to handle.
-            let executed_commands: Vec<String> = tool_calls_to_execute
-                .iter()
-                .filter(|tc| tc.name == "shell")
-                .filter_map(|tc| {
-                    tc.arguments.get("command").and_then(|v| v.as_str()).map(String::from)
-                })
-                .collect();
-            let commands_ref: Vec<&str> = executed_commands.iter().map(|s| s.as_str()).collect();
-
-            if let Some(dead_end_prompt) = build_list_only_dead_end_prompt(
-                &user_message,
-                &commands_ref,
-                &tool_call_results,
-                // No round loop on this path — the whole turn being read-only
-                // IS the repetition evidence (this is the end-of-turn last
-                // chance, not a per-round coercion). The ambiguity gate
-                // applies in full.
-                1,
-            ) {
-                tracing::info!("Multimodal dead-end: invoking one continuation round");
-                yield AgentEvent::progress("Continuing action...", "continuing", 0);
-
-                // Build history for the continuation LLM call (text-only; user image
-                // is already in history as a prior turn)
-                let cont_history: Vec<neomind_core::Message> = {
-                    let state_guard = internal_state.read().await;
-                    let compacted = turn_context.build(&state_guard.memory, effective_max);
-                    compacted.iter().map(|msg| msg.to_core()).collect()
-                };
-
-                let cont_stream_result = llm_interface
-                    .chat_stream_tool_followup(&user_message, &dead_end_prompt, &cont_history, None)
-                    .await;
-
-                if let Ok(cont_stream) = cont_stream_result {
-                    // Collect the continuation response — buffer for tool calls
-                    let mut cont_buffer = String::new();
-                    let mut cont_stream = Box::pin(cont_stream);
-                    while let Some(chunk) =
-                        next_chunk_or_timeout(&mut cont_stream, safeguards.max_stream_duration).await
-                    {
-                        match chunk {
-                            Ok((text, _)) => cont_buffer.push_str(&text),
-                            Err(_) => break,
-                        }
-                    }
-
-                    // Parse tool calls from the continuation response
-                    let cont_tool_calls = parse_tool_calls(&cont_buffer)
-                        .map(|(_, calls)| calls)
-                        .unwrap_or_default();
-
-                    if !cont_tool_calls.is_empty() {
-                        // Execute continuation tool calls with the same pattern as above
-                        let (large_cache_cont, cache_cont) = {
-                            let state = internal_state.read().await;
-                            (state.large_data_cache.clone(), state.tool_result_cache.clone())
-                        };
-                        let cont_inputs: Vec<(String, serde_json::Value)> = cont_tool_calls
-                            .iter()
-                            .map(|tc| {
-                                (
-                                    tc.name.clone(),
-                                    resolve_cached_arguments(&tc.arguments, &large_cache_cont, &tc.name),
-                                )
-                            })
-                            .collect();
-                        let cont_futures = futures::stream::iter(cont_inputs.into_iter().map(|(name, arguments)| {
-                            let tools_clone = tools.clone();
-                            let cache_clone = cache_cont.clone();
-                            async move {
-                                (name.clone(), ToolExecutionResult {
-                                    _name: name.clone(),
-                                    arguments: arguments.clone(),
-                                    result: execute_tool_with_retry(&tools_clone, &cache_clone, &name, arguments.clone()).await,
-                                })
-                            }
-                        })).buffer_unordered(6);
-                        let cont_results: Vec<_> = cont_futures.collect().await;
-
-                        // Save continuation assistant message + tool results to history
-                        let cont_msg = AgentMessage::assistant_with_tools(
-                            "",
-                            cont_tool_calls.iter().map(|tc| ToolCall {
-                                name: tc.name.clone(),
-                                id: String::new(),
-                                arguments: tc.arguments.clone(),
-                                result: None,
-                                round: Some(2),
-                            }).collect(),
-                        );
-                        internal_state.write().await.push_message(cont_msg);
-
-                        for (name, execution) in cont_results {
-                            // Continuation round — matches the ToolCall struct's
-                            // round: Some(2) persisted to history.
-                            yield AgentEvent::tool_call_start_round(&name, execution.arguments.clone(), 2);
-                            match execution.result {
-                                Ok(output) => {
-                                    let result_str = output.prompt_value().to_string();
-                                    // Slim large strings inline (see main path above).
-                                    let slimmed_str = {
-                                        let mut state = internal_state.write().await;
-                                        match serde_json::from_str::<serde_json::Value>(&result_str) {
-                                            Ok(mut v) => {
-                                                state.large_data_cache.slim_large_strings_in_json(&mut v, &name);
-                                                serde_json::to_string(&v).unwrap_or_else(|_| result_str.clone())
-                                            }
-                                            Err(_) => result_str.clone(),
-                                        }
-                                    };
-                                    // [stored-value sanitize] continuation path — same
-                                    // as the main path above.
-                                    let sanitized_str = sanitize_tool_result_for_prompt(&slimmed_str);
-                                    let display_str = sanitized_str.clone();
-                                    yield AgentEvent::tool_call_end_round(&name, &display_str, output.success, 2);
-                                    let mut state = internal_state.write().await;
-                                    state.push_message(AgentMessage::tool_result(&name, &sanitized_str));
-                                    tool_call_results.push((name.clone(), sanitized_str));
-                                }
-                                Err(e) => {
-                                    let err_msg = format!("Tool execution failed: {}", e);
-                                    yield AgentEvent::tool_call_end_round(&name, &err_msg, false, 2);
-                                    tool_call_results.push((name.clone(), err_msg));
-                                }
-                            }
-                        }
-                    }
                 }
             }
 
@@ -618,19 +464,24 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                 give a direct text response to the user's question.";
 
             let mut final_content = String::new();
-            let summary_result = llm_interface.chat_stream_summary(
+            let summary_result = super::request_before_deadline(llm_interface.chat_stream_summary(
                 summary_prompt,
                 &summary_history,
-            ).await;
+            ), turn_deadline, safeguards.interrupt_signal.as_ref()).await;
 
             match summary_result {
                 Ok(stream) => {
                     let mut pin = Box::pin(stream);
                     while let Some(chunk) =
-                        next_chunk_or_timeout(&mut pin, safeguards.max_stream_duration).await
+                        super::next_before_deadline(&mut pin, safeguards.max_stream_duration, turn_deadline, safeguards.interrupt_signal.as_ref()).await
                     {
                         match chunk {
-                            Ok((text, _)) => {
+                            Ok(StreamEvent::Thinking(text)) => {
+                                thinking_content.push_str(&text);
+                                yield AgentEvent::thinking(text);
+                            }
+                            Ok(StreamEvent::ToolCalls(_)) => {},
+                            Ok(StreamEvent::Text(text)) => {
                                 final_content.push_str(&text);
                                 yield AgentEvent::content(text);
                             }
@@ -646,31 +497,23 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                 }
             }
 
-            // Fallback to formatted tool results if summary is empty OR degenerate
-            // (fence-only "```", or a bare empty JSON container `[]`/`{}` —
-            // small models answer format directives literally).
-            if is_degenerate_final_output(&final_content) {
+            // Only an absent answer needs a factual fallback.
+            if final_content.trim().is_empty() {
                 let deduped_results = deduplicate_tool_results(&tool_call_results);
                 let formatted = format_tool_results(&deduped_results);
                 final_content = formatted.clone();
                 yield AgentEvent::content(formatted);
             }
 
-            // Save the final content
-            {
-                let mut state = internal_state.write().await;
-                if let Some(last_msg) = state.memory.last_mut() {
-                    if last_msg.role == "assistant" && last_msg.tool_calls.is_some() {
-                        last_msg.content = final_content.into();
-                    } else {
-                        let final_msg = AgentMessage::assistant(&final_content);
-                        state.memory.push(final_msg);
-                    }
-                } else {
-                    let final_msg = AgentMessage::assistant(&final_content);
-                    state.memory.push(final_msg);
-                }
+            // Persist the same answer and reasoning the UI received.
+            let mut state = internal_state.write().await;
+            if let Some(last) = state.memory.last_mut().filter(|m| m.role == "assistant" && m.tool_calls.is_some()) {
+                last.content = final_content.into();
+                last.thinking = (!thinking_content.is_empty()).then_some(thinking_content.clone());
+            } else {
+                state.push_message(AgentMessage::assistant_with_thinking(&final_content, &thinking_content));
             }
+            drop(state);
 
             tracing::debug!("Multimodal tool execution complete with summary");
         } else {
@@ -681,267 +524,30 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                 buffer.clone()
             };
 
-            // === NARRATION-COLLAPSE GUARD (multimodal path) ===
-            // The original field failure was an IMAGE chat: the model
-            // narrated "我现在使用 image_edit 工具…" without emitting any
-            // tool call and the turn ended with that promise. stream_core
-            // (text path) already nudges once; this mirrors it here. Single
-            // site, no loop-back — the guard fires at most once by
-            // construction.
-            let mut handled_by_nudge = false;
-            if !crate::agent::user_requested_no_execution(&user_message)
-                && crate::agent::is_narration_without_action(&raw_response)
-            {
-                tracing::info!(
-                    chars = raw_response.chars().count(),
-                    "Multimodal narration without tool call — nudging once"
-                );
-                yield AgentEvent::progress(
-                    "Retrying — promised action was not executed...".to_string(),
-                    "executing",
-                    0,
-                );
-                // The narration was already streamed to the user — record it.
-                let said = remove_tool_calls_from_response(&raw_response);
-                internal_state
-                    .write()
-                    .await
-                    .push_message(AgentMessage::assistant(&said));
-
-                // Nudge round — same collect pattern as the list-only
-                // dead-end continuation above.
-                let nudge_history: Vec<neomind_core::Message> = {
-                    let state_guard = internal_state.read().await;
-                    let compacted = turn_context.build(&state_guard.memory, effective_max);
-                    compacted.iter().map(|m| m.to_core()).collect()
-                };
-                let nudge_result = llm_interface
-                    .chat_stream_tool_followup(
-                        &user_message,
-                        crate::agent::narration_nudge_prompt(&raw_response),
-                        &nudge_history,
-                        None,
-                    )
-                    .await;
-                let mut nudge_buffer = String::new();
-                if let Ok(nudge_stream) = nudge_result {
-                    let mut pin = Box::pin(nudge_stream);
-                    while let Some(chunk) =
-                        next_chunk_or_timeout(&mut pin, safeguards.max_stream_duration).await
-                    {
-                        match chunk {
-                            Ok((text, _)) => nudge_buffer.push_str(&text),
-                            Err(_) => break,
-                        }
-                    }
-                }
-                let nudge_tool_calls = parse_tool_calls(&nudge_buffer)
-                    .map(|(_, calls)| calls)
-                    .unwrap_or_default();
-
-                if nudge_tool_calls.is_empty() {
-                    // === Post-nudge degenerate output — keep the narration ===
-                    // The model complied with "output the tool calls"
-                    // literally and answered with a bare empty JSON container
-                    // (live 2026-10-20 stream_core shape: `[]`). The
-                    // narration saved above is the real reply — keep it as
-                    // the final message (nothing new to yield, it was already
-                    // streamed) and label it as a progress report: the nudge
-                    // fired precisely because that narration was
-                    // promise-shaped.
-                    if is_degenerate_final_output(&remove_tool_calls_from_response(&nudge_buffer))
-                        && !said.is_empty()
-                    {
-                        tracing::warn!(
-                            narration_chars = said.chars().count(),
-                            degenerate_chars = nudge_buffer.chars().count(),
-                            "Multimodal nudge round degenerated to an empty JSON container — keeping the pre-nudge narration as the final reply"
-                        );
-                        let note = "The turn ended here: the reply above is a progress report, not a completed result. Send \"continue\" to resume.".to_string();
-                        yield AgentEvent::system_note(note.clone());
-                        {
-                            let mut state = internal_state.write().await;
-                            if let Some(last_msg) = state.memory.last_mut() {
-                                if last_msg.role == "assistant" {
-                                    last_msg.system_notes = Some(vec![note]);
-                                }
-                            }
-                        }
-                        handled_by_nudge = true;
-                    } else {
-                        // Escape hatch: the model gave a real answer without
-                        // tools — that IS the final response now. Unless it's
-                        // STILL an action promise (narration collapse twice in
-                        // a row): label it as a progress report rather than
-                        // letting the promise impersonate a finished answer
-                        // (see the stream_core backstop for the rationale).
-                        let nudge_final = nudge_buffer.clone();
-                        let mut system_notes: Vec<String> = Vec::new();
-                        if crate::agent::is_narration_without_action(&nudge_final) {
-                            tracing::warn!("Multimodal turn ending on an action promise after nudge — appending progress note");
-                            // English only (decision 2026-10-10) — emitted as a
-                            // SystemNote callout, never merged into the reply
-                            // text.
-                            let note = "The turn ended here: the reply above is a progress report, not a completed result. Send \"continue\" to resume.".to_string();
-                            yield AgentEvent::system_note(note.clone());
-                            system_notes.push(note);
-                        }
-                        yield AgentEvent::content(nudge_final.clone());
-                        let final_text = remove_tool_calls_from_response(&nudge_final);
-                        let mut final_msg = AgentMessage::assistant(&final_text);
-                        if !system_notes.is_empty() {
-                            final_msg.system_notes = Some(system_notes);
-                        }
-                        internal_state.write().await.push_message(final_msg);
-                        handled_by_nudge = true;
-                    }
-                } else {
-                    // Recovered tool calls — execute them (inline pattern
-                    // from the dead-end continuation), then summarize.
-                    yield AgentEvent::IntermediateEnd;
-                    let (large_cache_n, cache_n) = {
-                        let state = internal_state.read().await;
-                        (state.large_data_cache.clone(), state.tool_result_cache.clone())
-                    };
-                    let nudge_inputs: Vec<(String, serde_json::Value)> = nudge_tool_calls
-                        .iter()
-                        .map(|tc| {
-                            (
-                                tc.name.clone(),
-                                resolve_cached_arguments(&tc.arguments, &large_cache_n, &tc.name),
-                            )
-                        })
-                        .collect();
-                    let nudge_futures = futures::stream::iter(nudge_inputs.into_iter().map(
-                        |(name, arguments)| {
-                            let tools_clone = tools.clone();
-                            let cache_clone = cache_n.clone();
-                            async move {
-                                (name.clone(), ToolExecutionResult {
-                                    _name: name.clone(),
-                                    arguments: arguments.clone(),
-                                    result: execute_tool_with_retry(&tools_clone, &cache_clone, &name, arguments.clone()).await,
-                                })
-                            }
-                        },
-                    )).buffer_unordered(6);
-                    let nudge_results: Vec<_> = nudge_futures.collect().await;
-
-                    // Record the assistant-with-tools message + results.
-                    let nudge_msg = AgentMessage::assistant_with_tools(
-                        "",
-                        nudge_tool_calls.iter().map(|tc| ToolCall {
-                            name: tc.name.clone(),
-                            id: String::new(),
-                            arguments: tc.arguments.clone(),
-                            result: None,
-                            round: Some(2),
-                        }).collect(),
-                    );
-                    internal_state.write().await.push_message(nudge_msg);
-
-                    let mut nudge_tool_results: Vec<(String, String)> = Vec::new();
-                    for (name, execution) in nudge_results {
-                        // Nudge round — matches the ToolCall struct's round: Some(2).
-                        yield AgentEvent::tool_call_start_round(&name, execution.arguments.clone(), 2);
-                        match execution.result {
-                            Ok(output) => {
-                                let result_str = output.prompt_value().to_string();
-                                // Slim + sanitize, same as the main path.
-                                let slimmed_str = {
-                                    let mut state = internal_state.write().await;
-                                    match serde_json::from_str::<serde_json::Value>(&result_str) {
-                                        Ok(mut v) => {
-                                            state.large_data_cache.slim_large_strings_in_json(&mut v, &name);
-                                            serde_json::to_string(&v).unwrap_or_else(|_| result_str.clone())
-                                        }
-                                        Err(_) => result_str.clone(),
-                                    }
-                                };
-                                let sanitized_str = sanitize_tool_result_for_prompt(&slimmed_str);
-                                let display_str = sanitized_str.clone();
-                                yield AgentEvent::tool_call_end_round(&name, &display_str, output.success, 2);
-                                let mut state = internal_state.write().await;
-                                state.push_message(AgentMessage::tool_result(&name, &sanitized_str));
-                                nudge_tool_results.push((name.clone(), sanitized_str));
-                            }
-                            Err(e) => {
-                                let err_msg = format!("Tool execution failed: {}", e);
-                                yield AgentEvent::tool_call_end_round(&name, &err_msg, false, 2);
-                                nudge_tool_results.push((name.clone(), err_msg));
-                            }
-                        }
-                    }
-
-                    // Summarize for the user (same fallback chain as the
-                    // main tool path).
-                    let summary_history: Vec<neomind_core::Message> = {
-                        let state_guard = internal_state.read().await;
-                        let compacted = turn_context.build(&state_guard.memory, effective_max);
-                        compacted.iter().map(|msg| msg.to_core()).collect()
-                    };
-                    let summary_prompt = "Based on the tool execution results in the conversation above,                         provide a concise analysis and summary. Do NOT output any tool calls —                         give a direct text response to the user's question.";
-                    let mut final_content = String::new();
-                    if let Ok(summary_stream) = llm_interface
-                        .chat_stream_summary(summary_prompt, &summary_history)
-                        .await
-                    {
-                        let mut pin = Box::pin(summary_stream);
-                        while let Some(chunk) =
-                            next_chunk_or_timeout(&mut pin, safeguards.max_stream_duration).await
-                        {
-                            match chunk {
-                                Ok((text, _)) => {
-                                    final_content.push_str(&text);
-                                    yield AgentEvent::content(text);
-                                }
-                                Err(_) => break,
-                            }
-                        }
-                    }
-                    if is_degenerate_final_output(&final_content) {
-                        let deduped = deduplicate_tool_results(&nudge_tool_results);
-                        final_content = format_tool_results(&deduped);
-                        yield AgentEvent::content(final_content.clone());
-                    }
-                    let final_msg = AgentMessage::assistant(&final_content);
-                    internal_state.write().await.push_message(final_msg);
-                    handled_by_nudge = true;
-                }
-            }
-            // Turn completed by the nudge recovery skips this plain save
-            // path — its content is already recorded and yielded above.
-            if !handled_by_nudge {
-            // Detect degenerate output (fence-only "```", bare empty JSON
-            // container) and substitute a safe non-empty fallback so the
-            // user/judge never sees a content-less reply. The streamed
-            // degenerate text is already out, but the persisted
-            // assistant_message uses this cleaned value.
-            let degenerate = is_degenerate_final_output(&raw_response);
+            // Preserve valid empty JSON containers; only absent content needs recovery.
+            let degenerate = raw_response.trim().is_empty();
             let response_to_save = if degenerate {
                 tracing::warn!(
                     orig_len = raw_response.len(),
-                    "Multimodal stream produced degenerate fence-only output, substituting fallback"
+                    "Multimodal stream produced no content, substituting fallback"
                 );
                 let fallback = "Sorry, the model produced no usable response. Please retry."
                     .to_string();
                 yield AgentEvent::content(fallback.clone());
                 fallback
             } else {
-                // Clean any embedded tool call JSON from response
-                remove_tool_calls_from_response(&raw_response)
+                str::to_owned(&raw_response)
             };
 
-            let initial_msg = AgentMessage::assistant(&response_to_save);
+            let initial_msg = AgentMessage::assistant_with_thinking(&response_to_save, &thinking_content);
             internal_state.write().await.push_message(initial_msg);
 
-            // Yield any remaining content (skip when degenerate — already yielded fallback)
-            if !degenerate && !buffer.is_empty() {
-                yield AgentEvent::content(buffer.clone());
-            }
-            }
+
         }
 
+        if safeguards.interrupt_signal.as_ref().is_some_and(|rx| *rx.borrow()) {
+            yield AgentEvent::content("\n\n[Interrupted]");
+        }
         let pt = llm_interface.take_last_prompt_tokens().await;
         match pt {
             Some(t) => {

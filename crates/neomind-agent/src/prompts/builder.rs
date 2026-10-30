@@ -142,7 +142,7 @@ mod tests {
         let prompt = builder.build_system_prompt();
         assert!(prompt.contains("NeoMind"));
         assert!(prompt.contains("IoT"));
-        assert!(prompt.contains("Principles"));
+        assert!(prompt.contains("Tools and evidence"));
         assert!(!prompt.contains("Visual Understanding"));
     }
 
@@ -150,7 +150,7 @@ mod tests {
     fn test_prompt_without_examples() {
         let builder = PromptBuilder::new();
         let prompt = builder.build_system_prompt();
-        assert!(prompt.contains("Principles"));
+        assert!(prompt.contains("Tools and evidence"));
         assert!(!prompt.contains("Example Dialogs"));
     }
 
@@ -158,8 +158,8 @@ mod tests {
     fn test_prompt_without_thinking() {
         let builder = PromptBuilder::new().with_thinking(false);
         let prompt = builder.build_system_prompt();
-        assert!(prompt.contains("Principles"));
-        assert!(!prompt.contains("Thinking Mode"));
+        assert!(prompt.contains("Tools and evidence"));
+        assert!(!prompt.contains("Reasoning"));
     }
 
     #[test]
@@ -173,10 +173,10 @@ mod tests {
     fn test_language_policy_in_prompt() {
         let builder = PromptBuilder::new();
         let prompt = builder.build_system_prompt();
-        assert!(prompt.contains("Language Policy"));
-        assert!(prompt.contains("Highest Priority"));
+        assert!(prompt.contains("requested task, language and output format"));
+        assert!(prompt.contains("conversation's language"));
         let prompt_lower = prompt.to_lowercase();
-        assert!(prompt_lower.contains("same language"));
+        assert!(prompt_lower.contains("requested task, language"));
     }
 
     #[test]
@@ -185,7 +185,10 @@ mod tests {
         // --help guidance (saved tokens) — details live in skills/--help.
         let prompt = PromptBuilder::new().build_system_prompt();
         assert!(!prompt.contains("CLI Command Reference"));
-        assert!(!prompt.contains("--help"), "slim drops --help guidance");
+        assert!(
+            prompt.contains("--help"),
+            "syntax remains available on demand"
+        );
     }
 
     #[test]
@@ -207,7 +210,7 @@ mod tests {
         let builder = PromptBuilder::new().with_vision(true);
         let prompt = builder.build_system_prompt();
         assert!(prompt.contains("Vision"));
-        assert!(prompt.contains("analyze images"));
+        assert!(prompt.contains("analyze attached images"));
     }
 
     #[test]
@@ -215,10 +218,10 @@ mod tests {
         let builder = PromptBuilder::new();
         let prompt = builder.build_system_prompt();
         // Tier 1 rules must remain
-        assert!(prompt.contains("No Hallucinated Operations"));
-        assert!(prompt.contains("Task Workflow"));
-        assert!(prompt.contains("BATCH RULE"));
-        assert!(prompt.contains("Domain Boundaries"));
+        assert!(prompt.contains("actual execution results"));
+        assert!(prompt.contains("requested scope"));
+        assert!(prompt.contains("Only batch calls whose inputs and effects are independent"));
+        assert!(prompt.contains("Scheduled or recurring work uses agents"));
     }
 
     #[test]
@@ -238,27 +241,29 @@ mod tests {
         assert!(!no_vision.contains("## Vision"));
         assert!(!no_vision.contains("BEGIN_VISION"));
 
-        assert!(with_all.contains("## Thinking Mode"));
-        assert!(!no_thinking.contains("## Thinking Mode"));
+        assert!(with_all.contains("## Reasoning"));
+        assert!(!no_thinking.contains("## Reasoning"));
         assert!(!no_thinking.contains("BEGIN_THINKING"));
 
         // Default builder has vision disabled, thinking enabled.
         let default_prompt = PromptBuilder::new().build_system_prompt();
         assert!(!default_prompt.contains("## Vision"));
-        assert!(default_prompt.contains("## Thinking Mode"));
+        assert!(default_prompt.contains("## Reasoning"));
     }
 
     #[test]
     fn test_default_prompt_preserves_rules() {
         // The canonical prompt must keep every hard constraint.
         let prompt = PromptBuilder::new().build_system_prompt();
-        assert!(prompt.contains("Language Policy"));
-        assert!(prompt.contains("No Hallucinated Operations"));
-        assert!(prompt.contains("BATCH RULE"));
-        assert!(prompt.contains("Tool-First"));
+        assert!(prompt.contains("requested task, language and output format"));
+        assert!(prompt.contains("actual execution results"));
+        assert!(prompt.contains("Only batch calls whose inputs and effects are independent"));
+        assert!(prompt.contains(
+            "Explanations, plans and ordinary conversation do not inherently require calls"
+        ));
         assert!(prompt.contains("{{CURRENT_TIME}}")); // KV-cache boundary preserved
         assert!(prompt.contains("## Environment"));
-        assert!(prompt.contains("Device Onboarding Guidance")); // guided onboarding
+        assert!(prompt.contains("device-onboarding")); // guided onboarding
     }
 
     #[test]
@@ -268,7 +273,7 @@ mod tests {
         // and added unrequested annotations instead of the named text.
         let prompt = PromptBuilder::new().build_system_prompt();
         assert!(
-            prompt.contains("Show images you produce"),
+            prompt.contains("show the returned image URL"),
             "must instruct embedding tool-produced images via ![...](url)"
         );
         assert!(
@@ -276,7 +281,7 @@ mod tests {
             "must show the exact markdown image syntax"
         );
         assert!(
-            prompt.contains("Edits are exact"),
+            prompt.contains("edits within the requested scope"),
             "must instruct applying exactly the requested edit"
         );
     }
@@ -286,6 +291,6 @@ mod tests {
         // The model answered a Chinese question with an English technical
         // report — the policy must explicitly cover non-conversational replies.
         let prompt = PromptBuilder::new().build_system_prompt();
-        assert!(prompt.contains("tool-result summaries included"));
+        assert!(prompt.contains("requested task, language and output format"));
     }
 }

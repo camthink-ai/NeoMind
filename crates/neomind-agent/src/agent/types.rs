@@ -612,14 +612,17 @@ impl AgentMessage {
             }
             "assistant" => {
                 let mut content = self.content.to_string();
-                // When tool_calls exist and content is empty, inject a concise summary
-                // so the LLM knows what tools were called in previous turns.
+                // Keep a factual record of tool calls even when the model narrated them.
+                // Earlier observations do not prohibit a fresh verification.
                 if let Some(ref tool_calls) = self.tool_calls {
-                    if !tool_calls.is_empty() && content.is_empty() {
+                    if !tool_calls.is_empty() {
                         let summaries: Vec<String> = tool_calls
                             .iter()
                             .map(|tc| {
-                                let args_summary = summarize_tool_args(&tc.name, &tc.arguments);
+                                let args_summary =
+                                    super::streaming::sanitize_tool_result_for_prompt(
+                                        &tc.arguments.to_string(),
+                                    );
                                 let result_preview = tc
                                     .result
                                     .as_ref()
@@ -642,7 +645,13 @@ impl AgentMessage {
                                 }
                             })
                             .collect();
-                        content = format!("In a previous turn I called {}. These results are from earlier and should not be repeated.", summaries.join(", then "));
+                        let record =
+                            format!("[Tool calls recorded: {}]", summaries.join(", then "));
+                        content = if content.is_empty() {
+                            record
+                        } else {
+                            format!("{content}\n\n{record}")
+                        };
                     }
                 }
                 Message::assistant(&content)

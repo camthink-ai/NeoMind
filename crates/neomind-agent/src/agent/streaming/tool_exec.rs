@@ -48,6 +48,39 @@ pub(crate) async fn execute_tool_with_retry(
     result
 }
 
+/// Apply the same turn deadline and cancel signal to each real tool call.
+/// Completed peers are still collected; an interrupted side effect is unknown.
+pub(crate) async fn execute_tool_before_deadline(
+    tools: &crate::toolkit::ToolRegistry,
+    cache: &std::sync::Arc<tokio::sync::RwLock<ToolResultCache>>,
+    name: &str,
+    arguments: serde_json::Value,
+    deadline: std::time::Instant,
+    interrupt: Option<&tokio::sync::watch::Receiver<bool>>,
+) -> std::result::Result<crate::toolkit::ToolOutput, crate::toolkit::ToolError> {
+    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+    if remaining.is_zero() || interrupt.is_some_and(|rx| *rx.borrow()) {
+        return Err(crate::toolkit::ToolError::Execution(
+            "Not executed: turn ended before this call started".into(),
+        ));
+    }
+    let reason = tokio::select! {
+        result = execute_tool_with_retry(tools, cache, name, arguments) => return result,
+        () = tokio::time::sleep(remaining) => "Turn time budget exhausted during tool execution.",
+        () = super::wait_for_interrupt(interrupt) => "Tool execution interrupted.",
+    };
+    let replay_safe =
+        tools.replay_safety(&resolve_tool_name(name)) == crate::toolkit::tool::ReplaySafety::Safe;
+    let hint = if replay_safe {
+        ""
+    } else {
+        crate::toolkit::tool::outcome_unknown_guidance()
+    };
+    Err(crate::toolkit::ToolError::Execution(format!(
+        "{reason}{hint}"
+    )))
+}
+
 /// Inner retry logic without caching (for code reuse)
 pub(crate) async fn execute_with_retry_impl(
     tools: &crate::toolkit::ToolRegistry,
@@ -149,6 +182,79 @@ mod tests {
     use crate::toolkit::tool::{ReplaySafety, Tool, ToolOutput};
     use crate::toolkit::{ToolError, ToolRegistry};
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct PendingEffect(Arc<AtomicUsize>);
+    #[async_trait::async_trait]
+    impl Tool for PendingEffect {
+        fn name(&self) -> &str {
+            "pending_effect"
+        }
+        fn description(&self) -> &str {
+            "simulated effect with a pending response"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({"type":"object"})
+        }
+        fn replay_safety(&self) -> ReplaySafety {
+            ReplaySafety::Unsafe
+        }
+        async fn execute(&self, _: serde_json::Value) -> Result<ToolOutput, ToolError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            std::future::pending().await
+        }
+    }
+
+    #[tokio::test]
+    async fn turn_cancellation_preserves_unknown_outcome_without_replay() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut tools = ToolRegistry::new();
+        tools.register(Arc::new(PendingEffect(calls.clone())));
+        let cache = Arc::new(RwLock::new(ToolResultCache::new(
+            std::time::Duration::from_secs(60),
+        )));
+        let expired = execute_tool_before_deadline(
+            &tools,
+            &cache,
+            "pending_effect",
+            serde_json::json!({}),
+            std::time::Instant::now(),
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(expired.to_string().contains("Not executed"));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        let started = calls.clone();
+        tokio::spawn(async move {
+            while started.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+            tx.send(true).unwrap();
+        });
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            execute_tool_before_deadline(
+                &tools,
+                &cache,
+                "pending_effect",
+                serde_json::json!({}),
+                std::time::Instant::now() + std::time::Duration::from_secs(60),
+                Some(&rx),
+            ),
+        )
+        .await
+        .expect("cancel must wake the pending tool")
+        .unwrap_err();
+        assert!(result
+            .to_string()
+            .contains(crate::toolkit::tool::outcome_unknown_guidance()));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "interrupted effects must not be replayed"
+        );
+    }
 
     struct InterruptedTool {
         calls: Arc<AtomicUsize>,

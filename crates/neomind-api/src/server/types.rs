@@ -2880,10 +2880,7 @@ impl ServerState {
                                     Pin<
                                         Box<
                                             dyn Stream<
-                                                    Item = Result<
-                                                        (String, bool),
-                                                        neomind_core::llm::backend::LlmError,
-                                                    >,
+                                                    Item = neomind_core::llm::backend::StreamChunk,
                                                 > + Send,
                                         >,
                                     >,

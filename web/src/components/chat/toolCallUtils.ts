@@ -3,11 +3,35 @@
 
 import type { ToolCall } from "@/types"
 
-/** A failed tool is either flagged by the live event or carries an error result. */
+function resultObject(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value === "string") {
+    try { value = JSON.parse(value) } catch { return undefined }
+  }
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined
+}
+
+/** Use execution facts for live and restored cards; business fields are not status. */
 export function isToolError(toolCall: ToolCall): boolean {
   if (toolCall.success === false) return true
-  const result = toolCall.result
-  return !!result && typeof result === "object" && "error" in (result as Record<string, unknown>)
+  const result = resultObject(toolCall.result)
+  if (!result) return false
+  const data = resultObject(result.data) ?? result
+  const isShell = toolCall.name === "shell" || typeof toolCall.arguments?.command === "string"
+  if (isShell) {
+    if (data.timed_out === true) return true
+    if (typeof data.exit_code === "number") return data.exit_code !== 0
+    if ("exit_code" in data && data.exit_code === null) return true
+  }
+  if (toolCall.success === true) return false
+  // The failed ToolOutput envelope preserves partial data with its status.
+  if (result.success === false && "data" in result && "error" in result) return true
+  // Older persisted executor errors used a single error field. Avoid treating
+  // arbitrary business payloads containing error:null, error:0 or device faults as failures.
+  return Object.keys(result).length === 1
+    && typeof result.error === "string"
+    && result.error.trim().length > 0
 }
 
 /** "device list --yes" → "device list" */

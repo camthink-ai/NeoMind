@@ -1756,14 +1756,7 @@ mod tests {
                 _input: neomind_core::llm::backend::LlmInput,
             ) -> std::result::Result<
                 Pin<
-                    Box<
-                        dyn futures::Stream<
-                                Item = std::result::Result<
-                                    (String, bool),
-                                    neomind_core::llm::backend::LlmError,
-                                >,
-                            > + Send,
-                    >,
+                    Box<dyn futures::Stream<Item = neomind_core::llm::backend::StreamChunk> + Send>,
                 >,
                 neomind_core::llm::backend::LlmError,
             > {

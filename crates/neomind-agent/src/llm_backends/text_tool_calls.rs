@@ -1,16 +1,6 @@
-//! Shared text-based tool-calling fallback for models without native
-//! function calling.
-//!
-//! The agent layer's `tool_parser` understands several text protocols (JSON
-//! array / JSON object / XML / Hermes), but a model only emits one if it has
-//! been taught the format. The Ollama backend always injected this teaching
-//! into the system message for models reported as `function_calling=false`;
-//! the OpenAI-compatible and llama.cpp backends did not — so custom
-//! OpenAI-compatible endpoints (whose provider heuristic in `openai.rs`
-//! defaults to no function calling) silently lost all tool use: the request
-//! carried the `tools` schema, but the model never saw a protocol it could
-//! answer in and the reply parsed as plain prose. This module holds the one
-//! teaching text and the gating/injection helpers all backends share.
+//! Explicit text-protocol adapter for requests without native function calling.
+//! Only a complete, dedicated execution envelope is decoded. Plain JSON,
+//! prose and fenced examples remain ordinary output.
 
 use neomind_core::llm::backend::ToolDefinition;
 use neomind_core::message::{Content, ContentPart, Message, MessageRole};
@@ -20,19 +10,102 @@ use neomind_core::message::{Content, ContentPart, Message, MessageRole};
 /// tool descriptions are NOT repeated here; the agent system prompt already
 /// carries the "Available Tools" section this text points at.
 pub(crate) fn format_teaching() -> String {
-    let mut result = String::from("## Tool Calling Format (JSON)\n");
-    result.push_str("You must call tools using JSON format. Do not just describe what to do.\n\n");
-    result.push_str("Format:\n");
-    result.push_str("[{\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}]\n\n");
+    "## Tool protocol\nWhen an actual tool operation is needed, respond with exactly \
+     <neomind_tool_calls>[{\"name\":\"tool_name\",\"arguments\":{\"param\":\"value\"}}]</neomind_tool_calls>. \
+     Use only available tool names and documented parameters. This envelope is an execution request; \
+     do not put it in explanations or examples. For ordinary answers, plans, or explanations, \
+     respond normally without this envelope. Follow the user's requested scope."
+        .to_string()
+}
 
-    result.push_str("## Important Rules\n");
-    result.push_str("1. ALWAYS output tool calls as a JSON array\n");
-    result.push_str("2. Don't explain, just call the tool directly\n");
-    result.push_str(
-        "3. Use the exact tool names and parameters from the Available Tools section above\n",
-    );
+/// Only non-native requests that actually carry tools use the explicit text envelope.
+pub(crate) fn legacy_tools(
+    native: bool,
+    tools: Option<&[ToolDefinition]>,
+) -> Option<Vec<ToolDefinition>> {
+    needed(native, tools).then(|| tools.unwrap_or_default().to_vec())
+}
 
-    result
+fn decode(text: &str, tools: &[ToolDefinition]) -> Option<Vec<serde_json::Value>> {
+    let json = text
+        .trim()
+        .strip_prefix("<neomind_tool_calls>")?
+        .strip_suffix("</neomind_tool_calls>")?;
+    let calls: Vec<serde_json::Value> = serde_json::from_str(json).ok()?;
+    if calls.is_empty()
+        || !calls.iter().all(|call| {
+            call.get("name")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|name| tools.iter().any(|tool| tool.name == name))
+                && call
+                    .get("arguments")
+                    .is_some_and(serde_json::Value::is_object)
+        })
+    {
+        return None;
+    }
+    Some(calls)
+}
+
+pub(crate) fn adapt_output(
+    mut output: neomind_core::llm::backend::LlmOutput,
+    tools: Option<Vec<ToolDefinition>>,
+) -> neomind_core::llm::backend::LlmOutput {
+    if output.tool_calls.as_ref().is_none_or(Vec::is_empty) {
+        if let Some(calls) = tools.as_ref().and_then(|tools| decode(&output.text, tools)) {
+            output.text.clear();
+            output.tool_calls = Some(calls);
+            output.finish_reason = neomind_core::llm::backend::FinishReason::ToolCalls;
+        }
+    }
+    output
+}
+
+/// Text-only protocols buffer content until the complete envelope is known.
+/// Thinking and native calls retain their channel. Native-capable requests pass through.
+pub(crate) fn adapt_stream(
+    mut stream: std::pin::Pin<
+        Box<dyn futures::Stream<Item = neomind_core::llm::backend::StreamChunk> + Send>,
+    >,
+    tools: Option<Vec<ToolDefinition>>,
+) -> std::pin::Pin<Box<dyn futures::Stream<Item = neomind_core::llm::backend::StreamChunk> + Send>>
+{
+    let Some(tools) = tools else {
+        return stream;
+    };
+    Box::pin(async_stream::stream! {
+        use futures::StreamExt;
+        use neomind_core::llm::backend::StreamEvent;
+        let mut text = String::new();
+        let mut native_seen = false;
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(StreamEvent::Text(part)) => {
+                    // Usage markers are transport metadata, not part of a text envelope.
+                    let (content, prompt_tokens) = neomind_core::llm::backend::strip_token_marker(&part);
+                    text.push_str(&content);
+                    if let Some(tokens) = prompt_tokens {
+                        yield Ok(StreamEvent::Text(format!("\n__NEOMIND_TOKEN_PROMPT:{tokens}__")));
+                    }
+                }
+                Ok(StreamEvent::ToolCalls(calls)) => {
+                    native_seen = true;
+                    yield Ok(StreamEvent::ToolCalls(calls));
+                }
+                Err(error) => {
+                    if !text.is_empty() { yield Ok(StreamEvent::Text(std::mem::take(&mut text))); }
+                    yield Err(error);
+                    return;
+                }
+                thinking => yield thinking,
+            }
+        }
+        if let Some(calls) = (!native_seen).then(|| decode(&text, &tools)).flatten() {
+            yield Ok(StreamEvent::ToolCalls(calls));
+        } else if !text.is_empty() {
+            yield Ok(StreamEvent::Text(text));
+        }
+    })
 }
 
 /// Whether a request must carry the format-teaching injection: the effective
@@ -87,6 +160,71 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn explicit_envelope_survives_chunk_boundaries_but_examples_stay_text() {
+        use futures::StreamExt;
+        use neomind_core::llm::backend::StreamEvent;
+        let wrapped = "<neomind_tool_calls>[{\"name\":\"echo\",\"arguments\":{\"msg\":\"hello\"}}]</neomind_tool_calls>";
+        let tools = vec![tool("echo")];
+        for text in [
+            "```json\n[{\"name\":\"echo\",\"arguments\":{}}]\n```".to_string(),
+            "[]".to_string(),
+            format!("Example: {wrapped}"),
+            format!("```\n{wrapped}\n```"),
+            wrapped.replace("echo", "unknown"),
+        ] {
+            let stream = futures::stream::iter(vec![Ok(StreamEvent::Text(text.clone()))]);
+            let events: Vec<_> = adapt_stream(Box::pin(stream), Some(tools.clone()))
+                .collect()
+                .await;
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].as_ref().unwrap(), &StreamEvent::Text(text));
+        }
+        let chunks = wrapped
+            .chars()
+            .map(|c| Ok(StreamEvent::Text(c.to_string())))
+            .collect::<Vec<_>>();
+        let events: Vec<_> = adapt_stream(Box::pin(futures::stream::iter(chunks)), Some(tools))
+            .collect()
+            .await;
+        assert_eq!(events.len(), 1);
+        assert!(
+            matches!(&events[0], Ok(StreamEvent::ToolCalls(calls)) if calls[0]["name"] == "echo")
+        );
+    }
+
+    #[tokio::test]
+    async fn usage_metadata_does_not_prevent_a_text_protocol_call() {
+        use futures::StreamExt;
+        use neomind_core::llm::backend::StreamEvent;
+        let envelope =
+            "<neomind_tool_calls>[{\"name\":\"echo\",\"arguments\":{}}]</neomind_tool_calls>";
+        let stream = futures::stream::iter(vec![
+            Ok(StreamEvent::Text(envelope.into())),
+            Ok(StreamEvent::Text("\n__NEOMIND_TOKEN_PROMPT:123__".into())),
+        ]);
+        let events: Vec<_> = adapt_stream(Box::pin(stream), Some(vec![tool("echo")]))
+            .collect()
+            .await;
+        assert_eq!(events.len(), 2);
+        assert!(
+            matches!(&events[0], Ok(StreamEvent::Text(text)) if text.contains("__NEOMIND_TOKEN_PROMPT:123__"))
+        );
+        assert!(matches!(&events[1], Ok(StreamEvent::ToolCalls(calls)) if calls.len() == 1));
+    }
+
+    #[tokio::test]
+    async fn native_requests_do_not_interpret_even_the_text_envelope() {
+        use futures::StreamExt;
+        use neomind_core::llm::backend::StreamEvent;
+        let text =
+            "<neomind_tool_calls>[{\"name\":\"echo\",\"arguments\":{}}]</neomind_tool_calls>";
+        let stream = futures::stream::iter(vec![Ok(StreamEvent::Text(text.into()))]);
+        let events: Vec<_> = adapt_stream(Box::pin(stream), None).collect().await;
+        assert!(matches!(&events[0], Ok(StreamEvent::Text(got)) if got == text));
+        assert!(!format_teaching().contains("ALWAYS"));
+    }
+
     #[test]
     fn needed_gates_on_native_support_and_tools() {
         let tools = vec![tool("a")];
@@ -115,7 +253,7 @@ mod tests {
         match &prepared[0].content {
             Content::Text(text) => {
                 assert!(text.starts_with("base prompt\n\n"));
-                assert!(text.contains("Tool Calling Format (JSON)"));
+                assert!(text.contains("Tool protocol"));
             }
             other => panic!("text content must stay text, got {other:?}"),
         }

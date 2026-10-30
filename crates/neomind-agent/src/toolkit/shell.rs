@@ -59,30 +59,7 @@ struct CommandOutput {
     timed_out: bool,
 }
 
-/// Shell tool — executes system commands.
-/// [context-injection] Domains whose `--help` reference has been injected
-/// once already this process (first-use injection, channel C). See
-/// `ShellTool::domain_help` for the rationale.
-static INJECTED_DOMAINS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
-    std::sync::OnceLock::new();
-
-/// [context-injection] Set once the cross-domain index card has been
-/// injected into a shell tool result (channel D — first shell call of the
-/// process). See `DOMAIN_INDEX` for why the index is injected rather than
-/// living in the static tool description.
-static INDEX_INJECTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Cross-domain subcommand index (channel D). Delivered ONCE, appended to
-/// the FIRST shell tool result, so the model sees the full CLI surface
-/// right after it has already chosen `shell` — recall without any static
-/// description-length cost.
-///
-/// History: first shipped inside the static description (2026-08-17); the
-/// 2026-08-18 full eval showed the 2600-char description re-triggered the
-/// ≤3B tool-selection suppression (wrong-tool grabs like file_write), so it
-/// moved here. The 27 "detoured via a wrong-but-succeeding command" failures
-/// it fixes need the map BEFORE detouring, which channel D satisfies for
-/// every case that touches shell at least once.
+#[cfg(test)]
 const DOMAIN_INDEX: &str = r#"
 
 [neomind CLI domain index — the exact subcommands that exist (one line per domain; `neomind <domain> --help` for flags)]
@@ -229,36 +206,7 @@ impl ShellTool {
         })
     }
 
-    /// [context-injection] Domains whose `--help` reference has been injected
-    /// once already (first-use injection). Process-local: the eval spawns a
-    /// fresh server per case (each case gets one injection per domain); a
-    /// long-running server injects each domain on first use only — later
-    /// turns find it in the conversation history.
-    fn domain_injected(domain: &str) -> bool {
-        INJECTED_DOMAINS
-            .get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
-            .lock()
-            .map(|s| s.contains(domain))
-            .unwrap_or(false)
-    }
-
-    fn mark_domain_injected(domain: &str) {
-        if let Some(m) = INJECTED_DOMAINS.get() {
-            if let Ok(mut s) = m.lock() {
-                s.insert(domain.to_string());
-            }
-        }
-    }
-
-    /// [context-injection] Fetch a domain's `--help` (compact subcommand
-    /// reference) so the model sees exact syntax. Two channels:
-    /// (B) on a FAILED `neomind <domain> ...` call → "retry with the exact one"
-    /// (C) on the FIRST successful call in a domain → reference for the
-    ///     upcoming steps of a multi-step flow (create→test→enable...).
-    /// Both keep the static tool description short so ≤3B models still
-    /// SELECT `shell`; channel C is deterministic (fires only after the
-    /// model already chose shell), so there is no intent-detection
-    /// overtrigger risk.
+    /// Exact CLI reference attached only to reported command errors.
     async fn domain_help(domain: &str, subcommand: Option<&str>, note: &str) -> Option<String> {
         if domain.is_empty() {
             return None;
@@ -461,48 +409,28 @@ impl ShellTool {
         match tokio::time::timeout(timeout, neomind_cli_ops::dispatch::dispatch(&argv)).await {
             Ok(Ok(resp)) => {
                 let exit_code = if resp.success { 0 } else { 1 };
-                let mut stdout = serde_json::to_string_pretty(&resp).unwrap_or_else(|e| {
+                let stdout = serde_json::to_string_pretty(&resp).unwrap_or_else(|e| {
                     format!(
                         "{{\"success\":false,\"error\":\"serialize failed: {}\"}}",
                         e
                     )
                 });
-                // [context-injection] (D) FIRST shell call of the process →
-                // cross-domain index card (see DOMAIN_INDEX for why this
-                // lives here and not in the static description). (B)
-                // failure → --help to correct on retry; (C) FIRST
-                // successful call in a domain → --help as reference for the
-                // upcoming steps of multi-step flows.
-                if !INDEX_INJECTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                    stdout.push_str(DOMAIN_INDEX);
-                }
-                if let Some(domain) = argv.get(1) {
-                    // First non-flag token after the domain = the subcommand;
-                    // its --help lists the actual flags the model may have
-                    // guessed wrong (`--all`, `--format=json`, ...).
-                    let subcommand = argv
-                        .get(2)
-                        .map(String::as_str)
-                        .filter(|s| !s.starts_with('-'));
-                    let help: Option<String> = if !resp.success {
-                        Self::domain_help(domain.as_str(), subcommand, "retry with the exact one")
-                            .await
-                    } else if !Self::domain_injected(domain.as_str()) {
-                        let h = Self::domain_help(
-                            domain.as_str(),
-                            subcommand,
-                            "use the exact one for the next steps",
-                        )
-                        .await;
-                        if h.is_some() {
-                            Self::mark_domain_injected(domain.as_str());
+                if !resp.success {
+                    if let Some(domain) = argv.get(1) {
+                        let subcommand = argv
+                            .get(2)
+                            .map(String::as_str)
+                            .filter(|s| !s.starts_with('-'));
+                        if let Some(help) =
+                            Self::domain_help(domain, subcommand, "command reference").await
+                        {
+                            return Some(CommandOutput {
+                                exit_code: Some(exit_code),
+                                stdout,
+                                stderr: help,
+                                timed_out: false,
+                            });
                         }
-                        h
-                    } else {
-                        None
-                    };
-                    if let Some(help) = help {
-                        stdout.push_str(&help);
                     }
                 }
                 Some(CommandOutput {
@@ -1369,13 +1297,8 @@ Quick reference (run `neomind <domain> --help` or load the `skill` guide for ful
 - History & conversation: `agent executions <ID>`, `agent conversation <ID>`, `agent send-message <ID>`.
 - Notification channels are a sub-family: `message channel-list` / `channel-create` / `channel-test`, NOT `message list`.
 
-Critical rules:
-- NEVER guess metric or subcommand names — discover via `get`/`list`/`--help` first, then use exact names.
-- Read before write: `get <ID>` before create/update/control/delete.
-- COMPLETE THE FULL FLOW: a multi-step request ("create X then enable it", "deploy then verify") requires EVERY step — do not stop after the first action.
-  Worked example — "create an MQTT connector named c1 to 192.168.1.100, enable and test it" is ONE request = THREE commands:
-  `neomind connector create --name c1 --host 192.168.1.100 --port 1883` → `neomind connector enable c1` → `neomind connector test c1`. Run them all.
-- On error, read the `suggestion` field in the JSON output for recovery.
+Use documented subcommands and flags; unknown syntax can be checked with --help or skill guides.
+Output fields include stdout, stderr, exit_code and timed_out. Errors may include a structured suggestion. Report the actual command outcome.
 
 Native host tools also available via `/bin/sh -c`: ping, curl, ps, df, grep, docker, …"#;
         SLIM
@@ -1619,40 +1542,21 @@ mod tests {
              tool selection on <=3B models; move detail to on-demand injection",
             d.len()
         );
-        // Skeleton essentials
         let dl = d.to_lowercase();
         for needle in [
-            "primary tool",      // positions shell as the default
-            "quick reference",   // points at --help / skill for detail
-            "read before write", // sequence directive
-            "complete the full flow",
-            "never guess", // discover-before-use
+            "quick reference",
+            "--help",
+            "agent send-message",
+            "exit_code",
+            "stdout",
         ] {
             assert!(
                 dl.contains(needle),
-                "skeleton description must keep {needle:?}"
+                "shell description must document {needle}"
             );
         }
-        // The worked multi-step example (small models follow examples, not
-        // directives — the connector create→enable→test sequence).
-        assert!(
-            dl.contains("connector create") && dl.contains("connector enable"),
-            "worked multi-step example must stay"
-        );
-    }
-
-    /// Sequence directives: Ling-3.0-tiny's device/rule failures were dominated
-    /// by "skip the read step before write" and "don't finish multi-step flows".
-    /// Guard the two directives that nudge read-before-write + complete-the-flow.
-    #[test]
-    fn command_choice_directs_sequence() {
-        let d = ShellTool::new(test_config()).description().to_lowercase();
-        for needle in ["read before write", "complete the full flow"] {
-            assert!(
-                d.contains(needle),
-                "Command Choice must keep sequence directive {needle:?}"
-            );
-        }
+        assert!(!dl.contains("read before write"));
+        assert!(!dl.contains("complete the full flow"));
     }
 
     #[tokio::test]

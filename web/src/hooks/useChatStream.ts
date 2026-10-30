@@ -112,8 +112,6 @@ export interface UseChatStreamOptions {
  *  ToolCallStart and ToolCallEnd, so this must not undercut legitimate
  *  multi-minute tools). */
 const STREAM_IDLE_MS = 10 * 60_000
-/** Absolute turn cap — slightly above the backend's 1200s stream timeout. */
-const STREAM_TOTAL_MS = 21 * 60_000
 /** Error frames are followed by a fallback summary + end; give them this
  *  long before settling the view. */
 const ERROR_GRACE_MS = 30_000
@@ -161,7 +159,6 @@ export function useChatStream(options: UseChatStreamOptions) {
   // -- Terminal-frame watchdog --
   const watchdogRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const lastEventAtRef = useRef(0)
-  const turnStartAtRef = useRef(0)
   const errorAtRef = useRef<number | null>(null)
 
   /** Completed-round thinking + current round's live thinking. */
@@ -223,7 +220,6 @@ export function useChatStream(options: UseChatStreamOptions) {
    *  the spinner that used to require a page refresh/session switch. */
   const startWatchdog = useCallback(() => {
     stopWatchdog()
-    turnStartAtRef.current = Date.now()
     lastEventAtRef.current = Date.now()
     watchdogRef.current = setInterval(() => {
       if (!isStreamingRef.current) {
@@ -243,11 +239,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         optionsRef.current.onStalled?.("stream idle")
         return
       }
-      if (now - turnStartAtRef.current > STREAM_TOTAL_MS) {
-        stopWatchdog()
-        hardReset()
-        optionsRef.current.onStalled?.("stream total timeout")
-      }
+
     }, 5000)
   }, [hardReset, stopWatchdog])
 

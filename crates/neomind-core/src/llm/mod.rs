@@ -10,7 +10,8 @@ pub mod registry;
 
 pub use backend::{
     BackendCapabilities, BackendId, FinishReason, GenerationParams, LlmError, LlmInput, LlmOutput,
-    LlmRuntime, ReasoningCapabilities, ReasoningControl, StreamChunk, ThinkingEffort, TokenUsage,
+    LlmRuntime, ReasoningCapabilities, ReasoningControl, StreamChunk, StreamEvent, ThinkingEffort,
+    TokenUsage,
 };
 pub use capability::{detect_thinking, detect_tools_capability, detect_vision_capability};
 pub use compaction::{

@@ -15,6 +15,7 @@ impl CaptureRuntime {
         self.requests.lock().unwrap().push(serde_json::json!({
             "messages": input.messages,
             "tools_count": input.tools.as_ref().map_or(0, Vec::len),
+            "thinking": input.params.thinking_enabled,
         }));
     }
 }
@@ -64,7 +65,7 @@ async fn harness(script: Vec<MockResponse>) -> (Arc<LlmInterface>, Requests) {
     (iface, requests)
 }
 
-type ChatStream = Pin<Box<dyn Stream<Item = AgentResult<(String, bool)>> + Send>>;
+type ChatStream = Pin<Box<dyn Stream<Item = AgentResult<StreamEvent>> + Send>>;
 
 async fn drain(mut stream: ChatStream) {
     while let Some(chunk) = stream.next().await {
@@ -472,7 +473,7 @@ async fn repeated_poll_executes_again_and_observes_new_state() {
 }
 
 #[tokio::test]
-async fn summary_is_retained_in_forced_final_response() {
+async fn summary_is_retained_across_repeated_tool_rounds() {
     let call = MockResponse::tool_call("skill", serde_json::json!({"action":"load"}));
     let (iface, requests) = harness(vec![
         call.clone(),
@@ -497,7 +498,7 @@ async fn summary_is_retained_in_forced_final_response() {
     .await;
     let requests = requests.lock().unwrap();
     assert_eq!(requests.len(), 5);
-    assert_eq!(requests.last().unwrap()["tools_count"], 0);
+    assert_eq!(requests.last().unwrap()["tools_count"], 1);
     for request in requests.iter() {
         assert!(request["messages"]
             .to_string()
@@ -580,43 +581,44 @@ async fn agent_conversation_does_not_get_device_history_guidance() {
 }
 
 #[tokio::test]
-async fn task_guidance_requires_unambiguous_domain_evidence() {
+async fn keyword_guidance_never_replaces_the_original_task() {
     let cases = [
-        ("查看 demo-agent 最近的对话历史", None),
-        ("查看代理温度查询的会话历史", None),
-        ("查看助手最近的温度记录", None),
-        ("查看定时任务的数据执行历史", None),
-        ("Show cron temperature query history", None),
-        ("Show message history", None),
-        ("Open the dashboard", None),
-        ("Create a new agent to read temperature", None),
-        ("查询历史", None),
-        ("What is the current configuration?", None),
-        ("Show photosensor metadata", None),
-        ("List devices", Some("Device Management")),
-        ("读取设备历史", Some("Device Management")),
-        ("Read temperature telemetry", Some("Data Analysis")),
-        ("查询温度指标", Some("Data Analysis")),
-        ("Show rule execution history", Some("Rule Management")),
-        (
-            "Create an automation rule when the sensor temperature is high",
-            Some("Rule Management"),
-        ),
+        "查看 demo-agent 最近的对话历史",
+        "查看代理温度查询的会话历史",
+        "查看助手最近的温度记录",
+        "查看定时任务的数据执行历史",
+        "Show cron temperature query history",
+        "Show message history",
+        "Open the dashboard",
+        "Create a new agent to read temperature",
+        "查询历史",
+        "What is the current configuration?",
+        "Show photosensor metadata",
+        "List devices",
+        "读取设备历史",
+        "Read temperature telemetry",
+        "查询温度指标",
+        "Show rule execution history",
+        "Create an automation rule when the sensor temperature is high",
+        "Turn off the temperature sensor",
+        "关闭温度传感器",
     ];
     let (iface, requests) = harness(vec![MockResponse::text("done"); cases.len()]).await;
-    for (message, _) in cases {
+    for message in cases {
         drain(iface.chat_stream_with_history(message, &[]).await.unwrap()).await;
     }
     let requests = requests.lock().unwrap();
-    for (request, (message, expected)) in requests.iter().zip(cases) {
-        let system = request["messages"][0].to_string();
-        match expected {
-            Some(task) => assert!(
-                system.contains(&format!("## Current Task: {task}")),
-                "{message}"
-            ),
-            None => assert!(!system.contains("## Current Task:"), "{message}"),
-        }
+    for (request, message) in requests.iter().zip(cases) {
+        assert!(
+            !request["messages"][0]
+                .to_string()
+                .contains("## Current Task:"),
+            "{message}"
+        );
+        assert!(
+            request["messages"].to_string().contains(message),
+            "original user request is preserved"
+        );
     }
 }
 
@@ -671,6 +673,396 @@ async fn duplicate_advisory_preserves_scalar_and_array_results() {
         assert!(result["_duplicate"]
             .as_str()
             .unwrap()
-            .contains("if you are verifying a change"));
+            .contains("The current result below is fresh"));
     }
+}
+
+async fn audit_turn(
+    iface: Arc<LlmInterface>,
+    registry: Arc<crate::toolkit::ToolRegistry>,
+    task: &str,
+) -> Arc<tokio::sync::RwLock<crate::agent::types::AgentInternalState>> {
+    let state = Arc::new(tokio::sync::RwLock::new(
+        crate::agent::types::AgentInternalState::new("intervention-audit".into()),
+    ));
+    let mut stream = crate::agent::streaming::process_stream_events_with_safeguards(
+        iface,
+        state.clone(),
+        registry,
+        task,
+        Default::default(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    while stream.next().await.is_some() {}
+    state
+}
+
+#[tokio::test]
+async fn intervention_audit_multimodal_respects_behavioral_guards_off() {
+    let (iface, requests) = harness(vec![
+        MockResponse::text("Let me check the image."),
+        MockResponse::text("A plain scene."),
+    ])
+    .await;
+    let state = Arc::new(tokio::sync::RwLock::new(
+        crate::agent::types::AgentInternalState::new("audit-image".into()),
+    ));
+    let mut stream = crate::agent::streaming::process_multimodal_stream_events_with_safeguards(
+        iface,
+        state,
+        Arc::new(crate::toolkit::ToolRegistry::new()),
+        "Describe the scene in this image.",
+        vec![],
+        crate::agent::streaming::StreamSafeguards::default().with_behavioral_guards(false),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    while stream.next().await.is_some() {}
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        1,
+        "disabled behavioral guards still launched a narration nudge"
+    );
+}
+
+#[tokio::test]
+async fn intervention_audit_promise_directive_respects_behavioral_guards_off() {
+    let call = |n| {
+        MockResponse::tool_call("probe", serde_json::json!({"step":n}))
+            .with_text("Let me run neomind device create now.")
+    };
+    let (iface, requests) = harness(vec![call(1), call(2), MockResponse::text("done")]).await;
+    iface.set_tool_definitions(vec![tool("probe")]).await;
+    let mut tools = crate::toolkit::ToolRegistry::new();
+    tools.register(Arc::new(ProbeResult(serde_json::json!("prep result"))));
+    audit_turn(iface, Arc::new(tools), "Investigate the device setup.").await;
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 3);
+    assert!(
+        !requests[2]["messages"]
+            .to_string()
+            .contains("STATED-INTENT MISMATCH"),
+        "disabled behavioral guards still ordered a specific command NOW"
+    );
+}
+
+#[tokio::test]
+async fn intervention_audit_post_tool_round_keeps_requested_thinking() {
+    let (iface, requests) = harness(vec![
+        MockResponse::tool_call("probe", serde_json::json!({})),
+        MockResponse::text("done"),
+    ])
+    .await;
+    iface.set_thinking_enabled(true).await;
+    iface.set_tool_definitions(vec![tool("probe")]).await;
+    let mut tools = crate::toolkit::ToolRegistry::new();
+    tools.register(Arc::new(ProbeResult(serde_json::json!("evidence"))));
+    audit_turn(iface, Arc::new(tools), "Analyse the evidence.").await;
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests[0]["thinking"], true);
+    assert_eq!(
+        requests[1]["thinking"], true,
+        "a tool round silently overrode the user thinking choice"
+    );
+}
+
+#[tokio::test]
+async fn intervention_audit_truncated_history_does_not_disable_requested_thinking() {
+    let (iface, requests) = harness(vec![MockResponse::text("done")]).await;
+    iface.set_thinking_enabled(true).await;
+    let history = vec![Message::assistant("historical evidence ".repeat(25_000))];
+    drain(
+        iface
+            .chat_stream_with_history("Analyse the recent readings", &history)
+            .await
+            .unwrap(),
+    )
+    .await;
+    let requests = requests.lock().unwrap();
+    assert_eq!(
+        requests[0]["messages"].as_array().unwrap().len(),
+        2,
+        "oversized history was discarded"
+    );
+    assert_eq!(
+        requests[0]["thinking"], true,
+        "a discarded history triggered the 18K thinking override"
+    );
+}
+
+#[tokio::test]
+async fn intervention_audit_explicit_empty_json_is_a_valid_answer() {
+    let (iface, requests) = harness(vec![
+        MockResponse::text("[]"),
+        MockResponse::text("Replacement output"),
+    ])
+    .await;
+    let state = audit_turn(
+        iface,
+        Arc::new(crate::toolkit::ToolRegistry::new()),
+        "Return exactly the valid empty JSON array [] and nothing else.",
+    )
+    .await;
+    let final_text = state
+        .read()
+        .await
+        .memory
+        .last()
+        .unwrap()
+        .content
+        .to_string();
+    assert_eq!(
+        final_text,
+        "[]",
+        "valid requested output was replaced after an unsolicited retry; calls={}",
+        requests.lock().unwrap().len()
+    );
+}
+
+struct AuditProbe {
+    ready: Arc<std::sync::atomic::AtomicBool>,
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+    repair: bool,
+}
+#[async_trait::async_trait]
+impl crate::toolkit::Tool for AuditProbe {
+    fn name(&self) -> &str {
+        if self.repair {
+            "repair"
+        } else {
+            "probe"
+        }
+    }
+    fn description(&self) -> &str {
+        "test environment repair"
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({"type":"object"})
+    }
+    async fn execute(
+        &self,
+        _: serde_json::Value,
+    ) -> crate::toolkit::Result<crate::toolkit::ToolOutput> {
+        use std::sync::atomic::Ordering::SeqCst;
+        if self.repair {
+            self.ready.store(true, SeqCst);
+            Ok(crate::toolkit::ToolOutput::success("repaired"))
+        } else {
+            self.calls.fetch_add(1, SeqCst);
+            Ok(if self.ready.load(SeqCst) {
+                crate::toolkit::ToolOutput::success("READ_SUCCESS")
+            } else {
+                crate::toolkit::ToolOutput::error("missing resource")
+            })
+        }
+    }
+}
+#[tokio::test]
+async fn intervention_audit_failed_read_can_retry_after_environment_repair() {
+    let read = MockResponse::tool_call("probe", serde_json::json!({}));
+    let repair = MockResponse::tool_call("repair", serde_json::json!({}));
+    let (iface, _) = harness(vec![
+        read.clone(),
+        read.clone(),
+        repair,
+        read,
+        MockResponse::text("done"),
+    ])
+    .await;
+    iface
+        .set_tool_definitions(vec![tool("probe"), tool("repair")])
+        .await;
+    let ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut tools = crate::toolkit::ToolRegistry::new();
+    for repair in [false, true] {
+        tools.register(Arc::new(AuditProbe {
+            ready: ready.clone(),
+            calls: calls.clone(),
+            repair,
+        }));
+    }
+    audit_turn(
+        iface,
+        Arc::new(tools),
+        "Read the resource after repairing it.",
+    )
+    .await;
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        3,
+        "two failures permanently blocked the read even after repair"
+    );
+}
+
+#[tokio::test]
+async fn intervention_audit_latest_skill_body_reaches_model() {
+    let (iface, requests) = harness(vec![MockResponse::text("done")]).await;
+    iface
+        .set_skill_context(
+            "mutable-guide".into(),
+            serde_json::json!({"id":"mutable-guide","guide":"OLD_GUIDE"}).to_string(),
+        )
+        .await;
+    iface
+        .set_skill_context(
+            "mutable-guide".into(),
+            serde_json::json!({"id":"mutable-guide","guide":"NEW_GUIDE"}).to_string(),
+        )
+        .await;
+    drain(
+        iface
+            .chat_stream_with_history("Use the refreshed guide", &[])
+            .await
+            .unwrap(),
+    )
+    .await;
+    let requests = requests.lock().unwrap();
+    let system = requests[0]["messages"][0].to_string();
+    assert!(
+        system.contains("NEW_GUIDE") && !system.contains("OLD_GUIDE"),
+        "freshly loaded guide was discarded by same-id context dedup"
+    );
+}
+struct AuditLiveVision(Arc<std::sync::atomic::AtomicUsize>);
+#[async_trait::async_trait]
+impl crate::toolkit::Tool for AuditLiveVision {
+    fn name(&self) -> &str {
+        "vision"
+    }
+    fn description(&self) -> &str {
+        "observe a live image URL"
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({"type":"object"})
+    }
+    async fn execute(
+        &self,
+        _: serde_json::Value,
+    ) -> crate::toolkit::Result<crate::toolkit::ToolOutput> {
+        let n = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        Ok(crate::toolkit::ToolOutput::success(
+            serde_json::json!({"frame":n}),
+        ))
+    }
+}
+#[tokio::test]
+async fn intervention_audit_vision_reobserves_a_changed_live_source() {
+    let vision = MockResponse::tool_call(
+        "vision",
+        serde_json::json!({"image":"https://example.test/live.jpg","prompt":"describe the current frame"}),
+    );
+    let (iface, _) = harness(vec![
+        vision.clone(),
+        MockResponse::tool_call("probe", serde_json::json!({})),
+        vision,
+        MockResponse::text("done"),
+    ])
+    .await;
+    iface
+        .set_tool_definitions(vec![tool("vision"), tool("probe")])
+        .await;
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut tools = crate::toolkit::ToolRegistry::new();
+    tools.register(Arc::new(AuditLiveVision(calls.clone())));
+    tools.register(Arc::new(ProbeResult(serde_json::json!(
+        "the source changed"
+    ))));
+    let state = Arc::new(tokio::sync::RwLock::new(
+        crate::agent::types::AgentInternalState::new("audit-live-vision".into()),
+    ));
+    review_run_turn(iface, state, Arc::new(tools), None).await;
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "per-turn vision reuse bypassed the second live observation"
+    );
+}
+
+#[tokio::test]
+async fn intervention_audit_plan_only_request_does_not_receive_act_now_directive() {
+    let call = |n| {
+        MockResponse::tool_call("probe", serde_json::json!({"page":n}))
+            .with_text("The documentation describes neomind device create as the command.")
+    };
+    let (iface, requests) = harness(vec![
+        call(1),
+        call(2),
+        MockResponse::text("Explanation complete."),
+    ])
+    .await;
+    iface.set_tool_definitions(vec![tool("probe")]).await;
+    let mut tools = crate::toolkit::ToolRegistry::new();
+    tools.register(Arc::new(ProbeResult(serde_json::json!(
+        "read-only documentation"
+    ))));
+    let task = "只解释设备创建命令，不要执行任何修改。";
+    assert!(crate::agent::user_requested_no_execution(task));
+    let state = Arc::new(tokio::sync::RwLock::new(
+        crate::agent::types::AgentInternalState::new("audit-plan-only".into()),
+    ));
+    let mut stream = crate::agent::streaming::process_stream_events_with_safeguards(
+        iface,
+        state,
+        Arc::new(tools),
+        task,
+        Default::default(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    while stream.next().await.is_some() {}
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 3);
+    assert!(
+        !requests[2]["messages"]
+            .to_string()
+            .contains("STATED-INTENT MISMATCH"),
+        "platform ordered execution even though it recognized an explicit plan-only request"
+    );
+}
+
+#[tokio::test]
+async fn intervention_audit_explanation_json_does_not_execute_as_a_tool_call() {
+    let example = "Here is an example only:\n```json\n[{\"name\":\"shell\",\"arguments\":{\"command\":\"echo example\"}}]\n```";
+    let (iface, _) = harness(vec![
+        MockResponse::text(example),
+        MockResponse::text("Explanation complete."),
+    ])
+    .await;
+    iface.set_tool_definitions(vec![tool("shell")]).await;
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut tools = crate::toolkit::ToolRegistry::new();
+    tools.register(Arc::new(ReviewShell {
+        calls: calls.clone(),
+        timed_out: false,
+    }));
+    let task = "Only show the JSON example. Do not execute the command.";
+    assert!(crate::agent::user_requested_no_execution(task));
+    let state = Arc::new(tokio::sync::RwLock::new(
+        crate::agent::types::AgentInternalState::new("audit-example".into()),
+    ));
+    let mut stream = crate::agent::streaming::process_stream_events_with_safeguards(
+        iface,
+        state,
+        Arc::new(tools),
+        task,
+        Default::default(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    while stream.next().await.is_some() {}
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "a documented code example was dispatched as a real tool call"
+    );
 }

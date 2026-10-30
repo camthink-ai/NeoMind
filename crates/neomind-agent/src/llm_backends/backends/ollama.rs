@@ -459,6 +459,10 @@ impl LlmRuntime for OllamaRuntime {
         &self,
         input: neomind_core::llm::backend::LlmInput,
     ) -> Result<LlmOutput, LlmError> {
+        let legacy_tools = text_tool_calls::legacy_tools(
+            self.capabilities().function_calling,
+            input.tools.as_deref(),
+        );
         let start_time = Instant::now();
         let model = input.model.unwrap_or_else(|| self.model.clone());
 
@@ -614,14 +618,8 @@ impl LlmRuntime for OllamaRuntime {
         let ollama_response: OllamaChatResponse =
             serde_json::from_str(&body).map_err(LlmError::Serialization)?;
 
-        // Handle response - use content field directly; fall back to thinking if content is empty
-        // Ollama already separates content and thinking correctly in the API response.
-        let mut response_text = if ollama_response.message.content.is_empty() {
-            // Content is empty - use thinking field as fallback (for models like qwen3:1.7b)
-            ollama_response.message.thinking.clone()
-        } else {
-            ollama_response.message.content.clone()
-        };
+        // Keep reasoning on its own channel even when the answer is absent.
+        let response_text = ollama_response.message.content.clone();
 
         // Handle native tool calls from Ollama - preserve JSON format to keep tool ID
         let native_tool_calls = if !ollama_response.message.tool_calls.is_empty() {
@@ -643,8 +641,6 @@ impl LlmRuntime for OllamaRuntime {
                 })
                 .collect();
             // Keep text serialization for backward compat
-            let json_str = serde_json::to_string(&tool_calls_json).unwrap_or_default();
-            response_text.push_str(&json_str);
             Some(tool_calls_json)
         } else {
             None
@@ -691,13 +687,17 @@ impl LlmRuntime for OllamaRuntime {
             }
         }
 
-        result
+        result.map(|output| text_tool_calls::adapt_output(output, legacy_tools))
     }
 
     async fn generate_stream(
         &self,
         input: neomind_core::llm::backend::LlmInput,
     ) -> Result<Pin<Box<dyn Stream<Item = StreamChunk> + Send>>, LlmError> {
+        let legacy_tools = text_tool_calls::legacy_tools(
+            self.capabilities().function_calling,
+            input.tools.as_deref(),
+        );
         use tokio::sync::mpsc;
 
         let (tx, rx) = mpsc::channel(64);
@@ -844,7 +844,7 @@ impl LlmRuntime for OllamaRuntime {
         // (commit 162c73ff); ollama was missed.
         let read_idle_timeout = self.config.timeout();
 
-        tokio::spawn(async move {
+        crate::llm_backends::spawn_stream(tx.clone(), async move {
             let request = OllamaChatRequest {
                 model: model.clone(),
                 messages,
@@ -1092,13 +1092,11 @@ impl LlmRuntime for OllamaRuntime {
                                                         })
                                                     })
                                                     .collect();
-                                            let json_str = serde_json::to_string(&tool_calls_json)
-                                                .unwrap_or_default();
                                             tracing::debug!(
-                                                "Ollama: converted tool_calls to JSON: {}",
-                                                json_str
+                                                "Ollama: native tool calls: {:?}",
+                                                tool_calls_json
                                             );
-                                            let _ = tx.send(Ok((json_str, false))).await;
+                                            let _ = tx.send(Ok(neomind_core::llm::backend::StreamEvent::ToolCalls(tool_calls_json))).await;
 
                                             // CRITICAL FIX: Don't return immediately!
                                             // Continue consuming the stream until done=true to avoid:
@@ -1230,10 +1228,10 @@ impl LlmRuntime for OllamaRuntime {
 
                                             if should_send_thinking {
                                                 let _ = tx
-                                                    .send(Ok((
+                                                    .send(Ok(neomind_core::llm::backend::StreamEvent::from((
                                                         ollama_chunk.message.thinking.clone(),
                                                         true,
-                                                    )))
+                                                    ))))
                                                     .await;
                                             } else {
                                                 // Skip thinking content - model generated it but we don't want it
@@ -1261,7 +1259,13 @@ impl LlmRuntime for OllamaRuntime {
                                             // Content from Ollama's message.content is the actual response.
                                             // Thinking is already separated in message.thinking field.
                                             total_chars += content.chars().count();
-                                            let _ = tx.send(Ok((content.clone(), false))).await;
+                                            let _ = tx
+                                                .send(Ok(
+                                                    neomind_core::llm::backend::StreamEvent::from(
+                                                        (content.clone(), false),
+                                                    ),
+                                                ))
+                                                .await;
                                         }
 
                                         if ollama_chunk.done {
@@ -1284,13 +1288,13 @@ impl LlmRuntime for OllamaRuntime {
                                                 ollama_chunk.prompt_eval_count
                                             {
                                                 let _ = tx
-                                                    .send(Ok((
+                                                    .send(Ok(neomind_core::llm::backend::StreamEvent::from((
                                                         format!(
                                                             "\n__NEOMIND_TOKEN_PROMPT:{}__",
                                                             prompt_tokens
                                                         ),
                                                         false,
-                                                    )))
+                                                    ))))
                                                     .await;
                                             }
 
@@ -1350,7 +1354,10 @@ impl LlmRuntime for OllamaRuntime {
             }
         });
 
-        Ok(Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx)))
+        Ok(text_tool_calls::adapt_stream(
+            Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx)),
+            legacy_tools,
+        ))
     }
 
     fn max_context_length(&self) -> usize {

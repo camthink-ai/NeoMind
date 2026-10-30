@@ -85,16 +85,7 @@ fn create_default_llm_runtime() -> Arc<dyn LlmRuntime> {
                     &self,
                     _input: neomind_core::llm::backend::LlmInput,
                 ) -> Result<
-                    Pin<
-                        Box<
-                            dyn Stream<
-                                    Item = Result<
-                                        (String, bool),
-                                        neomind_core::llm::backend::LlmError,
-                                    >,
-                                > + Send,
-                        >,
-                    >,
+                    Pin<Box<dyn Stream<Item = neomind_core::llm::backend::StreamChunk> + Send>>,
                     neomind_core::llm::backend::LlmError,
                 > {
                     Ok(Box::pin(futures::stream::empty()))

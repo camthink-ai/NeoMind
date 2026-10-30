@@ -672,7 +672,7 @@ impl CloudRuntime {
             .ok_or_else(|| LlmError::Generation("No choices in response".to_string()))?;
 
         // Build response text, including tool calls if present
-        let mut response_text = choice.message.content.unwrap_or_default();
+        let response_text = choice.message.content.unwrap_or_default();
 
         // Handle native tool calls from OpenAI - preserve JSON format to keep tool ID
         let native_tool_calls = if let Some(ref tool_calls) = choice.message.tool_calls {
@@ -693,8 +693,6 @@ impl CloudRuntime {
                     })
                     .collect();
                 // Keep text serialization for backward compat
-                let json_str = serde_json::to_string(&tool_calls_json).unwrap_or_default();
-                response_text.push_str(&json_str);
                 Some(tool_calls_json)
             } else {
                 None
@@ -706,23 +704,24 @@ impl CloudRuntime {
         // Fallback: recover tool calls that leaked into content as XML when the
         // upstream parser (e.g. llama.cpp fork) failed to populate `tool_calls`.
         // See `parse_xml_tool_calls` for the cause.
-        let native_tool_calls =
-            if native_tool_calls.is_none() && response_text.contains("<tool_call>") {
-                let parsed = Self::parse_xml_tool_calls(&response_text);
-                if !parsed.is_empty() {
-                    tracing::debug!(
-                        "OpenAI: recovered {} tool call(s) from content XML fallback",
-                        parsed.len()
-                    );
-                    let json_str = serde_json::to_string(&parsed).unwrap_or_default();
-                    response_text.push_str(&json_str);
-                    Some(parsed)
-                } else {
-                    None
-                }
+        let native_tool_calls = if native_tool_calls.is_none()
+            && std::env::var("NEOMIND_LEGACY_TEXT_TOOL_CALLS").as_deref() == Ok("on")
+            && !response_text.contains("```")
+            && response_text.contains("<tool_call>")
+        {
+            let parsed = Self::parse_xml_tool_calls(&response_text);
+            if !parsed.is_empty() {
+                tracing::debug!(
+                    "OpenAI: recovered {} tool call(s) from content XML fallback",
+                    parsed.len()
+                );
+                Some(parsed)
             } else {
-                native_tool_calls
-            };
+                None
+            }
+        } else {
+            native_tool_calls
+        };
 
         let result = Ok(LlmOutput {
             text: response_text,
@@ -876,10 +875,6 @@ impl CloudRuntime {
         }
 
         // Append tool calls as JSON if any
-        if !tool_calls_json.is_empty() {
-            let json_str = serde_json::to_string(&tool_calls_json).unwrap_or_default();
-            response_text.push_str(&json_str);
-        }
 
         let finish_reason = match api_response.stop_reason.as_deref() {
             Some("end_turn") => FinishReason::Stop,
@@ -957,7 +952,7 @@ impl CloudRuntime {
         // not a borrow of `self`.
         let read_idle_timeout = self.config.timeout();
 
-        tokio::spawn(async move {
+        crate::llm_backends::spawn_stream(tx.clone(), async move {
             // Create rate limit key
             let rate_limit_key = format!("{:?}:{:x}", provider, hash_api_key(&api_key));
 
@@ -1014,10 +1009,10 @@ impl CloudRuntime {
                     let mut stream = response.bytes_stream();
                     let mut buffer = Vec::new();
                     // Accumulate tool calls across chunks
-                    let mut accumulated_tool_calls: std::collections::HashMap<
+                    let mut accumulated_tool_calls: std::collections::BTreeMap<
                         u32,
                         AccumulatedToolCall,
-                    > = std::collections::HashMap::new();
+                    > = std::collections::BTreeMap::new();
                     // Accumulate content for fallback XML tool-call recovery at [DONE].
                     let mut accumulated_content = String::new();
 
@@ -1087,10 +1082,13 @@ impl CloudRuntime {
                                                         })
                                                     })
                                                     .collect();
-                                            let json_str = serde_json::to_string(&tool_calls_json)
-                                                .unwrap_or_default();
-                                            let _ = tx.send(Ok((json_str, false))).await;
-                                        } else if accumulated_content.contains("<tool_call>") {
+                                            let _ = tx.send(Ok(neomind_core::llm::backend::StreamEvent::ToolCalls(tool_calls_json))).await;
+                                        } else if std::env::var("NEOMIND_LEGACY_TEXT_TOOL_CALLS")
+                                            .as_deref()
+                                            == Ok("on")
+                                            && !accumulated_content.contains("```")
+                                            && accumulated_content.contains("<tool_call>")
+                                        {
                                             // Fallback: upstream parser failed to populate
                                             // delta.tool_calls (preamble before <tool_call>
                                             // confused its content_before_tools), so recover
@@ -1102,13 +1100,18 @@ impl CloudRuntime {
                                                     "OpenAI stream: recovered {} tool call(s) from content XML fallback",
                                                     parsed.len()
                                                 );
-                                                let json_str = serde_json::to_string(&parsed)
-                                                    .unwrap_or_default();
-                                                let _ = tx.send(Ok((json_str, false))).await;
+                                                let _ = tx.send(Ok(neomind_core::llm::backend::StreamEvent::ToolCalls(parsed))).await;
                                             }
                                         }
-                                        let _ = tx.send(Ok((String::new(), false))).await;
-                                        continue;
+                                        let _ = tx
+                                            .send(Ok(
+                                                neomind_core::llm::backend::StreamEvent::from((
+                                                    String::new(),
+                                                    false,
+                                                )),
+                                            ))
+                                            .await;
+                                        return;
                                     }
                                     if let Some(json) = line.strip_prefix("data: ") {
                                         if let Ok(evt) =
@@ -1118,13 +1121,13 @@ impl CloudRuntime {
                                             if let Some(ref usage) = evt.usage {
                                                 if usage.prompt_tokens > 0 {
                                                     let _ = tx
-                                                        .send(Ok((
+                                                        .send(Ok(neomind_core::llm::backend::StreamEvent::from((
                                                             format!(
                                                                 "\n__NEOMIND_TOKEN_PROMPT:{}__",
                                                                 usage.prompt_tokens
                                                             ),
                                                             false,
-                                                        )))
+                                                        ))))
                                                         .await;
                                                 }
                                             }
@@ -1135,7 +1138,7 @@ impl CloudRuntime {
                                                     if !content.is_empty() {
                                                         accumulated_content.push_str(content);
                                                         let _ = tx
-                                                            .send(Ok((content.clone(), false)))
+                                                            .send(Ok(neomind_core::llm::backend::StreamEvent::from((content.clone(), false))))
                                                             .await;
                                                     }
                                                 }
@@ -1196,10 +1199,7 @@ impl CloudRuntime {
                                                                 })
                                                             })
                                                             .collect();
-                                                    let json_str =
-                                                        serde_json::to_string(&tool_calls_json)
-                                                            .unwrap_or_default();
-                                                    let _ = tx.send(Ok((json_str, false))).await;
+                                                    let _ = tx.send(Ok(neomind_core::llm::backend::StreamEvent::ToolCalls(tool_calls_json))).await;
                                                     accumulated_tool_calls.clear();
                                                 }
                                             }
@@ -1239,7 +1239,7 @@ impl CloudRuntime {
         // owned Duration moved into the async block (not a borrow of `self`).
         let read_idle_timeout = self.config.timeout();
 
-        tokio::spawn(async move {
+        crate::llm_backends::spawn_stream(tx.clone(), async move {
             let rate_limit_key = format!("Anthropic:{:x}", hash_api_key(&api_key));
             rate_limiter.acquire(&rate_limit_key).await;
 
@@ -1309,10 +1309,10 @@ impl CloudRuntime {
                     let mut stream = response.bytes_stream();
                     let mut buffer = Vec::new();
                     // Accumulate tool call arguments: (id, name, arguments_json)
-                    let mut accumulated_tool_calls: std::collections::HashMap<
+                    let mut accumulated_tool_calls: std::collections::BTreeMap<
                         u32,
                         (Option<String>, Option<String>, String),
-                    > = std::collections::HashMap::new();
+                    > = std::collections::BTreeMap::new();
 
                     while let Some(chunk_result) =
                         tokio::time::timeout(read_idle_timeout, stream.next())
@@ -1388,10 +1388,10 @@ impl CloudRuntime {
                                                             if let Some(ref text) = delta.text {
                                                                 if !text.is_empty() {
                                                                     let _ = tx
-                                                                        .send(Ok((
+                                                                        .send(Ok(neomind_core::llm::backend::StreamEvent::from((
                                                                             text.clone(),
                                                                             false,
-                                                                        )))
+                                                                        ))))
                                                                         .await;
                                                                 }
                                                             }
@@ -1429,16 +1429,13 @@ impl CloudRuntime {
                                                                     });
                                                             // Wrap in array format for consistent parsing with OpenAI format
                                                             // This ensures detect_json_tool_calls can properly detect the tool call
-                                                            let tc_json = serde_json::json!([{
+                                                            let tc_json = vec![serde_json::json!({
                                                                 "id": id,
                                                                 "name": name,
                                                                 "arguments": args
-                                                            }]);
-                                                            let json_str =
-                                                                serde_json::to_string(&tc_json)
-                                                                    .unwrap_or_default();
+                                                            })];
                                                             let _ = tx
-                                                                .send(Ok((json_str, false)))
+                                                                .send(Ok(neomind_core::llm::backend::StreamEvent::ToolCalls(tc_json)))
                                                                 .await;
                                                         }
                                                     }
@@ -1446,7 +1443,7 @@ impl CloudRuntime {
                                                 AnthropicStreamEvent::MessageStop => {
                                                     // Signal end of stream
                                                     let _ =
-                                                        tx.send(Ok((String::new(), false))).await;
+                                                        tx.send(Ok(neomind_core::llm::backend::StreamEvent::from((String::new(), false)))).await;
                                                 }
                                                 _ => {}
                                             }

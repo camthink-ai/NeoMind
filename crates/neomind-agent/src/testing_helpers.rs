@@ -349,18 +349,24 @@ pub mod mock_llm {
             }
             let mut chunks: Vec<StreamChunk> = Vec::new();
             if let Some(th) = &resp.thinking {
-                chunks.push(Ok((th.clone(), true)));
+                chunks.push(Ok(neomind_core::llm::backend::StreamEvent::from((
+                    th.clone(),
+                    true,
+                ))));
             }
             if !resp.text.is_empty() {
-                chunks.push(Ok((resp.text.clone(), false)));
+                chunks.push(Ok(neomind_core::llm::backend::StreamEvent::from((
+                    resp.text.clone(),
+                    false,
+                ))));
             }
             if !resp.tool_calls.is_empty() {
                 // Embed as a JSON-array content chunk so the default
                 // `generate_to_completion` (which leaves `tool_calls = None`)
                 // still surfaces tool calls via the loop's text-fallback parser.
-                let arr = serde_json::Value::Array(resp.tool_calls.clone());
-                let json = serde_json::to_string(&arr).unwrap_or_default();
-                chunks.push(Ok((json, false)));
+                chunks.push(Ok(neomind_core::llm::backend::StreamEvent::ToolCalls(
+                    resp.tool_calls.clone(),
+                )));
             }
             Ok(Box::pin(futures::stream::iter(chunks)))
         }

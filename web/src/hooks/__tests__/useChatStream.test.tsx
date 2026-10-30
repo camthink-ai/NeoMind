@@ -41,6 +41,48 @@ describe('useChatStream', () => {
   })
   afterEach(cleanup)
 
+  it('keeps an active turn beyond the old fixed 21 minute cap', () => {
+    vi.useFakeTimers()
+    try {
+      const onStalled = vi.fn()
+      const onEnd = vi.fn()
+      render(<Harness sessionId="s1" onStalled={onStalled} onEnd={onEnd} />)
+      act(() => latest.beginTurn())
+      for (let i = 0; i < 26; i++) {
+        act(() => {
+          emit({ type: 'Heartbeat', sessionId: 's1' })
+          vi.advanceTimersByTime(60_000)
+        })
+      }
+      expect(latest.isStreaming).toBe(true)
+      expect(onStalled).not.toHaveBeenCalled()
+      act(() => emit({ type: 'end', sessionId: 's1' }))
+      expect(onEnd).not.toHaveBeenCalled() // Empty turns reset without creating a bubble.
+      expect(latest.isStreaming).toBe(false)
+    } finally {
+      cleanup()
+      vi.useRealTimers()
+    }
+  })
+
+  it('preserves JSON and code examples without plan events or tool cards', async () => {
+    const onEnd = vi.fn()
+    render(<Harness sessionId="s1" onEnd={onEnd} />)
+    const example = '```json\n[{"name":"shell","arguments":{"command":"example"}}]\n```\n[]'
+    act(() => latest.beginTurn())
+    await act(async () => {
+      emit({ type: 'Content', content: example, sessionId: 's1' })
+      await nextFrame()
+      emit({ type: 'end', sessionId: 's1' })
+    })
+    expect(onEnd).toHaveBeenCalledTimes(1)
+    const result = onEnd.mock.calls[0][0] as StreamEndResult
+    expect(result.content).toBe(example)
+    expect(result.toolCalls).toEqual([])
+    expect(result.systemNotes).toBeUndefined()
+    expect(latest.isStreaming).toBe(false)
+  })
+
   it('heartbeats do not hide an error with no terminal frame', () => {
     vi.useFakeTimers()
     try {

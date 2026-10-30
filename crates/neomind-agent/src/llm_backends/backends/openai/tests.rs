@@ -453,8 +453,8 @@ fn test_custom_endpoint_teaches_text_tool_calling() {
         .as_str()
         .expect("system content serializes as text");
     assert!(
-            sys.contains("Tool Calling Format (JSON)"),
-            "custom endpoints default to no native function calling — the system message must teach the JSON protocol"
+            sys.contains("Tool protocol"),
+            "custom endpoints default to no native function calling — the system message must teach the explicit execution envelope"
         );
     assert!(
         sys.starts_with("You are helpful.\n\n"),

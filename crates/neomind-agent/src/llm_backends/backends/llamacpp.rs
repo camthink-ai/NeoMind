@@ -393,6 +393,10 @@ impl LlmRuntime for LlamaCppRuntime {
         &self,
         input: neomind_core::llm::backend::LlmInput,
     ) -> Result<LlmOutput, LlmError> {
+        let legacy_tools = text_tool_calls::legacy_tools(
+            self.capabilities().function_calling,
+            input.tools.as_deref(),
+        );
         let start_time = Instant::now();
         let model = input.model.unwrap_or_else(|| self.model.clone());
         let url = format!("{}/v1/chat/completions", self.config.base_url());
@@ -579,7 +583,7 @@ impl LlmRuntime for LlamaCppRuntime {
             .ok_or_else(|| LlmError::Generation("No choices in response".to_string()))?;
 
         // Build response text, including tool calls if present
-        let mut response_text = choice.message.content.unwrap_or_default();
+        let response_text = choice.message.content.unwrap_or_default();
 
         // Handle tool calls
         let native_tool_calls = if let Some(ref tool_calls) = choice.message.tool_calls {
@@ -597,9 +601,6 @@ impl LlmRuntime for LlamaCppRuntime {
                         })
                     })
                     .collect();
-                // Keep text serialization for backward compat
-                let json_str = serde_json::to_string(&tool_calls_json).unwrap_or_default();
-                response_text.push_str(&json_str);
                 Some(tool_calls_json)
             } else {
                 None
@@ -653,13 +654,17 @@ impl LlmRuntime for LlamaCppRuntime {
             }
         }
 
-        result
+        result.map(|output| text_tool_calls::adapt_output(output, legacy_tools))
     }
 
     async fn generate_stream(
         &self,
         input: neomind_core::llm::backend::LlmInput,
     ) -> Result<Pin<Box<dyn Stream<Item = StreamChunk> + Send>>, LlmError> {
+        let legacy_tools = text_tool_calls::legacy_tools(
+            self.capabilities().function_calling,
+            input.tools.as_deref(),
+        );
         use tokio::sync::mpsc;
 
         let (tx, rx) = mpsc::channel(64);
@@ -757,7 +762,7 @@ impl LlmRuntime for LlamaCppRuntime {
         // mid-stream wedge on thinking-loop stalls.
         let read_idle_timeout = self.config.timeout();
 
-        tokio::spawn(async move {
+        crate::llm_backends::spawn_stream(tx.clone(), async move {
             let mut req_builder = client.post(&url).json(&req_body);
             if let Some(ref key) = api_key {
                 req_builder = req_builder.bearer_auth(key);
@@ -877,10 +882,10 @@ impl LlmRuntime for LlamaCppRuntime {
                     let mut stream = response.bytes_stream();
                     let mut buffer = Vec::new();
                     // Accumulate tool calls across chunks
-                    let mut accumulated_tool_calls: std::collections::HashMap<
+                    let mut accumulated_tool_calls: std::collections::BTreeMap<
                         u32,
                         AccumulatedToolCall,
-                    > = std::collections::HashMap::new();
+                    > = std::collections::BTreeMap::new();
 
                     while let Some(chunk_result) =
                         super::next_bytes_or_end(&mut stream, read_idle_timeout).await
@@ -923,12 +928,17 @@ impl LlmRuntime for LlamaCppRuntime {
                                                         })
                                                     })
                                                     .collect();
-                                            let json_str = serde_json::to_string(&tool_calls_json)
-                                                .unwrap_or_default();
-                                            let _ = tx.send(Ok((json_str, false))).await;
+                                            let _ = tx.send(Ok(neomind_core::llm::backend::StreamEvent::ToolCalls(tool_calls_json))).await;
                                         }
-                                        let _ = tx.send(Ok((String::new(), false))).await;
-                                        continue;
+                                        let _ = tx
+                                            .send(Ok(
+                                                neomind_core::llm::backend::StreamEvent::from((
+                                                    String::new(),
+                                                    false,
+                                                )),
+                                            ))
+                                            .await;
+                                        return;
                                     }
                                     if let Some(json) = line.strip_prefix("data: ") {
                                         if let Ok(evt) =
@@ -938,13 +948,13 @@ impl LlmRuntime for LlamaCppRuntime {
                                             if let Some(ref usage) = evt.usage {
                                                 if usage.prompt_tokens > 0 {
                                                     let _ = tx
-                                                        .send(Ok((
+                                                        .send(Ok(neomind_core::llm::backend::StreamEvent::from((
                                                             format!(
                                                                 "\n__NEOMIND_TOKEN_PROMPT:{}__",
                                                                 usage.prompt_tokens
                                                             ),
                                                             false,
-                                                        )))
+                                                        ))))
                                                         .await;
                                                 }
                                             }
@@ -954,7 +964,7 @@ impl LlmRuntime for LlamaCppRuntime {
                                                 if let Some(ref content) = choice.delta.content {
                                                     if !content.is_empty() {
                                                         let _ = tx
-                                                            .send(Ok((content.clone(), false)))
+                                                            .send(Ok(neomind_core::llm::backend::StreamEvent::from((content.clone(), false))))
                                                             .await;
                                                     }
                                                 }
@@ -965,7 +975,7 @@ impl LlmRuntime for LlamaCppRuntime {
                                                 {
                                                     if !reasoning.is_empty() {
                                                         let _ = tx
-                                                            .send(Ok((reasoning.clone(), true)))
+                                                            .send(Ok(neomind_core::llm::backend::StreamEvent::from((reasoning.clone(), true))))
                                                             .await;
                                                     }
                                                 }
@@ -1021,10 +1031,7 @@ impl LlmRuntime for LlamaCppRuntime {
                                                                 })
                                                             })
                                                             .collect();
-                                                    let json_str =
-                                                        serde_json::to_string(&tool_calls_json)
-                                                            .unwrap_or_default();
-                                                    let _ = tx.send(Ok((json_str, false))).await;
+                                                    let _ = tx.send(Ok(neomind_core::llm::backend::StreamEvent::ToolCalls(tool_calls_json))).await;
                                                     accumulated_tool_calls.clear();
                                                 }
                                             }
@@ -1048,7 +1055,10 @@ impl LlmRuntime for LlamaCppRuntime {
             }
         });
 
-        Ok(Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx)))
+        Ok(text_tool_calls::adapt_stream(
+            Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx)),
+            legacy_tools,
+        ))
     }
 
     fn max_context_length(&self) -> usize {

@@ -3,10 +3,12 @@
 //! This module provides a simple LLM wrapper with concurrency limits
 //! and integration with the LlmBackendInstanceManager for dynamic backend switching.
 
+pub use neomind_core::llm::backend::StreamEvent;
+
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use futures::Stream;
 use tokio::sync::RwLock;
@@ -19,8 +21,6 @@ use neomind_core::{
 
 use crate::agent::tokenizer::estimate_tokens;
 
-// Import intent classifier for staged processing
-use crate::agent::staged::IntentClassifier;
 // Import the unified error type
 use crate::error::NeoMindError;
 // Import the Result type alias
@@ -240,13 +240,11 @@ impl<S: Stream + Unpin> Stream for PermitStream<S> {
 
 /// Transient skill context for the current turn.
 ///
-/// Tracks which skill ids have already been loaded so re-loading the same skill
-/// (a common LLM pattern when stuck in a retry loop) doesn't duplicate the body
-/// in the system prompt. The first legitimate load always preserves the full body.
+/// Keeps one current body per skill ID; reloading refreshes its contents
+/// without accumulating stale copies.
 #[derive(Default)]
 struct TransientSkillContext {
-    loaded_ids: std::collections::HashSet<String>,
-    body: String,
+    guides: Vec<(String, String)>,
 }
 
 /// Simple LLM chat interface.
@@ -301,8 +299,6 @@ pub struct LlmInterface {
     /// overhead the old 60%-of-window threshold could be unreachable while
     /// history was already being truncated every turn (2026-10-30).
     history_truncated: Arc<std::sync::atomic::AtomicBool>,
-    /// Intent classifier for staged processing.
-    intent_classifier: IntentClassifier,
     /// Global timezone for time-aware prompts (IANA format, e.g., "Asia/Shanghai").
     /// Loaded from settings and used for all time-related context.
     global_timezone: Arc<RwLock<Option<String>>>,
@@ -355,24 +351,19 @@ impl LlmInterface {
         (None, None)
     }
 
-    /// Whether the active backend instance is an integral-thinking model whose
-    /// thinking cannot be turned off (e.g. LFM2.5).
-    ///
-    /// Reads the GLOBAL active instance, not `self.instance_manager`: production
-    /// `LlmInterface`s are built via `LlmInterface::new()` and never carry
-    /// `self.instance_manager`, so the old per-interface read made this guard
-    /// inert (the builtin LFM would get `thinking_enabled=false` forced on
-    /// non-chat calls). Gated on `is_builtin` so a session directly configured
-    /// to a non-builtin backend while the builtin happens to be globally active
-    /// does not inherit the exception.
+    /// Respect the runtime bound to this interface. A globally active builtin
+    /// must not change a different session's thinking control.
     async fn active_thinking_is_integral(&self) -> bool {
-        match crate::get_instance_manager()
-            .ok()
-            .and_then(|m| m.get_active_instance())
-        {
-            Some(inst) => inst.is_builtin && inst.thinking_is_integral,
-            None => false,
+        if let Some(runtime) = self.llm.read().await.as_ref() {
+            let caps = runtime.capabilities();
+            return caps.reasoning.mandatory
+                || (caps.thinking_display
+                    && caps.reasoning.control == neomind_core::ReasoningControl::ReadOnly);
         }
+        self.instance_manager
+            .as_ref()
+            .and_then(|manager| manager.get_active_instance())
+            .is_some_and(|instance| instance.thinking_is_integral)
     }
 
     /// Resolve the effective thinking control for a call, combining the
@@ -421,7 +412,6 @@ impl LlmInterface {
             )), // Use backend default (from storage)
             last_prompt_tokens: Arc::new(tokio::sync::Mutex::new(None)),
             history_truncated: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            intent_classifier: IntentClassifier::default(),
             global_timezone: Arc::new(RwLock::new(None)), // Will be loaded from settings
             skill_registry: Arc::new(RwLock::new(None)),
             skill_context: Arc::new(RwLock::new(TransientSkillContext::default())),
@@ -457,7 +447,6 @@ impl LlmInterface {
             )), // Will use instance manager setting
             last_prompt_tokens: Arc::new(tokio::sync::Mutex::new(None)),
             history_truncated: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            intent_classifier: IntentClassifier::default(),
             global_timezone: Arc::new(RwLock::new(None)), // Will be loaded from settings
             skill_registry: Arc::new(RwLock::new(None)),
             skill_context: Arc::new(RwLock::new(TransientSkillContext::default())),
@@ -941,31 +930,27 @@ impl LlmInterface {
         *self.skill_context.write().await = TransientSkillContext::default();
     }
 
-    /// Append transient skill context (from skill tool results).
-    ///
-    /// Deduplicates by `skill_id`: if the same skill is loaded again in this turn,
-    /// the call is a no-op (full body from the first load is retained unchanged).
-    /// Distinct skill ids accumulate, separated by a blank line.
+    /// Refresh the current version of a loaded guide by its stable skill ID.
     pub async fn set_skill_context(&self, skill_id: String, content: String) {
         let mut guard = self.skill_context.write().await;
-        if !guard.loaded_ids.insert(skill_id) {
-            // Already loaded this turn — skip to avoid duplicate context bloat.
-            return;
+        if let Some((_, body)) = guard.guides.iter_mut().find(|(id, _)| id == &skill_id) {
+            *body = content;
+        } else {
+            guard.guides.push((skill_id, content));
         }
-        if !guard.body.is_empty() {
-            guard.body.push_str("\n\n");
-        }
-        guard.body.push_str(&content);
     }
 
-    /// Get transient skill context body (None if empty).
+    /// Current guides, retaining load order while allowing refreshed versions.
     pub async fn get_skill_context(&self) -> Option<String> {
         let guard = self.skill_context.read().await;
-        if guard.body.is_empty() {
-            None
-        } else {
-            Some(guard.body.clone())
-        }
+        (!guard.guides.is_empty()).then(|| {
+            guard
+                .guides
+                .iter()
+                .map(|(_, body)| body.as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        })
     }
 
     /// Set pinned skill IDs for this session (user-selected skills).
@@ -1046,7 +1031,7 @@ impl LlmInterface {
 
     /// Assemble session/skill context without resolving volatile time fields.
     /// All chat paths resolve time fields in the system prompt.
-    async fn assemble_system_prompt(&self, user_message: Option<&str>) -> String {
+    async fn assemble_system_prompt(&self, _user_message: Option<&str>) -> String {
         // Start from the RAW base prompt (time placeholders still intact).
         // Time is injected LAST, after all variable sections are appended —
         // the template deliberately places the time block near the end for
@@ -1112,28 +1097,6 @@ impl LlmInterface {
             prompt.push_str("Commands in this skill are canonical — use them exactly; don't guess subcommand names.\n\n");
             prompt.push_str(&skill_content);
             prompt.push('\n');
-        }
-
-        // Add intent-specific addon if we can classify the user's message
-        if let Some(msg) = user_message {
-            let intent = self.intent_classifier.classify_for_prompt(msg);
-
-            // Get intent addon using legacy PromptBuilder
-            use crate::prompts::PromptBuilder;
-
-            let task_type = match intent {
-                Some(crate::agent::staged::IntentCategory::Device) => "device",
-                Some(crate::agent::staged::IntentCategory::Data) => "data",
-                Some(crate::agent::staged::IntentCategory::Rule) => "rule",
-                _ => "general",
-            };
-
-            // Get intent-specific addon from PromptBuilder
-            let addon = PromptBuilder::new().get_intent_prompt_addon(task_type);
-
-            if !addon.is_empty() {
-                prompt.push_str(&addon);
-            }
         }
 
         prompt
@@ -1288,40 +1251,6 @@ impl LlmInterface {
         self.clear_skill_context().await;
 
         let max_ctx = self.max_context_length().await;
-
-        // === FAST PATH: Simple greetings ===
-        // Bypass LLM for simple greetings to improve response time
-        let trimmed = user_message.trim();
-        let greeting_patterns = [
-            "你好",
-            "您好",
-            "hi",
-            "hello",
-            "嗨",
-            "在吗",
-            "早上好",
-            "下午好",
-            "晚上好",
-        ];
-        let is_greeting = greeting_patterns
-            .iter()
-            .any(|&pat| trimmed.eq_ignore_ascii_case(pat) || trimmed.starts_with(pat));
-
-        if is_greeting && trimmed.len() < 20 {
-            let greeting_response = "您好！我是 NeoMind 智能助手。我可以帮您：\n\
-                • 查看设备列表 - 说「列出设备」\n\
-                • 查询设备数据 - 说「查询温度」\n\
-                • 创建自动化规则 - 说「创建规则」\n\
-                • 查看所有规则 - 说「列出规则」";
-
-            return Ok(ChatResponse {
-                text: greeting_response.to_string(),
-                tokens_used: 0,
-                duration: Duration::from_millis(0),
-                finish_reason: "stop".to_string(),
-                thinking: None,
-            });
-        }
 
         // Acquire permit for concurrency limiting
         let _permit = self.limiter.acquire().await;
@@ -1501,6 +1430,7 @@ impl LlmInterface {
             tokens_used,
             duration,
             finish_reason: format!("{:?}", output.finish_reason),
+            tool_calls: output.tool_calls,
             thinking: output.thinking,
         })
     }
@@ -1718,6 +1648,7 @@ impl LlmInterface {
             tokens_used,
             duration,
             finish_reason: format!("{:?}", output.finish_reason),
+            tool_calls: output.tool_calls,
             thinking: output.thinking,
         })
     }
@@ -1728,7 +1659,7 @@ impl LlmInterface {
         &self,
         user_message: impl Into<String>,
         history: &[Message],
-    ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<(String, bool)>> + Send>>> {
+    ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamEvent>> + Send>>> {
         self.chat_stream_internal(user_message, Some(history), true, None, None)
             .await
     }
@@ -1743,7 +1674,7 @@ impl LlmInterface {
         user_message: impl Into<String>,
         history: &[Message],
         thinking_override: Option<bool>,
-    ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<(String, bool)>> + Send>>> {
+    ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamEvent>> + Send>>> {
         self.chat_stream_internal(user_message, Some(history), true, thinking_override, None)
             .await
     }
@@ -1755,7 +1686,7 @@ impl LlmInterface {
         round_context: &str,
         history: &[Message],
         thinking_override: Option<bool>,
-    ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<(String, bool)>> + Send>>> {
+    ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamEvent>> + Send>>> {
         let message = format!(
             "Original user request:\n{original_request}\n\nTool-round context:\n{round_context}"
         );
@@ -1777,8 +1708,8 @@ impl LlmInterface {
         &self,
         user_message: impl Into<String>,
         history: &[Message],
-    ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<(String, bool)>> + Send>>> {
-        self.chat_stream_internal(user_message, Some(history), false, Some(false), None)
+    ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamEvent>> + Send>>> {
+        self.chat_stream_internal(user_message, Some(history), false, None, None)
             .await
     }
 
@@ -1788,7 +1719,7 @@ impl LlmInterface {
         &self,
         user_message: Message, // Can contain text + images via Content::Parts
         history: &[Message],
-    ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<(String, bool)>> + Send>>> {
+    ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamEvent>> + Send>>> {
         self.chat_stream_internal_message(user_message, Some(history), true, false)
             .await
     }
@@ -1800,7 +1731,7 @@ impl LlmInterface {
         history: Option<&[Message]>,
         include_tools: bool,
         _restore_thinking: bool,
-    ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<(String, bool)>> + Send>>> {
+    ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamEvent>> + Send>>> {
         // Check early before user_message is moved into the messages vec.
         let has_user_images = user_message.has_images();
 
@@ -1995,13 +1926,15 @@ impl LlmInterface {
             let mut stream = wrapped_stream;
             while let Some(result) = futures::StreamExt::next(&mut stream).await {
                 match result {
-                    Ok((content, is_thinking)) => {
+                    Ok(StreamEvent::ToolCalls(calls)) => yield Ok(StreamEvent::ToolCalls(calls)),
+                    Ok(event) => {
+                        let (content, is_thinking) = event.into_text_parts().expect("text event");
                         let (clean, is_thinking, tokens) = extract_token_marker(&content, is_thinking);
                         if let Some(t) = tokens {
                             *token_tracker.lock().await = Some(t);
                         }
                         if !clean.is_empty() {
-                            yield Ok((clean, is_thinking));
+                            yield Ok(StreamEvent::from((clean, is_thinking)));
                         }
                     }
                     Err(e) => yield Err(NeoMindError::Llm(e.to_string())),
@@ -2018,7 +1951,7 @@ impl LlmInterface {
         include_tools: bool,
         thinking_override: Option<bool>,
         task_message: Option<&str>,
-    ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<(String, bool)>> + Send>>> {
+    ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamEvent>> + Send>>> {
         let user_message = user_message.into();
 
         let model_arc = Arc::clone(&self.model);
@@ -2098,40 +2031,6 @@ impl LlmInterface {
             uses_instance_manager = self.uses_instance_manager(),
             "LlmInterface chat_stream_internal"
         );
-
-        // Safety: auto-disable thinking for very large prompts.
-        // Small thinking models (2B) with large prompts (20k+ tokens) tend to
-        // consume all num_predict tokens on thinking alone, producing no content.
-        // Observed: qwen3.5:2b with prompt_eval=32259, eval=32768, content=0.
-        let thinking_enabled = if thinking_enabled == Some(true) {
-            // Size the prompt with the same estimator the budget math uses, so the
-            // guard reflects real token density — not a bytes*0.8 approximation
-            // that over-counted English (~3×) and tripped the guard far too
-            // eagerly on text-heavy prompts.
-            let estimated_tokens = crate::agent::tokenizer::estimate_prompt_tokens_with_image_cost(
-                history.unwrap_or(&[]),
-                &system_prompt,
-                &user_message,
-                // Price images by the backend's REAL window: on an 8–16K
-                // model a 1024/image estimate under-counts 2K-token vision
-                // payloads 2×, exactly where two images eat a quarter of a
-                // budget the guard believes is still roomy.
-                crate::agent::tokenizer::image_token_estimate(self.max_context_length().await),
-            );
-
-            if estimated_tokens > 18000 {
-                tracing::info!(
-                    estimated_tokens,
-                    hist_messages = history.map(|h| h.len()).unwrap_or(0),
-                    "Auto-disabling thinking for large prompt to prevent thinking loop hang"
-                );
-                Some(false)
-            } else {
-                thinking_enabled
-            }
-        } else {
-            thinking_enabled
-        };
 
         // Get effective parameters from backend instance or local config
         let (eff_temp, eff_top_p, eff_top_k, _static_max_tokens) =
@@ -2337,13 +2236,15 @@ impl LlmInterface {
             let mut retry_stage: u8 = 0; // 0=initial, 1=compact retry, 2=minimal retry
             while let Some(result) = futures::StreamExt::next(&mut stream).await {
                 match result {
-                    Ok((content, is_thinking)) => {
+                    Ok(StreamEvent::ToolCalls(calls)) => yield Ok(StreamEvent::ToolCalls(calls)),
+                    Ok(event) => {
+                        let (content, is_thinking) = event.into_text_parts().expect("text event");
                         let (clean, is_thinking, tokens) = extract_token_marker(&content, is_thinking);
                         if let Some(t) = tokens {
                             *token_tracker.lock().await = Some(t);
                         }
                         if !clean.is_empty() {
-                            yield Ok((clean, is_thinking));
+                            yield Ok(StreamEvent::from((clean, is_thinking)));
                         }
                     }
                     Err(LlmError::ContextOverflow { prompt_tokens, max_context }) => {
@@ -2374,8 +2275,8 @@ impl LlmInterface {
                                     stop: None,
                                     frequency_penalty: None,
                                     presence_penalty: None,
-                                    thinking_enabled: None, // Disable thinking on retry
-                                    thinking_effort: None,
+                                    thinking_enabled,
+                                    thinking_effort,
                                     max_context: None,
                                     json_mode: None,
                                 },
@@ -2514,6 +2415,8 @@ impl Default for ChatConfig {
 /// Response from a chat request.
 #[derive(Debug, Clone)]
 pub struct ChatResponse {
+    /// Calls from the runtime's structured channel; response text remains prose.
+    pub tool_calls: Option<Vec<serde_json::Value>>,
     /// Generated text.
     pub text: String,
     /// Number of tokens generated.
@@ -2765,6 +2668,7 @@ mod tests {
             tokens_used: 10,
             duration: std::time::Duration::from_millis(100),
             finish_reason: "stop".to_string(),
+            tool_calls: None,
             thinking: None,
         };
 
@@ -2781,6 +2685,7 @@ mod tests {
             tokens_used: 15,
             duration: std::time::Duration::from_millis(200),
             finish_reason: "stop".to_string(),
+            tool_calls: None,
             thinking: Some("Let me think...".to_string()),
         };
 
@@ -2855,6 +2760,19 @@ mod tests {
             enabled,
             Some(true),
             "integral model must keep thinking on despite override"
+        );
+        // A session with a direct non-thinking runtime must not inherit the
+        // integral flag from that same globally selected builtin instance.
+        let runtime = crate::llm_backends::OllamaRuntime::new(
+            crate::llm_backends::OllamaConfig::new("plain-model"),
+        )
+        .unwrap()
+        .with_capabilities_override(false, false, true, 8192);
+        interface.set_llm(Arc::new(runtime)).await;
+        assert!(!interface.active_thinking_is_integral().await);
+        assert_eq!(
+            interface.effective_thinking_control(Some(false)).await.0,
+            Some(false)
         );
     }
 

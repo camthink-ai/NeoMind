@@ -19,17 +19,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conversation summaries now reach the model in text and image chats, including streaming and non-streaming requests. Tool continuations, final summaries, and recovery requests retain the same turn-level summary and account for it in the context budget without changing stored history indices.
 - Final-summary requests now omit tool definitions when tools are disabled, preventing the backend's tool-format instructions from conflicting with the request for a direct answer.
 - Clear the previous turn's transient skill guides before building the first request. Skills loaded during the current turn remain available to subsequent tool rounds.
-- Restore the streaming system-prompt layout used before 1.2.4: resolve time and task guidance in the system message and preserve the user's text without an appended context footer. Tool-round continuations retain the original request and classify its intent instead of classifying tool output. This removes a prompt-layout regression risk; model-quality recovery still requires a controlled evaluation.
-- Add domain-specific task guidance only when the request explicitly identifies a supported domain. Generic history/create/query wording and agent, message, dashboard, or mixed-domain requests no longer receive unrelated device or rule instructions.
+- Restore the streaming system-prompt layout used before 1.2.4: resolve time in the system message and preserve the user's text without an appended context footer. Tool-round continuations retain the original request. This removes a prompt-layout regression risk; model-quality recovery still requires a controlled evaluation.
+- Remove keyword-selected task instructions, synthetic intent plans, narration nudges, promise-to-action directives, and prose-based completion labels. Explanations and plan-only requests no longer receive platform-generated orders to execute changes.
 - Streaming failures send terminal events so the chat composer can settle. Non-streaming fallback replies appear immediately and persist across reloads. A client watchdog handles missing terminal frames; heartbeats alone do not clear its error deadline.
 - Actual history truncation triggers background summarization and a per-session UI notice. Requests whose system/tool overhead already exhausts the model window fail early with context-setting guidance.
 
 ### Fixed — tool execution and loop progress
-- Replace the third-identical-successful-call refusal with a no-new-information check over consecutive rounds. Changed results or new calls reset the check; existing failed-call, round, and wall-clock limits remain active.
-- Preserve duplicate-call advisory text in the actual next model request, including when the assistant narrated the call or the tool returned a scalar/array. Loop progress still compares undecorated execution results.
+- Remove signature-based repeat refusals and per-turn failure blacklists. Repeated reads and calls after an environment repair remain executable; explicit round, token, time, and tool-call budgets continue to bound resource use. Scheduled and non-streaming paths no longer conflate distinct operations using a 100-character argument prefix.
+- Preserve duplicate-call advisory text in the actual next model request, including when the assistant narrated the call or the tool returned a scalar/array. The advisory describes a fresh successful observation without prohibiting legitimate verification.
 - Live CLI queries, file reads, web fetches, extension tools, and all skill actions bypass the session result cache. Repeated status polls and read-after-write verification observe fresh state instead of reusing results for up to five minutes. Skill creation/deletion executes every time, and guide reads observe updates from other sessions or the API.
 - Apply replay safety to the actual streaming and multimodal tool executor: interrupted side-effectful calls are not automatically repeated and report an unknown outcome with verify-first guidance. Safe tools retain transient-error retries.
 - Preserve partial tool output alongside failure details through model requests and saved tool results. Classify failures from execution status and shell exit/timeout information, rather than business payload fields named `error` or `invalid`.
+
+### Fixed — execution boundaries and frontend compatibility
+- Separate backend text, thinking and native tool-call events. Ordinary JSON, fenced examples and reasoning text cannot be dispatched by the chat or scheduled executor. Text-only tool adapters use a dedicated, complete execution envelope; native-capable requests keep native calls.
+- Honor configured thinking in continuations, summaries and recovery; remove the pre-compaction 18K-history override. Resolve integral-thinking capabilities against the bound runtime or its own instance manager rather than an unrelated globally active model.
+- Refresh same-ID skill guides and retain ordinary skill search/error results. Preserve distinct observations in fallback summaries, valid `[]`/`{}`/`null` answers, and successful shell stdout without process-global help injection or keyword-based failure classification.
+- Model request setup, token consumption, recovery and tool execution share the configured turn deadline and cancellation signal. Dropping a stream cancels its upstream HTTP task even when it produces no tokens. Interrupted side effects retain outcome-unknown guidance and are not automatically replayed.
+- Keep the frontend WS/SSE event schema stable. Remove the client-only 21-minute hard stop that could preempt a longer configured backend turn; idle and missing-terminal error watchdogs remain. Image-chat content is emitted once, and summary thinking remains separate from the saved answer. Live and restored tool cards use shell exit/timeout status; business payload fields named `error` no longer imply execution failure.
 
 ### Fixed — builtin models and engine lifecycle
 - Active-model selection resolves installed catalog-only models on cold starts, and the model list no longer duplicates them as local imports.
@@ -45,6 +52,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Restart API GPU-layer options `ngl` and `vlm_ngl` accept a numeric pin or `auto`; these options are not yet exposed as editable controls in the frontend.
 
 ### Upgrade notes
+- Custom Rust LLM runtimes must emit `StreamEvent::{Text, Thinking, ToolCalls}` instead of `(String, bool)` stream items; existing tuples can be converted with `.into()`. HTTP and WS clients require no event-schema migration.
+- Non-native text tool requests now require a whole `<neomind_tool_calls>...</neomind_tool_calls>` envelope. Bare JSON and fenced examples are ordinary content. The older OpenAI-compatible XML recovery is disabled by default; `NEOMIND_LEGACY_TEXT_TOOL_CALLS=on` explicitly restores that compatibility behavior for endpoints that need it.
 - API-owned engine settings take precedence over inherited environment values. Explicit default/auto selections now survive service restarts.
 - Existing catalog-model installations acquire their local runtime-metadata snapshot on a successful model-catalog refresh or reselection. Installations that have never saved this metadata need that refresh before a fully offline restart can reproduce catalog defaults.
 

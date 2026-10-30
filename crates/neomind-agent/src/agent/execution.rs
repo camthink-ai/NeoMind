@@ -15,7 +15,6 @@ use neomind_core::Message;
 impl Agent {
     pub(crate) async fn process_with_llm(&self, user_message: &str) -> Result<AgentResponse> {
         tracing::debug!(message = %user_message, "process_with_llm starting");
-        use tool_parser::parse_tool_calls;
 
         // Get existing history (user message already added by caller in `process`)
         // Optimize: Clone only needed messages in one pass, avoiding double-clone
@@ -191,7 +190,9 @@ impl Agent {
 
         // Parse response for tool calls
         tracing::debug!(response_text = %chat_response.text, "LLM response received");
-        let (content, mut tool_calls) = parse_tool_calls(&chat_response.text)?;
+        let content = chat_response.text;
+        let mut tool_calls =
+            tool_parser::native_tool_calls(chat_response.tool_calls.unwrap_or_default());
         tracing::debug!(count = tool_calls.len(), "Parsed tool calls");
         for tc in &tool_calls {
             tracing::debug!(name = %tc.name, args = %tc.arguments, "  tool call");
@@ -199,19 +200,6 @@ impl Agent {
 
         // Extract thinking content if present
         let thinking = chat_response.thinking;
-
-        // If no tool calls in response content, try parsing from thinking field
-        // Some models (like qwen3 with thinking enabled) may put tool calls in thinking
-        if tool_calls.is_empty() {
-            if let Some(ref thinking_content) = thinking {
-                if let Ok((_, thinking_tool_calls)) = parse_tool_calls(thinking_content) {
-                    if !thinking_tool_calls.is_empty() {
-                        tracing::debug!("Found tool calls in thinking field, using them");
-                        tool_calls = thinking_tool_calls;
-                    }
-                }
-            }
-        }
 
         // If no tool calls, return the direct response
         if tool_calls.is_empty() {
@@ -255,33 +243,10 @@ impl Agent {
             tool_calls.truncate(max_calls);
         }
 
-        // === DEDUPLICATE: Remove duplicate tool calls to avoid redundant execution ===
-        // Models sometimes output the same tool call multiple times
-        // We keep the first occurrence of each unique (name, arguments) pair
-        let original_count = tool_calls.len();
-        let mut seen = std::collections::HashSet::new();
-        tool_calls.retain(|tool_call| {
-            // Create a unique key based on tool name and arguments
-            let key = (
-                tool_call.name.clone(),
-                tool_call
-                    .arguments
-                    .to_string()
-                    .chars()
-                    .take(100)
-                    .collect::<String>(),
-            );
-            seen.insert(key)
-        });
-        let dedup_count = tool_calls.len();
-        if original_count > dedup_count {
-            tracing::debug!(
-                "Deduplicated tool calls: {} -> {} (removed {} duplicates)",
-                original_count,
-                dedup_count,
-                original_count - dedup_count
-            );
-        }
+        // Only repeated transport identities are duplicates. Separate calls
+        // with identical inputs can be intentional, and prefixes are not identity.
+        let mut seen_ids = std::collections::HashSet::new();
+        tool_calls.retain(|call| seen_ids.insert(call.id.clone()));
 
         // Tool calls detected - DON'T save the initial assistant message yet
         // We'll save a complete message (with tool_calls and final response) after tool execution

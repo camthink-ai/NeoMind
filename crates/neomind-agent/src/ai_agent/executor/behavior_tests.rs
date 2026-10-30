@@ -198,7 +198,7 @@ async fn normal_completion_returns_final_text() {
 }
 
 #[tokio::test]
-async fn all_duplicate_breaks_to_phase2() {
+async fn repeated_native_calls_are_executed_fresh() {
     // Round 1: tool call (sig X). Round 2: the SAME tool call → cross-round
     // dedup filters it → AllDuplicate. With results already in hand, the loop
     // must break to Phase 2 (#5), NOT burn 30 rounds nudging the model.
@@ -226,17 +226,14 @@ async fn all_duplicate_breaks_to_phase2() {
         )
         .await;
 
-    assert!(
-        rt.call_count() <= 3,
-        "AllDuplicate should break early (not burn 30 rounds); got {} calls",
-        rt.call_count()
+    assert_eq!(rt.call_count(), 3);
+    assert_eq!(
+        out.all_tool_results.len(),
+        2,
+        "repeated calls are fresh observations"
     );
-    assert!(
-        !out.final_text.is_empty(),
-        "Phase 2 summary should produce final text, got: {:?}",
-        out.final_text
-    );
-    assert_eq!(out.stop_reason, StopReason::AllDuplicate);
+    assert_eq!(out.final_text, "summary from results so far");
+    assert_eq!(out.stop_reason, StopReason::NaturalCompletion);
 }
 
 #[tokio::test]
@@ -2460,7 +2457,7 @@ async fn daily_run_cap_applies_to_every_mode() {
 /// with that promise as the conclusion (the original field failure); with the
 /// guard, one nudge round recovers the call and the task completes.
 #[tokio::test]
-async fn narration_collapse_nudges_once_and_recovers() {
+async fn narration_does_not_authorize_an_extra_action() {
     let rt = MockLlmRuntime::new(vec![
         MockResponse::text("好的，我现在使用 echo 工具来处理。"),
         MockResponse::tool_call("echo", serde_json::json!({ "msg": "recovered" })),
@@ -2485,11 +2482,9 @@ async fn narration_collapse_nudges_once_and_recovers() {
         )
         .await;
 
-    assert_eq!(
-        out.final_text, "done after recovery",
-        "the narration promise must NOT be the run's conclusion"
-    );
-    assert_eq!(rt.call_count(), 3, "nudge round + tool round + final round");
+    assert_eq!(out.final_text, "好的，我现在使用 echo 工具来处理。");
+    assert_eq!(rt.call_count(), 1);
+    assert!(out.all_tool_results.is_empty());
     assert_eq!(out.stop_reason, StopReason::NaturalCompletion);
 }
 
@@ -2520,9 +2515,47 @@ async fn repeated_narration_is_accepted_as_final() {
         )
         .await;
 
-    assert_eq!(
-        out.final_text, "我将使用 echo 工具处理这件事。",
-        "second narration is the accepted final answer"
+    assert_eq!(out.final_text, "好的，我现在使用 echo 工具来处理。");
+    assert_eq!(rt.call_count(), 1);
+    assert!(out.all_tool_results.is_empty());
+}
+
+/// Distinct native operations must not collide because their JSON shares a long prefix.
+#[tokio::test]
+async fn intervention_audit_distinct_arguments_and_read_after_control_are_preserved() {
+    let prefix = "x".repeat(160);
+    let mut batch =
+        MockResponse::tool_call("echo", serde_json::json!({"msg": format!("{prefix}A")}));
+    batch.tool_calls.extend(
+        MockResponse::tool_call("echo", serde_json::json!({"msg": format!("{prefix}B")}))
+            .tool_calls,
     );
-    assert_eq!(rt.call_count(), 2, "exactly one nudge — no loop");
+    let rt = MockLlmRuntime::new(vec![
+        batch,
+        MockResponse::tool_call("echo", serde_json::json!({"msg": "read"})),
+        MockResponse::tool_call("echo", serde_json::json!({"msg": "control"})),
+        MockResponse::tool_call("echo", serde_json::json!({"msg": "read"})),
+        MockResponse::text("done"),
+    ]);
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt.clone());
+    let (executor, agent, registry) = build_harness().await;
+    let (tools, names) = AgentExecutor::filter_tools(&registry, &agent.tool_config);
+    let out = executor
+        .run_tool_loop(
+            &agent,
+            &registry,
+            &rt_dyn,
+            &tools,
+            &mut base_messages(),
+            "exec-preserve",
+            30,
+            &names,
+            None,
+        )
+        .await;
+    assert_eq!(out.all_tool_results.len(), 5);
+    assert_eq!(out.round_data_list_raw[0].1.len(), 2);
+    assert_eq!(out.round_data_list_raw[3].1[0].input["msg"], "read");
+    assert_eq!(out.stop_reason, StopReason::NaturalCompletion);
+    assert_eq!(out.final_text, "done");
 }

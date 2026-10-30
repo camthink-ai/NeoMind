@@ -129,7 +129,6 @@ impl AgentExecutor {
         results: &[crate::toolkit::ToolResult],
         messages: &mut Vec<Message>,
         all_tool_results: &mut Vec<crate::toolkit::ToolResult>,
-        skill_reference: &mut String,
         original_to_sanitized: &HashMap<String, String>,
         agent_id: &str,
         execution_id: &str,
@@ -243,25 +242,13 @@ impl AgentExecutor {
                 }
             };
 
-            // Skill tool results go to separate reference buffer, not messages history
-            if result.name == "skill" {
-                if !skill_reference.is_empty() {
-                    skill_reference.push_str("\n\n");
-                }
-                skill_reference.push_str(&result_text);
-                // Add a concise acknowledgment to messages so LLM knows the skill was retrieved
-                messages.push(Message::new(
-                    MessageRole::User,
-                    Content::text("Skill guide retrieved and will be used as reference."),
-                ));
-            } else {
-                // Use sanitized name for LLM message so it matches what the LLM used
-                let msg_name = original_to_sanitized
-                    .get(&result.name)
-                    .cloned()
-                    .unwrap_or_else(|| result.name.clone());
-                messages.push(Message::tool_result(&msg_name, &result_text));
-            }
+            // Every tool result stays in protocol history, including skill search,
+            // errors and updated guides. Do not freeze the first guide in system context.
+            let msg_name = original_to_sanitized
+                .get(&result.name)
+                .cloned()
+                .unwrap_or_else(|| result.name.clone());
+            messages.push(Message::tool_result(&msg_name, &result_text));
 
             // Send thinking event for each tool result
             let result_preview = match &result.result {

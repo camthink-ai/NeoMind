@@ -34,6 +34,31 @@ fn code_block_obj_re() -> &'static Regex {
     })
 }
 
+/// Normalize the backend's structured tool channel without inspecting prose.
+pub(crate) fn native_tool_calls(values: Vec<Value>) -> Vec<ToolCall> {
+    values
+        .into_iter()
+        .filter_map(|value| {
+            let name = value.get("name")?.as_str()?.to_owned();
+            Some(ToolCall {
+                name,
+                id: value
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| Uuid::new_v4().to_string()),
+                arguments: value
+                    .get("arguments")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({})),
+                result: None,
+                round: None,
+            })
+        })
+        .collect()
+}
+
 /// Parse tool calls from LLM response text.
 ///
 /// **Supported formats** (in priority order):

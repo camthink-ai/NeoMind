@@ -212,3 +212,6 @@ mod tests {
         assert_eq!(outcome.unwrap(), None);
     }
 }
+
+#[cfg(all(test, feature = "cloud", feature = "llamacpp", feature = "ollama"))]
+mod stream_tests;

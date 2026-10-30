@@ -59,6 +59,7 @@ pub(crate) enum StopReason {
     /// Phase 2 synthesizes a summary, same as MaxRounds.
     TokenBudget,
     /// Every tool call this round was a cross-round duplicate (results in hand).
+    #[allow(dead_code)] // Historical journal label retained for compatibility.
     AllDuplicate,
     /// LLM generation failed (after transient retries).
     LlmError,
@@ -95,16 +96,6 @@ pub(crate) struct ToolLoopOutput {
     /// run's calls. 0 when the backend reported no usage — an unreported
     /// run, not a free one. Threaded into `DecisionProcess::tokens_used`.
     pub(crate) tokens_used: u64,
-}
-
-/// Outcome of intra-round + cross-round deduplication.
-#[derive(PartialEq)]
-pub(crate) enum DedupOutcome {
-    /// Some tool calls survived deduplication.
-    /// Contains the count and signatures of cross-round duplicates that were dropped.
-    HasNew { skipped_cross_round: Vec<String> },
-    /// All tool calls were duplicates.
-    AllDuplicate,
 }
 
 /// Hard limit for a single tool result (128 KB).

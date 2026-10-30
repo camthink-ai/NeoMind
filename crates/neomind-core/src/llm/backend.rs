@@ -297,10 +297,33 @@ impl TokenUsage {
     }
 }
 
-/// Stream chunk.
-/// Contains the text content and a boolean indicating if it's from a "thinking" field
-/// (e.g., qwen3-vl's thinking field vs actual content).
-pub type StreamChunk = Result<(String, bool), LlmError>;
+/// Internal generation events. Text, reasoning and native calls stay separate.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StreamEvent {
+    Text(String),
+    Thinking(String),
+    /// Structured calls provided by the backend call channel, never prose.
+    ToolCalls(Vec<serde_json::Value>),
+}
+impl From<(String, bool)> for StreamEvent {
+    fn from((text, thinking): (String, bool)) -> Self {
+        if thinking {
+            Self::Thinking(text)
+        } else {
+            Self::Text(text)
+        }
+    }
+}
+impl StreamEvent {
+    pub fn into_text_parts(self) -> Option<(String, bool)> {
+        match self {
+            Self::Text(text) => Some((text, false)),
+            Self::Thinking(text) => Some((text, true)),
+            Self::ToolCalls(_) => None,
+        }
+    }
+}
+pub type StreamChunk = Result<StreamEvent, LlmError>;
 
 /// Strip a `__NEOMIND_TOKEN_PROMPT:N__` marker from a stream chunk and
 /// return `(clean_text, Some(N))`. Handles both standalone-chunk emission
@@ -309,7 +332,7 @@ pub type StreamChunk = Result<(String, bool), LlmError>;
 ///
 /// The marker is in-band metadata streaming backends inject to surface
 /// `prompt_tokens` (completion_tokens is not available via streaming).
-fn strip_token_marker(content: &str) -> (String, Option<u32>) {
+pub fn strip_token_marker(content: &str) -> (String, Option<u32>) {
     const MARKER: &str = "__NEOMIND_TOKEN_PROMPT:";
     if let Some(start) = content.find(MARKER) {
         let after = &content[start + MARKER.len()..];
@@ -603,17 +626,15 @@ pub trait LlmRuntime: Send + Sync {
     /// - token-usage markers (`\n__NEOMIND_TOKEN_PROMPT:N__`) are filtered out
     ///   as metadata, not content
     ///
-    /// `tool_calls` is left as `None` — backends that emit tool calls via
-    /// the stream embed them as JSON in content chunks (same shape as the
-    /// non-streaming path's text+JSON concatenation), so `tool_loop`'s
-    /// existing fallback parser extracts them from `text`.
+    /// Native tool events populate `tool_calls`; ordinary text and thinking
+    /// remain text and are never interpreted as executable instructions.
     ///
     /// `usage` is populated when any signal is available:
     /// - `prompt_tokens`: real, extracted from `__NEOMIND_TOKEN_PROMPT:N__`
     ///   markers emitted by streaming backends (Ollama/OpenAI/llama.cpp).
     ///   `0` if no marker was emitted.
     /// - `completion_tokens`: estimated via the trait's `estimate_tokens()`
-    ///   heuristic on `text + thinking` chars. Streaming backends do not
+    ///   heuristic on text, thinking and native tool-call chars. Streaming backends do not
     ///   surface completion_tokens, so this is necessarily approximate.
     /// - `usage` is `None` only when the stream produced no content AND no
     ///   marker (empty response — typically a stream-error case).
@@ -636,11 +657,14 @@ pub trait LlmRuntime: Send + Sync {
         // partial-estimated data instead of `None` — important for token
         // accounting, telemetry, and any per-iteration budgets.
         let mut prompt_tokens: Option<u32> = None;
+        let mut native_calls = Vec::new();
         let mut stream_error: Option<LlmError> = None;
 
         while let Some(chunk) = stream.next().await {
             match chunk {
-                Ok((text, is_thinking)) => {
+                Ok(StreamEvent::ToolCalls(calls)) => native_calls.extend(calls),
+                Ok(event) => {
+                    let (text, is_thinking) = event.into_text_parts().expect("text event");
                     // Streaming backends inject `\n__NEOMIND_TOKEN_PROMPT:N__`
                     // markers to surface prompt-token counts. Strip the marker
                     // (wherever it appears in the chunk — standalone or
@@ -678,8 +702,20 @@ pub trait LlmRuntime: Send + Sync {
 
         // Estimate completion_tokens via the trait's heuristic (~4 chars/token).
         // Includes thinking chars so reasoning-heavy models are accounted for.
-        let usage = if prompt_tokens.is_some() || !text.is_empty() || thinking.is_some() {
-            let completion_chars = text.len() + thinking.as_ref().map(|s| s.len()).unwrap_or(0);
+        let native_chars = if native_calls.is_empty() {
+            0
+        } else {
+            serde_json::to_string(&native_calls)
+                .map(|s| s.len())
+                .unwrap_or(0)
+        };
+        let usage = if prompt_tokens.is_some()
+            || !text.is_empty()
+            || thinking.is_some()
+            || native_chars > 0
+        {
+            let completion_chars =
+                text.len() + thinking.as_ref().map(|s| s.len()).unwrap_or(0) + native_chars;
             let completion_tokens = (completion_chars / 4) as u32;
             Some(TokenUsage::new(
                 prompt_tokens.unwrap_or(0),
@@ -691,10 +727,14 @@ pub trait LlmRuntime: Send + Sync {
 
         Ok(LlmOutput {
             text,
-            finish_reason: FinishReason::Stop,
+            finish_reason: if native_calls.is_empty() {
+                FinishReason::Stop
+            } else {
+                FinishReason::ToolCalls
+            },
             usage,
             thinking,
-            tool_calls: None,
+            tool_calls: (!native_calls.is_empty()).then_some(native_calls),
         })
     }
 
@@ -1004,6 +1044,7 @@ mod tests {
         Content(String),
         Thinking(String),
         TokenMarker(u32),
+        ToolCalls(Vec<serde_json::Value>),
         Error(String),
     }
 
@@ -1030,11 +1071,13 @@ mod tests {
                 .chunks
                 .iter()
                 .map(|c| match c {
-                    MockChunk::Content(s) => Ok((s.clone(), false)),
-                    MockChunk::Thinking(s) => Ok((s.clone(), true)),
-                    MockChunk::TokenMarker(n) => {
-                        Ok((format!("\n__NEOMIND_TOKEN_PROMPT:{}__", n), false))
-                    }
+                    MockChunk::Content(s) => Ok(StreamEvent::Text(s.clone())),
+                    MockChunk::Thinking(s) => Ok(StreamEvent::Thinking(s.clone())),
+                    MockChunk::TokenMarker(n) => Ok(StreamEvent::Text(format!(
+                        "\n__NEOMIND_TOKEN_PROMPT:{}__",
+                        n
+                    ))),
+                    MockChunk::ToolCalls(calls) => Ok(StreamEvent::ToolCalls(calls.clone())),
                     MockChunk::Error(msg) => Err(LlmError::Network(msg.clone())),
                 })
                 .collect();
@@ -1043,6 +1086,40 @@ mod tests {
         fn max_context_length(&self) -> usize {
             4096
         }
+    }
+
+    #[tokio::test]
+    async fn native_calls_remain_separate_from_explanatory_json_and_count_towards_usage() {
+        let calls =
+            vec![serde_json::json!({"id":"call1", "name":"echo", "arguments":{"msg":"actual"}})];
+        let example = "```json\n[{\"name\":\"shell\",\"arguments\":{}}]\n```";
+        let runtime = MockStreamRuntime {
+            chunks: vec![
+                MockChunk::Content(example.into()),
+                MockChunk::Thinking("reasoning".into()),
+                MockChunk::ToolCalls(calls.clone()),
+            ],
+        };
+        let out = runtime
+            .generate_to_completion(LlmInput::new("test"))
+            .await
+            .unwrap();
+        assert_eq!(out.text, example);
+        assert_eq!(out.thinking.as_deref(), Some("reasoning"));
+        assert_eq!(out.tool_calls, Some(calls.clone()));
+        assert!(matches!(out.finish_reason, FinishReason::ToolCalls));
+        let runtime = MockStreamRuntime {
+            chunks: vec![MockChunk::ToolCalls(calls)],
+        };
+        let out = runtime
+            .generate_to_completion(LlmInput::new("test"))
+            .await
+            .unwrap();
+        assert!(out.text.is_empty());
+        assert!(
+            out.usage.unwrap().completion_tokens > 0,
+            "native-only calls also consume tokens"
+        );
     }
 
     #[tokio::test]

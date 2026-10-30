@@ -154,28 +154,37 @@ impl LlmRuntime for CloudRuntime {
         &self,
         input: neomind_core::llm::backend::LlmInput,
     ) -> Result<LlmOutput, LlmError> {
+        let legacy = crate::llm_backends::text_tool_calls::legacy_tools(
+            self.capabilities().function_calling,
+            input.tools.as_deref(),
+        );
         let start_time = Instant::now();
-
-        // Anthropic-native API path
-        if self.config.provider == CloudProvider::Anthropic {
-            return self.generate_anthropic(input, start_time).await;
-        }
-
-        // OpenAI-compatible path (default)
-        self.generate_openai(input, start_time).await
+        let output = if self.config.provider == CloudProvider::Anthropic {
+            self.generate_anthropic(input, start_time).await?
+        } else {
+            self.generate_openai(input, start_time).await?
+        };
+        Ok(crate::llm_backends::text_tool_calls::adapt_output(
+            output, legacy,
+        ))
     }
 
     async fn generate_stream(
         &self,
         input: neomind_core::llm::backend::LlmInput,
     ) -> Result<Pin<Box<dyn Stream<Item = StreamChunk> + Send>>, LlmError> {
-        // Anthropic-native streaming path
-        if self.config.provider == CloudProvider::Anthropic {
-            return self.generate_stream_anthropic(input);
-        }
-
-        // OpenAI-compatible streaming path (default)
-        self.generate_stream_openai(input)
+        let legacy = crate::llm_backends::text_tool_calls::legacy_tools(
+            self.capabilities().function_calling,
+            input.tools.as_deref(),
+        );
+        let stream = if self.config.provider == CloudProvider::Anthropic {
+            self.generate_stream_anthropic(input)?
+        } else {
+            self.generate_stream_openai(input)?
+        };
+        Ok(crate::llm_backends::text_tool_calls::adapt_stream(
+            stream, legacy,
+        ))
     }
 
     fn max_context_length(&self) -> usize {
