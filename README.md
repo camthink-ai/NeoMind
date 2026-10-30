@@ -183,24 +183,29 @@ nginx reverse proxy, manual install — are in the wiki's
 
 Pick a catalog model in **Settings → LLM Backends** (or the first-run wizard) — it downloads and runs with zero configuration. Context defaults to 128K and auto-caps to available RAM; 32K/64K/128K presets and custom values available.
 
-Scores from the 2026-09 agent eval: 12 scenarios per cycle (Chinese + English, 40-turn long-horizon, tools-breadth), executed against a seeded sandbox platform under identical conditions. Finalists ran two cycles.
+Scores below are from the **2026-10-29 official-params gate**: 138 bilingual cases (69 zh + 69 en), 32K context per request, every model at its vendor-recommended samplers; pass = expected commands issued AND end-state assertions hold. Full methodology, attribution runs, and per-category breakdowns: [docs/model-leaderboard-20261029-official.md](docs/model-leaderboard-20261029-official.md).
 
-| Model | Size (min RAM) | Score @32K | Product ctx | Best for |
-|-------|----------------|------------|-------------|----------|
-| **MiniCPM5-2B** ⭐ | 1.5 GB (3 GB) | ~68* | 128K | Default pick; most robust across windows, 81% tool accuracy |
-| **Qwen 3.5 4B** | 2.7 GB (4 GB) | 65.8 | 128K | Strongest local agent; weak at 8K |
-| **Ling 3.0-tiny** | 4.8 GB (6 GB) | 44.9 | 128K | Fast MoE; keep sessions short |
-| **Gemma 4 E2B** | 3.1 GB (4.5 GB) | 59.7 | 128K | Long-context stable; weak resource creation |
-| **LFM 2.5 2.6B** | 1.5 GB (3 GB) | 53.5 | 128K | Small footprint; improves with context |
-| MiniCPM5-1B / Qwen3.5-0.8B | ~1 GB (2 GB) | — | — | Below the agent threshold; not in the catalog |
+| Model | Size (min RAM) | Thinking OFF | Thinking ON | Notes |
+|-------|----------------|--------------|--------------|-------|
+| **Spark-X2.6-1.7B** ⭐ | 1.8 GB (3 GB) | 43.5% | **63.8%** | New default edge pick — best score per GB, short thinking chains, multi-step 50% |
+| Nanbeige4.2-3B | 2.6 GB (6 GB) | 60.2%* | n/a† | Strong single-step precision (en 64.8); dense KV needs ~11 GB @32K, slow decode |
+| Qwen 3.5 4B | 2.7 GB (4 GB) | 41.3% official / 51.4% @1.0-0.95 | **55.1%** | Strongest 4B with thinking on — ship the sampler overrides below |
+| Spark-X2.6-4B | 3.5 GB (5 GB) | 50.0% | 59.4% | No edge over the 1.7B at thinking-on; pick by VRAM headroom |
+| LFM 3 1.7B | 1.2 GB (3 GB) | 42.8% | 47.1% | Requires llama.cpp ≥ b11946 (v0.8.0+); weak at multi-step — matches Liquid's own card |
+| MiniCPM5-2B | 1.5 GB (3 GB) | 33.3% | 45.7% | Official default ships thinking ON — keep it that way |
+| Gemma 4 E2B | 3.1 GB (4.5 GB) | 26.1% | 27.5% | Not recommended for agent workloads |
+| *Cloud reference* — DeepSeek-flash / GLM-5.3 | — | 81.2% / 76.8% | — | Best edge config sits 13–18pp under cloud |
 
-All scores are the SAME window (32K) so models are comparable; *MiniCPM5-2B's 32K cell is from the earlier 5-scenario suite (its 12-scenario cells are 64 @8K / 61.4 @16K). ≤6-point cross-model gaps are statistical ties. Product context is 128K, RAM-capped; no same-suite 128K scores exist yet — the 2026-10 gate's context was not recorded. Per-window matrix: [docs/edge-models.md](docs/edge-models.md).
+\*Nanbeige partial sample (108/138). †Its think-mode run was invalidated (16K ctx, 839 prompt truncations) — a valid re-run needs a dedicated ~14 GB VRAM window.
 
-Under fair scoring the top three are one tier (83–90% tool accuracy) — pick by footprint, latency, and context fit: **MiniCPM5-2B** default, **Qwen 3.5 4B** strongest local agent.
+**Deployment guidance from this batch:**
 
-**2026-10 re-verification (1.2.2 build):** all catalog locals re-ran on the 33-case hard-signal regression gate (thinking on): MiniCPM5-2B 77% at its official sampler point, LFM 2.5 2.6B 72%, Gemma 4 E2B 69% — the one-tier picture holds on the newer suite. The gate has since grown to 40 cases and 1.2.3 changed the chat guard policy (labels-only), so these are 1.2.2 numbers; a 1.2.3 re-run is pending.
+- **Enable thinking** for Spark / Qwen 3.5 / MiniCPM5 — worth **+9 to +20pp**. It is near-neutral for LFM 2.5 / Gemma. LFM 3's thinking emits 1,500–5,400 tokens *per ReAct round* — impractical on slow hardware.
+- **Sampler overrides ship with the model download**: Qwen off-mode wants 1.0/0.95 (its chat default loses ~10pp here); the LFM family is strict 0.1 / top_k 50 / repetition_penalty 1.1 (wrong params cost up to 23pp); Spark 1.0/0.95; Gemma 1.0/0.95/top_k 64.
+- **llama-server floor**: LFM 3 models need ≥ b11946 — v0.8.0 (2026-10-28, official LFM3-family support) is the recommended target.
+- Machine-to-machine variance measured ≈ ±1.4pp (Mac M-series vs T4) — scores are hardware-portable within noise.
 
-**2026-10-26 additions (1.2.3 build, same 40-case gate, official `pass_for_case` metric):** deepseek-flash (cloud) **93.8%** — the cloud tier measures ~20pp over the best local and ~39pp over the stock 2B; Spark-X2.6-4B **73.8%** and MiniCPM-V 4.7-35B-A3B **70.5%** are a statistical tie at this sample size (±10pp Wilson interval), both 4 GB+/32 GB+ tier candidates — MiniCPM-V also holds its tool calling, making a unified agent+perception slot viable on 32 GB+ hosts (vision quality still untested). Catalog locals' own 1.2.3 re-run is still pending. Full data: [docs/edge-models.md](docs/edge-models.md) · catalog: [NeoMind-Runtimes](https://github.com/camthink-ai/NeoMind-Runtimes).
+Historical scoring (2026-09 12-scenario suite, 2026-10 33/40-case gates with MiniCPM-V and deepseek-flash) lives in [docs/edge-models.md](docs/edge-models.md). Catalog & downloads: [NeoMind-Runtimes](https://github.com/camthink-ai/NeoMind-Runtimes).
 
 ### Development
 
