@@ -1278,26 +1278,21 @@ impl Tool for ShellTool {
     }
 
     fn description(&self) -> &str {
-        // Slim description (canonical): Critical Syntax Rules (hard
-        // constraints) + CLI concept. The per-domain subcommand INDEX lives
-        // in DOMAIN_INDEX below and is INJECTED into the first shell tool
-        // result instead of living here — the 2026-08-18 full eval proved a
-        // 2600-char static description re-triggers the ≤3B tool-selection
-        // suppression (models grabbed file_write/web_fetch instead of shell:
-        // the description-avoidance signature from the 6510-char era), which
-        // cost more cases than the index's recall gained. Defensive knowledge
-        // (easy-to-miss list, GUI guard) stays out — discoverable via
-        // `neomind <domain> <action> --help` or the skill tool.
+        // Keep common syntax and platform concepts short. Detailed help stays
+        // on demand and is never appended to successful business stdout.
         static SLIM: &str = r#"Execute shell commands on the host. This is your PRIMARY tool for ALL NeoMind platform operations via the `neomind` CLI (14 domains: device, dashboard, rule, agent, extension, widget, transform, llm, message, connector, push, settings, system, api-key). All commands return JSON by default — do NOT pass --json.
 
 Quick reference (run `neomind <domain> --help` or load the `skill` guide for full syntax):
 - Read: `<domain> get <ID>` (one) / `<domain> list` (all). ID is positional, never `--id`.
-- Write: `<domain> create/update/delete` take flags (`--name`, `--device-type`, …). Pass `--id <id>` on create ONLY if the user gave a specific ID.
+- Updates use a positional ID: `device update <ID> --name <NAME>`, never `device update --id ...`. Creation uses flags; specify an ID on create only when the user requests it.
 - Control / enable / activate are explicit writes: `device control <ID> <CMD>`, `rule enable <ID>`, `llm activate <ID>`, `connector enable <ID>`, `push enable <ID>`.
 - History & conversation: `agent executions <ID>`, `agent conversation <ID>`, `agent send-message <ID>`.
 - Notification channels are a sub-family: `message channel-list` / `channel-create` / `channel-test`, NOT `message list`.
 
-Use documented subcommands and flags; unknown syntax can be checked with --help or skill guides.
+Device readings: `device list` finds devices; `device get <ID>` inspects a device and its metric definitions; `device latest <ID>` reads current metric values; `device history <ID> --metric <NAME>` reads a time series. `system info` describes the host/platform, not device readings.
+
+Complete each requested step using actual results. Example: for "rename a device and verify", run `device update <ID> --name <NAME>` then `device get <ID>`, using an ID returned by discovery.
+For unfamiliar syntax, ask for the relevant `<domain> <subcommand> --help`; use the resulting usage and error suggestions to correct arguments. Prefer the known command for the task over unrelated domain enumeration.
 Output fields include stdout, stderr, exit_code and timed_out. Errors may include a structured suggestion. Report the actual command outcome.
 
 Native host tools also available via `/bin/sh -c`: ping, curl, ps, df, grep, docker, …"#;
