@@ -1,0 +1,182 @@
+[
+ {
+  "case": "agent-event-trigger[en]",
+  "baseline": "PASS",
+  "c7fb": "FAIL",
+  "mac124": "FAIL",
+  "cmd_partial": 0.0,
+  "sq_partial": 0.0,
+  "latency_s": 60
+ },
+ {
+  "case": "agent-executions[en]",
+  "baseline": "PASS",
+  "c7fb": "FAIL",
+  "mac124": "FAIL",
+  "cmd_partial": 0.5,
+  "sq_partial": null,
+  "latency_s": 73
+ },
+ {
+  "case": "agent-structured-extract[en]",
+  "baseline": "PASS",
+  "c7fb": "FAIL",
+  "mac124": "FAIL",
+  "cmd_partial": 0.5,
+  "sq_partial": 0.5,
+  "latency_s": 84
+ },
+ {
+  "case": "agri-auto-irrigate-north[en]",
+  "baseline": "PASS",
+  "c7fb": "FAIL",
+  "mac124": "PASS",
+  "cmd_partial": 0.0,
+  "sq_partial": 0.0,
+  "latency_s": 28
+ },
+ {
+  "case": "agri-bulk-irrigate-workflow[zh]",
+  "baseline": "PASS",
+  "c7fb": "FAIL",
+  "mac124": "FAIL",
+  "cmd_partial": 0.0,
+  "sq_partial": 0.0,
+  "latency_s": 120
+ },
+ {
+  "case": "agriculture-irrigation-solution-deploy[en]",
+  "baseline": "PASS",
+  "c7fb": "FAIL",
+  "mac124": "FAIL",
+  "cmd_partial": 0.0,
+  "sq_partial": 0.0,
+  "latency_s": 120
+ },
+ {
+  "case": "api-key-lifecycle[en]",
+  "baseline": "PASS",
+  "c7fb": "FAIL",
+  "mac124": "FAIL",
+  "cmd_partial": 0.0,
+  "sq_partial": null,
+  "latency_s": 24
+ },
+ {
+  "case": "building-co2-anomaly[en]",
+  "baseline": "PASS",
+  "c7fb": "FAIL",
+  "mac124": "PASS",
+  "cmd_partial": 0.0,
+  "sq_partial": 0.0,
+  "latency_s": 120
+ },
+ {
+  "case": "building-co2-anomaly[zh]",
+  "baseline": "PASS",
+  "c7fb": "FAIL",
+  "mac124": "FAIL",
+  "cmd_partial": 0.0,
+  "sq_partial": 0.0,
+  "latency_s": 120
+ },
+ {
+  "case": "command-discovery[en]",
+  "baseline": "PASS",
+  "c7fb": "FAIL",
+  "mac124": "FAIL",
+  "cmd_partial": 0.5,
+  "sq_partial": 0.0,
+  "latency_s": 120
+ },
+ {
+  "case": "config-export-validate[en]",
+  "baseline": "PASS",
+  "c7fb": "FAIL",
+  "mac124": "FAIL",
+  "cmd_partial": 0.5,
+  "sq_partial": null,
+  "latency_s": 53
+ },
+ {
+  "case": "config-export-validate[zh]",
+  "baseline": "PASS",
+  "c7fb": "FAIL",
+  "mac124": "FAIL",
+  "cmd_partial": 0.5,
+  "sq_partial": null,
+  "latency_s": 120
+ },
+ {
+  "case": "dashboard-components[en]",
+  "baseline": "PASS",
+  "c7fb": "FAIL",
+  "mac124": "FAIL",
+  "cmd_partial": 0.33,
+  "sq_partial": 0.5,
+  "latency_s": 141
+ },
+ {
+  "case": "dashboard-data-binding[en]",
+  "baseline": "PASS",
+  "c7fb": "FAIL",
+  "mac124": "FAIL",
+  "cmd_partial": 0.0,
+  "sq_partial": 0.0,
+  "latency_s": 120
+ },
+ {
+  "case": "dashboard-update-component-tweak[en]",
+  "baseline": "PASS",
+  "c7fb": "FAIL",
+  "mac124": "FAIL",
+  "cmd_partial": 0.33,
+  "sq_partial": 0.0,
+  "latency_s": 159
+ },
+ {
+  "case": "deep-memory-transform[en]",
+  "baseline": "PASS",
+  "c7fb": "FAIL",
+  "mac124": "FAIL",
+  "cmd_partial": 1.0,
+  "sq_partial": 0.0,
+  "latency_s": 121
+ },
+ {
+  "case": "device-control-stop-pump[en]",
+  "baseline": "PASS",
+  "c7fb": "FAIL",
+  "mac124": "PASS",
+  "cmd_partial": 0.0,
+  "sq_partial": 0.0,
+  "latency_s": 120
+ },
+ {
+  "case": "device-update-name[en]",
+  "baseline": "PASS",
+  "c7fb": "FAIL",
+  "mac124": "PASS",
+  "cmd_partial": 0.0,
+  "sq_partial": 0.0,
+  "latency_s": 21
+ },
+ {
+  "case": "edge-duplicate-create[zh]",
+  "baseline": "PASS",
+  "c7fb": "FAIL",
+  "mac124": "PASS",
+  "cmd_partial": null,
+  "sq_partial": null,
+  "latency_s": 7
+ },
+ {
+  "case": "edge-empty-system[zh]",
+  "baseline": "PASS",
+  "c7fb": "FAIL",
+  "mac124": "PASS",
+  "cmd_partial": 0.0,
+  "sq_partial": null,
+  "latency_s": 116
+ }
+]
