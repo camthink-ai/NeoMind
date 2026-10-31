@@ -38,6 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Model request setup, token consumption, recovery and tool execution share the configured turn deadline and cancellation signal. Dropping a stream cancels its upstream HTTP task even when it produces no tokens. Interrupted side effects retain outcome-unknown guidance and are not automatically replayed.
 - Keep the frontend WS/SSE event schema stable. Remove the client-only 21-minute hard stop that could preempt a longer configured backend turn; idle and missing-terminal error watchdogs remain. Image-chat content is emitted once, and summary thinking remains separate from the saved answer. Live and restored tool cards use shell exit/timeout status; business payload fields named `error` no longer imply execution failure.
 
+### Fixed — task continuation recovery candidate
+- Restore scoped completion decisions and a compact record of actual calls in tool continuations. Discovery alone does not complete an authorized operation; errors, user-only blockers, and explanation-only requests retain distinct next steps without keyword nudges.
+- Clarify device readings versus host status, positional update IDs, and complete multi-step operation examples in the shell reference.
+- Present shell exit/timeout failures consistently to the model while preserving stderr, suggestions and partial data in text/image chat and scheduled summaries. Keep the tool transport-success contract unchanged.
+- Reset generation timing and warning state per tool round; retain the independent total-turn budget. Add bounded metadata logs and opt-in trace-level model chunks for controlled reproductions.
+- Add recovery smoke and loss/retention case sets. These changes are code-validated candidates; real Spark paired evaluation remains required before release.
+
 ### Fixed — builtin models and engine lifecycle
 - Active-model selection resolves installed catalog-only models on cold starts, and the model list no longer duplicates them as local imports.
 - Persist catalog runtime metadata with installed weights, bound to the manifest checksum. Cold starts retain sampling defaults, thinking settings, context limits, roles, and projector metadata. Model discovery excludes vision companions; companion recovery and deletion also recognize persisted roles.
