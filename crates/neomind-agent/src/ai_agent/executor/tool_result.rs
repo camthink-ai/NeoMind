@@ -157,7 +157,7 @@ impl AgentExecutor {
                 == crate::toolkit::tool::ReplaySafety::Safe;
             let result_text = match &result.result {
                 Ok(output) => {
-                    let raw = serde_json::to_string(&output.data)
+                    let raw = serde_json::to_string(&output.prompt_value_for_tool(&result.name))
                         .unwrap_or_else(|_| "Success".to_string());
                     // Slim large/base64 strings into the cache BEFORE sanitize.
                     // Sanitize alone strips `data:image/` to a useless `[image data, N B]`
@@ -302,7 +302,7 @@ impl AgentExecutor {
         for r in all_tool_results {
             let result_text = match &r.result {
                 Ok(output) => {
-                    let raw = serde_json::to_string(&output.data)
+                    let raw = serde_json::to_string(&output.prompt_value_for_tool(&r.name))
                         .unwrap_or_else(|_| "Success".to_string());
                     // Sanitize base64/image data to prevent context bloat
                     let sanitized = crate::agent::streaming::sanitize_tool_result_for_prompt(&raw);

@@ -362,8 +362,8 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                 match execution.result {
                     Ok(output) => {
                         let succeeded = crate::toolkit::tool::effective_success(&crate::tools::resolve_tool_name(&name), &output);
-                        let result_value = output.prompt_value();
-                        let result_str = output.prompt_value().to_string();
+                        let result_value = output.prompt_value_for_tool(&name);
+                        let result_str = output.prompt_value_for_tool(&name).to_string();
 
                         // Slim large strings (image data URLs, big base64) inline
                         // BEFORE display/sanitize: walks JSON, stores each large

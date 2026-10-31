@@ -1111,3 +1111,69 @@ async fn recovery_followup_keeps_tools_task_and_completion_decision() {
         );
     }
 }
+
+struct FailedUsageShell;
+#[async_trait::async_trait]
+impl crate::toolkit::tool::Tool for FailedUsageShell {
+    fn name(&self) -> &str {
+        "shell"
+    }
+    fn description(&self) -> &str {
+        "report simulated CLI usage failure"
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({"type":"object"})
+    }
+    async fn execute(
+        &self,
+        _: serde_json::Value,
+    ) -> crate::toolkit::Result<crate::toolkit::tool::ToolOutput> {
+        Ok(crate::toolkit::tool::ToolOutput::success(
+            serde_json::json!({
+                "command":"neomind device update --id sensor-001 --name New",
+                "exit_code":2,"timed_out":false,"stdout":"PARTIAL_USAGE_SENTINEL",
+                "stderr":"Usage: neomind device update [OPTIONS] <ID>"
+            }),
+        ))
+    }
+}
+
+#[tokio::test]
+async fn recovery_cli_failure_reaches_next_model_request_with_partial_output() {
+    let (iface, requests) = harness(vec![
+        MockResponse::tool_call(
+            "shell",
+            serde_json::json!({"command":"neomind device update --id sensor-001 --name New"}),
+        ),
+        MockResponse::text("blocked"),
+    ])
+    .await;
+    iface.set_tool_definitions(vec![tool("shell")]).await;
+    let mut registry = crate::toolkit::ToolRegistry::new();
+    registry.register(Arc::new(FailedUsageShell));
+    let state = Arc::new(tokio::sync::RwLock::new(
+        crate::agent::types::AgentInternalState::new("usage-failure".into()),
+    ));
+    review_run_turn(iface, state, Arc::new(registry), None).await;
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    let contents = requests[1]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|m| m["content"].as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    for expected in [
+        "\"success\":false",
+        "\"exit_code\":2",
+        "Usage: neomind device update",
+        "PARTIAL_USAGE_SENTINEL",
+        "Tool round 2",
+    ] {
+        assert!(
+            contents.contains(expected),
+            "missing {expected}: {contents}"
+        );
+    }
+}

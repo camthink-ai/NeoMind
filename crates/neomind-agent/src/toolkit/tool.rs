@@ -41,6 +41,21 @@ impl ToolOutput {
         }
     }
 
+    /// Model-facing operation status. Shell transport success does not imply
+    /// that its command succeeded; preserve the full payload on either failure.
+    pub(crate) fn prompt_value_for_tool(&self, name: &str) -> Value {
+        let real_name = crate::tools::resolve_tool_name(name);
+        if !self.success || effective_success(&real_name, self) {
+            return self.prompt_value();
+        }
+        let error = if self.data.get("timed_out").and_then(Value::as_bool) == Some(true) {
+            format!("Command timed out.{}", outcome_unknown_guidance())
+        } else {
+            format!("Command failed with exit_code={}. Inspect stderr, usage and suggestions before another call.", self.data["exit_code"])
+        };
+        serde_json::json!({"success":false,"error":self.error.as_deref().unwrap_or(&error),"data":self.data})
+    }
+
     /// Create a successful output.
     pub fn success(data: impl Into<Value>) -> Self {
         Self {
@@ -128,6 +143,29 @@ pub fn effective_success(name: &str, out: &ToolOutput) -> bool {
 #[cfg(test)]
 mod effective_success_tests {
     use super::*;
+
+    #[test]
+    fn model_feedback_uses_command_status_without_mutating_business_payloads() {
+        let payload = serde_json::json!({"exit_code":2,"stdout":"partial evidence","stderr":"Usage: update <ID>","suggestion":"use a positional ID"});
+        let output = ToolOutput::success(payload.clone());
+        let failed = output.prompt_value_for_tool("shell");
+        assert_eq!(failed["success"], false);
+        assert_eq!(failed["data"], payload);
+        assert!(failed["error"].as_str().unwrap().contains("exit_code=2"));
+        assert!(output.success, "transport contract is unchanged");
+        assert_eq!(output.prompt_value_for_tool("file_read"), payload);
+        let business = serde_json::json!({"error":"sensor fault", "exit_code":0, "stdout":"command not found in docs"});
+        assert_eq!(
+            ToolOutput::success(business.clone()).prompt_value_for_tool("shell"),
+            business
+        );
+        let timed = ToolOutput::success(
+            serde_json::json!({"timed_out":true,"stdout":"effect may have landed"}),
+        )
+        .prompt_value_for_tool("shell");
+        assert_eq!(timed["success"], false);
+        assert!(timed["error"].as_str().unwrap().contains("OUTCOME UNKNOWN"));
+    }
 
     #[test]
     fn shell_exit_codes_decide_success() {

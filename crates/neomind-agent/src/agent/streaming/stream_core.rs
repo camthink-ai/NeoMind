@@ -786,7 +786,7 @@ pub async fn process_stream_events_with_safeguards(
                             if crate::toolkit::tool::effective_success(&name, &output) {
                                 this_round_success_sigs.insert(dup_sig.clone());
                             }
-                            let mut result_value = output.prompt_value();
+                            let mut result_value = output.prompt_value_for_tool(&name);
                             if was_dup {
                                 let advisory = serde_json::json!(
                                     "This call also succeeded in the preceding round. The current result below is fresh."
