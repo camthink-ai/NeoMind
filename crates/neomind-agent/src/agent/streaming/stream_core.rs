@@ -347,13 +347,13 @@ pub async fn process_stream_events_with_safeguards(
                 // Build context for subsequent rounds - tell LLM what happened before
                 drop(state_guard);
 
-                let context_msg = "Continue the original user request using the tool results above. Report actual outcomes and any remaining work.";
+                let context_msg = tool_round_context(tool_iteration_count + 1, &all_round_tool_results);
                 tracing::debug!("Multi-round context: {}", context_msg);
 
                 let thinking_override = None;
                 let round_stream_result = super::request_before_deadline(llm_interface.chat_stream_tool_followup(
                     &user_message,
-                    context_msg,
+                    &context_msg,
                     &history_for_llm,
                     thinking_override
                 ), turn_deadline, safeguards.interrupt_signal.as_ref()).await;
@@ -1283,6 +1283,51 @@ pub async fn process_stream_events_with_safeguards(
             None => yield AgentEvent::end(),
         }
     }))
+}
+
+/// Give the model a completion decision, without inferring intent or forcing actions.
+fn tool_round_context(round: usize, results: &[(String, String)]) -> String {
+    let recent = results.iter().rev().take(12).collect::<Vec<_>>();
+    let calls = recent
+        .into_iter()
+        .rev()
+        .map(|(name, payload)| {
+            let parsed = serde_json::from_str::<serde_json::Value>(payload).ok();
+            let data = parsed.as_ref().map(|v| {
+                if v.get("success").and_then(serde_json::Value::as_bool) == Some(false)
+                    && v.get("error").is_some()
+                    && v.get("data").is_some()
+                {
+                    &v["data"]
+                } else {
+                    v
+                }
+            });
+            let command = data
+                .and_then(|v| v.get("command"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(name);
+            let command: String = command.chars().take(240).collect();
+            let status = data
+                .and_then(|v| v.get("exit_code"))
+                .map(|exit| {
+                    format!(
+                        "; exit_code={exit}; timed_out={}",
+                        data.and_then(|v| v.get("timed_out"))
+                            .unwrap_or(&serde_json::Value::Null)
+                    )
+                })
+                .unwrap_or_default();
+            format!("- {command}{status}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("Tool round {round}. Original request and full results are in context.\n\nRecent executed calls:\n{calls}\n\n\
+Decide the next step against the user's requested outcome:\n\
+- Respect explanation-only, plan-only and no-change instructions; do not perform unrequested operations.\n\
+- Discovery alone does not complete a requested change. If required evidence or an authorized operation is still missing, continue with the next necessary tool. Batch only independent calls.\n\
+- If a command failed, inspect its error, usage and suggestion. Correct the arguments when possible; do not report the failed operation as successful. Verify unknown side effects before retrying.\n\
+- If the requested outcome is established by actual results, answer from that evidence. Otherwise continue, or explain a specific blocker and ask only for information that requires the user.")
 }
 
 /// Reserve tokens for model response generation (minimum 1024).

@@ -1066,3 +1066,48 @@ async fn intervention_audit_explanation_json_does_not_execute_as_a_tool_call() {
         "a documented code example was dispatched as a real tool call"
     );
 }
+
+#[tokio::test]
+async fn recovery_followup_keeps_tools_task_and_completion_decision() {
+    let (iface, requests) = harness(vec![
+        MockResponse::tool_call(
+            "shell",
+            serde_json::json!({"command":"neomind device list"}),
+        ),
+        MockResponse::text("done"),
+    ])
+    .await;
+    iface.set_tool_definitions(vec![tool("shell")]).await;
+    let mut registry = crate::toolkit::ToolRegistry::new();
+    registry.register(Arc::new(ReviewShell {
+        calls: Default::default(),
+        timed_out: false,
+    }));
+    let state = Arc::new(tokio::sync::RwLock::new(
+        crate::agent::types::AgentInternalState::new("recovery-context".into()),
+    ));
+    review_run_turn(iface, state, Arc::new(registry), None).await;
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1]["tools_count"], 1);
+    let followup = requests[1]["messages"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .to_string();
+    for expected in [
+        "perform the task",
+        "Tool round 2",
+        "Recent executed calls",
+        "shell",
+        "Discovery alone does not complete",
+        "plan-only",
+        "If a command failed",
+    ] {
+        assert!(
+            followup.contains(expected),
+            "missing {expected}: {followup}"
+        );
+    }
+}
