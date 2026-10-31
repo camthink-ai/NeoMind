@@ -728,6 +728,9 @@ impl LlmRuntime for LlamaCppRuntime {
             model = %model,
             message_count = msg_count,
             has_tools = input.tools.as_ref().is_some_and(|t| !t.is_empty()),
+            temperature = ?input.params.temperature,
+            top_p = ?input.params.top_p,
+            max_tokens = ?max_tokens,
             "llama.cpp generate_stream: sending request"
         );
 

@@ -421,13 +421,10 @@ pub async fn process_stream_events_with_safeguards(
                 yielded_up_to = 0;
                 tool_calls.clear();
                 content_before_tools = String::new();
-                // Per-round stream state: the thinking-stall clock (and
-                // the progress stage hints) must measure THIS round's
-                // stream. The old cross-round accumulation made the 300s
-                // warning fire 300s after the TURN's first thinking
-                // chunk (live 2026-10-27: warned at R5+133s while that
-                // stream itself was only 2m13s old), and the hard abort
-                // below inherits the same per-round semantics.
+                // Generation latency belongs to this request, not earlier rounds.
+                // Keep the separate turn_started_at clock for the total budget.
+                first_chunk_at = None;
+                long_thinking_warned = false;
                 thinking_start_time = None;
                 thinking_timeout_warned = false;
                 has_thinking = false;
@@ -546,7 +543,9 @@ pub async fn process_stream_events_with_safeguards(
                     Ok(event) => {
                         let (text, is_thinking) = match event {
                             StreamEvent::ToolCalls(values) => {
+                                let received = values.len();
                                 let calls = native_tool_calls(values);
+                                tracing::debug!(round = tool_iteration_count + 1, native_calls_received = received, parsed_calls = calls.len(), "Received native tool batch");
                                 tool_calls_detected |= !calls.is_empty();
                                 content_before_tools = buffer.clone();
                                 for call in calls {
@@ -560,6 +559,9 @@ pub async fn process_stream_events_with_safeguards(
                         if text.is_empty() {
                             continue;
                         }
+                        // Explicit trace logging is for controlled reproductions only;
+                        // normal logs retain counts, not model response contents.
+                        tracing::trace!(round = tool_iteration_count + 1, is_thinking, chunk = %text, "Model response chunk");
 
                         if is_thinking {
                             // Track thinking start time
@@ -620,6 +622,10 @@ pub async fn process_stream_events_with_safeguards(
                     }
                 }
             }
+
+            tracing::debug!(round = tool_iteration_count + 1,
+                text_chars = buffer.chars().count(), thinking_chars = thinking_content.chars().count(),
+                tool_calls = tool_calls.len(), "Model round consumed");
 
             // === Handle tool calls if detected ===
             if tool_calls_detected {
