@@ -247,6 +247,27 @@ struct TransientSkillContext {
     guides: Vec<(String, String)>,
 }
 
+/// Credential-free request defaults captured from the backend selected for a session.
+#[derive(Clone)]
+pub(crate) struct BackendRequestDefaults {
+    params: (f32, f32, usize, usize),
+    thinking: (Option<bool>, Option<neomind_core::ThinkingEffort>),
+}
+
+impl From<&neomind_storage::LlmBackendInstance> for BackendRequestDefaults {
+    fn from(instance: &neomind_storage::LlmBackendInstance) -> Self {
+        Self {
+            params: (
+                instance.temperature,
+                instance.top_p,
+                instance.top_k,
+                instance.max_tokens,
+            ),
+            thinking: (Some(instance.thinking_enabled), instance.thinking_effort),
+        }
+    }
+}
+
 /// Simple LLM chat interface.
 ///
 /// This is a lightweight wrapper around LLM runtime with concurrency limiting.
@@ -290,6 +311,8 @@ pub struct LlmInterface {
     /// Whether thinking mode is enabled (for direct mode when not using instance manager).
     /// Defaults to false for faster responses.
     thinking_enabled: Arc<RwLock<Option<bool>>>,
+    backend_defaults: Arc<RwLock<Option<BackendRequestDefaults>>>,
+    temperature_override: Arc<RwLock<Option<f32>>>,
     /// Last prompt token count from the most recent stream response.
     /// Updated in-band when the stream completes.
     last_prompt_tokens: Arc<tokio::sync::Mutex<Option<u32>>>,
@@ -340,6 +363,9 @@ impl LlmInterface {
                 Some(local),
                 Some(neomind_core::ThinkingEffort::from_bool(local)),
             );
+        }
+        if let Some(defaults) = self.backend_defaults.read().await.as_ref() {
+            return defaults.thinking;
         }
         if self.uses_instance_manager() {
             if let Some(manager) = &self.instance_manager {
@@ -395,6 +421,8 @@ impl LlmInterface {
         Self {
             llm: Arc::new(RwLock::new(None)),
             instance_manager: None,
+            backend_defaults: Arc::new(RwLock::new(None)),
+            temperature_override: Arc::new(RwLock::new(None)),
             model: Arc::new(RwLock::new(Some(config.model))),
             temperature: config.temperature,
             top_p: config.top_p,
@@ -430,6 +458,8 @@ impl LlmInterface {
         Self {
             llm: Arc::new(RwLock::new(None)),
             instance_manager: Some(manager),
+            backend_defaults: Arc::new(RwLock::new(None)),
+            temperature_override: Arc::new(RwLock::new(None)),
             model: Arc::new(RwLock::new(Some(config.model))),
             temperature: config.temperature,
             top_p: config.top_p,
@@ -659,22 +689,38 @@ impl LlmInterface {
     }
 
     /// Get effective generation parameters.
-    /// When using instance manager, reads from the active backend instance.
-    /// Otherwise falls back to local ChatConfig values.
+    /// Bound backend defaults take precedence over the global active instance.
+    /// Explicit session temperature overrides win; unbound direct runtimes use ChatConfig.
     async fn get_effective_params(&self) -> (f32, f32, usize, usize) {
-        if self.uses_instance_manager() {
-            if let Some(manager) = &self.instance_manager {
-                if let Some(inst) = manager.get_active_instance() {
-                    return (inst.temperature, inst.top_p, inst.top_k, inst.max_tokens);
-                }
-            }
+        let defaults = self.backend_defaults.read().await.clone();
+        let mut params = if let Some(defaults) = defaults {
+            defaults.params
+        } else if self.uses_instance_manager() {
+            self.instance_manager
+                .as_ref()
+                .and_then(|manager| manager.get_active_instance())
+                .map(|inst| (inst.temperature, inst.top_p, inst.top_k, inst.max_tokens))
+                .unwrap_or((self.temperature, self.top_p, self.top_k, self.max_tokens))
+        } else {
+            (self.temperature, self.top_p, self.top_k, self.max_tokens)
+        };
+        if let Some(temperature) = *self.temperature_override.read().await {
+            params.0 = temperature;
         }
-        // Fall back to local config
-        (self.temperature, self.top_p, self.top_k, self.max_tokens)
+        params
+    }
+
+    pub(crate) async fn set_backend_defaults(&self, defaults: BackendRequestDefaults) {
+        *self.backend_defaults.write().await = Some(defaults);
+    }
+
+    pub(crate) async fn set_temperature_override(&self, temperature: f32) {
+        *self.temperature_override.write().await = Some(temperature);
     }
 
     /// Set the LLM runtime (direct mode).
     pub async fn set_llm(&self, llm: Arc<dyn LlmRuntime>) {
+        *self.backend_defaults.write().await = None;
         // Update the model name when setting a custom LLM
         let model_name = llm.model_name().to_string();
         *self.model.write().await = Some(model_name);

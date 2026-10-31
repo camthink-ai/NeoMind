@@ -468,6 +468,9 @@ impl LlmRuntime for LlamaCppRuntime {
         if let Some(top_p) = input.params.top_p {
             req_body["top_p"] = serde_json::json!(top_p);
         }
+        if let Some(top_k) = input.params.top_k {
+            req_body["top_k"] = serde_json::json!(top_k);
+        }
         if let Some(max_tokens) = max_tokens {
             req_body["max_tokens"] = serde_json::json!(max_tokens);
         }
@@ -730,6 +733,7 @@ impl LlmRuntime for LlamaCppRuntime {
             has_tools = input.tools.as_ref().is_some_and(|t| !t.is_empty()),
             temperature = ?input.params.temperature,
             top_p = ?input.params.top_p,
+            top_k = ?input.params.top_k,
             max_tokens = ?max_tokens,
             "llama.cpp generate_stream: sending request"
         );
@@ -742,6 +746,9 @@ impl LlmRuntime for LlamaCppRuntime {
         }
         if let Some(top_p) = input.params.top_p {
             req_body["top_p"] = serde_json::json!(top_p);
+        }
+        if let Some(top_k) = input.params.top_k {
+            req_body["top_k"] = serde_json::json!(top_k);
         }
         if let Some(max_tokens) = max_tokens {
             req_body["max_tokens"] = serde_json::json!(max_tokens);

@@ -224,7 +224,7 @@ impl Agent {
         let llm_config = ChatConfig {
             model: config.model.clone(),
             temperature: config.temperature,
-            top_p: 0.75,
+            top_p: ChatConfig::default().top_p,
             top_k: 20,              // Lowered for faster responses
             max_tokens: usize::MAX, // No artificial limit - let model decide
             concurrent_limit: 3,    // Default to 3 concurrent LLM requests

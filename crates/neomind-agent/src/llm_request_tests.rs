@@ -16,6 +16,9 @@ impl CaptureRuntime {
             "messages": input.messages,
             "tools_count": input.tools.as_ref().map_or(0, Vec::len),
             "thinking": input.params.thinking_enabled,
+            "temperature": input.params.temperature,
+            "top_p": input.params.top_p,
+            "top_k": input.params.top_k,
         }));
     }
 }
@@ -1176,4 +1179,64 @@ async fn recovery_cli_failure_reaches_next_model_request_with_partial_output() {
             "missing {expected}: {contents}"
         );
     }
+}
+
+#[tokio::test]
+async fn bound_backend_settings_reach_streaming_and_nonstreaming_requests() {
+    let (iface, requests) = harness(vec![MockResponse::text("done"); 4]).await;
+    let (other, other_requests) = harness(vec![MockResponse::text("other")]).await;
+    let mut instance = neomind_storage::LlmBackendInstance::new(
+        "selected".into(),
+        "selected".into(),
+        neomind_storage::LlmBackendType::LlamaCpp,
+    );
+    instance.temperature = 1.0;
+    instance.top_p = 0.95;
+    instance.top_k = 40;
+    instance.thinking_enabled = true;
+    iface
+        .set_backend_defaults(BackendRequestDefaults::from(&instance))
+        .await;
+    instance.temperature = 0.2;
+    instance.top_p = 0.6;
+    other
+        .set_backend_defaults(BackendRequestDefaults::from(&instance))
+        .await;
+    drain(iface.chat_stream_with_history("hello", &[]).await.unwrap()).await;
+    iface.chat("hello").await.unwrap();
+    other.chat("hello").await.unwrap();
+    {
+        let captured = requests.lock().unwrap();
+        assert_eq!(captured.len(), 2);
+        for request in captured.iter() {
+            assert!((request["temperature"].as_f64().unwrap() - 1.0).abs() < 1e-6);
+            assert!((request["top_p"].as_f64().unwrap() - 0.95).abs() < 1e-6);
+            assert_eq!(request["top_k"], 40);
+            assert_eq!(request["thinking"], true);
+        }
+        assert!(
+            (other_requests.lock().unwrap()[0]["temperature"]
+                .as_f64()
+                .unwrap()
+                - 0.2)
+                .abs()
+                < 1e-6
+        );
+    }
+    // An explicit session override survives a backend switch; other knobs do not leak.
+    iface.set_temperature_override(0.4).await;
+    iface
+        .set_backend_defaults(BackendRequestDefaults::from(&instance))
+        .await;
+    iface.chat("again").await.unwrap();
+    assert_eq!(
+        iface.get_effective_params().await,
+        (0.4, 0.6, 40, instance.max_tokens)
+    );
+    // Installing a plain runtime must drop the previous backend's defaults.
+    iface.set_llm(Arc::new(MockLlmRuntime::new(vec![]))).await;
+    let params = iface.get_effective_params().await;
+    assert_eq!(params.0, 0.4);
+    assert_eq!(params.1, iface.top_p);
+    assert_eq!(iface.resolve_thinking_control().await, (None, None));
 }

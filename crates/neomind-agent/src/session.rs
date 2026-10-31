@@ -8,7 +8,7 @@ use futures::{Stream, StreamExt};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use crate::llm::LlmInterface;
+use crate::llm::{BackendRequestDefaults, LlmInterface};
 
 use neomind_storage::SessionStore;
 
@@ -21,6 +21,12 @@ pub use crate::llm_backends::{
 };
 
 use neomind_storage::LlmBackendInstance;
+
+#[derive(Clone)]
+struct SessionBackend {
+    runtime: LlmBackend,
+    defaults: Option<BackendRequestDefaults>,
+}
 
 /// Optional overrides applied on top of `SessionManager::default_config` when
 /// creating a new session. All fields are `Option<...>`; `None` means "inherit
@@ -256,7 +262,7 @@ pub struct SessionManager {
     /// Default agent config
     default_config: AgentConfig,
     /// Default LLM backend (configured for new sessions)
-    default_llm_backend: Arc<RwLock<Option<LlmBackend>>>,
+    default_llm_backend: Arc<RwLock<Option<SessionBackend>>>,
     /// Tool registry for all sessions
     tool_registry: Arc<RwLock<Option<Arc<crate::toolkit::ToolRegistry>>>>,
     /// Skill registry for scenario-driven prompt injection
@@ -771,7 +777,10 @@ impl SessionManager {
     /// Set the default LLM backend for NEW sessions only.
     /// Does NOT modify existing sessions (they may have their own backend configuration).
     pub async fn set_default_llm_backend(&self, backend: LlmBackend) {
-        *self.default_llm_backend.write().await = Some(backend);
+        *self.default_llm_backend.write().await = Some(SessionBackend {
+            runtime: backend,
+            defaults: None,
+        });
     }
 
     /// Set the default LLM backend for all new and existing sessions.
@@ -780,7 +789,10 @@ impl SessionManager {
     /// Use set_default_llm_backend() instead unless you specifically need this behavior.
     pub async fn set_llm_backend(&self, backend: LlmBackend) -> Result<()> {
         // Store as default for new sessions
-        *self.default_llm_backend.write().await = Some(backend.clone());
+        *self.default_llm_backend.write().await = Some(SessionBackend {
+            runtime: backend.clone(),
+            defaults: None,
+        });
 
         // Configure LLM for all existing sessions
         let sessions = self.sessions.read().await;
@@ -791,9 +803,34 @@ impl SessionManager {
         Ok(())
     }
 
+    /// Activate a persisted backend for chat sessions, retaining its request settings.
+    /// Scheduled agents remain bound to their own backend IDs.
+    pub async fn set_llm_backend_instance(&self, instance: &LlmBackendInstance) -> Result<()> {
+        let backend = instance_to_llm_backend(instance)?;
+        let defaults = BackendRequestDefaults::from(instance);
+        *self.default_llm_backend.write().await = Some(SessionBackend {
+            runtime: backend.clone(),
+            defaults: Some(defaults.clone()),
+        });
+        let agents: Vec<_> = self.sessions.read().await.values().cloned().collect();
+        for agent in agents {
+            agent.configure_llm(backend.clone()).await?;
+            agent
+                .llm_interface()
+                .set_backend_defaults(defaults.clone())
+                .await;
+        }
+        Ok(())
+    }
+
     /// Get the default LLM backend if configured.
     pub async fn get_llm_backend(&self) -> Result<Option<LlmBackend>> {
-        Ok(self.default_llm_backend.read().await.clone())
+        Ok(self
+            .default_llm_backend
+            .read()
+            .await
+            .as_ref()
+            .map(|backend| backend.runtime.clone()))
     }
 
     /// Configure LLM using the LlmBackendInstanceManager.
@@ -812,7 +849,10 @@ impl SessionManager {
         let backend = instance_to_llm_backend(&active_instance)?;
 
         // Only set as default for new sessions, don't modify existing sessions
-        self.set_default_llm_backend(backend).await;
+        *self.default_llm_backend.write().await = Some(SessionBackend {
+            runtime: backend,
+            defaults: Some(BackendRequestDefaults::from(&active_instance)),
+        });
         Ok(())
     }
 
@@ -851,7 +891,11 @@ impl SessionManager {
     ) -> Result<()> {
         tracing::debug!(session_id = %session_id, backend_id = %backend_id, "configure_agent_by_backend_id called");
 
-        let backend = Self::get_backend_by_id(backend_id)?;
+        let manager = get_instance_manager().map_err(|e| NeoMindError::Llm(e.to_string()))?;
+        let instance = manager
+            .get_instance(backend_id)
+            .ok_or_else(|| NeoMindError::Llm(format!("Backend '{}' not found", backend_id)))?;
+        let backend = instance_to_llm_backend(&instance)?;
 
         tracing::debug!(
             session_id = %session_id,
@@ -860,7 +904,12 @@ impl SessionManager {
         );
 
         let agent = self.get_session(session_id).await?;
-        agent.configure_llm(backend).await
+        agent.configure_llm(backend).await?;
+        agent
+            .llm_interface()
+            .set_backend_defaults(BackendRequestDefaults::from(&instance))
+            .await;
+        Ok(())
     }
 
     /// Set the tool registry for all new sessions.
@@ -1020,7 +1069,10 @@ impl SessionManager {
         // Configure LLM if a default backend is set
         let llm_backend = self.default_llm_backend.read().await.clone();
         if let Some(backend) = llm_backend {
-            let _ = agent.configure_llm(backend).await;
+            agent.configure_llm(backend.runtime).await?;
+            if let Some(defaults) = backend.defaults {
+                agent.llm_interface().set_backend_defaults(defaults).await;
+            }
         }
 
         // Inject skill registry into agent's LLM interface
@@ -1090,8 +1142,17 @@ impl SessionManager {
     }
 
     pub async fn create_session_with_options(&self, opts: CreateSessionOptions) -> Result<String> {
+        let temperature = opts.temperature;
         let config = self.merge_options(opts);
-        self.create_session_with_config(config).await
+        let session_id = self.create_session_with_config(config).await?;
+        if let Some(temperature) = temperature {
+            self.get_session(&session_id)
+                .await?
+                .llm_interface()
+                .set_temperature_override(temperature)
+                .await;
+        }
+        Ok(session_id)
     }
 
     /// Merge `CreateSessionOptions` on top of `default_config`. Any `None`
@@ -1165,7 +1226,10 @@ impl SessionManager {
         // Configure LLM if a default backend is set
         let llm_backend = self.default_llm_backend.read().await.clone();
         if let Some(backend) = llm_backend {
-            let _ = agent.configure_llm(backend).await;
+            agent.configure_llm(backend.runtime).await?;
+            if let Some(defaults) = backend.defaults {
+                agent.llm_interface().set_backend_defaults(defaults).await;
+            }
         }
 
         // Inject skill registry into agent's LLM interface
@@ -3195,3 +3259,7 @@ mod companion_delegation_tests {
         );
     }
 }
+
+#[cfg(all(test, feature = "llamacpp"))]
+#[path = "session_backend_request_tests.rs"]
+mod backend_request_tests;

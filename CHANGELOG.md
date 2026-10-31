@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve builtin engine settings and installed model metadata across restarts, including offline cold starts after metadata migration.
 - Recover the chat UI when fallback replies or terminal stream events were previously missed.
 
+### Fixed — backend request settings
+- Preserve selected backend sampling and thinking settings through session creation, backend selection, and activation from the settings UI. Explicit session temperature overrides retain priority.
+- Send configured `top_k` in llama.cpp streaming and non-streaming requests, and verify persisted settings against captured HTTP request bodies. Model-quality recovery remains pending a matched real-model evaluation.
+
 ### Fixed — chat requests and conversation history
 - Conversation summaries now reach the model in text and image chats, including streaming and non-streaming requests. Tool continuations, final summaries, and recovery requests retain the same turn-level summary and account for it in the context budget without changing stored history indices.
 - Final-summary requests now omit tool definitions when tools are disabled, preventing the backend's tool-format instructions from conflicting with the request for a direct answer.
