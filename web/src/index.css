@@ -785,8 +785,10 @@ html {
     transition-timing-function: var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
   }
 
-  /* Exception: Small icon buttons - add padding instead of forcing size */
-  button:where([class*="h-6"], [class*="h-7"], [class*="h-8"], [class*="h-9"]) {
+  /* Exception: Small icon buttons - add padding instead of forcing size.
+     h-4/h-5 cover inline badge-sized buttons (explicit small height must
+     win over the 44px min — min-height otherwise overrides height). */
+  button:where([class*="h-4"], [class*="h-5"], [class*="h-6"], [class*="h-7"], [class*="h-8"], [class*="h-9"]) {
     min-height: auto;
     min-width: auto;
   }

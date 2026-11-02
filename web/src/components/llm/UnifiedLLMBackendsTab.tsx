@@ -839,9 +839,12 @@ export function UnifiedLLMBackendsTab({
                   <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
                 ) : builtinStatus.runtime.update_available ? (
                   <button
+                    // h-5 is load-bearing: the global 44px touch-target rule
+                    // inflates any <button> without an h-* class (h-4/h-5 are
+                    // in its exemption list) and overflows the h-9 row.
                     className={cn(
                       badgeSize.small,
-                      'flex shrink-0 items-center gap-1 rounded bg-primary px-1.5 py-0.5 font-medium text-primary-foreground hover:opacity-90',
+                      'flex h-5 shrink-0 items-center gap-1 rounded bg-primary px-1.5 font-medium text-primary-foreground hover:opacity-90',
                     )}
                     onClick={() => setRuntimeDialogOpen(true)}
                   >

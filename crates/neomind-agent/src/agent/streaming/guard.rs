@@ -33,6 +33,9 @@ pub enum GuardKind {
     ListOnlyCoercion,
     /// Act-now directive after a post-coercion read-only streak.
     ExploreRecovery,
+    /// Forced turn end when the act-now directive was ignored and the
+    /// read-only streak continued (production 2026-11-02: 30-round cycles).
+    ReadOnlyStreak,
     /// Turn-end "requested action was not executed" note.
     IncompleteActionNote,
     /// Pre-nudge narration restored after a degenerate nudge round.
@@ -58,6 +61,7 @@ impl GuardKind {
             GuardKind::PromiseDirective => "promise_directive",
             GuardKind::ListOnlyCoercion => "list_only_coercion",
             GuardKind::ExploreRecovery => "explore_recovery",
+            GuardKind::ReadOnlyStreak => "read_only_streak",
             GuardKind::IncompleteActionNote => "incomplete_action_note",
             GuardKind::DegenerateRestore => "degenerate_restore",
             GuardKind::DegenerateSuppressed => "degenerate_suppressed",

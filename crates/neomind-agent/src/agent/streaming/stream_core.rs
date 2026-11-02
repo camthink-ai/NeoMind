@@ -1802,8 +1802,38 @@ pub async fn process_stream_events_with_safeguards(
                             0,
                         );
                     }
+                    // Read-only streak force-end: the act-now directive was
+                    // injected and the model STILL produced another all-
+                    // read-only round (production 2026-11-02: 30-round
+                    // list/skill cycles — advisory text does not stop a
+                    // looping small model). End the turn instead of granting
+                    // another round; the forced-summary path below produces
+                    // the text reply, with the honesty directive attached.
+                    let read_only_loop_terminated = behavioral_guards
+                        && !guards_disabled
+                        && explore_recovery_nudged
+                        && post_dead_end_read_only_rounds >= 3;
+                    if read_only_loop_terminated {
+                        guard_ledger.record(
+                            super::guard::GuardKind::ReadOnlyStreak,
+                            super::guard::GuardOutcome::Fired,
+                            tool_iteration_count + 1,
+                            "directive_ignored_force_end",
+                        );
+                        tracing::warn!(
+                            consecutive_read_only = post_dead_end_read_only_rounds,
+                            "Read-only loop ignored the act-now directive — forcing turn end"
+                        );
+                        yield AgentEvent::progress(
+                            "No new information after repeated read-only calls — generating final response..."
+                                .to_string(),
+                            "summarizing",
+                            0,
+                        );
+                    }
                     let should_continue = !wall_clock_exhausted
                         && !chat_repeating
+                        && !read_only_loop_terminated
                         && tool_iteration_count < MAX_TOOL_ITERATIONS - 1;
                     // === Save assistant message with tool_calls BEFORE tool results ===
                     let response_to_save = if content_before_tools.is_empty() {
@@ -1934,7 +1964,25 @@ pub async fn process_stream_events_with_safeguards(
                         // Detect whether tool results contain errors to tailor the prompt
                         let has_errors = last_round_has_errors;
 
-                        let summary_prompt = if has_errors {
+                        let summary_prompt = if read_only_loop_terminated {
+                            // The turn was force-ended because the model kept
+                            // re-calling read-only tools without acting or
+                            // asking. Zero-evidence honesty guard (production
+                            // 2026-11-02: after a fruitless search loop the
+                            // forced summary FABRICATED a Xiaomi protocol
+                            // table). The summary must state what was actually
+                            // found — including "nothing found" — and must
+                            // never invent content no tool returned.
+                            "The tool calls above did NOT produce the information the user asked \
+                            for. Answer now with complete honesty: state exactly what you checked \
+                            and what was or was not found. If the local knowledge base has no \
+                            relevant content, SAY SO explicitly and note that you have no \
+                            general web-search capability (only fetching specific URLs). \
+                            Do NOT invent protocols, device types, commands, or data that did \
+                            not appear in the tool results. Do NOT output any tool calls. If a \
+                            specific detail only the user can provide would unblock the task, \
+                            ask ONE concise clarifying question."
+                        } else if has_errors {
                             "Some tool calls above returned errors. If the user's question can \
                             already be answered from the successful results, answer it now. \
                             Otherwise explain the failure in plain language and suggest what the \
@@ -2551,35 +2599,57 @@ pub(crate) fn effective_history_budget(max_context: usize, prompt_overhead: usiz
     effective
 }
 
-/// Fingerprint of one round's tool results (name + payload). The chat loop
-/// breaker compares consecutive rounds: identical calls with a CHANGED result
-/// are progress (verification/polling), not a loop.
+/// Fingerprint of one round's tool results as an ORDER-INDEPENDENT SET:
+/// pairs are sorted before hashing, and the loop breaker compares each
+/// round's set against a small ring of recent rounds. Rationale
+/// (production traces 2026-11-02, T4/1.2.5): a looping small model does
+/// not replay one byte-identical sequence — it re-cycles COMBINATIONS of
+/// the same read-only calls (R5 {list,info,types} → R6 {info,list} →
+/// R7 {list,skill,info}…), so an ordered-sequence hash never repeats and
+/// the old breaker never fired. A set hash matched against a ring catches
+/// the cycle; identical calls with a CHANGED result still hash differently
+/// and count as progress (verification/polling).
 fn tool_round_fingerprint(results: &[(String, String)]) -> u64 {
     use std::hash::{Hash, Hasher};
+    let mut sorted: Vec<&(String, String)> = results.iter().collect();
+    sorted.sort();
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    for (name, result) in results {
+    for (name, result) in sorted {
         name.hash(&mut hasher);
         result.hash(&mut hasher);
     }
     hasher.finish()
 }
 
+/// How many recent round set-fingerprints the breaker remembers. Looping
+/// models cycle through a handful of combinations (observed ~4), so a ring
+/// of 6 covers the cycle without matching one-off re-verifications minutes
+/// apart (the ring only holds the LAST 6 rounds).
+const LOOP_FINGERPRINT_RING: usize = 6;
+
 #[derive(Default)]
 struct ChatLoopProgress {
-    previous: Option<u64>,
-    identical_rounds: usize,
+    ring: std::collections::VecDeque<u64>,
+    repeated_set_rounds: usize,
 }
 
 impl ChatLoopProgress {
+    /// Returns the consecutive count of "zero new calls AND this round's
+    /// result-set already appeared within the recent ring" — i.e. pure
+    /// re-exploration of already-seen state.
     fn observe(&mut self, new_calls: usize, results: &[(String, String)]) -> usize {
         let fingerprint = tool_round_fingerprint(results);
-        self.identical_rounds = if new_calls == 0 && self.previous == Some(fingerprint) {
-            self.identical_rounds + 1
+        let seen_before = new_calls == 0 && self.ring.contains(&fingerprint);
+        self.repeated_set_rounds = if seen_before {
+            self.repeated_set_rounds + 1
         } else {
             0
         };
-        self.previous = Some(fingerprint);
-        self.identical_rounds
+        self.ring.push_back(fingerprint);
+        if self.ring.len() > LOOP_FINGERPRINT_RING {
+            self.ring.pop_front();
+        }
+        self.repeated_set_rounds
     }
 }
 
@@ -2607,15 +2677,63 @@ mod history_budget_tests {
     use super::*;
 
     #[test]
-    fn repeated_poll_can_change_state_on_third_and_later_calls() {
+    fn repeated_poll_state_flip_counts_toward_loop_within_ring() {
+        // Ring semantics (2026-11-02): a poll whose state flips BACK to a
+        // recently-seen value still counts toward the loop budget — an
+        // endless ping-pong poll is also a loop the model must exit by
+        // acting or answering. A FIRST change still resets (see below).
         let mut progress = ChatLoopProgress::default();
         let pending = vec![("shell|status".into(), "pending".into())];
         let ready = vec![("shell|status".into(), "ready".into())];
         assert_eq!(progress.observe(1, &pending), 0);
         assert_eq!(progress.observe(0, &pending), 1);
-        assert_eq!(progress.observe(0, &ready), 0);
+        assert_eq!(progress.observe(0, &ready), 0); // first change = progress
         assert_eq!(progress.observe(0, &ready), 1);
-        assert_eq!(progress.observe(0, &pending), 0);
+        assert_eq!(progress.observe(0, &pending), 2); // flip-back: cycling
+    }
+
+    #[test]
+    fn combination_cycles_of_same_results_are_loops() {
+        // The production pattern (T4 2026-11-02, 30 rounds): the model
+        // re-cycled COMBINATIONS of the same read-only calls — never one
+        // byte-identical sequence, so the old consecutive-hash breaker
+        // never fired. Set-hashing + the ring must catch the cycle.
+        let mut progress = ChatLoopProgress::default();
+        let abc = vec![
+            ("shell|sysinfo".into(), "info".into()),
+            ("shell|types".into(), "types".into()),
+            ("shell|list".into(), "devices".into()),
+        ];
+        let ab = vec![
+            ("shell|list".into(), "devices".into()),
+            ("shell|sysinfo".into(), "info".into()),
+        ];
+        let abl = vec![
+            ("shell|list".into(), "devices".into()),
+            ("skill|load".into(), "guide".into()),
+            ("shell|sysinfo".into(), "info".into()),
+        ];
+        assert_eq!(progress.observe(1, &abc), 0);
+        assert_eq!(progress.observe(0, &ab), 0); // new combo, unseen set
+        assert_eq!(progress.observe(0, &abl), 0);
+        assert_eq!(progress.observe(0, &ab), 1); // ab seen within the ring
+        assert_eq!(progress.observe(0, &abc), 2); // abc cycles back
+        assert_eq!(progress.observe(0, &abl), 3); // abl cycles back → break
+    }
+
+    #[test]
+    fn ring_forgets_old_rounds() {
+        // Outside the ring window an old fingerprint no longer counts —
+        // long-running verification work isn't punished for history.
+        let mut progress = ChatLoopProgress::default();
+        let a = vec![("shell|x".into(), "1".into())];
+        let mut expected = 0;
+        for i in 0..(LOOP_FINGERPRINT_RING + 2) {
+            let v = vec![("shell|filler".into(), format!("f{i}"))];
+            expected = progress.observe(1, &v);
+        }
+        assert_eq!(expected, 0);
+        assert_eq!(progress.observe(0, &a), 0); // a fell out of the ring
     }
 
     #[test]
