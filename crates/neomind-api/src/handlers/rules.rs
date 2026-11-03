@@ -441,6 +441,68 @@ pub async fn update_rule_handler(
     let rule_id = RuleId::from_string(&id)
         .map_err(|_| ErrorResponse::bad_request(format!("Invalid rule ID: {}", id)))?;
 
+    // Unknown-field rejection: a body mixing valid fields with unrecognized
+    // ones (e.g. create-style flag names such as "trigger_device") must fail
+    // loudly instead of silently dropping the unknown half and reporting a
+    // no-op update as success (T4 552 trace full--multi-turn-correction--en--r0:
+    // `rule update --body '{"name":...,"trigger_device":"sensor-002",...}'`
+    // returned success with the rule still pointing at sensor-001). The whole
+    // request is rejected; nothing is written.
+    const UPDATE_FIELDS: &[&str] = &[
+        "name", "description", "enabled", "source", "condition", "trigger", "actions",
+    ];
+    // Keys the full-definition path deserializes into CompiledRule; accepted
+    // so a frontend full-rule PUT (tags/cooldown/…) is not rejected, but they
+    // do not count as update fields on their own.
+    const PASSTHROUGH_KEYS: &[&str] = &[
+        "id", "tags", "cooldown", "for_duration", "state", "dsl_preview", "created_at",
+        "updated_at",
+    ];
+    let obj = req
+        .as_object()
+        .ok_or_else(|| ErrorResponse::bad_request("Rule update body must be a JSON object"))?;
+    let unknown: Vec<&str> = obj
+        .keys()
+        .map(|k| k.as_str())
+        .filter(|k| !UPDATE_FIELDS.contains(k) && !PASSTHROUGH_KEYS.contains(k))
+        .collect();
+    if !unknown.is_empty() {
+        return Err(ErrorResponse::bad_request(format!(
+            "Unknown rule update fields: {}. Supported update fields: {}. The request was NOT applied. \
+             To change what a rule watches, send the full definition (trigger/condition/actions).",
+            unknown.join(", "),
+            UPDATE_FIELDS.join(", ")
+        ))
+        .with_hint(
+            "Rule update accepts name/description/enabled/source or a full trigger/condition/actions \
+             definition; unknown fields are rejected so a silent no-op update cannot report success."
+                .to_string(),
+        ));
+    }
+    if !obj.keys().any(|k| UPDATE_FIELDS.contains(&k.as_str())) {
+        return Err(ErrorResponse::bad_request(format!(
+            "No supported update fields in body (supported: {}). The request was NOT applied.",
+            UPDATE_FIELDS.join(", ")
+        )));
+    }
+    // Type checks for the scalar partial fields: a wrong-typed field must be
+    // rejected, not silently treated as absent.
+    if let Some(v) = obj.get("name") {
+        if !v.is_string() {
+            return Err(ErrorResponse::bad_request("'name' must be a string"));
+        }
+    }
+    if let Some(v) = obj.get("description") {
+        if !v.is_null() && !v.is_string() {
+            return Err(ErrorResponse::bad_request("'description' must be a string or null"));
+        }
+    }
+    if let Some(v) = obj.get("enabled") {
+        if !v.is_boolean() {
+            return Err(ErrorResponse::bad_request("'enabled' must be a boolean"));
+        }
+    }
+
     // Extract fields from request (clone before potential move)
     let name = req.get("name").and_then(|v| v.as_str()).map(String::from);
     let description = req
@@ -556,6 +618,7 @@ pub async fn update_rule_handler(
         return ok(json!({
             "rule": RuleDetailDto::from(&rule),
             "updated": true,
+            "changed": true,
         }));
     }
 
@@ -566,6 +629,23 @@ pub async fn update_rule_handler(
         .get_rule(&rule_id)
         .await
         .ok_or_else(|| ErrorResponse::not_found("Rule"))?;
+
+    // Idempotent updates (same values as stored) are legal: report
+    // changed=false and leave the stored rule — including updated_at —
+    // untouched instead of bumping the timestamp on a no-op.
+    let changed = name.as_deref().is_some_and(|n| n != rule.name)
+        || description
+            .as_deref()
+            .is_some_and(|d| rule.description.as_deref() != Some(d))
+        || source.as_ref().is_some_and(|s| rule.source.as_ref() != Some(s))
+        || enabled.is_some_and(|e| e != rule.enabled);
+    if !changed {
+        return ok(json!({
+            "rule": RuleDetailDto::from(&rule),
+            "updated": true,
+            "changed": false,
+        }));
+    }
 
     // Update fields
     if let Some(name) = name {
@@ -610,6 +690,7 @@ pub async fn update_rule_handler(
     ok(json!({
         "rule": RuleDetailDto::from(&rule),
         "updated": true,
+        "changed": true,
     }))
 }
 
