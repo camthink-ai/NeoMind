@@ -15,6 +15,7 @@ impl CaptureRuntime {
         self.requests.lock().unwrap().push(serde_json::json!({
             "messages": input.messages,
             "tools_count": input.tools.as_ref().map_or(0, Vec::len),
+            "tool_names": input.tools.as_ref().map(|tools| tools.iter().map(|t| t.name.clone()).collect::<Vec<_>>()).unwrap_or_default(),
             "thinking": input.params.thinking_enabled,
             "temperature": input.params.temperature,
             "top_p": input.params.top_p,
@@ -477,7 +478,7 @@ async fn repeated_poll_executes_again_and_observes_new_state() {
 
 #[tokio::test]
 async fn summary_is_retained_in_forced_final_response() {
-    let call = MockResponse::tool_call("skill", serde_json::json!({"action":"load"}));
+    let call = MockResponse::tool_call("skill", serde_json::json!({"action":"list"}));
     let (iface, requests) = harness(vec![
         call.clone(),
         call.clone(),
@@ -500,7 +501,11 @@ async fn summary_is_retained_in_forced_final_response() {
     )
     .await;
     let requests = requests.lock().unwrap();
+    // A repeated index lookup exercises the general loop summary, not guide exhaustion.
     assert_eq!(requests.len(), 5);
+    assert!(requests.last().unwrap()["messages"]
+        .to_string()
+        .contains("execution budget or loop guard ended this turn"));
     assert_eq!(requests.last().unwrap()["tools_count"], 0);
     for request in requests.iter() {
         assert!(request["messages"]
@@ -740,4 +745,47 @@ async fn bound_backend_settings_reach_streaming_and_nonstreaming_requests() {
     assert_eq!(params.0, 0.4);
     assert_eq!(params.1, iface.top_p);
     assert_eq!(iface.resolve_thinking_control().await, (None, None));
+}
+
+#[tokio::test]
+async fn guide_recovery_excludes_only_skill_for_one_request() {
+    let (iface, requests) = harness(vec![
+        MockResponse::text("recover"),
+        MockResponse::text("normal"),
+    ])
+    .await;
+    iface
+        .set_tool_definitions(vec![tool("shell"), tool("skill")])
+        .await;
+    drain(
+        iface
+            .chat_stream_tool_followup_without_guides(
+                "创建 webhook 推送目标",
+                "Guide lookup repeated without new evidence",
+                &[],
+                None,
+            )
+            .await
+            .unwrap(),
+    )
+    .await;
+    drain(
+        iface
+            .chat_stream_tool_followup("创建 webhook 推送目标", "continue", &[], None)
+            .await
+            .unwrap(),
+    )
+    .await;
+    let captured = requests.lock().unwrap();
+    assert_eq!(captured[0]["tool_names"], serde_json::json!(["shell"]));
+    assert_eq!(
+        captured[1]["tool_names"],
+        serde_json::json!(["shell", "skill"])
+    );
+    drop(captured);
+    assert_eq!(
+        iface.get_tool_definitions().await.len(),
+        2,
+        "request must not mutate the session's tools"
+    );
 }

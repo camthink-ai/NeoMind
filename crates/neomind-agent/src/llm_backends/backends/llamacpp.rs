@@ -64,6 +64,22 @@ fn is_model_loading(status: reqwest::StatusCode, body: &str) -> bool {
     status == reqwest::StatusCode::SERVICE_UNAVAILABLE && body.contains("Loading model")
 }
 
+/// Hybrid llama.cpp templates (including renamed models) honor this per-request
+/// switch. Do not infer the caller's intent from the display model name. Absent
+/// overrides leave server defaults untouched; effort takes precedence over bool.
+fn apply_thinking_override(
+    body: &mut serde_json::Value,
+    params: &neomind_core::llm::backend::GenerationParams,
+) {
+    let enabled = params
+        .thinking_effort
+        .map(|effort| effort != ThinkingEffort::None)
+        .or(params.thinking_enabled);
+    if let Some(enabled) = enabled {
+        body["chat_template_kwargs"]["enable_thinking"] = serde_json::json!(enabled);
+    }
+}
+
 /// Poll the server's /health until it answers 200 (model ready) or the
 /// deadline passes. llama-server serves /health with 503 during load.
 async fn wait_for_llama_model_ready(
@@ -454,6 +470,7 @@ impl LlmRuntime for LlamaCppRuntime {
             "stream": false,
             "cache_prompt": self.config.cache_prompt,
         });
+        apply_thinking_override(&mut req_body, &input.params);
 
         if !model.is_empty() {
             req_body["model"] = serde_json::json!(model);
@@ -720,6 +737,7 @@ impl LlmRuntime for LlamaCppRuntime {
             "cache_prompt": cache_prompt,
             "stream_options": { "include_usage": true },
         });
+        apply_thinking_override(&mut req_body, &input.params);
 
         tracing::info!(
             endpoint = %url,
@@ -1096,8 +1114,9 @@ impl LlmRuntime for LlamaCppRuntime {
             modalities: vec!["text".to_string()],
             thinking_display: supports_thinking,
             supports_images: supports_multimodal,
-            // llama.cpp has no request-side thinking toggle — thinking follows
-            // the model default and is only readable via `reasoning_content`.
+            // Discovery does not yet advertise template-specific toggles.
+            // Explicit per-request overrides are forwarded for hybrid templates;
+            // do not promise every model can disable mandatory reasoning.
             reasoning: ReasoningCapabilities {
                 supported_efforts: Vec::new(),
                 default_effort: if supports_thinking {
@@ -1364,6 +1383,109 @@ struct StreamFunctionCall {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_llamacpp_thinking_unspecified_preserves_server_default() {
+        let mut body = serde_json::json!({"cache_prompt": true});
+        apply_thinking_override(&mut body, &Default::default());
+        assert_eq!(body, serde_json::json!({"cache_prompt": true}));
+    }
+
+    #[test]
+    fn test_llamacpp_thinking_effort_precedes_legacy_boolean() {
+        use neomind_core::llm::backend::GenerationParams;
+        for (legacy, effort, expected) in [
+            (Some(false), None, false),
+            (Some(true), None, true),
+            (Some(true), Some(ThinkingEffort::None), false),
+            (Some(false), Some(ThinkingEffort::High), true),
+        ] {
+            let params = GenerationParams {
+                thinking_enabled: legacy,
+                thinking_effort: effort,
+                ..Default::default()
+            };
+            let mut body = serde_json::json!({"chat_template_kwargs": {"other": 1}});
+            apply_thinking_override(&mut body, &params);
+            assert_eq!(body["chat_template_kwargs"]["enable_thinking"], expected);
+            assert_eq!(body["chat_template_kwargs"]["other"], 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_llamacpp_thinking_reaches_http_in_stream_and_nonstream() {
+        use futures::StreamExt;
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        for streaming in [false, true] {
+            for enabled in [false, true] {
+                let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+                let address = listener.local_addr().unwrap();
+                let server = std::thread::spawn(move || {
+                    let (mut socket, _) = listener.accept().unwrap();
+                    socket
+                        .set_read_timeout(Some(Duration::from_secs(5)))
+                        .unwrap();
+                    let mut headers = Vec::new();
+                    while !headers.ends_with(b"\r\n\r\n") {
+                        let mut byte = [0];
+                        socket.read_exact(&mut byte).unwrap();
+                        headers.push(byte[0]);
+                        assert!(headers.len() < 8192);
+                    }
+                    let headers = String::from_utf8(headers).unwrap();
+                    let length = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (key, value) = line.split_once(':')?;
+                            key.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().unwrap())
+                        })
+                        .unwrap();
+                    let mut bytes = vec![0; length];
+                    socket.read_exact(&mut bytes).unwrap();
+                    let request: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                    let (mime, response) = if streaming {
+                        ("text/event-stream", "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+                    } else {
+                        ("application/json", "{\"choices\":[{\"message\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}")
+                    };
+                    write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len()).unwrap();
+                    request
+                });
+                let runtime = LlamaCppRuntime::new(
+                    LlamaCppConfig::new("renamed-hybrid-model")
+                        .with_endpoint(format!("http://{address}"))
+                        .with_timeout_secs(5),
+                )
+                .unwrap();
+                let mut input = neomind_core::llm::backend::LlmInput::new("hello");
+                input.params.thinking_enabled = Some(enabled);
+                if streaming {
+                    let chunks = runtime
+                        .generate_stream(input)
+                        .await
+                        .unwrap()
+                        .collect::<Vec<_>>()
+                        .await;
+                    assert!(!chunks.is_empty());
+                    assert!(chunks.iter().all(|chunk| chunk.is_ok()));
+                    assert_eq!(
+                        chunks
+                            .into_iter()
+                            .map(|chunk| chunk.unwrap().0)
+                            .collect::<String>(),
+                        "ok"
+                    );
+                } else {
+                    runtime.generate(input).await.unwrap();
+                }
+                let request = server.join().unwrap();
+                assert_eq!(request["stream"], streaming);
+                assert_eq!(request["chat_template_kwargs"]["enable_thinking"], enabled);
+            }
+        }
+    }
 
     #[test]
     fn test_llamacpp_config_default() {

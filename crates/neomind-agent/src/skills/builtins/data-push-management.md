@@ -39,10 +39,10 @@ Always RUN the command yourself and report the real output. The CLI group is `ne
 ## CRITICAL Rules
 
 1. **`--name` is required** for creating push targets
-2. **`--type` is required**: `webhook` or `mqtt`
+2. **`--type` defaults to `webhook`**; specify `--type mqtt` for MQTT targets.
 3. **`--config` must be valid JSON** with type-specific fields
-4. **Targets start in stopped state** — must `push enable <ID>` after creation
-5. **Always test** with `push test <ID>` before relying on delivery
+4. **New targets are enabled by default**. Inspect the returned `enabled` state; `push enable <ID>` is for a target that was disabled.
+5. **Verify the requested outcome** with `push list` / `push get <ID>`. `push test <ID>` sends sample data: use it when delivery testing is part of the task, and distinguish a registered target from verified delivery.
 6. **Use `--sources`** to filter which data gets forwarded (comma-separated patterns)
 
 ## Command Reference
@@ -59,13 +59,13 @@ neomind push logs <ID> [--limit 20]              # Delivery history for a target
 ### Create Push Target
 
 ```bash
-neomind push create --name <NAME> --type <TYPE> --config '<JSON>' [--schedule <SCHEDULE>] [--sources <PATTERNS>]
+neomind push create --name <NAME> [--type <TYPE>] --config '<JSON>' [--schedule <SCHEDULE>] [--sources <PATTERNS>]
 ```
 
 | Flag | Required | Default | Description |
 |------|----------|---------|-------------|
 | `--name` | Yes | — | Target name (unique identifier) |
-| `--type` | Yes | webhook | Target type: `webhook` or `mqtt` |
+| `--type` | No | webhook | Target type: `webhook` or `mqtt` |
 | `--config` | Yes | — | Type-specific config as JSON |
 | `--schedule` | No | event | Schedule: `event` (real-time) or `interval` (every 60s) |
 | `--sources` | No | (all) | Comma-separated source patterns to filter |
@@ -167,8 +167,8 @@ neomind push create --name sensor-webhook --type webhook \
   --config '{"url": "https://myapp.example.com/api/neomind-data", "headers": {"Authorization": "Bearer my-token"}}' \
   --sources "device:sensor-001:temperature"
 
-# Step 2: Start the target
-neomind push enable <ID>
+# Step 2: Verify the created target (enabled by default)
+neomind push get <ID>
 
 # Step 3: Test delivery
 neomind push test <ID>
@@ -185,8 +185,8 @@ neomind push create --name cloud-mqtt --type mqtt \
   --config '{"broker": "tcp://mqtt.cloud.example.com:1883", "topic": "neomind/telemetry", "username": "user", "password": "pass", "qos": 1}' \
   --schedule event
 
-# Start and test
-neomind push enable <ID>
+# Verify, then test delivery when requested
+neomind push get <ID>
 neomind push test <ID>
 ```
 

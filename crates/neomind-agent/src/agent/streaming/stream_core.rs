@@ -410,6 +410,10 @@ pub async fn process_stream_events_with_safeguards(
             let mut seen_tool_sigs: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
             let mut loop_progress = ChatLoopProgress::default();
+            let mut skill_exploration = super::guard::SkillExplorationBudget::default();
+            let mut guide_recovery_pending = false;
+            let mut guide_recovery_used = false;
+            let mut seen_non_skill_outcomes = std::collections::HashSet::new();
             // [identical-call reuse] Small models re-issue byte-identical calls
             // after a SUCCESS (observed: two identical image_edit calls back to
             // back — each a real execution on a 2.6B model, ~30s of pure waste).
@@ -585,6 +589,8 @@ pub async fn process_stream_events_with_safeguards(
                 // Calls in THIS round whose (tool + arguments) signature has
                 // not been seen yet this turn — the progress signal.
                 let mut round_new_calls: usize = 0;
+                let guide_recovery_this_round = guide_recovery_pending;
+                guide_recovery_pending = false;
                 if tool_iteration_count > 0 {
                     tracing::debug!("Starting tool iteration round {}", tool_iteration_count + 1);
 
@@ -596,8 +602,19 @@ pub async fn process_stream_events_with_safeguards(
                         // Build context with the same budget-managed context
                         // builder as the initial call.
                         let compacted = turn_context.build(&state_guard.memory, effective_max);
-                        compacted
-                        .iter().map(|msg| msg.to_core()).collect::<Vec<_>>()
+                        compacted.iter().map(|msg| {
+                            if !guide_recovery_this_round { return msg.to_core(); }
+                            let mut clean = msg.clone();
+                            if let Some(calls) = clean.tool_calls.as_mut() {
+                                for call in calls {
+                                    if crate::tools::resolve_tool_name(&call.name) == "skill" { call.result = None; }
+                                }
+                            }
+                            if clean.role == "tool" && clean.tool_call_name.as_deref() == Some("skill") {
+                                clean.content = "Workflow guide already consulted; no new task evidence.".into();
+                            }
+                            clean.to_core()
+                        }).collect::<Vec<_>>()
                     };
 
                     // Build context for subsequent rounds - tell LLM what happened before
@@ -609,7 +626,9 @@ pub async fn process_stream_events_with_safeguards(
                     // the model was ORDERED to emit a tool-call array, so a
                     // bare `[` opening is suspect from the first byte.
                     round_is_nudge = narration_nudge_pending.is_some();
-                    let context_msg = if let Some(nudge) = narration_nudge_pending.take() {
+                    let context_msg = if guide_recovery_this_round {
+                        super::guard::guide_recovery_directive().to_string()
+                    } else if let Some(nudge) = narration_nudge_pending.take() {
                         // Narration-collapse retry: a pointed nudge replaces the
                         // generic round prompt so the model can't pattern-match
                         // its way around it.
@@ -751,12 +770,18 @@ pub async fn process_stream_events_with_safeguards(
                         }
                     };
 
-                    let round_stream_result = llm_interface.chat_stream_tool_followup(
-                        &user_message,
-                        &context_msg,
-                        &history_for_llm,
-                        thinking_override
-                    ).await;
+                    let round_stream_result = if guide_recovery_this_round {
+                        // Result persistence may have reattached the last guide.
+                        // Clear it immediately before constructing this request.
+                        llm_interface.clear_skill_context().await;
+                        llm_interface.chat_stream_tool_followup_without_guides(
+                            &user_message, &context_msg, &history_for_llm, thinking_override,
+                        ).await
+                    } else {
+                        llm_interface.chat_stream_tool_followup(
+                            &user_message, &context_msg, &history_for_llm, thinking_override,
+                        ).await
+                    };
 
                     let round_stream = match round_stream_result {
                         Ok(s) => s,
@@ -1348,6 +1373,16 @@ pub async fn process_stream_events_with_safeguards(
                         let failed_map = failed_map.clone();
 
                         async move {
+                            // Enforce the request-scoped exclusion even for a model
+                            // that emits an unadvertised tool in plain JSON.
+                            if guide_recovery_this_round && crate::tools::resolve_tool_name(&name) == "skill" {
+                                return (i, name.clone(), ToolExecutionResult {
+                                    _name: name.clone(), arguments: arguments.clone(),
+                                    result: Err(crate::toolkit::ToolError::Execution(
+                                        "The skill tool is unavailable for this recovery request. Use another available capability or answer honestly.".to_string()
+                                    )),
+                                });
+                            }
                             // Shell policy check — same deny-list as Loop A (tool_loop.rs).
                             // Blocks catastrophic commands (rm -rf /, dd, mkfs, etc.) in chat.
                             if name == "shell" {
@@ -1490,6 +1525,9 @@ pub async fn process_stream_events_with_safeguards(
                     // decoration; those annotations are not new information.
                     let mut round_progress_results: Vec<(String, String)> = Vec::new();
                     let mut round_has_errors = false;
+                    let mut round_other_progress = false;
+                    let mut round_had_skill = false;
+                    let mut round_had_successful_mutation = false;
                     let mut this_round_success_sigs: std::collections::HashSet<String> =
                         std::collections::HashSet::new();
                     for (_, name, execution) in tool_results_executed {
@@ -1553,6 +1591,28 @@ pub async fn process_stream_events_with_safeguards(
                                 &crate::tools::resolve_tool_name(&name), output,
                             )
                         );
+                        round_had_skill |= crate::tools::resolve_tool_name(&name) == "skill";
+                        if succeeded {
+                            if name == "skill" {
+                                round_had_skill = true;
+                                if let Ok(output) = &execution.result {
+                                    skill_exploration.observe(&exec_arguments, &output.data);
+                                }
+                            } else {
+                                let real_name = crate::tools::resolve_tool_name(&name);
+                                let command = exec_arguments.get("command").and_then(|v| v.as_str()).unwrap_or("");
+                                // Re-reading volatile host status does not supply
+                                // new vendor evidence; new telemetry/query results do.
+                                let progress_key = if real_name == "shell" && super::dedup::command_similarity_key(command) == "system info" {
+                                    "host_system_info".to_string()
+                                } else {
+                                    format!("{}|{}|{}", real_name, exec_arguments, outcome)
+                                };
+                                round_other_progress |= seen_non_skill_outcomes.insert(progress_key);
+                                round_had_successful_mutation |= (real_name == "shell" && super::intent::is_mutation_command(&command.to_lowercase()))
+                                    || matches!(real_name.as_str(), "run_now" | "file_write" | "file_edit" | "image_edit");
+                            }
+                        }
                         round_has_errors |= !succeeded;
                         any_failed_tool_call |= !succeeded;
                         round_progress_results.push((dup_sig.clone(), outcome));
@@ -1831,10 +1891,40 @@ pub async fn process_stream_events_with_safeguards(
                             0,
                         );
                     }
-                    let should_continue = !wall_clock_exhausted
-                        && !chat_repeating
-                        && !read_only_loop_terminated
+                    // Tools in a batch execute concurrently. Decide progress only
+                    // after ALL results, independent of their emission order.
+                    if round_had_successful_mutation {
+                        skill_exploration = super::guard::SkillExplorationBudget::default();
+                    }
+                    let guide_stalled = round_had_skill && !round_other_progress && skill_exploration.exhausted();
+                    let try_guide_recovery = guide_stalled && !guide_recovery_used
+                        && !wall_clock_exhausted && !chat_repeating
                         && tool_iteration_count < MAX_TOOL_ITERATIONS - 1;
+                    if try_guide_recovery {
+                        guide_recovery_used = true;
+                        guide_recovery_pending = true;
+                        llm_interface.clear_skill_context().await;
+                        guard_ledger.record(super::guard::GuardKind::SkillRecovery,
+                            super::guard::GuardOutcome::Fired, tool_iteration_count + 1,
+                            "retry_without_repeated_guide_tool");
+                    }
+                    let skill_exploration_exhausted = guide_stalled && !try_guide_recovery;
+                    if skill_exploration_exhausted {
+                        guard_ledger.record(
+                            super::guard::GuardKind::SkillExploration,
+                            super::guard::GuardOutcome::Fired,
+                            tool_iteration_count + 1,
+                            "workflow_guide_budget_exhausted",
+                        );
+                        yield AgentEvent::progress(
+                            "Workflow-guide exploration made no further progress — generating final response...".to_string(),
+                            "summarizing", 0,
+                        );
+                    }
+                    let force_summary = wall_clock_exhausted || chat_repeating
+                        || read_only_loop_terminated || skill_exploration_exhausted
+                        || tool_iteration_count >= MAX_TOOL_ITERATIONS - 1;
+                    let should_continue = !force_summary;
                     // === Save assistant message with tool_calls BEFORE tool results ===
                     let response_to_save = if content_before_tools.is_empty() {
                         String::new()
@@ -1943,7 +2033,7 @@ pub async fn process_stream_events_with_safeguards(
                     let content_is_preamble =
                         content_before_tools.trim().chars().count() < 200;
 
-                    if content_before_tools.is_empty() || (last_round_has_errors && content_is_preamble) {
+                    if force_summary || content_before_tools.is_empty() || (last_round_has_errors && content_is_preamble) {
 
                         // Notify user that we're generating a final response
                         if last_round_has_errors {
@@ -1954,8 +2044,12 @@ pub async fn process_stream_events_with_safeguards(
                             );
                         }
 
+                        let mut final_content = String::new();
                         // Build compact history for the summary call
-                        let summary_history: Vec<neomind_core::Message> = {
+                        let summary_history: Vec<neomind_core::Message> = if skill_exploration_exhausted {
+                            llm_interface.clear_skill_context().await;
+                            Vec::new()
+                        } else {
                             let state_guard = internal_state.read().await;
                             let compacted = turn_context.build(&state_guard.memory, effective_max);
                             compacted.iter().map(|msg| msg.to_core()).collect()
@@ -1964,24 +2058,10 @@ pub async fn process_stream_events_with_safeguards(
                         // Detect whether tool results contain errors to tailor the prompt
                         let has_errors = last_round_has_errors;
 
-                        let summary_prompt = if read_only_loop_terminated {
-                            // The turn was force-ended because the model kept
-                            // re-calling read-only tools without acting or
-                            // asking. Zero-evidence honesty guard (production
-                            // 2026-11-02: after a fruitless search loop the
-                            // forced summary FABRICATED a Xiaomi protocol
-                            // table). The summary must state what was actually
-                            // found — including "nothing found" — and must
-                            // never invent content no tool returned.
-                            "The tool calls above did NOT produce the information the user asked \
-                            for. Answer now with complete honesty: state exactly what you checked \
-                            and what was or was not found. If the local knowledge base has no \
-                            relevant content, SAY SO explicitly and note that you have no \
-                            general web-search capability (only fetching specific URLs). \
-                            Do NOT invent protocols, device types, commands, or data that did \
-                            not appear in the tool results. Do NOT output any tool calls. If a \
-                            specific detail only the user can provide would unblock the task, \
-                            ask ONE concise clarifying question."
+                        let summary_prompt = if skill_exploration_exhausted {
+                            super::guard::guide_exploration_brief()
+                        } else if force_summary {
+                            super::guard::forced_summary_prompt()
                         } else if has_errors {
                             "Some tool calls above returned errors. If the user's question can \
                             already be answered from the successful results, answer it now. \
@@ -1994,12 +2074,13 @@ pub async fn process_stream_events_with_safeguards(
                             concise clarifying question instead of guessing."
                         };
 
-                        let summary_result = llm_interface.chat_stream_summary(
+                        let summary_result = llm_interface.chat_stream_summary_for_task(
+                            &user_message,
                             summary_prompt,
                             &summary_history,
                         ).await;
 
-                        let mut final_content = String::new();
+
                         match summary_result {
                             Ok(stream) => {
                                 let mut pin = Box::pin(stream);
@@ -2007,9 +2088,13 @@ pub async fn process_stream_events_with_safeguards(
                                     next_chunk_or_timeout(&mut pin, safeguards.max_stream_duration).await
                                 {
                                     match chunk {
-                                        Ok((text, _)) => {
-                                            final_content.push_str(&text);
-                                            yield AgentEvent::content(text);
+                                        Ok((text, is_thinking)) => {
+                                            if !is_thinking {
+                                                final_content.push_str(&text);
+                                                if !skill_exploration_exhausted {
+                                                    yield AgentEvent::content(text);
+                                                }
+                                            }
                                         }
                                         Err(e) => {
                                             tracing::error!("Summary stream error: {}", e);
@@ -2021,6 +2106,15 @@ pub async fn process_stream_events_with_safeguards(
                             Err(e) => {
                                 tracing::error!("Summary call failed: {}", e);
                             }
+                        }
+
+                        if skill_exploration_exhausted {
+                            // Validate before display; the fallback is a last resort,
+                            // not the normal wording of every guarded turn.
+                            if !super::guard::usable_exploration_reply(&final_content) {
+                                final_content = super::guard::guide_exploration_reply(&user_message).to_string();
+                            }
+                            yield AgentEvent::content(final_content.clone());
                         }
 
                         // If summary also failed, fall back to formatted tool results

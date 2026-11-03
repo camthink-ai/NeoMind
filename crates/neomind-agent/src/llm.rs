@@ -1800,6 +1800,21 @@ impl LlmInterface {
         .await
     }
 
+    /// One recovery request can use other tools without mutating the session's
+    /// registered tool set. The next ordinary request has the full set again.
+    pub(crate) async fn chat_stream_tool_followup_without_guides(
+        &self,
+        original_request: &str,
+        round_context: &str,
+        history: &[Message],
+        thinking_override: Option<bool>,
+    ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<(String, bool)>> + Send>>> {
+        self.chat_stream_internal_scoped(
+            format!("Original user request:\n{original_request}\n\nTool-round context:\n{round_context}"),
+            Some(history), true, thinking_override, Some(original_request), true,
+        ).await
+    }
+
     /// Lightweight summary call: no tools, no thinking.
     /// Used as fallback when the ReAct loop ends without the model producing
     /// its own summary content. Without tool definitions, the model must
@@ -1811,6 +1826,20 @@ impl LlmInterface {
     ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<(String, bool)>> + Send>>> {
         self.chat_stream_internal(user_message, Some(history), false, Some(false), None)
             .await
+    }
+
+    /// Final expression of a known task state without reclassifying an English
+    /// executor directive as the user's intent or language.
+    pub(crate) async fn chat_stream_summary_for_task(
+        &self,
+        original_request: &str,
+        instruction: &str,
+        history: &[Message],
+    ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<(String, bool)>> + Send>>> {
+        self.chat_stream_internal(
+            format!("Original user request:\n{original_request}\n\nFinal response instructions:\n{instruction}"),
+            Some(history), false, Some(false), Some(original_request),
+        ).await
     }
 
     /// Send a multimodal chat message (with images) with streaming response.
@@ -2050,6 +2079,27 @@ impl LlmInterface {
         thinking_override: Option<bool>,
         task_message: Option<&str>,
     ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<(String, bool)>> + Send>>> {
+        self.chat_stream_internal_scoped(
+            user_message,
+            history,
+            include_tools,
+            thinking_override,
+            task_message,
+            false,
+        )
+        .await
+    }
+
+    /// Internal streaming chat implementation.
+    async fn chat_stream_internal_scoped(
+        &self,
+        user_message: impl Into<String>,
+        history: Option<&[Message]>,
+        include_tools: bool,
+        thinking_override: Option<bool>,
+        task_message: Option<&str>,
+        exclude_skill: bool,
+    ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<(String, bool)>> + Send>>> {
         let user_message = user_message.into();
 
         let model_arc = Arc::clone(&self.model);
@@ -2096,7 +2146,10 @@ impl LlmInterface {
                 .to_string()
         };
 
-        let system_prompt = Self::with_history_summary(system_prompt, history);
+        let mut system_prompt = Self::with_history_summary(system_prompt, history);
+        if exclude_skill {
+            system_prompt.push_str("\nFor this request only, the skill tool is unavailable. Use remaining tools within the original user's scope, or answer from verified results. Do not invent missing prerequisites because guide lookup failed.");
+        }
 
         // Build input outside the lock
         let model_guard = model_arc.read().await;
@@ -2328,10 +2381,19 @@ impl LlmInterface {
 
         // Get tool definitions
         let tools = self.tool_definitions.read().await;
-        let tools_input = if !include_tools || tools.is_empty() {
+        let tools_input = if !include_tools {
             None
         } else {
-            Some(tools.clone())
+            let available: Vec<_> = tools
+                .iter()
+                .filter(|tool| !exclude_skill || tool.name != "skill")
+                .cloned()
+                .collect();
+            if available.is_empty() {
+                None
+            } else {
+                Some(available)
+            }
         };
         drop(tools);
 

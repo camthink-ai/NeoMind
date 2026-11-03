@@ -459,7 +459,9 @@ pub async fn get_device(client: &ApiClient, id: &str, metric: Option<&str>) -> R
     if let Some(field) = metric {
         filter_single_metric(&mut sanitized, field);
     }
-    Ok(CliResponse::success(sanitized, "Device details retrieved"))
+    Ok(CliResponse::success(sanitized, "Device details retrieved").with_suggestion(
+        "Current snapshot only: a false connection flag or null transition time does not establish earlier connections or a root cause. For missing telemetry, also check device history <ID>.",
+    ))
 }
 
 /// Reduce a /devices/{id}/current response to a single metric field.
@@ -590,9 +592,8 @@ pub async fn get_telemetry_history(
     // snapshot's value is preserved so the downstream streaming-layer slim
     // can cache it as a `$cached:` reference for the `vision` tool.
     let summarized = summarize_image_history(&data, id);
-    Ok(CliResponse::success(
-        summarized,
-        "Telemetry history retrieved",
+    Ok(CliResponse::success(summarized, "Telemetry history retrieved").with_suggestion(
+        "History evidence applies only to the returned start/end time range. Empty results do not identify a root cause or prove that a device never connected.",
     ))
 }
 

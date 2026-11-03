@@ -1,5 +1,5 @@
-use crate::types::CliResponse;
 use crate::ApiClient;
+use crate::types::CliResponse;
 use anyhow::Result;
 use serde_json::json;
 
@@ -169,6 +169,16 @@ pub async fn update_backend(
 
 /// Delete an LLM backend
 pub async fn delete_backend(client: &ApiClient, id: &str) -> Result<CliResponse> {
+    // DELETE is idempotent in the API; a nonexistent ID must not look like a real deletion.
+    client
+        .get(&format!("/llm-backends/{}", id))
+        .await
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "Cannot verify LLM backend ID; no deletion attempted. Run `neomind llm list` \
+             and use the exact `id`, not the backend name. Verification error: {error:#}"
+            )
+        })?;
     client.delete(&format!("/llm-backends/{}", id)).await?;
     Ok(CliResponse::success(
         json!({ "id": id }),
@@ -192,4 +202,125 @@ pub async fn test_backend(client: &ApiClient, id: &str) -> Result<CliResponse> {
         .post(&format!("/llm-backends/{}/test", id), &body)
         .await?;
     Ok(CliResponse::success(data, "LLM backend test completed"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::VecDeque;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+    use std::sync::mpsc::{self, Sender};
+    use std::thread::JoinHandle;
+    use std::time::{Duration, Instant};
+
+    fn mock_api(codes: Vec<u16>) -> (ApiClient, Sender<()>, JoinHandle<Vec<String>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let (stop, stopped) = mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            let mut codes = VecDeque::from(codes);
+            let mut requests = Vec::new();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < deadline {
+                if stopped.try_recv().is_ok() {
+                    break;
+                }
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        stream.set_nonblocking(false).unwrap();
+                        stream
+                            .set_read_timeout(Some(Duration::from_secs(2)))
+                            .unwrap();
+                        let request = {
+                            let mut reader = BufReader::new(&stream);
+                            let mut first = String::new();
+                            reader.read_line(&mut first).unwrap();
+                            loop {
+                                let mut line = String::new();
+                                if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                                    break;
+                                }
+                            }
+                            first.trim().to_string()
+                        };
+                        requests.push(request);
+                        let status = codes.pop_front().unwrap_or(200);
+                        let body = if status == 200 {
+                            r#"{"success":true,"data":{"backend":{"id":"existing-id"}}}"#
+                        } else {
+                            r#"{"error":"verification or mutation rejected"}"#
+                        };
+                        write!(stream, "HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(2));
+                    }
+                    Err(e) => panic!("test listener: {e}"),
+                }
+            }
+            requests
+        });
+        (
+            ApiClient::with_base_url(&format!("http://{address}/api")),
+            stop,
+            thread,
+        )
+    }
+
+    fn finish(stop: Sender<()>, thread: JoinHandle<Vec<String>>) -> Vec<String> {
+        let _ = stop.send(());
+        thread.join().unwrap()
+    }
+
+    #[tokio::test]
+    async fn delete_rejects_unknown_id_without_sending_delete() {
+        let (client, stop, thread) = mock_api(vec![404]);
+        let result = delete_backend(&client, "friendly-name").await;
+        let requests = finish(stop, thread);
+        let message = result.unwrap_err().to_string();
+        assert!(message.contains("neomind llm list"));
+        assert!(!message.contains("neomind device list"));
+        assert!(message.contains("404"));
+        assert_eq!(
+            requests,
+            vec!["GET /api/llm-backends/friendly-name HTTP/1.1"]
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_verifies_existing_id_before_mutation() {
+        let (client, stop, thread) = mock_api(vec![200, 200]);
+        let result = delete_backend(&client, "existing-id").await;
+        let requests = finish(stop, thread);
+        assert!(result.is_ok());
+        assert_eq!(
+            requests,
+            vec![
+                "GET /api/llm-backends/existing-id HTTP/1.1",
+                "DELETE /api/llm-backends/existing-id HTTP/1.1"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_does_not_mutate_when_verification_is_unavailable() {
+        let (client, stop, thread) = mock_api(vec![503]);
+        let result = delete_backend(&client, "existing-id").await;
+        let requests = finish(stop, thread);
+        let message = result.unwrap_err().to_string();
+        assert!(message.contains("503"));
+        assert_eq!(requests, vec!["GET /api/llm-backends/existing-id HTTP/1.1"]);
+    }
+
+    #[tokio::test]
+    async fn delete_propagates_rejected_mutation_after_valid_lookup() {
+        let (client, stop, thread) = mock_api(vec![200, 409]);
+        let result = delete_backend(&client, "existing-id").await;
+        let requests = finish(stop, thread);
+        assert!(result.is_err());
+        assert_eq!(requests.len(), 2);
+        assert!(requests[1].starts_with("DELETE "));
+    }
 }

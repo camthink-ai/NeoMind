@@ -90,7 +90,7 @@ const DOMAIN_INDEX: &str = r#"
 - agent: list get create update delete control <ID> <active|paused> invoke memory clear-memory executions <ID> latest-execution conversation <ID> send-message <ID> (talking to an agent, NOT `message`)
 - rule: list get create update delete enable disable test history
 - dashboard: list get create update delete add-components update-component remove-components share (ADD widgets → add-components (append); TWEAK one widget → update-component; `update --components` replaces ALL and needs --replace-all — almost never what you want; `dashboard get <ID>` first to see layout/ids)
-- connector: list get create update delete enable disable test subscribe subscriptions unsubscribe (external I/O bridges: MQTT broker / webhook / HTTP — NOT devices)
+- connector: list get create update delete enable disable test subscribe subscriptions unsubscribe (external MQTT data ingestion / subscriptions; outbound webhook or MQTT data targets use push)
 - extension: list get install uninstall status logs config reload create build market-list market-install validate
 - transform: list get create update delete enable disable metrics test-code data-sources executions (executions = recent run records; check it when a transform outputs nothing or fails)
 - widget: list get create install uninstall bundle market-list market-install
@@ -523,12 +523,10 @@ impl ShellTool {
             }
             Ok(Err(neomind_cli_ops::dispatch::DispatchError::Parse(msg))) => {
                 let mut stderr = format!("error: {}", msg);
-                // [context-injection] unquoted paths with spaces are the #1
-                // live parse failure ("... /Users/x/Library/Application
-                // Support/..." → "unexpected argument 'Support/...' found"
-                // — the model retried IDENTICALLY twice without adding
-                // quotes). Name the fix on the error itself.
-                if msg.contains("unexpected argument") && !command.contains("\"") {
+                // A rejected flag needs the CLI usage, not an unrelated path
+                // quoting hint. Inspect the offending token and its adjacent
+                // argv fragment instead of quotes anywhere in the command.
+                if should_hint_split_path(&msg, &argv) {
                     stderr.push_str(
                         "\nHint: an argument containing SPACES (e.g. a path under \"Application Support\") must be wrapped in double quotes: neomind widget install \"/Users/.../Application Support/.../device-info-widget\".",
                     );
@@ -1090,6 +1088,39 @@ fn tokenize_neomind_command(input: &str) -> std::result::Result<Vec<String>, Str
     Ok(tokens)
 }
 
+/// Conservatively recognize the split-path parse failure without guessing at
+/// arbitrary extra words. Tokenization preserves quoted/escaped spaces inside
+/// one argument, so only adjacent, whitespace-free path fragments qualify.
+fn should_hint_split_path(parse_error: &str, argv: &[String]) -> bool {
+    let Some((_, rest)) = parse_error.split_once("unexpected argument '") else {
+        return false;
+    };
+    let Some((unexpected, _)) = rest.split_once('\'') else {
+        return false;
+    };
+    let rooted = |s: &str| {
+        s.starts_with('/')
+            || s.starts_with("./")
+            || s.starts_with("../")
+            || s.starts_with("~/")
+            || s.starts_with("\\\\")
+            || (s.as_bytes().get(1) == Some(&b':')
+                && matches!(s.as_bytes().get(2), Some(b'/' | b'\\')))
+    };
+    // A bare extra word is ambiguous; a second independent absolute path is
+    // not evidence that it belongs to the preceding argument either.
+    if unexpected.starts_with('-')
+        || unexpected.chars().any(char::is_whitespace)
+        || !unexpected.contains(['/', '\\'])
+        || rooted(unexpected)
+    {
+        return false;
+    }
+    argv.windows(2).any(|pair| {
+        pair[1] == unexpected && rooted(&pair[0]) && !pair[0].chars().any(char::is_whitespace)
+    })
+}
+
 /// Truncate stdout + stderr to fit within max_total chars, with truncation notices.
 fn truncate_output(stdout: &str, stderr: &str, max_total: usize) -> (String, String) {
     let stdout_len = stdout.len();
@@ -1476,6 +1507,9 @@ Native host tools also available via `/bin/sh -c`: ping, curl, ps, df, grep, doc
         });
         if let Some(desc) = description {
             result["description"] = serde_json::Value::String(desc.to_string());
+        }
+        if let Some(dir) = working_dir {
+            result["working_dir"] = serde_json::Value::String(dir.to_string());
         }
 
         // Enrich error responses with recovery hints for neomind CLI commands
@@ -1979,29 +2013,75 @@ mod dispatch_edge_tests {
         assert_eq!(toks, ["rule", "create", "--name", "温湿度告警"]);
     }
 
-    /// The unquoted-path-with-spaces hint rides the clap parse error
-    /// exactly when it should (live incident: identical retry x2 without
-    /// quotes). Pure-string test on the same conditions as the branch.
     #[test]
-    fn quote_hint_conditions() {
+    fn split_path_hint_targets_the_offending_argument() {
         let case = |msg: &str, command: &str| {
-            msg.contains("unexpected argument") && !command.contains("\"")
+            should_hint_split_path(msg, &tokenize_neomind_command(command).unwrap())
         };
-        // live shape: split path fragment, no quotes in the raw command
+        let error = "unexpected argument 'Support/com.neomind.neomind/data/frontend-components/device-info-widget' found";
         assert!(case(
-            "unexpected argument 'Support/com.neomind.neomind/data/frontend-components/device-info-widget' found",
+            error,
             "neomind widget install /Users/x/Library/Application Support/com.neomind.neomind/data/frontend-components/device-info-widget",
         ));
-        // already-quoted command: no duplicate nagging
+        // Quotes around another argument do not repair the split path.
+        assert!(case(error,
+            "neomind widget install /Users/x/Library/Application Support/com.neomind.neomind/data/frontend-components/device-info-widget --label \"two words\""));
+        // Quoted and escaped paths remain a single parsed argument.
+        assert!(!case(error,
+            "neomind widget install \"/Users/x/Library/Application Support/com.neomind.neomind/data/frontend-components/device-info-widget\""));
+        assert!(!case(
+            error,
+            r"neomind widget install /Users/x/Library/Application\ Support/com.neomind.neomind/data/frontend-components/device-info-widget"
+        ));
+        for flag in ["--components", "--id", "--url"] {
+            assert!(!case(
+                &format!("unexpected argument '{flag}' found"),
+                &format!("neomind widget install /tmp/widget {flag} value"),
+            ));
+        }
         assert!(!case(
             "unexpected argument 'foo' found",
-            "neomind widget install \"/Users/x/Library/Application Support/x\"",
+            "neomind widget install /tmp/widget foo",
         ));
-        // different parse error: no hint
+        assert!(!case(
+            "unexpected argument '/tmp/second' found",
+            "neomind widget install /tmp/first /tmp/second"
+        ));
         assert!(!case(
             "missing required arguments",
             "neomind widget install"
         ));
+    }
+
+    #[tokio::test]
+    async fn real_clap_errors_do_not_misdiagnose_unsupported_flags_as_paths() {
+        for command in [
+            "neomind dashboard update-component dash-1 --components '{}'",
+            "neomind transform update --id transform-1 --code 'return input'",
+            "neomind connector create --name test --url https://example.com",
+        ] {
+            let argv = tokenize_neomind_command(command).unwrap();
+            let error = neomind_cli_ops::dispatch::dispatch(&argv)
+                .await
+                .expect_err("invalid flags must remain rejected");
+            let neomind_cli_ops::dispatch::DispatchError::Parse(message) = error else {
+                panic!("expected clap parse failure for {command}");
+            };
+            assert!(message.contains("unexpected argument"), "{message}");
+            assert!(!should_hint_split_path(&message, &argv));
+        }
+        let argv = tokenize_neomind_command(
+            "neomind widget install /Users/x/Library/Application Support/widget",
+        )
+        .unwrap();
+        let neomind_cli_ops::dispatch::DispatchError::Parse(message) =
+            neomind_cli_ops::dispatch::dispatch(&argv)
+                .await
+                .expect_err("split path")
+        else {
+            panic!("expected split-path parse error");
+        };
+        assert!(should_hint_split_path(&message, &argv), "{message}");
     }
 
     #[test]

@@ -2,7 +2,7 @@
 ///
 /// Keeps the **latest** result for each (tool_name, key_arguments) combination.
 /// When the same tool is called with the same arguments across rounds (LLM retrying),
-/// only the last successful result is kept. Different arguments produce separate entries.
+/// only the latest result is kept (including a later failure). Different arguments produce separate entries.
 pub(crate) fn deduplicate_tool_results(results: &[(String, String)]) -> Vec<(String, String)> {
     // Build a key from tool name + distinguishing arguments parsed from the result JSON
     let mut seen: Vec<(String, String)> = Vec::new(); // (key, dedup_key)
@@ -31,6 +31,16 @@ pub(crate) fn deduplicate_tool_results(results: &[(String, String)]) -> Vec<(Str
 pub(crate) fn make_result_dedup_key(name: &str, result: &str) -> String {
     // Try to extract entity IDs from the result JSON
     if let Ok(json) = serde_json::from_str::<serde_json::Value>(result) {
+        if name == "shell" {
+            if let Some(command) = json.get("command").and_then(|v| v.as_str()) {
+                // A shell is one tool for many independent operations. Entity
+                // names alone cannot distinguish a get, a history, or a list.
+                return format!(
+                    "shell|command|{}",
+                    serde_json::json!([command, json.get("working_dir")])
+                );
+            }
+        }
         let mut key_parts = vec![name.to_string()];
 
         // Extract common entity identifiers
@@ -51,15 +61,18 @@ pub(crate) fn make_result_dedup_key(name: &str, result: &str) -> String {
             }
         }
 
-        return key_parts.join("|");
+        if key_parts.len() > 1 {
+            return key_parts.join("|");
+        }
+        // No invocation/entity identity: only identical content is redundant.
+        // Do not collapse every unkeyed JSON result into the tool name.
     }
 
-    // Fallback: simple hash of the result content for dedup
-    let preview: String = result.chars().take(200).collect();
-    let hash = preview
-        .chars()
-        .fold(0u64, |acc, c| acc.wrapping_mul(31).wrapping_add(c as u64));
-    format!("{}|{:016x}", name, hash)
+    // Hash the complete result: late differences are still distinct evidence.
+    use std::hash::{Hash, Hasher};
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    result.hash(&mut hash);
+    format!("{}|{:016x}", name, hash.finish())
 }
 
 /// Normalize a shell command to a similarity key: for `neomind <domain>
@@ -242,5 +255,59 @@ mod tests {
         cmds.push_back("neomind agent create --name d".into());
         // trailing streak is only 2 (broken in the middle) → None
         assert!(similar_command_streak(&cmds).is_none());
+    }
+}
+
+#[cfg(test)]
+mod invocation_evidence_tests {
+    use super::*;
+
+    fn result(command: &str, stdout: &str, code: i32) -> (String, String) {
+        (
+            "shell".into(),
+            serde_json::json!({"command":command,"stdout":stdout,"exit_code":code}).to_string(),
+        )
+    }
+
+    #[test]
+    fn distinct_commands_survive_and_retry_keeps_the_latest_outcome() {
+        let list = result("neomind device list", "one device", 0);
+        let get = result("neomind device get d1", "device details", 0);
+        let latest = result("neomind device list", "permission denied", 3);
+        let deduped = deduplicate_tool_results(&[list, get.clone(), latest.clone()]);
+        assert_eq!(deduped.len(), 2);
+        assert!(deduped.contains(&get));
+        assert!(deduped.contains(&latest));
+    }
+
+    #[test]
+    fn identical_commands_in_different_directories_are_distinct() {
+        let rows: Vec<_> = ["/tmp/one", "/tmp/two"]
+            .iter()
+            .map(|dir| {
+                (
+                    "shell".into(),
+                    serde_json::json!({"command":"cat status.json","working_dir":dir,"stdout":dir})
+                        .to_string(),
+                )
+            })
+            .collect();
+        assert_eq!(deduplicate_tool_results(&rows), rows);
+    }
+
+    #[test]
+    fn unkeyed_json_and_late_text_differences_are_preserved() {
+        let prefix = "same evidence ".repeat(30);
+        for bodies in [
+            vec!["{\"total\":1}".to_string(), "{\"total\":2}".to_string()],
+            vec![format!("{} first", prefix), format!("{} second", prefix)],
+        ] {
+            let a = ("shell".into(), bodies[0].clone());
+            let b = ("shell".into(), bodies[1].clone());
+            assert_eq!(
+                deduplicate_tool_results(&[a.clone(), b.clone(), a.clone()]),
+                vec![a, b]
+            );
+        }
     }
 }

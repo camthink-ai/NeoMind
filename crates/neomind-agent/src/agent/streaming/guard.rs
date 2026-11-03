@@ -33,9 +33,12 @@ pub enum GuardKind {
     ListOnlyCoercion,
     /// Act-now directive after a post-coercion read-only streak.
     ExploreRecovery,
-    /// Forced turn end when the act-now directive was ignored and the
-    /// read-only streak continued (production 2026-11-02: 30-round cycles).
+    /// A read-only loop continued after the opt-in recovery directive.
     ReadOnlyStreak,
+    /// Per-turn workflow-guide exploration exhausted without useful progress.
+    SkillExploration,
+    /// One bounded continuation using capabilities other than guide lookup.
+    SkillRecovery,
     /// Turn-end "requested action was not executed" note.
     IncompleteActionNote,
     /// Pre-nudge narration restored after a degenerate nudge round.
@@ -62,6 +65,8 @@ impl GuardKind {
             GuardKind::ListOnlyCoercion => "list_only_coercion",
             GuardKind::ExploreRecovery => "explore_recovery",
             GuardKind::ReadOnlyStreak => "read_only_streak",
+            GuardKind::SkillExploration => "skill_exploration",
+            GuardKind::SkillRecovery => "skill_recovery",
             GuardKind::IncompleteActionNote => "incomplete_action_note",
             GuardKind::DegenerateRestore => "degenerate_restore",
             GuardKind::DegenerateSuppressed => "degenerate_suppressed",
@@ -230,6 +235,150 @@ pub fn should_inject_promise_directive(promise_rounds: usize, already_sent: bool
 /// are NOT ablated — they are correctness/safety, not action guards.
 pub fn guards_disabled(mode: Option<&str>) -> bool {
     matches!(mode.map(str::trim), Some(m) if m.eq_ignore_ascii_case("off"))
+}
+
+/// Turn-local guide exploration. This is a safety budget, independent of the
+/// opt-in action-coercion guards. Successful mutations reset it at the caller.
+#[derive(Default)]
+pub(crate) struct SkillExplorationBudget {
+    empty_searches: usize,
+    repeated_loads: usize,
+    loaded_guides: std::collections::HashSet<String>,
+}
+
+impl SkillExplorationBudget {
+    pub(crate) fn observe(&mut self, arguments: &serde_json::Value, data: &serde_json::Value) {
+        match arguments.get("action").and_then(|v| v.as_str()) {
+            Some("search") => match data.get("found").and_then(|v| v.as_bool()) {
+                Some(false) => self.empty_searches += 1,
+                Some(true) => self.empty_searches = 0,
+                None => {}
+            },
+            Some("load") if data.get("guide").is_some() && data.get("id").is_some() => {
+                // Track the resolved guide and its actual revision/content,
+                // not spelling variations of its requested id.
+                let key = serde_json::json!([data["id"], data["guide"]]).to_string();
+                if !self.loaded_guides.insert(key) {
+                    self.repeated_loads += 1;
+                } else {
+                    self.repeated_loads = 0;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub(crate) fn exhausted(&self) -> bool {
+        self.empty_searches >= 2 || self.repeated_loads >= 2
+    }
+}
+
+/// The model has already failed to use these guides productively. Do not
+/// ask the same model to invent a final account of the evidence.
+pub(crate) fn guide_exploration_reply(request: &str) -> &'static str {
+    use crate::agent::semantic_mapper::{Language, SemanticToolMapper};
+    match SemanticToolMapper::detect_language(request) {
+        Language::Chinese | Language::Mixed =>
+            "这次操作还没有完成。反复查阅同一份指南没有获得新的进展，我也还没能通过其他工具完成请求。现有结果不足以确认成功。",
+        _ => "This task is not complete. Re-reading the same guides made no further progress, and the remaining execution did not verify success.",
+    }
+}
+
+/// This brief contains only the observed execution state, never an unrelated
+/// device inventory or guide content that could be mistaken for vendor facts.
+pub(crate) fn guide_recovery_directive() -> &'static str {
+    "Guide lookup repeated without new evidence. The skill tool is unavailable \
+     for this request only. Continue the ORIGINAL user request using remaining \
+     capabilities when useful, respecting its original scope. Use information \
+     already supplied. Ask only for a genuinely missing required input; do not \
+     invent prerequisites because guide lookup failed. You may answer naturally \
+     when you have sufficient verified results."
+}
+
+pub(crate) fn guide_exploration_brief() -> &'static str {
+    "Verified execution state: repeated workflow-guide lookup made no further \
+     progress, and the available results do not resolve the task. \
+     Task completion has not been verified by this exit. Answer naturally in \
+     the ORIGINAL user's language in at most three short sentences. Use the \
+     original goal and supplied information. State what remains unverified. \
+     Ask one useful question ONLY if required information is actually missing; \
+     otherwise acknowledge incomplete execution without inventing prerequisites. \
+     Do not narrate reasoning or claim success."
+}
+
+pub(crate) fn usable_exploration_reply(text: &str) -> bool {
+    let text = text.trim();
+    !text.is_empty()
+        && text.chars().count() <= 600
+        && !text.starts_with('{')
+        && !text.starts_with('[')
+        && !text.contains("<think>")
+        && !text.contains("</think>")
+        && !["the user", "i need to", "let me", "i should"]
+            .iter()
+            .any(|prefix| text.to_lowercase().starts_with(prefix))
+}
+
+pub(crate) fn forced_summary_prompt() -> &'static str {
+    "The execution budget or loop guard ended this turn. Answer in the language of \
+     the ORIGINAL user request. Use only facts supported by the actual tool results. \
+     Distinguish completed and verified work from missing information, failed work, \
+     or an unknown outcome. A workflow guide is not evidence about a third-party \
+     device or protocol. If no relevant evidence was found, say so explicitly; \
+     do not invent protocols, brands, device types, commands, or a successful search. \
+     Describe capability limits only if established by the available tools. \
+     Ask one concise question if a user-provided detail would unblock the task. \
+     Do NOT output tool calls or promise that background work will continue."
+}
+
+#[cfg(test)]
+mod exploration_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn misses_are_turn_local_and_rephrasing_cannot_buy_unlimited_search() {
+        let mut first = SkillExplorationBudget::default();
+        let second = SkillExplorationBudget::default();
+        first.observe(
+            &json!({"action":"search","query":"小米协议"}),
+            &json!({"found":false}),
+        );
+        assert!(!first.exhausted());
+        first.observe(
+            &json!({"action":"search","query":"Xiaomi protocols"}),
+            &json!({"found":false}),
+        );
+        assert!(first.exhausted());
+        assert!(!second.exhausted());
+    }
+
+    #[test]
+    fn a_real_match_resets_the_empty_search_streak() {
+        let mut budget = SkillExplorationBudget::default();
+        let args = json!({"action":"search"});
+        budget.observe(&args, &json!({"found":false}));
+        budget.observe(&args, &json!({"found":true}));
+        budget.observe(&args, &json!({"found":false}));
+        assert!(!budget.exhausted());
+    }
+
+    #[test]
+    fn different_guides_and_revised_guides_are_not_repeated_exploration() {
+        let mut budget = SkillExplorationBudget::default();
+        let args = json!({"action":"load"});
+        for id in ["device", "rule", "dashboard", "agent"] {
+            budget.observe(&args, &json!({"id":id,"guide":"body"}));
+            assert!(!budget.exhausted());
+        }
+        budget.observe(&args, &json!({"id":"agent","guide":"body"}));
+        assert!(!budget.exhausted());
+        budget.observe(&args, &json!({"id":"agent","guide":"new revision"}));
+        assert!(!budget.exhausted());
+        budget.observe(&args, &json!({"id":"agent","guide":"new revision"}));
+        budget.observe(&args, &json!({"id":"agent","guide":"new revision"}));
+        assert!(budget.exhausted());
+    }
 }
 
 #[cfg(test)]

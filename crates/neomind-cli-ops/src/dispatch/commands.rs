@@ -650,13 +650,15 @@ pub enum DeviceCommand {
     /// List all devices, grouped by type.
     ///
     /// Returns devices grouped by device type with metric field names and
-    /// an example device's current values per type. No need to call
-    /// `device get <ID>` for deep inspection.
+    /// an example device's current values per type. This is an inventory
+    /// overview, not a per-device telemetry history check.
     /// Use --device-type or --status to filter results.
     ///
     /// Workflow: Use this for discovery — find device IDs, metric names,
     /// and current values in one command. Then use `device get <ID>` for
-    /// deep inspection of a specific device.
+    /// deep inspection of a specific device. For missing/no-data diagnosis,
+    /// also run `device history <ID>` to verify stored telemetry. Report the
+    /// observed state and queried time range; the cause needs separate evidence.
     ///
     /// Example: `neomind device list --device-type temp_sensor --status online`
     List {
@@ -2367,7 +2369,7 @@ pub enum ConnectorCommand {
     ///
     ///   Example: `neomind connector create --type mqtt --name "Factory MQTT" --host 192.168.1.100 --port 1883 --topics "sensor/#,device/#"`
     Create {
-        /// Connector type (mqtt, webhook, http). Default: mqtt.
+        /// Connector type (mqtt only). Default: mqtt. Outbound data targets use push; notification channels use message.
         #[arg(long, default_value = "mqtt")]
         connector_type: String,
         /// Connector display name.

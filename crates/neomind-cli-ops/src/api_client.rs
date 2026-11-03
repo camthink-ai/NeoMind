@@ -124,7 +124,7 @@ impl ApiClient {
                         // The server ANSWERED — a 404 is not a connectivity
                         // problem. The old "is the server running?" hint here
                         // sent users and LLM agents on wasted health checks.
-                        "\nHint: not found — check the id/spelling (e.g. `neomind device list`)"
+                        "\nHint: not found — check the exact ID using this resource's list command"
                     } else {
                         ""
                     }
@@ -159,7 +159,7 @@ impl ApiClient {
                         // The server ANSWERED — a 404 is not a connectivity
                         // problem. The old "is the server running?" hint here
                         // sent users and LLM agents on wasted health checks.
-                        "\nHint: not found — check the id/spelling (e.g. `neomind device list`)"
+                        "\nHint: not found — check the exact ID using this resource's list command"
                     } else {
                         ""
                     }
@@ -191,7 +191,7 @@ impl ApiClient {
                         // The server ANSWERED — a 404 is not a connectivity
                         // problem. The old "is the server running?" hint here
                         // sent users and LLM agents on wasted health checks.
-                        "\nHint: not found — check the id/spelling (e.g. `neomind device list`)"
+                        "\nHint: not found — check the exact ID using this resource's list command"
                     } else {
                         ""
                     }
@@ -226,7 +226,7 @@ impl ApiClient {
                         // The server ANSWERED — a 404 is not a connectivity
                         // problem. The old "is the server running?" hint here
                         // sent users and LLM agents on wasted health checks.
-                        "\nHint: not found — check the id/spelling (e.g. `neomind device list`)"
+                        "\nHint: not found — check the exact ID using this resource's list command"
                     } else {
                         ""
                     }
@@ -261,7 +261,7 @@ impl ApiClient {
                         // The server ANSWERED — a 404 is not a connectivity
                         // problem. The old "is the server running?" hint here
                         // sent users and LLM agents on wasted health checks.
-                        "\nHint: not found — check the id/spelling (e.g. `neomind device list`)"
+                        "\nHint: not found — check the exact ID using this resource's list command"
                     } else {
                         ""
                     }
@@ -293,7 +293,7 @@ impl ApiClient {
                         // The server ANSWERED — a 404 is not a connectivity
                         // problem. The old "is the server running?" hint here
                         // sent users and LLM agents on wasted health checks.
-                        "\nHint: not found — check the id/spelling (e.g. `neomind device list`)"
+                        "\nHint: not found — check the exact ID using this resource's list command"
                     } else {
                         ""
                     }
@@ -332,7 +332,7 @@ impl ApiClient {
                         // The server ANSWERED — a 404 is not a connectivity
                         // problem. The old "is the server running?" hint here
                         // sent users and LLM agents on wasted health checks.
-                        "\nHint: not found — check the id/spelling (e.g. `neomind device list`)"
+                        "\nHint: not found — check the exact ID using this resource's list command"
                     } else {
                         ""
                     }
@@ -391,7 +391,7 @@ impl ApiClient {
                         // The server ANSWERED — a 404 is not a connectivity
                         // problem. The old "is the server running?" hint here
                         // sent users and LLM agents on wasted health checks.
-                        "\nHint: not found — check the id/spelling (e.g. `neomind device list`)"
+                        "\nHint: not found — check the exact ID using this resource's list command"
                     } else {
                         ""
                     }
@@ -444,7 +444,7 @@ impl ApiClient {
                         // The server ANSWERED — a 404 is not a connectivity
                         // problem. The old "is the server running?" hint here
                         // sent users and LLM agents on wasted health checks.
-                        "\nHint: not found — check the id/spelling (e.g. `neomind device list`)"
+                        "\nHint: not found — check the exact ID using this resource's list command"
                     } else {
                         ""
                     }

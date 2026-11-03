@@ -136,6 +136,7 @@ def _build_turn_record(user_msg: str, resp: dict, pt_ms: int) -> dict:
             "raw_messages": resp.get("new_messages") or [],
             "transport": "websocket",
             "ws_error": resp.get("error"),
+            "generation_complete": resp.get("generation_complete"),
             "transient_stall_retry_count": resp.get("transient_stall_retry_count", 0),
         }
 
@@ -213,6 +214,7 @@ def _build_turn_record(user_msg: str, resp: dict, pt_ms: int) -> dict:
         "raw_messages": new_messages,
         "transport": "websocket" if resp.get("tool_calls_stream") is not None else "http",
         "ws_error": resp.get("error") if resp.get("tool_calls_stream") is not None else None,
+        "generation_complete": resp.get("generation_complete"),
         "transient_stall_retry_count": resp.get("transient_stall_retry_count", 0),
     }
 
@@ -865,6 +867,7 @@ def cmd_regression(args):
     ) != 0:
         return 1
     scores_path = run_dir / "scores.jsonl"
+    cases_path = run_dir / "cases.jsonl"
 
     if args.update_baseline and not baseline_path:
         print("--update-baseline needs --baseline <path>", file=sys.stderr)
@@ -883,7 +886,7 @@ def cmd_regression(args):
     results: dict[str, list] = {}
     results_prod: dict[str, list] = {}
     try:
-        with scores_path.open("w") as sf:
+        with scores_path.open("w") as sf, cases_path.open("w") as cf:
             for cid in case_ids:
                 paths = _select_cases(root, args.lang, None, cid)
                 paths = _filter_multimodal(paths, args.skip_multimodal)
@@ -912,6 +915,12 @@ def cmd_regression(args):
                                 timed_out.append(key)
                         finally:
                             signal.alarm(0)
+                        # Keep the production conversation/tool trace, not just
+                        # its verdict. Flush before scoring so a later analysis
+                        # failure cannot erase the evidence for this execution.
+                        cf.write(json.dumps({**rec, "case_id": cid, "lang": lang,
+                                             "round": ridx}, ensure_ascii=False) + "\n")
+                        cf.flush()
                         hard = hard_signal.compute(case, rec)
                         latency_ms = sum(
                             (t.get("processing_time_ms") or 0)

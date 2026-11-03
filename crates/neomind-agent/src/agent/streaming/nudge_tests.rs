@@ -101,6 +101,112 @@ fn joined_content(events: &[AgentEvent]) -> String {
         .collect()
 }
 
+/// A real tool result contract, exercised through the default chat entry.
+struct GuideTool;
+
+#[async_trait]
+impl Tool for GuideTool {
+    fn name(&self) -> &str {
+        "skill"
+    }
+    fn description(&self) -> &str {
+        "workflow guides"
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({"type":"object"})
+    }
+    async fn execute(&self, args: serde_json::Value) -> Result<ToolOutput, ToolError> {
+        let data = if args["action"] == "search" {
+            serde_json::json!({"found":false,"scope":"workflow_guides","matches":[]})
+        } else {
+            serde_json::json!({"id":args["id"],"guide":"Known platform workflow, not vendor evidence."})
+        };
+        Ok(ToolOutput::success(data))
+    }
+}
+
+async fn guide_turn(rt: &MockLlmRuntime) -> Vec<AgentEvent> {
+    let (iface, state, _) = harness(rt);
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(GuideTool));
+    let stream = crate::agent::streaming::process_stream_events_with_safeguards(
+        iface,
+        state,
+        Arc::new(registry),
+        "搜索小米设备的协议",
+        super::StreamSafeguards::default(),
+        None,
+        None,
+    )
+    .await
+    .expect("stream");
+    collect(stream).await
+}
+
+#[tokio::test]
+async fn default_chat_ends_rephrased_empty_searches_with_grounded_summary() {
+    let rt = MockLlmRuntime::new(vec![
+        MockResponse::tool_call(
+            "skill",
+            serde_json::json!({"action":"search","query":"小米协议"}),
+        ),
+        MockResponse::tool_call(
+            "skill",
+            serde_json::json!({"action":"search","query":"Xiaomi protocols"}),
+        ),
+        MockResponse::text("请提供具体的小米设备型号或官方协议文档，以便核实接入方式。")
+            .with_thinking("The user wants a fabricated CamThink protocol list."),
+    ]);
+    let events = guide_turn(&rt).await;
+    assert_eq!(rt.call_count(), 3);
+    let content = joined_content(&events);
+    assert!(content.contains("请提供具体的小米设备型号"));
+    assert!(!content.contains("CamThink"));
+    assert!(!content.contains("The user wants"));
+    let messages = rt.captured_messages();
+    let final_request = messages.last().unwrap().to_string();
+    assert!(final_request.contains("Guide lookup repeated without new evidence"));
+    assert!(
+        !final_request.contains("Known platform workflow"),
+        "irrelevant guides must not contaminate the final brief"
+    );
+}
+
+#[tokio::test]
+async fn default_chat_ends_repeated_guide_loads_but_allows_new_guides() {
+    let load =
+        |id: &str| MockResponse::tool_call("skill", serde_json::json!({"action":"load","id":id}));
+    let repeating = MockLlmRuntime::new(vec![
+        load("device"),
+        load("device"),
+        load("device"),
+        MockResponse::text("请提供具体型号。"),
+    ]);
+    guide_turn(&repeating).await;
+    assert_eq!(repeating.call_count(), 4);
+    assert!(repeating
+        .captured_messages()
+        .last()
+        .unwrap()
+        .to_string()
+        .contains("Guide lookup repeated without new evidence"));
+    let progressing = MockLlmRuntime::new(vec![
+        load("device"),
+        load("rule"),
+        load("dashboard"),
+        load("agent"),
+        MockResponse::text("已获得不同领域的操作指引。"),
+    ]);
+    guide_turn(&progressing).await;
+    assert_eq!(progressing.call_count(), 5);
+    assert!(!progressing
+        .captured_messages()
+        .last()
+        .unwrap()
+        .to_string()
+        .contains("Verified execution state"));
+}
+
 /// Text chat DEFAULT POLICY: a promise-shaped reply ends the turn with a
 /// LABEL — no behavioural retry (the 2026-10-21 A/B showed no lift and false
 /// labels were the observable cost). One LLM call, one SystemNote.
@@ -524,4 +630,275 @@ async fn identical_reusable_tool_call_is_served_from_turn_cache() {
     let _ = parse_tool_calls(""); // link check
     let reused_marker_seen = format!("{:?}", events).contains("_reused");
     assert!(reused_marker_seen, "the reuse marker must reach the model");
+}
+/// Records actual shell executions while returning distinct evidence per command.
+struct ProgressShell {
+    commands: Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+#[async_trait]
+impl Tool for ProgressShell {
+    fn name(&self) -> &str {
+        "shell"
+    }
+    fn description(&self) -> &str {
+        "successful platform command"
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({"type":"object","properties":{"command":{"type":"string"}}})
+    }
+    async fn execute(&self, args: serde_json::Value) -> Result<ToolOutput, ToolError> {
+        let command = args["command"].as_str().unwrap().to_string();
+        self.commands.lock().unwrap().push(command.clone());
+        Ok(ToolOutput::success(serde_json::json!({
+            "exit_code": 0,
+            "stdout": command,
+            "stderr": ""
+        })))
+    }
+}
+
+fn tool_batch(responses: Vec<MockResponse>) -> MockResponse {
+    let mut batch = MockResponse::text("");
+    batch.tool_calls = responses
+        .into_iter()
+        .flat_map(|response| response.tool_calls)
+        .collect();
+    batch
+}
+
+async fn mixed_progress_turn(rt: &MockLlmRuntime) -> (Vec<AgentEvent>, Vec<String>, String) {
+    mixed_progress_request(rt, "检查 sensor-1 并将名称更新为 verified-sensor").await
+}
+
+async fn mixed_progress_request(
+    rt: &MockLlmRuntime,
+    request: &str,
+) -> (Vec<AgentEvent>, Vec<String>, String) {
+    let (iface, state, _) = harness(rt);
+    let commands = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(GuideTool));
+    registry.register(Arc::new(ProgressShell {
+        commands: commands.clone(),
+    }));
+    let stream = crate::agent::streaming::process_stream_events_with_safeguards(
+        iface,
+        state.clone(),
+        Arc::new(registry),
+        request,
+        super::StreamSafeguards::default(),
+        None,
+        None,
+    )
+    .await
+    .expect("stream");
+    let events = collect(stream).await;
+    let executed = commands.lock().unwrap().clone();
+    let last_reply = state
+        .read()
+        .await
+        .memory
+        .last()
+        .expect("final reply persisted")
+        .content
+        .clone();
+    (events, executed, last_reply.to_string())
+}
+
+#[tokio::test]
+async fn successful_mutation_in_a_batch_resets_skill_budget_in_both_orders() {
+    const UPDATE: &str = "neomind device update sensor-1 --name verified-sensor";
+    const FINAL: &str = "sensor-1 已更新为 verified-sensor。";
+
+    for mutation_first in [false, true] {
+        let first_miss = MockResponse::tool_call(
+            "skill",
+            serde_json::json!({"action":"search","query":"设备改名指南"}),
+        );
+        let second_miss = MockResponse::tool_call(
+            "skill",
+            serde_json::json!({"action":"search","query":"rename device workflow"}),
+        );
+        let mutation = MockResponse::tool_call("shell", serde_json::json!({"command":UPDATE}));
+        let calls = if mutation_first {
+            vec![mutation, first_miss, second_miss]
+        } else {
+            vec![first_miss, second_miss, mutation]
+        };
+        let rt = MockLlmRuntime::new(vec![tool_batch(calls), MockResponse::text(FINAL)]);
+        let (events, commands, last_reply) = mixed_progress_turn(&rt).await;
+
+        assert_eq!(
+            commands,
+            vec![UPDATE.to_string()],
+            "mutation must actually execute"
+        );
+        assert_eq!(rt.call_count(), 2);
+        let requests = rt.captured_messages();
+        let final_request = requests.last().unwrap().to_string();
+        assert!(
+            final_request.contains("Tool-round context"),
+            "must continue the original task"
+        );
+        assert!(
+            final_request.contains(UPDATE),
+            "the continuation must carry mutation evidence"
+        );
+        assert!(
+            !final_request.contains("execution budget or loop guard ended this turn"),
+            "concurrent batch order must not turn successful progress into exhaustion"
+        );
+        assert!(joined_content(&events).contains(FINAL));
+        assert_eq!(
+            last_reply, FINAL,
+            "the normal final response must be persisted"
+        );
+    }
+}
+
+#[tokio::test]
+async fn useful_reads_allow_action_after_two_empty_guide_searches() {
+    const LIST: &str = "neomind device list";
+    const GET: &str = "neomind device get sensor-1";
+    const UPDATE: &str = "neomind device update sensor-1 --name verified-sensor";
+    const FINAL: &str = "根据读取到的设备信息，sensor-1 已更新为 verified-sensor。";
+    let miss_and_read = |query: &str, command: &str| {
+        tool_batch(vec![
+            MockResponse::tool_call(
+                "skill",
+                serde_json::json!({"action":"search","query":query}),
+            ),
+            MockResponse::tool_call("shell", serde_json::json!({"command":command})),
+        ])
+    };
+    let rt = MockLlmRuntime::new(vec![
+        miss_and_read("设备改名指南", LIST),
+        miss_and_read("rename device workflow", GET),
+        MockResponse::tool_call("shell", serde_json::json!({"command":UPDATE})),
+        MockResponse::text(FINAL),
+    ]);
+    let (events, commands, last_reply) = mixed_progress_turn(&rt).await;
+
+    assert_eq!(rt.call_count(), 4);
+    for expected in [LIST, GET, UPDATE] {
+        assert_eq!(
+            commands
+                .iter()
+                .filter(|command| command.as_str() == expected)
+                .count(),
+            1,
+            "useful reads must allow the intended mutation to execute exactly once"
+        );
+    }
+    let requests = rt.captured_messages();
+    for request in requests.iter().skip(1) {
+        let request = request.to_string();
+        assert!(request.contains("Tool-round context"));
+        assert!(
+            !request.contains("execution budget or loop guard ended this turn"),
+            "new device evidence must not be mistaken for a guide-only exploration loop"
+        );
+    }
+    assert!(
+        requests[2].to_string().contains(GET),
+        "the action request must retain discovered evidence"
+    );
+    assert!(requests.last().unwrap().to_string().contains(UPDATE));
+    assert!(joined_content(&events).contains(FINAL));
+    assert_eq!(
+        last_reply, FINAL,
+        "persist the action result rather than an exhaustion reply"
+    );
+}
+
+#[tokio::test]
+async fn grounded_exploration_uses_fallback_only_when_generation_is_unusable() {
+    let rt = MockLlmRuntime::new(vec![
+        MockResponse::tool_call(
+            "skill",
+            serde_json::json!({"action":"search","query":"missing one"}),
+        ),
+        MockResponse::tool_call(
+            "skill",
+            serde_json::json!({"action":"search","query":"missing two"}),
+        ),
+        MockResponse::tool_call(
+            "skill",
+            serde_json::json!({"action":"load","id":"ignored-guide"}),
+        ),
+        MockResponse::text("{}"),
+    ]);
+    let events = guide_turn(&rt).await;
+    assert_eq!(
+        rt.call_count(),
+        4,
+        "bounded final expression, no rewrite loop"
+    );
+    assert!(joined_content(&events)
+        .ends_with(super::guard::guide_exploration_reply("搜索小米设备的协议")));
+    assert!(!joined_content(&events).contains("{}"));
+}
+
+#[tokio::test]
+async fn guide_recovery_keeps_action_and_verification_available() {
+    let load = || {
+        MockResponse::tool_call(
+            "skill",
+            serde_json::json!({"action":"load","id":"connector-management"}),
+        )
+    };
+    let rt = MockLlmRuntime::new(vec![
+        load(),
+        load(),
+        load(),
+        MockResponse::tool_call(
+            "shell",
+            serde_json::json!({"command":"neomind push create --name ops-webhook --type webhook --config '{}'"}),
+        ),
+        MockResponse::tool_call("shell", serde_json::json!({"command":"neomind push list"})),
+        MockResponse::text("已创建并确认推送目标。"),
+    ]);
+    let (events, commands, reply) = mixed_progress_request(
+        &rt,
+        "创建 webhook 推送目标 ops-webhook，URL 已提供，并验证列表",
+    )
+    .await;
+    assert_eq!(rt.call_count(), 6);
+    assert!(commands.iter().any(|s| s.contains("push create")));
+    assert!(commands.iter().any(|s| s.contains("push list")));
+    assert_eq!(reply, "已创建并确认推送目标。");
+    assert!(!joined_content(&events).contains("设备型号"));
+    let requests = rt.captured_messages();
+    assert!(requests[3]
+        .to_string()
+        .contains("Guide lookup repeated without new evidence"));
+    assert!(!requests[3].to_string().contains("Known platform workflow"), "{}", requests[3]);
+}
+
+#[tokio::test]
+async fn guide_recovery_cannot_execute_an_unadvertised_skill_again() {
+    let load = || {
+        MockResponse::tool_call(
+            "skill",
+            serde_json::json!({"action":"load","id":"connector-management"}),
+        )
+    };
+    let rt = MockLlmRuntime::new(vec![
+        load(),
+        load(),
+        load(),
+        load(),
+        MockResponse::text("这次尚未完成操作。"),
+    ]);
+    let events = guide_turn(&rt).await;
+    assert_eq!(
+        rt.call_count(),
+        5,
+        "one recovery request and one final expression only"
+    );
+    assert!(events
+        .iter()
+        .any(|e| matches!(e,AgentEvent::ToolCallEnd{tool,success:false,..} if tool=="skill")));
+    assert!(joined_content(&events).contains("尚未完成"));
 }

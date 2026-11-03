@@ -17,6 +17,8 @@ anti_triggers:
 
 # Connector Management & MQTT Configuration
 
+Connectors receive data from external MQTT brokers into NeoMind. `connector create` supports `mqtt` only. A webhook/MQTT data push target forwards data OUT of NeoMind: use `data-push-management` and `neomind push`. Message/alert notification channels use `message-management` and `neomind message`. Choose by the requested purpose and direction, not the transport word alone.
+
 ## Command Cheat-Sheet (run these via `shell`)
 
 Always RUN the command yourself and report the real output.
@@ -58,7 +60,7 @@ neomind connector create --name <NAME> --host <HOST> [--port <PORT>] [options]
 | `--name` | Yes | — | Connector display name |
 | `--host` | Yes | — | Broker hostname or IP |
 | `--port` | No | 1883 | Broker port |
-| `--connector-type` | No | mqtt | Connector type (mqtt, webhook, http) |
+| `--connector-type` | No | mqtt | Connector type (mqtt only) |
 | `--tls` | No | false | Enable TLS (flag, no value) |
 | `--username` | No | — | Auth username |
 | `--password` | No | — | Auth password |

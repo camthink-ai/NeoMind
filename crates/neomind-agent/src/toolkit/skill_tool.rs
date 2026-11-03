@@ -10,38 +10,6 @@ use super::ToolOutput;
 use crate::skills;
 use crate::skills::matcher::description_intent_phrases;
 
-/// Empty-search circuit breaker (production 2026-11-02: "搜索小米的设备协议"
-/// looped 30 rounds — every empty search returned the FULL skill list plus a
-/// "load one" hint, which invited another load+search cycle). The FIRST
-/// empty search keeps the discover-the-catalog fallback; a second empty
-/// search for the SAME normalized query (within the window) returns a
-/// dead-end message that forbids further searching. A successful match
-/// clears the query's strike.
-static EMPTY_SEARCH_STRIKES: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::HashMap<String, (u32, std::time::Instant)>>,
-> = std::sync::OnceLock::new();
-
-const EMPTY_SEARCH_STRIKE_LIMIT: u32 = 2;
-const EMPTY_SEARCH_WINDOW: std::time::Duration = std::time::Duration::from_secs(600);
-
-fn empty_search_strikes(
-) -> &'static std::sync::Mutex<std::collections::HashMap<String, (u32, std::time::Instant)>> {
-    EMPTY_SEARCH_STRIKES.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
-}
-
-/// Normalize a search query for strike tracking: lowercase, unique sorted
-/// tokens — "小米 设备协议" and "设备协议 小米" are the same miss.
-fn normalize_query(query: &str) -> String {
-    let mut tokens: Vec<String> = query
-        .to_lowercase()
-        .split_whitespace()
-        .map(str::to_string)
-        .collect();
-    tokens.sort();
-    tokens.dedup();
-    tokens.join(" ")
-}
-
 /// Tool for managing operation guides (skills).
 ///
 /// Skills are reusable step-by-step guides built from available tools.
@@ -301,60 +269,20 @@ When to load: ONLY complex/unfamiliar workflows (multi-entity, unit conversion, 
                 }
 
                 if results.is_empty() {
-                    // Circuit breaker: strike bookkeeping for this query.
-                    let key = normalize_query(query);
-                    let now = std::time::Instant::now();
-                    let mut strikes = empty_search_strikes()
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner());
-                    let entry = strikes
-                        .entry(key)
-                        .and_modify(|(n, at)| {
-                            if at.elapsed() > EMPTY_SEARCH_WINDOW {
-                                *n = 1;
-                                *at = now;
-                            } else {
-                                *n += 1;
-                                *at = now;
-                            }
-                        })
-                        .or_insert((1, now));
-                    let strike = entry.0;
-                    drop(strikes);
-                    if strike >= EMPTY_SEARCH_STRIKE_LIMIT {
-                        // Dead end: the catalog-fallback below is exactly what
-                        // fuels a load→search→load loop on a topic the
-                        // knowledge base simply does not cover.
-                        return Ok(ToolOutput::success(serde_json::json!({
-                            "message": format!(
-                                "No local skill content matches this query (checked {} times). \
-                                 The knowledge base does NOT cover this topic. Do NOT search or \
-                                 load skills again for it — tell the user plainly that no local \
-                                 guide exists, and (if useful) that general web search is not \
-                                 available. Do not invent content.",
-                                strike
-                            )
-                        })));
-                    }
-                    // First miss: keep the discover-the-catalog fallback.
-                    let all: Vec<String> = registry_guard.list()
-                        .iter()
-                        .map(|s| format!("- {}: {}", s.metadata.id, s.metadata.name))
-                        .collect();
+                    // A successful search may have no matches. Do not return
+                    // unrelated guides as apparent evidence, or keep process-
+                    // global retry state: exploration budgets belong to the
+                    // calling turn, not this shared tool.
                     Ok(ToolOutput::success(serde_json::json!({
-                        "message": "No specific match. All available skills:",
-                        "skills": all,
-                        "hint": "Use action='load' with one of these IDs to get the full guide."
+                        "found": false,
+                        "scope": "workflow_guides",
+                        "count": 0,
+                        "matches": [],
+                        "skills": [],
+                        "message": "No matching workflow guide was found.",
+                        "hint": "Use another available capability if it can answer the request; otherwise explain what is missing or ask for the required details."
                     })))
                 } else {
-                    // Successful match — clear the strike for this query.
-                    {
-                        let key = normalize_query(query);
-                        let mut strikes = empty_search_strikes()
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner());
-                        strikes.remove(&key);
-                    }
                     results.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
                     let skills: Vec<serde_json::Value> = results.iter()
                         .take(5)
@@ -365,6 +293,9 @@ When to load: ONLY complex/unfamiliar workflows (multi-entity, unit conversion, 
                         }))
                         .collect();
                     Ok(ToolOutput::success(serde_json::json!({
+                        "found": true,
+                        "scope": "workflow_guides",
+                        "count": skills.len(),
                         "matches": skills,
                         "hint": "Use action='load' and 'id' to get the full guide."
                     })))
@@ -722,6 +653,54 @@ mod tests {
     fn builtin_tool() -> SkillTool {
         let registry = SkillRegistry::load_all(None);
         SkillTool::new(Arc::new(RwLock::new(registry)))
+    }
+
+    #[tokio::test]
+    async fn empty_search_is_stateless_and_does_not_offer_unrelated_guides() {
+        let first = builtin_tool();
+        let second = builtin_tool();
+        let args = serde_json::json!({"action": "search", "query": "zzz-not-a-skill"});
+        let initial = first.execute(args.clone()).await.unwrap();
+        let other_caller = second.execute(args.clone()).await.unwrap();
+        let repeated = first.execute(args).await.unwrap();
+
+        assert!(initial.success, "no matches is not an execution failure");
+        assert_eq!(initial.data["found"], false);
+        assert_eq!(initial.data["scope"], "workflow_guides");
+        assert_eq!(initial.data["count"], 0);
+        assert!(initial.data["matches"].as_array().unwrap().is_empty());
+        assert!(initial.data["skills"].as_array().unwrap().is_empty());
+        assert_eq!(
+            initial.data, other_caller.data,
+            "callers must not share strikes"
+        );
+        assert_eq!(
+            initial.data, repeated.data,
+            "retry guidance must not mutate globally"
+        );
+    }
+
+    #[tokio::test]
+    async fn matching_search_reports_found_and_preserves_loadable_matches() {
+        let tool = builtin_tool();
+        let out = tool
+            .execute(serde_json::json!({"action": "search", "query": "dashboard"}))
+            .await
+            .unwrap();
+
+        assert!(out.success);
+        assert_eq!(out.data["found"], true);
+        assert_eq!(out.data["scope"], "workflow_guides");
+        let matches = out.data["matches"].as_array().unwrap();
+        assert!(!matches.is_empty());
+        assert_eq!(out.data["count"].as_u64().unwrap() as usize, matches.len());
+        for matched in matches {
+            let loaded = tool
+                .execute(serde_json::json!({"action": "load", "id": matched["id"]}))
+                .await
+                .unwrap();
+            assert!(loaded.success, "search matches must remain loadable");
+        }
     }
 
     #[tokio::test]

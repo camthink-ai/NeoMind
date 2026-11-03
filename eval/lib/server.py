@@ -744,4 +744,5 @@ async def _ws_chat_async(
         "thinking_stream": "".join(thinking_chunks),
         "error": error_msg,
         "server_events": server_msg_buffer,
+        "generation_complete": got_end,
     }
