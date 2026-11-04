@@ -873,7 +873,11 @@ async fn guide_recovery_keeps_action_and_verification_available() {
     assert!(requests[3]
         .to_string()
         .contains("Guide lookup repeated without new evidence"));
-    assert!(!requests[3].to_string().contains("Known platform workflow"), "{}", requests[3]);
+    assert!(
+        !requests[3].to_string().contains("Known platform workflow"),
+        "{}",
+        requests[3]
+    );
 }
 
 #[tokio::test]
@@ -901,4 +905,82 @@ async fn guide_recovery_cannot_execute_an_unadvertised_skill_again() {
         .iter()
         .any(|e| matches!(e,AgentEvent::ToolCallEnd{tool,success:false,..} if tool=="skill")));
     assert!(joined_content(&events).contains("尚未完成"));
+}
+
+async fn assert_recovery_keeps_reasoning_out_of_content(
+    script: Vec<MockResponse>,
+    persisted: bool,
+) {
+    const SECRET: &str = "PRIVATE_RECOVERY_REASONING";
+    let rt = MockLlmRuntime::new(script);
+    let (iface, state, registry) = harness(&rt);
+    let stream = crate::agent::streaming::process_stream_events_with_safeguards(
+        iface,
+        state.clone(),
+        registry,
+        "Report the result.",
+        super::StreamSafeguards::default(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let events = collect(stream).await;
+    let visible = joined_content(&events);
+    assert!(
+        !visible.contains(SECRET),
+        "reasoning leaked into Content: {visible}"
+    );
+    assert!(visible.contains("PUBLIC_RECOVERY_ANSWER"));
+    assert!(visible.contains("literal </think> remains"));
+    assert!(rt.call_count() >= 2, "must exercise recovery");
+    let guard = state.read().await;
+    if persisted {
+        assert_eq!(
+            guard.memory.last().unwrap().content.to_string(),
+            "PUBLIC_RECOVERY_ANSWER; literal </think> remains."
+        );
+    }
+    for msg in guard.memory.iter() {
+        assert!(!msg.content.to_string().contains(SECRET));
+    }
+}
+
+fn recovery_answer() -> MockResponse {
+    MockResponse::text("PUBLIC_RECOVERY_ANSWER; literal </think> remains.")
+        .with_thinking("PRIVATE_RECOVERY_REASONING")
+}
+
+#[tokio::test]
+async fn recovery_channels_empty_answer_does_not_expose_reasoning() {
+    assert_recovery_keeps_reasoning_out_of_content(
+        vec![MockResponse::text("[]"), recovery_answer()],
+        true,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn recovery_channels_incomplete_json_does_not_expose_reasoning() {
+    assert_recovery_keeps_reasoning_out_of_content(
+        vec![
+            MockResponse::text("[{\"name\":\"echo\",\"arguments\":{"),
+            recovery_answer(),
+        ],
+        true,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn recovery_channels_failed_followup_does_not_expose_reasoning() {
+    assert_recovery_keeps_reasoning_out_of_content(
+        vec![
+            MockResponse::tool_call("echo", serde_json::json!({"msg":"checked"})),
+            MockResponse::error("followup request failed"),
+            recovery_answer(),
+        ],
+        false,
+    )
+    .await;
 }

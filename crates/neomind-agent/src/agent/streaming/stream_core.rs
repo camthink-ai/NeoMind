@@ -824,7 +824,11 @@ pub async fn process_stream_events_with_safeguards(
                                             next_chunk_or_timeout(&mut pin, safeguards.max_stream_duration).await
                                         {
                                             match chunk {
-                                                Ok((text, _)) => { yield AgentEvent::content(text); }
+                                                Ok((text, is_thinking)) => {
+                                                    if !is_thinking {
+                                                        yield AgentEvent::content(text);
+                                                    }
+                                                }
                                                 Err(_) => break,
                                             }
                                         }
@@ -2434,9 +2438,11 @@ pub async fn process_stream_events_with_safeguards(
                                     next_chunk_or_timeout(&mut pin, safeguards.max_stream_duration).await
                                 {
                                     match chunk {
-                                        Ok((text, _)) => {
-                                            summary_content.push_str(&text);
-                                            yield AgentEvent::content(text);
+                                        Ok((text, is_thinking)) => {
+                                            if !is_thinking {
+                                                summary_content.push_str(&text);
+                                                yield AgentEvent::content(text);
+                                            }
                                         }
                                         Err(e) => {
                                             tracing::error!("Incomplete JSON summary stream error: {}", e);
@@ -2540,9 +2546,11 @@ pub async fn process_stream_events_with_safeguards(
                                         break;
                                     }
                                     match chunk {
-                                        Ok((text, _)) => {
-                                            retry_content.push_str(&text);
-                                            // Don't yield yet — check for tool calls first
+                                        Ok((text, is_thinking)) => {
+                                            if !is_thinking {
+                                                retry_content.push_str(&text);
+                                            }
+                                            // Don't yield yet — check for tool calls first.
                                         }
                                         Err(e) => {
                                             tracing::error!("Retry stream error: {}", e);
