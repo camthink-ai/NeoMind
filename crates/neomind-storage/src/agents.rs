@@ -19,10 +19,35 @@ const AGENT_EXECUTIONS_TABLE: TableDefinition<&str, &[u8]> =
     TableDefinition::new("agent_executions");
 const AGENT_MEMORY_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("agent_memory");
 
+/// Per-instance test hook state for deterministic RMW interleaving tests.
+/// Cloned stores share the hook (same Arc); separate stores are isolated.
+/// Only present in test builds; production builds compile it away.
+#[cfg(test)]
+pub type SharedTestHook = std::sync::Arc<std::sync::Mutex<TestHookState>>;
+
+#[cfg(test)]
+#[derive(PartialEq, Clone, Copy)]
+pub enum TestHookState {
+    Disarmed,
+    Armed,
+    Paused,
+}
+
+#[cfg(test)]
+impl Default for TestHookState {
+    fn default() -> Self {
+        TestHookState::Disarmed
+    }
+}
+
 /// AI Agent store for persisting autonomous agents.
 pub struct AgentStore {
     /// redb database
     db: Arc<Database>,
+    /// Per-instance deterministic-interleaving test hook (test builds only).
+    /// Arc-cloned stores share the hook; separate stores are isolated.
+    #[cfg(test)]
+    pub(crate) test_hook: SharedTestHook,
 }
 
 /// An AI Agent definition.
@@ -1031,12 +1056,36 @@ impl AgentStore {
         write_txn.open_table(AGENT_MEMORY_TABLE)?;
         write_txn.commit()?;
 
-        Ok(Arc::new(Self { db: Arc::new(db) }))
+        Ok(Arc::new(Self {
+            db: Arc::new(db),
+            #[cfg(test)]
+            test_hook: std::sync::Arc::new(std::sync::Mutex::new(crate::agents::TestHookState::Disarmed)),
+        }))
+    }
+
+    /// Test-only: park this call while it holds the write transaction,
+    /// enabling deterministic interleaving tests. No-op in production.
+    #[cfg(test)]
+    fn test_hook_point(&self) {
+        let mut guard = self.test_hook.lock().unwrap();
+        if *guard == crate::agents::TestHookState::Armed {
+            *guard = crate::agents::TestHookState::Paused;
+            // Wake any waiter that's looking for Paused.
+            // We use a spin-wait here (test-only, bounded by release()).
+            while *guard == crate::agents::TestHookState::Paused {
+                drop(guard);
+                std::thread::yield_now();
+                guard = self.test_hook.lock().unwrap();
+            }
+        }
+        *guard = crate::agents::TestHookState::Disarmed;
     }
 
     /// Save an agent to the store.
     pub async fn save_agent(&self, agent: &AiAgent) -> Result<(), Error> {
         let write_txn = self.db.begin_write()?;
+        #[cfg(test)]
+        self.test_hook_point();
         {
             let mut table = write_txn.open_table(AGENTS_TABLE)?;
 
@@ -1129,31 +1178,30 @@ impl AgentStore {
         status: AgentStatus,
         error_message: Option<String>,
     ) -> Result<(), Error> {
-        let read_txn = self.db.begin_read()?;
-        let table = read_txn.open_table(AGENTS_TABLE)?;
-
-        let agent = match table.get(id)? {
-            Some(bytes) => {
-                let mut ag: AiAgent = serde_json::from_slice(bytes.value())
+        // Atomic read-modify-write in ONE write transaction: a concurrent
+        // delete either commits first (row gone -> no re-create, same as the
+        // old no-op) or afterwards (removes the updated row). The previous
+        // two-transaction shape re-inserted a stale snapshot and resurrected
+        // deleted agents (2026-11-04 delete-vs-update race).
+        let write_txn = self.db.begin_write()?;
+        #[cfg(test)]
+        self.test_hook_point();
+        {
+            let mut table = write_txn.open_table(AGENTS_TABLE)?;
+            let existing = match table.get(id)? {
+                Some(guard) => Some(guard.value().to_vec()),
+                None => None,
+            };
+            if let Some(bytes) = existing {
+                let mut ag: AiAgent = serde_json::from_slice(bytes.as_slice())
                     .map_err(|e| Error::Serialization(e.to_string()))?;
                 ag.status = status;
                 ag.error_message = error_message;
                 ag.updated_at = chrono::Utc::now().timestamp();
-                ag
+                let value =
+                    serde_json::to_vec(&ag).map_err(|e| Error::Serialization(e.to_string()))?;
+                table.insert(id, value.as_slice())?;
             }
-            None => return Ok(()), // Agent doesn't exist
-        };
-        drop(table);
-        drop(read_txn);
-
-        let write_txn = self.db.begin_write()?;
-        {
-            let mut table = write_txn.open_table(AGENTS_TABLE)?;
-
-            let value =
-                serde_json::to_vec(&agent).map_err(|e| Error::Serialization(e.to_string()))?;
-
-            table.insert(id, value.as_slice())?;
         }
         write_txn.commit()?;
         Ok(())
@@ -1165,30 +1213,25 @@ impl AgentStore {
         id: &str,
         consecutive_failures: u32,
     ) -> Result<(), Error> {
-        let read_txn = self.db.begin_read()?;
-        let table = read_txn.open_table(AGENTS_TABLE)?;
-
-        let agent = match table.get(id)? {
-            Some(bytes) => {
-                let mut ag: AiAgent = serde_json::from_slice(bytes.value())
+        // Atomic RMW, one write transaction (see update_agent_status).
+        let write_txn = self.db.begin_write()?;
+        #[cfg(test)]
+        self.test_hook_point();
+        {
+            let mut table = write_txn.open_table(AGENTS_TABLE)?;
+            let existing = match table.get(id)? {
+                Some(guard) => Some(guard.value().to_vec()),
+                None => None,
+            };
+            if let Some(bytes) = existing {
+                let mut ag: AiAgent = serde_json::from_slice(bytes.as_slice())
                     .map_err(|e| Error::Serialization(e.to_string()))?;
                 ag.consecutive_failures = consecutive_failures;
                 ag.updated_at = chrono::Utc::now().timestamp();
-                ag
+                let value =
+                    serde_json::to_vec(&ag).map_err(|e| Error::Serialization(e.to_string()))?;
+                table.insert(id, value.as_slice())?;
             }
-            None => return Ok(()), // Agent doesn't exist
-        };
-        drop(table);
-        drop(read_txn);
-
-        let write_txn = self.db.begin_write()?;
-        {
-            let mut table = write_txn.open_table(AGENTS_TABLE)?;
-
-            let value =
-                serde_json::to_vec(&agent).map_err(|e| Error::Serialization(e.to_string()))?;
-
-            table.insert(id, value.as_slice())?;
         }
         write_txn.commit()?;
         Ok(())
@@ -1200,30 +1243,25 @@ impl AgentStore {
         id: &str,
         parsed_intent: Option<ParsedIntent>,
     ) -> Result<(), Error> {
-        let read_txn = self.db.begin_read()?;
-        let table = read_txn.open_table(AGENTS_TABLE)?;
-
-        let agent = match table.get(id)? {
-            Some(bytes) => {
-                let mut ag: AiAgent = serde_json::from_slice(bytes.value())
+        // Atomic RMW, one write transaction (see update_agent_status).
+        let write_txn = self.db.begin_write()?;
+        #[cfg(test)]
+        self.test_hook_point();
+        {
+            let mut table = write_txn.open_table(AGENTS_TABLE)?;
+            let existing = match table.get(id)? {
+                Some(guard) => Some(guard.value().to_vec()),
+                None => None,
+            };
+            if let Some(bytes) = existing {
+                let mut ag: AiAgent = serde_json::from_slice(bytes.as_slice())
                     .map_err(|e| Error::Serialization(e.to_string()))?;
                 ag.parsed_intent = parsed_intent;
                 ag.updated_at = chrono::Utc::now().timestamp();
-                ag
+                let value =
+                    serde_json::to_vec(&ag).map_err(|e| Error::Serialization(e.to_string()))?;
+                table.insert(id, value.as_slice())?;
             }
-            None => return Ok(()), // Agent doesn't exist
-        };
-        drop(table);
-        drop(read_txn);
-
-        let write_txn = self.db.begin_write()?;
-        {
-            let mut table = write_txn.open_table(AGENTS_TABLE)?;
-
-            let value =
-                serde_json::to_vec(&agent).map_err(|e| Error::Serialization(e.to_string()))?;
-
-            table.insert(id, value.as_slice())?;
         }
         write_txn.commit()?;
         Ok(())
@@ -1232,40 +1270,33 @@ impl AgentStore {
     /// Update agent memory after execution.
     /// First reads the agent, then updates both tables in a single write transaction.
     pub async fn update_agent_memory(&self, id: &str, memory: AgentMemory) -> Result<(), Error> {
-        // First, read the current agent data (before starting write transaction)
-        let agent = {
-            let read_txn = self.db.begin_read()?;
-            let table = read_txn.open_table(AGENTS_TABLE)?;
-            match table.get(id)? {
-                Some(bytes) => Some(
-                    serde_json::from_slice::<AiAgent>(bytes.value())
-                        .map_err(|e| Error::Serialization(e.to_string()))?,
-                ),
-                None => None,
-            }
-        };
-
-        // Now start write transaction and update both tables
+        // Atomic RMW over BOTH tables in one write transaction. If the agent
+        // row is gone (concurrent delete), neither the agent row nor an
+        // orphan memory row may be written — the old shape wrote the memory
+        // table unconditionally and re-inserted a stale agent snapshot.
+        let memory_value =
+            serde_json::to_vec(&memory).map_err(|e| Error::Serialization(e.to_string()))?;
         let write_txn = self.db.begin_write()?;
-
-        // Update memory in dedicated table
+        #[cfg(test)]
+        self.test_hook_point();
         {
-            let memory_value =
-                serde_json::to_vec(&memory).map_err(|e| Error::Serialization(e.to_string()))?;
-            let mut memory_table = write_txn.open_table(AGENT_MEMORY_TABLE)?;
-            memory_table.insert(id, memory_value.as_slice())?;
-        }
-
-        // Also update the agent record
-        if let Some(mut ag) = agent {
-            ag.memory = memory;
-            ag.updated_at = chrono::Utc::now().timestamp();
-
-            let value = serde_json::to_vec(&ag).map_err(|e| Error::Serialization(e.to_string()))?;
             let mut agent_table = write_txn.open_table(AGENTS_TABLE)?;
-            agent_table.insert(id, value.as_slice())?;
+            let mut memory_table = write_txn.open_table(AGENT_MEMORY_TABLE)?;
+            let existing_agent = match agent_table.get(id)? {
+                Some(guard) => Some(guard.value().to_vec()),
+                None => None,
+            };
+            if let Some(bytes) = existing_agent {
+                memory_table.insert(id, memory_value.as_slice())?;
+                let mut ag: AiAgent = serde_json::from_slice(bytes.as_slice())
+                    .map_err(|e| Error::Serialization(e.to_string()))?;
+                ag.memory = memory;
+                ag.updated_at = chrono::Utc::now().timestamp();
+                let value =
+                    serde_json::to_vec(&ag).map_err(|e| Error::Serialization(e.to_string()))?;
+                agent_table.insert(id, value.as_slice())?;
+            }
         }
-
         write_txn.commit()?;
         Ok(())
     }
@@ -1279,29 +1310,30 @@ impl AgentStore {
         success: bool,
         duration_ms: u64,
     ) -> Result<(), Error> {
-        let read_txn = self.db.begin_read()?;
-
-        // Read agent and latest memory in the same transaction
-        let table = read_txn.open_table(AGENTS_TABLE)?;
-        let memory_table = read_txn.open_table(AGENT_MEMORY_TABLE)?;
-
-        let agent = match table.get(id)? {
-            Some(bytes) => {
-                let mut ag: AiAgent = serde_json::from_slice(bytes.value())
+        // Atomic RMW, one write transaction (see update_agent_status): reads
+        // the agent row AND the latest memory inside the same transaction, so
+        // neither a concurrent delete can be overwritten nor updates lost.
+        let write_txn = self.db.begin_write()?;
+        #[cfg(test)]
+        self.test_hook_point();
+        {
+            let mut table = write_txn.open_table(AGENTS_TABLE)?;
+            let memory_table = write_txn.open_table(AGENT_MEMORY_TABLE)?;
+            let existing = match table.get(id)? {
+                Some(guard) => Some(guard.value().to_vec()),
+                None => None,
+            };
+            if let Some(bytes) = existing {
+                let mut ag: AiAgent = serde_json::from_slice(bytes.as_slice())
                     .map_err(|e| Error::Serialization(e.to_string()))?;
 
-                // Try to get latest memory from memory table
-                let latest_mem = match memory_table.get(id)? {
-                    Some(mem_bytes) => Some(
-                        serde_json::from_slice::<AgentMemory>(mem_bytes.value())
-                            .map_err(|e| Error::Serialization(e.to_string()))?,
-                    ),
-                    None => None,
-                };
-
-                // Use latest memory if available
-                if let Some(ref mem) = latest_mem {
-                    ag.memory = mem.clone();
+                // Merge the latest memory from the dedicated table.
+                if let Some(mem_bytes) = memory_table
+                    .get(id)?
+                    .map(|g| g.value().to_vec())
+                {
+                    ag.memory = serde_json::from_slice::<AgentMemory>(mem_bytes.as_slice())
+                        .map_err(|e| Error::Serialization(e.to_string()))?;
                 }
 
                 // Update stats
@@ -1318,24 +1350,12 @@ impl AgentStore {
                 ag.last_execution_at = Some(chrono::Utc::now().timestamp());
                 ag.updated_at = chrono::Utc::now().timestamp();
 
-                ag
+                // Only write to AGENTS_TABLE, not to AGENT_MEMORY_TABLE
+                // (update_agent_memory handles writing to AGENT_MEMORY_TABLE)
+                let value =
+                    serde_json::to_vec(&ag).map_err(|e| Error::Serialization(e.to_string()))?;
+                table.insert(id, value.as_slice())?;
             }
-            None => return Ok(()),
-        };
-        drop(table);
-        drop(memory_table);
-        drop(read_txn);
-
-        // Only write to AGENTS_TABLE, not to AGENT_MEMORY_TABLE
-        // (update_agent_memory handles writing to AGENT_MEMORY_TABLE)
-        let write_txn = self.db.begin_write()?;
-        {
-            let mut table = write_txn.open_table(AGENTS_TABLE)?;
-
-            let value =
-                serde_json::to_vec(&agent).map_err(|e| Error::Serialization(e.to_string()))?;
-
-            table.insert(id, value.as_slice())?;
         }
         write_txn.commit()?;
         Ok(())
@@ -1344,6 +1364,8 @@ impl AgentStore {
     /// Delete an agent by ID.
     pub async fn delete_agent(&self, id: &str) -> Result<(), Error> {
         let write_txn = self.db.begin_write()?;
+        #[cfg(test)]
+        self.test_hook_point();
         {
             let mut table = write_txn.open_table(AGENTS_TABLE)?;
             table.remove(id)?;
@@ -1359,6 +1381,8 @@ impl AgentStore {
     /// Save an execution record.
     pub async fn save_execution(&self, execution: &AgentExecutionRecord) -> Result<(), Error> {
         let write_txn = self.db.begin_write()?;
+        #[cfg(test)]
+        self.test_hook_point();
         {
             let mut table = write_txn.open_table(AGENT_EXECUTIONS_TABLE)?;
 
@@ -1380,6 +1404,8 @@ impl AgentStore {
         _conversation_turn: Option<&serde_json::Value>,
     ) -> Result<(), Error> {
         let write_txn = self.db.begin_write()?;
+        #[cfg(test)]
+        self.test_hook_point();
 
         // Save execution record
         {
@@ -1536,6 +1562,8 @@ impl AgentStore {
         }
 
         let write_txn = self.db.begin_write()?;
+        #[cfg(test)]
+        self.test_hook_point();
         {
             let mut table = write_txn.open_table(AGENT_EXECUTIONS_TABLE)?;
             for key in &to_remove {
@@ -1652,6 +1680,8 @@ impl AgentStore {
 
         // Save the updated agent
         let write_txn = self.db.begin_write()?;
+        #[cfg(test)]
+        self.test_hook_point();
         {
             let mut table = write_txn.open_table(AGENTS_TABLE)?;
             let value =
@@ -1704,6 +1734,8 @@ impl AgentStore {
 
             // Save the updated agent
             let write_txn = self.db.begin_write()?;
+        #[cfg(test)]
+        self.test_hook_point();
             {
                 let mut table = write_txn.open_table(AGENTS_TABLE)?;
                 let value =
@@ -1731,6 +1763,8 @@ impl AgentStore {
 
         // Save the updated agent
         let write_txn = self.db.begin_write()?;
+        #[cfg(test)]
+        self.test_hook_point();
         {
             let mut table = write_txn.open_table(AGENTS_TABLE)?;
             let value =
@@ -2145,6 +2179,454 @@ mod tests {
         assert_eq!(retrieved.stats.total_executions, 2);
         assert_eq!(retrieved.stats.failed_executions, 1);
         assert_eq!(retrieved.stats.avg_duration_ms, 150); // (200 + 100) / 2
+    }
+    // ===== Atomic-RMW regression tests (agent resurrection race, 2026-11-04) =====
+    // Root cause under test: update_agent_* did read-(drop)-then-write in two
+    // transactions; a concurrent delete_agent committing between the read and
+    // the blind re-insert resurrected the row (T4 552 trial
+    // full--agent-full-lifecycle--en--r1; repro scripts: /tmp/agent-repro/).
+
+    fn race_agent(id: &str) -> AiAgent {
+        AiAgent {
+            id: id.to_string(),
+            name: format!("race-{id}"),
+            description: None,
+            user_prompt: "check".to_string(),
+            llm_backend_id: None,
+            parsed_intent: None,
+            resources: vec![],
+            schedule: AgentSchedule {
+                schedule_type: ScheduleType::Interval,
+                cron_expression: None,
+                interval_seconds: Some(600),
+                event_filter: None,
+                timezone: None,
+            },
+            status: AgentStatus::Active,
+            priority: 128,
+            created_at: 1,
+            updated_at: 1,
+            last_execution_at: None,
+            stats: AgentStats::default(),
+            memory: AgentMemory::default(),
+            conversation_history: vec![],
+            user_messages: Default::default(),
+            conversation_summary: None,
+            context_window_size: 10,
+            enable_tool_chaining: false,
+            max_chain_depth: 3,
+            tool_config: None,
+            execution_mode: ExecutionMode::Focused,
+            error_message: None,
+            system_prompt: None,
+            max_retries: 0,
+            consecutive_failures: 0,
+            output_schema: None,
+            operator_config: None,
+            memory_mode: None,
+            notify: None,
+            max_tokens_per_run: None,
+        }
+    }
+
+    fn memory_row_present(store: &AgentStore, id: &str) -> bool {
+        let txn = store.db.begin_read().unwrap();
+        let table = txn.open_table(AGENT_MEMORY_TABLE).unwrap();
+        table.get(id).unwrap().is_some()
+    }
+
+    /// Arm this store's hook (per-instance, isolated from other stores).
+    fn arm_hook(store: &AgentStore) {
+        *store.test_hook.lock().unwrap() = crate::agents::TestHookState::Armed;
+    }
+
+    /// Block until the hook on this store has paused (deterministic sync).
+    fn wait_hook_paused(store: &AgentStore) {
+        loop {
+            if *store.test_hook.lock().unwrap() == crate::agents::TestHookState::Paused {
+                return;
+            }
+            std::thread::yield_now();
+        }
+    }
+
+    /// Release the paused hook on this store.
+    fn release_hook(store: &AgentStore) {
+        *store.test_hook.lock().unwrap() = crate::agents::TestHookState::Disarmed;
+    }
+
+    /// Barrier-started delete-vs-update race on the SAME id, N iterations.
+    /// Synchronization is the barrier plus redb's own write-lock contention —
+    /// no sleeps. Any resurrection is a failure.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn agent_rmw_race_delete_vs_status_no_resurrection() {
+        let store = test_store();
+        let mut resurrections = 0u32;
+        for i in 0..300 {
+            let id = format!("race-status-{i}");
+            store.save_agent(&race_agent(&id)).await.unwrap();
+            let (sa, sb) = (store.clone(), store.clone());
+            let (ida, idb) = (id.clone(), id.clone());
+            let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+            let (b1, b2) = (barrier.clone(), barrier.clone());
+            let ta = tokio::spawn(async move {
+                b1.wait().await;
+                sa.update_agent_status(&ida, AgentStatus::Executing, None)
+                    .await
+                    .unwrap();
+            });
+            let tb = tokio::spawn(async move {
+                b2.wait().await;
+                sb.delete_agent(&idb).await.unwrap();
+            });
+            let _ = tokio::join!(ta, tb);
+            if store.get_agent(&id).await.unwrap().is_some() {
+                resurrections += 1;
+            }
+        }
+        assert_eq!(
+            resurrections, 0,
+            "delete must be durable: {resurrections}/300 delete-vs-status races resurrected"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn agent_rmw_race_delete_vs_stats_no_resurrection() {
+        let store = test_store();
+        let mut resurrections = 0u32;
+        for i in 0..200 {
+            let id = format!("race-stats-{i}");
+            store.save_agent(&race_agent(&id)).await.unwrap();
+            let (sa, sb) = (store.clone(), store.clone());
+            let (ida, idb) = (id.clone(), id.clone());
+            let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+            let (b1, b2) = (barrier.clone(), barrier.clone());
+            let ta = tokio::spawn(async move {
+                b1.wait().await;
+                sa.update_agent_stats(&ida, true, 7).await.unwrap();
+            });
+            let tb = tokio::spawn(async move {
+                b2.wait().await;
+                sb.delete_agent(&idb).await.unwrap();
+            });
+            let _ = tokio::join!(ta, tb);
+            if store.get_agent(&id).await.unwrap().is_some() {
+                resurrections += 1;
+            }
+        }
+        assert_eq!(
+            resurrections, 0,
+            "{resurrections}/200 delete-vs-stats races resurrected"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn agent_rmw_race_delete_vs_memory_no_resurrection_and_no_orphan() {
+        let store = test_store();
+        let mut resurrections = 0u32;
+        let mut orphans = 0u32;
+        for i in 0..200 {
+            let id = format!("race-mem-{i}");
+            store.save_agent(&race_agent(&id)).await.unwrap();
+            let mem = AgentMemory {
+                updated_at: 42,
+                ..AgentMemory::default()
+            };
+            let (sa, sb) = (store.clone(), store.clone());
+            let (ida, idb) = (id.clone(), id.clone());
+            let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+            let (b1, b2) = (barrier.clone(), barrier.clone());
+            let ta = tokio::spawn(async move {
+                b1.wait().await;
+                sa.update_agent_memory(&ida, mem).await.unwrap();
+            });
+            let tb = tokio::spawn(async move {
+                b2.wait().await;
+                sb.delete_agent(&idb).await.unwrap();
+            });
+            let _ = tokio::join!(ta, tb);
+            let exists = store.get_agent(&id).await.unwrap().is_some();
+            if exists {
+                resurrections += 1;
+            }
+            // Whatever the interleaving, a deleted agent must not leave an
+            // orphan memory row behind either (related-table consistency).
+            if !exists && memory_row_present(&store, &id) {
+                orphans += 1;
+            }
+        }
+        assert_eq!(
+            resurrections, 0,
+            "{resurrections}/200 delete-vs-memory races resurrected"
+        );
+        assert_eq!(
+            orphans, 0,
+            "{orphans}/200 delete-vs-memory races left an orphan memory row"
+        );
+    }
+
+    /// Documents the exact mechanism at the primitive level (always green;
+    /// uses raw table writes, not the fixed functions): a stale-snapshot
+    /// re-insert after a completed delete resurrects the row. This is the
+    /// shape the old update_agent_* functions had.
+    #[tokio::test]
+    async fn agent_rmw_mechanism_documented_stale_reinsert_resurrects() {
+        let store = test_store();
+        let id = "mech-1";
+        store.save_agent(&race_agent(id)).await.unwrap();
+
+        // Old algorithm, step 1: read a snapshot (row exists).
+        let stale = {
+            let txn = store.db.begin_read().unwrap();
+            let table = txn.open_table(AGENTS_TABLE).unwrap();
+            let mut ag: AiAgent =
+                serde_json::from_slice(table.get(id).unwrap().unwrap().value()).unwrap();
+            ag.status = AgentStatus::Executing;
+            serde_json::to_vec(&ag).unwrap()
+        };
+
+        // Concurrent delete completes fully.
+        store.delete_agent(id).await.unwrap();
+        assert!(store.get_agent(id).await.unwrap().is_none());
+
+        // Old algorithm, step 2: blind re-insert of the stale snapshot.
+        let txn = store.db.begin_write().unwrap();
+        {
+            let mut table = txn.open_table(AGENTS_TABLE).unwrap();
+            table.insert(id, stale.as_slice()).unwrap();
+        }
+        txn.commit().unwrap();
+
+        assert!(
+            store.get_agent(id).await.unwrap().is_some(),
+            "stale-snapshot re-insert resurrects — the fixed functions must never do this"
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_rmw_status_normal_and_missing() {
+        let store = test_store();
+        store.save_agent(&race_agent("s-1")).await.unwrap();
+        store
+            .update_agent_status("s-1", AgentStatus::Paused, Some("boom".into()))
+            .await
+            .unwrap();
+        let ag = store.get_agent("s-1").await.unwrap().unwrap();
+        assert_eq!(ag.status, AgentStatus::Paused);
+        assert_eq!(ag.error_message.as_deref(), Some("boom"));
+
+        // Missing record: no re-create.
+        store
+            .update_agent_status("ghost", AgentStatus::Active, None)
+            .await
+            .unwrap();
+        assert!(store.get_agent("ghost").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn agent_rmw_stats_normal_and_missing() {
+        let store = test_store();
+        store.save_agent(&race_agent("st-1")).await.unwrap();
+        for _ in 0..3 {
+            store.update_agent_stats("st-1", true, 10).await.unwrap();
+        }
+        let ag = store.get_agent("st-1").await.unwrap().unwrap();
+        assert_eq!(ag.stats.total_executions, 3);
+        assert_eq!(ag.stats.successful_executions, 3);
+        assert_eq!(ag.stats.last_duration_ms, Some(10));
+
+        store.update_agent_stats("ghost", true, 5).await.unwrap();
+        assert!(store.get_agent("ghost").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn agent_rmw_memory_normal_missing_and_consistency() {
+        let store = test_store();
+        store.save_agent(&race_agent("m-1")).await.unwrap();
+        let mem = AgentMemory {
+            updated_at: 42,
+            ..AgentMemory::default()
+        };
+        store.update_agent_memory("m-1", mem).await.unwrap();
+        assert_eq!(
+            store.get_agent("m-1").await.unwrap().unwrap().memory.updated_at,
+            42
+        );
+        assert!(memory_row_present(&store, "m-1"));
+
+        // Missing record: neither the agent row nor an orphan memory row may
+        // be created.
+        store
+            .update_agent_memory("ghost", AgentMemory::default())
+            .await
+            .unwrap();
+        assert!(store.get_agent("ghost").await.unwrap().is_none());
+        assert!(!memory_row_present(&store, "ghost"));
+
+        // Deleted record: the memory row is gone with the agent, and a late
+        // memory update must not resurrect either table.
+        store.delete_agent("m-1").await.unwrap();
+        assert!(!memory_row_present(&store, "m-1"));
+        store
+            .update_agent_memory("m-1", AgentMemory::default())
+            .await
+            .unwrap();
+        assert!(store.get_agent("m-1").await.unwrap().is_none());
+        assert!(!memory_row_present(&store, "m-1"));
+    }
+
+    /// Deterministic order 1 (status path): the REAL update function is
+    /// parked while it HOLDS the write transaction (rmw_test_hooks), the
+    /// REAL delete is started against it (queues on the write lock), then
+    /// the update is released. The delete must take effect afterwards.
+    /// No timing race: the interleaving is driven by the hook.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn agent_rmw_deterministic_update_holds_txn_then_delete_wins_status() {
+        let store = test_store();
+        store.save_agent(&race_agent("d-st")).await.unwrap();
+        arm_hook(&store);
+        let su = store.clone();
+        let up = tokio::spawn(async move {
+            su.update_agent_status("d-st", AgentStatus::Executing, None)
+                .await
+                .unwrap();
+        });
+        tokio::task::spawn_blocking({ let s = store.clone(); move || wait_hook_paused(&s) })
+            .await
+            .unwrap();
+        let sd = store.clone();
+        let del =
+            tokio::spawn(async move { sd.delete_agent("d-st").await.unwrap(); });
+        release_hook(&store);
+        up.await.unwrap();
+        del.await.unwrap();
+        assert!(
+            store.get_agent("d-st").await.unwrap().is_none(),
+            "delete queued behind the update transaction must still win"
+        );
+    }
+
+    /// Deterministic order 1 (memory path, with the related table): update
+    /// parked while holding the txn, delete queued behind it. Afterwards
+    /// neither the agent row nor the memory row may exist.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn agent_rmw_deterministic_update_holds_txn_then_delete_wins_memory() {
+        let store = test_store();
+        store.save_agent(&race_agent("d-mem")).await.unwrap();
+        arm_hook(&store);
+        let su = store.clone();
+        let up = tokio::spawn(async move {
+            su.update_agent_memory(
+                "d-mem",
+                AgentMemory {
+                    updated_at: 77,
+                    ..AgentMemory::default()
+                },
+            )
+            .await
+            .unwrap();
+        });
+        tokio::task::spawn_blocking({ let s = store.clone(); move || wait_hook_paused(&s) })
+            .await
+            .unwrap();
+        let sd = store.clone();
+        let del =
+            tokio::spawn(async move { sd.delete_agent("d-mem").await.unwrap(); });
+        release_hook(&store);
+        up.await.unwrap();
+        del.await.unwrap();
+        assert!(store.get_agent("d-mem").await.unwrap().is_none());
+        assert!(
+            !memory_row_present(&store, "d-mem"),
+            "related memory table must be empty after the delete wins"
+        );
+    }
+
+    /// Deterministic order 2: the delete has fully committed BEFORE any
+    /// update runs. None of the three update paths may re-create the agent
+    /// row or the related memory row.
+    #[tokio::test]
+    async fn agent_rmw_deterministic_delete_committed_first_no_recreate() {
+        let store = test_store();
+        store.save_agent(&race_agent("d-first")).await.unwrap();
+        store.delete_agent("d-first").await.unwrap();
+        assert!(store.get_agent("d-first").await.unwrap().is_none());
+
+        store
+            .update_agent_status("d-first", AgentStatus::Executing, None)
+            .await
+            .unwrap();
+        store.update_agent_stats("d-first", true, 5).await.unwrap();
+        store
+            .update_agent_memory(
+                "d-first",
+                AgentMemory {
+                    updated_at: 99,
+                    ..AgentMemory::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            store.get_agent("d-first").await.unwrap().is_none(),
+            "no update path may re-create the agent row after a committed delete"
+        );
+        assert!(
+            !memory_row_present(&store, "d-first"),
+            "no update path may re-create the related memory row"
+        );
+    }
+
+    /// Concurrent updates across the three paths must not lose each other's
+    /// fields (each atomic RMW applies against the latest committed row).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn agent_rmw_concurrent_updates_no_field_loss() {
+        let store = test_store();
+        store.save_agent(&race_agent("c-1")).await.unwrap();
+        let mut handles = vec![];
+        for i in 0..10u64 {
+            let s = store.clone();
+            handles.push(tokio::spawn(async move {
+                s.update_agent_stats("c-1", i % 2 == 0, i + 1).await.unwrap();
+            }));
+        }
+        for _ in 0..5 {
+            let s = store.clone();
+            handles.push(tokio::spawn(async move {
+                s.update_agent_status("c-1", AgentStatus::Paused, None)
+                    .await
+                    .unwrap();
+            }));
+        }
+        for at in [101i64, 102, 103] {
+            let s = store.clone();
+            handles.push(tokio::spawn(async move {
+                s.update_agent_memory(
+                    "c-1",
+                    AgentMemory {
+                        updated_at: at,
+                        ..AgentMemory::default()
+                    },
+                )
+                .await
+                .unwrap();
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+        let ag = store.get_agent("c-1").await.unwrap().unwrap();
+        assert_eq!(ag.stats.total_executions, 10, "no stats update may be lost");
+        assert_eq!(ag.stats.successful_executions, 5);
+        assert_eq!(ag.status, AgentStatus::Paused);
+        // Concurrent writers commit in arbitrary order; the guarantee is that
+        // exactly one of the written values survives (no lost/merged fields).
+        assert!(
+            [101i64, 102, 103].contains(&ag.memory.updated_at),
+            "memory must hold exactly one of the written values, got {}",
+            ag.memory.updated_at
+        );
     }
 }
 
@@ -2581,4 +3063,6 @@ mod event_filter_tests {
             "a single event satisfying every entry must fire"
         );
     }
+
 }
+
