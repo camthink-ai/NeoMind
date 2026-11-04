@@ -485,6 +485,40 @@ pub async fn update_rule_handler(
             UPDATE_FIELDS.join(", ")
         )));
     }
+    // Metadata keys only take effect on the full-definition path (with
+    // trigger/condition/actions, where the whole body is deserialized into
+    // CompiledRule and tags/cooldown/for_duration are applied). In a partial
+    // update they would be accepted-but-ignored — recreating the silent
+    // no-op-success defect — so reject them there instead. On the full path,
+    // id/state/created_at/updated_at/dsl_preview remain server-authoritative
+    // (overridden from the stored rule / regenerate) by design.
+    const METADATA_KEYS: &[&str] = &[
+        "id", "tags", "cooldown", "for_duration", "state", "dsl_preview", "created_at",
+        "updated_at",
+    ];
+    let has_full_definition = obj
+        .keys()
+        .any(|k| matches!(k.as_str(), "condition" | "trigger" | "actions"));
+    if !has_full_definition {
+        let misused: Vec<&str> = obj
+            .keys()
+            .map(|k| k.as_str())
+            .filter(|k| METADATA_KEYS.contains(k))
+            .collect();
+        if !misused.is_empty() {
+            return Err(ErrorResponse::bad_request(format!(
+                "Fields {} are only applied in full-definition updates (with trigger/condition/actions); \
+                 in a partial update they would be silently ignored, so the request was NOT applied.",
+                misused.join(", ")
+            ))
+            .with_hint(
+                "Send the full rule definition (trigger/condition/actions, plus optional \
+                 tags/cooldown/for_duration) to change those fields; partial updates accept only \
+                 name/description/enabled/source."
+                    .to_string(),
+            ));
+        }
+    }
     // Type checks for the scalar partial fields: a wrong-typed field must be
     // rejected, not silently treated as absent.
     if let Some(v) = obj.get("name") {
@@ -561,6 +595,30 @@ pub async fn update_rule_handler(
 
         // Finalize: auto-generate dsl_preview, extract trigger sources
         rule.finalize();
+
+        // changed covers ALL writable fields on this path: compare the new
+        // definition against the stored one with volatile keys (id, runtime
+        // state, timestamps) stripped. An identical full body is a legal
+        // idempotent update: report changed=false and skip the rewrite.
+        let strip_volatile = |mut v: serde_json::Value| {
+            if let Some(map) = v.as_object_mut() {
+                for key in ["id", "state", "created_at", "updated_at"] {
+                    map.remove(key);
+                }
+            }
+            v
+        };
+        if let Some(ref old) = existing {
+            if strip_volatile(serde_json::to_value(&rule).unwrap_or_default())
+                == strip_volatile(serde_json::to_value(old).unwrap_or_default())
+            {
+                return ok(json!({
+                    "rule": RuleDetailDto::from(old),
+                    "updated": true,
+                    "changed": false,
+                }));
+            }
+        }
 
         // Validate cron expression for Schedule triggers
         validate_rule_cron(&rule)?;

@@ -240,10 +240,11 @@ mod tests {
         assert_eq!(after.updated_at, before.updated_at);
     }
 
-    // A frontend-style PUT carrying CompiledRule metadata keys (tags/cooldown)
-    // must not trip the unknown-field rejection.
+    // Metadata keys (tags/cooldown/…) in a PARTIAL body must be rejected:
+    // they would be accepted-but-ignored, recreating the silent no-op
+    // success defect under a different shape.
     #[tokio::test]
-    async fn test_update_rule_accepts_compiled_rule_metadata_keys() {
+    async fn test_update_rule_rejects_metadata_keys_without_full_definition() {
         let state = create_test_server_state().await;
         let id = seed_sensor_rule(&state).await;
         let req = json!({
@@ -254,7 +255,78 @@ mod tests {
         });
         let result =
             update_rule_handler(State(state), Path(id.to_string()), Json(req)).await;
-        assert!(result.is_ok(), "metadata passthrough keys must be accepted");
+        assert!(
+            result.is_err(),
+            "metadata keys without a full definition must be rejected"
+        );
+        let err = result.unwrap_err();
+        assert_eq!(err.status, axum::http::StatusCode::BAD_REQUEST);
+        assert!(err.message.contains("tags"), "error must name the metadata fields");
+    }
+
+    // On the full-definition path, metadata keys must actually be APPLIED —
+    // whitelisting them is not enough. Also verifies the idempotent
+    // full-definition update reports changed=false without rewriting.
+    #[tokio::test]
+    async fn test_update_rule_full_definition_applies_metadata_and_idempotent() {
+        let state = create_test_server_state().await;
+        // Seed a schedule rule (no device references -> passes validation).
+        let rule: neomind_rules::CompiledRule = serde_json::from_value(json!({
+            "id": "11111111-2222-3333-4444-555555555555",
+            "name": "schedule-probe",
+            "enabled": true,
+            "trigger": {"trigger_type": "schedule", "cron": "*/5 * * * *"},
+            "actions": [{"type": "notify", "message": "tick", "severity": "info"}],
+            "cooldown": 60000
+        }))
+        .expect("valid CompiledRule");
+        let id = rule.id.clone();
+        state.automation.rule_engine.update_rule(rule).await.unwrap();
+
+        let req = json!({
+            "name": "schedule-probe",
+            "trigger": {"trigger_type": "schedule", "cron": "*/5 * * * *"},
+            "actions": [{"type": "notify", "message": "tick", "severity": "info"}],
+            "tags": ["prod"],
+            "cooldown": 120000
+        });
+        let result = update_rule_handler(
+            State(state.clone()),
+            Path(id.to_string()),
+            Json(req.clone()),
+        )
+        .await;
+        assert!(result.is_ok(), "full-definition update with metadata should succeed");
+        let body = result.unwrap().0.data.unwrap();
+        assert_eq!(body["changed"], true, "adding tags/cooldown is a real change");
+
+        let stored = state.automation.rule_engine.get_rule(&id).await.unwrap();
+        assert_eq!(stored.tags, vec!["prod".to_string()], "tags must be applied");
+        assert_eq!(
+            stored.cooldown.as_millis(),
+            120000,
+            "cooldown must be applied"
+        );
+
+        // Identical full body again: legal idempotent update, changed=false.
+        let again = update_rule_handler(State(state), Path(id.to_string()), Json(req)).await;
+        assert!(again.is_ok());
+        assert_eq!(again.unwrap().0.data.unwrap()["changed"], false);
+    }
+
+    // changed=false must hold for every writable partial field, not only name.
+    #[tokio::test]
+    async fn test_update_rule_idempotent_enabled_changed_false() {
+        let state = create_test_server_state().await;
+        let id = seed_sensor_rule(&state).await;
+        let result = update_rule_handler(
+            State(state),
+            Path(id.to_string()),
+            Json(json!({ "enabled": true })),
+        )
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().0.data.unwrap()["changed"], false);
     }
 
     // Positive control for the same contract: a recognized partial field must
