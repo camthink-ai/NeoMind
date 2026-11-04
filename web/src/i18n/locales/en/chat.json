@@ -196,7 +196,9 @@
     "clearDone": "Conversation history cleared",
     "clearFailed": "Clear failed",
     "clearConfirmTitle": "Clear conversation history?",
-    "clearConfirmDesc": "All messages in this session will be deleted. This cannot be undone."
+    "clearConfirmDesc": "All messages in this session will be deleted. This cannot be undone.",
+    "awaitingMeasurement": "Waiting for request context measurement",
+    "measuredHint": "Last measured model request; excludes accumulated execution output."
   },
   "loadEarlier": "Load earlier messages",
   "loadEarlierLoading": "Loading…",

@@ -252,6 +252,7 @@ route index (including not-yet-schematized endpoints): /api/docs/routes.json."
         crate::builtin_llm::handlers::upload_model_handler,
         crate::builtin_llm::handlers::delete_model_handler,
         crate::builtin_llm::handlers::restart_handler,
+        crate::builtin_llm::handlers::stop_handler,
         crate::builtin_llm::handlers::activate_handler,
         crate::builtin_llm::handlers::runtime_status_handler,
         crate::builtin_llm::handlers::runtime_check_handler,

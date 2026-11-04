@@ -1,5 +1,5 @@
-use crate::ApiClient;
 use crate::types::CliResponse;
+use crate::ApiClient;
 use anyhow::Result;
 use serde_json::json;
 

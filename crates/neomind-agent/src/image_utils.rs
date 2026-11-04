@@ -129,6 +129,10 @@ impl std::fmt::Display for ImageIoError {
 
 impl std::error::Error for ImageIoError {}
 
+/// Recovery contract for platform-owned images; no host or shell download needed.
+pub(crate) const INTERNAL_IMAGE_INPUT_HINT: &str =
+    "Pass the /api/images/... reference returned by device get unchanged as the image argument; no domain, curl download, or manually copied base64 is needed. Do not retry the same missing or denied local path.";
+
 /// Maximum image size in bytes (10 MB). Must match vision.rs constant.
 const MAX_IMAGE_SIZE: usize = 10 * 1024 * 1024;
 
@@ -347,8 +351,18 @@ pub async fn resolve_image(
             MAX_BASE64_LEN
         )));
     }
-    let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, input)
-        .map_err(|e| ImageIoError::InvalidArguments(format!("Invalid base64 data: {}", e)))?;
+    let bytes =
+        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, input).map_err(|e| {
+            let message = if input.contains('/') || input.contains('.') {
+                format!(
+                    "Invalid image input (not valid base64): {}. {}",
+                    e, INTERNAL_IMAGE_INPUT_HINT
+                )
+            } else {
+                format!("Invalid base64 data: {}", e)
+            };
+            ImageIoError::InvalidArguments(message)
+        })?;
     if bytes.len() > max_size {
         return Err(ImageIoError::InvalidArguments(format!(
             "Decoded image too large ({} bytes, max {} bytes)",
@@ -385,7 +399,10 @@ pub fn read_local_image(path_str: &str, max_size: usize) -> Result<Vec<u8>, Imag
 
     // Canonicalize to resolve symlinks - use blocking I/O since this is a sync function
     let canonical = std::fs::canonicalize(path).map_err(|e| {
-        ImageIoError::Execution(format!("Cannot resolve path '{}': {}", path_str, e))
+        ImageIoError::Execution(format!(
+            "Cannot resolve path '{}': {}. {}",
+            path_str, e, INTERNAL_IMAGE_INPUT_HINT
+        ))
     })?;
     let canonical_str = canonical.to_string_lossy();
 
@@ -399,9 +416,10 @@ pub fn read_local_image(path_str: &str, max_size: usize) -> Result<Vec<u8>, Imag
         .iter()
         .any(|prefix| canonical_lower.starts_with(prefix))
     {
-        return Err(ImageIoError::PermissionDenied(
-            "Access to system path is not allowed".to_string(),
-        ));
+        return Err(ImageIoError::PermissionDenied(format!(
+            "Access to system path is not allowed. {}",
+            INTERNAL_IMAGE_INPUT_HINT
+        )));
     }
 
     // Block hidden files (dotfiles) in home directories
@@ -491,8 +509,8 @@ pub async fn fetch_http_image(
 
     if is_private_host(host) {
         return Err(ImageIoError::PermissionDenied(format!(
-            "Access to private address '{}' is not allowed",
-            host
+            "Access to private address '{}' is not allowed. {}",
+            host, INTERNAL_IMAGE_INPUT_HINT
         )));
     }
 
@@ -983,6 +1001,24 @@ mod tests {
     mod io_tests {
         use super::*;
         use reqwest::Client;
+
+        #[tokio::test]
+        async fn failed_image_sources_explain_internal_reference_recovery() {
+            let client = make_client();
+            for input in [
+                "/tmp/neomind-missing-image-contract-test.jpg",
+                "images/device/image_data/missing_file.jpg",
+                "http://127.0.0.1:9375/api/images/device/image/file.jpg",
+            ] {
+                let error = resolve_image(input, &client, 1024).await.unwrap_err();
+                let message = error.to_string();
+                assert!(
+                    message.contains("Pass the /api/images/"),
+                    "{input}: {message}"
+                );
+                assert!(message.contains("device get"), "{input}: {message}");
+            }
+        }
 
         fn make_client() -> Client {
             Client::builder()

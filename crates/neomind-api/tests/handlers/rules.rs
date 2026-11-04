@@ -134,7 +134,12 @@ mod tests {
         }))
         .expect("valid CompiledRule");
         let id = rule.id.clone();
-        state.automation.rule_engine.update_rule(rule).await.unwrap();
+        state
+            .automation
+            .rule_engine
+            .update_rule(rule)
+            .await
+            .unwrap();
         id
     }
 
@@ -201,10 +206,12 @@ mod tests {
     async fn test_update_rule_rejects_empty_body() {
         let state = create_test_server_state().await;
         let id = seed_sensor_rule(&state).await;
-        let result =
-            update_rule_handler(State(state), Path(id.to_string()), Json(json!({}))).await;
+        let result = update_rule_handler(State(state), Path(id.to_string()), Json(json!({}))).await;
         assert!(result.is_err(), "empty body must be rejected");
-        assert_eq!(result.unwrap_err().status, axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(
+            result.unwrap_err().status,
+            axum::http::StatusCode::BAD_REQUEST
+        );
     }
 
     #[tokio::test]
@@ -218,7 +225,10 @@ mod tests {
         )
         .await;
         assert!(result.is_err(), "wrong-typed field must be rejected");
-        assert_eq!(result.unwrap_err().status, axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(
+            result.unwrap_err().status,
+            axum::http::StatusCode::BAD_REQUEST
+        );
     }
 
     // Idempotent updates (same value) are legal and must succeed with
@@ -253,15 +263,17 @@ mod tests {
             "tags": [],
             "cooldown": 60000
         });
-        let result =
-            update_rule_handler(State(state), Path(id.to_string()), Json(req)).await;
+        let result = update_rule_handler(State(state), Path(id.to_string()), Json(req)).await;
         assert!(
             result.is_err(),
             "metadata keys without a full definition must be rejected"
         );
         let err = result.unwrap_err();
         assert_eq!(err.status, axum::http::StatusCode::BAD_REQUEST);
-        assert!(err.message.contains("tags"), "error must name the metadata fields");
+        assert!(
+            err.message.contains("tags"),
+            "error must name the metadata fields"
+        );
     }
 
     // On the full-definition path, metadata keys must actually be APPLIED —
@@ -281,7 +293,12 @@ mod tests {
         }))
         .expect("valid CompiledRule");
         let id = rule.id.clone();
-        state.automation.rule_engine.update_rule(rule).await.unwrap();
+        state
+            .automation
+            .rule_engine
+            .update_rule(rule)
+            .await
+            .unwrap();
 
         let req = json!({
             "name": "schedule-probe",
@@ -296,12 +313,22 @@ mod tests {
             Json(req.clone()),
         )
         .await;
-        assert!(result.is_ok(), "full-definition update with metadata should succeed");
+        assert!(
+            result.is_ok(),
+            "full-definition update with metadata should succeed"
+        );
         let body = result.unwrap().0.data.unwrap();
-        assert_eq!(body["changed"], true, "adding tags/cooldown is a real change");
+        assert_eq!(
+            body["changed"], true,
+            "adding tags/cooldown is a real change"
+        );
 
         let stored = state.automation.rule_engine.get_rule(&id).await.unwrap();
-        assert_eq!(stored.tags, vec!["prod".to_string()], "tags must be applied");
+        assert_eq!(
+            stored.tags,
+            vec!["prod".to_string()],
+            "tags must be applied"
+        );
         assert_eq!(
             stored.cooldown.as_millis(),
             120000,

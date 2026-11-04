@@ -93,7 +93,7 @@ fn props_model_is_ours(model_path: Option<&str>, data_dir: &Path) -> bool {
 /// Best-effort reclaim of a llama-server left on the OLD default port by a
 /// previous version. Kills ONLY if the listener's reported model path lives
 /// under our data dir (an unrelated service on the port is left alone).
-async fn reclaim_legacy_llama_port(port: u16, data_dir: &Path) {
+pub(crate) async fn reclaim_legacy_llama_port(port: u16, data_dir: &Path) {
     if !super::server::health_check(port).await {
         return; // nothing there — the common case
     }
@@ -148,6 +148,12 @@ pub async fn bootstrap(
     manager: &LlmBackendInstanceManager,
 ) -> BootstrapOutcome {
     if !cfg.enabled {
+        return BootstrapOutcome::Disabled;
+    }
+    if cfg.stopped {
+        // Deliberate API stop — the user turned the engine off; respawning
+        // here (boot or watchdog) would silently undo that decision.
+        tracing::info!("builtin llm deliberately stopped — skipping spawn");
         return BootstrapOutcome::Disabled;
     }
 
@@ -483,6 +489,24 @@ mod tests {
     fn pick_free_port() -> u16 {
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         l.local_addr().unwrap().port()
+    }
+
+    #[tokio::test]
+    async fn deliberate_stop_skips_bootstrap_entirely() {
+        // stopped = 用户显式关闭:即使实例存在、模型在盘,也不得拉起。
+        // Disabled 早于一切 spawn/短路逻辑返回。
+        let manager = manager_with_builtin_instance("stopped").await;
+        let cfg = BuiltinConfig {
+            port: pick_free_port(),
+            stopped: true,
+            ..Default::default()
+        };
+        let data_dir =
+            std::env::temp_dir().join(format!("neomind-builtin-state-dir-{}", std::process::id()));
+        assert!(matches!(
+            bootstrap(&data_dir, &cfg, &manager).await,
+            BootstrapOutcome::Disabled
+        ));
     }
 
     #[tokio::test]

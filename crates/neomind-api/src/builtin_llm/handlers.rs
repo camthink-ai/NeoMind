@@ -1291,56 +1291,67 @@ async fn import_gguf_from_path(
     // Free the port the previous model's server may still hold, then spawn the
     // IMPORTED model explicitly (preferred_id) — the old model dirs are only
     // removed AFTER the new one is confirmed live.
+    let _engine_change = super::config::ENGINE_CHANGE_LOCK.lock().await;
     let cfg = BuiltinConfig::from_env();
-    if super::server::health_check(cfg.port).await {
-        kill_process_on_port(cfg.port);
-        tokio::time::sleep(Duration::from_millis(300)).await;
-    }
     // The ctx the server will actually run with (env override wins, RAM
     // guard caps) — registry id if the import names one, else uncapped.
     let spawn_ctx = guarded_ctx(&cfg, cfg.port, import_default_ctx(&dest), model_def(&id));
-
-    let spawned_endpoint = match get_instance_manager() {
-        Ok(manager) => match spawn_builtin_server(&state.data_dir, &cfg, &manager, Some(&id)).await
-        {
-            Ok(endpoint) => {
-                tracing::info!(endpoint = %endpoint, model = %id, "builtin llm: server started after local import");
-                // Multi-model coexistence: keep other models on disk; the
-                // pointer decides which runs. Same-id backup still goes.
-                write_active_model(&mdir, &id);
-                let _ = std::fs::remove_dir_all(&backup_dir);
-                Some(endpoint)
-            }
-            Err(e) => {
-                // A failed spawn rolls the import back: delete the new (bad)
-                // model, restore the previous one (same-id backup or the intact
-                // other dirs), and RESTART the previous server so the working
-                // model is back online — not just its files.
-                tracing::warn!(error = %e, model = %id, "builtin llm: import spawn failed — restoring previous model");
-                let _ = std::fs::remove_dir_all(mdir.join(&id));
-                if had_existing {
-                    let _ = std::fs::rename(&backup_dir, mdir.join(&id));
-                }
-                if let Ok(manager) = get_instance_manager() {
-                    if let Err(restart_err) =
-                        spawn_builtin_server(&state.data_dir, &cfg, &manager, None).await
-                    {
-                        tracing::warn!(error = %restart_err, "builtin llm: failed to restart previous model after import rollback");
+    let spawned_endpoint = if cfg.stopped {
+        // Deliberate stop: keep the imported files and move the pointer (Start
+        // will serve this model), but do NOT bring the engine up.
+        write_active_model(&mdir, &id);
+        let _ = std::fs::remove_dir_all(&backup_dir);
+        tracing::info!(model = %id,
+            "builtin llm: engine deliberately stopped — import kept on disk, not started");
+        None
+    } else {
+        if super::server::health_check(cfg.port).await {
+            kill_process_on_port(cfg.port);
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+        match get_instance_manager() {
+            Ok(manager) => {
+                match spawn_builtin_server(&state.data_dir, &cfg, &manager, Some(&id)).await {
+                    Ok(endpoint) => {
+                        tracing::info!(endpoint = %endpoint, model = %id, "builtin llm: server started after local import");
+                        // Multi-model coexistence: keep other models on disk; the
+                        // pointer decides which runs. Same-id backup still goes.
+                        write_active_model(&mdir, &id);
+                        let _ = std::fs::remove_dir_all(&backup_dir);
+                        Some(endpoint)
+                    }
+                    Err(e) => {
+                        // A failed spawn rolls the import back: delete the new (bad)
+                        // model, restore the previous one (same-id backup or the intact
+                        // other dirs), and RESTART the previous server so the working
+                        // model is back online — not just its files.
+                        tracing::warn!(error = %e, model = %id, "builtin llm: import spawn failed — restoring previous model");
+                        let _ = std::fs::remove_dir_all(mdir.join(&id));
+                        if had_existing {
+                            let _ = std::fs::rename(&backup_dir, mdir.join(&id));
+                        }
+                        if let Ok(manager) = get_instance_manager() {
+                            if let Err(restart_err) =
+                                spawn_builtin_server(&state.data_dir, &cfg, &manager, None).await
+                            {
+                                tracing::warn!(error = %restart_err, "builtin llm: failed to restart previous model after import rollback");
+                            }
+                        }
+                        return Err(ErrorResponse::internal(format!(
+                        "imported model could not start ({e}) — rolled back; the previous model was restored"
+                    )));
                     }
                 }
+            }
+            Err(e) => {
+                // Transient manager failure: the import is VALID — keep the files
+                // (a /restart can serve it) and report an error rather than a
+                // misleading success.
+                tracing::warn!(error = %e, model = %id, "builtin llm: import spawn skipped (instance manager unavailable) — files kept, use /restart");
                 return Err(ErrorResponse::internal(format!(
-                    "imported model could not start ({e}) — rolled back; the previous model was restored"
+                    "instance manager unavailable ({e}) — model files installed but not started; run /restart once the server is fully up"
                 )));
             }
-        },
-        Err(e) => {
-            // Transient manager failure: the import is VALID — keep the files
-            // (a /restart can serve it) and report an error rather than a
-            // misleading success.
-            tracing::warn!(error = %e, model = %id, "builtin llm: import spawn skipped (instance manager unavailable) — files kept, use /restart");
-            return Err(ErrorResponse::internal(format!(
-                "instance manager unavailable ({e}) — model files installed but not started; run /restart once the server is fully up"
-            )));
         }
     };
 
@@ -1518,6 +1529,10 @@ pub async fn status_handler(
         // registry (e.g. MiniCPM missing entirely).
         "model_name": installed_pair.as_ref().map(|(d, _)| d.display_name),
         "server_state": server_state,
+        // Deliberate API stop (vs. crashed/dead): lets the UI offer "start"
+        // instead of implying self-healing. Only meaningful when a model is
+        // installed and the server is down.
+        "deliberately_stopped": cfg.stopped,
         "error": if server_state == "error" { bootstrap_err } else { None },
         "runtime": runtime,
         "downloaded_bytes": file_size,
@@ -1784,6 +1799,9 @@ pub async fn download_handler(
         return ok(json!({ "started": false, "already_running": true }));
     };
 
+    // Stop holds the download lock until its state is persisted. Re-read after acquiring it.
+    let cfg = BuiltinConfig::from_env();
+
     let model_id = payload.and_then(|json| {
         json.0
             .get("model_id")
@@ -1841,15 +1859,21 @@ pub async fn download_handler(
         // Companion on-disk = "make sure it runs", never a main-model
         // switch: the active-model pointer and the main port are untouched.
         if is_vlm {
-            if let Ok(manager) = get_instance_manager() {
-                match ensure_companion(&state.data_dir, &cfg, &manager).await {
-                    Ok(ep) => {
-                        tracing::info!(endpoint = %ep, "builtin llm: vision companion running after install request")
-                    }
-                    Err(skip) => {
-                        tracing::warn!(reason = %skip, "builtin llm: vision companion not running")
+            if !cfg.stopped {
+                if let Ok(manager) = get_instance_manager() {
+                    match ensure_companion(&state.data_dir, &cfg, &manager).await {
+                        Ok(ep) => {
+                            tracing::info!(endpoint = %ep, "builtin llm: vision companion running after install request")
+                        }
+                        Err(skip) => {
+                            tracing::warn!(reason = %skip, "builtin llm: vision companion not running")
+                        }
                     }
                 }
+            } else {
+                tracing::info!(
+                    "builtin llm: engine deliberately stopped — companion install kept, not started"
+                );
             }
             return ok(json!({
                 "started": false,
@@ -1862,40 +1886,48 @@ pub async fn download_handler(
         let switching = read_active_model(&mdir).as_deref() != Some(def.id.as_str());
         if switching {
             write_active_model(&mdir, &def.id);
-            if health_check(cfg.port).await {
-                kill_process_on_port(cfg.port);
-                tokio::time::sleep(Duration::from_millis(300)).await;
-            }
-            if let Ok(manager) = get_instance_manager() {
-                if spawn_builtin_server(&state.data_dir, &cfg, &manager, Some(&def.id))
-                    .await
-                    .is_ok()
-                {
-                    // The builtin may be the ACTIVE chat backend — its
-                    // session-manager snapshot still carries the OLD model
-                    // (prompt budget + chat dropdown name). Re-push, same as
-                    // the restart handler does after a respawn.
-                    let builtin_active = manager
-                        .get_active_instance()
-                        .map(|i| i.id == BUILTIN_INSTANCE_ID)
-                        .unwrap_or(false);
-                    if builtin_active {
-                        if let Some(instance) = manager.get_instance(BUILTIN_INSTANCE_ID) {
-                            let backend = LlmBackend::LlamaCpp {
-                                endpoint: instance
-                                    .endpoint
-                                    .clone()
-                                    .unwrap_or_else(|| format!("http://127.0.0.1:{}", cfg.port)),
-                                model: instance.model.clone(),
-                                capabilities: Some(convert_capabilities(&instance.capabilities)),
-                            };
-                            if let Err(e) =
-                                state.agents.session_manager.set_llm_backend(backend).await
-                            {
-                                tracing::warn!(
-                                    error = %e,
-                                    "builtin llm: failed to refresh session backend after switch"
-                                );
+            if cfg.stopped {
+                // Deliberate stop: the pointer moved (Start serves the new
+                // model), but the engine stays down — no kill, no spawn.
+                tracing::info!(model = %def.id,
+                    "builtin llm: engine deliberately stopped — active-model pointer switched without spawn");
+            } else {
+                if health_check(cfg.port).await {
+                    kill_process_on_port(cfg.port);
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                }
+                if let Ok(manager) = get_instance_manager() {
+                    if spawn_builtin_server(&state.data_dir, &cfg, &manager, Some(&def.id))
+                        .await
+                        .is_ok()
+                    {
+                        // The builtin may be the ACTIVE chat backend — its
+                        // session-manager snapshot still carries the OLD model
+                        // (prompt budget + chat dropdown name). Re-push, same as
+                        // the restart handler does after a respawn.
+                        let builtin_active = manager
+                            .get_active_instance()
+                            .map(|i| i.id == BUILTIN_INSTANCE_ID)
+                            .unwrap_or(false);
+                        if builtin_active {
+                            if let Some(instance) = manager.get_instance(BUILTIN_INSTANCE_ID) {
+                                let backend = LlmBackend::LlamaCpp {
+                                    endpoint: instance.endpoint.clone().unwrap_or_else(|| {
+                                        format!("http://127.0.0.1:{}", cfg.port)
+                                    }),
+                                    model: instance.model.clone(),
+                                    capabilities: Some(convert_capabilities(
+                                        &instance.capabilities,
+                                    )),
+                                };
+                                if let Err(e) =
+                                    state.agents.session_manager.set_llm_backend(backend).await
+                                {
+                                    tracing::warn!(
+                                        error = %e,
+                                        "builtin llm: failed to refresh session backend after switch"
+                                    );
+                                }
                             }
                         }
                     }
@@ -2155,7 +2187,14 @@ async fn run_builtin_download(
             // fatal — the model is downloaded and restart/status can recover.
             // A companion download brings up the COMPANION instead (own port,
             // never active).
-            if let Ok(manager) = get_instance_manager() {
+            //
+            // Deliberate stop wins over bring-up: re-read the flag (the user
+            // may have stopped between DL_ACTIVE's drop above and here) and
+            // leave the engine down — Start will serve the fresh model.
+            if BuiltinConfig::from_env().stopped {
+                tracing::info!(model = %model_id,
+                    "builtin llm: engine deliberately stopped — model kept on disk, not started");
+            } else if let Ok(manager) = get_instance_manager() {
                 if companion {
                     match ensure_companion(&state.data_dir, cfg, &manager).await {
                         Ok(endpoint) => {
@@ -2864,7 +2903,17 @@ pub async fn restart_handler(
     let mut overrides = super::config::EngineOverrides::try_load(&overrides_path)
         .map_err(|e| ErrorResponse::internal(format!("read engine overrides: {e}")))?;
     overrides.apply_to(&mut cfg);
-    let mut overrides_dirty = false;
+    // restart doubles as START: a deliberate stop only holds until someone
+    // restarts. Clear the flag BEFORE any early return so the persisted
+    // state never says stopped while a server is actually running. The
+    // engine-change flag is OR-ed in later (after its declaration) to force
+    // a full — not companion-only — restart so the main comes back.
+    let restarting_from_stop = cfg.stopped;
+    if restarting_from_stop {
+        cfg.stopped = false;
+        overrides.stopped = false;
+    }
+    let mut overrides_dirty = restarting_from_stop;
     // The installed model's own default — used to give `?ctx=<default>` a
     // "reset to default" meaning (clears the override instead of pinning it).
     let model_default_ctx: Option<u32> = params
@@ -2920,7 +2969,7 @@ pub async fn restart_handler(
     // the context setting. parallel=0 omits `--parallel`
     // entirely (upstream default: 4 slots, unified KV); kv=f16 disables
     // the q8_0 KV + flash-attention default.
-    let mut engine_change_requested = false;
+    let mut engine_change_requested = restarting_from_stop;
     if let Some(p_str) = params.get("parallel") {
         match p_str.trim().parse::<usize>() {
             Ok(0) => {
@@ -3195,6 +3244,92 @@ pub async fn restart_handler(
 }
 
 // ---------------------------------------------------------------------------
+// Stop (deliberate, reversible)
+// ---------------------------------------------------------------------------
+
+/// POST /api/builtin-llm/stop — kill the builtin llama-server processes
+/// (main + companion) WITHOUT deleting any files, and persist a `stopped`
+/// flag so neither the boot bootstrap nor the watchdog respawns them. The
+/// next `restart` (any params) clears the flag and starts the engine.
+/// Nothing here unregisters the backend instance or the active selection:
+/// a chat sent while stopped fails with a connection error by design.
+#[utoipa::path(
+    post,
+    path = "/api/builtin-llm/stop",
+    tag = "builtin-llm",
+    responses(
+        (status = 200, description = "Builtin engine stopped (deliberate)"),
+        (status = 409, description = "Engine disabled via environment, or a download is in progress"),
+    )
+)]
+pub async fn stop_handler(
+    State(state): State<crate::server::types::ServerState>,
+) -> HandlerResult<serde_json::Value> {
+    let _engine_change = super::config::ENGINE_CHANGE_LOCK.lock().await;
+    let cfg = BuiltinConfig::from_env();
+    if !cfg.enabled {
+        return Err(ErrorResponse::conflict(
+            "builtin engine disabled via NEOMIND_BUILTIN_LLM=off — nothing to stop",
+        ));
+    }
+    // A download owns the spawn flow (it spawns on completion); stopping
+    // mid-download would race its completion handler. Restart guards the
+    // same way.
+    let download_guard_lock = download_lock();
+    let _download_guard = download_guard_lock.try_lock().map_err(|_| {
+        ErrorResponse::conflict("a builtin model download is in progress — cancel it before stopping the engine")
+    })?;
+    if DL_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err(ErrorResponse::conflict("a builtin model download is in progress — cancel it before stopping the engine"));
+    }
+    // The runtime upgrade does its own stop/respawn; a concurrent deliberate
+    // stop would fight its respawn step. Mirrors restart's guard.
+    if super::runtime_manager::upgrade_active() {
+        return Err(ErrorResponse::conflict(
+            "a llama.cpp runtime upgrade is in flight — retry after it finishes",
+        ));
+    }
+
+    // Kill BOTH ways, mirroring restart: the in-process registry catches
+    // servers still loading (port not yet bound), port kills catch foreign /
+    // legacy listeners. Main + companion both — the companion is part of
+    // the builtin engine service.
+    crate::builtin_llm::server::stop_all_llama_servers();
+    super::state::reclaim_legacy_llama_port(cfg.port, &state.data_dir).await;
+    super::state::reclaim_legacy_llama_port(cfg.vlm_port, &state.data_dir).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Do not acknowledge a successful stop while either configured listener remains.
+    // Foreign listeners are preserved; report the conflict instead of killing them.
+    for port in [cfg.port, cfg.vlm_port] {
+        if std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).is_err() {
+            return Err(ErrorResponse::conflict(format!(
+                "cannot confirm builtin engine stopped: port {port} is still occupied; foreign listeners are left untouched"
+            )));
+        }
+    }
+
+    let overrides_path = state.data_dir.join("builtin_engine.json");
+    let mut overrides = super::config::EngineOverrides::try_load(&overrides_path)
+        .map_err(|e| ErrorResponse::internal(format!("read engine overrides: {e}")))?;
+    overrides.stopped = true;
+    overrides
+        .save(&overrides_path)
+        .map_err(|e| ErrorResponse::internal(format!("persist engine overrides: {e}")))?;
+
+    tracing::info!(
+        port = cfg.port,
+        vlm_port = cfg.vlm_port,
+        "builtin llm stopped by user (deliberate; bootstrap/watchdog suppressed)"
+    );
+    ok(json!({
+        "stopped": true,
+        "restarted": false,
+        "endpoint_cleared": true,
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // Activate
 // ---------------------------------------------------------------------------
 
@@ -3406,6 +3541,14 @@ async fn restart_builtin_engine(state: &crate::server::types::ServerState) -> Re
         return Ok(()); // nothing installed — the next spawn picks the new runtime up
     }
     let cfg = BuiltinConfig::from_env();
+    if cfg.stopped {
+        // Deliberate stop: the new runtime is on disk and the next Start
+        // resolves it at spawn time — do not bring the engine up.
+        tracing::info!(
+            "builtin llm: engine deliberately stopped — runtime change applied without respawn"
+        );
+        return Ok(());
+    }
     crate::builtin_llm::server::stop_all_llama_servers();
     kill_process_on_port(cfg.port);
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -3842,6 +3985,82 @@ mod tests {
         assert_eq!(v["data"]["installed"], false);
         assert_eq!(v["data"]["server_state"], "not_configured");
         assert!(v["data"]["model_id"].is_null());
+    }
+
+    #[tokio::test]
+    async fn deliberate_stop_persists_flag_and_restart_clears_it() {
+        let _g = test_serial().lock().unwrap();
+        use axum::routing::post;
+
+        // Just-freed ephemeral ports for BOTH engines: stop_handler kills
+        // whatever listens on cfg.port / cfg.vlm_port, and a dev machine
+        // may run live llama-servers on the defaults (29375/29385).
+        let pin = |var: &str| {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").expect("ephemeral bind");
+            let port = l.local_addr().unwrap().port();
+            drop(l);
+            let prev = std::env::var(var).ok();
+            std::env::set_var(var, port.to_string());
+            prev
+        };
+        let prev_main = pin("NEOMIND_BUILTIN_LLM_PORT");
+        let prev_vlm = pin("NEOMIND_BUILTIN_VLM_PORT");
+
+        let dir = temp_data_dir("stop-flag");
+        let overrides_path = dir.join("builtin_engine.json");
+        let mut state = ServerState::new_for_testing().await;
+        state.data_dir = dir.clone();
+        let app = Router::new()
+            .route("/api/builtin-llm/stop", post(super::stop_handler))
+            .route("/api/builtin-llm/restart", post(super::restart_handler))
+            .with_state(state);
+
+        let stop = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/builtin-llm/stop")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(stop.status(), StatusCode::OK);
+        assert!(
+            super::super::config::EngineOverrides::load(&overrides_path).stopped,
+            "stop must persist the deliberate flag"
+        );
+
+        // restart doubles as START: the flag clears BEFORE the spawn
+        // attempt (no model installed here — the spawn fails, but the
+        // persisted state must already say not-stopped).
+        let restart = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/builtin-llm/restart")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(restart.status(), StatusCode::OK);
+        assert!(
+            !super::super::config::EngineOverrides::load(&overrides_path).stopped,
+            "restart must clear the deliberate flag before spawning"
+        );
+
+        for (var, prev) in [
+            ("NEOMIND_BUILTIN_LLM_PORT", prev_main),
+            ("NEOMIND_BUILTIN_VLM_PORT", prev_vlm),
+        ] {
+            match prev {
+                Some(v) => std::env::set_var(var, v),
+                None => std::env::remove_var(var),
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

@@ -183,8 +183,11 @@ export const llmApi = {
           ctx?: number
           parallel?: number | 'auto'
           kv?: 'q8_0' | 'f16'
+          /** GPU layer pin for the main engine; 'auto' = VRAM auto-sizing. */
+          ngl?: number | 'auto'
           vlm_ctx?: number
           vlm_kv?: 'q8_0' | 'f16'
+          vlm_ngl?: number | 'auto'
         },
   ) => {
     const o = typeof opts === 'number' ? { ctx: opts } : (opts ?? {})
@@ -195,12 +198,25 @@ export const llmApi = {
     // 'auto' = omit the flag; upstream picks (4 slots on current builds).
     if (o.parallel !== undefined) qs.set('parallel', o.parallel === 'auto' ? '0' : String(o.parallel))
     if (o.kv) qs.set('kv', o.kv)
+    // GPU layers: 'auto' hands sizing back to the spawn path's VRAM planner.
+    if (o.ngl !== undefined) qs.set('ngl', o.ngl === 'auto' ? 'auto' : String(o.ngl))
+    if (o.vlm_ngl !== undefined) qs.set('vlm_ngl', o.vlm_ngl === 'auto' ? 'auto' : String(o.vlm_ngl))
     const suffix = qs.toString() ? `?${qs.toString()}` : ''
     return fetchAPI<{ restarted: boolean; already_running: boolean; endpoint?: string }>(
       `/builtin-llm/restart${suffix}`,
       { method: 'POST' }
     )
   },
+  /**
+   * Deliberately stop the builtin engine (main + companion llama-server).
+   * No files are deleted; the persisted flag suppresses bootstrap/watchdog
+   * respawn. The next `restart` (any params) clears it and starts again.
+   * POST /api/builtin-llm/stop
+   */
+  stopBuiltinLlm: () =>
+    fetchAPI<{ stopped: boolean }>('/builtin-llm/stop', {
+      method: 'POST',
+    }),
   /**
    * Activate the built-in backend as the active LLM backend.
    * POST /api/builtin-llm/activate

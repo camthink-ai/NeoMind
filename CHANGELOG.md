@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.6] - 2026-11-04 — honest turn endings, retained conversation memory, a truthful context meter, and image-tool recovery
+
+Chat turns now end with grounded answers instead of looping or claiming unexecuted work; conversation summaries survive every compaction cycle; the context ring reports the measured tokens of the last model request instead of accumulating the whole execution; and vision/image failures recover through platform-owned references. API contracts (rules, agent storage) fail loudly instead of succeeding silently.
+
+### Highlights
+- Chat turns end honestly: exploration loops break with a grounded wrap-up, "progress report, not a result" replies are labeled and continued, and requests that were never executed are called out instead of answered with chatter.
+- Conversation memory survives compaction: every successful summary merges the previous one's coverage, and empty/interrupted model output can no longer replace stored memory.
+- The context ring shows the last measured model request — not the sum of thinking, tool arguments, and results across the whole ReAct run that used to read as multiples of the window; first turns wait for a real measurement instead of guessing.
+- Auto-compaction closes its gap: in-request history trimming now reports itself to the summarizer, first-turn tool transcripts became summarizable while recent user wording stays verbatim, and completed compactions are visible in the UI.
+- Vision and image tools recover by contract: platform `/api/images/` references replace curl/base64 scavenging, vision backends register dynamically without an API restart, and repeated image failures count as no progress.
+- The builtin engine gains real controls: deliberate Stop/Start (files kept, no watchdog respawn), free-form context sizes beyond the four fixed tiers, and the GPU-layer pin in the settings UI.
+
+### Fixed — chat turn guards and honest completions
+- **Exploration-loop termination**: each round's tool results are fingerprinted as an order-independent set and compared against a ring of recent rounds; a round that re-probes without new information ends the loop with a grounded natural-language wrap-up of what was actually observed, instead of looping until wall-clock limits. Duplicate-result identity is command + working directory, not surface JSON.
+- **Honest turn endings**: a turn that returns only a progress report gets a "progress report, not a result" label and one forced continuation; a reply describing a requested action that was never executed is called out; list-only dead ends and read-only streaks after a coercion directive get bounded act-now continuations. Guards are muted for plan-only requests, and degenerate nudge output is kept off the screen.
+- **Narration-collapse retry**: a round that narrates a tool call without issuing one gets one measured nudge round; whether the nudge produced a tool call is recorded, so it earns or loses its latency budget on evidence.
+- Measured in a frozen 552-trial two-arm paired acceptance (T4, Spark-1.7B, zh/en, frozen grading): 69.6% → 74.6% (+5.07pp, 33 gained / 19 lost), duplicate tool calls 734 → 326. Cluster-bootstrap intervals include zero — a measured improvement, not yet a statistically confirmed one.
+
+### Fixed — conversation summary retention
+- **Folded summaries keep prior memory**: every successful compaction merges the previous summary with the newly covered range instead of replacing it; the previous summary's tokens are reserved whole before new coverage is selected and are never truncated to make the summary request fit.
+- **Failed summary generation cannot erase memory**: empty, interrupted, or token-limited model output never replaces a stored summary — the deterministic fallback is appended at the fold boundary instead, and repeated fallbacks cannot grow an unbounded system message.
+
+### Fixed — chat context meter and auto-compaction
+- **The context ring measures one request, not the transcript**: the meter previously summed every round's thinking, tool arguments, and tool results (the whole execution), and estimated first turns from raw chat text — routinely displaying multiples of the context window. It now shows the backend-measured prompt tokens of the most recent model request (new per-request `ContextUsage` event) and shows a waiting state before any measurement exists.
+- **Impossible breakdowns are hidden, not shown**: the per-part figures (system prompt, tool definitions) are template estimates; when they contradict the measured total (typically the first request), the parts display as unknown and the trusted total is kept.
+- **In-request trimming now triggers summarization**: the streaming context builder reduced tool history to fit the budget but never reported it, so the summarizer's 60% usage threshold could stay unmet forever while history was silently dropped every turn. Builder pressure now marks the turn truncated, which trips the existing threshold bypass; one truncation triggers at most one summary.
+- **First-turn tool transcripts are summarizable**: sessions with three or fewer user messages previously had no summarizable range at all (the recent-user protection covered everything) — a tool-heavy first turn could never be compacted. Short sessions may now summarize the tool transcript while the context builder keeps the last three user messages verbatim in the request (still counted against the window); user-only prefixes produce no empty summaries.
+- **Compaction completion is visible**: a successful background summary emits a `ContextCompacted` event (message count, fallback flag) and the UI confirms it; stored chat history is never deleted — compaction changes request-side context selection only.
+
+### Fixed — reasoning in recovery replies
+- **Recovery channels stop leaking reasoning text**: the failed-followup summary, incomplete-tool-JSON summary, and empty-answer retry paths forwarded reasoning chunks as visible reply content; recovery streams now exclude reasoning from content events, response buffers, and stored messages, matching the ordinary final-summary path. (Reasoning the model/server itself mislabels as content is a separate, still-open issue.)
+
+### Fixed — image and vision tool pipeline
+- **Cache image extraction reads real image fields**: history JSON `latest_value` entries, nested image strings, and top-level `data:`/`/api/images/` strings resolve to the actual image instead of passing the whole JSON blob off as image data.
+- **Explicit image selections are honored**: an explicit `/api/images/` reference, local path, or `$cached:` selection is no longer silently replaced by the newest user image; unknown references keep their error instead of swapping in a different picture.
+- **Vision backends register dynamically**: the vision tool re-resolves the configured vision backend on every call — adding or removing a VLM takes effect without an API restart, and an unconfigured vision tool returns a configuration error.
+- **Image extensions validate inputs before execution**: image-capable extensions share the platform data directory and internal image reader; missing or invalid references fail before the extension runs.
+- **Repeated image failures are not progress**: image failures fingerprint by tool and error kind, so rotating filenames through the same failing operation no longer resets loop detection — the existing repeat-round guard trips instead.
+- **Failed image sources explain the recovery path**: base64-looking paths, denied system paths, and private-address fetches now return guidance pointing at the platform-owned `/api/images/` reference (pass it unchanged; no domain, curl download, or copied base64 needed).
+
+### Fixed — thinking parameter consistency
+- **Effort takes precedence and the boolean follows**: when a backend specifies a thinking effort, the legacy enable flag is kept consistent with it; llama.cpp requests forward explicit thinking parameters with the effort's priority and the stored default preserved.
+- **Integral-thinking detection reads the session's backend**: whether a model's thinking cannot be disabled is resolved from the session-bound instance (then its manager) instead of whichever model is globally active — a session on a regular model no longer inherits another active model's integral-thinking exception. Recovery and context-overflow paths send an explicit thinking-off instead of unset defaults.
+
+### Fixed — rules and agent-storage API contracts
+- **Rule updates reject unknown or no-op bodies**: an update carrying unknown fields, no actual changes, or wrong-typed values returns a structured 400 with the whole request unwritten — the rule and `updated_at` untouched — instead of reporting silent success; idempotent re-updates succeed with `changed=false`.
+- **Metadata keys apply only in full definitions**: partial rule updates no longer touch metadata keys, and full-definition bodies have their keys actually applied (verified, not just whitelisted).
+- **Agent updates are atomic read-modify-write**: a concurrent reader can no longer resurrect a deleted agent by writing back a stale snapshot.
+
+### Fixed — CLI operational verification
+- **Connector updates preserve existing config**: PUT-style updates keep the observed broker DTO (credentials, envelope lookups) instead of blanking missing fields with defaults, and unsupported transports are rejected before any API call rather than echoed back as if created.
+- **LLM backend delete verifies first**: the CLI confirms the real backend ID via GET before issuing DELETE, and device list/get help plus current/history scope hints match actual behavior.
+
+### Added — builtin engine controls
+- **Deliberate stop/start**: `POST /api/builtin-llm/stop` kills the builtin llama-server processes (main + vision companion) WITHOUT deleting model files, and persists a stop flag that suppresses the boot bootstrap, the OOM watchdog, AND every post-download/import/switch/runtime-upgrade bring-up — previously a deliberate stop was impossible (any killed process was auto-respawned; the only real "off" was deleting the model or `NEOMIND_BUILTIN_LLM=off` at deploy time). The LLM tab gains Stop/Start buttons (confirmed; the stopped state shows a warning badge); the next restart — any params — clears the flag and starts the engine. Chats pointed at the builtin model fail with a connection error while stopped, by design; downloads, imports, model switches, and runtime upgrades while stopped apply their changes (files, active-model pointer, runtime binaries) without starting the engine, and the model wizard skips its "starting" wait for a deliberately stopped engine.
+- **Free-form context size**: the engine-settings dialogs (main and vision companion) previously offered only four fixed tiers (16K/32K/64K/128K) while the restart API accepts any 1024–1,048,576. A "Custom…" option now takes any value in that range (256K, 4096, …); off-preset values inherited from env/API open in custom mode instead of silently snapping to the nearest tier.
+- **GPU layer pin exposed**: `ngl` / `vlm_ngl` (0–65535 or auto) join the engine-settings dialogs. The API supported them since 1.2.5 but no UI control existed; an operator pin (env or API) now prefills as the pinned number, everything else as auto — saving no longer silently drops an inherited pin to auto.
+
+### Upgrade notes
+- Rule updates (`PATCH`-style) now return a structured 400 for bodies with unknown fields, no actual change, or wrong-typed values — previously they reported silent success with nothing written. Clients that treated any 2xx as success should handle 400 responses; an idempotent re-send of the current rule definition still succeeds with `changed=false`.
+- The chat context ring changes meaning (last measured request instead of cumulative execution) — dashboards or habits built on the old number should be re-baselined; no configuration or stored-data migration is involved.
+
+---
+
 ## [1.2.5] - 2026-11-01 — chat context continuity, fresh tool results, and persistent builtin engine settings
 
 ### Highlights

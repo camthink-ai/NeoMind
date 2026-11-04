@@ -47,3 +47,80 @@ Rule-update contract fix RETAINED: unknown/no-op/wrong-type bodies -> structured
 ## Iteration protocol after the 552 comparison (user directive, 2026-11-03)
 
 After the full two-arm comparison completes, do NOT stop at the verdict. If there is no reliable improvement: analyze the dominant failure types from full traces (request, tool calls, raw results, expected state, final reply — scores alone do not explain failures). Each round changes exactly ONE well-defined mechanism. Paired screening first (affected failed cases plus normal-operation controls, zh/en, interleaved arms), then full regression before keeping a change. Retain effective changes, revert harmful ones, iterate. Hard constraints: NEVER modify scoring rules, relax timeouts, or delete/soften hard cases to manufacture gains; grader, case set, model/runtime/sampling stay frozen across arms. Follow docs/development/agent-eval-method.md throughout.
+
+## Latest thinking review outcome (2026-11-04)
+
+Read docs/development/thinking-readiness-result-2026-11-04.md before resuming.
+Capability gating and its rollout switch were withdrawn from the worktree;
+archive: /tmp/neomind-thinking-readiness/withdrawn-policy/. Retained changes are
+parameter consistency and three recovery-channel fixes. The 8-case default-path
+screen ended (baseline 1/4, candidate 0/4); no model-quality gain or leak cure is
+claimed. Do not restart that queue. Raw trials and observation gaps are retained.
+No commit/push/publish; follow the final source/build manifest in the artifact root.
+
+## Scoped recovery fix committed with user authorization (2026-11-04)
+
+User authorized tested leakage fixes to be committed. Commit 7ccbffa7 contains
+only the three recovery-channel guards and their tests (two Rust files).
+Isolated HEAD plus that patch passed 920 agent tests. No push or publication.
+Model/server content misclassification is not fixed by that commit.
+Native reasoning-budget and structured-response probes remain experimental;
+do not infer acceptance from isolated transport tests or deploy their parameters.
+
+## Image pipeline fixes validated (2026-11-04)
+
+Read docs/development/image-pipeline-fixes-2026-11-04.md. Mac candidate fixes cache image extraction/selection, dynamic vision registration, extension input validation, and repeated-image-failure progress. Workspace gate 3737/0/69; zero-inference registration integration passed; one isolated Spark+MiniCPM task completed in 38.520s with 7 effective-success calls and one vision call, no API restart. Artifacts /tmp/neomind-image-fixes-v2/. Own API/tunnel exited; T4 production unchanged. Not a paired score/regression claim. Preserve existing unrelated llm changes. No commit/push/deploy/publish performed.
+
+## Context meter and auto-compaction fix (2026-11-04)
+
+Read docs/development/context-meter-auto-compaction-2026-11-04.md. Two independent
+defects fixed in the worktree (no commit/push/publish). Frontend ring now shows only
+the last measured model request (new per-request ContextUsage event); without a
+measurement it shows a waiting state, never a transcript estimate; inconsistent
+per-part estimates (system/tools) are hidden, the measured total is kept. Backend:
+short sessions may summarize first-turn tool history while the context builder keeps
+the last 3 user messages verbatim (still budgeted); context-builder truncation now
+marks history_truncated so the summarizer's 60% threshold bypass actually fires;
+ContextCompacted WS event toasts completion. Frontend vitest 340/340 + tsc clean;
+workspace 3743/0; real-task replay (12 request snapshots, peak 24,188/32,768,
+summary triggered then injected) under /tmp/neomind-context-fix/ with API/tunnel
+cleanup confirmed. Not a paired score/regression claim; visible </think> leak
+remains unfixed; unrelated llm/thinking/image worktree changes preserved.
+
+## 1.2.6 release prep (2026-11-04, uncommitted)
+
+CHANGELOG [1.2.6] entry written (covers all commits since the 1.2.5 gate plus
+the worktree fixes) and version bumped to 1.2.6 across root Cargo.toml,
+web/package.json(+lock), src-tauri Cargo.toml/tauri.conf.json/Cargo.lock; both
+locks pass --locked. All CI gates verified locally: eslint error-level + warning
+ratchet (473<=474), tsc, vitest 340/340, cargo fmt (fixed 4 committed files),
+clippy --workspace --all-targets -D warnings (fixed 6 errors in
+neomind-storage/agents.rs + 3 in neomind-agent stream_core tests), skill-cli
+drift, llama pin sync. Extract_changelog full+short modes verified. Nothing
+committed, no tag pushed; a release-gate eval round is a user decision per
+agent-eval-method (552 acceptance measured the guards arm; image/context/thinking
+fixes carry targeted tests + replay, no full regression).
+
+## Builtin engine stop + exposed controls (2026-11-04, uncommitted)
+
+User request. New POST /api/builtin-llm/stop: kills main+companion llama-server
+WITHOUT deleting files, persists EngineOverrides.stopped (bootstrap AND watchdog
+skip it; from_env applies persisted overrides via the startup-set overrides
+path); any restart clears the flag and spawns (forced full restart, not
+companion-only). Status reports deliberately_stopped. UI: Stop/Start buttons
+(confirmed) + warning badge in the LLM tab; engine dialogs gained free-form ctx
+(1024..1M, off-preset opens in custom mode) and ngl/vlm_ngl pin/auto (env/API
+pins prefill; reset sets auto). Delete already existed (wizard + tab). apiSurface
+ratchet 282->283. Gates: neomind-api clippy -D warnings OK, api lib 477/0
+(builtin_llm 95/0 incl. 3 new stop tests), vitest 340/340, tsc, eslint, fmt OK.
+Post-implementation review fixed two gaps (2026-11-05): all four post-download/
+import/switch spawn sites now respect the stop flag (files + pointer kept,
+no spawn; download completion re-reads from_env to close the DL_ACTIVE-drop
+race), and stop gained the runtime-upgrade 409 guard mirroring restart.
+Review round 2 (2026-11-05) fixed two more: the runtime-upgrade respawn
+(restart_builtin_engine) also respects the stop flag now (runtime applied,
+engine stays down), and the model wizard skips its 90s "starting" window when
+deliberately_stopped (lands on ready with the start button directly).
+CHANGELOG 1.2.6 gained "Added — builtin engine controls". Deliberately-stopped
+chats fail with connection errors by design; no auto-restart until user acts.
+No commit/push/publish.

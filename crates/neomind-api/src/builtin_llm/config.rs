@@ -5,6 +5,11 @@ use std::path::PathBuf;
 #[derive(Debug, Clone)]
 pub struct BuiltinConfig {
     pub enabled: bool,
+    /// Deliberate runtime stop (`POST /api/builtin-llm/stop`). Unlike
+    /// `enabled = false` (deploy-time env), this is set through the API and
+    /// PERSISTS in the engine overrides: bootstrap and the watchdog must
+    /// not respawn until the next `restart` clears it.
+    pub stopped: bool,
     pub port: u16,
     /// Context-size OVERRIDE. `None` = per-model default (LFM 128K native,
     /// Qwen/Gemma 32K). Set via NEOMIND_BUILTIN_LLM_CTX or the restart API's
@@ -56,6 +61,7 @@ impl Default for BuiltinConfig {
     fn default() -> Self {
         Self {
             enabled: true,
+            stopped: false,
             // [port choice] llama-server's OWN default is 8080 and 8081 is a
             // hot dev port — spawning there collides with any llama.cpp /
             // web-dev tooling the user already runs, and our port-conflict
@@ -178,6 +184,11 @@ impl BuiltinConfig {
 /// owns these values; explicit auto/default flags override inherited env pins.
 #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct EngineOverrides {
+    /// Deliberate stop flag — `true` keeps bootstrap/watchdog from spawning
+    /// until a `restart` clears it. `apply_to` only ever SETS it; the stop
+    /// and restart handlers own clearing it (they rewrite the file).
+    #[serde(default)]
+    pub stopped: bool,
     /// Explicit model default / automatic offload override inherited env pins.
     #[serde(default)]
     pub ctx_default: bool,
@@ -254,6 +265,9 @@ impl EngineOverrides {
     }
 
     pub(crate) fn apply_to(&self, c: &mut BuiltinConfig) {
+        if self.stopped {
+            c.stopped = true;
+        }
         if self.ctx_default {
             c.ctx = None;
         } else if let Some(v) = self.ctx {
@@ -355,6 +369,34 @@ mod tests {
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn stopped_flag_round_trips_and_applies() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("builtin_engine.json");
+        let o = EngineOverrides {
+            stopped: true,
+            ..Default::default()
+        };
+        o.save(&path).unwrap();
+        let loaded = EngineOverrides::load(&path);
+        assert!(loaded.stopped);
+        let mut cfg = BuiltinConfig::default();
+        loaded.apply_to(&mut cfg);
+        assert!(cfg.stopped);
+
+        // Pre-stop-era files (no stopped key) keep working: absent = false.
+        std::fs::write(&path, br#"{"ctx":4096}"#).unwrap();
+        assert!(!EngineOverrides::load(&path).stopped);
+        // apply_to only ever SETS the flag — clearing is the handlers' job.
+        let mut cleared_overrides = loaded;
+        cleared_overrides.stopped = false;
+        cleared_overrides.apply_to(&mut cfg);
+        assert!(
+            cfg.stopped,
+            "apply_to must not resurrect the flag by itself"
+        );
     }
     #[serial_test::serial]
     #[test]

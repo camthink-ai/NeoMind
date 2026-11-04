@@ -1895,6 +1895,15 @@ impl ChatSessionCapabilityProvider {
 /// this here means subscribers consume the exact same schema as the browser.
 fn agent_event_to_json(event: &AgentEvent) -> Value {
     match event {
+        AgentEvent::ContextUsage {
+            prompt_tokens,
+            system_prompt_tokens,
+            tool_tokens,
+            max_context_tokens,
+        } => json!({
+            "type":"ContextUsage", "tokenUsage":{"promptTokens":prompt_tokens,
+                "systemPromptTokens":system_prompt_tokens,"toolTokens":tool_tokens,"maxContextTokens":max_context_tokens}
+        }),
         AgentEvent::Thinking { content } => json!({ "type": "Thinking", "content": content }),
         AgentEvent::Content { content } => json!({ "type": "Content", "content": content }),
         AgentEvent::ToolCallStart {

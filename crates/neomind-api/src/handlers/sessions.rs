@@ -286,18 +286,31 @@ async fn process_stream_to_channel(
                             let pt_val = (*prompt_tokens).unwrap_or(0);
                             let sum_session_id = session_id.clone();
                             let sum_state = state.clone();
+                            let summary_tx = tx.clone();
                             tokio::spawn(async move {
-                                if let Err(e) =
-                                    crate::handlers::summarization::trigger_summarization(
-                                        &sum_session_id,
-                                        &sum_state,
-                                        pt_val,
-                                        false,
-                                        history_truncated,
-                                    )
-                                    .await
+                                match crate::handlers::summarization::trigger_summarization(
+                                    &sum_session_id,
+                                    &sum_state,
+                                    pt_val,
+                                    false,
+                                    history_truncated,
+                                )
+                                .await
                                 {
-                                    tracing::warn!("Background summarization failed: {}", e);
+                                    Ok(outcome) if outcome.summarized_messages > 0 => {
+                                        let event = json!({"type":"ContextCompacted", "sessionId":sum_session_id,
+                                            "summarizedMessages":outcome.summarized_messages,
+                                            "fallbackUsed":outcome.fallback_used});
+                                        let _ = summary_tx
+                                            .send(StreamEvent {
+                                                json: event.to_string(),
+                                            })
+                                            .await;
+                                    }
+                                    Ok(_) => {}
+                                    Err(e) => {
+                                        tracing::warn!("Background summarization failed: {}", e)
+                                    }
                                 }
                             });
                         }
@@ -340,6 +353,16 @@ async fn process_stream_to_channel(
                         }
                         end_json
                     }
+                    AgentEvent::ContextUsage {
+                        prompt_tokens,
+                        system_prompt_tokens,
+                        tool_tokens,
+                        max_context_tokens,
+                    } => json!({
+                        "type": "ContextUsage", "sessionId": session_id,
+                        "tokenUsage": {"promptTokens":prompt_tokens, "systemPromptTokens":system_prompt_tokens,
+                            "toolTokens":tool_tokens, "maxContextTokens":max_context_tokens},
+                    }),
                     AgentEvent::SystemNote { note } => {
                         json!({
                             "type": "SystemNote",
@@ -2579,6 +2602,35 @@ mod compact_clear_tests {
             .await
             .unwrap();
         (status, serde_json::from_slice(&body).unwrap())
+    }
+
+    #[tokio::test]
+    async fn first_turn_pressure_writes_automatic_summary_below_usage_threshold() {
+        let state = crate::server::ServerState::new_for_testing().await;
+        let manager = state.agents.session_manager.clone();
+        let sid = manager.create_session().await.unwrap();
+        let agent = manager.get_session(&sid).await.unwrap();
+        let exact = "请在图上保留原文 厦门市集美区";
+        let mut history = vec![AgentMessage::user(exact)];
+        for _ in 0..12 {
+            history.push(AgentMessage::assistant("tool evidence ".repeat(100)));
+        }
+        agent.restore_history(history).await;
+        let out =
+            crate::handlers::summarization::trigger_summarization(&sid, &state, 1, false, true)
+                .await
+                .unwrap();
+        assert!(out.summarized_messages > 0);
+        let metadata = manager.session_store().get_session_metadata(&sid).unwrap();
+        assert!(metadata.conversation_summary.is_some());
+        assert!(metadata.summary_up_to_index.unwrap() > 0);
+        let after = manager.get_history(&sid).await.unwrap();
+        assert_eq!(after[0].content.as_ref(), exact);
+        assert_eq!(
+            after.len(),
+            13,
+            "compaction changes context selection, not stored chat history"
+        );
     }
 
     /// Force-compact on a session with no LLM backend must still write a

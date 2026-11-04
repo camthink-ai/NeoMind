@@ -26,18 +26,12 @@ const AGENT_MEMORY_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("a
 pub type SharedTestHook = std::sync::Arc<std::sync::Mutex<TestHookState>>;
 
 #[cfg(test)]
-#[derive(PartialEq, Clone, Copy)]
+#[derive(PartialEq, Clone, Copy, Default)]
 pub enum TestHookState {
+    #[default]
     Disarmed,
     Armed,
     Paused,
-}
-
-#[cfg(test)]
-impl Default for TestHookState {
-    fn default() -> Self {
-        TestHookState::Disarmed
-    }
 }
 
 /// AI Agent store for persisting autonomous agents.
@@ -1059,7 +1053,9 @@ impl AgentStore {
         Ok(Arc::new(Self {
             db: Arc::new(db),
             #[cfg(test)]
-            test_hook: std::sync::Arc::new(std::sync::Mutex::new(crate::agents::TestHookState::Disarmed)),
+            test_hook: std::sync::Arc::new(std::sync::Mutex::new(
+                crate::agents::TestHookState::Disarmed,
+            )),
         }))
     }
 
@@ -1188,10 +1184,7 @@ impl AgentStore {
         self.test_hook_point();
         {
             let mut table = write_txn.open_table(AGENTS_TABLE)?;
-            let existing = match table.get(id)? {
-                Some(guard) => Some(guard.value().to_vec()),
-                None => None,
-            };
+            let existing = table.get(id)?.map(|guard| guard.value().to_vec());
             if let Some(bytes) = existing {
                 let mut ag: AiAgent = serde_json::from_slice(bytes.as_slice())
                     .map_err(|e| Error::Serialization(e.to_string()))?;
@@ -1219,10 +1212,7 @@ impl AgentStore {
         self.test_hook_point();
         {
             let mut table = write_txn.open_table(AGENTS_TABLE)?;
-            let existing = match table.get(id)? {
-                Some(guard) => Some(guard.value().to_vec()),
-                None => None,
-            };
+            let existing = table.get(id)?.map(|guard| guard.value().to_vec());
             if let Some(bytes) = existing {
                 let mut ag: AiAgent = serde_json::from_slice(bytes.as_slice())
                     .map_err(|e| Error::Serialization(e.to_string()))?;
@@ -1249,10 +1239,7 @@ impl AgentStore {
         self.test_hook_point();
         {
             let mut table = write_txn.open_table(AGENTS_TABLE)?;
-            let existing = match table.get(id)? {
-                Some(guard) => Some(guard.value().to_vec()),
-                None => None,
-            };
+            let existing = table.get(id)?.map(|guard| guard.value().to_vec());
             if let Some(bytes) = existing {
                 let mut ag: AiAgent = serde_json::from_slice(bytes.as_slice())
                     .map_err(|e| Error::Serialization(e.to_string()))?;
@@ -1282,10 +1269,7 @@ impl AgentStore {
         {
             let mut agent_table = write_txn.open_table(AGENTS_TABLE)?;
             let mut memory_table = write_txn.open_table(AGENT_MEMORY_TABLE)?;
-            let existing_agent = match agent_table.get(id)? {
-                Some(guard) => Some(guard.value().to_vec()),
-                None => None,
-            };
+            let existing_agent = agent_table.get(id)?.map(|guard| guard.value().to_vec());
             if let Some(bytes) = existing_agent {
                 memory_table.insert(id, memory_value.as_slice())?;
                 let mut ag: AiAgent = serde_json::from_slice(bytes.as_slice())
@@ -1319,19 +1303,13 @@ impl AgentStore {
         {
             let mut table = write_txn.open_table(AGENTS_TABLE)?;
             let memory_table = write_txn.open_table(AGENT_MEMORY_TABLE)?;
-            let existing = match table.get(id)? {
-                Some(guard) => Some(guard.value().to_vec()),
-                None => None,
-            };
+            let existing = table.get(id)?.map(|guard| guard.value().to_vec());
             if let Some(bytes) = existing {
                 let mut ag: AiAgent = serde_json::from_slice(bytes.as_slice())
                     .map_err(|e| Error::Serialization(e.to_string()))?;
 
                 // Merge the latest memory from the dedicated table.
-                if let Some(mem_bytes) = memory_table
-                    .get(id)?
-                    .map(|g| g.value().to_vec())
-                {
+                if let Some(mem_bytes) = memory_table.get(id)?.map(|g| g.value().to_vec()) {
                     ag.memory = serde_json::from_slice::<AgentMemory>(mem_bytes.as_slice())
                         .map_err(|e| Error::Serialization(e.to_string()))?;
                 }
@@ -1734,8 +1712,8 @@ impl AgentStore {
 
             // Save the updated agent
             let write_txn = self.db.begin_write()?;
-        #[cfg(test)]
-        self.test_hook_point();
+            #[cfg(test)]
+            self.test_hook_point();
             {
                 let mut table = write_txn.open_table(AGENTS_TABLE)?;
                 let value =
@@ -2449,7 +2427,13 @@ mod tests {
         };
         store.update_agent_memory("m-1", mem).await.unwrap();
         assert_eq!(
-            store.get_agent("m-1").await.unwrap().unwrap().memory.updated_at,
+            store
+                .get_agent("m-1")
+                .await
+                .unwrap()
+                .unwrap()
+                .memory
+                .updated_at,
             42
         );
         assert!(memory_row_present(&store, "m-1"));
@@ -2491,12 +2475,16 @@ mod tests {
                 .await
                 .unwrap();
         });
-        tokio::task::spawn_blocking({ let s = store.clone(); move || wait_hook_paused(&s) })
-            .await
-            .unwrap();
+        tokio::task::spawn_blocking({
+            let s = store.clone();
+            move || wait_hook_paused(&s)
+        })
+        .await
+        .unwrap();
         let sd = store.clone();
-        let del =
-            tokio::spawn(async move { sd.delete_agent("d-st").await.unwrap(); });
+        let del = tokio::spawn(async move {
+            sd.delete_agent("d-st").await.unwrap();
+        });
         release_hook(&store);
         up.await.unwrap();
         del.await.unwrap();
@@ -2526,12 +2514,16 @@ mod tests {
             .await
             .unwrap();
         });
-        tokio::task::spawn_blocking({ let s = store.clone(); move || wait_hook_paused(&s) })
-            .await
-            .unwrap();
+        tokio::task::spawn_blocking({
+            let s = store.clone();
+            move || wait_hook_paused(&s)
+        })
+        .await
+        .unwrap();
         let sd = store.clone();
-        let del =
-            tokio::spawn(async move { sd.delete_agent("d-mem").await.unwrap(); });
+        let del = tokio::spawn(async move {
+            sd.delete_agent("d-mem").await.unwrap();
+        });
         release_hook(&store);
         up.await.unwrap();
         del.await.unwrap();
@@ -2588,7 +2580,9 @@ mod tests {
         for i in 0..10u64 {
             let s = store.clone();
             handles.push(tokio::spawn(async move {
-                s.update_agent_stats("c-1", i % 2 == 0, i + 1).await.unwrap();
+                s.update_agent_stats("c-1", i % 2 == 0, i + 1)
+                    .await
+                    .unwrap();
             }));
         }
         for _ in 0..5 {
@@ -3063,6 +3057,4 @@ mod event_filter_tests {
             "a single event satisfying every entry must fire"
         );
     }
-
 }
-

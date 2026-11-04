@@ -1,3 +1,4 @@
+import { contextUsageSnapshot } from '@/lib/contextUsage'
 import { useEffect, useRef, useState, useCallback, useMemo } from "react"
 import { createPortal } from "react-dom"
 import { usePageSidebarSlot, PageSidebarColumn } from "@/components/layout/PageSidebarSlot"
@@ -26,7 +27,6 @@ import { forceViewportReset } from "@/hooks/useVisualViewport"
 import { useToast } from "@/hooks/use-toast"
 import { LlmSetupGuide } from "@/components/llm/LlmSetupGuide"
 import { useChatStream } from "@/hooks/useChatStream"
-import { estimateTokens } from "@/lib/tokens"
 
 // Hook to detect desktop breakpoint — md: 768px, matching the app-wide
 // breakpoint (useIsMobile < 768). The old 1024 left the 768–1024 band in a
@@ -167,6 +167,11 @@ export function ChatPage() {
     restore,
     restoreIfBehind,
   } = useChatStream({
+    onContextCompacted: (count, sid) => {
+      setLastTokenUsage(null)
+      persistTokenUsage(sid, null)
+      toast({ description: t('chat:context.compactDone', { count }) })
+    },
     // Drop events from other sessions — the side panel shares this socket.
     // Welcome mode binds a sentinel matching NO session: navigating to bare
     // /chat keeps the store's sessionId (sidebar entries don't clear it), so
@@ -891,43 +896,13 @@ export function ChatPage() {
 
   // Settled-messages token estimate (backend CJK-aware weights) — memoized
   // separately from the streaming delta so chunks don't resc an the history.
-  const messageTokensEstimate = useMemo(
-    () => estimateTokens(messages.map(m => m.content ?? '').join('\n')),
-    [messages],
-  )
-
-  // Context usage — real prompt tokens after a turn, chars/3 estimate otherwise
+  // Only server request snapshots describe context; UI history includes
+  // compressed/omitted rounds and must not be added into the meter.
   const contextUsage = useMemo(() => {
     if (messages.length === 0 || isWelcomeMode) return null
     const activeBackend = llmBackends.find(b => b.id === activeBackendId)
-    // Backend-measured window (end event) is authoritative — capability
-    // metadata can lag the live instance config.
-    const maxContext = lastTokenUsage?.maxContextTokens
-      ?? activeBackend?.capabilities?.max_context
-      ?? 8192
-    const promptTokens = lastTokenUsage?.promptTokens
-    let used: number
-    if (promptTokens != null && !isStreaming) {
-      used = promptTokens
-    } else {
-      // Only the streaming delta is re-estimated per chunk — the settled
-      // messages' total is memoized below, so each chunk costs O(delta)
-      // instead of a full-history join + scan.
-      const streamCorpus = (streamingContent ?? '') + (streamingThinking ?? '')
-        + streamingToolCalls.map(tc => (tc.arguments ?? '') + (tc.result ?? '')).join('')
-      used = messageTokensEstimate + estimateTokens(streamCorpus)
-      // While streaming with a known real baseline, never dip below it — the
-      // in-flight request's at least the last measured prompt.
-      if (promptTokens != null) used = Math.max(used, promptTokens)
-    }
-    const system = lastTokenUsage?.systemPromptTokens
-    const tools = lastTokenUsage?.toolTokens
-    const history = system != null && tools != null && promptTokens != null
-      ? Math.max(0, used - system - tools)
-      : undefined
-    const estimated = promptTokens == null || isStreaming
-    return { used, max: maxContext, system, tools, history, estimated, messageCount: messages.length }
-  }, [messages, isWelcomeMode, llmBackends, activeBackendId, lastTokenUsage, isStreaming, streamingContent, streamingThinking, streamingToolCalls])
+    return contextUsageSnapshot(lastTokenUsage, activeBackend?.capabilities?.max_context, messages.length)
+  }, [messages, isWelcomeMode, llmBackends, activeBackendId, lastTokenUsage])
 
   // Show LLM setup prompt if not configured. First-ever load shows a
   // skeleton; a REFETCH (focus/click re-triggers loadBackends, which flips
@@ -963,6 +938,10 @@ export function ChatPage() {
     setIsCompacting(true)
     try {
       const r = await api.compactSession(sessionId)
+      if (r.summarizedMessages > 0) {
+        setLastTokenUsage(null)
+        persistTokenUsage(sessionId, null)
+      }
       toast({
         description: r.summarizedMessages > 0
           ? t('chat:context.compactDone', { count: r.summarizedMessages })

@@ -408,11 +408,14 @@ export function BuiltinModelWizard({
       // still in flight. Show "starting" for at most 90s; a spawn that failed
       // permanently leaves status at 'stopped' forever, and an endless
       // spinner with no error is worse than landing on ready (which carries
-      // the restart-engine button for exactly this case).
+      // the restart-engine button for exactly this case). A deliberately
+      // stopped engine never enters this window — there is no spawn to wait
+      // for; ready (with its start button) is the destination immediately.
       if (
         sawDownloadingRef.current &&
         !activatedRef.current &&
         s.server_state !== 'running' &&
+        !s.deliberately_stopped &&
         Date.now() - completedAtRef.current < 90_000
       ) {
         setPhase('starting')

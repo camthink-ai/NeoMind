@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use futures::{Stream, StreamExt};
 
-use super::context::{build_context_window_with_summary, ToolExecutionResult};
+use super::context::ToolExecutionResult;
 use super::dedup::deduplicate_tool_results;
 use super::intent::build_list_only_dead_end_prompt;
 use super::next_chunk_or_timeout;
@@ -86,12 +86,15 @@ pub async fn process_multimodal_stream_events_with_safeguards(
     let effective_max = super::stream_core::effective_history_budget(max_context, prompt_overhead);
 
     let history_for_llm: Vec<neomind_core::Message> = {
-        let window = build_context_window_with_summary(
+        let (window, pressure) = super::context::build_context_window_with_summary_tracked(
             &history_messages,
             effective_max,
             conversation_summary.as_deref(),
             summary_up_to_index,
         );
+        if pressure {
+            llm_interface.mark_history_truncated();
+        }
         window
     }
     .iter()
@@ -500,7 +503,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                 // is already in history as a prior turn)
                 let cont_history: Vec<neomind_core::Message> = {
                     let state_guard = internal_state.read().await;
-                    let compacted = turn_context.build(&state_guard.memory, effective_max);
+                    let compacted = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
                     compacted.iter().map(|msg| msg.to_core()).collect()
                 };
 
@@ -609,7 +612,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
             // This avoids dumping raw tool JSON to the user
             let summary_history: Vec<neomind_core::Message> = {
                 let state_guard = internal_state.read().await;
-                let compacted = turn_context.build(&state_guard.memory, effective_max);
+                let compacted = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
                 compacted.iter().map(|msg| msg.to_core()).collect()
             };
 
@@ -712,7 +715,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                 // dead-end continuation above.
                 let nudge_history: Vec<neomind_core::Message> = {
                     let state_guard = internal_state.read().await;
-                    let compacted = turn_context.build(&state_guard.memory, effective_max);
+                    let compacted = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
                     compacted.iter().map(|m| m.to_core()).collect()
                 };
                 let nudge_result = llm_interface
@@ -877,7 +880,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                     // main tool path).
                     let summary_history: Vec<neomind_core::Message> = {
                         let state_guard = internal_state.read().await;
-                        let compacted = turn_context.build(&state_guard.memory, effective_max);
+                        let compacted = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
                         compacted.iter().map(|msg| msg.to_core()).collect()
                     };
                     let summary_prompt = "Based on the tool execution results in the conversation above,                         provide a concise analysis and summary. Do NOT output any tool calls —                         give a direct text response to the user's question.";

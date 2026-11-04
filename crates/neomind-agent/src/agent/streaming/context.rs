@@ -12,24 +12,51 @@ pub(crate) struct ToolExecutionResult {
 ///
 /// When a summary is provided, messages up to `summary_up_to_index` are removed
 /// and a system message with the summary is prepended to the context.
+#[cfg(test)]
 pub(crate) fn build_context_window_with_summary(
     messages: &[AgentMessage],
     max_tokens: usize,
     summary: Option<&str>,
     summary_up_to_index: Option<u64>,
 ) -> Vec<AgentMessage> {
+    build_context_window_with_summary_tracked(messages, max_tokens, summary, summary_up_to_index).0
+}
+
+pub(crate) fn build_context_window_with_summary_tracked(
+    messages: &[AgentMessage],
+    max_tokens: usize,
+    summary: Option<&str>,
+    summary_up_to_index: Option<u64>,
+) -> (Vec<AgentMessage>, bool) {
     // [summary budget] The injected summary is part of the history payload
     // and must COUNT against it — it used to be inserted after the budget
     // was enforced (and system messages are exempt from the hard-budget
     // eviction below), so a long summary chain could push the final context
     // past the window it was derived from. Reserve its tokens up front.
     let summary_tokens = summary
-        .map(crate::agent::tokenizer::estimate_tokens)
+        .map(|s| {
+            crate::agent::tokenizer::estimate_tokens(&format!(
+                "{}{}",
+                super::super::types::CONVERSATION_SUMMARY_PREFIX,
+                s
+            ))
+        })
         .unwrap_or(0);
     let history_budget = max_tokens.saturating_sub(summary_tokens);
 
     // Adapt compaction to model capacity — larger contexts get gentler treatment
     let config = CompactionConfig::for_context_size(history_budget);
+
+    // Recent user instructions stay verbatim even when their surrounding
+    // tool history is summarized. They still count against the window budget.
+    let protected_users: std::collections::HashSet<usize> = messages
+        .iter()
+        .enumerate()
+        .rev()
+        .filter(|(_, m)| m.role == "user")
+        .take(3)
+        .map(|(i, _)| i)
+        .collect();
 
     // Filter out summarized messages if summary exists
     let filtered: Vec<AgentMessage> =
@@ -37,12 +64,15 @@ pub(crate) fn build_context_window_with_summary(
             messages
                 .iter()
                 .enumerate()
-                .filter(|(i, _)| (*i as u64) > up_to)
+                .filter(|(i, _)| (*i as u64) > up_to || protected_users.contains(i))
                 .map(|(_, msg)| msg.clone())
                 .collect()
         } else {
             messages.to_vec()
         };
+
+    let pressure = filtered.iter().map(estimate_message_tokens).sum::<usize>() > history_budget
+        || summary_tokens > max_tokens;
 
     // Build context window from filtered messages
     let mut result = build_context_window_with_config(&filtered, history_budget, &config);
@@ -61,7 +91,7 @@ pub(crate) fn build_context_window_with_summary(
         }
     }
 
-    result
+    (result, pressure)
 }
 
 /// Build context window with custom compaction configuration.
@@ -319,18 +349,62 @@ impl TurnContext {
     pub(crate) fn new(summary: Option<String>, up_to: Option<u64>) -> Self {
         Self { summary, up_to }
     }
-    pub(crate) fn build(&self, messages: &[AgentMessage], budget: usize) -> Vec<AgentMessage> {
+    pub(crate) fn build_for_llm(
+        &self,
+        messages: &[AgentMessage],
+        budget: usize,
+        llm: &crate::llm::LlmInterface,
+    ) -> Vec<AgentMessage> {
+        let (window, pressure) = self.build_tracked(messages, budget);
+        if pressure {
+            llm.mark_history_truncated();
+        }
+        window
+    }
+    fn build_tracked(&self, messages: &[AgentMessage], budget: usize) -> (Vec<AgentMessage>, bool) {
         let mut messages = messages.to_vec();
         let drained = crate::agent::apply_chat_history_depth(&mut messages);
         let up_to = crate::agent::adjust_summary_index_after_drain(self.up_to, drained);
         crate::agent::strip_stale_images(&mut messages);
-        build_context_window_with_summary(&messages, budget, self.summary.as_deref(), up_to)
+        build_context_window_with_summary_tracked(&messages, budget, self.summary.as_deref(), up_to)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn compacted_prefix_keeps_recent_user_words_verbatim() {
+        let exact = "请按原文写上 厦门市集美区，不要改字";
+        let messages = vec![
+            AgentMessage::user(exact),
+            AgentMessage::assistant("old tool narration"),
+            AgentMessage::assistant("latest result"),
+        ];
+        let out = build_context_window_with_summary(&messages, 2048, Some("brief memory"), Some(1));
+        assert!(out
+            .iter()
+            .any(|m| m.role == "user" && m.content.as_ref() == exact));
+        assert!(!out
+            .iter()
+            .any(|m| m.content.as_ref() == "old tool narration"));
+        assert!(out.iter().any(|m| m.content.as_ref() == "latest result"));
+    }
+
+    #[test]
+    fn first_turn_window_pressure_is_forwarded_to_summary_trigger() {
+        let llm = crate::llm::LlmInterface::default();
+        let mut history = vec![AgentMessage::user("分析原图，保留我的准确要求")];
+        for _ in 0..12 {
+            history.push(AgentMessage::assistant("old tool evidence ".repeat(200)));
+        }
+        let turn = TurnContext::new(None, None);
+        let out = turn.build_for_llm(&history, 1200, &llm);
+        assert!(llm.take_history_truncated());
+        assert!(!llm.take_history_truncated());
+        assert!(out.iter().any(|m| m.role == "user"));
+        assert!(out.iter().map(estimate_message_tokens).sum::<usize>() <= 1200);
+    }
 
     /// Hard-budget eviction must drop assistant/tool filler BEFORE user
     /// messages — the user's exact wording is the thing follow-up turns need

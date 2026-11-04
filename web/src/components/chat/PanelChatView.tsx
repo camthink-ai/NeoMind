@@ -1,3 +1,4 @@
+import { contextUsageSnapshot, type ContextTokenUsage } from '@/lib/contextUsage'
 /**
  * PanelChatView - Independent chat interface for the global side panel
  *
@@ -18,7 +19,6 @@ import { api } from "@/lib/api"
 import type { Message } from "@/types"
 import { filterPartialMessages, mergeMessagesForDisplay as mergeAssistantMessages } from "@/lib/messageUtils"
 import { useChatStream } from "@/hooks/useChatStream"
-import { estimateTokens } from "@/lib/tokens"
 import {
   selectLlmBackendState,
   selectChatActions,
@@ -97,6 +97,8 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
   // panel's view-specific behavior rides the callbacks: local-message
   // persistence (seconds-precision timestamps), reset-on-error, and the
   // post-end reconciliation against the server's canonical history.
+  const [contextTokens, setContextTokens] = useState<ContextTokenUsage | null>(null)
+
   const {
     isStreaming,
     hasReceivedEvent,
@@ -113,6 +115,11 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     restore,
     restoreIfBehind,
   } = useChatStream({
+    onContextCompacted: (count) => {
+      setContextTokens(null)
+      toast({ description: t('chat:context.compactDone', { count }) })
+    },
+    onTokenUsage: (usage) => setContextTokens(usage),
     // Drop events from other sessions — the chat page shares this socket.
     // See filterSessionIdRef: intentionally never cleared on page change.
     sessionId: filterSessionIdRef.current,
@@ -385,6 +392,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
       const result = await api.createSession(cfg)
       if (result?.sessionId) {
         panelSessionIdRef.current = result.sessionId
+        setContextTokens(null)
         filterSessionIdRef.current = result.sessionId
         writeStoredPanelSession(currentPageKeyRef.current, result.sessionId, profileFingerprint(baseAssistant))
         ws.setSessionId(result.sessionId)
@@ -412,6 +420,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     // including a resumed poll: keyed to the OLD page's session, it would
     // re-inject that conversation's content into the new page's panel.
     panelSessionIdRef.current = null
+        setContextTokens(null)
     sendEpochRef.current += 1
     sendInProgressRef.current = false
     setSendPhase("idle")
@@ -439,6 +448,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
       api.getSessionHistory(persistedId, undefined, { skipErrorToast: true }).then(result => {
         if (initCancelled) return
         panelSessionIdRef.current = persistedId
+        setContextTokens(null)
         filterSessionIdRef.current = persistedId
         ws.setSessionId(persistedId)
         const merged = mergeAssistantMessages(result.messages || [])
@@ -483,6 +493,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     if (isStreaming || sendInProgressRef.current) return
     localStorage.removeItem(panelSessionKey(currentPageKeyRef.current))
     panelSessionIdRef.current = null
+        setContextTokens(null)
     isPinnedRef.current = true
     setShowScrollPill(false)
     setPanelMessages([])
@@ -630,17 +641,12 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
 
   const filteredMessages = useMemo(() => filterPartialMessages(panelMessages), [panelMessages])
 
-  // Context estimate — the shared CJK-weighted estimator (the old chars/3
-  // underestimated Chinese ~5x). The panel has no measured token usage, so
-  // this is always an estimate, computed cheaply per streaming delta.
+  // Use the same per-request measurements as the full chat page.
+  // Stored UI history includes rounds omitted/compacted by the server.
   const contextUsage = useMemo(() => {
     if (filteredMessages.length === 0) return null
-    const maxContext = activeBackend?.capabilities?.max_context ?? 8192
-    const msgTokens = panelMessages.reduce((sum, m) => sum + estimateTokens(m.content ?? ""), 0)
-    const streamCorpus = (streamingContent ?? '') + (streamingThinking ?? '')
-      + streamingToolCalls.map(tc => String(tc.arguments ?? '') + String(tc.result ?? '')).join('')
-    return { used: msgTokens + estimateTokens(streamCorpus), max: maxContext }
-  }, [filteredMessages.length, panelMessages, activeBackend, streamingContent, streamingThinking, streamingToolCalls])
+    return contextUsageSnapshot(contextTokens, activeBackend?.capabilities?.max_context, panelMessages.length)
+  }, [filteredMessages.length, panelMessages, activeBackend, contextTokens])
 
   // Manual context compaction / clear — same contract as the chat page's
   // usage-card actions (the panel shares ChatComposer).
@@ -651,6 +657,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     setIsCompacting(true)
     try {
       const r = await api.compactSession(sid)
+      if (r.summarizedMessages > 0) setContextTokens(null)
       toast({
         description: r.summarizedMessages > 0
           ? t("chat:context.compactDone", { count: r.summarizedMessages })

@@ -54,6 +54,7 @@ interface ChatComposerProps {
   // Context usage indicator — null hides it. The breakdown powers the hover
   // card; parts are undefined while only a character estimate is available.
   contextUsage?: {
+    pending?: boolean
     used: number
     max: number
     system?: number
@@ -376,7 +377,7 @@ export function ChatComposer({
                     <button
                       type="button"
                       className="shrink-0 h-8 flex items-center gap-1.5 text-muted-foreground hover:text-foreground transition-colors"
-                      aria-label={`${t('chat:context.title', 'Context usage')}: ${pct}%`}
+                      aria-label={`${t('chat:context.title', 'Context usage')}: ${contextUsage.pending ? t('chat:context.awaitingMeasurement', 'Waiting for request context measurement') : `${pct}%`}`}
                     >
                       <svg width="20" height="20" viewBox="0 0 20 20" className="-rotate-90">
                         <circle cx="10" cy="10" r={R} fill="none" stroke="var(--border)" strokeWidth="2.5" />
@@ -388,7 +389,7 @@ export function ChatComposer({
                         />
                       </svg>
                       <span className={cn("text-xs tabular-nums", ratio > 0.9 ? "text-error" : ratio > 0.7 ? "text-warning" : "text-muted-foreground")}>
-                        {fmt(contextUsage.used)}
+                        {contextUsage.pending ? "—" : fmt(contextUsage.used)}
                       </span>
                     </button>
                   </TooltipTrigger>
@@ -396,7 +397,7 @@ export function ChatComposer({
                     <p className="text-xs font-medium mb-2">
                       {t('chat:context.title', 'Context usage')}
                       <span className="ml-1.5 text-muted-foreground tabular-nums">
-                        {fmt(contextUsage.used)} / {fmt(contextUsage.max)} · {pct}%
+                        {contextUsage.pending ? "—" : fmt(contextUsage.used)} / {fmt(contextUsage.max)} · {contextUsage.pending ? "—" : pct}%
                       </span>
                     </p>
                     <div className="space-y-1.5">
@@ -410,7 +411,14 @@ export function ChatComposer({
                     </div>
                     {contextUsage.estimated && (
                       <p className="mt-2 text-nano text-muted-foreground">
-                        {t('chat:context.estimatedHint', 'Character-based estimate — updates after the next reply')}
+                        {contextUsage.pending
+                          ? t('chat:context.awaitingMeasurement', 'Waiting for request context measurement')
+                          : t('chat:context.estimatedHint', 'Character-based estimate — updates after the next reply')}
+                      </p>
+                    )}
+                    {!contextUsage.estimated && (
+                      <p className="mt-2 text-nano text-muted-foreground">
+                        {t('chat:context.measuredHint', 'Last measured model request; excludes accumulated execution output')}
                       </p>
                     )}
                     {(onCompact || onClearContext) && (

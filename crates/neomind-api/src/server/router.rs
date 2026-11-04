@@ -1186,6 +1186,13 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/builtin-llm/restart",
             post(crate::builtin_llm::handlers::restart_handler),
         )
+        // Deliberate stop (no file deletion); the persisted flag suppresses
+        // bootstrap/watchdog respawn until the next restart. Same hybrid-auth
+        // class as restart itself.
+        .route(
+            "/api/builtin-llm/stop",
+            post(crate::builtin_llm::handlers::stop_handler),
+        )
         .route(
             "/api/builtin-llm/activate",
             post(crate::builtin_llm::handlers::activate_handler),

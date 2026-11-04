@@ -205,6 +205,10 @@ export interface BuiltinLlmStatus {
    * - `error`          — manifest unreadable
    */
   server_state: 'not_configured' | 'downloading' | 'running' | 'stopped' | 'error'
+  /** True when the engine was deliberately stopped via the stop API (vs.
+   *  crashed/dead): the UI offers "start" instead of implying self-healing.
+   *  Absent on older servers (treat as false). */
+  deliberately_stopped?: boolean
   /** Failure reason when `server_state === 'error'` (bootstrap/runtime
    *  download failure) — null otherwise. Newer backends only. */
   error?: string | null

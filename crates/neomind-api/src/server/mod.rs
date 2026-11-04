@@ -768,7 +768,9 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                         if pins_changed {
                             pinned_failures = 0;
                         }
-                        if !cfg.enabled {
+                        if !cfg.enabled || cfg.stopped {
+                            // `stopped` = deliberate API stop; the watchdog
+                            // must not respawn what the user turned off.
                             continue;
                         }
                         if crate::builtin_llm::server::health_check(cfg.port).await {

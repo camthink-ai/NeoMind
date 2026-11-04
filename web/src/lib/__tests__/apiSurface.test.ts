@@ -70,8 +70,10 @@ describe('api surface (post-split composition)', () => {
   // setBuiltinRuntimeVariant), the mirror layer two (getLlmSources,
   // putLlmSource), and the offline model paths two (importBuiltinModelLocal,
   // uploadBuiltinModel) — all consumed by the LLM tab / runtime dialog.
-  it('member count grows only by deliberate additions (282)', () => {
+  // 282 -> 283 when the deliberate engine stop added `stopBuiltinLlm`
+  // (POST /api/builtin-llm/stop, backed by the persisted stop flag).
+  it('member count grows only by deliberate additions (283)', () => {
     const keys = Object.keys(api)
-    expect(keys.length).toBe(282)
+    expect(keys.length).toBe(283)
   })
 })

@@ -2235,22 +2235,17 @@ impl ServerState {
             self.data_dir.clone(),
         )));
 
-        // Vision tool — auto-detect VLM backend and register if available
+        // Keep the builtin tool registered; candidates are resolved per call so
+        // adding/removing a VLM after startup needs no registry rebuild.
         if let Ok(llm_manager) = neomind_agent::llm_backends::get_instance_manager() {
-            let has_vlm = llm_manager
-                .list_instances()
-                .iter()
-                .any(|inst| inst.capabilities.supports_multimodal);
-            if has_vlm {
-                registry.register(Arc::new(neomind_agent::toolkit::VisionTool::new(
-                    neomind_agent::toolkit::VisionConfig::default(),
-                    llm_manager,
-                )));
-                tracing::info!(
-                    category = "ai",
-                    "Vision tool registered (VLM backend detected)"
-                );
-            }
+            registry.register(Arc::new(neomind_agent::toolkit::VisionTool::new(
+                neomind_agent::toolkit::VisionConfig::default(),
+                llm_manager,
+            )));
+            tracing::info!(
+                category = "ai",
+                "Vision tool registered (dynamic VLM resolution)"
+            );
         } else {
             tracing::debug!(
                 category = "ai",
@@ -2333,22 +2328,17 @@ impl ServerState {
             self.data_dir.clone(),
         )));
 
-        // Vision tool — auto-detect VLM backend and register if available
+        // Keep the builtin tool registered; candidates are resolved per call so
+        // adding/removing a VLM after startup needs no registry rebuild.
         if let Ok(llm_manager) = neomind_agent::llm_backends::get_instance_manager() {
-            let has_vlm = llm_manager
-                .list_instances()
-                .iter()
-                .any(|inst| inst.capabilities.supports_multimodal);
-            if has_vlm {
-                registry.register(Arc::new(neomind_agent::toolkit::VisionTool::new(
-                    neomind_agent::toolkit::VisionConfig::default(),
-                    llm_manager,
-                )));
-                tracing::info!(
-                    category = "ai",
-                    "Vision tool registered (VLM backend detected)"
-                );
-            }
+            registry.register(Arc::new(neomind_agent::toolkit::VisionTool::new(
+                neomind_agent::toolkit::VisionConfig::default(),
+                llm_manager,
+            )));
+            tracing::info!(
+                category = "ai",
+                "Vision tool registered (dynamic VLM resolution)"
+            );
         } else {
             tracing::debug!(
                 category = "ai",

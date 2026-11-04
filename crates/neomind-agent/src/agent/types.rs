@@ -57,6 +57,13 @@ pub enum AgentEvent {
         /// Warning message
         message: String,
     },
+    /// Snapshot of one completed model request, never cumulative turn usage.
+    ContextUsage {
+        prompt_tokens: u32,
+        system_prompt_tokens: usize,
+        tool_tokens: usize,
+        max_context_tokens: usize,
+    },
     /// Stream ended
     End {
         /// Prompt tokens used in this request (from LLM backend)
@@ -1206,7 +1213,9 @@ impl LargeDataCache {
     /// Resolve the data dir for internal image lookups.
     /// Mirrors the agent data collector / extension tool normalization.
     fn image_data_dir() -> String {
-        std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "data".to_string())
+        neomind_core::paths::data_dir()
+            .to_string_lossy()
+            .into_owned()
     }
 
     /// Resolve an internal `/api/images/` URL to raw base64 (no `data:` prefix),
@@ -1239,7 +1248,7 @@ impl LargeDataCache {
                     return Some(b64.to_string());
                 }
                 // data:image URL (extract base64 portion)
-                for key in &["data", "image", "content", "url"] {
+                for key in &["latest_value", "data", "image", "content", "url"] {
                     if let Some(s) = map.get(*key).and_then(|v| v.as_str()) {
                         // Internal /api/images/ URL → resolve to raw base64.
                         if let Some(b64) = Self::resolve_api_images_url(s, data_dir) {
@@ -1276,6 +1285,12 @@ impl LargeDataCache {
                     }
                 }
                 None
+            }
+            serde_json::Value::String(s) => {
+                if let Some(b64) = Self::resolve_api_images_url(s, data_dir) {
+                    return Some(b64);
+                }
+                crate::image_utils::parse_data_image_url(s).map(|image| image.base64.to_string())
             }
             _ => None,
         }
@@ -1915,6 +1930,19 @@ pub enum LlmBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cache_extracts_history_latest_value_instead_of_json() {
+        let image = "data:image/png;base64,iVBORw0KGgo=";
+        let payload = serde_json::json!({"success":true,"data":{"data":{"image_data":{"_image_history_summary":true,"latest_value":image}}}});
+        let actual =
+            LargeDataCache::extract_image_data(&payload.to_string(), std::path::Path::new("data"));
+        assert_eq!(actual, "iVBORw0KGgo=");
+        let ordinary = r#"{"value":"ordinary text","description":"not an image"}"#;
+        assert_eq!(
+            LargeDataCache::extract_image_data(ordinary, std::path::Path::new("data")),
+            ordinary
+        );
+    }
 
     #[test]
     fn test_agent_event_creation() {

@@ -80,6 +80,7 @@ export interface StreamEndResult {
 }
 
 export interface UseChatStreamOptions {
+  onContextCompacted?: (count: number, sessionId: string) => void
   /** Session this surface is currently bound to. Events tagged with a
    *  DIFFERENT sessionId are dropped — the chat page and the side panel
    *  share one WebSocket, so without this filter a turn streaming in the
@@ -393,6 +394,14 @@ export function useChatStream(options: UseChatStreamOptions) {
     ) errorAtRef.current = null
 
     switch (data.type) {
+      case "ContextCompacted":
+        if (data.summarizedMessages > 0) optionsRef.current.onContextCompacted?.(data.summarizedMessages, data.sessionId)
+        break
+
+      case "ContextUsage":
+        if (data.tokenUsage) optionsRef.current.onTokenUsage?.(data.tokenUsage, data.sessionId)
+        break
+
       case "Thinking":
         markStreamStart()
         accRef.current.thinking += data.content || ""

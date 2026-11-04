@@ -35,6 +35,29 @@ function Harness(props: Partial<UseChatStreamOptions>) {
 }
 
 describe('useChatStream', () => {
+  it('reports compaction without reviving a completed turn', () => {
+    const onContextCompacted = vi.fn()
+    render(<Harness sessionId="s1" onContextCompacted={onContextCompacted} />)
+    act(() => emit({ type: 'ContextCompacted', sessionId: 's2', summarizedMessages: 12 }))
+    expect(onContextCompacted).not.toHaveBeenCalled()
+    act(() => emit({ type: 'ContextCompacted', sessionId: 's1', summarizedMessages: 12 }))
+    expect(onContextCompacted).toHaveBeenCalledWith(12, 's1')
+    expect(latest.isStreaming).toBe(false)
+  })
+
+  it('updates measured context during a turn without ending it or accepting another session', () => {
+    const onTokenUsage = vi.fn()
+    render(<Harness sessionId="s1" onTokenUsage={onTokenUsage} />)
+    act(() => latest.beginTurn())
+    act(() => emit({ type: 'ContextUsage', sessionId: 's2', tokenUsage: { promptTokens: 99999 } }))
+    expect(onTokenUsage).not.toHaveBeenCalled()
+    act(() => emit({ type: 'ContextUsage', sessionId: 's1', tokenUsage: { promptTokens: 12000, maxContextTokens: 32768 } }))
+    expect(onTokenUsage).toHaveBeenLastCalledWith({ promptTokens: 12000, maxContextTokens: 32768 }, 's1')
+    expect(latest.isStreaming).toBe(true)
+    act(() => emit({ type: 'ContextUsage', sessionId: 's1', tokenUsage: { promptTokens: 7000, maxContextTokens: 32768 } }))
+    expect(onTokenUsage).toHaveBeenLastCalledWith({ promptTokens: 7000, maxContextTokens: 32768 }, 's1')
+  })
+
   beforeEach(() => {
     listeners.clear()
     latest = null

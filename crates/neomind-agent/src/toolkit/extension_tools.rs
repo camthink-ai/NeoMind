@@ -162,6 +162,16 @@ impl ExtensionTool {
                 "description": param.description,
             });
 
+            if matches!(
+                param.name.as_str(),
+                "image" | "image_base64" | "base64_data" | "image_data" | "img"
+            ) {
+                param_schema["description"] = json!(format!(
+                    "{} Platform image references /api/images/... and data:image/... URLs are accepted here; the platform resolves them to image bytes. Do not manually copy large base64 through the model.",
+                    param.description
+                ));
+            }
+
             // Add enum options if present
             if let MetricDataType::Enum { options } = &param.param_type {
                 param_schema["enum"] = json!(options);
@@ -218,56 +228,61 @@ impl ExtensionTool {
         })
     }
 
-    /// Normalize image-related arguments for extensions.
-    ///
-    /// Extensions run in a separate process and cannot resolve a hostless
-    /// internal path, so two image forms must be reduced to raw base64 before
-    /// crossing the process boundary:
-    ///
-    /// - `/api/images/...` internal file URLs (the v0.9.6 image-storage form):
-    ///   resolved to bytes via
-    ///   `resolve_internal_image_to_data_url`, which applies the same
-    ///   symlink/size/magic-byte guards as the public `GET /api/images/` route.
-    /// - `data:image/...;base64,<data>` data URIs: the prefix is stripped.
-    ///
-    /// Both become a `data:` URL, then the `;base64,` strip below reduces them
-    /// to the raw base64 payload extensions expect. Handles direct strings and
-    /// strings nested in objects/arrays.
-    fn normalize_image_args(args: &Value, data_dir: &Path) -> Value {
+    /// Resolve internal image references to raw base64 before process dispatch.
+    /// The shared reader validates paths, size, and image bytes; failures are
+    /// returned here rather than forwarding a URL to an extension expecting bytes.
+    /// Data URL prefixes are stripped. Nested objects and arrays are supported.
+    fn normalize_image_args(args: &Value, data_dir: &Path) -> ToolResult<Value> {
+        use super::error::ToolError;
         match args {
             Value::String(s) => {
-                // Resolve internal /api/images/ URLs → data URL. If resolution
-                // fails (missing file, too large, non-image, traversal) fall
-                // back to the original string so the extension surfaces its own
-                // error instead of the arg being silently dropped.
-                let resolved: String = if s.starts_with("/api/images/") {
-                    neomind_devices::image_storage::resolve_internal_image_to_data_url(s, data_dir)
-                        .unwrap_or_else(|| s.clone())
-                } else {
-                    s.clone()
-                };
-                // Strip data URI prefix: "data:image/jpeg;base64,<data>" → "<data>"
-                if let Some(comma_pos) = resolved.find(";base64,") {
-                    let base64_data = &resolved[comma_pos + 8..]; // skip ";base64,"
-                    if !base64_data.is_empty() {
-                        return Value::String(base64_data.to_string());
+                if s.starts_with("/api/images/") {
+                    let (bytes, _) =
+                        neomind_devices::image_storage::read_internal_image_url(s, data_dir)
+                            .map_err(|e| {
+                                ToolError::InvalidArguments(format!(
+                                    "Cannot read internal image reference {s}: {e}. {}",
+                                    crate::image_utils::INTERNAL_IMAGE_INPUT_HINT
+                                ))
+                            })?;
+                    use base64::Engine as _;
+                    return Ok(Value::String(
+                        base64::engine::general_purpose::STANDARD.encode(bytes),
+                    ));
+                }
+                if let Some(comma_pos) = s.find(";base64,") {
+                    let data = &s[comma_pos + 8..];
+                    if !data.is_empty() {
+                        return Ok(Value::String(data.to_string()));
                     }
                 }
-                Value::String(resolved)
+                Ok(args.clone())
             }
             Value::Object(map) => {
-                let normalized: serde_json::Map<String, Value> = map
+                let values = map
                     .iter()
-                    .map(|(k, v)| (k.clone(), Self::normalize_image_args(v, data_dir)))
-                    .collect();
-                Value::Object(normalized)
+                    .map(|(k, v)| {
+                        let image_field = matches!(k.as_str(), "image" | "images" | "image_base64" | "base64_data" | "image_data" | "img");
+                        let value = if image_field || v.is_object() {
+                            Self::normalize_image_args(v, data_dir)?
+                        } else if let Value::Array(items) = v {
+                            Value::Array(items.iter().map(|item| {
+                                if item.is_object() { Self::normalize_image_args(item, data_dir) }
+                                else { Ok(item.clone()) }
+                            }).collect::<ToolResult<Vec<_>>>()?)
+                        } else { v.clone() };
+                        Ok((k.clone(), value))
+                    })
+                    .collect::<ToolResult<serde_json::Map<String, Value>>>()?;
+                Ok(Value::Object(values))
             }
-            Value::Array(arr) => Value::Array(
-                arr.iter()
+            Value::Array(items) => Ok(Value::Array(
+                items
+                    .iter()
                     .map(|v| Self::normalize_image_args(v, data_dir))
-                    .collect(),
-            ),
-            _ => args.clone(),
+                    .collect::<ToolResult<Vec<_>>>()?,
+            )),
+            _ => Ok(args.clone()),
         }
     }
 }
@@ -298,8 +313,8 @@ impl Tool for ExtensionTool {
         //   separate process and can't read hostless internal paths);
         // - strip the data:image/...;base64, prefix (extensions fail with
         //   "Invalid base64: Invalid symbol 58" when they get the data URI).
-        let data_dir = std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "data".to_string());
-        let normalized_args = Self::normalize_image_args(&args, std::path::Path::new(&data_dir));
+        let data_dir = neomind_core::paths::data_dir();
+        let normalized_args = Self::normalize_image_args(&args, &data_dir)?;
 
         // Execute with the centralized SLOW tier timeout (300s) for extensions that
         // need longer inference. Routed through `timeouts` so the ceiling is tunable
@@ -538,6 +553,42 @@ mod tests {
         assert_eq!(def.version, "2.0.0");
     }
 
+    #[tokio::test]
+    async fn image_parameter_schema_explains_platform_reference_adapter() {
+        let mut tools = ExtensionTool::from_extension(create_mock_extension()).await;
+        tools[0].command.parameters[0].name = "image_base64".into();
+        let schema = tools[0].parameters();
+        assert!(schema["properties"]["image_base64"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("/api/images/"));
+        assert!(schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("image_base64")));
+    }
+
+    #[tokio::test]
+    async fn missing_internal_image_fails_before_extension_execution() {
+        let tools = ExtensionTool::from_extension(create_mock_extension()).await;
+        let args = json!({"image_base64":format!("/api/images/missing-{}/image/0.png", uuid::Uuid::new_v4())});
+        let result = tools[0].execute(args).await;
+        assert!(
+            matches!(
+                result,
+                Err(super::super::error::ToolError::InvalidArguments(_))
+            ),
+            "must reject missing reference before dispatch: {result:?}"
+        );
+    }
+
+    #[test]
+    fn non_image_text_is_not_resolved_as_an_image() {
+        let args = json!({"prompt":"/api/images/missing/image/file.jpg", "notes":["/api/images/missing/image/file.jpg"]});
+        let actual = ExtensionTool::normalize_image_args(&args, Path::new("data")).unwrap();
+        assert_eq!(actual, args);
+    }
+
     #[test]
     fn test_normalize_image_args_strips_data_uri() {
         // Data URI should be stripped to raw base64
@@ -545,7 +596,8 @@ mod tests {
             "image": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ==",
             "prompt": "Analyze this image"
         });
-        let normalized = ExtensionTool::normalize_image_args(&args, std::path::Path::new("data"));
+        let normalized =
+            ExtensionTool::normalize_image_args(&args, std::path::Path::new("data")).unwrap();
         assert_eq!(normalized["image"], "/9j/4AAQSkZJRgABAQ==");
         assert_eq!(normalized["prompt"], "Analyze this image"); // unchanged
     }
@@ -557,7 +609,8 @@ mod tests {
             "image": "/9j/4AAQSkZJRgABAQ==",
             "prompt": "Analyze"
         });
-        let normalized = ExtensionTool::normalize_image_args(&args, std::path::Path::new("data"));
+        let normalized =
+            ExtensionTool::normalize_image_args(&args, std::path::Path::new("data")).unwrap();
         assert_eq!(normalized["image"], "/9j/4AAQSkZJRgABAQ==");
     }
 
@@ -570,7 +623,8 @@ mod tests {
                 "model": "yolov8"
             }
         });
-        let normalized = ExtensionTool::normalize_image_args(&args, std::path::Path::new("data"));
+        let normalized =
+            ExtensionTool::normalize_image_args(&args, std::path::Path::new("data")).unwrap();
         assert_eq!(normalized["params"]["image"], "iVBORw0KGgo=");
         assert_eq!(normalized["params"]["model"], "yolov8");
     }
@@ -584,7 +638,8 @@ mod tests {
                 "data:image/png;base64,iVBORw0K=="
             ]
         });
-        let normalized = ExtensionTool::normalize_image_args(&args, std::path::Path::new("data"));
+        let normalized =
+            ExtensionTool::normalize_image_args(&args, std::path::Path::new("data")).unwrap();
         assert_eq!(normalized["images"][0], "/9j/AAA==");
         assert_eq!(normalized["images"][1], "iVBORw0K==");
     }
@@ -597,7 +652,8 @@ mod tests {
             "count": 42,
             "enabled": true
         });
-        let normalized = ExtensionTool::normalize_image_args(&args, std::path::Path::new("data"));
+        let normalized =
+            ExtensionTool::normalize_image_args(&args, std::path::Path::new("data")).unwrap();
         assert_eq!(normalized["city"], "Beijing");
         assert_eq!(normalized["count"], 42);
         assert_eq!(normalized["enabled"], true);
@@ -622,7 +678,7 @@ mod tests {
         std::fs::write(images_dir.join("1234567890.png"), png).unwrap();
 
         let args = json!({ "image": "/api/images/dev/image/1234567890.png" });
-        let normalized = ExtensionTool::normalize_image_args(&args, &temp);
+        let normalized = ExtensionTool::normalize_image_args(&args, &temp).unwrap();
         let got = normalized["image"]
             .as_str()
             .expect("image should be a string");
@@ -640,18 +696,19 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_image_args_api_images_missing_falls_back() {
-        // A /api/images/ URL whose file is missing must fall back to the
-        // original string (so the extension surfaces its own error) rather than
-        // panic or silently drop the arg.
+    fn test_normalize_image_args_api_images_missing_is_rejected() {
+        // A missing internal reference must fail before the extension sees a URL
+        // where it expects base64. Preserve the real read error.
         let temp = std::env::temp_dir().join(format!(
             "neomind_test_ext_tool_empty_{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&temp).unwrap();
         let args = json!({ "image": "/api/images/nope/image/0.png" });
-        let normalized = ExtensionTool::normalize_image_args(&args, &temp);
-        assert_eq!(normalized["image"], "/api/images/nope/image/0.png");
+        let error = ExtensionTool::normalize_image_args(&args, &temp).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("Cannot read internal image reference"));
         let _ = std::fs::remove_dir_all(&temp);
     }
 }

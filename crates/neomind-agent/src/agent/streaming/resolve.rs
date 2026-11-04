@@ -12,9 +12,9 @@ const IMAGE_AWARE_TOOLS: &[&str] = &["image_edit", "vision"];
 /// Resolve `$cached:tool_name` references in tool arguments by replacing them
 /// with the full cached data. Also **auto-injects** cached image data for any
 /// image-related argument — the LLM cannot reliably pass binary image data, so
-/// whenever cached image data exists it takes precedence over the LLM's value.
+/// explicit source references are preserved; placeholders can use the latest cache.
 ///
-/// Only HTTP(S) URLs are passed through (they may point to a real image resource).
+/// HTTP(S), internal/local paths, and explicit cache selections are preserved.
 pub(crate) fn resolve_cached_arguments(
     arguments: &serde_json::Value,
     cache: &LargeDataCache,
@@ -47,11 +47,18 @@ pub(crate) fn resolve_cached_arguments(
                     if IMAGE_ARG_NAMES.contains(&k.as_str()) {
                         if let serde_json::Value::String(ref s) = resolved_val {
                             // Pass through valid HTTP(S) URLs — those are legitimate references
-                            if !s.starts_with("http://") && !s.starts_with("https://") {
+                            let explicit_reference = v.as_str().is_some_and(|original| {
+                                original.starts_with("$cached:")
+                                    || original.starts_with("http://")
+                                    || original.starts_with("https://")
+                                    || original.starts_with('/')
+                                    || original.starts_with("./")
+                            });
+                            if !explicit_reference {
                                 if let Some((image_data, source)) = cache.get_latest_image() {
                                     tracing::info!(
                                         arg_name = %k,
-                                        original_preview = %&s[..s.len().min(80)],
+                                        original_preview = %s.chars().take(80).collect::<String>(),
                                         source = %source,
                                         injected_bytes = image_data.len(),
                                         "Auto-injected cached image data (LLM cannot pass binary data)"
@@ -113,6 +120,27 @@ pub(crate) fn resolve_tool_name(simplified_name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn explicit_image_selection_is_not_replaced_by_latest_upload() {
+        let mut cache = LargeDataCache::new();
+        cache.store_user_image("user_image", "data:image/png;base64,iVBORw0KGgo=");
+        cache.store_user_image("selected", "data:image/jpeg;base64,/9j/AA==");
+        for source in [
+            "/api/images/device/image/selected.jpg",
+            "/home/user/selected.jpg",
+            "$cached:selected",
+            "$cached:missing",
+        ] {
+            let args = serde_json::json!({"image":source});
+            let actual = resolve_cached_arguments(&args, &cache, "vision");
+            let expected = if source == "$cached:selected" {
+                cache.resolve_reference(source).unwrap()
+            } else {
+                source.to_string()
+            };
+            assert_eq!(actual["image"], expected, "source {source}");
+        }
+    }
 
     #[test]
     fn test_resolve_cached_arguments_passthrough() {

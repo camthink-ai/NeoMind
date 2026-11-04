@@ -12,7 +12,7 @@ use futures::{Stream, StreamExt};
 
 use super::{next_chunk_or_timeout, next_chunk_or_timeout_or_interrupt, StreamWait};
 
-use super::context::{build_context_window_with_summary, ToolExecutionResult};
+use super::context::ToolExecutionResult;
 use super::dedup::deduplicate_tool_results;
 use super::intent::{all_tools_were_read_only, build_list_only_dead_end_prompt};
 use super::resolve::resolve_cached_arguments;
@@ -278,12 +278,15 @@ pub async fn process_stream_events_with_safeguards(
     }
 
     let history_for_llm: Vec<neomind_core::Message> = {
-        let window = build_context_window_with_summary(
+        let (window, pressure) = super::context::build_context_window_with_summary_tracked(
             &history_messages,
             effective_max,
             conversation_summary.as_deref(),
             summary_up_to_index,
         );
+        if pressure {
+            llm_interface.mark_history_truncated();
+        }
         window
     }
     .iter()
@@ -601,7 +604,7 @@ pub async fn process_stream_events_with_safeguards(
                     let history_for_llm: Vec<neomind_core::Message> = {
                         // Build context with the same budget-managed context
                         // builder as the initial call.
-                        let compacted = turn_context.build(&state_guard.memory, effective_max);
+                        let compacted = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
                         compacted.iter().map(|msg| {
                             if !guide_recovery_this_round { return msg.to_core(); }
                             let mut clean = msg.clone();
@@ -808,7 +811,7 @@ pub async fn process_stream_events_with_safeguards(
 
                                 let summary_history: Vec<neomind_core::Message> = {
                                     let state_guard = internal_state.read().await;
-                                    let compacted = turn_context.build(&state_guard.memory, effective_max);
+                                    let compacted = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
                                     compacted.iter().map(|msg| msg.to_core()).collect()
                                 };
 
@@ -1264,6 +1267,14 @@ pub async fn process_stream_events_with_safeguards(
                     }
                 }
 
+                if let Some(prompt_tokens) = llm_interface.peek_last_prompt_tokens().await {
+                    let (system_prompt_tokens, tool_tokens) = llm_interface.estimate_prompt_breakdown().await;
+                    yield AgentEvent::ContextUsage {
+                        prompt_tokens, system_prompt_tokens, tool_tokens,
+                        max_context_tokens: llm_interface.max_context_length().await,
+                    };
+                }
+
                 // Release any held-back content if it turned out NOT to be a tool call.
                 // If tool_calls_detected is true, the held content IS part of the tool call JSON
                 // and should be discarded (it will not be displayed).
@@ -1544,9 +1555,7 @@ pub async fn process_stream_events_with_safeguards(
                             name,
                             serde_json::to_string(&exec_arguments).unwrap_or_default()
                         );
-                        if seen_tool_sigs.insert(call_sig) {
-                            round_new_calls += 1;
-                        }
+                        let is_new_call = seen_tool_sigs.insert(call_sig);
                         yield AgentEvent::tool_call_start_round(&name, exec_arguments.clone(), tool_iteration_count + 1);
 
                         // Mutation-flavored SHELL commands that effectively
@@ -1619,7 +1628,11 @@ pub async fn process_stream_events_with_safeguards(
                         }
                         round_has_errors |= !succeeded;
                         any_failed_tool_call |= !succeeded;
-                        round_progress_results.push((dup_sig.clone(), outcome));
+                        let image_failure = image_failure_progress(&name, &exec_arguments, &execution.result);
+                        if is_new_call && image_failure.is_none() {
+                            round_new_calls += 1;
+                        }
+                        round_progress_results.push(image_failure.unwrap_or((dup_sig.clone(), outcome)));
 
                         match execution.result {
                             Ok(output) => {
@@ -2055,7 +2068,7 @@ pub async fn process_stream_events_with_safeguards(
                             Vec::new()
                         } else {
                             let state_guard = internal_state.read().await;
-                            let compacted = turn_context.build(&state_guard.memory, effective_max);
+                            let compacted = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
                             compacted.iter().map(|msg| msg.to_core()).collect()
                         };
 
@@ -2407,7 +2420,7 @@ pub async fn process_stream_events_with_safeguards(
 
                         let summary_history: Vec<neomind_core::Message> = {
                             let state_guard = internal_state.read().await;
-                            let compacted = turn_context.build(&state_guard.memory, effective_max);
+                            let compacted = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
                             compacted.iter().map(|msg| msg.to_core()).collect()
                         };
 
@@ -2483,7 +2496,7 @@ pub async fn process_stream_events_with_safeguards(
                         // Build a compact history for the retry (keep last few messages)
                         let state_guard = internal_state.read().await;
                         let retry_history: Vec<neomind_core::Message> = {
-                            let context = turn_context.build(&state_guard.memory, effective_max);
+                            let context = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
                             let non_system: Vec<&AgentMessage> = context.iter().collect();
                             // Keep at most last 6 messages to reduce prompt size
                             let keep = non_system.len().saturating_sub(6);
@@ -2699,6 +2712,29 @@ pub(crate) fn effective_history_budget(max_context: usize, prompt_overhead: usiz
         );
     }
     effective
+}
+
+/// A new filename is not progress when the image operation still fails.
+/// Keep the detailed error in history; only the loop fingerprint is normalized.
+fn image_failure_progress(
+    name: &str,
+    arguments: &serde_json::Value,
+    result: &crate::toolkit::error::Result<crate::toolkit::ToolOutput>,
+) -> Option<(String, String)> {
+    let real_name = crate::tools::resolve_tool_name(name);
+    let image_call = matches!(real_name.as_str(), "vision" | "image_edit")
+        || ["image", "image_base64", "base64_data", "image_data", "img"]
+            .iter()
+            .any(|key| arguments.get(key).is_some());
+    if !image_call {
+        return None;
+    }
+    let failure_kind = match result {
+        Ok(output) if crate::toolkit::tool::effective_success(&real_name, output) => return None,
+        Ok(_) => "tool_result_error".to_string(),
+        Err(error) => format!("{:?}", std::mem::discriminant(error)),
+    };
+    Some((format!("image_failure:{real_name}"), failure_kind))
 }
 
 /// Fingerprint of one round's tool results as an ORDER-INDEPENDENT SET:
@@ -2922,6 +2958,67 @@ mod history_budget_tests {
 
     /// Loop-break state machine: one failure never breaks; the refusal
     /// carries the previous error and the shell/CLI redirect.
+    #[test]
+    fn rotating_image_tools_with_repeated_errors_eventually_stop() {
+        let mut guard = ChatLoopProgress::default();
+        for i in 0..6 {
+            let name = ["vision", "ocr", "detect"][i % 3];
+            let args = serde_json::json!({"image_base64":format!("/tmp/retry-{i}.jpg")});
+            let result = Err(crate::toolkit::ToolError::InvalidArguments(
+                "missing image".into(),
+            ));
+            let entry = image_failure_progress(name, &args, &result).unwrap();
+            let repeats = guard.observe(0, &[entry]);
+            assert_eq!(repeats, if i < 3 { 0 } else { i - 2 });
+        }
+    }
+
+    #[test]
+    fn repeated_image_failures_ignore_path_churn_but_success_recovers() {
+        use crate::toolkit::{ToolError, ToolOutput};
+        let failure = Err(ToolError::PermissionDenied("system path".into()));
+        let first = image_failure_progress(
+            "vision",
+            &serde_json::json!({"image":"/tmp/one.jpg"}),
+            &failure,
+        )
+        .expect("image failure must have a stable progress key");
+        let second = image_failure_progress(
+            "vision",
+            &serde_json::json!({"image":"/tmp/two.jpg"}),
+            &failure,
+        )
+        .unwrap();
+        assert_eq!(first, second);
+        let mut guard = ChatLoopProgress::default();
+        assert_eq!(guard.observe(0, std::slice::from_ref(&first)), 0);
+        assert_eq!(guard.observe(0, std::slice::from_ref(&second)), 1);
+        assert_eq!(guard.observe(0, std::slice::from_ref(&first)), 2);
+        assert_eq!(guard.observe(0, std::slice::from_ref(&second)), 3);
+        let ok = Ok(ToolOutput::success(
+            serde_json::json!({"analysis":"visible scene"}),
+        ));
+        assert!(image_failure_progress(
+            "vision",
+            &serde_json::json!({"image":"/api/images/device/image/good.jpg"}),
+            &ok
+        )
+        .is_none());
+        assert_eq!(
+            guard.observe(1, &[("vision".into(), "visible scene".into())]),
+            0
+        );
+        assert!(
+            image_failure_progress("shell", &serde_json::json!({"command":"probe"}), &failure)
+                .is_none()
+        );
+        let corrected_error = Err(ToolError::InvalidArguments("invalid format".into()));
+        assert_ne!(
+            image_failure_progress("vision", &serde_json::json!({}), &corrected_error).unwrap(),
+            first
+        );
+    }
+
     #[test]
     fn loop_break_fires_only_after_repeated_failure() {
         assert!(loop_break_message(0, "err").is_none());

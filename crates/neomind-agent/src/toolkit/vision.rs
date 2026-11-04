@@ -280,7 +280,7 @@ impl VisionTool {
         }
 
         if candidates.is_empty() {
-            return Err(ToolError::Execution(
+            return Err(ToolError::ConfigurationError(
                 "No vision model configured. Install the built-in vision companion (模型向导 → 视觉伴侣 / builtin-llm models with role vlm), or register any multimodal backend (cloud or Ollama) and it will be picked up automatically.".into(),
             ));
         }
@@ -446,7 +446,10 @@ impl Tool for VisionTool {
     fn description(&self) -> &str {
         r#"Analyze images you CANNOT already see, using a vision-language model. Pass an image source and get back a description/analysis.
 
+Requires a configured vision backend; adding one takes effect without restarting.
+
 Use this tool when you need to analyze images from sources other than the current message:
+- `/api/images/...` — platform image reference returned by device get; pass unchanged, no hostname or download required.
 - `$cached:xxx` — a cache ref returned by other tools (e.g. `device get --metric <image_field>` output, or extension image outputs). Pass it directly as `image`; it resolves to the full image bytes. Prefer this over base64-decoding/saving files yourself.
 - HTTP/HTTPS image URLs (e.g., camera snapshots, web images) — fetches automatically, private/local URLs blocked
 - /path/to/file.jpg — local image file on disk (must have an image extension)
@@ -560,8 +563,9 @@ fn validate_url(url: &reqwest::Url) -> Result<()> {
 
     if is_private_host(host) {
         return Err(ToolError::PermissionDenied(format!(
-            "Access to private address '{}' is not allowed",
-            host
+            "Access to private address '{}' is not allowed. {}",
+            host,
+            crate::image_utils::INTERNAL_IMAGE_INPUT_HINT
         )));
     }
 
@@ -820,6 +824,26 @@ mod candidate_tests {
         inst.capabilities.supports_multimodal = true;
         inst.capabilities.multimodal_source = Some("runtime_api".into());
         inst
+    }
+
+    #[serial_test::serial]
+    #[tokio::test]
+    async fn existing_vision_tool_accepts_backend_added_after_construction() {
+        let manager = Arc::new(LlmBackendInstanceManager::new(test_store("late-vlm")));
+        let tool = VisionTool::new(VisionConfig::default(), manager.clone());
+        assert!(matches!(
+            tool.resolve_vlm_candidates(None).await,
+            Err(ToolError::ConfigurationError(_))
+        ));
+        let (endpoint, task) = fake_vlm("\"late vision ready\"").await;
+        manager
+            .upsert_instance(vlm_instance("late-vlm", "gpt-4o", &endpoint))
+            .await
+            .unwrap();
+        let candidates = tool.resolve_vlm_candidates(None).await.unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].0, "late-vlm");
+        task.abort();
     }
 
     #[serial_test::serial]

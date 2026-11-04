@@ -22,11 +22,14 @@ import {
   
   Settings2,
   AlertTriangle,
+  Play,
+  Power,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { badgeSize } from '@/design-system/tokens/typography'
 import { UnifiedFormDialog } from '@/components/dialog/UnifiedFormDialog'
@@ -157,7 +160,7 @@ const PROTOCOL_TYPE_IDS = ['ollama', 'llamacpp'] as const
 const _CLOUD_AI_PROTOCOLS = ['openai', 'anthropic'] as const
 
 // Built-in bundled LLM (LFM2.5-2.6B) card actions.
-type BuiltinAction = 'download' | 'restart' | 'activate' | 'delete'
+type BuiltinAction = 'download' | 'restart' | 'activate' | 'delete' | 'stop'
 
 interface BuiltinStatusInfo {
   text: string
@@ -364,6 +367,17 @@ export function UnifiedLLMBackendsTab({
   // Engine knobs exposed alongside ctx (1.2.1): slot count and KV quant.
   const [parallelInput, setParallelInput] = useState<number | 'auto'>('auto')
   const [kvInput, setKvInput] = useState<'q8_0' | 'f16'>('q8_0')
+  // Free-form ctx + GPU-layer pin: the restart API accepts any
+  // 1024..=1,048,576 ctx and ngl/vlm_ngl=auto|N — the preset Select alone
+  // could not express either (256K, 4096, a pin inherited from env, …).
+  const [ctxCustomMode, setCtxCustomMode] = useState(false)
+  const [ctxCustomText, setCtxCustomText] = useState('')
+  const [nglMode, setNglMode] = useState<'auto' | 'custom'>('auto')
+  const [nglText, setNglText] = useState('')
+  const [vlmCustomMode, setVlmCustomMode] = useState(false)
+  const [vlmCustomText, setVlmCustomText] = useState('')
+  const [vlmNglMode, setVlmNglMode] = useState<'auto' | 'custom'>('auto')
+  const [vlmNglText, setVlmNglText] = useState('')
   const [ctxDialogSaving, setCtxDialogSaving] = useState(false)
   const [ctxDialogError, setCtxDialogError] = useState<string | null>(null)
   const [cloudAddOpen, setCloudAddOpen] = useState(false)
@@ -456,6 +470,17 @@ export function UnifiedLLMBackendsTab({
       })
       if (!confirmed) return
     }
+    if (action === 'stop') {
+      // Non-destructive but disruptive: chats pointed at the builtin model
+      // fail while it is off, and it stays off until deliberately started.
+      const confirmed = await confirm({
+        title: t('plugins:llm.builtinStopConfirmTitle', { defaultValue: 'Stop the builtin engine?' }),
+        description: t('plugins:llm.builtinStopConfirmDesc'),
+        confirmText: t('plugins:llm.builtinStop', { defaultValue: 'Stop' }),
+        cancelText: t('common:cancel', { defaultValue: 'Cancel' }),
+      })
+      if (!confirmed) return
+    }
 
     builtinBusyActionRef.current = action
     setBuiltinBusyAction(action)
@@ -471,7 +496,14 @@ export function UnifiedLLMBackendsTab({
         }
         case 'restart':
           await api.restartBuiltinLlm()
-          successMsg = t('plugins:llm.builtinRestarted')
+          // The same endpoint doubles as START after a deliberate stop.
+          successMsg = builtinStatus?.deliberately_stopped
+            ? t('plugins:llm.builtinStarted')
+            : t('plugins:llm.builtinRestarted')
+          break
+        case 'stop':
+          await api.stopBuiltinLlm()
+          successMsg = t('plugins:llm.builtinStopped')
           break
         case 'activate':
           await api.activateBuiltinLlm()
@@ -749,12 +781,16 @@ export function UnifiedLLMBackendsTab({
                     'shrink-0 rounded font-medium',
                     builtinStatus.server_state === 'running'
                       ? 'bg-success-light text-success'
-                      : 'bg-muted text-muted-foreground',
+                      : builtinStatus.deliberately_stopped
+                        ? 'bg-warning-light text-warning'
+                        : 'bg-muted text-muted-foreground',
                   )}
                 >
                   {builtinStatus.server_state === 'running'
                     ? t('plugins:llm.companionRunning')
-                    : t('plugins:llm.companionStopped')}
+                    : builtinStatus.deliberately_stopped
+                      ? t('plugins:llm.builtinStopped')
+                      : t('plugins:llm.companionStopped')}
                 </span>
                 <button
                   className="grid h-6 w-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
@@ -763,7 +799,17 @@ export function UnifiedLLMBackendsTab({
                   onClick={() => {
                     const cur = builtinStatus.ctx_override ?? builtinStatus.ctx ?? builtinStatus.default_ctx ?? 32768
                     const presets = BUILTIN_CTX_PRESETS
-                    setCtxDialogInput(presets.reduce((a, b) => Math.abs(b - cur) < Math.abs(a - cur) ? b : a, presets[0]))
+                    // Off-preset values (256K, 4096, env pins) open in custom
+                    // mode instead of silently snapping to the nearest tier.
+                    const onPreset = presets.includes(cur)
+                    setCtxCustomMode(!onPreset)
+                    setCtxCustomText(onPreset ? '' : String(cur))
+                    setCtxDialogInput(onPreset ? cur : null)
+                    // A pinned GPU layer shows as the pin; auto/planned stays auto.
+                    const gpu = builtinStatus.gpu_offload
+                    const gpuPinned = gpu?.ngl != null && (gpu.note ?? '').includes('pinned')
+                    setNglMode(gpuPinned ? 'custom' : 'auto')
+                    setNglText(gpuPinned ? String(gpu!.ngl) : '')
                     setParallelInput(builtinStatus.parallel == null ? 'auto' : (builtinStatus.parallel as number))
                     setKvInput(builtinStatus.kv_cache === 'f16' ? 'f16' : 'q8_0')
                     setCtxDialogOpen(true)
@@ -804,7 +850,15 @@ export function UnifiedLLMBackendsTab({
                     className="grid h-6 w-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
                     title={t('plugins:llm.companionSettings')}
                     onClick={() => {
-                      setVlmDialogInput(builtinStatus.companion?.ctx ?? 32768)
+                      const cur = builtinStatus.companion?.ctx ?? 32768
+                      const onPreset = BUILTIN_CTX_PRESETS.includes(cur)
+                      setVlmCustomMode(!onPreset)
+                      setVlmCustomText(onPreset ? '' : String(cur))
+                      setVlmDialogInput(onPreset ? cur : null)
+                      const gpu = builtinStatus.companion?.gpu_offload
+                      const gpuPinned = gpu?.ngl != null && (gpu.note ?? '').includes('pinned')
+                      setVlmNglMode(gpuPinned ? 'custom' : 'auto')
+                      setVlmNglText(gpuPinned ? String(gpu!.ngl) : '')
                       setVlmKvInput('q8_0')
                       setVlmDialogOpen(true)
                     }}
@@ -889,6 +943,32 @@ export function UnifiedLLMBackendsTab({
                   {t('plugins:llm.switchModel')}
                 </Button>
                 <div className="ml-auto flex items-center gap-2">
+                  {builtinStatus.deliberately_stopped ? (
+                    // Start = restart with no params: it clears the persisted
+                    // stop flag and spawns (main + companion).
+                    <Button
+                      size="sm"
+                      onClick={() => handleBuiltinAction('restart')}
+                      disabled={!!builtinBusyAction}
+                    >
+                      {builtinBusyAction === 'restart'
+                        ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                        : <Play className="mr-1.5 h-3.5 w-3.5" />}
+                      {t('plugins:llm.builtinStart')}
+                    </Button>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleBuiltinAction('stop')}
+                      disabled={!!builtinBusyAction || builtinStatus.server_state !== 'running'}
+                    >
+                      {builtinBusyAction === 'stop'
+                        ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                        : <Power className="mr-1.5 h-3.5 w-3.5" />}
+                      {t('plugins:llm.builtinStop')}
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     onClick={() => handleBuiltinAction('activate')}
@@ -1159,15 +1239,25 @@ export function UnifiedLLMBackendsTab({
           className="z-[110]"
           isSubmitting={ctxDialogSaving}
           onSubmit={async () => {
-            const v = ctxDialogInput
-            if (v == null || !Number.isFinite(v) || v < 1024 || v > 131_072) {
+            // Preset pick or free-form value — both funnel through the same
+            // backend validation range (1024..=1M).
+            const v = ctxCustomMode ? Number(ctxCustomText) : ctxDialogInput
+            if (v == null || !Number.isFinite(v) || v < 1024 || v > 1_048_576) {
               setCtxDialogError(t('plugins:llm.builtinCtxInvalid'))
               return
             }
+            if (nglMode === 'custom') {
+              const pin = Number(nglText)
+              if (nglText.trim() === '' || !Number.isInteger(pin) || pin < 0 || pin > 65_535) {
+                setCtxDialogError(t('plugins:llm.builtinNglInvalid'))
+                return
+              }
+            }
+            const ngl: number | 'auto' = nglMode === 'custom' ? Number(nglText) : 'auto'
             setCtxDialogSaving(true)
             setCtxDialogError(null)
             try {
-              await api.restartBuiltinLlm({ ctx: v, parallel: parallelInput, kv: kvInput })
+              await api.restartBuiltinLlm({ ctx: v, parallel: parallelInput, kv: kvInput, ngl })
               toast({ title: t('plugins:llm.builtinEngineApplied') })
               setCtxDialogOpen(false)
               await refreshBuiltinStatus()
@@ -1208,6 +1298,7 @@ export function UnifiedLLMBackendsTab({
                       ctx: builtinStatus.default_ctx!,
                       parallel: 1,
                       kv: 'q8_0',
+                      ngl: 'auto',
                     })
                     toast({ title: t('plugins:llm.builtinCtxReset') })
                     setCtxDialogOpen(false)
@@ -1232,8 +1323,18 @@ export function UnifiedLLMBackendsTab({
           <div className="space-y-4">
             <FormField label={t('plugins:llm.builtinCtx')} helpText={t('plugins:llm.builtinCtxHelp')}>
               <Select
-                value={String(ctxDialogInput ?? '')}
-                onValueChange={(v) => setCtxDialogInput(Number(v))}
+                value={ctxCustomMode ? 'custom' : String(ctxDialogInput ?? '')}
+                onValueChange={(v) => {
+                  if (v === 'custom') {
+                    // Seed the input with the current value so switching to
+                    // custom mode never starts from a blank.
+                    if (ctxCustomText === '') setCtxCustomText(String(ctxDialogInput ?? ''))
+                    setCtxCustomMode(true)
+                  } else {
+                    setCtxCustomMode(false)
+                    setCtxDialogInput(Number(v))
+                  }
+                }}
               >
                 <SelectTrigger className="w-full font-mono">
                   <SelectValue />
@@ -1247,8 +1348,25 @@ export function UnifiedLLMBackendsTab({
                       </SelectItem>
                     )
                   })}
+                  <SelectItem value="custom">
+                    {ctxCustomMode && ctxCustomText
+                      ? `${t('plugins:llm.builtinCtxCustom')} · ${(Number(ctxCustomText) / 1024).toFixed(1)}K`
+                      : t('plugins:llm.builtinCtxCustom')}
+                  </SelectItem>
                 </SelectContent>
               </Select>
+              {ctxCustomMode && (
+                <Input
+                  type="number"
+                  min={1024}
+                  max={1_048_576}
+                  step={1024}
+                  value={ctxCustomText}
+                  onChange={(e) => setCtxCustomText(e.target.value)}
+                  className="mt-2 font-mono"
+                  placeholder="1024 – 1048576"
+                />
+              )}
             </FormField>
             <FormField label={t('plugins:llm.builtinParallel')} helpText={t('plugins:llm.builtinParallelHelp')}>
               <Select
@@ -1277,6 +1395,40 @@ export function UnifiedLLMBackendsTab({
                 </SelectContent>
               </Select>
             </FormField>
+            <details>
+              <summary className="cursor-pointer text-sm text-muted-foreground">{t('plugins:llm.builtinNgl')}</summary>
+            <FormField label={t('plugins:llm.builtinNgl')} helpText={t('plugins:llm.builtinNglHelp')}>
+              <Select
+                value={nglMode}
+                onValueChange={(v) => {
+                  const mode = v as 'auto' | 'custom'
+                  setNglMode(mode)
+                  if (mode === 'custom' && nglText === '' && builtinStatus?.gpu_offload?.ngl != null) {
+                    setNglText(String(builtinStatus.gpu_offload.ngl))
+                  }
+                }}
+              >
+                <SelectTrigger className="w-full font-mono">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">{t('plugins:llm.builtinNglAuto')}</SelectItem>
+                  <SelectItem value="custom">{t('plugins:llm.builtinNglCustom')}</SelectItem>
+                </SelectContent>
+              </Select>
+              {nglMode === 'custom' && (
+                <Input
+                  type="number"
+                  min={0}
+                  max={65_535}
+                  value={nglText}
+                  onChange={(e) => setNglText(e.target.value)}
+                  className="mt-2 font-mono"
+                  placeholder="0 – 65535"
+                />
+              )}
+            </FormField>
+            </details>
           </div>
         </UnifiedFormDialog>
 
@@ -1291,15 +1443,23 @@ export function UnifiedLLMBackendsTab({
           className="z-[110]"
           isSubmitting={vlmDialogSaving}
           onSubmit={async () => {
-            const v = vlmDialogInput
+            const v = vlmCustomMode ? Number(vlmCustomText) : vlmDialogInput
             if (v == null || !Number.isFinite(v) || v < 1024 || v > 1_048_576) {
               setVlmDialogError(t('plugins:llm.builtinCtxInvalid'))
               return
             }
+            if (vlmNglMode === 'custom') {
+              const pin = Number(vlmNglText)
+              if (vlmNglText.trim() === '' || !Number.isInteger(pin) || pin < 0 || pin > 65_535) {
+                setVlmDialogError(t('plugins:llm.builtinNglInvalid'))
+                return
+              }
+            }
+            const vlmNgll: number | 'auto' = vlmNglMode === 'custom' ? Number(vlmNglText) : 'auto'
             setVlmDialogSaving(true)
             setVlmDialogError(null)
             try {
-              await api.restartBuiltinLlm({ vlm_ctx: v, vlm_kv: vlmKvInput })
+              await api.restartBuiltinLlm({ vlm_ctx: v, vlm_kv: vlmKvInput, vlm_ngl: vlmNgll })
               toast({ title: t('plugins:llm.builtinEngineApplied') })
               setVlmDialogOpen(false)
               await refreshBuiltinStatus()
@@ -1316,8 +1476,16 @@ export function UnifiedLLMBackendsTab({
           <div className="space-y-4">
             <FormField label={t('plugins:llm.builtinCtx')} helpText={t('plugins:llm.builtinCtxHelp')}>
               <Select
-                value={String(vlmDialogInput ?? '')}
-                onValueChange={(v) => setVlmDialogInput(Number(v))}
+                value={vlmCustomMode ? 'custom' : String(vlmDialogInput ?? '')}
+                onValueChange={(v) => {
+                  if (v === 'custom') {
+                    if (vlmCustomText === '') setVlmCustomText(String(vlmDialogInput ?? ''))
+                    setVlmCustomMode(true)
+                  } else {
+                    setVlmCustomMode(false)
+                    setVlmDialogInput(Number(v))
+                  }
+                }}
               >
                 <SelectTrigger className="w-full font-mono">
                   <SelectValue />
@@ -1328,8 +1496,25 @@ export function UnifiedLLMBackendsTab({
                       {(n / 1024).toFixed(0)}K
                     </SelectItem>
                   ))}
+                  <SelectItem value="custom">
+                    {vlmCustomMode && vlmCustomText
+                      ? `${t('plugins:llm.builtinCtxCustom')} · ${(Number(vlmCustomText) / 1024).toFixed(1)}K`
+                      : t('plugins:llm.builtinCtxCustom')}
+                  </SelectItem>
                 </SelectContent>
               </Select>
+              {vlmCustomMode && (
+                <Input
+                  type="number"
+                  min={1024}
+                  max={1_048_576}
+                  step={1024}
+                  value={vlmCustomText}
+                  onChange={(e) => setVlmCustomText(e.target.value)}
+                  className="mt-2 font-mono"
+                  placeholder="1024 – 1048576"
+                />
+              )}
             </FormField>
             <FormField label={t('plugins:llm.builtinKv')} helpText={t('plugins:llm.builtinKvHelp')}>
               <Select value={vlmKvInput} onValueChange={(v) => setVlmKvInput(v as 'q8_0' | 'f16')}>
@@ -1342,6 +1527,40 @@ export function UnifiedLLMBackendsTab({
                 </SelectContent>
               </Select>
             </FormField>
+            <details>
+              <summary className="cursor-pointer text-sm text-muted-foreground">{t('plugins:llm.builtinNgl')}</summary>
+            <FormField label={t('plugins:llm.builtinNgl')} helpText={t('plugins:llm.builtinNglHelp')}>
+              <Select
+                value={vlmNglMode}
+                onValueChange={(v) => {
+                  const mode = v as 'auto' | 'custom'
+                  setVlmNglMode(mode)
+                  if (mode === 'custom' && vlmNglText === '' && builtinStatus?.companion?.gpu_offload?.ngl != null) {
+                    setVlmNglText(String(builtinStatus.companion.gpu_offload.ngl))
+                  }
+                }}
+              >
+                <SelectTrigger className="w-full font-mono">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">{t('plugins:llm.builtinNglAuto')}</SelectItem>
+                  <SelectItem value="custom">{t('plugins:llm.builtinNglCustom')}</SelectItem>
+                </SelectContent>
+              </Select>
+              {vlmNglMode === 'custom' && (
+                <Input
+                  type="number"
+                  min={0}
+                  max={65_535}
+                  value={vlmNglText}
+                  onChange={(e) => setVlmNglText(e.target.value)}
+                  className="mt-2 font-mono"
+                  placeholder="0 – 65535"
+                />
+              )}
+            </FormField>
+            </details>
           </div>
         </UnifiedFormDialog>
 

@@ -4,9 +4,9 @@
 //! of the earlier conversation and stores it in SessionMetadata. Subsequent
 //! requests inject the summary and remove summarized messages, freeing context space.
 //!
-//! Invariant: the last few user messages ([`RECENT_PROTECTED_USER_MSGS`]) are
-//! NEVER covered by a summary — their exact wording must survive for follow-up
-//! turns, and a paraphrase loses it.
+//! Recent user wording stays verbatim in the request context. Early tool-heavy
+//! turns may summarize the surrounding prefix while the context builder also
+//! retains those recent user messages in their original role.
 
 use crate::server::ServerState;
 use neomind_agent::AgentMessage;
@@ -218,6 +218,37 @@ fn recent_user_floor(history: &[AgentMessage], keep: usize) -> usize {
     0
 }
 
+fn planned_summary_target(history: &[AgentMessage], covered: usize) -> usize {
+    let target = summarizable_target(
+        history.len().saturating_sub(covered),
+        covered,
+        summary_protection_floor(history),
+    );
+    // Covered users remain native context. Summarizing only a user would
+    // add a summary without releasing any context.
+    if history
+        .iter()
+        .skip(covered)
+        .take(target)
+        .any(|m| matches!(m.role.as_str(), "assistant" | "tool"))
+    {
+        target
+    } else {
+        0
+    }
+}
+
+fn summary_protection_floor(history: &[AgentMessage]) -> usize {
+    let users = history.iter().filter(|m| m.role == "user").count();
+    if users <= RECENT_PROTECTED_USER_MSGS {
+        // The context builder retains these users verbatim alongside the summary.
+        // Permit compressing the surrounding first-turn tool transcript.
+        history.len()
+    } else {
+        recent_user_floor(history, RECENT_PROTECTED_USER_MSGS)
+    }
+}
+
 /// How many messages (starting at `covered_count`) may be summarized without
 /// the summary's coverage reaching `protected_first`.
 ///
@@ -357,14 +388,11 @@ pub async fn trigger_summarization(
     // away — the summary paraphrases, and follow-up turns need the user's
     // exact wording (draw-text content, names, thresholds). Clamp the range
     // BEFORE building the summary text so text and coverage stay in sync.
-    // Sessions with ≤3 user messages simply skip summarization; overflow is
-    // handled by the context window's eviction path instead.
-    let user_count = history.iter().filter(|m| m.role == "user").count();
-    let keep = RECENT_PROTECTED_USER_MSGS.min(user_count);
-    let protected_first = recent_user_floor(&history, keep);
+    // Short sessions may summarize tool history because the context builder
+    // retains recent user messages verbatim even inside the covered prefix.
+    let protected_first = summary_protection_floor(&history);
 
-    let summarize_count_target =
-        summarizable_target(unsummarized.len(), covered_count, protected_first);
+    let summarize_count_target = planned_summary_target(&history, covered_count);
     if summarize_count_target == 0 {
         tracing::debug!(
             session_id = %session_id,
@@ -815,6 +843,44 @@ mod tests {
         assert!(
             new_up_to < protected,
             "summary must never cover the protected user messages"
+        );
+    }
+}
+
+#[cfg(test)]
+mod early_turn_compaction_tests {
+    use super::*;
+    #[test]
+    fn first_user_tool_transcript_has_a_compressible_prefix() {
+        let mut history = vec![AgentMessage::user("保留原话 厦门市集美区")];
+        for _ in 0..12 {
+            history.push(AgentMessage::assistant("tool output"));
+        }
+        let floor = summary_protection_floor(&history);
+        assert_eq!(floor, history.len());
+        assert!(summarizable_target(history.len(), 0, floor) > 0);
+    }
+    #[test]
+    fn a_user_only_prefix_does_not_pretend_to_release_context() {
+        let history = vec![
+            AgentMessage::user("exact words"),
+            AgentMessage::assistant("answer"),
+        ];
+        assert_eq!(planned_summary_target(&history, 0), 0);
+    }
+    #[test]
+    fn longer_chats_keep_the_existing_recent_user_floor() {
+        let history = (0..5)
+            .flat_map(|_| {
+                [
+                    AgentMessage::user("exact words"),
+                    AgentMessage::assistant("answer"),
+                ]
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            summary_protection_floor(&history),
+            recent_user_floor(&history, 3)
         );
     }
 }

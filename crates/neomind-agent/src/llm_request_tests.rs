@@ -8,6 +8,7 @@ use std::sync::Mutex;
 struct CaptureRuntime {
     inner: MockLlmRuntime,
     requests: Arc<Mutex<Vec<serde_json::Value>>>,
+    overflow_once: std::sync::atomic::AtomicBool,
 }
 
 impl CaptureRuntime {
@@ -17,6 +18,7 @@ impl CaptureRuntime {
             "tools_count": input.tools.as_ref().map_or(0, Vec::len),
             "tool_names": input.tools.as_ref().map(|tools| tools.iter().map(|t| t.name.clone()).collect::<Vec<_>>()).unwrap_or_default(),
             "thinking": input.params.thinking_enabled,
+            "effort": input.params.thinking_effort,
             "temperature": input.params.temperature,
             "top_p": input.params.top_p,
             "top_k": input.params.top_k,
@@ -51,6 +53,17 @@ impl LlmRuntime for CaptureRuntime {
         input: LlmInput,
     ) -> std::result::Result<Pin<Box<dyn Stream<Item = StreamChunk> + Send>>, LlmError> {
         self.capture(&input);
+        if self
+            .overflow_once
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Ok(Box::pin(futures::stream::iter(vec![Err(
+                LlmError::ContextOverflow {
+                    prompt_tokens: 40000,
+                    max_context: 32768,
+                },
+            )])));
+        }
         self.inner.generate_stream(input).await
     }
 }
@@ -64,6 +77,7 @@ async fn harness(script: Vec<MockResponse>) -> (Arc<LlmInterface>, Requests) {
         .set_llm(Arc::new(CaptureRuntime {
             inner: MockLlmRuntime::new(script),
             requests: requests.clone(),
+            overflow_once: std::sync::atomic::AtomicBool::new(false),
         }))
         .await;
     (iface, requests)
@@ -787,5 +801,126 @@ async fn guide_recovery_excludes_only_skill_for_one_request() {
         iface.get_tool_definitions().await.len(),
         2,
         "request must not mutate the session's tools"
+    );
+}
+
+fn thinking_instance(integral: bool) -> neomind_storage::LlmBackendInstance {
+    let mut inst = neomind_storage::LlmBackendInstance::new(
+        "policy-test".into(),
+        "policy-test".into(),
+        neomind_storage::LlmBackendType::LlamaCpp,
+    );
+    inst.thinking_enabled = true;
+    inst.thinking_effort = Some(neomind_core::ThinkingEffort::from_bool(true));
+    inst.is_builtin = integral;
+    inst.thinking_is_integral = integral;
+    inst
+}
+
+#[tokio::test]
+async fn dynamic_thinking_large_prompt_updates_bool_and_effort_together() {
+    let (iface, requests) = harness(vec![MockResponse::text("done")]).await;
+    iface
+        .set_backend_defaults(BackendRequestDefaults::from(&thinking_instance(false)))
+        .await;
+    drain(
+        iface
+            .chat_stream_with_history("measured value context ".repeat(7000), &[])
+            .await
+            .unwrap(),
+    )
+    .await;
+    let r = requests.lock().unwrap();
+    assert_eq!(r[0]["thinking"], false);
+    assert_eq!(
+        r[0]["effort"],
+        serde_json::json!(neomind_core::ThinkingEffort::None)
+    );
+}
+
+#[tokio::test]
+async fn dynamic_thinking_bound_integral_model_resists_dynamic_disable() {
+    let (iface, requests) = harness(vec![MockResponse::text("done"); 2]).await;
+    iface
+        .set_backend_defaults(BackendRequestDefaults::from(&thinking_instance(true)))
+        .await;
+    drain(
+        iface
+            .chat_stream_with_history("measured value context ".repeat(7000), &[])
+            .await
+            .unwrap(),
+    )
+    .await;
+    drain(iface.chat_stream_summary("summarize", &[]).await.unwrap()).await;
+    let r = requests.lock().unwrap();
+    assert_eq!(r.len(), 2);
+    for request in r.iter() {
+        assert_eq!(request["thinking"], true);
+        assert_eq!(
+            request["effort"],
+            serde_json::json!(neomind_core::ThinkingEffort::from_bool(true))
+        );
+    }
+}
+
+#[tokio::test]
+async fn dynamic_thinking_overflow_retry_explicitly_disables_when_supported() {
+    for integral in [false, true] {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let iface = LlmInterface::new(ChatConfig::default());
+        iface
+            .set_llm(Arc::new(CaptureRuntime {
+                inner: MockLlmRuntime::new(vec![MockResponse::text("recovered")]),
+                requests: requests.clone(),
+                overflow_once: std::sync::atomic::AtomicBool::new(true),
+            }))
+            .await;
+        iface
+            .set_backend_defaults(BackendRequestDefaults::from(&thinking_instance(integral)))
+            .await;
+        drain(
+            iface
+                .chat_stream_with_history("check status", &[])
+                .await
+                .unwrap(),
+        )
+        .await;
+        let r = requests.lock().unwrap();
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0]["thinking"], true);
+        assert_eq!(r[1]["thinking"], integral);
+        assert_eq!(
+            r[1]["effort"],
+            serde_json::json!(neomind_core::ThinkingEffort::from_bool(integral))
+        );
+    }
+}
+
+#[tokio::test]
+async fn dynamic_thinking_effort_precedence_and_unset_defaults_are_preserved() {
+    let (iface, _) = harness(vec![]).await;
+    iface.restore_thinking_enabled(None).await;
+    assert_eq!(iface.effective_thinking_control(None).await, (None, None));
+    let mut inst = thinking_instance(false);
+    inst.thinking_enabled = true;
+    inst.thinking_effort = Some(neomind_core::ThinkingEffort::None);
+    iface
+        .set_backend_defaults(BackendRequestDefaults::from(&inst))
+        .await;
+    assert_eq!(
+        iface.effective_thinking_control(None).await,
+        (Some(false), Some(neomind_core::ThinkingEffort::None))
+    );
+    iface.set_thinking_enabled(true).await;
+    assert_eq!(
+        iface.effective_thinking_control(None).await,
+        (
+            Some(true),
+            Some(neomind_core::ThinkingEffort::from_bool(true))
+        )
+    );
+    assert_eq!(
+        iface.effective_thinking_control(Some(false)).await,
+        (Some(false), Some(neomind_core::ThinkingEffort::None))
     );
 }

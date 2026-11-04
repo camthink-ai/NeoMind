@@ -254,6 +254,7 @@ struct TransientSkillContext {
 pub(crate) struct BackendRequestDefaults {
     params: (f32, f32, usize, usize),
     thinking: (Option<bool>, Option<neomind_core::ThinkingEffort>),
+    thinking_is_integral: bool,
 }
 
 impl From<&neomind_storage::LlmBackendInstance> for BackendRequestDefaults {
@@ -266,6 +267,7 @@ impl From<&neomind_storage::LlmBackendInstance> for BackendRequestDefaults {
                 instance.max_tokens,
             ),
             thinking: (Some(instance.thinking_enabled), instance.thinking_effort),
+            thinking_is_integral: instance.is_builtin && instance.thinking_is_integral,
         }
     }
 }
@@ -384,14 +386,18 @@ impl LlmInterface {
     /// Whether the active backend instance is an integral-thinking model whose
     /// thinking cannot be turned off (e.g. LFM2.5).
     ///
-    /// Reads the GLOBAL active instance, not `self.instance_manager`: production
-    /// `LlmInterface`s are built via `LlmInterface::new()` and never carry
-    /// `self.instance_manager`, so the old per-interface read made this guard
-    /// inert (the builtin LFM would get `thinking_enabled=false` forced on
-    /// non-chat calls). Gated on `is_builtin` so a session directly configured
-    /// to a non-builtin backend while the builtin happens to be globally active
-    /// does not inherit the exception.
+    /// Prefer the backend bound to this session, then its instance manager.
+    /// Legacy unbound interfaces fall back to the global builtin instance.
+    /// A different globally active model must not change a bound session.
     async fn active_thinking_is_integral(&self) -> bool {
+        if let Some(defaults) = self.backend_defaults.read().await.as_ref() {
+            return defaults.thinking_is_integral;
+        }
+        if let Some(manager) = &self.instance_manager {
+            return manager
+                .get_active_instance()
+                .is_some_and(|inst| inst.is_builtin && inst.thinking_is_integral);
+        }
         match crate::get_instance_manager()
             .ok()
             .and_then(|m| m.get_active_instance())
@@ -414,7 +420,14 @@ impl LlmInterface {
         &self,
         thinking_override: Option<bool>,
     ) -> (Option<bool>, Option<neomind_core::ThinkingEffort>) {
-        let resolved = self.resolve_thinking_control().await;
+        let (enabled, effort) = self.resolve_thinking_control().await;
+        // Backends prefer effort. Keep the legacy boolean consistent with it.
+        let resolved = (
+            effort
+                .map(|e| e != neomind_core::ThinkingEffort::None)
+                .or(enabled),
+            effort,
+        );
         if self.active_thinking_is_integral().await {
             resolved
         } else if let Some(ov) = thinking_override {
@@ -515,12 +528,21 @@ impl LlmInterface {
 
     /// Take the last prompt token count from the most recent stream response.
     /// Returns the value and resets it to None.
+    pub async fn peek_last_prompt_tokens(&self) -> Option<u32> {
+        *self.last_prompt_tokens.lock().await
+    }
+
     pub async fn take_last_prompt_tokens(&self) -> Option<u32> {
         self.last_prompt_tokens.lock().await.take()
     }
 
     /// Whether the last context build dropped history messages. Taking it
     /// clears the flag so one truncated turn triggers at most one summary.
+    pub fn mark_history_truncated(&self) {
+        self.history_truncated
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
     pub fn take_history_truncated(&self) -> bool {
         self.history_truncated
             .swap(false, std::sync::atomic::Ordering::SeqCst)
@@ -1399,6 +1421,7 @@ impl LlmInterface {
 
         tracing::debug!(
             thinking_enabled = ?thinking_enabled,
+            thinking_effort = ?thinking_effort,
             uses_instance_manager = self.uses_instance_manager(),
             "LlmInterface chat_stream_internal"
         );
@@ -1588,7 +1611,7 @@ impl LlmInterface {
         };
 
         // Get thinking control - priority: local setting > instance setting.
-        let (thinking_enabled, thinking_effort) = self.resolve_thinking_control().await;
+        let (thinking_enabled, thinking_effort) = self.effective_thinking_control(None).await;
 
         // Get effective parameters from backend instance or local config
         let (eff_temp, eff_top_p, eff_top_k, _static_max_tokens) =
@@ -1899,10 +1922,11 @@ impl LlmInterface {
         };
 
         // Get thinking control - priority: local setting > instance setting.
-        let (thinking_enabled, thinking_effort) = self.resolve_thinking_control().await;
+        let (thinking_enabled, thinking_effort) = self.effective_thinking_control(None).await;
 
         tracing::debug!(
             thinking_enabled = ?thinking_enabled,
+            thinking_effort = ?thinking_effort,
             uses_instance_manager = self.uses_instance_manager(),
             "LlmInterface chat_stream_internal_message (multimodal)"
         );
@@ -2179,6 +2203,7 @@ impl LlmInterface {
 
         tracing::debug!(
             thinking_enabled = ?thinking_enabled,
+            thinking_effort = ?thinking_effort,
             uses_instance_manager = self.uses_instance_manager(),
             "LlmInterface chat_stream_internal"
         );
@@ -2187,7 +2212,7 @@ impl LlmInterface {
         // Small thinking models (2B) with large prompts (20k+ tokens) tend to
         // consume all num_predict tokens on thinking alone, producing no content.
         // Observed: qwen3.5:2b with prompt_eval=32259, eval=32768, content=0.
-        let thinking_enabled = if thinking_enabled == Some(true) {
+        let (thinking_enabled, thinking_effort) = if thinking_enabled == Some(true) {
             // Size the prompt with the same estimator the budget math uses, so the
             // guard reflects real token density — not a bytes*0.8 approximation
             // that over-counted English (~3×) and tripped the guard far too
@@ -2207,15 +2232,19 @@ impl LlmInterface {
                 tracing::info!(
                     estimated_tokens,
                     hist_messages = history.map(|h| h.len()).unwrap_or(0),
-                    "Auto-disabling thinking for large prompt to prevent thinking loop hang"
+                    "Requesting dynamic thinking disable for large prompt"
                 );
-                Some(false)
+                self.effective_thinking_control(Some(false)).await
             } else {
-                thinking_enabled
+                (thinking_enabled, thinking_effort)
             }
         } else {
-            thinking_enabled
+            (thinking_enabled, thinking_effort)
         };
+
+        tracing::debug!(thinking_enabled = ?thinking_enabled,
+            thinking_effort = ?thinking_effort,
+            "Final streaming thinking policy after dynamic budget control");
 
         // Get effective parameters from backend instance or local config
         let (eff_temp, eff_top_p, eff_top_k, _static_max_tokens) =
@@ -2418,6 +2447,7 @@ impl LlmInterface {
         let fg_guard = ForegroundChatGuard::acquire();
         let wrapped_stream = PermitStream::new(stream, permit);
 
+        let retry_thinking = self.effective_thinking_control(Some(false)).await;
         // Prepare retry data for tiered context overflow retry
         let llm_retry = llm.clone();
         let limiter_retry = self.limiter.clone();
@@ -2457,6 +2487,9 @@ impl LlmInterface {
                                 "Context overflow, retrying with {} strategy", retry_label
                             );
                             drop(stream);
+                            tracing::debug!(reason = "context_overflow_recovery",
+                                enabled = ?retry_thinking.0, effort = ?retry_thinking.1,
+                                "Applying recovery thinking policy");
                             let retry_input = LlmInput {
                                 messages: retry_messages,
                                 params: neomind_core::llm::backend::GenerationParams {
@@ -2467,8 +2500,8 @@ impl LlmInterface {
                                     stop: None,
                                     frequency_penalty: None,
                                     presence_penalty: None,
-                                    thinking_enabled: None, // Disable thinking on retry
-                                    thinking_effort: None,
+                                    thinking_enabled: retry_thinking.0,
+                                    thinking_effort: retry_thinking.1,
                                     max_context: None,
                                     json_mode: None,
                                 },

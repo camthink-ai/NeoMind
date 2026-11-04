@@ -449,13 +449,25 @@ pub async fn update_rule_handler(
     // returned success with the rule still pointing at sensor-001). The whole
     // request is rejected; nothing is written.
     const UPDATE_FIELDS: &[&str] = &[
-        "name", "description", "enabled", "source", "condition", "trigger", "actions",
+        "name",
+        "description",
+        "enabled",
+        "source",
+        "condition",
+        "trigger",
+        "actions",
     ];
     // Keys the full-definition path deserializes into CompiledRule; accepted
     // so a frontend full-rule PUT (tags/cooldown/…) is not rejected, but they
     // do not count as update fields on their own.
     const PASSTHROUGH_KEYS: &[&str] = &[
-        "id", "tags", "cooldown", "for_duration", "state", "dsl_preview", "created_at",
+        "id",
+        "tags",
+        "cooldown",
+        "for_duration",
+        "state",
+        "dsl_preview",
+        "created_at",
         "updated_at",
     ];
     let obj = req
@@ -493,7 +505,13 @@ pub async fn update_rule_handler(
     // id/state/created_at/updated_at/dsl_preview remain server-authoritative
     // (overridden from the stored rule / regenerate) by design.
     const METADATA_KEYS: &[&str] = &[
-        "id", "tags", "cooldown", "for_duration", "state", "dsl_preview", "created_at",
+        "id",
+        "tags",
+        "cooldown",
+        "for_duration",
+        "state",
+        "dsl_preview",
+        "created_at",
         "updated_at",
     ];
     let has_full_definition = obj
@@ -528,7 +546,9 @@ pub async fn update_rule_handler(
     }
     if let Some(v) = obj.get("description") {
         if !v.is_null() && !v.is_string() {
-            return Err(ErrorResponse::bad_request("'description' must be a string or null"));
+            return Err(ErrorResponse::bad_request(
+                "'description' must be a string or null",
+            ));
         }
     }
     if let Some(v) = obj.get("enabled") {
@@ -695,7 +715,9 @@ pub async fn update_rule_handler(
         || description
             .as_deref()
             .is_some_and(|d| rule.description.as_deref() != Some(d))
-        || source.as_ref().is_some_and(|s| rule.source.as_ref() != Some(s))
+        || source
+            .as_ref()
+            .is_some_and(|s| rule.source.as_ref() != Some(s))
         || enabled.is_some_and(|e| e != rule.enabled);
     if !changed {
         return ok(json!({
