@@ -44,6 +44,15 @@ Create, update, diagnose, or delete event-driven rules over device / extension /
 | "delete / disable / enable rule X" | **Quick Command Reference** |
 | "update an existing rule" | Run diagnosis first, then **Phase 2** with new JSON |
 
+## Deployments involving rules, channels, and device control
+
+When a request spans several resource types (for example, BMS ventilation rules, an alert channel, and immediate HVAC control), load the `message-management` and `device-onboarding` guides as well. Their CLI contracts differ from `rule create`:
+
+- Discover the channel type and schema with `neomind message channel-types` and `neomind message channel-type-schema <type>` before `channel-create`. Use the documented `--type` and `--param key=value` or `--config` form; `--url` alone is not a channel-create option.
+- Inspect the target device's supported metrics and commands with `neomind device get <id>` before rule creation or control. A light actuator may not expose an `occupancy` metric; source the condition from a device that actually reports occupancy.
+- Send an immediate command as `neomind device control <id> <command> --param key=value` or `--params '{"key":"value"}'`; a bare value after the command is not an accepted parameter.
+- Read each shell result's `exit_code`, stderr, and returned state. A completed tool call can contain a failed command. After errors, consult `--help` or the relevant guide and retry with a valid schema. Before saying a deployment is complete, verify the requested rule count, channel existence, and immediate device command result. Name any uncompleted item plainly.
+
 ## HARD GATE
 
 ```

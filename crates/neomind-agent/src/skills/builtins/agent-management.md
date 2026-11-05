@@ -71,8 +71,10 @@ neomind agent control agent-abc123 active
 |------|-------------------|-------------------------------|---------|
 | Event | `event` (default) | Not needed | Triggered by device data matching the event filter |
 | Interval | `interval` | `--every 5m` (shortcut) or `--schedule-config '300'` | `--every 5m` = every 5 min |
-| Cron | `cron` | `--schedule-config` | `--schedule-config '0 9 * * *'` = daily 9 AM |
+| Cron | `cron` | `--schedule-config` + `--timezone` | `--schedule-config '0 9 * * *' --timezone 'Asia/Shanghai'` = daily 9 AM Beijing time |
 | Manual | `manual` | Not needed | Never auto-scheduled — runs ONLY via `agent invoke` |
+
+For a cron schedule, the expression does not encode a timezone. If the user specifies a timezone, pass `--timezone` explicitly (Beijing time: `Asia/Shanghai`), then verify both the cron expression and timezone with `neomind agent get <id>`. Do not claim a local-time schedule is configured when the returned timezone is missing or different. If the user does not specify a timezone, use the timezone configured in NeoMind system settings; verify the effective scheduled time before reporting it.
 
 **Manual agents** are repeatable one-off workers: they never fire on their own, `agent invoke <ID>` runs them any number of times, and between runs they show status `Completed` (a ready-state — Completed agents can always be invoked again). Use manual for on-demand analysis, ad-hoc checks, or tasks delegated from chat.
 
@@ -261,6 +263,7 @@ neomind agent create \
   --prompt '<task_description>' \
   [--schedule-type <event|interval|cron|manual>] \
   [--schedule-config '<config>'] \
+  [--timezone '<IANA timezone>'] \
   [--description '<desc>'] \
   [--llm-backend '<llm_backend_id>'] \
   [--system-prompt '<instructions>'] \
