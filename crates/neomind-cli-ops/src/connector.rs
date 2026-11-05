@@ -24,10 +24,10 @@ fn preserved_broker_update(response: &serde_json::Value, id: &str) -> Result<ser
                     bail!("Cannot preserve connector configuration: missing {key}");
                 }
             }
-            if !broker
+            if broker
                 .get("port")
                 .and_then(|v| v.as_u64())
-                .is_some_and(|v| v <= u16::MAX as u64)
+                .is_none_or(|v| v > u16::MAX as u64)
                 || ["tls", "enabled"]
                     .iter()
                     .any(|key| broker.get(key).and_then(|v| v.as_bool()).is_none())

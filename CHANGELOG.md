@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.2.6] - 2026-11-04 — honest turn endings, retained conversation memory, a truthful context meter, and image-tool recovery
+## [1.2.6] - 2026-11-05 — honest turn endings, retained conversation memory, a truthful context meter, and image-tool recovery
 
 Chat turns now end with grounded answers instead of looping or claiming unexecuted work; conversation summaries survive every compaction cycle; the context ring reports the measured tokens of the last model request instead of accumulating the whole execution; and vision/image failures recover through platform-owned references. API contracts (rules, agent storage) fail loudly instead of succeeding silently. Dashboard config controls now do what they say, and the interface converges on one tab, search and card language.
 
