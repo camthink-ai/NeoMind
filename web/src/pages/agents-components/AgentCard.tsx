@@ -39,6 +39,7 @@ import { cn } from "@/lib/utils"
 import { formatTimestamp } from "@/lib/utils/format"
 import { interactiveCardLift } from "@/design-system/tokens/size"
 import type { AiAgent } from "@/types"
+import { useIsMobile } from "@/hooks/useMobile"
 
 interface AgentCardProps {
   agent: AiAgent & { currentThinking?: string | null }
@@ -59,6 +60,7 @@ export function AgentCard({
 }: AgentCardProps) {
   const { t } = useTranslation(['common', 'agents'])
   const { confirm } = useConfirm()
+  const isMobile = useIsMobile()
 
   const handleToggleStatus = async () => {
     const isCurrentlyActive = agent.status === 'Active' || agent.status === 'Executing'
@@ -94,6 +96,62 @@ export function AgentCard({
 
   const isExecuting = agent.status === 'Executing'
   const isError = agent.status === 'Error'
+
+  if (isMobile) {
+    return (
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onClick}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() } }}
+        className="flex min-h-[5.25rem] cursor-pointer items-center gap-3 border-b border-border py-3.5 active:opacity-60"
+      >
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h3 className="truncate text-[15px] font-medium text-foreground">{agent.name}</h3>
+            <span className={cn(
+              "h-1.5 w-1.5 shrink-0 rounded-full",
+              isError ? "bg-error" : isExecuting ? "bg-info" : agent.status === 'Paused' ? "bg-muted-foreground" : "bg-success",
+            )} />
+          </div>
+          <p className="mt-1 truncate text-xs text-muted-foreground">
+            {isExecuting
+              ? (agent.currentThinking || t('agents:thinking.executing'))
+              : (agent.user_prompt || agent.description || t('agents:card.noDescription'))}
+          </p>
+          <p className="mt-1 truncate text-xs text-muted-foreground">
+            {agent.last_execution_at ? formatTimestamp(agent.last_execution_at, false) : t('agents:card.neverExecuted')}
+            {successRate !== null ? ` · ${agent.execution_count}${t('agents:card.runsSuffix')} · ${successRate}%` : ''}
+          </p>
+        </div>
+        <Switch
+          checked={agent.status === 'Active'}
+          onCheckedChange={handleToggleStatus}
+          onClick={(e) => e.stopPropagation()}
+          aria-label={t('agents:card.toggleStatus', { name: agent.name })}
+        />
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <IconButton className="h-11 w-11" onClick={(e) => e.stopPropagation()} aria-label={t('agents:card.moreOptions')}>
+              <MoreVertical className="h-4 w-4" />
+            </IconButton>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-40">
+            <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onEdit(agent) }}>
+              <Edit className="mr-2 h-4 w-4" />{t('common:edit')}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onExecute(agent) }} disabled={isExecuting}>
+              <Play className="mr-2 h-4 w-4" />{t('agents:execute')}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onDelete(agent) }} className="text-error">
+              <Trash2 className="mr-2 h-4 w-4" />{t('common:delete')}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    )
+  }
 
   return (
     <Card

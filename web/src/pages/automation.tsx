@@ -656,7 +656,6 @@ export function AutomationPage() {
       <PageLayout
         title={tAuto('title')}
         hideFooterOnMobile
-        hasBottomNav
         headerContent={
           <PageTabsBar
             tabs={tabs}
@@ -740,13 +739,6 @@ export function AutomationPage() {
           />
         </PageTabsContent>
       </PageLayout>
-
-      {/* Mobile Bottom Navigation */}
-      <PageTabsBottomNav
-        tabs={tabs}
-        activeTab={activeTab}
-        onTabChange={(v) => handleTabChange(v as AutomationTab)}
-      />
 
       {/* Rule Builder Dialog */}
       <SimpleRuleBuilderSplit

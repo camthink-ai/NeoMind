@@ -8,6 +8,7 @@ import { shallow } from "zustand/shallow"
 import { AppSidebar } from "@/components/layout/AppSidebar"
 import { GlobalControlsFloating } from "@/components/layout/GlobalControls"
 import { MobileNav } from "@/components/layout/MobileNav"
+import { MobilePrimaryNav } from "@/components/layout/MobilePrimaryNav"
 import { SwipeNavigation } from "@/components/layout/SwipeNavigation"
 import { NavigationProgress } from "@/components/layout/NavigationProgress"
 import { useIsMobile } from "@/hooks/useMobile"
@@ -611,7 +612,13 @@ function App() {
                         onMouseDown={handleWindowDragMouseDown}
                       />
                     )}
-                    <div className="w-full h-full overflow-hidden" id="main-scroll-container">
+                    <div
+                      className="w-full h-full overflow-hidden"
+                      id="main-scroll-container"
+                      style={isMobile && currentPath !== '/' && !currentPath.startsWith('/chat')
+                        ? { paddingBottom: 'calc(4rem + env(safe-area-inset-bottom, 0px))' }
+                        : undefined}
+                    >
                     <ErrorBoundary>
                     <div key={location.pathname.split('/')[1] || 'root'} className="animate-page-enter w-full h-full overflow-hidden">
                     <Routes>
@@ -667,6 +674,7 @@ function App() {
                     </div>
                     </ErrorBoundary>
                     </div>
+                    <MobilePrimaryNav />
                   </main>
                   <Suspense fallback={null}>
                     <SettingsDialog />

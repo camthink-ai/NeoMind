@@ -33,6 +33,8 @@ describe('TurnTimeline', () => {
       />
     )
     expect(screen.getByText(/chat:timeline\.title/)).toBeTruthy()
+    // Completed tool work is quiet by default; details remain one tap away.
+    fireEvent.click(screen.getByRole('button', { name: /chat:timeline\.title/ }))
     expect(screen.getByText('R1')).toBeTruthy()
     expect(screen.getByText('R2')).toBeTruthy()
     expect(screen.getByText('第一轮思考')).toBeTruthy()
@@ -51,6 +53,7 @@ describe('TurnTimeline', () => {
         roundThinking={{ 1: '第一轮思考', 2: '第二轮思考' }}
       />
     )
+    fireEvent.click(screen.getByRole('button', { name: /chat:timeline\.title/ }))
     const round1 = screen.getByRole('button', { name: /R1/ })
     expect(round1.getAttribute('aria-expanded')).toBe('true')
     fireEvent.click(round1)
@@ -60,10 +63,11 @@ describe('TurnTimeline', () => {
     expect(screen.getByText('device.query_temperature')).toBeTruthy()
   })
 
-  it('collapses the whole process from its summary header', () => {
+  it('keeps a completed process collapsed and expands it from its summary header', () => {
     render(<TurnTimeline toolCalls={toolCalls} />)
-    fireEvent.click(screen.getByRole('button', { name: /chat:timeline\.title/ }))
     expect(screen.queryByText('R1')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /chat:timeline\.title/ }))
+    expect(screen.getByText('R1')).toBeTruthy()
   })
 
   it('shows a failed tool inside its round', () => {
@@ -78,6 +82,7 @@ describe('TurnTimeline', () => {
         ]}
       />
     )
+    fireEvent.click(screen.getByRole('button', { name: /chat:timeline\.title/ }))
     expect(screen.getByText('toolCall.status.failed')).toBeTruthy()
   })
 
@@ -95,6 +100,7 @@ describe('TurnTimeline', () => {
         ]}
       />
     )
+    fireEvent.click(screen.getByRole('button', { name: /chat:timeline\.title/ }))
     const toolButton = screen
       .getAllByText('vision.inspect')
       .map((el) => el.closest('button'))

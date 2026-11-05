@@ -157,7 +157,9 @@ const DialogHeader = function DialogHeader({
     <div
       className={cn(
         // Header container with title and close button side by side
-        "flex items-center justify-between gap-2",
+        isMobile
+          ? "grid grid-cols-[2.75rem_minmax(0,1fr)_2.75rem] items-center gap-1"
+          : "flex items-center justify-between gap-2",
         // Mobile styling
         isMobile && "px-4 py-4 border-b shrink-0 bg-popover",
         className
@@ -166,8 +168,8 @@ const DialogHeader = function DialogHeader({
     >
       {/* Title content */}
       <div className={cn(
-        "flex flex-col gap-1.5 flex-1 min-w-0",
-        !isMobile && "text-left"
+        "flex min-w-0 flex-col gap-1.5",
+        isMobile ? "col-start-2 row-start-1 text-center" : "flex-1 text-left"
       )}>
         {children}
       </div>
@@ -175,7 +177,7 @@ const DialogHeader = function DialogHeader({
       <DialogPrimitive.Close className={cn(
         "inline-flex items-center justify-center rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground",
         // Mobile: larger button
-        isMobile ? "p-2" : "p-0.5"
+        isMobile ? "col-start-1 row-start-1 h-11 w-11 p-0" : "p-0.5"
       )}>
         <X className={cn("h-4 w-4", isMobile && "h-5 w-5")} />
         <span className="sr-only">Close</span>

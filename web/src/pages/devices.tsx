@@ -772,7 +772,6 @@ export function DevicesPage() {
         title={deviceDetailView ? undefined : t('devices:title')}
         noPadding={!!deviceDetailView}
         hideFooterOnMobile
-        hasBottomNav
         mobileHeader={
           deviceDetailView
             ? {
@@ -787,7 +786,7 @@ export function DevicesPage() {
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-9 w-9 shrink-0"
+                    className="h-11 w-11 shrink-0"
                     onClick={handleCloseDeviceDetail}
                     aria-label={t('common:back', 'Back')}
                   >
@@ -946,19 +945,6 @@ export function DevicesPage() {
           </>
         )}
       </PageLayout>
-
-      {/* Mobile: Bottom navigation bar */}
-      {!deviceDetailView && (
-        <PageTabsBottomNav
-          tabs={[
-            { value: 'devices', label: t('devices:deviceList'), icon: <Server className="h-4 w-4" /> },
-            { value: 'types', label: t('devices:deviceTypes'), icon: <Layers className="h-4 w-4" /> },
-            { value: 'drafts', label: t('devices:pending.tab'), icon: <FileEdit className="h-4 w-4" /> },
-          ]}
-          activeTab={activeTab}
-          onTabChange={(v) => handleTabChange(v as DeviceTabValue)}
-        />
-      )}
 
       {/* Device Edit Dialog */}
       <EditDeviceDialog

@@ -289,7 +289,8 @@
     "data": "数据",
     "messages": "消息",
     "extensions": "扩展",
-    "settings": "设置"
+    "settings": "设置",
+    "mobilePrimary": "主要导航"
   },
   "add": "添加",
   "edit": "编辑",
@@ -779,7 +780,15 @@
     "about": "帮助 / 关于",
     "version": "v{{version}}",
     "back": "返回",
+    "localInstance": "本地实例",
+    "connected": "已连接",
+    "disconnected": "未连接",
+    "mobileSummary": "{{online}} / {{total}} 台设备在线 · {{alerts}} 条未处理告警",
+    "extensionPage": "扩展页面",
+    "preferences": "偏好与账户",
+    "account": "账户",
     "cards": {
+      "dashboard": "可视化看板",
       "automation": "Transform 与数据推送",
       "data": "遥测数据查询",
       "messages": "通知中心",

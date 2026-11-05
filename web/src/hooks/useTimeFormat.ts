@@ -108,9 +108,9 @@ export function useGlobalTimezone(): UseGlobalTimezoneReturn {
         api.listTimezones().catch(() => ({ timezones: [] })),
       ])
 
-      setTimezone(tzResponse.timezone)
-      setIsDefault(tzResponse.is_default)
-      setAvailableTimezones(timezonesResponse.timezones)
+      setTimezone(tzResponse.timezone || "Asia/Shanghai")
+      setIsDefault(tzResponse.is_default ?? true)
+      setAvailableTimezones(Array.isArray(timezonesResponse.timezones) ? timezonesResponse.timezones : [])
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load timezone settings")
     } finally {

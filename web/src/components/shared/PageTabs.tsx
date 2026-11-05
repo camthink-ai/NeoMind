@@ -103,16 +103,45 @@ export function PageTabsBar({
   const isMobile = useIsMobile()
 
 
-  // On mobile, lift all actions into the MobilePageHeader via context.
-  // secondaryActions are appended so MobileTabActionsCompact naturally
-  // tucks them into the MoreHorizontal overflow alongside any extra
-  // primary actions.
+  // Mobile keeps business-local tabs directly below the page title. Global
+  // destinations live in MobilePrimaryNav; putting these tabs at the bottom
+  // would create two competing navigation bars.
   if (isMobile) {
     return (
-      <MobilePageTabsActionsLift
-        actions={[...actions, ...secondaryActions]}
-        actionsExtra={actionsExtra}
-      />
+      <>
+        <MobilePageTabsActionsLift
+          actions={[...actions, ...secondaryActions]}
+          actionsExtra={actionsExtra}
+        />
+        <div
+          role="tablist"
+          className={cn("flex min-w-0 gap-1 overflow-x-auto px-3 pb-1 scrollbar-none", tabsClassName)}
+        >
+          {tabs.map((tab) => {
+            const selected = tab.value === activeTab
+            return (
+              <button
+                key={tab.value}
+                id={`page-tab-${tab.value}`}
+                role="tab"
+                aria-selected={selected}
+                aria-controls={`page-tabpanel-${tab.value}`}
+                disabled={tab.disabled}
+                onClick={() => onTabChange(tab.value)}
+                className={cn(
+                  "relative h-11 shrink-0 px-3 text-sm font-medium transition-colors",
+                  "after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full",
+                  selected
+                    ? "text-foreground after:bg-foreground"
+                    : "text-muted-foreground after:bg-transparent active:text-foreground",
+                )}
+              >
+                {tab.label}
+              </button>
+            )
+          })}
+        </div>
+      </>
     )
   }
 
@@ -624,7 +653,7 @@ function TabActionsOverflow({
           <Button
             variant="ghost"
             size="icon"
-            className="h-9 w-9 shrink-0"
+            className="h-11 w-11 shrink-0 sm:h-9 sm:w-9"
             aria-label={moreText}
           >
             <MoreHorizontal className="h-5 w-5" />
@@ -702,7 +731,7 @@ function MobileTabActionsCompact({
           size={primaryIcon ? 'icon' : 'sm'}
           onClick={primary.onClick}
           disabled={primary.disabled || primary.loading}
-          className={primaryIcon ? 'h-9 w-9 shrink-0' : 'h-9 shrink-0 px-2 text-xs'}
+          className={primaryIcon ? 'h-11 w-11 shrink-0 sm:h-9 sm:w-9' : 'h-11 shrink-0 px-2 text-xs sm:h-9'}
           aria-label={primary.label}
           title={primary.label}
         >

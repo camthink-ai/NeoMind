@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/useMobile"
 import { useMobileNav } from "@/store/mobileNav"
 import { Button } from "@/components/ui/button"
+import { useLocation } from "react-router-dom"
 
 export interface MobilePageHeaderProps {
   /** Center title (required). */
@@ -40,7 +41,12 @@ export function MobilePageHeader({
   const isMobile = useIsMobile()
   const { t } = useTranslation("common")
   const setOpen = useMobileNav((s) => s.setOpen)
+  const location = useLocation()
   if (!isMobile) return null
+
+  // The global bottom bar is the navigation entry on regular mobile pages.
+  // Chat hides that bar to protect the composer, so it keeps the menu button.
+  const showMenu = !hideMenu && (location.pathname === "/" || location.pathname.startsWith("/chat"))
 
   return (
     <div
@@ -61,7 +67,7 @@ export function MobilePageHeader({
     >
       {/* Left slot: hamburger + leftExtra (e.g. back chevron) */}
       <div className="flex min-w-0 items-center gap-1 justify-self-start">
-        {!hideMenu && (
+        {showMenu && (
           <Button
             variant="ghost"
             size="icon"

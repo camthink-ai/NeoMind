@@ -80,9 +80,9 @@ export function EmptyState({ icon, title, description, action, className }: Empt
   const iconContent = typeof icon === 'string' ? iconMap[icon as keyof typeof iconMap] : icon
 
   return (
-    <div className={cn('flex w-full flex-1 flex-col items-center justify-center px-4 py-10 text-center', className)}>
-      {iconContent && (
-        <div className="mb-3 flex h-8 w-8 items-center justify-center text-muted-foreground [&>svg]:h-7 [&>svg]:w-7">
+    <div className={cn('flex flex-col flex-1 w-full items-center justify-center py-12 px-4 text-center animate-fade-in-up', className)}>
+      {iconContent && action && (
+        <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-muted text-muted-foreground [&>svg]:h-7 [&>svg]:w-7">
           {iconContent}
         </div>
       )}
@@ -114,7 +114,7 @@ export function EmptyState({ icon, title, description, action, className }: Empt
  */
 export function EmptyStateCard({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <Card className={cn('overflow-hidden border-border', className)}>
+    <Card className={cn('overflow-hidden border-0 bg-transparent shadow-none md:border md:border-border md:bg-card', className)}>
       <div className="p-8">{children}</div>
     </Card>
   )
@@ -133,13 +133,9 @@ export function EmptyStateCompact({
   icon?: React.ReactNode
 }) {
   return (
-    <div className="flex w-full flex-1 flex-col items-center justify-center py-6 text-center">
-      {icon && (
-        <div className="mb-2 flex h-6 w-6 items-center justify-center text-muted-foreground [&>svg]:h-5 [&>svg]:w-5">
-          {icon}
-        </div>
-      )}
-      <p className="text-sm font-medium text-muted-foreground">{title}</p>
+    <div className="flex flex-col flex-1 w-full items-center justify-center py-6 text-center">
+      {/* explicit size: compact used to silently inherit whatever the parent set */}
+      <p className="text-base font-medium text-muted-foreground">{title}</p>
       {description && (
         <p className="mt-1 text-sm text-muted-foreground">{description}</p>
       )}

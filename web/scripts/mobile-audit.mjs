@@ -1,0 +1,198 @@
+import { chromium } from "@playwright/test"
+import fs from "node:fs/promises"
+
+const outDir = new URL("../../work/mobile-audit/", import.meta.url)
+await fs.mkdir(outDir, { recursive: true })
+
+const devices = [
+  { id: "camera-entry", device_id: "camera-entry", name: "入口摄像头", device_type: "camera", adapter_type: "mqtt", status: "offline", online: false, last_seen: new Date(Date.now() - 720000).toISOString() },
+  { id: "cold-room-02", device_id: "cold-room-02", name: "冷库温度传感器", device_type: "temperature_sensor", adapter_type: "mqtt", status: "offline", online: false, last_seen: new Date(Date.now() - 420000).toISOString() },
+  { id: "door-01", device_id: "door-01", name: "仓库门磁", device_type: "door_sensor", adapter_type: "webhook", status: "online", online: true, last_seen: new Date().toISOString() },
+]
+const messages = [
+  { id: "m1", title: "入口摄像头离线", message: "设备已离线 12 分钟", category: "alert", severity: "warning", status: "active", timestamp: new Date().toISOString(), source: "camera-entry" },
+  { id: "m2", title: "冷库温度传感器离线", message: "设备已离线 7 分钟", category: "alert", severity: "critical", status: "active", timestamp: new Date().toISOString(), source: "cold-room-02" },
+]
+const agents = [
+  { id: "a1", name: "仓库巡检", description: "检查离线设备与异常告警", user_prompt: "检查仓库设备", status: "Active", execution_mode: "free", memory_mode: "assistant", execution_count: 18, success_count: 17, last_execution_at: new Date().toISOString() },
+  { id: "a2", name: "冷库温度监控", description: "监控冷库温度变化", user_prompt: "分析温度趋势", status: "Paused", execution_mode: "free", memory_mode: "assistant", execution_count: 8, success_count: 8, last_execution_at: new Date().toISOString() },
+]
+const backend = {
+  id: "qwen3", name: "Qwen3 8B", model: "qwen3-8b", backend_type: "builtin",
+  active: true, healthy: true, context_window: 32768,
+  capabilities: { supports_tools: true, supports_multimodal: false, supports_thinking: true },
+}
+
+function bodyFor(url) {
+  const path = new URL(url).pathname.replace(/^\/api/, "")
+  if (path === "/setup/status") return { setup_required: false }
+  if (path.includes("/auth/me") || path.includes("/auth/current")) return { id: "u1", username: "shenmingming", role: "admin" }
+  if (path.startsWith("/llm-backends")) return { backends: [backend], count: 1, active_id: backend.id }
+  if (path === "/devices") return { devices, count: devices.length }
+  if (path === "/device-types") return { device_types: [{ device_type: "temperature_sensor", name: "温度传感器", description: "", categories: [] }], count: 1 }
+  if (path.startsWith("/devices/drafts")) return { devices: [], drafts: [], count: 0 }
+  if (path.startsWith("/sessions")) return []
+  if (path === "/skills" || path.startsWith("/skills?")) return { skills: [], total: 0, page: 1, page_size: 10, total_pages: 0 }
+  if (path.startsWith("/agents/skills")) return { skills: [], total: 0 }
+  if (path.startsWith("/agents/tools")) return { tools: [] }
+  if (path === "/agents" || path.startsWith("/agents?")) return { agents, count: agents.length }
+  if (path.includes("/channels")) return { channels: [] }
+  if (path.includes("/messages")) return { messages, count: messages.length, total: messages.length }
+  if (path.includes("/onboarding")) return { dismissed: true, steps: { llm: { completed: true }, device: { completed: true } } }
+  if (path.includes("/extensions/pages")) return { pages: [] }
+  if (path === "/extensions" || path.startsWith("/extensions?")) return []
+  if (path.includes("/automation") || path.includes("/rules") || path.includes("/transforms")) return { rules: [], transforms: [], count: 0 }
+  if (path.includes("/dashboard")) return { dashboards: [], count: 0 }
+  if (path.includes("/im/bridges")) return { bridges: [] }
+  if (path.includes("/mqtt/status")) return { status: { connected: true, server_ip: "192.168.1.10" } }
+  return {}
+}
+
+const browser = await chromium.launch({ executablePath: "/usr/bin/chromium", headless: true })
+const routes = [
+  "/chat",
+  "/devices", "/devices/types", "/devices/drafts",
+  "/agents", "/agents/memory", "/agents/skills", "/agents/tools",
+  "/system",
+  "/messages", "/messages/channels", "/messages/im",
+  "/automation", "/automation/transforms",
+  "/data", "/extensions", "/visual-dashboard",
+]
+const allViewports = [
+  { name: "narrow", width: 320, height: 700 },
+  { name: "standard", width: 390, height: 844 },
+  { name: "large", width: 430, height: 932 },
+  { name: "landscape", width: 844, height: 390 },
+]
+const viewports = process.env.AUDIT_STANDARD_ONLY === "1"
+  ? allViewports.filter((viewport) => viewport.name === "standard")
+  : allViewports
+const results = []
+const interactionResults = []
+
+for (const viewport of viewports) {
+  const context = await browser.newContext({
+    viewport: { width: viewport.width, height: viewport.height },
+    locale: "zh-CN",
+    hasTouch: true,
+    isMobile: true,
+  })
+  await context.addInitScript(() => {
+    sessionStorage.setItem("neomind_token_session", "audit-token")
+    sessionStorage.setItem("neomind_user_session", JSON.stringify({ id: "u1", username: "shenmingming", role: "admin" }))
+    localStorage.setItem("neomind_has_llm_backends", "1")
+    localStorage.setItem("i18nextLng", "zh")
+  })
+  const page = await context.newPage()
+  const pageErrors = []
+  page.on("pageerror", (error) => pageErrors.push(error.message))
+  await page.route(/\/api\//, async (route) => {
+    const pathname = new URL(route.request().url()).pathname
+    // Vite source modules such as /src/lib/api/client.ts also contain
+    // "/api/". Only mock the backend namespace rooted at /api/.
+    if (!pathname.startsWith("/api/")) {
+      await route.continue()
+      return
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(bodyFor(route.request().url())) })
+  })
+  if (typeof page.routeWebSocket === "function") {
+    await page.routeWebSocket(/.*/, () => {})
+  }
+
+  for (const route of routes) {
+    pageErrors.length = 0
+    await page.goto(`http://127.0.0.1:5173${route}`, { waitUntil: "domcontentloaded" })
+    await page.waitForFunction(() => document.querySelector('#root')?.childElementCount, null, { timeout: 5000 })
+    await page.waitForTimeout(700)
+    const audit = await page.evaluate((routePath) => {
+      const visible = (el) => {
+        const style = getComputedStyle(el)
+        const rect = el.getBoundingClientRect()
+        return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0
+      }
+      const tinyTargets = [...document.querySelectorAll("button, a, [role=button], input, textarea, [role=tab]")]
+        .filter(visible)
+        .filter((el) => !el.classList.contains("sr-only") && el.getAttribute("role") !== "switch")
+        .map((el) => {
+          const r = el.getBoundingClientRect()
+          return { text: (el.getAttribute("aria-label") || el.textContent || "").trim().slice(0, 40), w: Math.round(r.width), h: Math.round(r.height) }
+        })
+        .filter((item) => item.w < 40 || item.h < 40)
+      return {
+        route: routePath,
+        horizontalOverflow: document.documentElement.scrollWidth > window.innerWidth + 1,
+        scrollWidth: document.documentElement.scrollWidth,
+        viewportWidth: window.innerWidth,
+        primaryNavCount: document.querySelectorAll(".mobile-primary-nav").length,
+        tinyTargets: tinyTargets.slice(0, 12),
+      }
+    }, route)
+    results.push({ viewport: viewport.name, ...audit, pageErrors: [...pageErrors] })
+    if (viewport.name === "standard") {
+      const file = route.replaceAll("/", "_") || "_root"
+      await page.screenshot({ path: new URL(`${file}.png`, outDir).pathname, fullPage: false })
+    }
+  }
+
+  if (viewport.name === "standard") {
+    const interactions = [
+      { name: "chat-model", route: "/chat", button: "Qwen3 8B" },
+      { name: "device-create", route: "/devices", button: "添加设备" },
+      { name: "agent-create", route: "/agents", button: "创建 AI 智能体" },
+      { name: "message-create", route: "/messages", button: "创建消息" },
+      { name: "automation-create", route: "/automation", button: "创建" },
+      { name: "settings", route: "/system", button: "设置" },
+      { name: "extension-upload", route: "/extensions", button: "上传扩展" },
+    ]
+    for (const item of interactions) {
+      try {
+        pageErrors.length = 0
+        await page.goto(`http://127.0.0.1:5173${item.route}`, { waitUntil: "domcontentloaded" })
+        await page.waitForFunction(() => document.querySelector('#root')?.childElementCount, null, { timeout: 5000 })
+        await page.waitForTimeout(500)
+        await page.getByRole("button", { name: item.button, exact: item.name !== "settings" }).first().click()
+        await page.waitForTimeout(350)
+        const state = await page.evaluate(() => {
+          const dialogs = [...document.querySelectorAll('[role="dialog"]')].filter((el) => {
+            const r = el.getBoundingClientRect()
+            return r.width > 0 && r.height > 0
+          })
+          const dialog = dialogs.at(-1)
+          const r = dialog?.getBoundingClientRect()
+          const fields = dialog ? [...dialog.querySelectorAll('input, textarea, select')] : []
+          return {
+            dialogCount: dialogs.length,
+            bounds: r ? { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) } : null,
+            horizontalOverflow: dialog ? dialog.scrollWidth > dialog.clientWidth + 1 : false,
+            fields: fields.map((el) => ({
+              fontSize: getComputedStyle(el).fontSize,
+              type: el.getAttribute("type") || el.tagName.toLowerCase(),
+              name: el.getAttribute("name") || el.getAttribute("aria-label") || el.getAttribute("placeholder") || "",
+            })),
+          }
+        })
+        interactionResults.push({ name: item.name, ...state, pageErrors: [...pageErrors] })
+        await page.screenshot({ path: new URL(`interaction-${item.name}.png`, outDir).pathname, fullPage: false })
+        await page.keyboard.press("Escape")
+      } catch (error) {
+        interactionResults.push({ name: item.name, error: String(error) })
+      }
+    }
+  }
+  await context.close()
+}
+
+await browser.close()
+await fs.writeFile(new URL("report.json", outDir), JSON.stringify(results, null, 2))
+await fs.writeFile(new URL("interaction-report.json", outDir), JSON.stringify(interactionResults, null, 2))
+
+const failures = results.filter((r) =>
+  r.horizontalOverflow || r.pageErrors.length ||
+  ((r.route === "/chat") ? r.primaryNavCount !== 0 : (r.viewport !== "landscape" && r.primaryNavCount !== 1))
+)
+const interactionFailures = interactionResults.filter((r) =>
+  r.error || r.dialogCount < 1 || r.horizontalOverflow || r.pageErrors?.length || r.fields?.some((field) => Number.parseFloat(field.fontSize) < 16)
+)
+console.log(JSON.stringify({ checked: results.length, failures, interactionResults, interactionFailures, reports: new URL("report.json", outDir).pathname }, null, 2))
+if (failures.length || interactionFailures.length) process.exitCode = 1

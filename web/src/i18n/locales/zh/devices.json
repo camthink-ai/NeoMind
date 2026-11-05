@@ -497,8 +497,12 @@
   },
   "id": {
     "autoGenerate": "自动生成10位随机ID",
-    "regenerate": "重新生成随机ID"
+    "regenerate": "重新生成随机ID",
+    "invalid": "设备 ID 只能包含字母、数字、- 和 _"
   },
+  "advanced": "高级",
+  "offlineTimeoutInvalid": "请输入大于 0 的秒数",
+  "offlineTimeoutHelp": "留空时使用设备类型或系统默认值",
   "adding": "添加中...",
   "editing": "保存中...",
   "yes": "是",

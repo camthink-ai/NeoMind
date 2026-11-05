@@ -494,7 +494,6 @@ export function DataExplorerPage() {
       <PageLayout
         title={t('data:title', 'Data Explorer')}
         hideFooterOnMobile
-        hasBottomNav
         headerContent={
           <PageTabsBar
             tabs={tabs}
@@ -549,12 +548,6 @@ export function DataExplorerPage() {
           <PushTargetsTab />
         </PageTabsContent>
       </PageLayout>
-
-      <PageTabsBottomNav
-        tabs={tabs}
-        activeTab={activeTab}
-        onTabChange={(v) => setActiveTab(v as TabValue)}
-      />
 
       <FullScreenDialog
         open={!!selectedSource}

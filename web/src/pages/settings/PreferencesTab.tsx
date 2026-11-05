@@ -339,26 +339,45 @@ function optionToHours(value: string): number | null {
   return Number(value)
 }
 
+interface AgentDefaultsConfig {
+  max_rounds: number
+  execution_timeout_secs: number
+  tool_concurrency: number
+  default_temperature: number
+  default_top_p: number
+  default_thinking_enabled: boolean | null
+  chat_history_depth: number
+  chat_turn_timeout_secs: number
+  summary_instance_id: string | null
+}
+
+const DEFAULT_AGENT_CONFIG: AgentDefaultsConfig = {
+  max_rounds: 30,
+  execution_timeout_secs: 300,
+  tool_concurrency: 4,
+  default_temperature: 0.7,
+  default_top_p: 0.9,
+  default_thinking_enabled: null,
+  chat_history_depth: 50,
+  chat_turn_timeout_secs: 1800,
+  summary_instance_id: null,
+}
+
 function AgentDefaultsSection() {
   const { t } = useTranslation(["common", "settings"])
   const { toast } = useToast()
-  const [config, setConfig] = useState<{
-    max_rounds: number
-    execution_timeout_secs: number
-    tool_concurrency: number
-    default_temperature: number
-    default_top_p: number
-    default_thinking_enabled: boolean | null
-    chat_history_depth: number
-    chat_turn_timeout_secs: number
-    summary_instance_id: string | null
-  } | null>(null)
+  const [config, setConfig] = useState<AgentDefaultsConfig | null>(null)
   const [loading, setLoading] = useState(true)
   const [instances, setInstances] = useState<LlmBackendInstance[]>([])
 
   useEffect(() => {
     api.get("/settings/agent")
-      .then((data: any) => setConfig(data))
+      // Older servers can return only the fields they know. Merge defaults so
+      // a partial response never crashes Preferences while formatting values.
+      .then((data: unknown) => setConfig({
+        ...DEFAULT_AGENT_CONFIG,
+        ...(data && typeof data === "object" ? data as Partial<AgentDefaultsConfig> : {}),
+      }))
       .catch(() => {})
       .finally(() => setLoading(false))
     // Instance list for the summary-model selector. Failure is non-fatal —
@@ -375,7 +394,7 @@ function AgentDefaultsSection() {
       .catch(() => {})
   }, [])
 
-  const saveConfig = async (updates: Partial<typeof config>) => {
+  const saveConfig = async (updates: Partial<AgentDefaultsConfig>) => {
     if (!config) return
     const next = { ...config, ...updates }
     setConfig(next)

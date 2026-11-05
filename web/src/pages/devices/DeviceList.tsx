@@ -1,6 +1,5 @@
 import { useTranslation } from "react-i18next"
 import { Badge } from "@/components/ui/badge"
-import { Card } from "@/components/ui/card"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu"
 import { IconButton } from "@/components/ui/button"
 import { ResponsiveTable, EmptyState, EmptyStateCard } from "@/components/shared"
@@ -91,20 +90,15 @@ export function DeviceList({
       {addDeviceDialog}
 
       {isMobile ? (
-        <div className="space-y-3">
+        <div className="divide-y divide-border border-y border-border">
           {/* Mobile has no ResponsiveTable, so it must carry its own loading
               and empty states — a bare map() renders as a blank void. */}
           {loading && paginatedDevices.length === 0 && (
             [0, 1, 2].map((i) => (
-              <Card key={i} className="overflow-hidden border-border shadow-sm">
-                <div className="px-3 py-2.5 animate-pulse">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-muted" />
-                    <div className="h-4 w-32 rounded bg-muted" />
-                  </div>
-                  <div className="mt-2.5 ml-[42px] h-3.5 w-48 rounded bg-muted" />
-                </div>
-              </Card>
+              <div key={i} className="animate-pulse py-4">
+                <div className="h-4 w-36 rounded bg-muted" />
+                <div className="mt-2 h-3 w-52 rounded bg-muted" />
+              </div>
             ))
           )}
           {!loading && paginatedDevices.length === 0 && (
@@ -123,34 +117,35 @@ export function DeviceList({
             </EmptyStateCard>
           )}
           {paginatedDevices.map((device) => {
-            const AdapterIcon = getAdapterIcon(device.adapter_type)
             return (
-              <Card
+              <div
                 key={device.id}
-                className={cn(
-                  "overflow-hidden border-border shadow-sm cursor-pointer active:scale-[0.99]",
-                  interactiveCardHover,
-                )}
+                role="button"
+                tabIndex={0}
+                className="cursor-pointer py-3.5 active:opacity-60"
                 onClick={() => onViewDetails(device)}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onViewDetails(device) }}
               >
-                <div className="px-3 py-2.5">
-                  {/* Row 1: icon + name + status + actions */}
-                  <div className="flex items-center gap-2.5">
-                    <div className={cn(
-                      "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
-                      device.status === 'online'
-                        ? "bg-success-light text-success"
-                        : "bg-muted text-muted-foreground"
-                    )}>
-                      <Cpu className="h-4 w-4" />
+                <div className="flex items-start gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <div className="truncate text-[15px] font-medium text-foreground">{device.name || "-"}</div>
+                      <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", device.online ? "bg-success" : "bg-muted-foreground")} />
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium text-sm truncate">{device.name || "-"}</div>
+                    <div className="mt-1 truncate text-xs text-muted-foreground">
+                      {device.device_type} · {device.adapter_type || 'mqtt'}
                     </div>
-                    <DeviceStatusBadge device={device} />
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {t('devices:headers.lastReport')} {formatTimestamp(device.last_seen, false)}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <span className="pt-2 text-xs text-muted-foreground">
+                      {device.online ? t('common:online', '在线') : t('common:offline', '离线')}
+                    </span>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                        <IconButton>
+                        <IconButton className="h-11 w-11">
                           <MoreVertical className="h-4 w-4" />
                         </IconButton>
                       </DropdownMenuTrigger>
@@ -173,23 +168,8 @@ export function DeviceList({
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
-                  {/* Row 2: type badge + adapter + last seen */}
-                  <div className="flex items-center gap-1.5 mt-1.5 ml-[42px]">
-                    <Badge variant="outline" className={cn(textMini, "h-5 px-1.5")}>
-                      {device.device_type}
-                    </Badge>
-                    <div className="flex items-center gap-1">
-                      <AdapterIcon className="h-3 w-3 text-muted-foreground" />
-                      <Badge variant="outline" className={cn(textMini, "h-5 px-1.5")}>
-                        {device.adapter_type || 'mqtt'}
-                      </Badge>
-                    </div>
-                    <span className={cn(textMini, "text-muted-foreground ml-auto")}>
-                      {formatTimestamp(device.last_seen, false)}
-                    </span>
-                  </div>
                 </div>
-              </Card>
+              </div>
             )
           })}
         </div>

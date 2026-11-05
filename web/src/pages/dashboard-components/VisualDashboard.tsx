@@ -938,9 +938,11 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
     // "let AI build it" opens the in-page side chat panel (the floating
     // button's panel) instead of navigating away to /chat.
     return (
-      <div className="flex items-center justify-center h-screen bg-background">
-        <div className="text-center max-w-md px-6">
-          <div className="mx-auto mb-5 flex size-14 items-center justify-center rounded-xl bg-primary-light text-primary">
+      <div className="flex h-full flex-col bg-background">
+        {isMobile && <MobilePageHeader title={t('common:nav.visual-dashboard')} />}
+        <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-5 py-8">
+        <div className="max-w-md text-center">
+          <div className="mx-auto mb-5 hidden size-14 items-center justify-center rounded-xl bg-primary-light text-primary sm:flex">
             <LayoutDashboard className="size-7" />
           </div>
           <h2 className="mb-2 text-lg font-semibold tracking-tight">
@@ -949,7 +951,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
           <p className="text-sm text-muted-foreground mb-6 leading-relaxed">
             {t('visualDashboard.emptyGuideDesc')}
           </p>
-          <div className="flex items-center justify-center gap-3">
+          <div className="flex flex-col items-stretch justify-center gap-2 sm:flex-row sm:items-center sm:gap-3">
             <Button
               className="h-11 sm:h-10"
               onClick={() => {
@@ -972,7 +974,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
           </div>
           {/* Three-step path so a first-time user knows what "building a
               dashboard" involves before clicking. */}
-          <div className="mt-6 flex items-center justify-center gap-x-2 text-xs text-muted-foreground">
+          <div className="mt-6 hidden items-center justify-center gap-x-2 text-xs text-muted-foreground sm:flex">
             {[
               t('visualDashboard.emptyStep1'),
               t('visualDashboard.emptyStep2'),
@@ -987,6 +989,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
               </span>
             ))}
           </div>
+        </div>
         </div>
       </div>
     )

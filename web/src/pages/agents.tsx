@@ -597,7 +597,6 @@ export function AgentsPage() {
         />
       }
       hideFooterOnMobile
-      hasBottomNav
       footer={
         activeTab === 'agents' && agents.length > AGENTS_PER_PAGE ? (
           <Pagination
@@ -673,7 +672,7 @@ export function AgentsPage() {
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,280px),1fr))] gap-5">
+          <div className="grid grid-cols-1 gap-0 border-y border-border md:grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,280px),1fr))] md:gap-5 md:border-0">
             {paginatedAgents.map((agent, index) => (
               <div
                 key={agent.id}
@@ -709,13 +708,6 @@ export function AgentsPage() {
           sourceFilter={toolsSourceFilter}
         />
       </PageTabsContent>
-
-      {/* Mobile: Bottom navigation bar */}
-      <PageTabsBottomNav
-        tabs={tabs}
-        activeTab={activeTab}
-        onTabChange={handleTabChange}
-      />
 
       {/* Agent Editor Full Screen */}
       <AgentEditorFullScreen

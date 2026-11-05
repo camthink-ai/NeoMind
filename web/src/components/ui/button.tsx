@@ -30,14 +30,14 @@ const buttonVariants = cva(
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {
-        default: "h-10 px-4 py-2",
-        sm: "h-9 rounded-md px-3",
+        default: "h-11 px-4 py-2 sm:h-10",
+        sm: "h-11 rounded-md px-3 sm:h-9",
         lg: "h-11 rounded-md px-8",
-        icon: "h-10 w-10",
+        icon: "h-11 w-11 sm:h-10 sm:w-10",
         // Extra-small: inline mini buttons (28px) — list rows, text-adjacent actions
         xs: "h-7 rounded-md px-2 text-xs",
         // Small icon button (32×32) — inside lists / cards
-        "icon-sm": "h-8 w-8",
+        "icon-sm": "h-11 w-11 sm:h-8 sm:w-8",
       },
     },
     defaultVariants: {

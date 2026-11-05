@@ -5,7 +5,7 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { PageLayout } from '@/components/layout/PageLayout'
-import { PageTabsBar, PageTabsContent, PageTabsBottomNav, Pagination, ResponsiveTable, EmptyState, EmptyStateCard } from '@/components/shared'
+import { PageTabsBar, PageTabsContent, Pagination, ResponsiveTable, EmptyState, EmptyStateCard } from '@/components/shared'
 import { MessageSquare, Network, Settings, Filter as FilterIcon, Loader2 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useStore } from '@/store'
@@ -807,7 +807,6 @@ export default function MessagesPage() {
       <PageLayout
         title={t('messages.title')}
         hideFooterOnMobile
-        hasBottomNav
         headerContent={
           <PageTabsBar
             tabs={tabs}
@@ -896,10 +895,10 @@ export default function MessagesPage() {
 
           {/* Messages Table - Responsive (Desktop: Table, Mobile: Cards) */}
           {isMobile ? (
-            <div className="space-y-2">
+            <div className="divide-y divide-border border-y border-border">
               {messages.length === 0 && loading ? (
                 Array.from({ length: 4 }).map((_, i) => (
-                  <Card key={i} className="overflow-hidden border-border">
+                  <Card key={i} className="overflow-hidden rounded-none border-0 shadow-none">
                     <div className="p-3 space-y-2">
                       <div className="flex items-center gap-2">
                         <div className="w-8 h-8 rounded-lg bg-muted animate-pulse" />
@@ -929,7 +928,7 @@ export default function MessagesPage() {
                     <Card
                       key={message.id}
                       className={cn(
-                        "overflow-hidden border-border shadow-sm cursor-pointer active:scale-[0.99] transition-all",
+                        "overflow-hidden rounded-none border-0 shadow-none cursor-pointer active:opacity-60 transition-opacity",
                         isDimmed && "opacity-50"
                       )}
                       onClick={() => setSelectedMessage(message)}
@@ -1168,10 +1167,10 @@ export default function MessagesPage() {
         <PageTabsContent value="channels" activeTab={activeTab}>
           {/* Channels Responsive Table */}
           {isMobile ? (
-            <div className="space-y-2">
+            <div className="divide-y divide-border border-y border-border">
               {loading ? (
                 Array.from({ length: 3 }).map((_, i) => (
-                  <Card key={i} className="overflow-hidden border-border">
+                  <Card key={i} className="overflow-hidden rounded-none border-0 shadow-none">
                     <div className="p-3 space-y-2">
                       <div className="flex items-center gap-2">
                         <div className="w-8 h-8 rounded-lg bg-muted animate-pulse" />
@@ -1213,7 +1212,7 @@ export default function MessagesPage() {
                   return (
                     <Card
                       key={channel.name}
-                      className="overflow-hidden border-border shadow-sm cursor-pointer active:scale-[0.99] transition-all"
+                      className="overflow-hidden rounded-none border-0 shadow-none cursor-pointer active:opacity-60 transition-opacity"
                       onClick={() => handleViewChannel(channel.name)}
                     >
                       <div className="px-3 py-2.5">
@@ -1528,13 +1527,6 @@ export default function MessagesPage() {
           <ImSessionsTab />
         </PageTabsContent>
       </PageLayout>
-
-      {/* Mobile Bottom Navigation */}
-      <PageTabsBottomNav
-        tabs={tabs}
-        activeTab={activeTab}
-        onTabChange={(v) => handleTabChange(v as TabValue)}
-      />
 
       <CreateMessageDialog
         open={createDialogOpen}

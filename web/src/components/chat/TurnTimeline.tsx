@@ -130,7 +130,7 @@ export function TurnTimeline({
   // Expansion is decided once at mount: a turn that streamed open must not
   // snap shut when isStreaming flips false. The user keeps their choice until
   // they toggle it.
-  const [isExpanded, setIsExpanded] = useState(() => isStreaming || toolCalls.length <= 4)
+  const [isExpanded, setIsExpanded] = useState(() => isStreaming)
   const [openRounds, setOpenRounds] = useState<Record<number, boolean>>({})
 
   if (rounds.length === 0) return null
@@ -143,26 +143,27 @@ export function TurnTimeline({
     t("chat:toolCall.roundsCount", { count: rounds.length }),
     ...(totalTools > 0 ? [t("chat:toolCall.callsCount", { count: totalTools })] : []),
   ].join(" · ")
+  const duration = toolCalls.reduce((sum, call) => sum + (call.durationMs ?? 0), 0)
 
   return (
     <Collapsible
       open={isExpanded}
       onOpenChange={setIsExpanded}
       data-testid="turn-timeline"
-      className="mb-4 min-w-0 overflow-hidden rounded-xl border border-chat-card-border bg-muted-20"
+      className="mb-3 min-w-0 overflow-hidden"
     >
       <CollapsibleTrigger asChild>
         <button
           type="button"
-          className="w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-muted-30"
+          className="flex min-h-10 w-full items-center gap-2 px-0 py-1.5 text-left text-muted-foreground transition-colors hover:text-foreground"
         >
           <div
             className={cn(
-              "h-4 w-4 rounded flex items-center justify-center shrink-0",
-              hasError && !isStreaming && "bg-error-light text-error",
-              !hasError && allComplete && "bg-accent-emerald-light text-accent-emerald",
-              isStreaming && "bg-warning-light text-warning",
-              !allComplete && !isStreaming && !hasError && "bg-muted text-muted-foreground"
+              "flex h-4 w-4 shrink-0 items-center justify-center",
+              hasError && !isStreaming && "text-error",
+              !hasError && allComplete && "text-muted-foreground",
+              isStreaming && "text-muted-foreground",
+              !allComplete && !isStreaming && !hasError && "text-muted-foreground"
             )}
           >
             {isStreaming ? (
@@ -170,13 +171,14 @@ export function TurnTimeline({
             ) : hasError ? (
               <AlertCircle className="h-4 w-4" aria-hidden="true" />
             ) : allComplete ? (
-              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+              <span className="h-2 w-2 rounded-full bg-current" aria-hidden="true" />
             ) : (
               <Circle className="h-3.5 w-3.5" aria-hidden="true" />
             )}
           </div>
-          <span className="text-body sm:text-sm font-medium text-foreground truncate">
+          <span className="truncate text-sm">
             {t("chat:timeline.title")} · {counts}
+            {!isStreaming && duration > 0 ? ` · ${Math.round(duration / 100) / 10} s` : ""}
           </span>
           <div className="flex-1" />
           <ChevronDown
@@ -190,7 +192,7 @@ export function TurnTimeline({
       </CollapsibleTrigger>
 
       <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down">
-        <div className="border-t border-border">
+        <div className="ml-6 overflow-hidden rounded-lg border border-border bg-muted-20">
           {rounds.map(group => {
             const isOpen = openRounds[group.round] ?? true
             const isActive = activeRound === group.round

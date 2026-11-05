@@ -46,30 +46,32 @@ export function WelcomeArea({ className, onQuickAction, children }: WelcomeAreaP
   ]
 
   return (
-    <div className={cn("relative flex min-h-full w-full flex-col items-center overflow-hidden p-6", className)}>
+    <div className={cn("relative flex min-h-full w-full flex-col items-center overflow-hidden px-0 py-6 sm:p-6", className)}>
       {/* Dot field backdrop — each dot an edge device, masked to fade toward
           the edges (see .welcome-dots in index.css). Decorative. */}
-      <div aria-hidden="true" className="welcome-dots" />
+      <div aria-hidden="true" className="welcome-dots max-sm:hidden" />
       {/* Top spacer */}
       <div className="min-h-0 flex-1 shrink" />
       {/* max-w-3xl — same width as the conversation view's composer, so the
           slotted input keeps its conversational width and the suggestion
           grid spans it too. relative keeps it painting above the aurora. */}
-      <div className="relative w-full max-w-3xl shrink-0 space-y-8">
+      <div className="relative flex min-h-full w-full max-w-3xl shrink-0 flex-col gap-5 sm:block sm:min-h-0 sm:space-y-8">
         {/* Greeting */}
-        <div className="text-center">
+        <div className="order-1 text-left sm:text-center">
           {/* Horizontal brand wordmark — same image as the expanded sidebar,
               theme-adaptive (logo-light / logo-dark) */}
-          <div className="mb-4 flex justify-center">
+          <div className="mb-4 hidden justify-center sm:flex">
             <BrandLogoHorizontal className="h-9" />
           </div>
-          <h1 className="text-xl font-semibold text-foreground">
+          <h1 className="text-[22px] font-semibold leading-snug tracking-tight text-foreground sm:text-xl">
             {t('common:welcome.askLine', { greeting: t(getGreetingKey()) })}
           </h1>
         </div>
 
         {/* Slotted composer — the input lives inside the centered group */}
-        {children}
+        <div className="order-3 mt-auto w-full pt-3 sm:mt-0 sm:pt-0">
+          {children}
+        </div>
 
         {/* Prompt suggestions — quiet pill chips, self-explanatory: no
             "try these questions" caption needed above them. Mobile shows a
@@ -94,8 +96,18 @@ export function WelcomeArea({ className, onQuickAction, children }: WelcomeAreaP
           ]
           return (
             <>
-              <div className="flex flex-wrap items-center justify-center gap-2 sm:hidden">
-                {mobileSuggestions.map(({ label, prompt }) => renderChip(label, prompt))}
+              <div className="order-2 divide-y divide-border sm:hidden">
+                {mobileSuggestions.slice(0, 3).map(({ label, prompt }) => (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => onQuickAction?.(prompt)}
+                    className="flex min-h-12 w-full items-center justify-between py-3 text-left text-sm text-foreground"
+                  >
+                    <span>{label}</span>
+                    <ArrowRight className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                  </button>
+                ))}
               </div>
               <div className="hidden flex-wrap items-center justify-center gap-2 sm:flex">
                 {promptSuggestions.map((prompt) => renderChip(prompt, prompt))}

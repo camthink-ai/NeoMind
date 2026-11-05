@@ -361,10 +361,10 @@ export function ChatMessages({
                 </div>
               </div>
 
-              <div className="mt-1.5 flex items-center gap-2">
+              <div className="mt-1.5 flex items-center gap-2 max-md:mt-1">
                 <time
                   title={statsTitle}
-                  className="text-xs text-muted-foreground tabular-nums"
+                  className="text-xs text-muted-foreground tabular-nums max-md:hidden"
                 >
                   {formatTimestamp(message.timestamp, false)}
                 </time>

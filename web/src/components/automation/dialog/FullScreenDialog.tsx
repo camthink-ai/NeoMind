@@ -5,12 +5,13 @@
  * Used for complex forms like TransformBuilder, RuleBuilder, AgentEditor.
  */
 
-import { ReactNode, useEffect } from 'react'
+import { ReactNode, createContext, useContext, useEffect, useId } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
 import { useIsMobile, useSafeAreaInsets } from '@/hooks/useMobile'
+import { useTranslation } from 'react-i18next'
 
 export interface FullScreenDialogProps {
   open: boolean
@@ -24,6 +25,8 @@ export interface FullScreenDialogProps {
   zIndex?: number
 }
 
+const FullScreenDialogTitleContext = createContext<string | undefined>(undefined)
+
 export function FullScreenDialog({
   open,
   onOpenChange,
@@ -34,6 +37,7 @@ export function FullScreenDialog({
 }: FullScreenDialogProps) {
   const isMobile = useIsMobile()
   const _insets = useSafeAreaInsets()
+  const titleId = useId()
 
   // Lock body scroll when dialog is open
   useBodyScrollLock(open, { mobileOnly: true })
@@ -60,6 +64,9 @@ export function FullScreenDialog({
 
   return createPortal(
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
       className={cn(
         "fixed inset-0 flex flex-col",
         // Glassmorphism background - lower opacity to show content behind
@@ -68,7 +75,7 @@ export function FullScreenDialog({
         !open && "hidden"
       )}
       style={{ zIndex }}
-      onClick={() => !disableBackdropClose && onOpenChange(false)}
+      onClick={() => !isMobile && !disableBackdropClose && onOpenChange(false)}
     >
       {/* Inner container - prevents click propagation */}
       <div
@@ -92,7 +99,9 @@ export function FullScreenDialog({
             : {}),
         }}
       >
-        {children}
+        <FullScreenDialogTitleContext.Provider value={titleId}>
+          {children}
+        </FullScreenDialogTitleContext.Provider>
       </div>
     </div>,
     dialogRoot
@@ -124,10 +133,32 @@ export function FullScreenDialogHeader({
   onClose,
   actions,
 }: FullScreenDialogHeaderProps) {
+  const isMobile = useIsMobile()
+  const { t } = useTranslation('common')
+  const titleId = useContext(FullScreenDialogTitleContext)
+
+  if (isMobile) {
+    return (
+      <header className="grid h-14 shrink-0 grid-cols-[1fr_auto_1fr] items-center border-b border-border px-3">
+        <button
+          type="button"
+          onClick={onClose}
+          className="min-h-11 justify-self-start px-1 text-sm text-foreground"
+        >
+          {t('cancel')}
+        </button>
+        <h1 id={titleId} className="max-w-[56vw] truncate text-center text-base font-semibold text-foreground">{title}</h1>
+        <div className="flex min-w-0 items-center justify-self-end [&>button]:h-11 [&>button]:w-11 [&>button]:px-0 [&>button]:text-[0px] [&>button>svg]:m-0">
+          {actions}
+        </div>
+      </header>
+    )
+  }
+
   return (
     <header className="shrink-0 flex items-center justify-between gap-3 px-4 md:px-6 h-14 border-b border-border">
       <div className="min-w-0 flex-1">
-        <h1 className="text-base md:text-lg font-semibold truncate text-foreground">
+        <h1 id={titleId} className="text-base md:text-lg font-semibold truncate text-foreground">
           {title}
         </h1>
         {subtitle && (
@@ -191,6 +222,7 @@ export function FullScreenDialogFooter({
         "shrink-0 flex items-center justify-end gap-2 md:gap-3",
         "px-3 md:px-5 lg:px-6 py-3 md:py-4",
         "border-t border-border",
+        "max-md:[&>button]:min-h-11 max-md:[&>button]:flex-1",
         // No bg: footer inherits the container's bg-popover (white) so it
         // matches the body. A bg-black/[0.02] tint here read as #FBFBFC,
         // a visible mismatch vs the white content (the old "glassmorphism

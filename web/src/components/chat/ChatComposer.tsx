@@ -19,6 +19,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useToast } from "@/hooks/use-toast"
 import { useIsMobile } from "@/hooks/useMobile"
@@ -107,6 +108,7 @@ export function ChatComposer({
   const isMobile = useIsMobile()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isUploadingImage, setIsUploadingImage] = useState(false)
+  const [modelSheetOpen, setModelSheetOpen] = useState(false)
 
   const canAttach = !!onAttachmentsChange
   const inputDisabled = disabled || isStreaming
@@ -213,7 +215,7 @@ export function ChatComposer({
       )}
 
       {/* Single unified input box — everything inside one container */}
-      <div className="rounded-lg border border-input bg-card shadow-sm transition-colors">
+      <div className="rounded-lg border border-input bg-card shadow-sm transition-colors max-sm:rounded-[1.4rem]">
         {/* Textarea — fills the top, borderless */}
         <textarea
           ref={textareaRef}
@@ -224,7 +226,7 @@ export function ChatComposer({
           rows={1}
           disabled={inputDisabled}
           className={cn(
-            "w-full block px-4 pt-3 pb-1 resize-none text-sm leading-5 bg-transparent",
+            "w-full block px-4 pt-3 pb-1 resize-none text-base sm:text-sm leading-5 bg-transparent",
             "placeholder:text-muted-foreground",
             "focus:outline-none",
             "max-h-[100px] scroll-mb-32",
@@ -280,7 +282,69 @@ export function ChatComposer({
           )}
 
           {/* Model selector */}
-          {backends && backends.length > 0 && (
+          {backends && backends.length > 0 && (isMobile ? (
+            <>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setModelSheetOpen(true)}
+                className="h-11 max-w-[132px] gap-1 rounded-lg px-2 text-xs text-muted-foreground"
+              >
+                <span className="truncate">
+                  {backends.find(b => b.id === activeBackendId)?.name ||
+                   backends.find(b => b.id === activeBackendId)?.model ||
+                   t("chat:input.selectModel")}
+                </span>
+                <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+              </Button>
+              <Sheet open={modelSheetOpen} onOpenChange={setModelSheetOpen}>
+                <SheetContent
+                  side="bottom"
+                  className="max-h-[70dvh] rounded-t-[1.75rem] border-t border-border px-0 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] pt-3 [&>button]:hidden"
+                >
+                  <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-border" aria-hidden="true" />
+                  <div className="px-5 pb-3">
+                    <SheetTitle className="text-left text-xl font-semibold">
+                      {t("chat:input.selectLLMModel")}
+                    </SheetTitle>
+                    <SheetDescription className="mt-1 text-left text-sm text-muted-foreground">
+                      {t("chat:model.forConversation", "本次对话使用的模型")}
+                    </SheetDescription>
+                  </div>
+                  <div className="overflow-y-auto px-5">
+                    {backends.map((backend) => {
+                      const active = backend.id === activeBackendId
+                      const capability = [
+                        backend.backend_type,
+                        backend.capabilities?.supports_tools ? t("chat:capability.tools", "工具调用") : null,
+                        backend.capabilities?.supports_multimodal ? t("chat:capability.vision", "视觉") : null,
+                      ].filter(Boolean).join(" · ")
+                      return (
+                        <button
+                          key={backend.id}
+                          type="button"
+                          onClick={() => {
+                            onActivateBackend?.(backend.id)
+                            setModelSheetOpen(false)
+                          }}
+                          className="flex min-h-16 w-full items-center gap-3 border-b border-border py-3 text-left last:border-b-0"
+                        >
+                          <span className="min-w-0 flex-1">
+                            <span className={cn("block truncate text-base", active && "font-semibold")}>
+                              {backend.name || backend.model}
+                            </span>
+                            <span className="mt-0.5 block truncate text-xs text-muted-foreground">{capability}</span>
+                          </span>
+                          {active && <Check className="h-5 w-5 shrink-0" aria-hidden="true" />}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </SheetContent>
+              </Sheet>
+            </>
+          ) : (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -338,7 +402,7 @@ export function ChatComposer({
                 </div>
               </DropdownMenuContent>
             </DropdownMenu>
-          )}
+          ))}
 
           {/* Context usage — progress ring; hover for the breakdown card */}
           {contextUsage && (() => {
@@ -469,7 +533,7 @@ export function ChatComposer({
               type="button"
               onClick={onCancel}
               variant="outline"
-              className="h-8 w-8 rounded-full flex-shrink-0 p-0 border-destructive text-destructive hover:bg-destructive-light"
+              className="h-11 w-11 rounded-full flex-shrink-0 p-0 border-destructive text-destructive hover:bg-destructive-light"
               title={t("chat:input.cancel")}
               aria-label={t("chat:input.cancel")}
             >
@@ -481,7 +545,7 @@ export function ChatComposer({
               onClick={onSend}
               disabled={!canSend}
               className={cn(
-                "h-8 w-8 rounded-full flex-shrink-0 p-0 transition-all",
+                "h-11 w-11 rounded-full flex-shrink-0 p-0 transition-all",
                 !canSend
                   ? "bg-muted text-muted-foreground"
                   : "bg-primary hover:bg-primary-hover text-primary-foreground"
