@@ -1100,3 +1100,36 @@ async fn file_edit_not_found_helpful_error() {
         "should include the file's first lines for context"
     );
 }
+
+// ============================================================================
+// web_search tests
+// ============================================================================
+
+use neomind_agent::toolkit::WebSearchTool;
+
+#[tokio::test]
+async fn web_search_rejects_missing_or_empty_query() {
+    let tool = WebSearchTool::new();
+    for bad in [serde_json::json!({}), serde_json::json!({"query": "   "})] {
+        let result = tool.execute(bad).await;
+        assert_failure(result);
+    }
+}
+
+#[tokio::test]
+#[ignore = "live network — cargo test -- --ignored"]
+async fn web_search_live_english_query() {
+    let tool = WebSearchTool::new();
+    let result = tool
+        .execute(serde_json::json!({"query": "rust programming language", "count": 5}))
+        .await
+        .unwrap();
+    assert!(result.success, "error: {:?}", result.error);
+    let results = result.data["results"].as_array().unwrap();
+    assert!(!results.is_empty(), "expected at least one result");
+    for item in results {
+        let url = item["url"].as_str().unwrap();
+        assert!(url.starts_with("http"), "bad url: {}", url);
+        assert!(!item["title"].as_str().unwrap().is_empty());
+    }
+}

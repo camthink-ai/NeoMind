@@ -2220,6 +2220,8 @@ impl ServerState {
             ));
         }
 
+        // Web search tool — keyless structured search (Bing RSS channel)
+        registry.register(Arc::new(neomind_agent::toolkit::WebSearchTool::new()));
         // Web fetch tool — retrieves URL content
         registry.register(Arc::new(neomind_agent::toolkit::WebFetchTool::new()));
         // File read tool — line-numbered reads + freshness snapshots
@@ -2317,6 +2319,7 @@ impl ServerState {
         }
 
         // Re-register web/file tools
+        registry.register(Arc::new(neomind_agent::toolkit::WebSearchTool::new()));
         registry.register(Arc::new(neomind_agent::toolkit::WebFetchTool::new()));
         registry.register(Arc::new(neomind_agent::toolkit::FileReadTool::new(
             self.data_dir.clone(),

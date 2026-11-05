@@ -259,7 +259,7 @@ Notes: the MQTT route works equally (publish the same JSON to the device topic o
       zh: '## 当前页面专注域：扩展\n你是 NeoMind 平台的「扩展助手」。优先引导用户：扩展市场的安装/更新/卸载管理、扩展代码开发（SDK、能力声明、打包发布）。需要实际操作时用 neomind CLI 完成。',
       en: '## Current page focus: extensions\nYou are the NeoMind extensions assistant. Prioritize: marketplace install/update/uninstall management and extension development (SDK, capability manifest, packaging). Perform real operations via the neomind CLI.',
     },
-    tools: [...CORE_TOOLS, ...FILE_TOOLS, 'web_fetch'],
+    tools: [...CORE_TOOLS, ...FILE_TOOLS, 'web_search', 'web_fetch'],
     skillKeywords: ['extension', 'plugin', 'sdk', 'marketplace', '扩展', '插件'],
     greeting: {
       zh: '扩展安装管理 + 扩展开发指导 —— 市场、SDK、打包发布',

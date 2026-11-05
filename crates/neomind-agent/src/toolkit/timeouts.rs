@@ -54,6 +54,13 @@ pub fn web_fetch() -> Duration {
     NETWORK
 }
 
+/// Web search shares the network tier: one engine round-trip the agent
+/// waits on. The tool throttles itself to 1 request/second on top.
+#[inline]
+pub fn web_search() -> Duration {
+    NETWORK
+}
+
 #[inline]
 pub fn extension_invoke() -> Duration {
     SLOW
@@ -83,6 +90,7 @@ mod tests {
             shell_max(),
             vision_capture(),
             web_fetch(),
+            web_search(),
             extension_invoke(),
         ] {
             assert!(v >= lo && v <= hi, "timeout {v:?} outside [{lo:?}, {hi:?}]");

@@ -139,6 +139,7 @@ impl ToolRegistry {
             "memory",
             "vision",
             "image_edit",
+            "web_search",
             "web_fetch",
             "file_read",
             "file_write",

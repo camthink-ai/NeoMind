@@ -20,6 +20,7 @@ pub mod timeouts;
 pub mod tool;
 pub mod vision;
 pub mod web_fetch;
+pub mod web_search;
 
 // Re-exports consumed via shortcut path (toolkit::TypeName)
 pub use error::{Result, ToolError};
@@ -43,6 +44,7 @@ pub use vision::{VisionConfig, VisionTool};
 pub use image_edit::ImageEditTool;
 
 pub use web_fetch::WebFetchTool;
+pub use web_search::WebSearchTool;
 
 /// Version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
