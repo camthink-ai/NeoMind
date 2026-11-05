@@ -817,6 +817,14 @@ fn thinking_instance(integral: bool) -> neomind_storage::LlmBackendInstance {
     inst
 }
 
+#[test]
+fn large_prompt_guard_scales_with_context_window() {
+    assert_eq!(long_prompt_thinking_threshold(32_768), 18_000);
+    assert_eq!(long_prompt_thinking_threshold(131_072), 65_536);
+    assert!(25_363 <= long_prompt_thinking_threshold(131_072));
+    assert!(25_363 > long_prompt_thinking_threshold(32_768));
+}
+
 #[tokio::test]
 async fn dynamic_thinking_large_prompt_updates_bool_and_effort_together() {
     let (iface, requests) = harness(vec![MockResponse::text("done")]).await;
