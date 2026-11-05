@@ -99,6 +99,9 @@ Chat turns now end with grounded answers instead of looping or claiming unexecut
 - **`list` previews 50 → 200 chars**: previews too short to judge relevance from left cleanup tasks blind; full text remains one `read` away.
 - **File tools can no longer touch the memory store**: `file_read`/`file_write`/`file_edit` deny paths under `<data_dir>/memory` with a pointer to the `memory` tool — raw file writes bypassed the store's budgets and write serialization. Only the exact `memory` directory is reserved (`memory-notes.md`, `memory-backup/` are unaffected).
 
+### Added — per-call model selection for the `chat_stream` capability
+- Extensions invoking the `chat_stream` capability can now pass `"model": "<backend id>"` (a backend ID from the platform's model configuration) to run that turn on a specific backend — the same reconfiguration path the chat UI's model picker uses; absent means the platform default. The tuyun-bridge VLM watermark flow already declares and documents this parameter. The override applies on BOTH the text-only and image branches — wiring only the image branch would have silently ignored a text-only `model` param.
+
 ### Upgrade notes
 - Rule updates (`PATCH`-style) now return a structured 400 for bodies with unknown fields, no actual change, or wrong-typed values — previously they reported silent success with nothing written. Clients that treated any 2xx as success should handle 400 responses; an idempotent re-send of the current rule definition still succeeds with `changed=false`.
 - The chat context ring changes meaning (last measured request instead of cumulative execution) — dashboards or habits built on the old number should be re-baselined; no configuration or stored-data migration is involved.

@@ -1490,6 +1490,15 @@ impl ChatStreamCapabilityProvider {
             }
         };
 
+        // Optional per-call backend/model override. When present, the session's
+        // agent is reconfigured to that backend before the turn runs (the same
+        // path the chat UI's model picker uses). Absent ⇒ platform default.
+        let model_override: Option<String> = params
+            .get("model")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(String::from);
+
         // Spawn background task that drives the stream and publishes each chunk.
         let mgr = session_manager.clone();
         let bus = self.event_bus.clone();
@@ -1498,11 +1507,21 @@ impl ChatStreamCapabilityProvider {
         let imgs = images;
         tokio::spawn(async move {
             let result = async {
+                // Both branches honor the per-call model override — a
+                // text-only `model` param silently ignored while the
+                // multimodal branch honored it would be a caller trap.
+                // `None` skips backend configuration (platform default).
                 let stream_result = if imgs.is_empty() {
-                    mgr.process_message_events(&sid, &msg).await
-                } else {
-                    mgr.process_message_multimodal_with_backend_stream(&sid, &msg, imgs, None)
+                    mgr.process_message_events_with_backend(&sid, &msg, model_override.as_deref())
                         .await
+                } else {
+                    mgr.process_message_multimodal_with_backend_stream(
+                        &sid,
+                        &msg,
+                        imgs,
+                        model_override.as_deref(),
+                    )
+                    .await
                 };
                 let stream = match stream_result {
                     Ok(s) => s,

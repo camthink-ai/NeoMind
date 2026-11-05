@@ -8,8 +8,6 @@ Use Spark-1.7B for primary acceptance with fixed model/runtime/sampling settings
 
 Do not put credentials in source or logs. Do not commit, push, deploy, or publish without an explicit user instruction.
 
-Read [latest handoff](docs/development/mac-glm-takeover-2026-11-03.md) before continuing (it supersedes the 2026-11-02 handoff's process states; the cloud coordinator disconnected on 2026-11-03).
-
 Follow the [agent evaluation method](docs/development/agent-eval-method.md) for ongoing improvements.
 
 ## Active comprehensive evaluation (2026-11-03)
@@ -27,7 +25,7 @@ Executed per HANDOFF_EVAL_2026-11-03.md (repo root). Current active work:
 - T4 (ubuntu@43.132.189.162, /tmp/neomind-t4-eval-20261103-67vlq1cb): v2 two-arm builds complete and hash-verified; missing acceptance bootstrap reconstructed (neomind-t4-acceptance-bootstrap.py, all checks passed); **552-trial paired acceptance is RUNNING, controller PID 439563 (verify before acting), launched 2026-11-03 06:16:55Z** (acceptance-launch.json). Results accumulate under acceptance/. neomind.service stays paused during the run; the controller restores it on normal AND abnormal exit. Do not start overlapping T4 inference/builds; do not touch the two unrelated Docker GPU processes (PIDs 2725541, 3791136).
 - Jetson (box@192.168.93.20, /tmp/neomind-linux-ci-20261103-msim9c25): cli-identity-v2.patch applied over the validated 15-file state, 17-file hashes equal revision-v2-input.json full; `cargo test --locked -p neomind-cli-ops --lib` running (PID 44024 at launch; see cli-identity-v2-launch.json / cli-identity-v2-test.log; note default toolchain resolves to 1.92.0 while the earlier 194-item run recorded 1.99.1).
 
-Details, monitoring commands and remaining follow-ups: docs/development/mac-glm-takeover-2026-11-03.md. No commit/push/publish.
+Details were recorded in the 2026-11-03 takeover handoff (since removed with the other superseded process docs); that workstream is concluded and committed. No push.
 
 ## 552 acceptance verdict and round-1 constraints (2026-11-03 late night, user directive)
 
@@ -50,7 +48,6 @@ After the full two-arm comparison completes, do NOT stop at the verdict. If ther
 
 ## Latest thinking review outcome (2026-11-04)
 
-Read docs/development/thinking-readiness-result-2026-11-04.md before resuming.
 Capability gating and its rollout switch were withdrawn from the worktree;
 archive: /tmp/neomind-thinking-readiness/withdrawn-policy/. Retained changes are
 parameter consistency and three recovery-channel fixes. The 8-case default-path
@@ -69,11 +66,11 @@ do not infer acceptance from isolated transport tests or deploy their parameters
 
 ## Image pipeline fixes validated (2026-11-04)
 
-Read docs/development/image-pipeline-fixes-2026-11-04.md. Mac candidate fixes cache image extraction/selection, dynamic vision registration, extension input validation, and repeated-image-failure progress. Workspace gate 3737/0/69; zero-inference registration integration passed; one isolated Spark+MiniCPM task completed in 38.520s with 7 effective-success calls and one vision call, no API restart. Artifacts /tmp/neomind-image-fixes-v2/. Own API/tunnel exited; T4 production unchanged. Not a paired score/regression claim. Preserve existing unrelated llm changes. No commit/push/deploy/publish performed.
+Image pipeline fixes (2026-11-04, committed): Mac candidate fixes cache image extraction/selection, dynamic vision registration, extension input validation, and repeated-image-failure progress. Workspace gate 3737/0/69; zero-inference registration integration passed; one isolated Spark+MiniCPM task completed in 38.520s with 7 effective-success calls and one vision call, no API restart. Artifacts /tmp/neomind-image-fixes-v2/. Own API/tunnel exited; T4 production unchanged. Not a paired score/regression claim. Preserve existing unrelated llm changes. No commit/push/deploy/publish performed.
 
 ## Context meter and auto-compaction fix (2026-11-04)
 
-Read docs/development/context-meter-auto-compaction-2026-11-04.md. Two independent
+Context meter and auto-compaction fix (2026-11-04, committed): Two independent
 defects fixed in the worktree (no commit/push/publish). Frontend ring now shows only
 the last measured model request (new per-request ContextUsage event); without a
 measurement it shows a waiting state, never a transcript estimate; inconsistent
@@ -146,7 +143,7 @@ No commit/push/publish.
 
 ## Thinking-leak fix round leakfix-r2 (2026-11-05, uncommitted)
 
-Read docs/development/thinking-leak-fix-2026-11-05.md. Spark-X2.6 dynamic-toggle
+Thinking-leak fix round leakfix-r2 (2026-11-05, committed): Spark-X2.6 dynamic-toggle
 leak fixed at the llama.cpp backend boundary: new think_filter.rs state machine
 (stream + non-stream) reclassifies stray-closer prefixes (GRACE_CHARS=2048,
 chosen by pre-registered rule from a 9-marked-request capture corpus; all
