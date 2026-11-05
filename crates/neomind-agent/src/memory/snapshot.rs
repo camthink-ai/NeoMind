@@ -1,18 +1,8 @@
-//! Memory snapshot for injecting long-term memories into system prompts.
+//! Legacy bounded snapshot utility for explicit callers.
 //!
-//! Uses a "frozen snapshot" pattern: load once at session start, cache for the
-//! entire session. This keeps the prompt prefix stable for caching.
-//!
-//! ## Hard-loaded (always in system prompt)
-//! - `USER.md` (max 2000 chars) — user profile
-//! - `KNOWLEDGE.md` (max 3000 chars) — system knowledge
-//! - `PROCEDURES.md` (max 3000 chars) — SOPs, playbooks, how-tos
-//!
-//! ## On-demand (AI reads via memory tool when needed)
-//! - `agents/{agent_id}.md` — agent experiences
-//! - `custom/{name}.md` — domain-specific files
-//!
-//! Total budget: 8000 chars (user + knowledge + procedures)
+//! Chat sessions no longer load or inject this snapshot. They access user,
+//! knowledge and procedures through the memory tool only when requested.
+//! The utility remains available for callers that explicitly need a snapshot.
 
 use neomind_storage::MarkdownMemoryStore;
 
@@ -21,8 +11,7 @@ use crate::agent::tokenizer::{estimate_tokens, truncate_to_tokens};
 /// Hard character budget for memory context in prompts (user + knowledge + procedures).
 const CHAR_BUDGET: usize = 8000;
 
-/// Token budget for the memory snapshot. The snapshot is injected into every
-/// prompt, so it must stay a bounded fraction of context. A char budget alone
+/// Token budget for explicit memory snapshots. A char budget alone
 /// balloons for CJK (8000 chars ≈ 15K tokens) and would dominate small windows,
 /// so the snapshot is also capped to this many tokens after the char-budget pass.
 const SNAPSHOT_TOKEN_BUDGET: usize = 2048;

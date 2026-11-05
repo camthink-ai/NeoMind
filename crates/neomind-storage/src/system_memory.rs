@@ -2572,6 +2572,7 @@ mod tests_new_layout {
         let temp_dir = TempDir::new().unwrap();
         let config = MemoryConfig {
             enabled: true,
+            auto_extract: false,
             storage_path: temp_dir.path().to_str().unwrap().to_string(),
             user_char_limit: 2000,
             knowledge_char_limit: 3000,

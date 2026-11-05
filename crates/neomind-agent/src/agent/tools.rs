@@ -214,6 +214,14 @@ impl Agent {
     /// - Categorizes errors (transient, validation, execution, timeout)
     /// - Logs detailed error information for debugging
     pub(crate) async fn execute_tool(&self, name: &str, arguments: &Value) -> Result<String> {
+        // Check before the result cache too: toggling memory off must not
+        // serve a previously cached memory read.
+        if self.tools.is_disabled(name) {
+            return Err(crate::error::NeoMindError::Tool(format!(
+                "Tool '{}' is disabled",
+                name
+            )));
+        }
         const MAX_RETRIES: u32 = 2;
         let start = std::time::Instant::now();
 

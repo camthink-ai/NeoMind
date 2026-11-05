@@ -40,7 +40,7 @@ pub struct SessionMetadata {
     /// User-defined title for the session
     #[serde(default)]
     pub title: Option<String>,
-    /// Whether memory injection is enabled for this session (defaults to true)
+    /// Whether on-demand memory access is enabled for this session (defaults to true)
     #[serde(default = "default_memory_enabled")]
     pub memory_enabled: bool,
     /// Conversation summary for context compression (injected when context exceeds threshold)

@@ -1177,9 +1177,10 @@ impl ServerState {
         let agent_store = agent_store_h.await.expect("agent_store task panicked");
 
         // Initialize system memory store (Markdown-based persistent memory)
+        let memory_config = neomind_storage::MemoryConfig::load();
         let system_memory_store = Arc::new(neomind_storage::MarkdownMemoryStore::with_config(
-            neomind_core::paths::data_dir().join("memory"),
-            neomind_storage::MemoryConfig::load(),
+            &memory_config.storage_path,
+            memory_config.clone(),
         ));
         if let Err(e) = system_memory_store.init() {
             tracing::warn!(category = "storage", error = %e, "Failed to initialize system memory store");

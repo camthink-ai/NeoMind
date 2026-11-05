@@ -85,10 +85,8 @@ pub struct AddMemoryRequest {
 
 /// Get the memory store
 fn get_memory_store(_state: &ServerState) -> MarkdownMemoryStore {
-    MarkdownMemoryStore::with_config(
-        neomind_core::paths::data_dir().join("memory"),
-        neomind_storage::MemoryConfig::load(),
-    )
+    let config = neomind_storage::MemoryConfig::load();
+    MarkdownMemoryStore::with_config(&config.storage_path, config.clone())
 }
 
 /// Create error response

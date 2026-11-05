@@ -126,6 +126,23 @@ impl PathValidator {
             )));
         }
 
+        // The memory store (USER.md / KNOWLEDGE.md / PROCEDURES.md / session
+        // notes) lives at <data_dir>/memory and is managed exclusively by the
+        // `memory` tool: the store enforces per-file char budgets and write
+        // serialization that a raw file write bypasses (live incident: a chat
+        // asked to clean up memory rewrote a memory file via file_write,
+        // skipping every limit). Lexical check is sufficient here — the path
+        // already passed the containment check above. Custom storage paths
+        // outside the default directory are out of file tools' sandbox anyway.
+        let memory_dir = self.data_dir.join("memory");
+        if resolved.starts_with(&memory_dir) {
+            return Err(ToolError::PermissionDenied(format!(
+                "Path '{}' is inside the memory store. Use the `memory` tool \
+                 (action=read/rewrite/...) instead of file tools.",
+                path_str
+            )));
+        }
+
         Ok(resolved)
     }
 
@@ -351,6 +368,34 @@ mod tests {
                 "Symlink escape should be blocked"
             );
         }
+    }
+
+    #[test]
+    fn test_memory_store_is_memory_tool_only() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let data = dir.path().join("data");
+        std::fs::create_dir_all(data.join("memory")).unwrap();
+        let v = PathValidator::new(data.clone());
+
+        // The live incident shape: cleaning memory via file tools.
+        for path in [
+            "memory/USER.md",
+            "memory/memory.md",
+            "memory/sessions/abc/notes.md",
+        ] {
+            let err = v
+                .resolve_path(path)
+                .expect_err("memory store paths must be denied");
+            assert!(
+                err.to_string().contains("memory"),
+                "denial should point at the memory tool: {err}"
+            );
+        }
+
+        // Only the exact `memory` directory is reserved.
+        assert!(v.resolve_path("memory-notes.md").is_ok());
+        assert!(v.resolve_path("memory-backup/x.md").is_ok());
+        assert!(v.resolve_path("skills/memory-guide.md").is_ok());
     }
 
     #[test]

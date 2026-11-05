@@ -106,9 +106,6 @@ async fn streaming_keeps_time_and_session_context_in_system_and_user_text_unchan
         .set_system_prompt_suffix(Some("SESSION_SUFFIX".into()))
         .await;
     iface
-        .set_memory_context(Some("MEMORY_SNAPSHOT".into()))
-        .await;
-    iface
         .set_skill_context("current".into(), "CURRENT_SKILL".into())
         .await;
     let user = "Send a message to demo-agent: 'Any anomalies today?'";
@@ -120,7 +117,7 @@ async fn streaming_keeps_time_and_session_context_in_system_and_user_text_unchan
     assert!(!prompt.contains("{{CURRENT_TIME}}"));
     assert!(!prompt.contains("{{LOCAL_TIME}}"));
     assert!(!prompt.contains("{{TIMEZONE}}"));
-    for marker in ["SESSION_SUFFIX", "MEMORY_SNAPSHOT", "CURRENT_SKILL"] {
+    for marker in ["SESSION_SUFFIX", "CURRENT_SKILL"] {
         assert!(prompt.contains(marker), "lost {marker}");
     }
     let current = messages.last().unwrap();
@@ -790,13 +787,14 @@ async fn guide_recovery_excludes_only_skill_for_one_request() {
             .unwrap(),
     )
     .await;
-    let captured = requests.lock().unwrap();
-    assert_eq!(captured[0]["tool_names"], serde_json::json!(["shell"]));
-    assert_eq!(
-        captured[1]["tool_names"],
-        serde_json::json!(["shell", "skill"])
-    );
-    drop(captured);
+    {
+        let captured = requests.lock().unwrap();
+        assert_eq!(captured[0]["tool_names"], serde_json::json!(["shell"]));
+        assert_eq!(
+            captured[1]["tool_names"],
+            serde_json::json!(["shell", "skill"])
+        );
+    }
     assert_eq!(
         iface.get_tool_definitions().await.len(),
         2,
@@ -931,4 +929,172 @@ async fn dynamic_thinking_effort_precedence_and_unset_defaults_are_preserved() {
         iface.effective_thinking_control(Some(false)).await,
         (Some(false), Some(neomind_core::ThinkingEffort::None))
     );
+}
+
+/// Isolate the process-global data-directory resolver from parallel tests and
+/// from the operator's real memory files. This exercises the real session path.
+#[test]
+fn memory_on_demand_session_requests() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "llm::request_tests::memory_on_demand_isolated_child",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env("NEOMIND_DATA_DIR", dir.path())
+        .env("NEOMIND_MEMORY_TEST_CHILD", "1")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+}
+
+#[tokio::test]
+#[ignore = "run by memory_on_demand_session_requests with isolated data directory"]
+async fn memory_on_demand_isolated_child() {
+    assert_eq!(std::env::var("NEOMIND_MEMORY_TEST_CHILD").unwrap(), "1");
+    use crate::session::SessionManager;
+    use crate::toolkit::{MemoryTool, ToolRegistry};
+    let cfg = neomind_storage::MemoryConfig::load();
+    let store = neomind_storage::MarkdownMemoryStore::with_config(&cfg.storage_path, cfg.clone());
+    store.init().unwrap();
+    const OLD: &str = "OLD_WIDGET_TASK_7F92: meteor widget component unavailable";
+    store.write_file("user", OLD).await.unwrap();
+    store
+        .write_file("knowledge", "FACT_91BD: lab sensor uses MQTT")
+        .await
+        .unwrap();
+    store
+        .write_file("procedures", "SOP_21AE: inspect sensor before reset")
+        .await
+        .unwrap();
+    let store = Arc::new(tokio::sync::RwLock::new(store));
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(MemoryTool::new(store.clone())));
+    let manager = SessionManager::memory();
+    manager.set_tool_registry(Arc::new(registry)).await;
+    let sid = manager.create_session().await.unwrap();
+    let agent = manager.get_session(&sid).await.unwrap();
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let rt = |script| {
+        Arc::new(CaptureRuntime {
+            inner: MockLlmRuntime::new(script),
+            requests: requests.clone(),
+            overflow_once: std::sync::atomic::AtomicBool::new(false),
+        })
+    };
+    agent
+        .llm_interface()
+        .set_llm(rt(vec![
+            MockResponse::text(
+                "AI chips perform parallel computation."
+            );
+            8
+        ]))
+        .await;
+    manager
+        .process_message(&sid, "Explain AI hardware trends.")
+        .await
+        .unwrap();
+    let mut stream = manager.process_message_events(&sid, "继续").await.unwrap();
+    while stream.next().await.is_some() {}
+    {
+        let captured = requests.lock().unwrap();
+        assert!(
+            !captured.is_empty(),
+            "must reach the real LLM request boundary"
+        );
+        for request in captured.iter() {
+            let text = request["messages"].to_string();
+            for marker in [
+                "OLD_WIDGET_TASK_7F92",
+                "FACT_91BD",
+                "SOP_21AE",
+                "<memory-context>",
+            ] {
+                assert!(
+                    !text.contains(marker),
+                    "unsolicited memory entered request: {marker}"
+                );
+            }
+        }
+        assert!(captured.last().unwrap()["messages"]
+            .to_string()
+            .contains("Explain AI hardware trends."));
+    }
+    requests.lock().unwrap().clear();
+    agent
+        .llm_interface()
+        .set_llm(rt(vec![
+            MockResponse::tool_call(
+                "memory",
+                serde_json::json!({"action":"read", "target":"knowledge"}),
+            ),
+            MockResponse::text("The saved lab sensor uses MQTT."),
+        ]))
+        .await;
+    let mut stream = manager
+        .process_message_events(&sid, "Recall the saved lab sensor protocol.")
+        .await
+        .unwrap();
+    while stream.next().await.is_some() {}
+    {
+        let captured = requests.lock().unwrap();
+        assert!(
+            captured.len() >= 2,
+            "explicit read must execute and reach the follow-up request"
+        );
+        assert!(!captured[0]["messages"].to_string().contains("FACT_91BD"));
+        assert!(captured[1..]
+            .iter()
+            .any(|r| r["messages"].to_string().contains("FACT_91BD")));
+        assert!(captured
+            .iter()
+            .all(|r| !r["messages"].to_string().contains("OLD_WIDGET_TASK_7F92")));
+    }
+    // A hallucinated tool call must still be rejected when the schema hid it.
+    let disabled_sid = manager.create_session().await.unwrap();
+    let disabled_agent = manager.get_session(&disabled_sid).await.unwrap();
+    manager.toggle_memory(&disabled_sid, false).await.unwrap();
+    requests.lock().unwrap().clear();
+    disabled_agent
+        .llm_interface()
+        .set_llm(rt(vec![
+            MockResponse::tool_call(
+                "memory",
+                serde_json::json!({"action":"read", "target":"user"}),
+            ),
+            MockResponse::text("Memory is disabled for this session."),
+        ]))
+        .await;
+    let mut stream = manager
+        .process_message_events(&disabled_sid, "Recall my earlier preference.")
+        .await
+        .unwrap();
+    while stream.next().await.is_some() {}
+    {
+        let captured = requests.lock().unwrap();
+        assert!(captured.len() >= 2);
+        assert!(captured.iter().all(|r| !r["tool_names"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|n| n == "memory")));
+        assert!(captured
+            .iter()
+            .all(|r| !r["messages"].to_string().contains("OLD_WIDGET_TASK_7F92")));
+        assert!(captured[1..].iter().any(|r| r["messages"]
+            .to_string()
+            .to_lowercase()
+            .contains("disabled")));
+    }
+    assert_eq!(store.read().await.read_file("user").await.unwrap(), OLD);
 }

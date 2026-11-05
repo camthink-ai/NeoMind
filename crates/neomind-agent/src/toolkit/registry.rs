@@ -17,6 +17,8 @@ use super::tool::{DynTool, MemoryToolHandles, ToolDefinition, ToolOutput};
 /// unregistered.
 pub struct ToolRegistry {
     tools: HashMap<String, DynTool>,
+    /// Session-local gate; never changes the shared global disabled set.
+    memory_enabled: std::sync::atomic::AtomicBool,
     /// Cached tool definitions (rebuilt on register/unregister).
     cached_definitions: RwLock<Option<Vec<ToolDefinition>>>,
     /// Optional cancellation token. When set, `execute` / `execute_parallel`
@@ -39,10 +41,39 @@ impl ToolRegistry {
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
+            memory_enabled: std::sync::atomic::AtomicBool::new(true),
             cached_definitions: RwLock::new(None),
             cancellation_token: Arc::new(RwLock::new(None)),
             disabled: Arc::new(RwLock::new(HashSet::new())),
         }
+    }
+
+    /// Share ordinary tools and global policy, but bind memory to one chat.
+    pub(crate) fn for_chat_session(&self, session_id: &str) -> Self {
+        let mut tools = self.tools.clone();
+        if let Some(tool) = self.tools.get("memory") {
+            if let Some(memory) = tool
+                .as_any()
+                .downcast_ref::<super::memory_tool::MemoryTool>()
+            {
+                tools.insert(
+                    "memory".into(),
+                    Arc::new(memory.for_chat_session(session_id)),
+                );
+            }
+        }
+        Self {
+            tools,
+            memory_enabled: std::sync::atomic::AtomicBool::new(true),
+            cached_definitions: RwLock::new(None),
+            cancellation_token: self.cancellation_token.clone(),
+            disabled: self.disabled.clone(),
+        }
+    }
+
+    pub(crate) fn set_memory_enabled(&self, enabled: bool) {
+        self.memory_enabled
+            .store(enabled, std::sync::atomic::Ordering::Release);
     }
 
     /// Invalidate cached definitions (call after any mutation).
@@ -126,6 +157,7 @@ impl ToolRegistry {
                 .collect()
         };
         drop(disabled);
+        defs.retain(|d| !self.is_disabled(&d.name));
         // Deterministic order matching the system-prompt tool hierarchy.
         // self.tools is a HashMap (random iteration order per process start),
         // so without this the tools:[...] array the LLM sees reshuffles on
@@ -174,7 +206,11 @@ impl ToolRegistry {
 
     /// Check whether a tool name is currently disabled.
     pub fn is_disabled(&self, name: &str) -> bool {
-        self.disabled.read().contains(name)
+        (name == "memory"
+            && !self
+                .memory_enabled
+                .load(std::sync::atomic::Ordering::Acquire))
+            || self.disabled.read().contains(name)
     }
 
     /// Replay safety of a registered tool (see [`ReplaySafety`]). Unknown

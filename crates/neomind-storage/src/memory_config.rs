@@ -10,6 +10,10 @@ pub struct MemoryConfig {
     /// Whether the memory system is enabled
     #[serde(default = "default_enabled")]
     pub enabled: bool,
+    /// Opt-in LLM extraction after chat turns. Explicit memory-tool writes
+    /// remain available when false; existing configs default to false.
+    #[serde(default)]
+    pub auto_extract: bool,
     /// Storage path for memory files
     #[serde(default = "default_storage_path")]
     pub storage_path: String,
@@ -79,6 +83,7 @@ impl Default for MemoryConfig {
     fn default() -> Self {
         Self {
             enabled: default_enabled(),
+            auto_extract: false,
             storage_path: default_storage_path(),
             user_char_limit: default_user_limit(),
             knowledge_char_limit: default_knowledge_limit(),
@@ -120,6 +125,16 @@ impl MemoryConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chat_extraction_is_opt_in_for_new_and_existing_configs() {
+        assert!(!MemoryConfig::default().auto_extract);
+        let old: MemoryConfig = serde_json::from_str(r#"{"enabled":true}"#).unwrap();
+        assert!(old.enabled);
+        assert!(!old.auto_extract);
+        let explicit: MemoryConfig = serde_json::from_str(r#"{"auto_extract":true}"#).unwrap();
+        assert!(explicit.auto_extract);
+    }
 
     #[test]
     fn test_default_config() {

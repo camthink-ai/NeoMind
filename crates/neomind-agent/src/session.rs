@@ -280,13 +280,6 @@ pub struct SessionManager {
     /// extension. A slow subscriber that fills its channel just drops events
     /// (deliberate: voice workloads should never accumulate backlog).
     event_subscribers: Arc<RwLock<HashMap<String, Vec<tokio::sync::mpsc::Sender<AgentEvent>>>>>,
-    /// Per-session frozen memory snapshot (loaded once, cached for the session).
-    /// `MemorySnapshot::load` reads 3 files synchronously + token-truncates on
-    /// every call; the "frozen snapshot" design (snapshot.rs) loads once per
-    /// session, so re-reading on each message was redundant work on the hot
-    /// path. Memory-tool writes intentionally do NOT invalidate this — the
-    /// snapshot stays frozen for the session and is re-read on the next one.
-    memory_snapshots: Arc<RwLock<HashMap<String, crate::memory::MemorySnapshot>>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -501,7 +494,6 @@ impl SessionManager {
             skill_registry: crate::skills::create_shared_registry(None),
             cancel_senders: Arc::new(RwLock::new(HashMap::new())),
             event_subscribers: Arc::new(RwLock::new(HashMap::new())),
-            memory_snapshots: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -522,7 +514,6 @@ impl SessionManager {
             skill_registry: crate::skills::create_shared_registry(Some(data_dir)),
             cancel_senders: Arc::new(RwLock::new(HashMap::new())),
             event_subscribers: Arc::new(RwLock::new(HashMap::new())),
-            memory_snapshots: Arc::new(RwLock::new(HashMap::new())),
         };
 
         // Restore sessions from database on startup
@@ -1194,6 +1185,7 @@ impl SessionManager {
     pub async fn get_session(&self, session_id: &str) -> Result<Arc<Agent>> {
         // First check if session is in memory
         if let Some(agent) = self.sessions.read().await.get(session_id).cloned() {
+            agent.set_memory_enabled(self.is_memory_enabled(session_id).await);
             return Ok(agent);
         }
 
@@ -1222,6 +1214,8 @@ impl SessionManager {
         } else {
             Agent::new(self.default_config.clone(), session_id.to_string())
         };
+
+        agent.set_memory_enabled(self.is_memory_enabled(session_id).await);
 
         // Configure LLM if a default backend is set
         let llm_backend = self.default_llm_backend.read().await.clone();
@@ -1267,6 +1261,9 @@ impl SessionManager {
             drop(sessions);
             return Ok(existing);
         }
+        // Configuration can change while the backend/history is restoring.
+        // Refresh under the cache lock so a concurrent toggle cannot miss it.
+        agent.set_memory_enabled(self.is_memory_enabled(session_id).await);
         sessions.insert(session_id.to_string(), agent.clone());
         drop(sessions);
 
@@ -1428,26 +1425,28 @@ impl SessionManager {
             .toggle_memory(session_id, enabled)
             .map_err(|e| NeoMindError::Storage(format!("Failed to toggle memory: {}", e)))?;
 
+        let agent = self.sessions.read().await.get(session_id).cloned();
+        if let Some(agent) = agent {
+            // Read the latest value: another toggle may have completed while
+            // this call waited for the sessions lock.
+            agent.set_memory_enabled(self.is_memory_enabled(session_id).await);
+            agent.update_tool_definitions().await;
+        }
+
         Ok(enabled)
     }
 
-    /// Get whether memory is enabled for a session.
-    /// Lightweight background memory extraction after a chat turn.
-    ///
-    /// Chat had NO automatic memory write — only what the model chose to
-    /// write via the memory tool, which small models almost never do — so
-    /// USER.md/KNOWLEDGE.md stayed empty and cross-session memory was dead
-    /// in practice. This runs a small thinking-disabled LLM call over the
-    /// last exchange, merges durable facts into the snapshot files
-    /// (deduped, budget-capped), and invalidates the frozen-snapshot cache
-    /// so the next turn sees them. Fire-and-forget; never blocks the reply.
+    /// Optional background memory extraction, disabled by default.
+    /// Explicit memory-tool writes remain available; ordinary conversation
+    /// must not silently turn temporary tasks or assistant claims into facts.
     pub async fn maybe_extract_memory(
         &self,
         session_id: &str,
         user_message: &str,
         assistant_reply: &str,
     ) {
-        if !self.is_memory_enabled(session_id).await {
+        let mem_cfg = neomind_storage::MemoryConfig::load();
+        if !mem_cfg.enabled || !mem_cfg.auto_extract || !self.is_memory_enabled(session_id).await {
             tracing::info!(session_id, "memory extraction: memory disabled, skip");
             return;
         }
@@ -1478,12 +1477,10 @@ impl SessionManager {
         };
         let model = runtime.model_name().to_string();
 
-        // The snapshot cache is invalidated after a write so the next turn
-        // re-loads the updated files. Rebuild from the store fresh each time.
+        // Explicit reads use the latest files; no snapshot is injected into chat.
         // Path AND merge limits come from the configured MemorySystemConfig —
         // hardcoding 2000/3000 here would truncate files the user had raised
         // the limits for (Settings → Preferences), silently destroying memory.
-        let mem_cfg = neomind_storage::MemoryConfig::load();
         // with_config — `new` silently uses DEFAULT limits, so a user who
         // raised the limits had the fit pass (configured limit) and the
         // write rejected (default limit) on every extraction.
@@ -1497,8 +1494,8 @@ impl SessionManager {
         // silently (write_file error swallowed by the merge below), so
         // extracted facts vanished. Initialize best-effort; idempotent.
         let _ = store.init();
-        let snapshots = self.memory_snapshots.clone();
         let session_id = session_id.to_string();
+        let session_store = self.store.clone();
 
         tokio::spawn(async move {
             use neomind_core::llm::backend::{GenerationParams, LlmInput};
@@ -1570,6 +1567,18 @@ Assistant: {ar}\n"
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             }
 
+            let memory_still_enabled = || {
+                let config = neomind_storage::MemoryConfig::load();
+                config.enabled
+                    && config.auto_extract
+                    && session_store
+                        .get_session_metadata(&session_id)
+                        .map(|m| m.memory_enabled)
+                        .unwrap_or(false)
+            };
+            if !memory_still_enabled() {
+                return;
+            }
             let out = match runtime.generate(input).await {
                 Ok(o) => o,
                 Err(e) => {
@@ -1633,6 +1642,9 @@ Assistant: {ar}\n"
                     .filter(|f| fuzzy.find_similar(f, &existing_bullets).is_none())
                     .collect()
             };
+            if !memory_still_enabled() {
+                return;
+            }
             let user_fresh = prep("user", &new_user);
             let knowledge_fresh = prep("knowledge", &new_knowledge);
 
@@ -1648,7 +1660,7 @@ Assistant: {ar}\n"
                     category = "memory",
                     error = %e,
                     "Failed to persist extracted user facts — this extraction's \
-                         facts are lost and the snapshot cache stays stale"
+                         facts are lost"
                 ),
             }
             match store.append_facts("knowledge", &knowledge_fresh).await {
@@ -1660,13 +1672,11 @@ Assistant: {ar}\n"
                     category = "memory",
                     error = %e,
                     "Failed to persist extracted knowledge facts — this \
-                         extraction's facts are lost and the snapshot cache stays stale"
+                         extraction's facts are lost"
                 ),
             }
 
             if wrote_any {
-                // Invalidate the frozen snapshot so the next turn re-loads.
-                snapshots.write().await.remove(&session_id);
                 tracing::info!(
                     session_id,
                     fresh_user_facts = fresh_user,
@@ -1681,49 +1691,9 @@ Assistant: {ar}\n"
         self.store
             .get_session_metadata(session_id)
             .map(|m| m.memory_enabled)
-            // Bare sessions (no metadata row — core-path consumers like the
-            // CLI/eval create exactly these) default ON: extraction is
-            // budget-capped and background, and a default-off gate was one
-            // half of why cross-session memory stayed empty in practice.
+            // Bare sessions allow explicit memory-tool access. Automatic
+            // chat extraction has a separate opt-in configuration flag.
             .unwrap_or(true)
-    }
-
-    /// Ensure the session's frozen memory snapshot is loaded and set on the
-    /// agent. Loads once per session and caches the result — `MemorySnapshot`
-    /// is a "frozen snapshot" (see `memory/snapshot.rs`) that reads 3 files
-    /// synchronously per load, so reloading on every message was redundant
-    /// work on the hot path. Memory-tool writes deliberately do NOT invalidate
-    /// this cache: the snapshot stays frozen for the session and is re-read on
-    /// the next session, matching the original frozen-snapshot semantics.
-    async fn ensure_memory_snapshot(&self, session_id: &str, agent: &Arc<Agent>) {
-        if !self.is_memory_enabled(session_id).await {
-            return;
-        }
-        {
-            let cache = self.memory_snapshots.read().await;
-            if let Some(snapshot) = cache.get(session_id) {
-                if !snapshot.is_empty() {
-                    agent.set_memory_snapshot(snapshot.clone()).await;
-                }
-                return;
-            }
-        }
-        let memory_store = neomind_storage::MarkdownMemoryStore::with_config(
-            neomind_core::paths::data_dir().join("memory"),
-            neomind_storage::MemoryConfig::load(),
-        );
-        let snapshot = crate::memory::MemorySnapshot::load(&memory_store);
-        if !snapshot.is_empty() {
-            tracing::info!(
-                session_id = %session_id,
-                "Loaded memory snapshot for session"
-            );
-            self.memory_snapshots
-                .write()
-                .await
-                .insert(session_id.to_string(), snapshot.clone());
-            agent.set_memory_snapshot(snapshot).await;
-        }
     }
 
     /// List all active sessions with their metadata.
@@ -1881,9 +1851,6 @@ Assistant: {ar}\n"
         tracing::debug!(session_id = %session_id, message = %message, "SessionManager::process_message");
         let agent = self.get_session(session_id).await?;
 
-        // Load memory snapshot if enabled and not yet loaded (parity with process_message_events)
-        self.ensure_memory_snapshot(session_id, &agent).await;
-
         let response = agent.process(message).await?;
 
         // Update message history
@@ -1898,12 +1865,7 @@ Assistant: {ar}\n"
             tracing::error!(session_id = %session_id, error = %e, message = "Failed to save history");
         }
 
-        // Background chat memory extraction — the REST chat path runs this
-        // after every turn (handlers/sessions.rs); the core path must too,
-        // or every non-REST consumer (CLI, embedded, eval) leaves USER.md
-        // empty forever and the memory tool answers from nothing. Awaiting
-        // (not spawning) matches the non-streaming REST semantics and keeps
-        // the next turn's snapshot deterministic.
+        // Optional extraction uses the same opt-in gate as the REST path.
         self.maybe_extract_memory(session_id, message, &response.message.content)
             .await;
 
@@ -1942,9 +1904,6 @@ Assistant: {ar}\n"
         message: &str,
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
         let agent = self.get_session(session_id).await?;
-
-        // Load memory snapshot if enabled and not yet loaded
-        self.ensure_memory_snapshot(session_id, &agent).await;
 
         // Read conversation summary from session metadata for context compression
         let (conversation_summary, summary_up_to_index) = self
@@ -2524,7 +2483,6 @@ impl Default for SessionManager {
                 skill_registry: crate::skills::create_shared_registry(None),
                 cancel_senders: Arc::new(RwLock::new(HashMap::new())),
                 event_subscribers: Arc::new(RwLock::new(HashMap::new())),
-                memory_snapshots: Arc::new(RwLock::new(HashMap::new())),
             }
         })
     }
@@ -3263,3 +3221,106 @@ mod companion_delegation_tests {
 #[cfg(all(test, feature = "llamacpp"))]
 #[path = "session_backend_request_tests.rs"]
 mod backend_request_tests;
+
+#[cfg(test)]
+mod on_demand_memory_tests {
+    use super::*;
+    use crate::toolkit::{MemoryTool, ToolRegistry};
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn memory_toggle_is_session_local_and_survives_restore() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = neomind_storage::MarkdownMemoryStore::new(dir.path());
+        store.init().unwrap();
+        store
+            .write_file("user", "prefers Chinese responses")
+            .await
+            .unwrap();
+        let store = Arc::new(RwLock::new(store));
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(MemoryTool::new(store.clone())));
+        let registry = Arc::new(registry);
+        let manager = SessionManager::memory();
+        manager.set_tool_registry(registry.clone()).await;
+        let a_id = manager.create_session().await.unwrap();
+        let b_id = manager.create_session().await.unwrap();
+        let a = manager.get_session(&a_id).await.unwrap();
+        let b = manager.get_session(&b_id).await.unwrap();
+        let read = json!({"action":"read", "target":"user"});
+        assert!(a
+            .execute_tool("memory", &read)
+            .await
+            .unwrap()
+            .contains("Chinese"));
+        manager.toggle_memory(&a_id, false).await.unwrap();
+        assert!(
+            a.execute_tool("memory", &read).await.is_err(),
+            "cached read must also be blocked"
+        );
+        assert!(a
+            .execute_tool(
+                "memory",
+                &json!({"action":"add", "target":"user", "content":"bad write"})
+            )
+            .await
+            .is_err());
+        assert!(!a
+            .llm_interface()
+            .get_tool_definitions()
+            .await
+            .iter()
+            .any(|d| d.name == "memory"));
+        assert!(b
+            .execute_tool("memory", &read)
+            .await
+            .unwrap()
+            .contains("Chinese"));
+        assert!(
+            !registry.is_disabled("memory"),
+            "shared registry must not be disabled"
+        );
+        manager
+            .save_history(&a_id, &[AgentMessage::user("current chat task")])
+            .unwrap();
+        manager.sessions.write().await.remove(&a_id);
+        let restored = manager.get_session(&a_id).await.unwrap();
+        assert!(restored.execute_tool("memory", &read).await.is_err());
+        manager.toggle_memory(&a_id, true).await.unwrap();
+        assert!(restored
+            .execute_tool("memory", &read)
+            .await
+            .unwrap()
+            .contains("Chinese"));
+        restored
+            .execute_tool(
+                "memory",
+                &json!({"action":"add", "target":"session", "content":"session A task"}),
+            )
+            .await
+            .unwrap();
+        b.execute_tool(
+            "memory",
+            &json!({"action":"add", "target":"session", "content":"session B task"}),
+        )
+        .await
+        .unwrap();
+        let notes = json!({"action":"read", "target":"session"});
+        let a_notes = restored.execute_tool("memory", &notes).await.unwrap();
+        let b_notes = b.execute_tool("memory", &notes).await.unwrap();
+        assert!(a_notes.contains("session A task") && !a_notes.contains("session B task"));
+        assert!(b_notes.contains("session B task") && !b_notes.contains("session A task"));
+        assert!(!store
+            .read()
+            .await
+            .read_file("user")
+            .await
+            .unwrap()
+            .contains("bad write"));
+        registry.disable("memory");
+        assert!(
+            restored.execute_tool("memory", &read).await.is_err(),
+            "global policy still applies"
+        );
+    }
+}

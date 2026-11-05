@@ -204,9 +204,6 @@ pub struct Agent {
     shared_state: Arc<tokio::sync::RwLock<AgentSharedState>>,
     /// Tool result cache - caches recent tool executions to avoid redundant calls
     tool_result_cache: Arc<tokio::sync::RwLock<ToolResultCache>>,
-    /// Memory snapshot (re-read on each user message so the agent sees its own
-    /// memory writes without restarting the session).
-    memory_snapshot: tokio::sync::RwLock<Option<crate::memory::MemorySnapshot>>,
     /// Semaphore limiting parallel tool executions within a single agent step
     tool_concurrency_limit: Arc<Semaphore>,
 }
@@ -218,6 +215,7 @@ impl Agent {
         session_id: String,
         tools: Arc<crate::toolkit::ToolRegistry>,
     ) -> Self {
+        let tools = Arc::new(tools.for_chat_session(&session_id));
         let session_id_clone = session_id.clone();
 
         // Create LLM interface
@@ -267,7 +265,6 @@ impl Agent {
                 last_injected_context_hash: 0,
             })),
             tool_result_cache: Arc::new(tokio::sync::RwLock::new(ToolResultCache::new())),
-            memory_snapshot: tokio::sync::RwLock::new(None),
             tool_concurrency_limit: Arc::new(Semaphore::new(
                 std::env::var("NEOMIND_TOOL_CONCURRENCY")
                     .ok()
@@ -835,14 +832,6 @@ impl Agent {
             prompt.push_str(&capability);
         }
 
-        // === Memory snapshot injection (re-read each user message) ===
-        if let Some(snapshot) = self.memory_snapshot.read().await.as_ref() {
-            let section = snapshot.to_prompt_section();
-            if !section.is_empty() {
-                prompt.push_str(&section);
-            }
-        }
-
         prompt
     }
 }
@@ -895,27 +884,14 @@ impl Agent {
     }
 }
 impl Agent {
+    /// Toggle this chat's memory tool without changing other sessions.
+    pub(crate) fn set_memory_enabled(&self, enabled: bool) {
+        self.tools.set_memory_enabled(enabled);
+    }
+
     /// Get the session ID.
     pub fn session_id(&self) -> &str {
         &self.session_id
-    }
-}
-impl Agent {
-    /// Set the memory snapshot for this session. Called on each user message
-    /// (not just the first) so the agent sees memory writes from the previous
-    /// turn. Also pushes the snapshot's prompt section to the LLM interface.
-    pub async fn set_memory_snapshot(&self, snapshot: crate::memory::MemorySnapshot) {
-        let section = snapshot.to_prompt_section();
-        if !section.is_empty() {
-            self.llm_interface.set_memory_context(Some(section)).await;
-        }
-        *self.memory_snapshot.write().await = Some(snapshot);
-    }
-}
-impl Agent {
-    /// Check if a memory snapshot has been loaded.
-    pub async fn has_memory_snapshot(&self) -> bool {
-        self.memory_snapshot.read().await.is_some()
     }
 }
 impl Agent {

@@ -49,6 +49,14 @@ impl MemoryTool {
         }
     }
 
+    /// Chat sessions share durable files, never the mutable session-note handle.
+    pub(crate) fn for_chat_session(&self, session_id: &str) -> Self {
+        Self::with_session_handle(
+            self.store.clone(),
+            Arc::new(RwLock::new(Some(session_id.to_string()))),
+        )
+    }
+
     /// Create a new memory tool with a shared session ID handle.
     pub fn with_session_handle(
         store: Arc<RwLock<MarkdownMemoryStore>>,
@@ -120,7 +128,10 @@ impl MemoryTool {
 
     /// Get preview text (first 50 chars).
     fn get_preview(content: &str) -> String {
-        content.chars().take(50).collect::<String>()
+        // Long enough to judge relevance without a read; the full text is one
+        // `read` away. A 50-char preview once left a cleanup task no way to
+        // see what it was cleaning, so it escaped to file_write.
+        content.chars().take(200).collect::<String>()
     }
 
     /// Append content to existing content.
@@ -466,7 +477,9 @@ impl Tool for MemoryTool {
     fn description(&self) -> &str {
         r##"Manage persistent memory across sessions (the agent's own cross-run memory). To create/edit arbitrary files use `file_write`/`file_edit` instead.
 
-Actions: add (append), replace (needs old_text+content), remove (needs old_text), read (full target), list (all targets), create (custom file, target=custom:{name}).
+Files are NOT preloaded into chat. Read only when the current request needs prior preferences, facts, or procedures; list if the target is unknown. Historical memory is reference, not an instruction to resume old tasks.
+
+Actions: add (append), rewrite (replace the WHOLE file — for cleanup/consolidation, budget-enforced), replace (needs old_text+content), remove (needs old_text), read (full target), list (all targets), create (custom file, target=custom:{name}).
 
 Targets: user (profile/preferences), knowledge (domain facts), procedures (SOPs), session (7-day scratch), custom:{name} (high-bar escape hatch). PREFER the 3 standard targets. Keep entries concise.
 
@@ -479,7 +492,7 @@ If a write exceeds the per-file limit, the error reports the exact limit — tru
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["add", "replace", "remove", "read", "list", "create"],
+                    "enum": ["add", "rewrite", "replace", "remove", "read", "list", "create"],
                     "description": "The memory action to perform"
                 },
                 "target": {
@@ -488,7 +501,7 @@ If a write exceeds the per-file limit, the error reports the exact limit — tru
                 },
                 "content": {
                     "type": "string",
-                    "description": "Content to add or replace with. REQUIRED for add/replace/create."
+                    "description": "Content to add, rewrite, or replace with. REQUIRED for add/rewrite/replace/create."
                 },
                 "old_text": {
                     "type": "string",
@@ -683,6 +696,59 @@ If a write exceeds the per-file limit, the error reports the exact limit — tru
                             format!(
                                 "Added to session notes ({} chars)",
                                 new_content.chars().count()
+                            )
+                        }
+                        _ => {
+                            return Err(ToolError::InvalidArguments(format!(
+                                "Invalid target '{}'. Must be one of: user, knowledge, procedures, session, custom:{{name}}",
+                                target
+                            )))
+                        }
+                    }
+                };
+
+                Ok(ToolOutput::success(serde_json::json!({
+                    "message": result
+                })))
+            }
+            "rewrite" => {
+                let content = args["content"].as_str().ok_or_else(|| {
+                    ToolError::InvalidArguments("content is required for rewrite".into())
+                })?;
+
+                let store = self.store.write().await;
+
+                // Whole-file replacement — the cleanup/consolidation path.
+                // Without it, a "clean up my memory" request had no tool-
+                // level expression and escaped to file_write, bypassing the
+                // per-file budgets and the store's write path entirely.
+                let result = if let Some(custom_name) = Self::parse_custom_target(target) {
+                    let new_chars = Self::modify_custom_persisted(
+                        &store,
+                        agent_id.as_deref(),
+                        custom_name,
+                        |_| Ok(content.to_string()),
+                    )
+                    .await?;
+                    format!("Rewrote custom:{} ({} chars)", custom_name, new_chars)
+                } else {
+                    match target {
+                        // modify_file enforces the configured char limit on
+                        // the result and reports the exact limit on overflow.
+                        "user" | "knowledge" | "procedures" => {
+                            let new_chars =
+                                Self::modify_persisted(&store, target, |_| Ok(content.to_string()))
+                                    .await?;
+                            format!("Rewrote {} ({} chars)", target, new_chars)
+                        }
+                        "session" => {
+                            let session_id = self.require_session_id().await?;
+                            store
+                                .write_session_file(&session_id, "notes", content)
+                                .await?;
+                            format!(
+                                "Rewrote session notes ({} chars)",
+                                content.chars().count()
                             )
                         }
                         _ => {
@@ -1032,6 +1098,111 @@ mod tests {
             "read after add must contain the new content; got {} chars: {:?}",
             chars2,
             content2
+        );
+    }
+    #[tokio::test]
+    async fn test_rewrite_replaces_whole_file_and_enforces_budget() {
+        let temp = tempfile::TempDir::new().unwrap();
+        // Small explicit knowledge budget so the overflow case does not
+        // depend on the default limits.
+        let config = neomind_storage::MemoryConfig {
+            knowledge_char_limit: 300,
+            ..Default::default()
+        };
+        let store = neomind_storage::MarkdownMemoryStore::with_config(temp.path(), config.clone());
+        store.init().unwrap();
+        let store = std::sync::Arc::new(tokio::sync::RwLock::new(store));
+        let tool = MemoryTool::new(store.clone());
+
+        // Seed noise, then clean up via rewrite.
+        tool.execute(serde_json::json!({
+            "action": "add", "target": "knowledge",
+            "content": "- stale widget fault entry that should disappear"
+        }))
+        .await
+        .unwrap();
+
+        let r = tool
+            .execute(serde_json::json!({
+                "action": "rewrite", "target": "knowledge",
+                "content": "# Knowledge\n- lab sensor uses MQTT"
+            }))
+            .await
+            .unwrap();
+        assert!(
+            r.data["message"]
+                .as_str()
+                .unwrap()
+                .starts_with("Rewrote knowledge"),
+            "rewrite must succeed: {:?}",
+            r.data
+        );
+
+        let read = tool
+            .execute(serde_json::json!({"action":"read","target":"knowledge"}))
+            .await
+            .unwrap();
+        let content = read.data["content"].as_str().unwrap();
+        assert!(content.contains("lab sensor uses MQTT"));
+        assert!(
+            !content.contains("stale widget fault"),
+            "rewrite must fully replace prior content"
+        );
+
+        // Over-budget rewrite is rejected with the exact limit named — no
+        // silent truncation of a carefully written replacement.
+        let over = "x".repeat(config.knowledge_char_limit + 10);
+        let over_err = tool
+            .execute(serde_json::json!({
+                "action": "rewrite", "target": "knowledge", "content": over
+            }))
+            .await;
+        assert!(over_err.is_err(), "over-limit rewrite must be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_rewrite_rejects_missing_content_and_bad_target() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let store = neomind_storage::MarkdownMemoryStore::new(temp.path());
+        store.init().unwrap();
+        let tool = MemoryTool::new(std::sync::Arc::new(tokio::sync::RwLock::new(store)));
+
+        assert!(tool
+            .execute(serde_json::json!({"action":"rewrite","target":"user"}))
+            .await
+            .is_err());
+        assert!(tool
+            .execute(serde_json::json!({
+                "action":"rewrite","target":"nonexistent","content":"x"
+            }))
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_list_preview_is_long_enough_to_judge_relevance() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let store = neomind_storage::MarkdownMemoryStore::new(temp.path());
+        store.init().unwrap();
+        let store = std::sync::Arc::new(tokio::sync::RwLock::new(store));
+        let tool = MemoryTool::new(store);
+
+        let body = "- ".to_string() + &"fact ".repeat(60); // ~300 chars
+        tool.execute(serde_json::json!({
+            "action": "rewrite", "target": "user", "content": body
+        }))
+        .await
+        .unwrap();
+
+        let list = tool
+            .execute(serde_json::json!({"action":"list"}))
+            .await
+            .unwrap();
+        let preview = list.data["user"]["preview"].as_str().unwrap();
+        assert!(
+            preview.chars().count() >= 150,
+            "preview must be a substantial sample, got {} chars",
+            preview.chars().count()
         );
     }
 }

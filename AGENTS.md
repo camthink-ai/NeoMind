@@ -188,3 +188,14 @@ binaries out (9.5GB freed, user disk now ~29GB free). Known follow-ups
 (deliberately not bundled):
 detect_thinking misses sparkx2.6-1.7b; mid-session effort PATCH without
 backend_id keeps a stale snapshot. No commit/push/publish.
+
+## On-demand chat memory (2026-11-05, committed with user authorization)
+
+Read docs/development/on-demand-chat-memory-2026-11-05.md. User authorized removing
+implicit long-term memory injection while keeping explicit memory-tool access.
+Chat-turn extraction now defaults off (auto_extract=false). Current conversation
+history/compaction and scheduled-agent memory are unchanged. Test artifacts:
+/tmp/neomind-memory-demand-20261105/. Takeover round (same evening): workspace gate
++ clippy verified, and live-use tool gaps fixed (memory rewrite action, 200-char
+list previews, file tools barred from <data_dir>/memory). The unrelated
+model-override hunk in capability_providers.rs stays uncommitted. No push.
