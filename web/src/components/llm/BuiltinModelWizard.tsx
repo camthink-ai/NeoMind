@@ -148,6 +148,10 @@ export function BuiltinModelWizard({
   const [phase, setPhase] = useState<WizardPhase>('loading')
   const [status, setStatus] = useState<BuiltinLlmStatus | null>(null)
   const [models, setModels] = useState<BuiltinModelDef[]>([])
+  // Whether a models fetch has ever settled — the empty picker shows a
+  // loading spinner (not the no-models default state) until then, so the
+  // first open doesn't flash the retry placeholder before the list lands.
+  const [modelsLoaded, setModelsLoaded] = useState(false)
   const [catalogFallback, setCatalogFallback] = useState(false)
   const [importBusy, setImportBusy] = useState(false)
   const importFileRef = useRef<HTMLInputElement | null>(null)
@@ -210,10 +214,16 @@ export function BuiltinModelWizard({
     }
   }, [onActivated])
 
-  // Reset per-open-session state. If the model is already installed when the
-  // wizard reopens, jump straight to ready instead of re-downloading —
-  // unless the switch-model entry asked for the picker directly.
-  useEffect(() => {
+  // Reset per-open-session state DURING RENDER (the "adjust state on prop
+  // change" pattern) — an effect runs after the first paint, so the dialog
+  // used to flash one frame of the previous close-time phase (e.g. the
+  // 已就绪 screen) before flipping to the picker. If the model is already
+  // installed when the wizard reopens, jump straight to ready instead of
+  // re-downloading — unless the switch-model entry asked for the picker
+  // directly.
+  const [prevOpen, setPrevOpen] = useState(open)
+  if (open !== prevOpen) {
+    setPrevOpen(open)
     if (open) {
       activatedRef.current = false
       sawDownloadingRef.current = false
@@ -223,8 +233,7 @@ export function BuiltinModelWizard({
       setErrorMsg(null)
       setPhase(startInPicker ? 'idle' : status?.installed ? 'ready' : 'loading')
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open])
+  }
 
   // Live download progress over WS/SSE (Task 15). ModelDownloadProgress is in
   // NO is_*_event() category, so the 'llm' category filter would never deliver
@@ -297,6 +306,7 @@ export function BuiltinModelWizard({
     api
       .getBuiltinModels()
       .then((r) => {
+        setModelsLoaded(true)
         setModels(r.models)
         setCatalogFallback(r.catalog_fallback === true)
         // Pre-select: already-installed → recommended → default id → first.
@@ -308,7 +318,9 @@ export function BuiltinModelWizard({
         if (preferred) setSelectedModelId(preferred.id)
       })
       .catch(() => {
-        // Transient — the picker just stays empty and the poll retries status.
+        // Transient — surface the retry state only after the fetch has
+        // actually settled; until then the picker keeps its loading look.
+        setModelsLoaded(true)
       })
     const timer = window.setInterval(poll, STATUS_POLL_MS)
     return () => {
@@ -320,13 +332,17 @@ export function BuiltinModelWizard({
   // Re-fetch the model list (the empty state's retry button — the list is
   // otherwise fetched once per wizard open).
   const reloadModels = useCallback(() => {
+    setModelsLoaded(false)
     api
       .getBuiltinModels()
       .then((r) => {
+        setModelsLoaded(true)
         setModels(r.models)
         setCatalogFallback(r.catalog_fallback === true)
       })
-      .catch(() => {})
+      .catch(() => {
+        setModelsLoaded(true)
+      })
   }, [])
 
   // Offline paths: import a GGUF already on the server, or upload one. Both
@@ -609,11 +625,20 @@ export function BuiltinModelWizard({
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {models.length === 0 && (
                     <div className="col-span-full flex flex-col items-center gap-2 py-2 text-xs text-muted-foreground">
-                      <span>{t('plugins:llm.builtinWizardNoModels')}</span>
-                      <Button size="sm" variant="outline" onClick={reloadModels}>
-                        <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
-                        {t('common:retry')}
-                      </Button>
+                      {modelsLoaded ? (
+                        <>
+                          <span>{t('plugins:llm.builtinWizardNoModels')}</span>
+                          <Button size="sm" variant="outline" onClick={reloadModels}>
+                            <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                            {t('common:retry')}
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <span>{t('common:loading')}</span>
+                        </>
+                      )}
                     </div>
                   )}
                   {models.filter((m) => m.role !== 'vlm').map((m) => {

@@ -143,7 +143,6 @@ export function CloudAiAddDialog({ open, onOpenChange, onSubmit, editing }: Prop
       open={open}
       onOpenChange={onOpenChange}
       title={editing ? t('plugins:llm.cloudEditTitle') : t('plugins:llm.cloudAddTitle')}
-      description={t('plugins:llm.cloudAddDesc')}
       icon={<Cloud className="h-5 w-5 text-muted-foreground" />}
       className="z-[110]"
       loading={false}

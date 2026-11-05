@@ -1231,10 +1231,6 @@ export function UnifiedLLMBackendsTab({
           open={ctxDialogOpen}
           onOpenChange={(o) => { setCtxDialogOpen(o); if (!o) setCtxDialogError(null) }}
           title={t('plugins:llm.builtinEngineSettings')}
-          description={t('plugins:llm.builtinEngineSettingsDesc', {
-            def: (builtinStatus?.default_ctx ?? 0).toLocaleString(),
-            model: builtinStatus?.model_id ?? '',
-          })}
           icon={<BrainCircuit className="h-5 w-5 text-muted-foreground" />}
           className="z-[110]"
           isSubmitting={ctxDialogSaving}
@@ -1395,8 +1391,6 @@ export function UnifiedLLMBackendsTab({
                 </SelectContent>
               </Select>
             </FormField>
-            <details>
-              <summary className="cursor-pointer text-sm text-muted-foreground">{t('plugins:llm.builtinNgl')}</summary>
             <FormField label={t('plugins:llm.builtinNgl')} helpText={t('plugins:llm.builtinNglHelp')}>
               <Select
                 value={nglMode}
@@ -1428,7 +1422,6 @@ export function UnifiedLLMBackendsTab({
                 />
               )}
             </FormField>
-            </details>
           </div>
         </UnifiedFormDialog>
 
@@ -1438,7 +1431,6 @@ export function UnifiedLLMBackendsTab({
           open={vlmDialogOpen}
           onOpenChange={(o) => { setVlmDialogOpen(o); if (!o) setVlmDialogError(null) }}
           title={t('plugins:llm.companionSettings')}
-          description={t('plugins:llm.companionApplyHint')}
           icon={<Eye className="h-5 w-5 text-muted-foreground" />}
           className="z-[110]"
           isSubmitting={vlmDialogSaving}
@@ -1527,8 +1519,6 @@ export function UnifiedLLMBackendsTab({
                 </SelectContent>
               </Select>
             </FormField>
-            <details>
-              <summary className="cursor-pointer text-sm text-muted-foreground">{t('plugins:llm.builtinNgl')}</summary>
             <FormField label={t('plugins:llm.builtinNgl')} helpText={t('plugins:llm.builtinNglHelp')}>
               <Select
                 value={vlmNglMode}
@@ -1560,7 +1550,6 @@ export function UnifiedLLMBackendsTab({
                 />
               )}
             </FormField>
-            </details>
           </div>
         </UnifiedFormDialog>
 
