@@ -143,3 +143,48 @@ baseline copy + analysis: /tmp/neomind-126-t4-stage/. No commit/push/publish.
 CHANGELOG 1.2.6 gained "Added — builtin engine controls". Deliberately-stopped
 chats fail with connection errors by design; no auto-restart until user acts.
 No commit/push/publish.
+
+## Thinking-leak fix round leakfix-r2 (2026-11-05, uncommitted)
+
+Read docs/development/thinking-leak-fix-2026-11-05.md. Spark-X2.6 dynamic-toggle
+leak fixed at the llama.cpp backend boundary: new think_filter.rs state machine
+(stream + non-stream) reclassifies stray-closer prefixes (GRACE_CHARS=2048,
+chosen by pre-registered rule from a 9-marked-request capture corpus; all
+thinking=false, no opener in content) and strips later stray markers; clean
+streams pass byte-identical; repairs log `think_filter_strip`. Plus the four
+stream_multimodal is_thinking guards (7ccbffa7 pattern) and three in-passing
+repairs (llm.rs doc-comment placement, fmt drift in extension_tools.rs +
+builtin_llm/handlers.rs, missing POST /api/builtin-llm/stop ROUTES entry that
+made the api_docs gate fail on HEAD). Gates: agent lib 953/0, workspace green,
+clippy/fmt clean, web untouched. Acceptance (pre-registered
+/tmp/neomind-leakfix-r2/acceptance.json; base 59ac1b78=bb496d0f vs cand
+7d9d8028): smoke 4/4 criteria (candidate 13 wire-marked -> 13 repairs -> 0
+live/persisted leaks; baseline reproduced both languages); 32-trial screen CUT
+AT 6/32 by user decision (太久了) — partial subset: candidate 0/3 leak trials,
+38 repairs 0 escapes; baseline 3/3 leaked (35 wire-marked -> 35 live markers,
+100% passthrough). Combined: 51 repairs, 0 escapes. Claim: leak eliminated on
+measured surfaces; NO score gain claimed; statistical pass-rate non-regression
+NOT established (screen cut). Independent-case check (user-requested,
+readiness8, pre-registered /tmp/neomind-leakfix-r2/readiness8/): the
+thinking-readiness 8-trial set re-run with the leakfix arms — candidate 0 leak
+trials / 12 repairs 0 escapes; baseline 11 wire-marked -> 11 live leaks;
+pass-rate pairs candidate >= baseline in all 4 units (no claim at n=1).
+Cumulative: candidate 63 repairs / 0 escapes; baseline 57/57 marked requests
+leaked live. Hardening round (same day, user-directed review): markers in
+markdown code context (fence/inline, spanning chunks, blank-line inline
+reset) are now literal text; the grace hold activates only when the FINAL
+SENT enable_thinking==false, so thinking-on replies stream with only the
+<=7-char holdback. Direct first-chunk evidence added (3 paced timing tests
+at NeoMind's emission boundary). smoke2 mechanism regression PASS
+(candidate-v2 875831db: 29 wire-marked -> 29 repairs -> 0 live/0 persisted;
+baseline 22/22 live leaks). Claim wording per user: "reduces measured leaks
+and reduces part of the streaming impact"; residuals on record: plain-prose
+marker mentions still swallow the preceding answer text (pinned by test,
+unsolved), thinking-on stray-closer prefixes stripped-only, prefixes >2048
+partially visible. Frozen binaries preserved at /tmp/neomind-leakfix-r2/bin/
+(baseline bb496d0f, candidate-v1 7d9d8028, candidate-v2 875831db); disk-full
+incident resolved by deleting the session's own target dirs after moving
+binaries out (9.5GB freed, user disk now ~29GB free). Known follow-ups
+(deliberately not bundled):
+detect_thinking misses sparkx2.6-1.7b; mid-session effort PATCH without
+backend_id keeps a stale snapshot. No commit/push/publish.
