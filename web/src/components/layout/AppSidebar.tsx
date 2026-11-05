@@ -60,9 +60,8 @@ import { OnboardingDialog } from "@/components/onboarding/OnboardingDialog"
 import { useOnboarding } from "@/hooks/useOnboarding"
 import { InstanceManagerDialog } from "@/components/instances/InstanceManagerDialog"
 
-// 72px — still clears the macOS traffic lights (~14–66px from the window
-// edge) while keeping the rail visually tight.
-const SIDEBAR_WIDTH_PX = 72
+// Compact rail; the titlebar inset keeps its logo below the macOS traffic lights.
+const SIDEBAR_WIDTH_PX = 64
 // Expanded (logo click / collapse toggle): 224px — fits icon + label +
 // padding with room for i18n labels and instance names.
 const SIDEBAR_EXPANDED_PX = 224

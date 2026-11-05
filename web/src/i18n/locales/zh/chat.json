@@ -193,6 +193,7 @@
     "clearConfirmTitle": "清空对话历史？",
     "clearConfirmDesc": "该会话的全部对话历史将被删除，此操作无法恢复。",
     "awaitingMeasurement": "等待模型请求的上下文实测值",
+    "breakdownUnavailable": "本次请求的分类统计不可用；仅总 token 数可用于参考。",
     "measuredHint": "最近一次模型请求的上下文；不累加整个执行过程。"
   },
   "loadEarlier": "加载更早的消息",

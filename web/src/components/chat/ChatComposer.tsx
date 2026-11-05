@@ -10,7 +10,7 @@
 
 import { useRef, useState, type RefObject } from "react"
 import { useTranslation } from "react-i18next"
-import { Archive, ArrowUp, Check, ChevronDown, Image as ImageIcon, Loader2, Trash2, X } from "lucide-react"
+import { Archive, ArrowUp, Check, ChevronDown, Eye, Image as ImageIcon, Loader2, Sparkles, Trash2, Wrench, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useConfirm } from "@/components/ui/use-confirm"
 import {
@@ -24,7 +24,7 @@ import { useToast } from "@/hooks/use-toast"
 import { useIsMobile } from "@/hooks/useMobile"
 import type { ChatImage, LlmBackendInstance } from "@/types"
 import { cn } from "@/lib/utils"
-import { textNano, textMicro } from "@/design-system/tokens/typography"
+import { textNano } from "@/design-system/tokens/typography"
 import { compressImage, MAX_ORIGINAL_IMAGE_MB, COMPRESSED_IMAGE_MB } from "@/lib/image"
 
 interface ChatComposerProps {
@@ -296,9 +296,9 @@ export function ChatComposer({
                   <ChevronDown className="h-3.5 w-3.5 shrink-0" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-72 max-h-[50vh] overflow-y-auto scrollbar-none p-0">
-                <div className="sticky top-0 z-10 bg-popover px-3 py-2 border-b border-border">
-                  <span className="font-semibold text-sm">{t("chat:input.selectLLMModel")}</span>
+              <DropdownMenuContent align="start" className="w-[min(21rem,calc(100vw-2rem))] max-h-[min(24rem,60vh)] overflow-y-auto scrollbar-none rounded-xl p-1.5 shadow-md">
+                <div className="sticky top-0 z-10 rounded-t-lg bg-popover px-2.5 py-2">
+                  <span className="text-xs font-medium text-muted-foreground">{t("chat:input.selectLLMModel")}</span>
                 </div>
                 <div className="p-1">
                   {backends.map((backend) => {
@@ -307,39 +307,29 @@ export function ChatComposer({
                       <DropdownMenuItem
                         key={backend.id}
                         onClick={() => onActivateBackend?.(backend.id)}
-                        className="gap-2.5 py-2"
+                        className={cn("flex items-center gap-2.5 rounded-lg px-2.5 py-2", isActive && "bg-muted")}
                       >
-                        {/* Left slot: active → Check, else health dot (symmetrical) */}
-                        <div className="w-4 flex items-center justify-center shrink-0">
-                          {isActive ? (
-                            <Check className="h-4 w-4 text-primary" />
-                          ) : (
-                            <span className={cn(
-                              "w-1.5 h-1.5 rounded-full",
-                              backend.healthy ? "bg-success" : "bg-muted-foreground"
-                            )} />
-                          )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <p className={cn("text-sm truncate", isActive && "font-medium")}>
-                              {backend.name || backend.model}
-                            </p>
-                            <div className="flex items-center gap-1 shrink-0">
-                              {backend.capabilities?.supports_multimodal && (
-                                <span title={t("chat:model.supportsVision")} className={cn("inline-flex items-center px-1 h-4 rounded font-medium bg-info-light text-info", textMicro)}>{t("chat:capability.vision", { defaultValue: "Vision" })}</span>
-                              )}
-                              {backend.capabilities?.supports_tools && (
-                                <span title={t("chat:model.supportsTools")} className={cn("inline-flex items-center px-1 h-4 rounded font-medium bg-accent-orange-light text-accent-orange", textMicro)}>{t("chat:capability.tools", { defaultValue: "Tools" })}</span>
-                              )}
-                              {backend.capabilities?.supports_thinking && (
-                                <span title={t("chat:model.supportsThinking")} className={cn("inline-flex items-center px-1 h-4 rounded font-medium bg-accent-purple-light text-accent-purple", textMicro)}>{t("chat:capability.thinking", { defaultValue: "Thinking" })}</span>
-                              )}
-                            </div>
+                        <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+                          {isActive ? <Check className="h-4 w-4 text-foreground" aria-hidden="true" /> :
+                            <span className={cn("h-1.5 w-1.5 rounded-full", backend.healthy ? "bg-success" : "bg-muted-foreground/50")} />}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex min-w-0 items-center">
+                            <span className={cn("truncate text-sm text-foreground", isActive && "font-medium")}>{backend.name || backend.model}</span>
                           </div>
-                          <p className={cn(textNano, "text-muted-foreground truncate mt-0.5")}>
-                            {backend.backend_type} · {backend.model}
-                          </p>
+                          <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
+                            <span className="shrink-0 rounded bg-muted px-1 py-px text-[10px] leading-4 text-muted-foreground">{backend.backend_type}</span>
+                            <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">{backend.model}</span>
+                            <span className="flex shrink-0 items-center gap-1.5 text-muted-foreground" aria-label={[
+                              backend.capabilities?.supports_multimodal && t("chat:capability.vision", { defaultValue: "Vision" }),
+                              backend.capabilities?.supports_tools && t("chat:capability.tools", { defaultValue: "Tools" }),
+                              backend.capabilities?.supports_thinking && t("chat:capability.thinking", { defaultValue: "Thinking" }),
+                            ].filter(Boolean).join(', ')}>
+                              {backend.capabilities?.supports_multimodal && <span title={t("chat:model.supportsVision")}><Eye className="h-3.5 w-3.5" aria-hidden="true" /></span>}
+                              {backend.capabilities?.supports_tools && <span title={t("chat:model.supportsTools")}><Wrench className="h-3.5 w-3.5" aria-hidden="true" /></span>}
+                              {backend.capabilities?.supports_thinking && <span title={t("chat:model.supportsThinking")}><Sparkles className="h-3.5 w-3.5" aria-hidden="true" /></span>}
+                            </span>
+                          </div>
                         </div>
                       </DropdownMenuItem>
                     )
@@ -370,6 +360,7 @@ export function ChatComposer({
               { label: t('chat:context.toolDefs', 'Tool definitions'), value: contextUsage.tools, color: 'var(--accent-cyan)' },
               { label: t('chat:context.history', 'Conversation history'), value: contextUsage.history, color: 'var(--muted-foreground)', suffix: contextUsage.messageCount != null ? t('chat:context.msgCount', { defaultValue: ' · {{count}} msgs', count: contextUsage.messageCount }) : undefined },
             ]
+            const availableRows = rows.filter(r => r.value != null)
             return (
               <TooltipProvider delayDuration={150}>
                 <Tooltip>
@@ -393,36 +384,45 @@ export function ChatComposer({
                       </span>
                     </button>
                   </TooltipTrigger>
-                  <TooltipContent side="top" align="end" className="w-60 p-3">
-                    <p className="text-xs font-medium mb-2">
-                      {t('chat:context.title', 'Context usage')}
-                      <span className="ml-1.5 text-muted-foreground tabular-nums">
-                        {contextUsage.pending ? "—" : fmt(contextUsage.used)} / {fmt(contextUsage.max)} · {contextUsage.pending ? "—" : pct}%
+                  <TooltipContent side="top" align="end" className="w-72 max-w-[calc(100vw-1rem)] rounded-xl border border-border p-4 shadow-lg">
+                    <div className="mb-3 flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-semibold text-foreground">{t('chat:context.title', 'Context usage')}</p>
+                        <p className="mt-1 text-lg font-semibold tabular-nums leading-none text-foreground">
+                          {contextUsage.pending ? "—" : fmt(contextUsage.used)}
+                          <span className="text-xs font-normal text-muted-foreground"> / {fmt(contextUsage.max)}</span>
+                        </p>
+                      </div>
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium tabular-nums text-foreground">
+                        {contextUsage.pending ? "—" : pct}%
                       </span>
-                    </p>
-                    <div className="space-y-1.5">
-                      {rows.map(r => (
+                    </div>
+                    <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={contextUsage.pending ? 0 : pct} aria-valuemin={0} aria-valuemax={100}>
+                      <div className="h-full rounded-full transition-[width] duration-500" style={{ width: `${contextUsage.pending ? 0 : pct}%`, backgroundColor: color }} />
+                    </div>
+                    {availableRows.length > 0 ? <div className="space-y-2 pt-1">
+                      {availableRows.map(r => (
                         <div key={r.label} className="flex items-center gap-2">
                           <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: r.color }} />
-                          <span className="text-xs text-muted-foreground flex-1 truncate">{r.label}</span>
-                          <span className="text-xs tabular-nums">{(r.value != null ? fmt(r.value) : '—') + (r.suffix ?? '')}</span>
+                          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{r.label}</span>
+                          <span className="shrink-0 text-xs font-medium tabular-nums text-foreground">{(r.value != null ? fmt(r.value) : '—') + (r.suffix ?? '')}</span>
                         </div>
                       ))}
-                    </div>
+                    </div> : <p className="text-xs text-muted-foreground">{t('chat:context.breakdownUnavailable')}</p>}
                     {contextUsage.estimated && (
-                      <p className="mt-2 text-nano text-muted-foreground">
+                      <p className="mt-3 text-nano leading-relaxed text-muted-foreground">
                         {contextUsage.pending
                           ? t('chat:context.awaitingMeasurement', 'Waiting for request context measurement')
                           : t('chat:context.estimatedHint', 'Character-based estimate — updates after the next reply')}
                       </p>
                     )}
                     {!contextUsage.estimated && (
-                      <p className="mt-2 text-nano text-muted-foreground">
+                      <p className="mt-3 text-nano leading-relaxed text-muted-foreground">
                         {t('chat:context.measuredHint', 'Last measured model request; excludes accumulated execution output')}
                       </p>
                     )}
                     {(onCompact || onClearContext) && (
-                      <div className="mt-3 flex items-center gap-2">
+                      <div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
                         {onCompact && (
                           <Button
                             type="button"
@@ -430,7 +430,7 @@ export function ChatComposer({
                             size="xs"
                             onClick={confirmCompact}
                             disabled={compacting}
-                            className="flex-1 gap-1.5"
+                            className="h-8 flex-1 gap-1.5 rounded-lg"
                           >
                             {compacting
                               ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -446,7 +446,7 @@ export function ChatComposer({
                             variant="outline"
                             size="xs"
                             onClick={confirmClear}
-                            className="flex-1 gap-1.5 border-destructive text-destructive hover:bg-destructive-light hover:text-destructive"
+                            className="h-8 flex-1 gap-1.5 rounded-lg text-muted-foreground hover:bg-destructive-light hover:text-destructive"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                             {t('chat:context.clear', 'Clear')}

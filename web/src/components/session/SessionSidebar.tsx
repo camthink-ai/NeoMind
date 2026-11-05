@@ -401,7 +401,7 @@ export function SessionSidebar({
                         className={cn(
                           // Flat list: selected = plain muted block (no
                           // raised card / shadow — the 3D look was overkill)
-                          "group relative flex items-start gap-2 p-2 rounded-lg cursor-pointer transition-colors",
+                          "group relative flex items-center gap-2 rounded-lg px-2 py-2 cursor-pointer transition-colors focus-within:bg-muted-50",
                           isActive
                             ? "bg-muted"
                             : "hover:bg-muted-50",
@@ -410,13 +410,13 @@ export function SessionSidebar({
                       >
                         {isEditing ? (
                           // Edit mode
-                          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex min-w-0 flex-1 items-center gap-1" onClick={(e) => e.stopPropagation()}>
                             <Input
                               ref={editInputRef}
                               value={editingTitle}
                               onChange={(e) => setEditingTitle(e.target.value)}
                               onKeyDown={(e) => handleEditKeyDown(e, session.sessionId)}
-                              className="h-7 text-sm flex-1 rounded-md"
+                              className="h-8 min-w-0 flex-1 rounded-md text-sm"
                               autoFocus
                               disabled={isUpdating}
                             />
@@ -441,16 +441,11 @@ export function SessionSidebar({
                           // Normal mode
                           <>
                             <div className="flex items-center gap-2 min-w-0 flex-1">
-                              {isGenerating ? (
+                              {isGenerating && (
                                 <Loader2
-                                  className="h-4 w-4 shrink-0 animate-spin text-primary motion-reduce:animate-none motion-reduce:text-primary"
+                                  className="h-4 w-4 shrink-0 animate-spin text-primary motion-reduce:animate-none"
                                   aria-label={t('session.generating')}
                                 />
-                              ) : (
-                                <MessageSquare className={cn(
-                                  "h-4 w-4 shrink-0",
-                                  isActive ? "text-foreground" : "text-muted-foreground"
-                                )} />
                               )}
                               <div className="min-w-0 flex-1">
                                 <h4 className={cn(
@@ -474,30 +469,30 @@ export function SessionSidebar({
 
                             {/* Action buttons — hover-reveal is desktop-only; touch has no hover */}
                             <div className={cn(
-                              "absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5 transition-all duration-fast",
+                              "flex shrink-0 items-center gap-0.5 overflow-hidden transition-[width] duration-fast",
                               isDesktop
-                                ? "opacity-0 translate-x-1 group-hover:translate-x-0 group-hover:opacity-100"
-                                : "opacity-100"
+                                ? "w-8 group-hover:w-[4.125rem] group-focus-within:w-[4.125rem]"
+                                : "w-[4.125rem]"
                             )}>
                               <button
                                 onClick={(e) => handleEditClick(e, session)}
                                 aria-label={t('common:edit')}
-                                className="h-6 w-6 flex items-center justify-center rounded hover:bg-muted transition-colors"
+                                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                                 title={t('session.rename')}
                               >
-                                <Pencil className="h-3 w-3" />
+                                <Pencil className="h-3.5 w-3.5" />
                               </button>
                               <button
                                 onClick={(e) => handleDeleteClick(e, session.sessionId)}
                                 aria-label={t('common:delete')}
                                 disabled={isDeleting}
                                 className={cn(
-                                  "h-6 w-6 flex items-center justify-center rounded hover:bg-error-light text-muted-foreground hover:text-error transition-colors",
+                                  "flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-error-light hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                                   isDeleting && "opacity-50"
                                 )}
                                 title={t('delete')}
                               >
-                                <Trash2 className="h-3 w-3" />
+                                <Trash2 className="h-3.5 w-3.5" />
                               </button>
                             </div>
                           </>

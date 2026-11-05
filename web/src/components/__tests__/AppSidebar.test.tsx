@@ -50,6 +50,6 @@ describe('AppSidebar', () => {
 
   it('exports the fixed rail width for fixed surfaces', () => {
     renderSidebar()
-    expect(document.documentElement.style.getPropertyValue('--app-sidebar-width')).toBe('72px')
+    expect(document.documentElement.style.getPropertyValue('--app-sidebar-width')).toBe('64px')
   })
 })
