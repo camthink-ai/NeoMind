@@ -552,7 +552,6 @@ export function PendingDevicesList({
           // means nothing unknown has reported yet. (The old broker-status
           // probe also misfired whenever the broker port was merely occupied.)
           <EmptyState
-            icon="inbox"
             title={t('devices:pending.noDraftsTitle')}
             description={t('devices:pending.noDraftsDesc')}
           />

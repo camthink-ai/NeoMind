@@ -43,7 +43,6 @@ import {
   MoreVertical,
   Download,
   Loader2,
-  FileJson,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { textMini } from "@/design-system/tokens/typography"
@@ -2361,7 +2360,6 @@ export function CloudImportDialog({ open, onOpenChange, onImportComplete }: Clou
             <LoadingState size="lg" className="h-64" />
           ) : deviceTypes.length === 0 ? (
             <EmptyStateCompact
-              icon={<FileJson className="h-5 w-5" />}
               title={t('devices:cloud.noDeviceTypes', "暂无可用设备类型")}
             />
           ) : (

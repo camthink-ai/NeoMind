@@ -271,7 +271,6 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
   const noResultsPane = (
     <div className="flex h-full min-h-[320px]">
       <EmptyState
-        icon="search"
         title={t('componentLibrary.noResults')}
         description={t('componentLibrary.noResultsHint')}
       />
@@ -294,7 +293,6 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
         {extensionGroups.length === 0 ? (
           <div className="flex h-full min-h-[320px]">
             <EmptyState
-              icon={<Puzzle className="h-12 w-12" />}
               title={searching ? t('componentLibrary.noResults') : t('componentLibrary.extensionsEmptyTitle')}
               description={searching ? t('componentLibrary.noResultsHint') : t('componentLibrary.extensionsEmptyDesc')}
             />
@@ -328,7 +326,6 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
         ) : marketComponents.length === 0 ? (
           <div className="flex h-full min-h-[320px]">
             <EmptyState
-              icon="plugin"
               title={t('componentLibrary.marketplaceEmpty')}
             />
           </div>

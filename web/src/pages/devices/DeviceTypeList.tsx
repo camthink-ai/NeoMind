@@ -84,7 +84,6 @@ export function DeviceTypeList({
           {!loading && paginatedDeviceTypes.length === 0 && (
             <EmptyStateCard>
               <EmptyState
-                icon={<Database className="h-12 w-12" />}
                 title={t('devices:emptyType.title', 'No device types')}
                 description={t('devices:emptyType.description', 'Create a device type to define device categories')}
               />
@@ -325,7 +324,6 @@ export function DeviceTypeList({
         ]}
         emptyState={
           <EmptyState
-            icon={<Database className="h-12 w-12" />}
             title={t('devices:emptyType.title', 'No device types')}
             description={t('devices:emptyType.description', 'Create a device type to define device categories')}
           />

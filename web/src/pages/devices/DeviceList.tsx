@@ -5,7 +5,7 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { IconButton } from "@/components/ui/button"
 import { ResponsiveTable, EmptyState, EmptyStateCard } from "@/components/shared"
 import { DeviceStatusBadge } from "@/components/shared/DeviceStatusBadge"
-import { Eye, MoreVertical, Trash2, Cpu, Database, Waves, Pencil, Search } from "lucide-react"
+import { Eye, MoreVertical, Trash2, Cpu, Database, Waves, Pencil } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { interactiveCardHover } from "@/design-system/tokens/size"
 import { textMini } from "@/design-system/tokens/typography"
@@ -111,13 +111,11 @@ export function DeviceList({
             <EmptyStateCard>
               {searching ? (
                 <EmptyState
-                  icon={<Search className="h-12 w-12" />}
                   title={t('devices:searchNoResults', 'No devices match your search')}
                   description={t('devices:searchNoResultsHint', 'Try a different name, type or adapter')}
                 />
               ) : (
                 <EmptyState
-                  icon={<Cpu className="h-12 w-12" />}
                   title={t('devices:empty.title', 'No devices')}
                   description={t('devices:empty.description', 'Add your first device to get started')}
                 />
@@ -321,7 +319,6 @@ export function DeviceList({
         ]}
         emptyState={
           <EmptyState
-            icon={<Cpu className="h-12 w-12" />}
             title={t('devices:empty.title', 'No devices')}
             description={t('devices:empty.description', 'Add your first device to get started')}
           />

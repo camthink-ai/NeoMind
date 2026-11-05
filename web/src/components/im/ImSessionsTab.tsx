@@ -110,7 +110,6 @@ export function ImSessionsTab() {
           data={sessions as unknown as Record<string, unknown>[]}
           emptyState={
             <EmptyState
-              icon={<Send className="h-12 w-12" />}
               title={t(
                 !bridge ? 'messages.im.noBridge' : 'messages.im.noSessions',
                 !bridge ? 'No IM Bridge Configured' : 'No Sessions',

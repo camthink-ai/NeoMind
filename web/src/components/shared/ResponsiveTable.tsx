@@ -8,9 +8,10 @@
 import { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Card } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
+import { IconButton } from '@/components/ui/button'
+import { tableHeadClass, tableCellClass, tableRowClass } from '@/components/ui/table-styles'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import { MoreVertical, Inbox } from 'lucide-react'
+import { MoreVertical } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyStateCompact } from '@/components/shared/EmptyState'
 import { cn } from '@/lib/utils'
@@ -20,6 +21,7 @@ import { textMini } from "@/design-system/tokens/typography"
 export interface TableColumn {
   key: string
   label: string | ReactNode
+  /** CSS width (e.g. 28%, 180px) or legacy Tailwind sizing classes. */
   width?: string
   align?: 'left' | 'center' | 'right'
   className?: string
@@ -66,6 +68,12 @@ export interface ResponsiveTableProps<T = Record<string, unknown>> {
   renderMobileHeaderExtra?: (rowData: T) => ReactNode
 }
 
+// Keep existing Tailwind widths while accepting the CSS values used by page columns.
+function columnWidth(width?: string) {
+  const isCssWidth = width && /^(?:\d|\.|calc\(|clamp\(|min\(|max\(|var\(|auto$|fit-content$|max-content$|min-content$)/.test(width)
+  return isCssWidth ? { style: { width } } : { className: width }
+}
+
 /**
  * Render column label as ReactNode
  */
@@ -102,7 +110,6 @@ export function ResponsiveTable<T extends object>({
   // Default empty state — uses shared EmptyStateCompact for consistency
   const defaultEmpty = (
     <EmptyStateCompact
-      icon={<Inbox className="h-5 w-5" />}
       title={t('noData', { defaultValue: 'No data available' })}
     />
   )
@@ -115,24 +122,26 @@ export function ResponsiveTable<T extends object>({
             outgrows it (min-w-full keeps the table filling the container) */}
         <div className="hidden md:block w-full overflow-x-auto rounded-lg border bg-card">
           <table className={cn("min-w-full caption-bottom text-sm", className)}>
-            <thead className="[&_tr]:border-b">
+            <thead className="bg-muted-30 [&_tr]:border-b">
               <tr className="rounded-t-lg">
                 {columns.map((column) => (
                   <th
                     key={column.key}
+                    scope="col"
+                    style={columnWidth(column.width).style}
                     className={cn(
-                      "h-12 px-4 align-middle text-mini font-semibold uppercase tracking-wide text-muted-foreground",
+                      tableHeadClass,
                       column.align === 'center' && 'text-center',
                       column.align === 'right' && 'text-right',
                       !column.align && 'text-left',
-                      column.width
+                      columnWidth(column.width).className
                     )}
                   >
                     {renderColumnLabel(column.label)}
                   </th>
                 ))}
                 {actions && actions.length > 0 && (
-                  <th className="w-[60px]"></th>
+                  <th className="w-16 bg-muted-30"></th>
                 )}
               </tr>
             </thead>
@@ -140,12 +149,12 @@ export function ResponsiveTable<T extends object>({
               {Array.from({ length: skeletonRows }).map((_, i) => (
                 <tr key={i} className="border-b">
                   {columns.map((column) => (
-                    <td key={column.key} className="px-4 py-2.5">
-                      <Skeleton className="h-4 w-full" />
+                    <td key={column.key} className={tableCellClass}>
+                      <div className="flex min-h-8 items-center"><Skeleton className="h-4 w-full" /></div>
                     </td>
                   ))}
                   {actions && actions.length > 0 && (
-                    <td className="px-4 py-2.5">
+                    <td className={tableCellClass}>
                       <Skeleton className="h-4 w-6" />
                     </td>
                   )}
@@ -184,26 +193,28 @@ export function ResponsiveTable<T extends object>({
       <div className="hidden md:block w-full overflow-x-auto rounded-lg border bg-card">
         <table className={cn("min-w-full caption-bottom text-sm", className)}>
           <thead className={cn(
-            "[&_tr]:border-b",
-            stickyHeader && "sticky top-0 z-10 bg-card"
+            "bg-card [&_tr]:border-b",
+            stickyHeader && "sticky top-0 z-10"
           )}>
             <tr className="rounded-t-xl">
               {columns.map((column) => (
                 <th
                   key={column.key}
+                  scope="col"
+                  style={columnWidth(column.width).style}
                   className={cn(
-                    "h-12 px-4 align-middle text-mini font-semibold uppercase tracking-wide text-muted-foreground",
+                    tableHeadClass,
                     column.align === 'center' && 'text-center',
                     column.align === 'right' && 'text-right',
                     !column.align && 'text-left',
-                    column.width
+                    columnWidth(column.width).className
                   )}
                 >
                   {renderColumnLabel(column.label)}
                 </th>
               ))}
               {actions && actions.length > 0 && (
-                <th className="w-[60px]"></th>
+                <th className="w-16 bg-muted-30"></th>
               )}
             </tr>
           </thead>
@@ -217,7 +228,7 @@ export function ResponsiveTable<T extends object>({
                 </td>
               </tr>
             ) : (
-              data.map((rowData, index) => {
+              data.map((rowData) => {
                 const rowClass = getRowClassName?.(rowData)
                 const visibleActions = actions?.filter(a => a.show?.(rowData) !== false)
 
@@ -225,18 +236,17 @@ export function ResponsiveTable<T extends object>({
                   <tr
                     key={rowKey(rowData)}
                     className={cn(
-                      "border-b transition-colors duration-fast hover:bg-muted-30 animate-fade-in-up",
+                      tableRowClass,
                       onRowClick && 'cursor-pointer',
                       rowClass
                     )}
-                    style={{ animationDelay: `calc(${index} * var(--stagger-step))`, animationFillMode: 'both' }}
                     onClick={() => onRowClick?.(rowData)}
                   >
                     {columns.map((column) => (
                       <td
                         key={column.key}
                         className={cn(
-                          "px-4 py-2.5 align-middle",
+                          tableCellClass,
                           column.align === 'center' && 'text-center',
                           column.align === 'right' && 'text-right',
                           !column.align && 'text-left',
@@ -253,19 +263,17 @@ export function ResponsiveTable<T extends object>({
                         </div>
                       </td>
                     ))}
-                    {visibleActions && visibleActions.length > 0 && (
-                      <td className="px-4 py-2.5 align-middle">
-                        <DropdownMenu>
+                    {actions && actions.length > 0 && (
+                      <td className={cn(tableCellClass, "text-right")} onClick={(e) => e.stopPropagation()}>
+                        {!!visibleActions?.length && <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 p-0"
-                              aria-label="Actions"
+                            <IconButton
+                              size="sm"
+                              aria-label={t('actions', { defaultValue: 'Actions' })}
                               onClick={(e) => e.stopPropagation()}
                             >
                               <MoreVertical className="h-4 w-4" />
-                            </Button>
+                            </IconButton>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-[160px]">
                             {visibleActions.map((action, idx) => (
@@ -286,7 +294,7 @@ export function ResponsiveTable<T extends object>({
                               </DropdownMenuItem>
                             ))}
                           </DropdownMenuContent>
-                        </DropdownMenu>
+                        </DropdownMenu>}
                       </td>
                     )}
                   </tr>
@@ -306,7 +314,7 @@ export function ResponsiveTable<T extends object>({
             </div>
           </Card>
         ) : (
-          data.map((rowData, index) => {
+          data.map((rowData) => {
             const rowClass = getRowClassName?.(rowData)
             const visibleActions = actions?.filter(a => a.show?.(rowData) !== false)
 
@@ -314,12 +322,11 @@ export function ResponsiveTable<T extends object>({
               <Card
                 key={rowKey(rowData)}
                 className={cn(
-                  'overflow-hidden border-border shadow-sm animate-fade-in-up',
+                  'overflow-hidden border-border',
                   interactiveCardHover,
                   onRowClick && 'cursor-pointer active:scale-[0.99]',
                   rowClass
                 )}
-                style={{ animationDelay: `calc(${index} * var(--stagger-step))`, animationFillMode: 'both' }}
                 onClick={() => onRowClick?.(rowData)}
               >
                 {/* Card Header - First column as title. Flat single-surface
@@ -336,14 +343,14 @@ export function ResponsiveTable<T extends object>({
                     {visibleActions && visibleActions.length > 0 ? (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 shrink-0 hover:bg-muted"
-                            aria-label="Actions"
+                          <IconButton
+                            size="sm"
+                            className="shrink-0"
+                            onClick={(e) => e.stopPropagation()}
+                            aria-label={t('actions', { defaultValue: 'Actions' })}
                           >
                             <MoreVertical className="h-4 w-4" />
-                          </Button>
+                          </IconButton>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-[160px]">
                           {visibleActions.map((action, idx) => (

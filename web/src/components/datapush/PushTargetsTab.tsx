@@ -9,7 +9,7 @@ import { useDataVersion } from '@/hooks/useDataVersion'
 import { useTranslation } from 'react-i18next'
 import { useIsMobile } from '@/hooks/useMobile'
 import { ResponsiveTable, type TableColumn, type TableRowAction, EmptyState, Pagination, SearchInput } from '@/components/shared'
-import { Send, Play, FlaskConical, FileText, Pencil, Trash2, Loader2, Globe, Radio } from 'lucide-react'
+import { Play, FlaskConical, FileText, Pencil, Trash2, Loader2, Globe, Radio } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { textMini } from '@/design-system/tokens/typography'
 import { cn } from '@/lib/utils'
@@ -310,7 +310,6 @@ export function PushTargetsTab() {
         }}
         emptyState={
           <EmptyState
-            icon={<Send className="h-12 w-12" />}
             title={t('common:dataPush.empty', 'No push targets configured')}
             description={t('common:dataPush.emptyHint', 'Create a push target to forward data to external systems')}
           />

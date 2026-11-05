@@ -1050,7 +1050,6 @@ export function UnifiedLLMBackendsTab({
           {/* No builtinCard here — the CTA buttons below already pitch the
               built-in model; stacking both was the duplicate CTA users saw. */}
           <EmptyState
-            icon="plugin"
             title={t('plugins:llm.noBackends')}
             description={t('plugins:llm.noBackendsDesc')}
           />

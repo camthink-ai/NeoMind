@@ -204,7 +204,6 @@ export function DeliveryHistoryPanel({ targetId, open, onOpenChange }: DeliveryH
                 }}
                 emptyState={
                   <EmptyState
-                    icon={<FileText className="h-12 w-12" />}
                     title={t('common:dataPush.noLogs', 'No delivery logs')}
                     description={t('common:dataPush.noLogsHint', 'Logs will appear here after data is pushed')}
                   />

@@ -584,7 +584,6 @@ export const MemoryPanel = forwardRef<MemoryPanelRef, MemoryPanelProps>(function
         ]}
         emptyState={
           <EmptyState
-            icon={<FileText className="h-12 w-12" />}
             title={t('systemMemory.empty.title', 'No memory files')}
             description={t('systemMemory.empty.description', 'Memory files will appear here once configured')}
           />

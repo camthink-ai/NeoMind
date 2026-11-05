@@ -482,8 +482,23 @@ Default page size is **10** across all pages.
 ### Empty States: `EmptyState`
 
 ```tsx
-<EmptyState icon={Server} title="No devices" description="Add your first device" />
+// Routine absence and search misses stay text-only.
+<EmptyState title="No results" description="Try a different search" />
+
+// Keep one quiet line icon only when the state leads to a meaningful action.
+<EmptyState
+  icon={<Server />}
+  title="No devices"
+  description="Add your first device to begin"
+  action={{ label: "Add device", onClick: openCreate }}
+/>
 ```
+
+**Visual hierarchy:** Empty states are supporting UI, not hero content. Table
+empties, search misses, completed inboxes, and read-only “nothing yet” states
+are text-only. A first-run state may use one small monochrome line icon when it
+also offers a clear next action. Do not add colored icon tiles, oversized icons,
+or repeat the same symbol in the empty state and its action button.
 
 ---
 

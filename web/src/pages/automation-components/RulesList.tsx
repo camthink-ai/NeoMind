@@ -181,7 +181,6 @@ function RuleHistoryDialog({ rule, open, onOpenChange }: {
                 flexHeight={false}
                 emptyState={
                   <EmptyState
-                    icon={<History className="h-12 w-12" />}
                     title={t('automation:noHistory')}
                   />
                 }
@@ -371,7 +370,6 @@ export function RulesList({
         {paginatedRules.length === 0 && !loading ? (
           <EmptyStateCard>
             <EmptyState
-              icon={<Sparkles className="h-12 w-12" />}
               title={t('automation:emptyRules.title', 'No rules')}
               description={t('automation:emptyRules.description', 'Create your first rule to automate actions based on conditions')}
             />
@@ -679,7 +677,6 @@ export function RulesList({
       ]}
       emptyState={
         <EmptyState
-          icon={<Sparkles className="h-12 w-12" />}
           title={t('automation:emptyRules.title', 'No rules')}
           description={t('automation:emptyRules.description', 'Create your first rule to automate actions based on conditions')}
         />

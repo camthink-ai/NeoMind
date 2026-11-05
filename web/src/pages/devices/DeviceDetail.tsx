@@ -729,7 +729,6 @@ export function DeviceDetail({
                   flexHeight={false}
                   emptyState={
                     <EmptyState
-                      icon={<Clock className="h-12 w-12" />}
                       title={t('devices:detailPage.noHistoryData')}
                     />
                   }

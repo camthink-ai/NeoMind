@@ -500,7 +500,6 @@ anti_triggers:
         ]}
         emptyState={
           <EmptyState
-            icon={<BookOpen className="h-12 w-12" />}
             title={t("skills.emptyTitle")}
             description={t("skills.emptyDesc")}
           />

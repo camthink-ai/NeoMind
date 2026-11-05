@@ -396,7 +396,6 @@ export function DataExplorerPage() {
         {pageData.length === 0 && !loading ? (
           <EmptyStateCard>
             <EmptyState
-              icon={<Database className="h-12 w-12" />}
               title={search ? t('data:noResults', 'No data sources match your search') : t('data:noSources', 'No data sources available')}
               description={search ? undefined : t('data:noSourcesDesc', 'Data sources will appear here once devices are connected or extensions are registered')}
             />
@@ -462,7 +461,6 @@ export function DataExplorerPage() {
       className={isSearchPending ? 'opacity-60 transition-opacity duration-normal' : undefined}
       emptyState={
         <EmptyState
-          icon={<Database className="h-12 w-12" />}
           title={search ? t('data:noResults', 'No data sources match your search') : t('data:noSources', 'No data sources available')}
           description={search ? undefined : t('data:noSourcesDesc', 'Data sources will appear here once devices are connected or extensions are registered')}
         />

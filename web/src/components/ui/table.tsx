@@ -1,5 +1,6 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
+import { tableHeadClass, tableCellClass, tableRowClass } from "./table-styles"
 
 const Table = React.forwardRef<
   HTMLTableElement,
@@ -19,7 +20,7 @@ const TableHeader = React.forwardRef<
   HTMLTableSectionElement,
   React.HTMLAttributes<HTMLTableSectionElement>
 >(({ className, ...props }, ref) => (
-  <thead ref={ref} className={cn("[&_tr]:border-b", className)} {...props} />
+  <thead ref={ref} className={cn("bg-muted-30 [&_tr]:border-b", className)} {...props} />
 ))
 TableHeader.displayName = "TableHeader"
 
@@ -57,7 +58,7 @@ const TableRow = React.forwardRef<
   <tr
     ref={ref}
     className={cn(
-      "border-b transition-colors hover:bg-muted-50 data-[state=selected]:bg-muted",
+      tableRowClass,
       className
     )}
     style={{ touchAction: 'manipulation', ...style }}
@@ -73,7 +74,7 @@ const TableHead = React.forwardRef<
   <th
     ref={ref}
     className={cn(
-      "h-11 px-3 align-middle text-nano font-semibold uppercase tracking-wider text-foreground sm:h-12 sm:px-4 [&:has([role=checkbox])]:pr-0",
+      tableHeadClass, "[&:has([role=checkbox])]:pr-0",
       align === "center" && "text-center",
       align === "right" && "text-right",
       !align && "text-left",
@@ -91,7 +92,7 @@ const TableCell = React.forwardRef<
   <td
     ref={ref}
     className={cn(
-      "p-3 align-middle text-xs sm:p-4 sm:text-sm [&:has([role=checkbox])]:pr-0",
+      tableCellClass, "[&:has([role=checkbox])]:pr-0",
       align === "center" && "text-center",
       align === "right" && "text-right",
       !align && "text-left",

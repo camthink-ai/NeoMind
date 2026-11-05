@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next"
 import { LanAccessSection } from "@/components/settings/LanAccessSection"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { logError } from "@/lib/errors"
-import { SettingsRow } from "./SettingsRow"
+import { SettingsRow, settingsSectionTitle, settingsGroup, settingsFooter } from "./SettingsRow"
 import { MemorySettingsSection } from "./MemorySettingsSection"
 import { AutoOnboardSettings } from "./AutoOnboardSettings"
 import { Button } from "@/components/ui/button"
@@ -31,6 +31,7 @@ import type { LlmBackendInstance } from "@/types/llm-backend"
 import { useStore } from "@/store"
 import { useGlobalTimezone } from "@/hooks/useTimeFormat"
 import { getLocalizedTimezones } from "@/lib/time"
+import { cn } from "@/lib/utils"
 
 type Language = "zh" | "en"
 type TimeFormat = "12h" | "24h"
@@ -150,15 +151,15 @@ export function PreferencesTab() {
   }))
 
   return (
-    <div className="space-y-8">
+    <div className="max-w-4xl space-y-7 pb-8">
       {/* Desktop-only LAN access control (renders nothing in web builds) */}
       <LanAccessSection />
 
       {/* Actions */}
       {hasChanges && (
-        <div className="flex items-center justify-between p-4 bg-muted-50 rounded-lg">
+        <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted-30 p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Info className="h-4 w-4" />
+            <Info className="h-4 w-4 shrink-0" />
             <span>{t("settings:unsavedChanges")}</span>
           </div>
           <div className="flex gap-2">
@@ -175,10 +176,10 @@ export function PreferencesTab() {
 
       {/* Language & Region Settings */}
       <section>
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+        <h3 className={settingsSectionTitle}>
           {t("settings:languageRegion")}
         </h3>
-        <div className="rounded-lg bg-card border border-border p-5 space-y-4">
+        <div className={settingsGroup}>
           {/* Language */}
           <SettingsRow
             label={t("settings:language")}
@@ -188,7 +189,7 @@ export function PreferencesTab() {
               value={preferences.language}
               onValueChange={(v) => updatePreference("language", v as Language)}
             >
-              <SelectTrigger className="w-full sm:w-[180px]">
+              <SelectTrigger className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -205,10 +206,10 @@ export function PreferencesTab() {
 
       {/* Time Settings */}
       <section>
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+        <h3 className={settingsSectionTitle}>
           {t("settings:timeSettings")}
         </h3>
-        <div className="rounded-lg bg-card border border-border p-5 space-y-4">
+        <div className={settingsGroup}>
           {/* Time Format */}
           <SettingsRow
             label={t("settings:timeFormat")}
@@ -218,7 +219,7 @@ export function PreferencesTab() {
               value={preferences.timeFormat}
               onValueChange={(v) => updatePreference("timeFormat", v as TimeFormat)}
             >
-              <SelectTrigger className="w-full sm:w-[180px]">
+              <SelectTrigger className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -236,7 +237,7 @@ export function PreferencesTab() {
             label={t("settings:systemTimezone")}
             description={t("settings:systemTimezoneDesc")}
           >
-            <div className="flex items-center gap-2">
+            <div className="flex w-full items-center gap-2">
               {timezoneLoading && (
                 <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
               )}
@@ -257,7 +258,7 @@ export function PreferencesTab() {
                 }}
                 disabled={timezoneLoading}
               >
-                <SelectTrigger className="w-full sm:w-[280px]">
+                <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -273,16 +274,14 @@ export function PreferencesTab() {
             </div>
           </SettingsRow>
 
-          {/* Current Time Preview */}
-          <div className="pt-3">
-            <div className="text-center p-4 bg-muted-50 rounded-lg">
-              <div className="text-xs text-muted-foreground mb-1">
-                {t("settings:currentTime")}
-              </div>
-              <div className="text-2xl font-mono font-medium">
-                {formatTimeInTimezone(globalTimezone, preferences.timeFormat)}
-              </div>
-            </div>
+          {/* Quiet preview, aligned with the rest of the settings controls. */}
+          <div className={cn(settingsFooter, "flex flex-wrap items-center justify-between gap-2")}>
+            <span className="text-xs text-muted-foreground">
+              {t("settings:currentTime")}
+            </span>
+            <span className="font-mono text-sm tabular-nums text-foreground">
+              {formatTimeInTimezone(globalTimezone, preferences.timeFormat)}
+            </span>
           </div>
         </div>
       </section>
@@ -312,7 +311,7 @@ export function PreferencesTab() {
       <DiagnosticDataSection />
 
       {/* Info */}
-      <div className="text-sm text-muted-foreground text-center py-4">
+      <div className="text-xs leading-relaxed text-muted-foreground">
         <p>{t("settings:preferencesInfo")}</p>
       </div>
     </div>
@@ -416,13 +415,13 @@ function AgentDefaultsSection() {
 
   return (
     <section>
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+      <h3 className={settingsSectionTitle}>
         {t("settings:agentDefaults")}
       </h3>
-      <div className="rounded-lg bg-card border border-border p-5 space-y-4">
+      <div className={settingsGroup}>
         <SettingsRow label={t("settings:maxRounds")} description={t("settings:maxRoundsDesc")}>
           <Select value={String(config.max_rounds)} onValueChange={(v) => saveConfig({ max_rounds: +v })}>
-            <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
               {roundOpts.map((r) => <SelectItem key={r} value={String(r)}>{r}</SelectItem>)}
             </SelectContent>
@@ -430,7 +429,7 @@ function AgentDefaultsSection() {
         </SettingsRow>
         <SettingsRow label={t("settings:executionTimeout")} description={t("settings:executionTimeoutDesc")}>
           <Select value={String(config.execution_timeout_secs)} onValueChange={(v) => saveConfig({ execution_timeout_secs: +v })}>
-            <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
               {timeoutOpts.map((o) => <SelectItem key={o.v} value={String(o.v)}>{o.l}</SelectItem>)}
             </SelectContent>
@@ -438,7 +437,7 @@ function AgentDefaultsSection() {
         </SettingsRow>
         <SettingsRow label={t("settings:chatTurnTimeout")} description={t("settings:chatTurnTimeoutDesc")}>
           <Select value={String(chatTurnValue)} onValueChange={(v) => saveConfig({ chat_turn_timeout_secs: +v })}>
-            <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
               {chatTurnOpts.map((o) => <SelectItem key={o.v} value={String(o.v)}>{o.l}</SelectItem>)}
             </SelectContent>
@@ -449,7 +448,7 @@ function AgentDefaultsSection() {
             value={config.summary_instance_id ?? "session"}
             onValueChange={(v) => saveConfig({ summary_instance_id: v === "session" ? null : v })}
           >
-            <SelectTrigger className="w-full sm:w-[220px]"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="session">{t("settings:summaryInstanceSessionDefault")}</SelectItem>
               {instances.map((b) => (
@@ -470,7 +469,7 @@ function AgentDefaultsSection() {
         </SettingsRow>
         <SettingsRow label={t("settings:toolConcurrency")} description={t("settings:toolConcurrencyDesc")}>
           <Select value={String(config.tool_concurrency)} onValueChange={(v) => saveConfig({ tool_concurrency: +v })}>
-            <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
               {concOpts.map((c) => <SelectItem key={c} value={String(c)}>{c}</SelectItem>)}
             </SelectContent>
@@ -478,7 +477,7 @@ function AgentDefaultsSection() {
         </SettingsRow>
         <SettingsRow label={t("settings:defaultTemperature")} description={t("settings:defaultTemperatureDesc")}>
           <Select value={config.default_temperature.toFixed(1)} onValueChange={(v) => saveConfig({ default_temperature: +v })}>
-            <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
               {tempOpts.map((tp) => <SelectItem key={tp} value={tp.toFixed(1)}>{tp.toFixed(1)}</SelectItem>)}
             </SelectContent>
@@ -486,7 +485,7 @@ function AgentDefaultsSection() {
         </SettingsRow>
         <SettingsRow label={t("settings:chatHistoryDepth")} description={t("settings:chatHistoryDepthDesc")}>
           <Select value={String(config.chat_history_depth)} onValueChange={(v) => saveConfig({ chat_history_depth: +v })}>
-            <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
               {depthOpts.map((d) => <SelectItem key={d} value={String(d)}>{d}</SelectItem>)}
             </SelectContent>
@@ -494,7 +493,7 @@ function AgentDefaultsSection() {
         </SettingsRow>
         <SettingsRow label={t("settings:defaultTopP")} description={t("settings:defaultTopPDesc")}>
           <Select value={config.default_top_p.toFixed(1)} onValueChange={(v) => saveConfig({ default_top_p: +v })}>
-            <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
               {topPOpts.map((tp) => <SelectItem key={tp} value={tp.toFixed(1)}>{tp.toFixed(1)}</SelectItem>)}
             </SelectContent>
@@ -505,7 +504,7 @@ function AgentDefaultsSection() {
             value={config.default_thinking_enabled === null ? "auto" : String(config.default_thinking_enabled)}
             onValueChange={(v) => saveConfig({ default_thinking_enabled: v === "auto" ? null : v === "true" })}
           >
-            <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="auto">{t("settings:thinkingAuto")}</SelectItem>
               <SelectItem value="true">On</SelectItem>
@@ -557,19 +556,19 @@ function DeviceDefaultsSection() {
 
   return (
     <section>
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+      <h3 className={settingsSectionTitle}>
         {t("settings:deviceDefaults")}
       </h3>
-      <div className="rounded-lg bg-card border border-border p-5 space-y-4">
+      <div className={settingsGroup}>
         <SettingsRow label={t("settings:defaultOfflineTimeout")} description={t("settings:defaultOfflineTimeoutDesc")}>
           <Select value={String(config.default_offline_timeout_secs)} onValueChange={(v) => saveConfig({ default_offline_timeout_secs: +v })}>
-            <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
               {timeoutOpts.map((o) => <SelectItem key={o.v} value={String(o.v)}>{o.l}</SelectItem>)}
             </SelectContent>
           </Select>
         </SettingsRow>
-        <SettingsRow label={t("settings:autoOnboardEnabled")} description={t("settings:autoOnboardEnabledDesc")}>
+        <SettingsRow inlineControl label={t("settings:autoOnboardEnabled")} description={t("settings:autoOnboardEnabledDesc")}>
           <Switch checked={config.auto_onboard_enabled} onCheckedChange={(checked) => saveConfig({ auto_onboard_enabled: checked })} />
         </SettingsRow>
       </div>
@@ -631,12 +630,12 @@ function DataManagementSection() {
 
   return (
     <section>
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+      <h3 className={settingsSectionTitle}>
         {t("settings:dataManagement")}
       </h3>
-      <div className="rounded-lg bg-card border border-border p-5 space-y-5">
+      <div className={settingsGroup}>
         {/* Auto Cleanup Toggle */}
-        <SettingsRow
+        <SettingsRow inlineControl
           label={t("settings:autoCleanup")}
           description={t("settings:autoCleanupDesc")}
         >
@@ -656,7 +655,7 @@ function DataManagementSection() {
             onValueChange={(v) => saveConfig({ default_retention: optionToHours(v) })}
             disabled={!config.enabled}
           >
-            <SelectTrigger className="w-full sm:w-[180px]">
+            <SelectTrigger className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -670,7 +669,7 @@ function DataManagementSection() {
         </SettingsRow>
 
         {/* Image Retention */}
-        <SettingsRow
+        <SettingsRow inlineControl
           label={t("settings:imageRetention")}
           description={t("settings:imageRetentionDesc")}
           leadingIcon={<SwitchCamera className="h-4 w-4 text-muted-foreground" />}
@@ -680,7 +679,7 @@ function DataManagementSection() {
             onValueChange={(v) => saveConfig({ image_retention: optionToHours(v) })}
             disabled={!config.enabled}
           >
-            <SelectTrigger className="w-full sm:w-[180px]">
+            <SelectTrigger className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -704,7 +703,7 @@ function DataManagementSection() {
             onValueChange={(v) => saveConfig({ session_retention_hours: optionToHours(v) })}
             disabled={!config.enabled}
           >
-            <SelectTrigger className="w-full sm:w-[180px]">
+            <SelectTrigger className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -718,7 +717,7 @@ function DataManagementSection() {
         </SettingsRow>
 
         {/* Manual Cleanup */}
-        <div className="pt-3">
+        <div className={cn(settingsFooter, "flex justify-end")}>
           <Button
             variant="outline"
             size="sm"
@@ -764,16 +763,16 @@ function DiagnosticDataSection() {
 
   return (
     <section>
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+      <h3 className={settingsSectionTitle}>
         {t("settings:diagnosticData")}
       </h3>
-      <div className="rounded-lg bg-card border border-border p-5 space-y-4">
+      <div className={settingsGroup}>
         <SettingsRow
           label={t("settings:logTimeRange")}
           description={t("settings:diagnosticDataDesc")}
         >
           <Select value={logDays} onValueChange={setLogDays}>
-            <SelectTrigger className="w-full sm:w-[180px]">
+            <SelectTrigger className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -783,7 +782,7 @@ function DiagnosticDataSection() {
             </SelectContent>
           </Select>
         </SettingsRow>
-        <div className="pt-3">
+        <div className={cn(settingsFooter, "flex justify-end")}>
           <Button
             variant="outline"
             size="sm"
@@ -912,11 +911,11 @@ function BackupSettingsSection() {
 
   return (
     <section>
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+      <h3 className={settingsSectionTitle}>
         {t("settings:backupSchedule")}
       </h3>
-      <div className="rounded-lg bg-card border border-border p-5 space-y-4">
-        <SettingsRow
+      <div className={settingsGroup}>
+        <SettingsRow inlineControl
           label={t("settings:backupEnabled")}
           description={t("settings:backupEnabledDesc")}
         >
@@ -934,7 +933,7 @@ function BackupSettingsSection() {
             onValueChange={(v) => saveConfig({ interval_secs: +v })}
             disabled={!config.enabled}
           >
-            <SelectTrigger className="w-full sm:w-[180px]">
+            <SelectTrigger className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -952,7 +951,7 @@ function BackupSettingsSection() {
             onValueChange={(v) => saveConfig({ keep: +v })}
             disabled={!config.enabled}
           >
-            <SelectTrigger className="w-full sm:w-[180px]">
+            <SelectTrigger className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -964,7 +963,7 @@ function BackupSettingsSection() {
             </SelectContent>
           </Select>
         </SettingsRow>
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+        <div className={cn(settingsFooter, "flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between")}>
           <span className="text-sm text-muted-foreground">
             {t("settings:backupLast")}: {lastLabel}
           </span>
@@ -1027,11 +1026,13 @@ function MarketSourceSection() {
 
   return (
     <section>
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+      <h3 className={settingsSectionTitle}>
         {t("settings:marketSource")}
       </h3>
-      <div className="rounded-lg bg-card border border-border p-5 space-y-4">
+      <div className={settingsGroup}>
         <SettingsRow
+          className="sm:flex-col sm:items-stretch"
+          controlClassName="sm:w-full"
           label={t("settings:marketSourceUrl")}
           description={t("settings:marketSourceDesc")}
         >
@@ -1039,11 +1040,11 @@ function MarketSourceSection() {
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             placeholder={config.default_url}
-            className="w-full sm:w-[420px] font-mono text-xs"
+            className="w-full font-mono text-xs"
             spellCheck={false}
           />
         </SettingsRow>
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+        <div className={cn(settingsFooter, "flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between")}>
           <span className="text-xs text-muted-foreground">
             {isDefault ? t("settings:marketSourceDefault") : t("settings:marketSourceCustom")}
           </span>

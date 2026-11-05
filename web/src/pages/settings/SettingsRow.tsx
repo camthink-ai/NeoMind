@@ -12,6 +12,9 @@ interface SettingsRowProps {
   /** Right-side control: Select / Switch / a wrapped node (e.g. loader + select). */
   children: ReactNode
   className?: string
+  /** Keep a switch beside its label even on narrow screens. */
+  inlineControl?: boolean
+  controlClassName?: string
 }
 
 /**
@@ -24,19 +27,33 @@ interface SettingsRowProps {
  * drops its help text beneath it — fine in a narrow dialog, but the
  * label-left / control-right pattern reads better in a wide settings page.
  */
-export function SettingsRow({ label, description, leadingIcon, className, children }: SettingsRowProps) {
+export const settingsSectionTitle = 'mb-3 text-sm font-semibold text-foreground'
+export const settingsGroup = 'rounded-lg border border-border bg-card px-4 sm:px-5 [&>[data-settings-row]+[data-settings-row]]:border-t [&>[data-settings-row]]:border-border'
+export const settingsFooter = 'border-t border-border py-4'
+
+export function SettingsRow({ label, description, leadingIcon, className, children, inlineControl = false, controlClassName }: SettingsRowProps) {
   return (
-    <div className={cn("flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2", className)}>
-      <div className="flex items-center gap-2">
-        {leadingIcon}
-        <div>
-          <Label className="text-sm font-medium">{label}</Label>
+    <div data-settings-row className={cn(
+      "flex gap-x-8 gap-y-3 py-4",
+      inlineControl ? "flex-row items-center justify-between" : "flex-col sm:flex-row sm:items-center sm:justify-between",
+      className,
+    )}>
+      <div className="flex min-w-0 flex-1 items-start gap-2.5">
+        {leadingIcon && <span className="mt-0.5 shrink-0">{leadingIcon}</span>}
+        <div className="min-w-0">
+          <Label className="text-sm font-medium leading-5">{label}</Label>
           {description && (
-            <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
+            <p className="mt-1 max-w-prose break-words text-xs leading-relaxed text-muted-foreground">{description}</p>
           )}
         </div>
       </div>
-      {children}
+      <div className={cn(
+        "flex min-w-0 items-center justify-end gap-2 sm:shrink-0",
+        inlineControl ? "shrink-0" : "w-full sm:w-60",
+        controlClassName,
+      )}>
+        {children}
+      </div>
     </div>
   )
 }

@@ -914,7 +914,6 @@ export default function MessagesPage() {
               ) : messages.length === 0 ? (
                 <EmptyStateCard>
                   <EmptyState
-                    icon={<Mail className="h-12 w-12" />}
                     title={t('messages.empty.title')}
                     description={t('messages.empty.description')}
                   />
@@ -1156,7 +1155,6 @@ export default function MessagesPage() {
               emptyState={
                 !loading && messages.length === 0 ? (
                   <EmptyState
-                    icon={<Mail className="h-12 w-12" />}
                     title={t('messages.empty.title')}
                     description={t('messages.empty.description')}
                   />

@@ -421,7 +421,6 @@ export function ToolsPanel({ onPaginationChange, searchQuery = "", sourceFilter 
         ]}
         emptyState={
           <EmptyState
-            icon={<Wrench className="h-12 w-12" />}
             title={
               searchQuery.trim()
                 ? t("common:noResults", "No matching results")

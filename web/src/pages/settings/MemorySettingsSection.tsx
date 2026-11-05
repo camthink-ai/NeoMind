@@ -19,7 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { SettingsRow } from "./SettingsRow"
+import { SettingsRow, settingsSectionTitle, settingsGroup } from "./SettingsRow"
 import { api } from "@/lib/api"
 import type { MemorySystemConfig, LlmBackendInstance } from "@/types"
 
@@ -90,18 +90,18 @@ export function MemorySettingsSection() {
           const clamped = Math.min(max, Math.max(min, parsed))
           if (clamped !== value) save({ [field]: clamped } as Partial<MemorySystemConfig>)
         }}
-        className="w-full sm:w-[140px]"
+        className="w-full tabular-nums sm:w-32"
       />
     </SettingsRow>
   )
 
   return (
     <section>
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+      <h3 className={settingsSectionTitle}>
         {t("agents:systemMemory.config.title", "Memory Configuration")}
       </h3>
-      <div className="rounded-lg bg-card border border-border p-5 space-y-4">
-        <SettingsRow
+      <div className={settingsGroup}>
+        <SettingsRow inlineControl
           label={t("agents:systemMemory.config.enabled", "Enabled")}
           description={t("agents:systemMemory.config.description", "Configure memory storage and scheduling")}
         >
@@ -156,7 +156,7 @@ export function MemorySettingsSection() {
               save({ summary_backend_id: value === "__active__" ? null : value })
             }
           >
-            <SelectTrigger className="w-full sm:w-[220px]">
+            <SelectTrigger className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

@@ -386,7 +386,6 @@ export function TransformsList({
       ]}
       emptyState={
         <EmptyState
-          icon={<Code className="h-12 w-12" />}
           title={t('automation:emptyTransforms.title', 'No transforms')}
           description={t('automation:emptyTransforms.description', 'Create your first transform to process device data')}
         />

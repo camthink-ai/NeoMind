@@ -1,6 +1,6 @@
 /// Smoke tests for ResponsiveTable (desktop) — guards the contracts that
 /// broke historically: the w-full scrollable wrapper (table adapts to
-/// window width) and the text-nano header tokens (the tailwind-merge
+/// window width) and the shared header tokens (the tailwind-merge
 /// regression dropped sizes app-wide).
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
@@ -73,7 +73,7 @@ describe('ResponsiveTable (desktop)', () => {
     expect(table!.className).toContain('min-w-full')
   })
 
-  it('headers carry the text-nano token (10px ladder)', () => {
+  it('headers use readable labels', () => {
     const { container: _container } = render(
       <ThemeProvider>
         <ResponsiveTable
@@ -87,7 +87,55 @@ describe('ResponsiveTable (desktop)', () => {
     const header = screen.getByText('Name').closest('th')
     expect(header).toBeTruthy()
     // Upgraded from the old 10px text-nano ladder for readability
-    expect(header!.className).toContain('text-mini')
+    expect(header!.className).toContain('text-xs')
     expect(header!.className).not.toContain('text-nano')
   })
+  it('applies CSS widths in loaded and loading headers while preserving class widths', () => {
+    const props = {
+      columns: [{ key: 'name', label: 'Name', width: '28%' }, { key: 'status', label: 'Status', width: 'w-24' }],
+      data,
+      rowKey: (row: Row) => row.name,
+      renderCell: (key: string, row: Row) => row[key as keyof Row],
+    }
+    const { container, rerender } = render(<ResponsiveTable {...props} />)
+    for (const loading of [false, true]) {
+      rerender(<ResponsiveTable {...props} loading={loading} />)
+      const headers = container.querySelectorAll('thead th')
+      expect((headers[0] as HTMLElement).style.width).toBe('28%')
+      expect(headers[1].className).toContain('w-24')
+    }
+  })
+
+  it('keeps an action cell when all row actions are hidden', () => {
+    const { container } = render(
+      <ResponsiveTable
+        columns={columns}
+        data={data}
+        rowKey={(row) => row.name}
+        renderCell={(key, row) => row[key as keyof Row]}
+        actions={[{ label: 'Edit', onClick: vi.fn(), show: (row) => row.status === 'online' }]}
+      />,
+    )
+    const rows = container.querySelectorAll('tbody tr')
+    expect(rows[0].children).toHaveLength(3)
+    expect(rows[1].children).toHaveLength(3)
+    expect(rows[1].lastElementChild?.querySelector('button')).toBeNull()
+  })
+
+  it('keeps the default empty table quiet and icon-free', () => {
+    const { container } = render(
+      <ThemeProvider>
+        <ResponsiveTable
+          columns={columns}
+          data={[]}
+          renderCell={() => null}
+          rowKey={() => 'empty'}
+        />
+      </ThemeProvider>
+    )
+
+    expect(screen.getAllByText('No data available').length).toBeGreaterThan(0)
+    expect(container.querySelector('tbody svg')).toBeNull()
+  })
+
 })

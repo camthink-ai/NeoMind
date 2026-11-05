@@ -480,7 +480,6 @@ export function ImBridgesTab() {
             <Card className="border-dashed">
               <CardContent className="py-6">
                 <EmptyState
-                  icon={<QrCode className="h-10 w-10" />}
                   title={t('settings:im.noInvites')}
                   description={t('settings:im.noInvitesDesc')}
                 />
@@ -555,7 +554,6 @@ export function ImBridgesTab() {
             <Card className="border-dashed">
               <CardContent className="py-6">
                 <EmptyState
-                  icon={<Send className="h-10 w-10" />}
                   title={t('settings:im.noAllowlist')}
                   description={t('settings:im.noAllowlistDesc')}
                 />

@@ -12,7 +12,7 @@ import { useTranslation } from "react-i18next"
 import { useToast } from "@/components/ui/use-toast"
 import { Switch } from "@/components/ui/switch"
 import { Input } from "@/components/ui/input"
-import { SettingsRow } from "./SettingsRow"
+import { SettingsRow, settingsSectionTitle, settingsGroup } from "./SettingsRow"
 import { api } from "@/lib/api"
 
 interface OnboardConfig {
@@ -63,11 +63,11 @@ export function AutoOnboardSettings() {
 
   return (
     <section>
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+      <h3 className={settingsSectionTitle}>
         {t("devices:pending.configTitle")}
       </h3>
-      <div className="rounded-lg bg-card border border-border p-5 space-y-4">
-        <SettingsRow
+      <div className={settingsGroup}>
+        <SettingsRow inlineControl
           label={t("devices:pending.configSettings.enabled")}
           description={t("devices:pending.configSettings.enabledDesc")}
         >
@@ -94,7 +94,7 @@ export function AutoOnboardSettings() {
               const clamped = Math.min(100, Math.max(1, parsed))
               if (clamped !== config.max_samples) save({ max_samples: clamped })
             }}
-            className="w-full sm:w-[140px]"
+            className="w-full tabular-nums sm:w-32"
           />
         </SettingsRow>
 
@@ -116,7 +116,7 @@ export function AutoOnboardSettings() {
               const clamped = Math.min(604800, Math.max(3600, parsed))
               if (clamped !== config.draft_retention_secs) save({ draft_retention_secs: clamped })
             }}
-            className="w-full sm:w-[160px]"
+            className="w-full tabular-nums sm:w-32"
           />
         </SettingsRow>
       </div>
