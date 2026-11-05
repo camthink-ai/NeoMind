@@ -766,5 +766,7 @@
     "title": "暂无规则",
     "description": "暂无自动化规则，创建一个来自动响应设备事件"
   },
-  "confidence": "置信度"
+  "confidence": "置信度",
+  "searchRules": "搜索规则...",
+  "searchTransforms": "搜索转换..."
 }

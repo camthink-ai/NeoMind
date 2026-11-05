@@ -14,7 +14,7 @@ import { useLocation, useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import { PageLayout } from "@/components/layout/PageLayout"
 import { BuiltinModelWizard } from "@/components/llm/BuiltinModelWizard"
-import { PageTabsBar, PageTabsContent, PageTabsBottomNav, Pagination } from "@/components/shared"
+import { PageTabsBar, PageTabsContent, PageTabsBottomNav, Pagination, SearchInput } from "@/components/shared"
 import { LoadingState } from "@/components/shared/LoadingState"
 import { api } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
@@ -23,9 +23,8 @@ import { useEvents } from "@/hooks/useEvents"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { showErrorToast } from "@/lib/error-messages"
 import { useIsMobile } from "@/hooks/useMobile"
-import { Bot, Plus, Brain, Cpu, Settings, BookOpen, Edit, Play, FileText, Wrench, Search, Download, Server } from "lucide-react"
+import { Bot, Plus, Brain, Cpu, Settings, BookOpen, Edit, Play, FileText, Wrench, Download, Server } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
@@ -575,17 +574,13 @@ export function AgentsPage() {
           <SelectItem value="extension">{tAgent('detail.toolsSourceExtension')}</SelectItem>
         </SelectContent>
       </Select>
-      <div className="relative">
-        <span className="absolute left-2.5 top-0 bottom-0 flex items-center">
-          <Search className="h-4 w-4 text-muted-foreground pointer-events-none" />
-        </span>
-        <Input
-          placeholder={tAgent('detail.toolsSearchPlaceholder', 'Search tools…')}
-          value={toolsSearch}
-          onChange={(e) => setToolsSearch(e.target.value)}
-          className="pl-9 w-[180px] md:w-[240px] h-9"
-        />
-      </div>
+      <SearchInput
+        value={toolsSearch}
+        onChange={setToolsSearch}
+        placeholder={tAgent('detail.toolsSearchPlaceholder', 'Search tools…')}
+        aria-label={tAgent('detail.toolsSearchPlaceholder', 'Search tools…')}
+        className="w-[180px] md:w-[240px]"
+      />
     </div>
   ) : undefined
 

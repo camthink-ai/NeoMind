@@ -10,7 +10,7 @@ import { confirm } from "@/hooks/use-confirm"
 import { fetchCache } from "@/lib/utils/async"
 import { useNavigate, useLocation, useParams } from "react-router-dom"
 import { PageLayout } from "@/components/layout/PageLayout"
-import { PageTabsBar, PageTabsContent, PageTabsBottomNav, Pagination, type TabAction } from "@/components/shared"
+import { PageTabsBar, PageTabsContent, PageTabsBottomNav, Pagination, SearchInput, type TabAction } from "@/components/shared"
 import { Upload, Download, Settings, Server, Layers, FileEdit, Cloud, ChevronLeft } from "lucide-react"
 import { LoadingState } from "@/components/shared/LoadingState"
 import { Button } from "@/components/ui/button"
@@ -182,19 +182,37 @@ export function DevicesPage() {
     }
   }, [activeTab])
 
+  // Device-list search — client-side over the full device array (the list
+  // is client-paginated from the store, so a filter must sit BEFORE the
+  // pagination slice). Matches name / id / type / adapter.
+  const [deviceSearch, setDeviceSearch] = useState('')
+  const filteredDevices = useMemo(() => {
+    const q = deviceSearch.trim().toLowerCase()
+    if (!q) return devices
+    return devices.filter((d) =>
+      [d.name, d.device_id, d.device_type, d.adapter_type]
+        .some((field) => field?.toLowerCase().includes(q))
+    )
+  }, [devices, deviceSearch])
+
+  // Entering/leaving a query must land the user on page 1 of the result set.
+  useEffect(() => {
+    setDevicePage(1)
+  }, [deviceSearch])
+
   // Paginated devices
   // On mobile: show cumulative data (all pages up to current)
   // On desktop: show only current page
   const paginatedDevices = useMemo(() => {
     if (isMobile) {
-      return devices.slice(0, devicePage * devicesPerPage)
+      return filteredDevices.slice(0, devicePage * devicesPerPage)
     } else {
-      return devices.slice(
+      return filteredDevices.slice(
         (devicePage - 1) * devicesPerPage,
         devicePage * devicesPerPage
       )
     }
-  }, [devices, devicePage, devicesPerPage, isMobile])
+  }, [filteredDevices, devicePage, devicesPerPage, isMobile])
 
   // Device detail view state
   const [deviceDetailView, setDeviceDetailView] = useState<string | null>(null)
@@ -791,12 +809,23 @@ export function DevicesPage() {
               onTabChange={(v) => handleTabChange(v as DeviceTabValue)}
               actions={tabActions.primary}
               secondaryActions={tabActions.secondary}
+              actionsExtra={
+                activeTab === 'devices' ? (
+                  <SearchInput
+                    value={deviceSearch}
+                    onChange={setDeviceSearch}
+                    placeholder={t('devices:searchDevices', { defaultValue: 'Search devices...' })}
+                    aria-label={t('devices:searchDevices', { defaultValue: 'Search devices...' })}
+                    className="w-full sm:w-[min(16rem,calc(100vw-3rem))]"
+                  />
+                ) : undefined
+              }
             />
           ) : undefined
         }
         footer={
           !deviceDetailView && (
-            activeTab === 'devices' && devices.length > devicesPerPage ? (
+            activeTab === 'devices' && filteredDevices.length > devicesPerPage ? (
               <Pagination
                 total={devices.length}
                 pageSize={devicesPerPage}
@@ -850,6 +879,7 @@ export function DevicesPage() {
                 devices={devices}
                 loading={devicesLoading}
                 paginatedDevices={paginatedDevices}
+                searching={!!deviceSearch.trim()}
                 devicePage={devicePage}
                 devicesPerPage={devicesPerPage}
                 onRefresh={fetchDevices}

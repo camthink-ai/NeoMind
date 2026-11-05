@@ -974,5 +974,8 @@
     "min": "min",
     "max": "max"
   },
-  "deleteTypeConfirmWithDevices": "This type still has {{count}} device(s) attached. Deleting it does not delete the devices, but they lose their metric/command definitions until reassigned. Delete anyway?"
+  "deleteTypeConfirmWithDevices": "This type still has {{count}} device(s) attached. Deleting it does not delete the devices, but they lose their metric/command definitions until reassigned. Delete anyway?",
+  "searchDevices": "Search devices...",
+  "searchNoResults": "No devices match your search",
+  "searchNoResultsHint": "Try a different name, type or adapter"
 }

@@ -4,9 +4,8 @@ import { PageLayout } from '@/components/layout/PageLayout'
 import { useStore } from '@/store'
 import { Card } from '@/components/ui/card'
 import { interactiveCardHover } from '@/design-system/tokens/size'
-import { ResponsiveTable, type TableColumn, Pagination, EmptyState, EmptyStateCard } from '@/components/shared'
+import { ResponsiveTable, type TableColumn, Pagination, EmptyState, EmptyStateCard, SearchInput } from '@/components/shared'
 import { PageTabsBar, PageTabsContent, PageTabsBottomNav } from '@/components/shared/PageTabs'
-import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { debounce } from '@/lib/utils/async'
@@ -32,7 +31,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Search, Database, Cpu, Puzzle, Workflow, Brain, History, Loader2, Eye, Download, Clock, Copy, Check, Send, Plus, AlertTriangle, RefreshCw } from 'lucide-react'
+import { Database, Cpu, Puzzle, Workflow, Brain, History, Loader2, Eye, Download, Clock, Copy, Check, Send, Plus, AlertTriangle, RefreshCw } from 'lucide-react'
 import { api } from '@/lib/api'
 import { isBase64Image, getImageDataUrl } from '@/pages/devices/utils'
 import { cn } from '@/lib/utils'
@@ -517,24 +516,17 @@ export function DataExplorerPage() {
               activeTab === 'data' ? (
                 <div className="flex items-center gap-2">
                   {sourceFilter}
-                  <div className="relative">
-                    <span className="absolute left-2.5 top-0 bottom-0 flex items-center">
-                      {isSearchPending ? (
-                        <Loader2 className="h-4 w-4 text-muted-foreground animate-spin" />
-                      ) : (
-                        <Search className="h-4 w-4 text-muted-foreground" />
-                      )}
-                    </span>
-                    <Input
-                      placeholder={t('data:search', 'Search data sources...')}
-                      value={search}
-                      onChange={e => setSearch(e.target.value)}
-                      className="pl-9 w-[180px] md:w-[240px] h-9"
-                      // No autofocus on mobile: the input lifts into the sticky
-                      // page header, so it would pop the keyboard over the list.
-                      autoFocus={!isMobile}
-                    />
-                  </div>
+                  <SearchInput
+                    placeholder={t('data:search', 'Search data sources...')}
+                    value={search}
+                    onChange={setSearch}
+                    pending={isSearchPending}
+                    aria-label={t('data:search', 'Search data sources...')}
+                    className="w-[180px] md:w-[240px]"
+                    // No autofocus on mobile: the input lifts into the sticky
+                    // page header, so it would pop the keyboard over the list.
+                    autoFocus={!isMobile}
+                  />
                 </div>
               ) : undefined
             }

@@ -5,7 +5,7 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { IconButton } from "@/components/ui/button"
 import { ResponsiveTable, EmptyState, EmptyStateCard } from "@/components/shared"
 import { DeviceStatusBadge } from "@/components/shared/DeviceStatusBadge"
-import { Eye, MoreVertical, Trash2, Cpu, Database, Waves, Pencil } from "lucide-react"
+import { Eye, MoreVertical, Trash2, Cpu, Database, Waves, Pencil, Search } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { interactiveCardHover } from "@/design-system/tokens/size"
 import { textMini } from "@/design-system/tokens/typography"
@@ -21,6 +21,9 @@ interface DeviceListProps {
   devices: Device[]
   loading: boolean
   paginatedDevices: Device[]
+  /** True while a text search is active — switches the mobile empty state
+      from the "add your first device" pitch to a no-results message. */
+  searching?: boolean
   devicePage: number
   devicesPerPage: number
   onRefresh: () => void
@@ -36,6 +39,7 @@ export function DeviceList({
   devices: _devices,
   loading,
   paginatedDevices,
+  searching = false,
   devicePage: _devicePage,
   devicesPerPage: _devicesPerPage,
   onRefresh,
@@ -105,11 +109,19 @@ export function DeviceList({
           )}
           {!loading && paginatedDevices.length === 0 && (
             <EmptyStateCard>
-              <EmptyState
-                icon={<Cpu className="h-12 w-12" />}
-                title={t('devices:empty.title', 'No devices')}
-                description={t('devices:empty.description', 'Add your first device to get started')}
-              />
+              {searching ? (
+                <EmptyState
+                  icon={<Search className="h-12 w-12" />}
+                  title={t('devices:searchNoResults', 'No devices match your search')}
+                  description={t('devices:searchNoResultsHint', 'Try a different name, type or adapter')}
+                />
+              ) : (
+                <EmptyState
+                  icon={<Cpu className="h-12 w-12" />}
+                  title={t('devices:empty.title', 'No devices')}
+                  description={t('devices:empty.description', 'Add your first device to get started')}
+                />
+              )}
             </EmptyStateCard>
           )}
           {paginatedDevices.map((device) => {

@@ -25,7 +25,7 @@ import type { AlertChannel, Device, DeviceType } from '@/types'
 import { useTranslation } from "react-i18next"
 import { useNavigate, useLocation } from "react-router-dom"
 import { PageLayout } from "@/components/layout/PageLayout"
-import { PageTabsBar, PageTabsContent, PageTabsBottomNav, Pagination } from "@/components/shared"
+import { PageTabsBar, PageTabsContent, PageTabsBottomNav, Pagination, SearchInput } from "@/components/shared"
 import { Sparkles, GitBranch, Download, Upload } from "lucide-react"
 import { api } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
@@ -211,30 +211,54 @@ export function AutomationPage() {
     setTransformsPage(1)
   }, [transforms.length])
 
+  // List search — client-side over the full arrays (both lists are
+  // client-paginated, so the filter must sit BEFORE the pagination slice).
+  // Rules match name/description; transforms match name/description.
+  const [ruleSearch, setRuleSearch] = useState('')
+  const [transformSearch, setTransformSearch] = useState('')
+  const filteredRules = useMemo(() => {
+    const q = ruleSearch.trim().toLowerCase()
+    if (!q) return rules
+    return rules.filter((r) =>
+      [r.name, r.description].some((field) => field?.toLowerCase().includes(q))
+    )
+  }, [rules, ruleSearch])
+  const filteredTransforms = useMemo(() => {
+    const q = transformSearch.trim().toLowerCase()
+    if (!q) return transforms
+    return transforms.filter((tr) =>
+      [tr.name, tr.description].some((field) => field?.toLowerCase().includes(q))
+    )
+  }, [transforms, transformSearch])
+
+  // Entering/leaving a query must land the user on page 1 of the result set.
+  useEffect(() => { setRulesPage(1) }, [ruleSearch])
+  useEffect(() => { setTransformsPage(1) }, [transformSearch])
+
   // Compute paginated data
   // On mobile: show cumulative data (all pages up to current)
   // On desktop: show only current page
   const paginatedRules = useMemo(() => {
     if (isMobile) {
-      return rules.slice(0, rulesPage * RULES_ITEMS_PER_PAGE)
+      return filteredRules.slice(0, rulesPage * RULES_ITEMS_PER_PAGE)
     } else {
-      return rules.slice(
+      return filteredRules.slice(
         (rulesPage - 1) * RULES_ITEMS_PER_PAGE,
         rulesPage * RULES_ITEMS_PER_PAGE
       )
     }
-  }, [rules, rulesPage, RULES_ITEMS_PER_PAGE, isMobile])
+  }, [filteredRules, rulesPage, RULES_ITEMS_PER_PAGE, isMobile])
 
   const paginatedTransforms = useMemo(() => {
     if (isMobile) {
-      return transforms.slice(0, transformsPage * TRANSFORMS_ITEMS_PER_PAGE)
+      return filteredTransforms.slice(0, transformsPage * TRANSFORMS_ITEMS_PER_PAGE)
     } else {
-      return transforms.slice(
+      return filteredTransforms.slice(
         (transformsPage - 1) * TRANSFORMS_ITEMS_PER_PAGE,
         transformsPage * TRANSFORMS_ITEMS_PER_PAGE
       )
     }
-  }, [transforms, transformsPage, TRANSFORMS_ITEMS_PER_PAGE, isMobile])
+  }, [filteredTransforms, transformsPage, TRANSFORMS_ITEMS_PER_PAGE, isMobile])
 
   // Handlers
   const handleCreate = async () => {
@@ -640,19 +664,38 @@ export function AutomationPage() {
             onTabChange={(v) => handleTabChange(v as AutomationTab)}
             actions={actions}
             secondaryActions={secondaryActions}
+            actionsExtra={
+              activeTab === 'rules' ? (
+                <SearchInput
+                  value={ruleSearch}
+                  onChange={setRuleSearch}
+                  placeholder={tAuto('searchRules', { defaultValue: 'Search rules...' })}
+                  aria-label={tAuto('searchRules', { defaultValue: 'Search rules...' })}
+                  className="w-full sm:w-[min(16rem,calc(100vw-3rem))]"
+                />
+              ) : activeTab === 'transforms' ? (
+                <SearchInput
+                  value={transformSearch}
+                  onChange={setTransformSearch}
+                  placeholder={tAuto('searchTransforms', { defaultValue: 'Search transforms...' })}
+                  aria-label={tAuto('searchTransforms', { defaultValue: 'Search transforms...' })}
+                  className="w-full sm:w-[min(16rem,calc(100vw-3rem))]"
+                />
+              ) : undefined
+            }
           />
         }
         footer={
-          activeTab === 'rules' && rules.length > RULES_ITEMS_PER_PAGE ? (
+          activeTab === 'rules' && filteredRules.length > RULES_ITEMS_PER_PAGE ? (
             <Pagination
-              total={rules.length}
+              total={filteredRules.length}
               pageSize={RULES_ITEMS_PER_PAGE}
               currentPage={rulesPage}
               onPageChange={setRulesPage}
             />
-          ) : activeTab === 'transforms' && transforms.length > TRANSFORMS_ITEMS_PER_PAGE ? (
+          ) : activeTab === 'transforms' && filteredTransforms.length > TRANSFORMS_ITEMS_PER_PAGE ? (
             <Pagination
-              total={transforms.length}
+              total={filteredTransforms.length}
               pageSize={TRANSFORMS_ITEMS_PER_PAGE}
               currentPage={transformsPage}
               onPageChange={setTransformsPage}

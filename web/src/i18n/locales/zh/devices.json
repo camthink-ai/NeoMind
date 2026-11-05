@@ -974,5 +974,8 @@
     "min": "最小",
     "max": "最大"
   },
-  "deleteTypeConfirmWithDevices": "该类型下仍有 {{count}} 台设备。删除类型不会删除设备，但这些设备将失去指标定义与命令，直到重新分配类型。确定删除？"
+  "deleteTypeConfirmWithDevices": "该类型下仍有 {{count}} 台设备。删除类型不会删除设备，但这些设备将失去指标定义与命令，直到重新分配类型。确定删除？",
+  "searchDevices": "搜索设备...",
+  "searchNoResults": "没有匹配的设备",
+  "searchNoResultsHint": "尝试其他名称、类型或适配器"
 }

@@ -605,7 +605,8 @@
     "urlRequired": "Url Required",
     "topicRequired": "Topic is required",
     "source": "Source",
-    "payload": "Payload"
+    "payload": "Payload",
+    "searchTargets": "Search push targets..."
   },
   "active": "Active",
   "test": "Test Connection",

@@ -5,9 +5,9 @@ import { PageLayout } from "@/components/layout/PageLayout"
 import { ExtensionGrid, ExtensionDetailsDialog, MarketplaceDialog } from "@/components/extensions"
 import { ExtensionUploadDialog } from "@/components/extensions"
 import { useToast } from "@/hooks/use-toast"
-import { RefreshCw, Upload, Globe, Search, X } from "lucide-react"
+import { RefreshCw, Upload, Globe } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { SearchInput } from "@/components/shared"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -145,10 +145,19 @@ export function ExtensionsPage() {
         borderedHeader={false}
         headerContent={
           // No-tab page standard (actions-left variant): page actions sit
-          // in the tab slot, search anchors the right edge (aligned with
+          // in the tab slot, page actions anchor the right edge (aligned with
           // the content below) — the mirrored layout to tabbed pages'
-          // "tabs left, actions right".
+          // "tabs left, search middle, actions right".
           <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-end bg-background px-4 pt-2 sm:px-6 md:px-8">
+            {/* Search leads (utility), actions anchor the trailing edge
+                (primary CTA) — the same order as PageTabsBar's group. */}
+            <SearchInput
+              value={searchQuery}
+              onChange={setSearchQuery}
+              placeholder={t("searchPlaceholder", { defaultValue: "Search extensions and commands..." })}
+              aria-label={t("searchPlaceholder", { defaultValue: "Search extensions and commands..." })}
+              className="w-full sm:max-w-md sm:mr-auto"
+            />
             <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
               <Button
                 variant="default"
@@ -167,26 +176,6 @@ export function ExtensionsPage() {
                 <Upload className="h-4 w-4 mr-1 sm:mr-2" />
                 {t("extensions:uploadExtension", { defaultValue: "Upload" })}
               </Button>
-            </div>
-            {/* Anchored right: ml-auto + capped width keeps the input's
-                right edge flush with the content card edge below. */}
-            <div className="relative w-full sm:ml-auto sm:w-full sm:max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder={t("searchPlaceholder", { defaultValue: "Search extensions and commands..." })}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9 h-9 bg-card"
-              />
-              {searchQuery && (
-                <button
-                  onClick={() => setSearchQuery("")}
-                  aria-label={t("common:clear")}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              )}
             </div>
           </div>
         }

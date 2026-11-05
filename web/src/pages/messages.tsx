@@ -1,7 +1,7 @@
 // Messages Page
 // Unified notification/message system for NeoMind
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { PageLayout } from '@/components/layout/PageLayout'
@@ -158,13 +158,21 @@ export default function MessagesPage() {
   // Mobile: track loaded page count for cumulative append
   const [_mobileLoadedPages, setMobileLoadedPages] = useState(1)
 
-  // Filters - support multiple selections
+  // Filters — single-select per dimension. The server API takes ONE value
+  // per dimension (ListMessagesQuery has scalar severity/status/category),
+  // so every active filter maps to a server param and totals/pagination
+  // stay correct. The former multi-select filtered only the current page
+  // window client-side — matched rows on later pages were unreachable and
+  // the total stayed stale. Multi-select needs a repeated-params server
+  // contract; revisit there, not here.
   const [selectedSeverities, setSelectedSeverities] = useState<Set<MessageSeverity>>(new Set())
   const [selectedStatuses, setSelectedStatuses] = useState<Set<MessageStatus>>(new Set())
   const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set())
 
-  // Dynamic categories from API
+  // Dynamic categories from API — unioned across fetched pages, so the
+  // option list doesn't reshape itself every time the user turns a page.
   const [availableCategories, setAvailableCategories] = useState<string[]>([])
+  const seenCategoriesRef = useRef<Set<string>>(new Set())
 
   // Check if any filters are active
   const hasActiveFilters = selectedSeverities.size > 0 || selectedStatuses.size > 0 || selectedCategories.size > 0
@@ -176,35 +184,18 @@ export default function MessagesPage() {
     setSelectedCategories(new Set())
   }
 
-  // Toggle filter
+  // Toggle filter — single-select: picking a value replaces the dimension's
+  // previous pick; picking the active value clears it.
   const toggleSeverity = (severity: MessageSeverity) => {
-    const newSet = new Set(selectedSeverities)
-    if (newSet.has(severity)) {
-      newSet.delete(severity)
-    } else {
-      newSet.add(severity)
-    }
-    setSelectedSeverities(newSet)
+    setSelectedSeverities(selectedSeverities.has(severity) ? new Set() : new Set([severity]))
   }
 
   const toggleStatus = (status: MessageStatus) => {
-    const newSet = new Set(selectedStatuses)
-    if (newSet.has(status)) {
-      newSet.delete(status)
-    } else {
-      newSet.add(status)
-    }
-    setSelectedStatuses(newSet)
+    setSelectedStatuses(selectedStatuses.has(status) ? new Set() : new Set([status]))
   }
 
   const toggleCategory = (category: string) => {
-    const newSet = new Set(selectedCategories)
-    if (newSet.has(category)) {
-      newSet.delete(category)
-    } else {
-      newSet.add(category)
-    }
-    setSelectedCategories(newSet)
+    setSelectedCategories(selectedCategories.has(category) ? new Set() : new Set([category]))
   }
 
   // Get active filter count
@@ -485,26 +476,18 @@ export default function MessagesPage() {
       // Fetch messages
       const messagesResponse = await api.getMessages(params)
 
-      let messagesArray: NotificationMessage[] = messagesResponse.messages || []
+      const messagesArray: NotificationMessage[] = messagesResponse.messages || []
       const serverTotal = messagesResponse.total ?? 0
 
-      // Extract categories
-      const categories = [...new Set(messagesArray.map(m => m.category))].sort()
-      setAvailableCategories(categories)
+      // Extract categories — union across every fetch so the option list
+      // is stable across pagination instead of reshaping per page.
+      for (const m of messagesArray) {
+        if (m.category) seenCategoriesRef.current.add(m.category)
+      }
+      setAvailableCategories([...seenCategoriesRef.current].sort())
 
-      // Multi-value filters (server only supports single value)
-      if (selectedSeverities.size > 1) {
-        messagesArray = messagesArray.filter((m: NotificationMessage) =>
-          selectedSeverities.has(m.severity as MessageSeverity))
-      }
-      if (selectedStatuses.size > 1) {
-        messagesArray = messagesArray.filter((m: NotificationMessage) =>
-          selectedStatuses.has(m.status as MessageStatus))
-      }
-      if (selectedCategories.size > 1) {
-        messagesArray = messagesArray.filter((m: NotificationMessage) =>
-          selectedCategories.has(m.category))
-      }
+      // Single-select filters are fully server-side (params above) — the
+      // response IS the filtered page; totals and pagination are exact.
 
       // Sort by timestamp descending
       messagesArray.sort((a: NotificationMessage, b: NotificationMessage) => {

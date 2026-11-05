@@ -766,5 +766,7 @@
   "emptyRules": {
     "title": "No Rules",
     "description": "Create your first rule to automate responses to device events"
-  }
+  },
+  "searchRules": "Search rules...",
+  "searchTransforms": "Search transforms..."
 }

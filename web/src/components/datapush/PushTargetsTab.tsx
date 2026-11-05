@@ -8,7 +8,7 @@ import { useStore } from '@/store'
 import { useDataVersion } from '@/hooks/useDataVersion'
 import { useTranslation } from 'react-i18next'
 import { useIsMobile } from '@/hooks/useMobile'
-import { ResponsiveTable, type TableColumn, type TableRowAction, EmptyState, Pagination } from '@/components/shared'
+import { ResponsiveTable, type TableColumn, type TableRowAction, EmptyState, Pagination, SearchInput } from '@/components/shared'
 import { Send, Play, FlaskConical, FileText, Pencil, Trash2, Loader2, Globe, Radio } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { textMini } from '@/design-system/tokens/typography'
@@ -226,14 +226,41 @@ export function PushTargetsTab() {
     if (page > maxPage) setPage(maxPage)
   }, [pushTargets.length])
 
+  // List search — client-side over the full target array (the table is
+  // client-paginated, so the filter sits BEFORE the pagination slice).
+  // Matches name / type / endpoint / source patterns.
+  const [targetSearch, setTargetSearch] = useState('')
+  const filteredTargets = (() => {
+    const q = targetSearch.trim().toLowerCase()
+    if (!q) return pushTargets
+    return pushTargets.filter((target) => {
+      const endpoint = typeof target.config?.endpoint === 'string' ? target.config.endpoint : ''
+      const patterns = target.data_filter?.source_patterns?.join(' ') ?? ''
+      return [target.name, target.target_type, endpoint, patterns]
+        .some((field) => field?.toLowerCase().includes(q))
+    })
+  })()
+  useEffect(() => { setPage(1) }, [targetSearch])
+
   // Mobile infinite scroll: cumulative slice (0 to current page) so previous items stay
   // visible as the user scrolls. Desktop: current-page slice only. Matches automation.tsx.
   const paginatedTargets = isMobile
-    ? pushTargets.slice(0, page * PAGE_SIZE)
-    : pushTargets.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+    ? filteredTargets.slice(0, page * PAGE_SIZE)
+    : filteredTargets.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
   return (
     <div className="space-y-4">
+      {/* Toolbar: search leads (utility class); the tab row's actions
+          anchor the trailing edge above. */}
+      <div className="flex items-center gap-2">
+        <SearchInput
+          value={targetSearch}
+          onChange={setTargetSearch}
+          placeholder={t('common:dataPush.searchTargets', 'Search push targets...')}
+          aria-label={t('common:dataPush.searchTargets', 'Search push targets...')}
+          className="w-full sm:max-w-md"
+        />
+      </div>
       {/* Table */}
       <ResponsiveTable
         columns={columns}
@@ -291,9 +318,9 @@ export function PushTargetsTab() {
       />
 
       {/* Pagination */}
-      {pushTargets.length > PAGE_SIZE && (
+      {filteredTargets.length > PAGE_SIZE && (
         <Pagination
-          total={pushTargets.length}
+          total={filteredTargets.length}
           pageSize={PAGE_SIZE}
           currentPage={page}
           onPageChange={setPage}

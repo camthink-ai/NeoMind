@@ -141,6 +141,16 @@ export function PageTabsBar({
 
       {(actions.length > 0 || secondaryActions.length > 0 || actionsExtra) && (
         <div className="ml-auto flex shrink-0 flex-wrap items-end gap-2">
+          {/* Order within the group: search/filter utilities FIRST, then the
+              secondary overflow, primary actions LAST — the row's trailing
+              edge is the strongest position and belongs to the page's
+              primary CTA (GitHub/Linear toolbar convention). If the row
+              wraps, the search input takes its own full-width line under
+              the buttons, which reads intentional. */}
+          {actionsExtra}
+          {secondaryActions.length > 0 && (
+            <TabActionsOverflow actions={secondaryActions} trigger="more" />
+          )}
           {actions.map((action) => (
             <Button
               key={action.label}
@@ -157,10 +167,6 @@ export function PageTabsBar({
               <span className="whitespace-nowrap">{action.label}</span>
             </Button>
           ))}
-          {secondaryActions.length > 0 && (
-            <TabActionsOverflow actions={secondaryActions} trigger="more" />
-          )}
-          {actionsExtra}
         </div>
       )}
     </div>
