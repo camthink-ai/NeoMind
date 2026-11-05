@@ -1172,7 +1172,10 @@ async fn validate_nep_package(path: &std::path::PathBuf, verbose: bool) -> Resul
         for i in 0..archive.len() {
             let file = archive.by_index(i)?;
             // zip 9: name() may fail UTF-8 validation — show a placeholder.
-            let shown = file.name().map(|n| n.to_string()).unwrap_or_else(|e| format!("<invalid name: {e}>"));
+            let shown = file
+                .name()
+                .map(|n| n.to_string())
+                .unwrap_or_else(|e| format!("<invalid name: {e}>"));
             println!("  {}", shown);
         }
     }

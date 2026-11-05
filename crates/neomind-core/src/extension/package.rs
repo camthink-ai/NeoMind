@@ -821,8 +821,8 @@ impl ExtensionPackage {
             for i in 0..archive.len() {
                 if let Ok(mut file) = archive.by_index(i) {
                     // zip 9: `name()` validates UTF-8 and returns Result — an invalid
-// name can never match an expected prefix, so it degrades to "".
-let name = file.name().map(|n| n.to_string()).unwrap_or_default();
+                    // name can never match an expected prefix, so it degrades to "".
+                    let name = file.name().map(|n| n.to_string()).unwrap_or_default();
                     // Same directory, not the binary itself, not a directory entry
                     if name.starts_with(&dir_prefix)
                         && !name.ends_with('/')
@@ -1154,8 +1154,8 @@ let name = file.name().map(|n| n.to_string()).unwrap_or_default();
                 .map_err(|e| PackageError::Zip(format!("Failed to access file {}: {}", i, e)))?;
 
             // zip 9: `name()` validates UTF-8 and returns Result — an invalid
-// name can never match an expected prefix, so it degrades to "".
-let name = file.name().map(|n| n.to_string()).unwrap_or_default();
+            // name can never match an expected prefix, so it degrades to "".
+            let name = file.name().map(|n| n.to_string()).unwrap_or_default();
 
             // Check if file starts with prefix
             if name.starts_with(src_prefix) && !name.ends_with('/') {
@@ -1365,8 +1365,8 @@ let name = file.name().map(|n| n.to_string()).unwrap_or_default();
                 .map_err(|e| PackageError::Zip(format!("Failed to access file {}: {}", i, e)))?;
 
             // zip 9: `name()` validates UTF-8 and returns Result — an invalid
-// name can never match an expected prefix, so it degrades to "".
-let name = file.name().map(|n| n.to_string()).unwrap_or_default();
+            // name can never match an expected prefix, so it degrades to "".
+            let name = file.name().map(|n| n.to_string()).unwrap_or_default();
 
             // Check if file starts with prefix
             if name.starts_with(src_prefix) && !name.ends_with('/') {
