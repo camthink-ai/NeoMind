@@ -1736,6 +1736,11 @@ pub static ROUTES: &[RouteDoc] = &[
     },
     RouteDoc {
         method: "POST",
+        path: "/api/builtin-llm/stop",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
+        method: "POST",
         path: "/api/builtin-llm/activate",
         auth: "jwt-or-api-key",
     },
