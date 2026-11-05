@@ -512,14 +512,20 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                     .await;
 
                 if let Ok(cont_stream) = cont_stream_result {
-                    // Collect the continuation response — buffer for tool calls
+                    // Collect the continuation response — buffer for tool calls.
+                    // Recovery-channel reasoning (is_thinking chunks) never
+                    // belongs in the tool-call buffer or the visible reply.
                     let mut cont_buffer = String::new();
                     let mut cont_stream = Box::pin(cont_stream);
                     while let Some(chunk) =
                         next_chunk_or_timeout(&mut cont_stream, safeguards.max_stream_duration).await
                     {
                         match chunk {
-                            Ok((text, _)) => cont_buffer.push_str(&text),
+                            Ok((text, is_thinking)) => {
+                                if !is_thinking {
+                                    cont_buffer.push_str(&text);
+                                }
+                            }
                             Err(_) => break,
                         }
                     }
@@ -633,9 +639,14 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                         next_chunk_or_timeout(&mut pin, safeguards.max_stream_duration).await
                     {
                         match chunk {
-                            Ok((text, _)) => {
-                                final_content.push_str(&text);
-                                yield AgentEvent::content(text);
+                            // Summary-channel reasoning (is_thinking chunks)
+                            // stays out of the visible summary — same guard as
+                            // the text path's recovery channels (7ccbffa7).
+                            Ok((text, is_thinking)) => {
+                                if !is_thinking {
+                                    final_content.push_str(&text);
+                                    yield AgentEvent::content(text);
+                                }
                             }
                             Err(e) => {
                                 tracing::error!("Multimodal summary stream error: {}", e);
@@ -733,7 +744,14 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                         next_chunk_or_timeout(&mut pin, safeguards.max_stream_duration).await
                     {
                         match chunk {
-                            Ok((text, _)) => nudge_buffer.push_str(&text),
+                            // Nudge-channel reasoning (is_thinking chunks) must
+                            // not leak into the buffer that may become the
+                            // final visible reply.
+                            Ok((text, is_thinking)) => {
+                                if !is_thinking {
+                                    nudge_buffer.push_str(&text);
+                                }
+                            }
                             Err(_) => break,
                         }
                     }
@@ -894,9 +912,13 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                             next_chunk_or_timeout(&mut pin, safeguards.max_stream_duration).await
                         {
                             match chunk {
-                                Ok((text, _)) => {
-                                    final_content.push_str(&text);
-                                    yield AgentEvent::content(text);
+                                // Post-nudge summary reasoning stays out of the
+                                // visible reply (recovery-channel guard).
+                                Ok((text, is_thinking)) => {
+                                    if !is_thinking {
+                                        final_content.push_str(&text);
+                                        yield AgentEvent::content(text);
+                                    }
                                 }
                                 Err(_) => break,
                             }

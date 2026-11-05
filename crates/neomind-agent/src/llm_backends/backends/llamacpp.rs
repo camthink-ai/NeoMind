@@ -22,6 +22,7 @@ use neomind_core::llm::backend::{
 };
 use neomind_core::message::{Content, ContentPart, Message, MessageRole};
 
+use super::think_filter::{ThinkContentFilter, GRACE_CHARS};
 use crate::llm_backends::text_tool_calls;
 
 /// Default llama.cpp server endpoint.
@@ -80,6 +81,19 @@ fn apply_thinking_override(
     }
 }
 
+/// Grace-window activation follows the FINAL value sent to the server: every
+/// leak in the leakfix-r2 corpus (26/26) sat on requests that disabled
+/// thinking, so only those buffer the opening run. Thinking-on requests keep
+/// unbuffered first-token streaming; balanced blocks and unclosed opens are
+/// repaired without any hold either way.
+fn think_grace_for_request(req_body: &serde_json::Value) -> usize {
+    if req_body["chat_template_kwargs"]["enable_thinking"] == serde_json::json!(false) {
+        GRACE_CHARS
+    } else {
+        0
+    }
+}
+
 /// Poll the server's /health until it answers 200 (model ready) or the
 /// deadline passes. llama-server serves /health with 503 during load.
 async fn wait_for_llama_model_ready(
@@ -105,6 +119,20 @@ async fn wait_for_llama_model_ready(
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
     false
+}
+
+/// One warn line per repaired response so acceptance runs can prove the
+/// mechanism fired (grep `think_filter_strip` in server logs) instead of
+/// mistaking a non-reproducing trial for a fix.
+fn log_think_filter_stats(filter: &ThinkContentFilter) {
+    let stats = filter.stats();
+    if stats.markers_stripped > 0 || stats.chars_reclassified > 0 {
+        tracing::warn!(
+            markers_stripped = stats.markers_stripped,
+            chars_reclassified = stats.chars_reclassified,
+            "think_filter_strip: repaired think markers misrouted into the content channel"
+        );
+    }
 }
 
 fn default_endpoint() -> String {
@@ -471,6 +499,7 @@ impl LlmRuntime for LlamaCppRuntime {
             "cache_prompt": self.config.cache_prompt,
         });
         apply_thinking_override(&mut req_body, &input.params);
+        let content_grace = think_grace_for_request(&req_body);
 
         if !model.is_empty() {
             req_body["model"] = serde_json::json!(model);
@@ -598,8 +627,23 @@ impl LlmRuntime for LlamaCppRuntime {
             .next()
             .ok_or_else(|| LlmError::Generation("No choices in response".to_string()))?;
 
+        // Repair think markers the server misrouted into content (stray
+        // `</think>` after a template-consumed opening tag): the opening run
+        // belongs to the thinking channel. Run BEFORE tool-call JSON is
+        // appended below — the appended JSON must never pass through the
+        // filter.
+        let raw_content = choice.message.content.unwrap_or_default();
+        let mut think_filter = ThinkContentFilter::with_grace(content_grace);
+        let (mut repaired_thinking, mut clean_content) = think_filter.feed(&raw_content);
+        {
+            let (more_thinking, more_content) = think_filter.finish();
+            repaired_thinking.push_str(&more_thinking);
+            clean_content.push_str(&more_content);
+        }
+        log_think_filter_stats(&think_filter);
+
         // Build response text, including tool calls if present
-        let mut response_text = choice.message.content.unwrap_or_default();
+        let mut response_text = clean_content;
 
         // Handle tool calls
         let native_tool_calls = if let Some(ref tool_calls) = choice.message.tool_calls {
@@ -628,8 +672,15 @@ impl LlmRuntime for LlamaCppRuntime {
             None
         };
 
-        // Extract thinking content from reasoning_content field
-        let thinking = choice.message.reasoning_content;
+        // Server-split reasoning first, then any reasoning the filter
+        // recovered out of the content channel.
+        let mut thinking = choice.message.reasoning_content.unwrap_or_default();
+        thinking.push_str(&repaired_thinking);
+        let thinking = if thinking.is_empty() {
+            None
+        } else {
+            Some(thinking)
+        };
 
         let result = Ok(LlmOutput {
             text: response_text,
@@ -738,6 +789,7 @@ impl LlmRuntime for LlamaCppRuntime {
             "stream_options": { "include_usage": true },
         });
         apply_thinking_override(&mut req_body, &input.params);
+        let content_grace = think_grace_for_request(&req_body);
 
         tracing::info!(
             endpoint = %url,
@@ -900,6 +952,11 @@ impl LlmRuntime for LlamaCppRuntime {
 
                     let mut stream = response.bytes_stream();
                     let mut buffer = Vec::new();
+                    // Repairs think markers the server misrouted into the
+                    // content channel (see think_filter.rs); spans the whole
+                    // response, flushed at [DONE] and again as a backstop.
+                    // Grace hold only when this request disabled thinking.
+                    let mut content_filter = ThinkContentFilter::with_grace(content_grace);
                     // Accumulate tool calls across chunks
                     let mut accumulated_tool_calls: std::collections::HashMap<
                         u32,
@@ -929,6 +986,14 @@ impl LlmRuntime for LlamaCppRuntime {
                                         continue;
                                     }
                                     if line == "data: [DONE]" {
+                                        // Flush think-marker repair still held back
+                                        let (repaired, visible) = content_filter.finish();
+                                        if !repaired.is_empty() {
+                                            let _ = tx.send(Ok((repaired, true))).await;
+                                        }
+                                        if !visible.is_empty() {
+                                            let _ = tx.send(Ok((visible, false))).await;
+                                        }
                                         // Flush any accumulated tool calls
                                         if !accumulated_tool_calls.is_empty() {
                                             let tool_calls_json: Vec<serde_json::Value> =
@@ -977,9 +1042,16 @@ impl LlmRuntime for LlamaCppRuntime {
                                                 // Handle content
                                                 if let Some(ref content) = choice.delta.content {
                                                     if !content.is_empty() {
-                                                        let _ = tx
-                                                            .send(Ok((content.clone(), false)))
-                                                            .await;
+                                                        let (repaired, visible) =
+                                                            content_filter.feed(content);
+                                                        if !repaired.is_empty() {
+                                                            let _ =
+                                                                tx.send(Ok((repaired, true))).await;
+                                                        }
+                                                        if !visible.is_empty() {
+                                                            let _ =
+                                                                tx.send(Ok((visible, false))).await;
+                                                        }
                                                     }
                                                 }
 
@@ -1061,6 +1133,18 @@ impl LlmRuntime for LlamaCppRuntime {
                             }
                         }
                     }
+
+                    // Backstop for streams that end without [DONE]: flush
+                    // any think-marker repair still held back and log the
+                    // repair once per response (idempotent after [DONE]).
+                    let (repaired, visible) = content_filter.finish();
+                    if !repaired.is_empty() {
+                        let _ = tx.send(Ok((repaired, true))).await;
+                    }
+                    if !visible.is_empty() {
+                        let _ = tx.send(Ok((visible, false))).await;
+                    }
+                    log_think_filter_stats(&content_filter);
                 }
                 Err(e) => {
                     tracing::error!(
@@ -1485,6 +1569,290 @@ mod tests {
                 assert_eq!(request["chat_template_kwargs"]["enable_thinking"], enabled);
             }
         }
+    }
+
+    /// Mock SSE/JSON server for the think-filter wiring tests: accepts one
+    /// request, replies with `response`, returns the parsed request body.
+    fn spawn_once_server(
+        response: String,
+    ) -> (
+        std::net::SocketAddr,
+        std::thread::JoinHandle<serde_json::Value>,
+    ) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut headers = Vec::new();
+            while !headers.ends_with(b"\r\n\r\n") {
+                let mut byte = [0];
+                socket.read_exact(&mut byte).unwrap();
+                headers.push(byte[0]);
+                assert!(headers.len() < 8192);
+            }
+            let headers = String::from_utf8(headers).unwrap();
+            let length = headers
+                .lines()
+                .find_map(|line| {
+                    let (key, value) = line.split_once(':')?;
+                    key.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().unwrap())
+                })
+                .unwrap();
+            let mut bytes = vec![0; length];
+            socket.read_exact(&mut bytes).unwrap();
+            let response = response.clone();
+            write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response.len(),
+                response
+            )
+            .unwrap();
+            serde_json::from_slice(&bytes).unwrap()
+        });
+        (address, server)
+    }
+
+    #[tokio::test]
+    async fn test_llamacpp_stream_repairs_stray_think_closer_into_thinking_channel() {
+        use futures::StreamExt;
+        // The stray closer is split across two content deltas to prove the
+        // chunk-boundary hold-back works end to end. Thinking DISABLED (the
+        // leak mode) reclassifies the opening run into the thinking channel;
+        // thinking ON streams without the grace hold, so the marker is
+        // stripped but the already-streamed prefix stays visible.
+        for (thinking, want_thinking, want_content) in [
+            (
+                false,
+                "Plan first: check the list.</think>",
+                "The answer is 42.",
+            ),
+            (true, "", "Plan first: check the list.The answer is 42."),
+        ] {
+            let sse = concat!(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"Plan first: check the list.\"}}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{\"content\":\"</th\"}}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{\"content\":\"ink>The answer is 42.\"},\"finish_reason\":\"stop\"}]}\n\n",
+                "data: [DONE]\n\n",
+            )
+            .to_string();
+            let (address, _server) = spawn_once_server(sse);
+            let runtime = LlamaCppRuntime::new(
+                LlamaCppConfig::new("spark-test").with_endpoint(format!("http://{address}")),
+            )
+            .unwrap();
+            let mut input = neomind_core::llm::backend::LlmInput::new("hello");
+            input.params.thinking_enabled = Some(thinking);
+            let chunks = runtime
+                .generate_stream(input)
+                .await
+                .unwrap()
+                .collect::<Vec<_>>()
+                .await;
+            assert!(chunks.iter().all(|chunk| chunk.is_ok()));
+            let thinking_out: String = chunks
+                .iter()
+                .filter(|chunk| chunk.as_ref().unwrap().1)
+                .map(|chunk| chunk.as_ref().unwrap().0.clone())
+                .collect();
+            let content: String = chunks
+                .iter()
+                .filter(|chunk| !chunk.as_ref().unwrap().1)
+                .map(|chunk| chunk.as_ref().unwrap().0.clone())
+                .collect();
+            assert_eq!(thinking_out, want_thinking);
+            assert_eq!(content, want_content);
+            assert!(!content.contains("</think>"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_llamacpp_nonstream_repairs_stray_think_closer() {
+        let body = "{\"choices\":[{\"message\":{\"content\":\"Plan</think>Answer\",\"reasoning_content\":\"server-reasoning\"},\"finish_reason\":\"stop\"}]}".to_string();
+        let (address, _server) = spawn_once_server(body);
+        let runtime = LlamaCppRuntime::new(
+            LlamaCppConfig::new("spark-test").with_endpoint(format!("http://{address}")),
+        )
+        .unwrap();
+        let output = runtime
+            .generate(neomind_core::llm::backend::LlmInput::new("hello"))
+            .await
+            .unwrap();
+        assert_eq!(output.text, "Answer");
+        assert_eq!(
+            output.thinking.as_deref(),
+            Some("server-reasoningPlan</think>")
+        );
+    }
+
+    /// Paced mock SSE server: accepts one request, then performs the given
+    /// `(delay_ms, raw bytes)` writes in order, ignoring client disconnects.
+    /// The body is close-delimited (no Content-Length) so each write reaches
+    /// the client immediately — assertions below therefore measure NeoMind's
+    /// own emission timing, not the mock's.
+    fn spawn_paced_server(writes: Vec<(u64, String)>) -> std::net::SocketAddr {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut socket, _) = match listener.accept() {
+                Ok(pair) => pair,
+                Err(_) => return,
+            };
+            let _ = socket.set_read_timeout(Some(Duration::from_secs(5)));
+            let mut headers = Vec::new();
+            loop {
+                let mut byte = [0];
+                if socket.read_exact(&mut byte).is_err() {
+                    return;
+                }
+                headers.push(byte[0]);
+                if headers.ends_with(b"\r\n\r\n") {
+                    break;
+                }
+                if headers.len() > 8192 {
+                    return;
+                }
+            }
+            let header_str = String::from_utf8_lossy(&headers);
+            let length = header_str
+                .lines()
+                .find_map(|line| {
+                    let (key, value) = line.split_once(':')?;
+                    key.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().unwrap())
+                })
+                .unwrap_or(0);
+            if length > 0 {
+                let mut bytes = vec![0; length];
+                if socket.read_exact(&mut bytes).is_err() {
+                    return;
+                }
+            }
+            let _ = write!(
+                socket,
+                "HTTP/1.0 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n"
+            );
+            let _ = socket.flush();
+            for (delay_ms, data) in writes {
+                std::thread::sleep(Duration::from_millis(delay_ms));
+                if socket.write_all(data.as_bytes()).is_err() {
+                    return;
+                }
+                let _ = socket.flush();
+            }
+        });
+        address
+    }
+
+    fn paced_input(thinking: Option<bool>) -> neomind_core::llm::backend::LlmInput {
+        let mut input = neomind_core::llm::backend::LlmInput::new("hello");
+        input.params.thinking_enabled = thinking;
+        input
+    }
+
+    /// Thinking ON: a short marker-free reply must stream progressively —
+    /// the first chunk leaves while the server is still mid-stream, not
+    /// buffered until completion.
+    #[tokio::test]
+    async fn thinking_on_short_reply_streams_before_completion() {
+        use futures::StreamExt;
+        let address = spawn_paced_server(vec![
+            (0, "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n".to_string()),
+            (
+                3000,
+                "data: {\"choices\":[{\"delta\":{\"content\":\" world\"},\"finish_reason\":\"stop\"}]}\n\n"
+                    .to_string(),
+            ),
+            (0, "data: [DONE]\n\n".to_string()),
+        ]);
+        let runtime = LlamaCppRuntime::new(
+            LlamaCppConfig::new("spark-test").with_endpoint(format!("http://{address}")),
+        )
+        .unwrap();
+        let mut stream = runtime
+            .generate_stream(paced_input(Some(true)))
+            .await
+            .unwrap();
+        let first = tokio::time::timeout(Duration::from_millis(1500), stream.next())
+            .await
+            .expect("thinking-on first chunk must not wait for stream end")
+            .expect("stream open")
+            .expect("chunk ok");
+        assert_eq!(first, ("Hello".to_string(), false));
+    }
+
+    /// Thinking OFF: the grace hold is active, so a short reply stays held
+    /// until the stream completes — no chunk may arrive mid-generation.
+    #[tokio::test]
+    async fn thinking_off_short_reply_holds_until_completion() {
+        use futures::StreamExt;
+        let address = spawn_paced_server(vec![
+            (
+                0,
+                "data: {\"choices\":[{\"delta\":{\"content\":\"short answer\"}}]}\n\n".to_string(),
+            ),
+            (
+                3000,
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+                    .to_string(),
+            ),
+        ]);
+        let runtime = LlamaCppRuntime::new(
+            LlamaCppConfig::new("spark-test").with_endpoint(format!("http://{address}")),
+        )
+        .unwrap();
+        let mut stream = runtime
+            .generate_stream(paced_input(Some(false)))
+            .await
+            .unwrap();
+        let none = tokio::time::timeout(Duration::from_millis(1500), stream.next()).await;
+        assert!(
+            none.is_err(),
+            "grace hold must keep a short thinking-off reply invisible mid-generation"
+        );
+    }
+
+    /// Thinking OFF with a reply longer than the grace budget: content is
+    /// released as soon as the budget is exceeded — before completion.
+    #[tokio::test]
+    async fn thinking_off_long_reply_releases_after_grace_budget() {
+        use futures::StreamExt;
+        let long: String = "a".repeat(GRACE_CHARS + 400);
+        let first_write = format!(
+            "data: {{\"choices\":[{{\"delta\":{{\"content\":\"{}\"}}}}]}}\n\n",
+            long
+        );
+        let address = spawn_paced_server(vec![
+            (0, first_write),
+            (
+                3000,
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+                    .to_string(),
+            ),
+        ]);
+        let runtime = LlamaCppRuntime::new(
+            LlamaCppConfig::new("spark-test").with_endpoint(format!("http://{address}")),
+        )
+        .unwrap();
+        let mut stream = runtime
+            .generate_stream(paced_input(Some(false)))
+            .await
+            .unwrap();
+        let first = tokio::time::timeout(Duration::from_millis(1500), stream.next())
+            .await
+            .expect("long reply must release after the grace budget, not at completion")
+            .expect("stream open")
+            .expect("chunk ok");
+        assert!(!first.1);
+        assert!(first.0.starts_with("aaa"));
     }
 
     #[test]

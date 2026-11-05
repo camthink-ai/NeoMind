@@ -547,6 +547,141 @@ async fn multimodal_path_narration_nudge_recovers_tool_call() {
     );
 }
 
+/// Multimodal recovery-channel guards (leakfix-r2 mechanism B): reasoning
+/// arriving with `is_thinking = true` on the four multimodal summary /
+/// continuation / nudge consumers must never reach Content events or
+/// persisted memory — the same contract the text path got in 7ccbffa7.
+mod multimodal_recovery_guards {
+    use super::{collect, harness, joined_content, ProgressShell};
+    use crate::agent::types::{AgentEvent, AgentInternalState};
+    use crate::testing_helpers::mock_llm::{MockLlmRuntime, MockResponse};
+    use crate::toolkit::registry::ToolRegistry;
+    use std::sync::Arc;
+
+    const SECRET_SUMMARY: &str = "PRIVATE_MM_SUMMARY_REASONING";
+    const SECRET_CONTINUATION: &str = "PRIVATE_MM_CONTINUATION_REASONING";
+    const SECRET_NUDGE: &str = "PRIVATE_MM_NUDGE_REASONING";
+    const PUBLIC_SUMMARY: &str = "PUBLIC_MM_SUMMARY_ANSWER";
+
+    async fn run_multimodal(
+        rt: &MockLlmRuntime,
+        user_message: &str,
+    ) -> (
+        Vec<AgentEvent>,
+        Arc<tokio::sync::RwLock<AgentInternalState>>,
+    ) {
+        let (iface, state, _) = harness(rt);
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(super::EchoTool));
+        registry.register(Arc::new(ProgressShell {
+            commands: Arc::new(std::sync::Mutex::new(Vec::new())),
+        }));
+        let stream = crate::agent::streaming::process_multimodal_stream_events_with_safeguards(
+            iface,
+            state.clone(),
+            Arc::new(registry),
+            user_message,
+            vec![],
+            crate::agent::StreamSafeguards::default(),
+            None,
+            None,
+        )
+        .await
+        .expect("stream");
+        (collect(stream).await, state)
+    }
+
+    async fn assert_no_secret(
+        events: &[AgentEvent],
+        state: &Arc<tokio::sync::RwLock<AgentInternalState>>,
+    ) {
+        let visible = joined_content(events);
+        for secret in [SECRET_SUMMARY, SECRET_CONTINUATION, SECRET_NUDGE] {
+            assert!(
+                !visible.contains(secret),
+                "reasoning leaked into Content: {visible}"
+            );
+        }
+        let guard = state.read().await;
+        for msg in guard.memory.iter() {
+            let text = msg.content.to_string();
+            for secret in [SECRET_SUMMARY, SECRET_CONTINUATION, SECRET_NUDGE] {
+                assert!(
+                    !text.contains(secret),
+                    "reasoning leaked into memory: {text}"
+                );
+            }
+        }
+    }
+
+    /// Main tool-path summary (chat_stream_summary after a tool round).
+    #[tokio::test]
+    async fn multimodal_main_summary_drops_reasoning_channel() {
+        let rt = MockLlmRuntime::new(vec![
+            MockResponse::tool_call("echo", serde_json::json!({ "msg": "checked" })),
+            MockResponse::text(PUBLIC_SUMMARY).with_thinking(SECRET_SUMMARY),
+        ]);
+        let (events, state) = run_multimodal(&rt, "帮我处理").await;
+        assert!(joined_content(&events).contains(PUBLIC_SUMMARY));
+        assert_no_secret(&events, &state).await;
+    }
+
+    /// Dead-end continuation buffer + the summary that follows it: both
+    /// consumers must drop the reasoning channel.
+    #[tokio::test]
+    async fn multimodal_continuation_buffer_drops_reasoning_channel() {
+        let rt = MockLlmRuntime::new(vec![
+            MockResponse::tool_call(
+                "shell",
+                serde_json::json!({ "command": "neomind device list" }),
+            ),
+            // Continuation answer: reasoning plus a public line, no tool
+            // calls — falls through to the summary.
+            MockResponse::text("I will create the dashboard next.")
+                .with_thinking(SECRET_CONTINUATION),
+            MockResponse::text(PUBLIC_SUMMARY).with_thinking(SECRET_SUMMARY),
+        ]);
+        let (events, state) = run_multimodal(&rt, "创建一个温湿度仪表盘").await;
+        assert!(events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Progress { ref stage, .. } if stage.as_deref() == Some("continuing")
+        )));
+        assert!(joined_content(&events).contains(PUBLIC_SUMMARY));
+        assert_no_secret(&events, &state).await;
+    }
+
+    /// Nudge round degenerating to `[]` with reasoning: the restored
+    /// narration must stay clean of the reasoning channel.
+    #[tokio::test]
+    async fn multimodal_nudge_degenerate_round_drops_reasoning_channel() {
+        let narration = "我现在使用 echo 工具来处理。";
+        let rt = MockLlmRuntime::new(vec![
+            MockResponse::text(narration),
+            MockResponse::text("[]").with_thinking(SECRET_NUDGE),
+        ]);
+        let (events, state) = run_multimodal(&rt, "帮我处理").await;
+        let visible = joined_content(&events);
+        assert!(
+            visible.contains(narration),
+            "narration must be kept: {visible}"
+        );
+        assert_no_secret(&events, &state).await;
+    }
+
+    /// Post-nudge summary after a recovered tool call.
+    #[tokio::test]
+    async fn multimodal_post_nudge_summary_drops_reasoning_channel() {
+        let rt = MockLlmRuntime::new(vec![
+            MockResponse::text("我现在使用 echo 工具来处理。"),
+            MockResponse::tool_call("echo", serde_json::json!({ "msg": "recovered" })),
+            MockResponse::text(PUBLIC_SUMMARY).with_thinking(SECRET_SUMMARY),
+        ]);
+        let (events, state) = run_multimodal(&rt, "帮我处理").await;
+        assert!(joined_content(&events).contains(PUBLIC_SUMMARY));
+        assert_no_secret(&events, &state).await;
+    }
+}
+
 /// A deterministic tool NAMED image_edit (so the reuse guard applies) that
 /// counts real executions.
 struct CountingImageEdit {

@@ -18,6 +18,10 @@ pub mod llamacpp;
 #[cfg(feature = "llamacpp")]
 pub use llamacpp::{LlamaCppConfig, LlamaCppRuntime};
 
+// Content-channel think-marker repair shared by the llama.cpp backend paths
+#[cfg(feature = "llamacpp")]
+pub(crate) mod think_filter;
+
 // OpenAI-compatible cloud backends (OpenAI, Anthropic, Google, xAI, etc.)
 #[cfg(feature = "cloud")]
 pub mod openai;
