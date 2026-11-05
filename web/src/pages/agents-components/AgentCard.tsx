@@ -31,14 +31,13 @@ import {
   Play,
   Trash2,
   MoreVertical,
-  Pause,
   AlertTriangle,
   Loader2,
   Clock,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { formatTimestamp } from "@/lib/utils/format"
-import { interactiveCardHover } from "@/design-system/tokens/size"
+import { interactiveCardLift } from "@/design-system/tokens/size"
 import type { AiAgent } from "@/types"
 
 interface AgentCardProps {
@@ -104,7 +103,7 @@ export function AgentCard({
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() } }}
       className={cn(
         "group relative flex h-full flex-col cursor-pointer active:scale-[0.99]",
-        interactiveCardHover,
+        interactiveCardLift,
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
       )}
     >
@@ -112,7 +111,7 @@ export function AgentCard({
       {/* ── Header: identity + health ─────────────────────────────── */}
       <div className="flex items-start gap-3">
         <div className={cn(
-          "relative w-11 h-11 rounded-xl flex items-center justify-center shrink-0 transition-colors",
+          "relative w-11 h-11 rounded-lg flex items-center justify-center shrink-0 transition-colors",
           isExecuting ? "bg-info-light" : isError ? "bg-error-light"
             : agent.status === 'Paused' ? "bg-muted" : "bg-success-light"
         )}>

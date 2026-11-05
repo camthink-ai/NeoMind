@@ -126,7 +126,7 @@ const LLM_PROVIDER_CONFIG: Record<string, {
   },
   llamacpp: {
     icon: <Server className="h-6 w-6" />,
-    iconBg: 'bg-warning-light text-warning',
+    iconBg: 'bg-accent-indigo-light text-accent-indigo',
   },
   cloudai: {
     icon: <Cloud className="h-6 w-6" />,
@@ -695,7 +695,10 @@ export function UnifiedLLMBackendsTab({
             model NAME as the title, category demoted to the subline. */}
         <CardHeader className="pb-3">
           <div className="flex items-center gap-2.5">
-            <div className="flex items-center justify-center h-8 w-8 rounded-lg shrink-0 bg-warning-light text-warning">
+            {/* Identity tile — accent-indigo like every sibling backend card.
+                Warning-yellow misused the "attention" semantic on a healthy
+                engine's identity icon. */}
+            <div className="flex items-center justify-center h-8 w-8 rounded-lg shrink-0 bg-accent-indigo-light text-accent-indigo">
               <BrainCircuit className="h-4 w-4" />
             </div>
             <div className="min-w-0 flex-1">
@@ -761,7 +764,9 @@ export function UnifiedLLMBackendsTab({
           {builtinStatus.installed && builtinStatus.server_state !== 'downloading' && (
             <div className="rounded-md border border-border divide-y divide-border">
               <div className="flex h-9 items-center gap-2 px-3">
-                <BrainCircuit className="h-3.5 w-3.5 shrink-0 text-warning" />
+                {/* Identity icon — accent-indigo, matching the card tile above.
+                    State lives in the pill on the right, not the icon hue. */}
+                <BrainCircuit className="h-3.5 w-3.5 shrink-0 text-accent-indigo" />
                 <span className="w-28 shrink-0 truncate text-xs font-medium">
                   {t('plugins:llm.builtinMainEngine')}
                 </span>
@@ -820,7 +825,7 @@ export function UnifiedLLMBackendsTab({
               </div>
               {builtinStatus.companion && (
                 <div className="flex h-9 items-center gap-2 px-3">
-                  <Eye className="h-3.5 w-3.5 shrink-0 text-info" />
+                  <Eye className="h-3.5 w-3.5 shrink-0 text-accent-indigo" />
                   <span className="w-28 shrink-0 truncate text-xs font-medium">
                     {t('plugins:llm.companionLabel')}
                   </span>

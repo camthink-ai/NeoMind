@@ -399,13 +399,13 @@ html {
 
     /* Semantic colors (light). L is tuned so colored TEXT passes WCAG AA
        (4.5:1) on cards and tinted pills — verified by
-       scripts/check-contrast.mjs; hue 78 keeps warning a clean amber
-       instead of mud. Washes (10%) stay light — they're carriers, not
-       text. */
+       scripts/check-contrast.mjs. Warning hue 85 (matching the dark theme)
+       keeps the yellow clean; hue ~78 sat in mustard territory and read as
+       mud. Washes (10%) stay light — they're carriers, not text. */
     --color-success: oklch(0.50 0.17 155);
     --color-success-bg: oklch(0.55 0.19 155 / 10%);
-    --color-warning: oklch(0.54 0.15 78);
-    --color-warning-bg: oklch(0.68 0.19 78 / 10%);
+    --color-warning: oklch(0.54 0.16 85);
+    --color-warning-bg: oklch(0.68 0.19 85 / 10%);
     --color-error: oklch(0.52 0.24 25);
     --color-error-bg: oklch(0.55 0.24 25 / 10%);
     --color-info: oklch(0.52 0.17 250);
@@ -438,6 +438,7 @@ html {
        elevation. Each step up adds a wider, fainter ambient layer rather than
        just scaling one shadow. */
     --shadow-sm: 0 1px 2px 0 oklch(0 0 0 / 8%);
+    --shadow-xs: 0 1px 1.5px 0 oklch(0 0 0 / 5%);
     --shadow-md: 0 1px 2px 0 oklch(0 0 0 / 7%), 0 2px 6px -1px oklch(0 0 0 / 9%);
     --shadow-lg: 0 1px 2px 0 oklch(0 0 0 / 5%), 0 4px 12px -2px oklch(0 0 0 / 9%), 0 12px 24px -8px oklch(0 0 0 / 6%);
     --shadow-xl: 0 2px 4px 0 oklch(0 0 0 / 5%), 0 8px 20px -4px oklch(0 0 0 / 10%), 0 20px 40px -12px oklch(0 0 0 / 8%);
@@ -621,6 +622,7 @@ html {
        on dark surfaces), still layered. Real dark elevation comes from the
        surface lightness ladder + borders above; shadows add depth cue only. */
     --shadow-sm: 0 1px 2px 0 oklch(0 0 0 / 25%);
+    --shadow-xs: 0 1px 2px 0 oklch(0 0 0 / 18%);
     --shadow-md: 0 1px 2px 0 oklch(0 0 0 / 20%), 0 2px 8px -1px oklch(0 0 0 / 30%);
     --shadow-lg: 0 2px 4px 0 oklch(0 0 0 / 20%), 0 4px 16px -3px oklch(0 0 0 / 40%), 0 10px 28px -8px oklch(0 0 0 / 25%);
     --shadow-xl: 0 2px 6px 0 oklch(0 0 0 / 22%), 0 8px 24px -5px oklch(0 0 0 / 45%), 0 18px 40px -12px oklch(0 0 0 / 30%);

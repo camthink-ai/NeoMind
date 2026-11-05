@@ -157,6 +157,7 @@ export default {
         "2xl": "var(--radius-2xl)",
       },
       boxShadow: {
+        xs: "var(--shadow-xs)",
         sm: "var(--shadow-sm)",
         md: "var(--shadow-md)",
         lg: "var(--shadow-lg)",

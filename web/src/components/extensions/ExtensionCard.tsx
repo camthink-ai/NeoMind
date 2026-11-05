@@ -1,5 +1,5 @@
 import { Card, CardContent } from "@/components/ui/card"
-import { interactiveCardHover } from "@/design-system/tokens/size"
+import { interactiveCardLift } from "@/design-system/tokens/size"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -94,6 +94,7 @@ export function ExtensionCard({
   const hasCrashed = extension.state === "Crashed"
   const hasWarning = extension.state === "Warning"
   const isFailed = extension.state === "Failed" || extension.state === "Stopped"
+  const isRunning = !hasError && !hasCrashed && !hasWarning && !isFailed
 
   const displayState = hasError
     ? t('error', { defaultValue: 'Error' })
@@ -119,22 +120,28 @@ export function ExtensionCard({
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onDetails?.() } }}
       className={cn(
         "group h-full overflow-hidden flex flex-col cursor-pointer active:scale-[0.99]",
-        interactiveCardHover,
+        interactiveCardLift,
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
       )}
     >
       <CardContent className="p-4 flex flex-col flex-1">
-        {/* Header: status-tinted icon + name + state + actions */}
+        {/* Header: status-tinted icon + name + actions.
+            Status is expressed by the tinted tile + corner dot alone — the
+            old state pill triple-encoded the same signal. The icon tile
+            carries a hover title so Error/Crashed states keep their
+            explanation (crash count + reason) one hover away. */}
         <div className="flex items-start justify-between mb-3">
           <div className="flex items-center gap-3 min-w-0">
-            {/* Icon with status-tinted background (mirrors AgentCard) */}
-            <div className={cn(
-              "relative w-11 h-11 rounded-xl flex items-center justify-center shrink-0 transition-colors",
-              hasError || hasCrashed ? "bg-error-light text-error" :
-              hasWarning ? "bg-warning-light text-warning" :
-              isFailed ? "bg-muted text-muted-foreground" :
-              "bg-success-light text-success",
-            )}>
+            <div
+              className={cn(
+                "relative w-11 h-11 rounded-lg flex items-center justify-center shrink-0 transition-colors",
+                hasError || hasCrashed ? "bg-error-light text-error" :
+                hasWarning ? "bg-warning-light text-warning" :
+                isFailed ? "bg-muted text-muted-foreground" :
+                "bg-success-light text-success",
+              )}
+              title={hasCrashed ? crashTitle : !isRunning ? displayState : undefined}
+            >
             <CategoryIcon className="h-5 w-5" />
               {/* Status indicator dot */}
               <div className={cn(
@@ -143,18 +150,7 @@ export function ExtensionCard({
               )} />
             </div>
             <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <h3 className="font-semibold text-sm truncate" title={extension.name}>{extension.name}</h3>
-                <span className={cn(
-                  textNano, "px-1.5 py-0.5 rounded-full shrink-0",
-                  hasError || hasCrashed ? "bg-error-light text-error" :
-                  hasWarning ? "bg-warning-light text-warning" :
-                  isFailed ? "bg-muted-30 text-muted-foreground" :
-                  "bg-success-light text-success"
-                )} title={crashTitle}>
-                  {displayState}
-                </span>
-              </div>
+              <h3 className="font-semibold text-[15px] truncate" title={extension.name}>{extension.name}</h3>
               <div className="flex items-center gap-2 mt-0.5">
                 <span className={cn(textMini, "text-muted-foreground font-mono truncate max-w-[160px]")} title={extension.id}>{extension.id}</span>
                 {extension.version && (
@@ -216,7 +212,7 @@ export function ExtensionCard({
               className={cn(
                 textNano,
                 "flex items-center gap-1 px-1.5 py-0.5 rounded-full shrink-0",
-                "bg-warning-light text-warning border border-warning-light",
+                "bg-warning-light text-warning",
               )}
               title={t('card.aiToolsOff', { defaultValue: 'Hidden from agent' })}
             >

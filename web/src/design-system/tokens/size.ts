@@ -303,39 +303,55 @@ export const dashboardScrollableContent = [
 // ============================================================================
 
 /**
- * General card container — used for cards, panels, stat boxes across the app
- * Equivalent to `rounded-lg border bg-card shadow-sm` but centralized
+ * General card container — used for cards, panels, stat boxes across the app.
+ * Separation is TWO-layered (mainstream shadcn/Tailwind-Plus default): a
+ * hairline border AND a faint rest shadow — neither carries the card's
+ * presence alone, which is what de-emphasizes the "grid of outlined boxes"
+ * look on white-on-white pages.
  */
 export const cardBase = [
-  'rounded-md border bg-card',
+  'rounded-xl border bg-card shadow-xs',
 ].join(' ')
 
 /**
  * Interactive card — a clickable card surface (device/agent/extension cards,
- * list rows, etc.). Unifies the previously scattered hover treatments
- * into one consistent interaction: shadow + border deepen. NO translate —
- * a positional hover jump reads as jitter on dense card grids; the
- * static shadow/border cue keeps the grid calm (Linear/GitHub style).
+ * list rows, etc.). Unifies the previously scattered hover treatments into
+ * one consistent interaction: the shadow deepens, the border stays CONSTANT
+ * (a darkening border on hover reads as the box getting louder, the opposite
+ * of "lift"). NO translate in the default — a positional hover jump reads
+ * as jitter on dense card grids and table rows; grid hero cards opt into
+ * `interactiveCardLift` instead.
  * Opaque surface: no backdrop-blur, keeping content legible and GPU-light.
  */
 export const interactiveCard = [
-  'bg-card rounded-md border',
+  'bg-card rounded-xl border',
   'cursor-pointer transition-all duration-fast ease-out',
-  'hover:shadow-md hover:border-[var(--border-hover)]',
+  'hover:shadow-md',
 ].join(' ')
 
 /**
- * Interactive card hover effect — the shadow/border transition only.
+ * Interactive card hover effect — the shadow transition only.
  *
  * Use this on cards that already carry their own surface styles (e.g. the
  * `<Card>` component which includes `cardBase`, or cards with a non-default
  * radius like `rounded-xl`) but should share the same hover interaction.
- * This avoids re-declaring `hover:shadow-md hover:border-[var(--border-hover)]
- * transition-all duration-fast ease-out` at every call site.
+ * This avoids re-declaring `hover:shadow-md transition-all duration-fast
+ * ease-out` at every call site.
  */
 export const interactiveCardHover = [
   'transition-all duration-fast ease-out',
-  'hover:shadow-md hover:border-[var(--border-hover)]',
+  'hover:shadow-md',
+].join(' ')
+
+/**
+ * Grid hero-card hover — the lift variant (shadow deepens + card rises
+ * 2px). For clickable grid cards (agent/extension/device card grids) where
+ * a positional cue sells clickability; NOT for table rows or dense lists
+ * (use `interactiveCardHover` there — translate on rows reads as jitter).
+ */
+export const interactiveCardLift = [
+  'transition-all duration-fast ease-out',
+  'hover:shadow-md hover:-translate-y-0.5',
 ].join(' ')
 
 /**
