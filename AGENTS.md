@@ -121,6 +121,25 @@ Review round 2 (2026-11-05) fixed two more: the runtime-upgrade respawn
 (restart_builtin_engine) also respects the stop flag now (runtime applied,
 engine stays down), and the model wizard skips its 90s "starting" window when
 deliberately_stopped (lands on ready with the start button directly).
+
+## T4 138 gate: 1.2.6 candidate vs 1.2.5 (2026-11-05)
+
+Single-arm frozen gate on T4 (/tmp/neomind-t4-126gate-20261105-a; binary sha
+715e2dec…a9703 = the full Mac worktree incl. engine-stop and all 1.2.6 fixes,
+built cargo build --release --locked -p neomind-cli on T4). Frozen 138 = 69
+ids x zh/en, 1 round, same shuffle seed as 552 round 0; frozen evaluator/
+grader reused from the 552 SNAP + venv (source-sha256 asserts passed); Spark
+q4_k_m + b12024-cuda, fresh llama-server per cohort (32K, 1 slot, -ngl 99),
+thinking/.3/.75/20, 600s cap; proxy-verified live request params. Result:
+94/138 = 68.1% (en 69.6%, zh 66.7%), 0 timeouts, 125.4 min. vs 1.2.5 official
+gate 69/138 (50.0%): +25 cases (+18.1pp), far beyond single-round noise. vs
+552 full-arm rounds (99/138 r0, 107/138 r1): 94 is below both (net -5/-13);
+post-552 fixes show no measurable gain on this text-only set (multimodal
+skipped by design) and the gap is near the full arm's own round-to-round
+spread (8) — claim neither regression nor gain vs the full arm without another
+round. neomind.service paused per contract, auto-restored on completion
+(restoration-result rc0, API 200, both production llama-servers back). Local
+baseline copy + analysis: /tmp/neomind-126-t4-stage/. No commit/push/publish.
 CHANGELOG 1.2.6 gained "Added — builtin engine controls". Deliberately-stopped
 chats fail with connection errors by design; no auto-restart until user acts.
 No commit/push/publish.
