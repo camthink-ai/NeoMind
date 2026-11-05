@@ -778,8 +778,10 @@ fn extract_zip_contents(zip_data: &[u8]) -> Result<(String, Vec<u8>), ErrorRespo
             .by_index(i)
             .map_err(|e| ErrorResponse::bad_request(format!("Failed to read ZIP entry: {}", e)))?;
 
-        // Normalize path: strip directory prefixes
-        let name = file.name().to_string();
+        // Normalize path: strip directory prefixes.
+        // zip 9: name() validates UTF-8 — an invalid name matches no
+        // expected component file, so it degrades to "".
+        let name = file.name().map(|n| n.to_string()).unwrap_or_default();
         let filename = name.rsplit('/').next().unwrap_or(&name).to_string();
 
         match filename.as_str() {

@@ -511,7 +511,12 @@ fn extract_archive(bytes: &[u8], out_dir: &Path, is_zip: bool) -> anyhow::Result
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes))?;
         for i in 0..zip.len() {
             let mut entry = zip.by_index(i)?;
-            let rel = entry.name().trim_start_matches('/');
+            // zip 9: name() validates UTF-8; an invalid name has no sane
+            // extraction target — skip the entry.
+            let Ok(name) = entry.name() else {
+                continue;
+            };
+            let rel = name.trim_start_matches('/');
             let dest = out_dir.join(rel);
             if entry.is_dir() {
                 std::fs::create_dir_all(&dest)?;

@@ -41,7 +41,7 @@ tiktoken-rs = { version = "0.6", optional = true }
 semver = { workspace = true }
 libloading = "0.8"
 libc = "0.2"
-zip = { version = "2.1", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 sha2 = { workspace = true }
 scopeguard = "1.2"
 

@@ -102,6 +102,9 @@ Chat turns now end with grounded answers instead of looping or claiming unexecut
 ### Added — per-call model selection for the `chat_stream` capability
 - Extensions invoking the `chat_stream` capability can now pass `"model": "<backend id>"` (a backend ID from the platform's model configuration) to run that turn on a specific backend — the same reconfiguration path the chat UI's model picker uses; absent means the platform default. The tuyun-bridge VLM watermark flow already declares and documents this parameter. The override applies on BOTH the text-only and image branches — wiring only the image branch would have silently ignored a text-only `model` param.
 
+### Fixed — dependencies
+- **zip 2.6.1 → 9.3.0** (RUSTSEC-2026-0429, high 7.5 — `ZipArchive::extract` aborts the process on a symlink entry with a large declared size). The platform's own zip usage (`.nep` extension packages, builtin-runtime archives, log and community-component bundles) never calls `extract()`, but the release cargo-audit gate fails on any known-vulnerable version. Entry names in zip 9 are UTF-8-validated Results: invalid names now degrade to "match nothing" (prefix-filtered package/component entries) or skip the entry (runtime extraction) — identical outcomes to before for names that could never match a known path.
+
 ### Upgrade notes
 - Rule updates (`PATCH`-style) now return a structured 400 for bodies with unknown fields, no actual change, or wrong-typed values — previously they reported silent success with nothing written. Clients that treated any 2xx as success should handle 400 responses; an idempotent re-send of the current rule definition still succeeds with `changed=false`.
 - The chat context ring changes meaning (last measured request instead of cumulative execution) — dashboards or habits built on the old number should be re-baselined; no configuration or stored-data migration is involved.

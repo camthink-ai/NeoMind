@@ -1081,10 +1081,12 @@ async fn validate_nep_package(path: &std::path::PathBuf, verbose: bool) -> Resul
     let mut archive = ZipArchive::new(file)?;
 
     // Check for manifest.json - collect names first to avoid borrow issues
+    // zip 9: file_names() yields Results (UTF-8 validation); an invalid
+    // name is never the manifest.
     let manifest_names: Vec<String> = archive
         .file_names()
+        .filter_map(|n| n.ok().map(|s| s.to_string()))
         .filter(|n| n.ends_with("manifest.json"))
-        .map(|s| s.to_string())
         .collect();
 
     if manifest_names.is_empty() {
@@ -1169,7 +1171,9 @@ async fn validate_nep_package(path: &std::path::PathBuf, verbose: bool) -> Resul
         println!("Package contents:");
         for i in 0..archive.len() {
             let file = archive.by_index(i)?;
-            println!("  {}", file.name());
+            // zip 9: name() may fail UTF-8 validation — show a placeholder.
+            let shown = file.name().map(|n| n.to_string()).unwrap_or_else(|e| format!("<invalid name: {e}>"));
+            println!("  {}", shown);
         }
     }
 
