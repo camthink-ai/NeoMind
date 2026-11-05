@@ -62,6 +62,9 @@ export interface VideoDisplayProps {
   rounded?: boolean
   showFullscreen?: boolean
 
+  /** Poster frame shown before the video loads (native video poster attr). */
+  poster?: string
+
   className?: string
 }
 
@@ -77,6 +80,7 @@ interface VideoPlayerProps {
   controls: boolean
   loop: boolean
   fit: string
+  poster?: string
   onLoadingChange: (loading: boolean) => void
   onError: (error: boolean, message?: string) => void
 }
@@ -144,6 +148,7 @@ function VideoPlayer({
   controls,
   loop,
   fit,
+  poster,
   onLoadingChange,
   onError,
 }: VideoPlayerProps) {
@@ -496,6 +501,7 @@ function VideoPlayer({
         muted={isMuted}
         loop={loop}
         playsInline
+        poster={poster}
         className={cn(
           'w-full h-full',
           fit === 'contain' && 'object-contain',
@@ -633,6 +639,7 @@ export function VideoDisplay({
   fit = 'contain',
   rounded = true,
   showFullscreen = true,
+  poster,
   className,
   title,
 }: VideoDisplayProps & { title?: string }) {
@@ -755,6 +762,7 @@ export function VideoDisplay({
               controls={controls}
               loop={loop}
               fit={fit}
+              poster={poster}
               onLoadingChange={setIsLoading}
               onError={handleVideoError}
             />
@@ -827,6 +835,7 @@ export function VideoDisplay({
             controls={controls}
             loop={loop}
             fit={fit}
+            poster={poster}
             onLoadingChange={setIsLoading}
             onError={handleVideoError}
           />

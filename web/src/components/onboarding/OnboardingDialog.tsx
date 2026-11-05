@@ -428,7 +428,7 @@ function StepHeader({
           {t("onboarding.stepIndicator", { current: step, total: STEPS.length })}
         </p>
         <div className="flex items-center flex-wrap gap-x-3 gap-y-1 mb-1">
-          <h2 className="text-2xl font-bold text-foreground">{title}</h2>
+          <h2 className="text-2xl font-semibold text-foreground">{title}</h2>
           {badge}
         </div>
         <p className="text-sm text-muted-foreground leading-relaxed max-w-2xl">{subtitle}</p>
@@ -545,8 +545,11 @@ function SetupStep({
         }
       : {
           icon: <Cpu className="w-7 h-7" />,
-          tint: "bg-accent-cyan-light text-accent-cyan",
-          accent: "bg-accent-cyan",
+          // Same identity hue as the LLM step — the wizard is ONE story, so
+          // every step wears the accent; per-step hues made the flow read
+          // as a category dashboard.
+          tint: "bg-accent-indigo-light text-accent-indigo",
+          accent: "bg-accent-indigo",
           title: t("onboarding.setup.device.title"),
           features: DEVICE_FEATURE_KEYS.map((k) => ({
             title: t(`onboarding.setup.device.features.${k}.title`),
@@ -673,8 +676,10 @@ function ReadyStep({
           other steps' hero block */}
       <StepHeader
         icon={allComplete ? <Check className="w-7 h-7" /> : <Sparkles className="w-7 h-7" />}
+        // Completion celebration is a SOFT green tint (same language as the
+        // Done pill) — a solid saturated tile shouted over the whole step.
         tint={allComplete
-          ? "bg-success text-primary-foreground"
+          ? "bg-success-light text-success"
           : "bg-accent-indigo-light text-accent-indigo"}
         step={4}
         title={allComplete ? t("onboarding.ready.allSetTitle") : t("onboarding.ready.partialTitle")}

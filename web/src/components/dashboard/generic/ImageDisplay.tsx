@@ -44,6 +44,9 @@ export interface ImageDisplayProps {
   downloadable?: boolean
   openInNewTab?: boolean
 
+  /** Native img loading behavior — 'lazy' keeps offscreen cards off the network. */
+  loadingState?: 'lazy' | 'eager'
+
   className?: string
 }
 
@@ -127,6 +130,7 @@ export const ImageDisplay = memo(function ImageDisplay({
   zoomable = true,
   downloadable = false,
   openInNewTab = false,
+  loadingState = 'lazy',
   className,
 }: ImageDisplayProps) {
   const { t } = useTranslation('dashboardComponents')
@@ -273,6 +277,7 @@ export const ImageDisplay = memo(function ImageDisplay({
             ref={imageRef}
             src={displaySrc}
             alt={altText}
+            loading={loadingState}
             className={cn(
               'w-full h-full transition-transform duration-normal',
               fit === 'contain' && 'object-contain',

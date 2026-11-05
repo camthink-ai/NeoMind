@@ -169,21 +169,6 @@ export function getMapDisplaySchema// eslint-disable-next-line @typescript-eslin
                         </SelectContent>
                       </Select>
                     </Field>
-                    <Field>
-                      <Label>{t('visualDashboard.showLayerControl')}</Label>
-                      <Select
-                        value={String(config.showLayers ?? true)}
-                        onValueChange={(value) => updateConfig('showLayers')(value === 'true')}
-                      >
-                        <SelectTrigger className="w-full h-9">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="true">{t('visualDashboard.showCard')}</SelectItem>
-                          <SelectItem value="false">{t('visualDashboard.hide')}</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </Field>
                   </div>
 
                   <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3">

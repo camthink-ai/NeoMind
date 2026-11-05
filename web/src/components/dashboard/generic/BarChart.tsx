@@ -168,6 +168,8 @@ export interface BarChartProps {
 
   // Layout
   layout?: 'vertical' | 'horizontal'
+  /** Stack multiple series into one bar per category (recharts stackId). */
+  stacked?: boolean
 
   // === Telemetry options ===
   // Legacy options (kept for backward compatibility)
@@ -198,6 +200,7 @@ export const BarChart = memo(function BarChart({
   showLegend = false,
   showTooltip = true,
   layout: _layout = 'vertical',
+  stacked = false,
   color,
   size = 'md',
   limit = 24,
@@ -345,13 +348,13 @@ export const BarChart = memo(function BarChart({
         <div className={cn('mb-3', indicatorFontWeight.title, config.titleText)}>{title}</div>
       )}
       <ChartContainer>
-        <BarChartWithDimensions data={chartData} seriesInfo={seriesInfo} showGrid={showGrid} showTooltip={showTooltip} showLegend={showLegend} color={color} chartData={chartData} />
+        <BarChartWithDimensions data={chartData} seriesInfo={seriesInfo} showGrid={showGrid} showTooltip={showTooltip} showLegend={showLegend} color={color} chartData={chartData} stacked={stacked} />
       </ChartContainer>
     </div>
   )
 })
 
-const BarChartRenderer = createMemoRenderer(({ data, seriesInfo, showGrid, showTooltip, showLegend, color, chartData, width, height, uid }: {
+const BarChartRenderer = createMemoRenderer(({ data, seriesInfo, showGrid, showTooltip, showLegend, color, chartData, stacked, width, height, uid }: {
   data: any[]
   seriesInfo: { dataKey: string; name: string; color: string }[] | null
   showGrid: boolean
@@ -359,6 +362,7 @@ const BarChartRenderer = createMemoRenderer(({ data, seriesInfo, showGrid, showT
   showLegend: boolean
   color?: string
   chartData: any[]
+  stacked: boolean
   width: number
   height: number
   uid: string
@@ -381,7 +385,9 @@ const BarChartRenderer = createMemoRenderer(({ data, seriesInfo, showGrid, showT
       {showLegend && <Legend />}
       {seriesInfo ? (
         seriesInfo.map((info, i) => (
-          <Bar key={info.dataKey} dataKey={info.dataKey} name={info.name} fill={`url(#bar-grad-${uid}-${i})`} radius={4} isAnimationActive animationDuration={600} />
+          // stackId groups the series into one stacked bar per category;
+          // same constant for every series = stacked, omit = grouped.
+          <Bar key={info.dataKey} dataKey={info.dataKey} name={info.name} fill={`url(#bar-grad-${uid}-${i})`} radius={4} isAnimationActive animationDuration={600} stackId={stacked ? 'stack' : undefined} />
         ))
       ) : (
         <Bar dataKey="value" fill={`url(#bar-grad-${uid}-0)`} radius={4} isAnimationActive animationDuration={600}>
@@ -394,7 +400,7 @@ const BarChartRenderer = createMemoRenderer(({ data, seriesInfo, showGrid, showT
   )
 })
 
-function BarChartWithDimensions({ data, seriesInfo, showGrid, showTooltip, showLegend, color, chartData }: {
+function BarChartWithDimensions({ data, seriesInfo, showGrid, showTooltip, showLegend, color, chartData, stacked }: {
   data: any[]
   seriesInfo: { dataKey: string; name: string; color: string }[] | null
   showGrid: boolean
@@ -402,6 +408,7 @@ function BarChartWithDimensions({ data, seriesInfo, showGrid, showTooltip, showL
   showLegend: boolean
   color?: string
   chartData: any[]
+  stacked: boolean
 }) {
   const { ref, width, height, turn } = useChartDimensions()
   const staggeredData = useStaggeredData(data, turn)
@@ -411,7 +418,7 @@ function BarChartWithDimensions({ data, seriesInfo, showGrid, showTooltip, showL
   return (
     <div ref={ref} style={{ width: '100%', height: '100%' }}>
       {width > 0 && height > 0 && (
-        <BarChartRenderer uid={uid} data={staggeredData} seriesInfo={staggeredSeriesInfo} showGrid={showGrid} showTooltip={showTooltip} showLegend={showLegend} color={color} chartData={staggeredChartData} width={width} height={height} />
+        <BarChartRenderer uid={uid} data={staggeredData} seriesInfo={staggeredSeriesInfo} showGrid={showGrid} showTooltip={showTooltip} showLegend={showLegend} color={color} chartData={staggeredChartData} stacked={stacked} width={width} height={height} />
       )}
     </div>
   )

@@ -226,7 +226,22 @@ function normalizeDataSourceForImages(
     }
   }
 
-  return ds
+  // Every other source type the config dialog offers (extension / system /
+  // transform / agent): merge limit/timeRange onto the source as-is. The
+  // data layer consumes both for these types (extension: timeRange → query
+  // window + client-side limit truncation, useExtensionSource; system:
+  // polling accumulation prunes by timeRange/limit, usePollingSource;
+  // transform/agent fall through the same consumers by source field).
+  // Previously these types were passed through UNTOUCHED, so the
+  // component's configured range/count silently never applied.
+  return {
+    ...ds,
+    limit,
+    timeRange,
+    // Same timeWindow override hazard as the telemetry branch.
+    timeWindow: undefined,
+    params: { ...ds.params, isImage: true },
+  }
 }
 
 // ============================================================================
