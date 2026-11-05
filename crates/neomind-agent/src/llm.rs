@@ -238,17 +238,17 @@ impl<S: Stream + Unpin> Stream for PermitStream<S> {
     }
 }
 
-/// Transient skill context for the current turn.
-///
-/// Tracks which skill ids have already been loaded so re-loading the same skill
-/// (a common LLM pattern when stuck in a retry loop) doesn't duplicate the body
-/// in the system prompt. The first legitimate load always preserves the full body.
 // Preserve the existing 18K guard on small windows while scaling it for larger
 // contexts. This is a budget policy, not a parser for ambiguous model output.
 fn long_prompt_thinking_threshold(max_context: usize) -> usize {
     18_000usize.max(max_context / 2)
 }
 
+/// Transient skill context for the current turn.
+///
+/// Tracks which skill ids have already been loaded so re-loading the same skill
+/// (a common LLM pattern when stuck in a retry loop) doesn't duplicate the body
+/// in the system prompt. The first legitimate load always preserves the full body.
 #[derive(Default)]
 struct TransientSkillContext {
     loaded_ids: std::collections::HashSet<String>,

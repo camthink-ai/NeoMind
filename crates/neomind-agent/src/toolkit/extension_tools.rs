@@ -262,15 +262,33 @@ impl ExtensionTool {
                 let values = map
                     .iter()
                     .map(|(k, v)| {
-                        let image_field = matches!(k.as_str(), "image" | "images" | "image_base64" | "base64_data" | "image_data" | "img");
+                        let image_field = matches!(
+                            k.as_str(),
+                            "image"
+                                | "images"
+                                | "image_base64"
+                                | "base64_data"
+                                | "image_data"
+                                | "img"
+                        );
                         let value = if image_field || v.is_object() {
                             Self::normalize_image_args(v, data_dir)?
                         } else if let Value::Array(items) = v {
-                            Value::Array(items.iter().map(|item| {
-                                if item.is_object() { Self::normalize_image_args(item, data_dir) }
-                                else { Ok(item.clone()) }
-                            }).collect::<ToolResult<Vec<_>>>()?)
-                        } else { v.clone() };
+                            Value::Array(
+                                items
+                                    .iter()
+                                    .map(|item| {
+                                        if item.is_object() {
+                                            Self::normalize_image_args(item, data_dir)
+                                        } else {
+                                            Ok(item.clone())
+                                        }
+                                    })
+                                    .collect::<ToolResult<Vec<_>>>()?,
+                            )
+                        } else {
+                            v.clone()
+                        };
                         Ok((k.clone(), value))
                     })
                     .collect::<ToolResult<serde_json::Map<String, Value>>>()?;

@@ -3277,10 +3277,14 @@ pub async fn stop_handler(
     // same way.
     let download_guard_lock = download_lock();
     let _download_guard = download_guard_lock.try_lock().map_err(|_| {
-        ErrorResponse::conflict("a builtin model download is in progress — cancel it before stopping the engine")
+        ErrorResponse::conflict(
+            "a builtin model download is in progress — cancel it before stopping the engine",
+        )
     })?;
     if DL_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
-        return Err(ErrorResponse::conflict("a builtin model download is in progress — cancel it before stopping the engine"));
+        return Err(ErrorResponse::conflict(
+            "a builtin model download is in progress — cancel it before stopping the engine",
+        ));
     }
     // The runtime upgrade does its own stop/respawn; a concurrent deliberate
     // stop would fight its respawn step. Mirrors restart's guard.
