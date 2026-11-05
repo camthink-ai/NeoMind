@@ -16,6 +16,14 @@ input[type="number"] {
   -moz-appearance: textfield;
 }
 
+/* Search inputs render their own clear affordance (SearchInput's ✕ button);
+ * WebKit additionally draws a native cancel glyph — hide it so the box never
+ * shows two clear controls. type="search" itself stays (semantics + ESC). */
+input[type="search"]::-webkit-search-cancel-button,
+input[type="search"]::-webkit-search-decoration {
+  -webkit-appearance: none;
+}
+
 /* Stabilize password masking glyph: the project font stack ("Plus Jakarta Sans"
  * → "Noto Sans SC" → ...) does not include U+25CF (●), so the browser falls
  * back to CJK / emoji fonts that render the dot taller, wider, or colored.

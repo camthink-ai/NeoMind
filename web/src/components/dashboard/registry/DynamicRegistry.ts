@@ -669,17 +669,7 @@ export function dtoToComponentMeta(dto: DashboardComponentDto): ComponentMeta {
     hasDisplayConfig: dto.has_display_config,
     hasActions: dto.has_actions,
     hasDeviceBinding: dto.has_device_binding,
-    acceptsProp: createPropChecker(dto.config_schema),
     defaultProps: dto.default_config,
     variants: dto.variants,
   }
-}
-
-/**
- * Create a prop checker function from JSON Schema
- */
-function createPropChecker(schema?: { properties?: Record<string, unknown> }): (prop: string) => boolean {
-  if (!schema || !schema.properties) return () => false
-  const allowedProps = Object.keys(schema.properties)
-  return (prop: string) => allowedProps.includes(prop)
 }

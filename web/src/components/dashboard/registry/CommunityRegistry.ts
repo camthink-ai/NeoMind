@@ -465,15 +465,6 @@ export class CommunityComponentRegistry {
       maxH: meta.size_constraints.max_h,
     }
 
-    // Create prop checker from config schema
-    const acceptsProp = (prop: string) => {
-      if (!meta.config_schema || !meta.config_schema.properties) {
-        return false
-      }
-      const allowedProps = Object.keys(meta.config_schema.properties)
-      return allowedProps.includes(prop)
-    }
-
     return {
       type: meta.id as ComponentMeta['type'], // community ids are dynamic component types
       name: getName(),
@@ -486,7 +477,6 @@ export class CommunityComponentRegistry {
       hasDisplayConfig: meta.has_display_config,
       hasActions: meta.has_actions,
       hasDeviceBinding: meta.has_device_binding,
-      acceptsProp,
       defaultProps: meta.default_config,
       variants: meta.variants,
     }

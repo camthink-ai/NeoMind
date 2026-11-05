@@ -45,9 +45,6 @@ export interface ComponentMeta {
   hasActions: boolean         // Does this component support actions?
   hasDeviceBinding?: boolean  // Does this component bind to devices?
 
-  // Props acceptance (for config builder)
-  acceptsProp: (prop: string) => boolean
-
   // Default config
   defaultProps?: Record<string, unknown>
 

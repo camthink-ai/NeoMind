@@ -23,12 +23,6 @@ type BindingDataSource = Record<string, unknown> & {
   property?: string
 }
 
-/** Component config view: the spatial schemas read/write `bindings`. */
-type SpatialConfig = Record<string, unknown> & {
-  bindings?: unknown
-  image?: unknown
-}
-
 import { useStore } from '@/store'
 import { getSourceId } from '@/types/dashboard'
 import type { DataSource } from '@/types/dashboard'
