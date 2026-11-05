@@ -84,6 +84,26 @@ export function setApiBase(url: string): void {
 }
 
 // ============================================================================
+// Bridge for in-page dynamic components (marketplace bundles)
+// ============================================================================
+
+/**
+ * Marketplace/extension component bundles evaluate in-page and build their
+ * own absolute URLs from relative `/api/...` references (e.g. image srcs).
+ * They cannot import this module, so expose a live getter on `window`: the
+ * getter reads the CURRENT api base on every call, so it follows instance
+ * switching (`setApiBase`) — the pre-bridge bundles hardcoded
+ * `http://localhost:9375` in Tauri mode and broke every image whenever the
+ * desktop app connected to a remote/cloud instance.
+ */
+if (typeof window !== 'undefined') {
+  const w = window as typeof window & { __neomind?: { getServerOrigin: () => string } }
+  w.__neomind = {
+    getServerOrigin: () => getServerOrigin(),
+  }
+}
+
+// ============================================================================
 // 401 Handling Callback Registry
 // ============================================================================
 
