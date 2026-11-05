@@ -194,6 +194,11 @@ export function PageLayout({
             !headerContent && headerElevated && ELEVATED_SHADOW,
           )}
         >
+          {/* Title row rhythm — kept IDENTICAL to the dashboard page's
+              hand-rolled title row (VisualDashboard pt-4/5/6 pb-2/3/3):
+              title + tabs fuse into ONE header block, the compact look the
+              dashboard established. The tabs→content separation comes from
+              PageTabsContent's mt-4 plus this row's pb. */}
           <div className={cn('mx-auto w-full px-4 pt-4 pb-2 sm:px-6 sm:pt-5 sm:pb-3 md:px-8 md:pt-6 md:pb-3', maxWidthClass[maxWidth], className)}>
             <PageHeader
               title={title}

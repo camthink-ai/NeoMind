@@ -6,13 +6,12 @@ export interface PageHeaderProps {
   description?: string
   icon?: ReactNode
   actions?: ReactNode
-  variant?: 'default' | 'gradient' | 'bordered'
+  variant?: 'default' | 'bordered'
   className?: string
 }
 
 const variantStyles = {
   default: '',
-  gradient: 'bg-gradient-to-br primary-light rounded-lg p-4 -m-4 mb-2 md:p-6 md:-m-6',
   bordered: 'border-b pb-6 -mt-4 -mx-4 px-4 md:-mx-6 md:px-6',
 }
 
@@ -42,12 +41,18 @@ export function PageHeader({
       {/* Title section with actions on same row for desktop */}
       <div className="flex items-start gap-3 sm:gap-4">
         {icon && (
-          <div className="shrink-0 rounded-xl bg-gradient-to-br primary-light p-2">
+          // Neutral surface — the icon node carries its own accent color, so
+          // the tile works for any hue (the old `primary-light` gradient
+          // class didn't exist in the token set and rendered nothing).
+          <div className="shrink-0 rounded-xl bg-muted p-2">
             {icon}
           </div>
         )}
         <div className="min-w-0 flex-1">
-          <h1 className="truncate text-xl font-bold tracking-tight sm:text-2xl">{title}</h1>
+          {/* semibold, not bold — a 700-weight 24px title against 14px
+              medium tab labels read heavy; 600 keeps the hierarchy with a
+              lighter step. */}
+          <h1 className="truncate text-xl font-semibold tracking-tight sm:text-2xl">{title}</h1>
           {description && (
             <p className="mt-1 line-clamp-2 text-sm text-muted-foreground sm:mt-2">{description}</p>
           )}

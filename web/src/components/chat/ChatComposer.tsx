@@ -314,13 +314,10 @@ export function ChatComposer({
                             <span className={cn("h-1.5 w-1.5 rounded-full", backend.healthy ? "bg-success" : "bg-muted-foreground/50")} />}
                         </span>
                         <div className="min-w-0 flex-1">
-                          <div className="flex min-w-0 items-center">
+                          <div className="flex min-w-0 items-center gap-1.5">
                             <span className={cn("truncate text-sm text-foreground", isActive && "font-medium")}>{backend.name || backend.model}</span>
-                          </div>
-                          <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
-                            <span className="shrink-0 rounded bg-muted px-1 py-px text-[10px] leading-4 text-muted-foreground">{backend.backend_type}</span>
-                            <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">{backend.model}</span>
-                            <span className="flex shrink-0 items-center gap-1.5 text-muted-foreground" aria-label={[
+                            {/* Capability hints sit top-right, on the name line — bottom-right crowded the model/protocol line. */}
+                            <span className="ml-auto flex shrink-0 items-center gap-1.5 text-muted-foreground" aria-label={[
                               backend.capabilities?.supports_multimodal && t("chat:capability.vision", { defaultValue: "Vision" }),
                               backend.capabilities?.supports_tools && t("chat:capability.tools", { defaultValue: "Tools" }),
                               backend.capabilities?.supports_thinking && t("chat:capability.thinking", { defaultValue: "Thinking" }),
@@ -329,6 +326,10 @@ export function ChatComposer({
                               {backend.capabilities?.supports_tools && <span title={t("chat:model.supportsTools")}><Wrench className="h-3.5 w-3.5" aria-hidden="true" /></span>}
                               {backend.capabilities?.supports_thinking && <span title={t("chat:model.supportsThinking")}><Sparkles className="h-3.5 w-3.5" aria-hidden="true" /></span>}
                             </span>
+                          </div>
+                          <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
+                            <span className="shrink-0 rounded bg-muted px-1 py-px text-[10px] leading-4 text-muted-foreground">{backend.backend_type}</span>
+                            <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">{backend.model}</span>
                           </div>
                         </div>
                       </DropdownMenuItem>

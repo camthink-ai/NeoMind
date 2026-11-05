@@ -50,20 +50,24 @@ describe('PageTabsBar (desktop)', () => {
     expect(row!.className).not.toContain('border-b')
   })
 
-  it('active tab is text + solid underline (no pill background)', () => {
-    renderBar('b')
+  it('active tab is text + the shared sliding indicator (no pill background)', () => {
+    const { container } = renderBar('b')
     const active = screen.getByRole('tab', { name: 'Tab B' })
     expect(active.className).toContain('text-foreground')
-    expect(active.className).toContain('after:bg-foreground')
-    // the pill background is gone (after:bg-foreground is the underline bar,
-    // not the button's own background — match on the class boundary)
+    // the pill background is gone (the underline is the shared indicator
+    // bar, not the button's own background — match on the class boundary)
     expect(active.className).not.toMatch(/(^|\s)bg-foreground/)
+    // exactly one shared indicator bar in the strip (jsdom can't measure
+    // layout, so presence is the contract — geometry is browser-only)
+    const indicators = container.querySelectorAll('[data-tab-indicator]')
+    expect(indicators.length).toBe(1)
+    expect(indicators[0].getAttribute('aria-hidden')).toBe('true')
   })
 
-  it('inactive tab has a transparent underline', () => {
+  it('inactive tab carries no underline styling of its own', () => {
     renderBar('b')
     const inactive = screen.getByRole('tab', { name: 'Tab A' })
-    expect(inactive.className).toContain('after:bg-transparent')
+    expect(inactive.className).not.toContain('after:')
   })
 
   it('tab buttons left-align their content', () => {

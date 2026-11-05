@@ -1079,7 +1079,10 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
               {layoutMode === 'sidebar' && currentDashboard ? (
                 <h1
                   key={currentDashboard.id}
-                  className="animate-in fade-in duration-200 truncate text-xl font-bold tracking-tight sm:text-2xl"
+                  // font-semibold matches PageHeader's title weight — this
+                  // hand-rolled row renders the same hierarchy as every
+                  // PageLayout page.
+                  className="animate-in fade-in duration-200 truncate text-xl font-semibold tracking-tight sm:text-2xl"
                 >
                   {currentDashboard.name}
                 </h1>
