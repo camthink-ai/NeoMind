@@ -60,7 +60,7 @@ export function MobilePageHeader({
         // solid elevated gray in dark mode) — this is the dedicated token
         // for stable chrome layers per index.css. Using bg-background would
         // tint the header gray after the background token was darkened.
-        "safe-top sticky top-0 z-30 grid h-12 grid-cols-[1fr_auto_1fr] items-center gap-1 border-b border-border px-2",
+        "safe-top sticky top-0 z-30 grid h-14 grid-cols-[1fr_auto_1fr] items-center gap-1 px-3",
         className,
       )}
       style={{ backgroundColor: 'var(--chrome)' }}
@@ -86,7 +86,7 @@ export function MobilePageHeader({
       </div>
       {/* Center title — clamp width so very long titles truncate instead of
           pushing the side columns and breaking centering. */}
-      <span className="min-w-0 max-w-[65vw] truncate text-center text-base font-semibold text-foreground">
+      <span className="min-w-0 max-w-[65vw] truncate text-center text-[17px] font-semibold tracking-tight text-foreground">
         {title}
       </span>
       {/* Right slot: actions */}

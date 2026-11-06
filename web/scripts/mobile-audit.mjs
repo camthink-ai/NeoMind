@@ -70,6 +70,24 @@ const viewports = process.env.AUDIT_STANDARD_ONLY === "1"
 const results = []
 const interactionResults = []
 
+async function waitForRouteReady(page, route) {
+  await page.waitForFunction(() => document.querySelector('#root')?.childElementCount, null, { timeout: 5000 })
+  if (route === "/chat") {
+    await page.waitForSelector("textarea", { state: "visible", timeout: 10000 })
+  } else if ((page.viewportSize()?.width ?? 0) < 768) {
+    await page.waitForSelector(".mobile-primary-nav", { state: "visible", timeout: 10000 })
+  } else {
+    await page.waitForFunction(
+      () => (document.querySelector("#main-scroll-container")?.textContent?.trim().length ?? 0) > 0,
+      null,
+      { timeout: 10000 },
+    )
+  }
+  // Allow the route's first data-driven render to settle after its lazy chunk
+  // and persistent mobile chrome are mounted.
+  await page.waitForTimeout(350)
+}
+
 for (const viewport of viewports) {
   const context = await browser.newContext({
     viewport: { width: viewport.width, height: viewport.height },
@@ -103,8 +121,7 @@ for (const viewport of viewports) {
   for (const route of routes) {
     pageErrors.length = 0
     await page.goto(`http://127.0.0.1:5173${route}`, { waitUntil: "domcontentloaded" })
-    await page.waitForFunction(() => document.querySelector('#root')?.childElementCount, null, { timeout: 5000 })
-    await page.waitForTimeout(700)
+    await waitForRouteReady(page, route)
     const audit = await page.evaluate((routePath) => {
       const visible = (el) => {
         const style = getComputedStyle(el)
@@ -149,8 +166,7 @@ for (const viewport of viewports) {
       try {
         pageErrors.length = 0
         await page.goto(`http://127.0.0.1:5173${item.route}`, { waitUntil: "domcontentloaded" })
-        await page.waitForFunction(() => document.querySelector('#root')?.childElementCount, null, { timeout: 5000 })
-        await page.waitForTimeout(500)
+        await waitForRouteReady(page, item.route)
         await page.getByRole("button", { name: item.button, exact: item.name !== "settings" }).first().click()
         await page.waitForTimeout(350)
         const state = await page.evaluate(() => {

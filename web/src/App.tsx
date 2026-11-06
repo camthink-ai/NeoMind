@@ -616,7 +616,7 @@ function App() {
                       className="w-full h-full overflow-hidden"
                       id="main-scroll-container"
                       style={isMobile && currentPath !== '/' && !currentPath.startsWith('/chat')
-                        ? { paddingBottom: 'calc(4rem + env(safe-area-inset-bottom, 0px))' }
+                        ? { paddingBottom: 'calc(5rem + env(safe-area-inset-bottom, 0px))' }
                         : undefined}
                     >
                     <ErrorBoundary>

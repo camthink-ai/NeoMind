@@ -36,10 +36,13 @@ export function MobilePrimaryNav() {
   return (
     <nav
       aria-label={t("common:nav.mobilePrimary")}
-      className="mobile-primary-nav fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background safe-bottom"
-      style={{ backgroundColor: "var(--chrome)" }}
+      className="mobile-primary-nav fixed inset-x-3 z-40 overflow-hidden rounded-[1.65rem] border border-border/80 shadow-[0_8px_28px_rgba(0,0,0,0.12)] backdrop-blur-xl"
+      style={{
+        bottom: "max(0.5rem, env(safe-area-inset-bottom, 0px))",
+        backgroundColor: "color-mix(in srgb, var(--chrome) 94%, transparent)",
+      }}
     >
-      <div className="grid h-16 grid-cols-4 px-2">
+      <div className="grid h-[3.75rem] grid-cols-4 gap-1 p-1.5">
         {items.map(({ id, path, icon: Icon, label }) => {
           const selected = active === id
           return (
@@ -49,19 +52,14 @@ export function MobilePrimaryNav() {
               aria-current={selected ? "page" : undefined}
               onClick={() => navigate(path)}
               className={cn(
-                "relative flex min-w-0 flex-col items-center justify-center gap-1 rounded-lg px-1 text-[11px] font-medium transition-colors",
-                selected ? "text-foreground" : "text-muted-foreground active:text-foreground",
+                "flex min-w-0 flex-col items-center justify-center gap-0.5 rounded-[1.15rem] px-1 text-[11px] font-medium transition-[background-color,color,transform] active:scale-[0.97]",
+                selected
+                  ? "bg-foreground text-background"
+                  : "text-muted-foreground active:bg-muted active:text-foreground",
               )}
             >
               <Icon className="h-5 w-5" strokeWidth={selected ? 2.1 : 1.7} aria-hidden="true" />
               <span className="max-w-full truncate">{t(label)}</span>
-              <span
-                aria-hidden="true"
-                className={cn(
-                  "absolute bottom-1 h-0.5 w-4 rounded-full bg-foreground transition-opacity",
-                  selected ? "opacity-100" : "opacity-0",
-                )}
-              />
             </button>
           )
         })}
