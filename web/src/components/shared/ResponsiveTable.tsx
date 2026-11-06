@@ -163,9 +163,9 @@ export function ResponsiveTable<T extends object>({
           </table>
         </div>
         {/* Mobile skeleton */}
-        <div className="overflow-hidden rounded-2xl border border-border bg-card divide-y divide-border/70 md:hidden">
+        <div className="space-y-2 md:hidden">
           {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="px-4 py-3.5">
+            <div key={i} className="rounded-2xl border border-border bg-card px-4 py-3.5">
               <div>
                 <Skeleton className="h-4 w-1/3" />
               </div>
@@ -304,13 +304,9 @@ export function ResponsiveTable<T extends object>({
         </table>
       </div>
 
-      {/* Mobile grouped list — one calm surface with subtle row dividers.
-          This keeps the hierarchy visible without repeating a card border
-          around every record. */}
-      <div className={cn(
-        "md:hidden",
-        data.length > 0 && "overflow-hidden rounded-2xl border border-border bg-card divide-y divide-border/70"
-      )}>
+      {/* Mobile card list — every record owns a clear surface, with one
+          consistent radius, border and vertical rhythm across pages. */}
+      <div className="space-y-2 md:hidden">
         {data.length === 0 ? (
           <div className="py-8">
               {emptyState || defaultEmpty}
@@ -326,7 +322,7 @@ export function ResponsiveTable<T extends object>({
                 role={onRowClick ? "button" : undefined}
                 tabIndex={onRowClick ? 0 : undefined}
                 className={cn(
-                  'animate-fade-in-up px-4 py-3.5 transition-colors',
+                  'animate-fade-in-up rounded-2xl border border-border bg-card px-4 py-3.5 transition-colors',
                   onRowClick && 'cursor-pointer active:bg-muted',
                   rowClass
                 )}

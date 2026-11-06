@@ -88,7 +88,7 @@ export function DeviceTypeList({
           )}
           {loading && paginatedDeviceTypes.length === 0 && (
             [0, 1, 2].map((i) => (
-              <Card key={i} className="overflow-hidden border-border shadow-sm">
+              <Card key={i} className="overflow-hidden rounded-2xl border-border bg-card shadow-none">
                 <div className="px-3 py-2.5 animate-pulse">
                   <div className="flex items-center gap-2">
                     <div className="w-8 h-8 rounded-lg bg-muted" />
@@ -103,7 +103,7 @@ export function DeviceTypeList({
             <Card
               key={dt.device_type}
               className={cn(
-                "cursor-pointer overflow-hidden rounded-2xl border border-border bg-card shadow-none transition-[background-color,transform] active:scale-[0.99] active:bg-muted",
+                "cursor-pointer overflow-hidden rounded-2xl border border-border bg-card shadow-none transition-colors active:bg-muted",
               )}
               onClick={() => onViewDetails(dt)}
             >

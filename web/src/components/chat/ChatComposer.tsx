@@ -109,6 +109,7 @@ export function ChatComposer({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isUploadingImage, setIsUploadingImage] = useState(false)
   const [modelSheetOpen, setModelSheetOpen] = useState(false)
+  const [mobileExpanded, setMobileExpanded] = useState(false)
 
   const canAttach = !!onAttachmentsChange
   const inputDisabled = disabled || isStreaming
@@ -217,20 +218,28 @@ export function ChatComposer({
       {/* Single unified input box — everything inside one container */}
       <div className={cn(
         "rounded-lg border border-input bg-card shadow-sm transition-colors",
-        isMobile && "flex items-end gap-0.5 rounded-[1.6rem] border-border bg-background p-1.5",
-      )}>
+        isMobile && "rounded-[1.4rem] border-border bg-background p-1.5",
+        isMobile && mobileExpanded ? "flex flex-col" : isMobile ? "flex items-end gap-0.5" : "",
+      )}
+      onBlur={(event) => {
+        if (!isMobile) return
+        const next = event.relatedTarget as Node | null
+        if (!next || !event.currentTarget.contains(next)) setMobileExpanded(false)
+      }}>
         {/* Textarea — fills the top, borderless */}
         <textarea
           ref={textareaRef}
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          onFocus={() => { if (isMobile) setMobileExpanded(true) }}
           onKeyDown={onKeyDown}
           placeholder={isStreaming && streamingPlaceholder ? streamingPlaceholder : placeholder}
           rows={1}
           disabled={inputDisabled}
           className={cn(
             "block w-full resize-none bg-transparent px-4 pb-1 pt-3 text-base leading-5 sm:text-sm",
-            isMobile && "min-w-0 flex-1 px-2 py-3",
+            isMobile && mobileExpanded && "min-w-0 px-3 pb-1.5 pt-2.5",
+            isMobile && !mobileExpanded && "min-w-0 flex-1 px-2 py-3",
             "placeholder:text-muted-foreground",
             "focus:outline-none",
             "max-h-[100px] scroll-mb-32",
@@ -245,7 +254,10 @@ export function ChatComposer({
         />
 
         {/* Bottom toolbar — left: image + model + context, right: send */}
-        <div className={isMobile ? "contents" : "flex items-center gap-1 px-2 pb-2"}>
+        <div className={isMobile
+          ? (mobileExpanded ? "flex w-full items-center gap-0.5 px-0.5 pb-0.5" : "contents")
+          : "flex items-center gap-1 px-2 pb-2"
+        }>
           {/* Image upload */}
           {canAttach && (
             <>
@@ -538,7 +550,7 @@ export function ChatComposer({
             )
           })()}
 
-          <div className="flex-1 max-sm:hidden" />
+          <div className={cn("flex-1", isMobile && !mobileExpanded && "hidden")} />
 
           {/* Send or Cancel button */}
           {isStreaming ? (

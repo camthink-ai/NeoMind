@@ -7,7 +7,7 @@ import { useStore } from "@/store"
 import { shallow } from "zustand/shallow"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { generateId } from "@/lib/id"
-import { ChevronDown, Loader2, MessageSquarePlus, PanelsTopLeft } from "lucide-react"
+import { Loader2, MessageSquarePlus, PanelsTopLeft } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SessionSidebar } from "@/components/session/SessionSidebar"
 import { WelcomeArea } from "@/components/chat/WelcomeArea"
@@ -1085,8 +1085,8 @@ export function ChatPage() {
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-        {/* Chat uses its own restrained header: workspace, centered session
-            history, and compose. It deliberately avoids the business-page
+        {/* Chat uses its own restrained header: workspace, left-aligned session
+            title, and compose. It deliberately avoids the business-page
             title/action chrome shown elsewhere in the app. */}
         {!isDesktop && (
           <div
@@ -1108,13 +1108,12 @@ export function ChatPage() {
             </Button>
             <button
               type="button"
-              className="flex min-w-0 items-center justify-center gap-1 px-2 text-base font-semibold tracking-[-0.01em] disabled:pointer-events-none"
+              className="flex min-w-0 items-center justify-start px-1 text-left text-base font-semibold tracking-[-0.01em] disabled:pointer-events-none"
               onClick={() => setSidebarOpen(true)}
               disabled={sessions.length === 0 && isWelcomeMode}
               aria-label={t('common:session.history')}
             >
               <span className="truncate">{mobileChatTitle}</span>
-              {(sessions.length > 0 || !isWelcomeMode) && <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />}
             </button>
             {!noLlmContent ? (
               <Button

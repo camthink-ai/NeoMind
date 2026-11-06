@@ -66,6 +66,25 @@ describe('ChatComposer', () => {
     expect(root.contains(box)).toBe(true)
     expect(preview.closest('.mb-1')?.nextElementSibling).toBe(box)
   })
+
+  it('moves mobile actions below the textarea only while composing', () => {
+    const previousWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
+    const { unmount } = render(
+      <ChatComposer value="" onChange={vi.fn()} onSend={vi.fn()} />,
+    )
+    const textarea = screen.getByRole('textbox')
+    const box = textarea.parentElement as HTMLElement
+    expect(box.classList.contains('flex-col')).toBe(false)
+
+    fireEvent.focus(textarea)
+    expect(box.classList.contains('flex-col')).toBe(true)
+
+    fireEvent.blur(textarea, { relatedTarget: null })
+    expect(box.classList.contains('flex-col')).toBe(false)
+    unmount()
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: previousWidth })
+  })
 })
 
 /// Context usage card actions — the manual compact/clear affordances added

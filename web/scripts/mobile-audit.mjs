@@ -300,6 +300,15 @@ for (const viewport of viewports) {
       const file = route.replaceAll("/", "_") || "_root"
       const suffix = viewport.name === "desktop" ? "_desktop" : ""
       await page.screenshot({ path: `${outDirPath}${file}${suffix}.png`, fullPage: false })
+      if (viewport.name === "standard" && route.startsWith("/chat")) {
+        const composer = page.locator(".chat-mobile-shell textarea")
+        if (await composer.count()) {
+          await composer.focus()
+          await page.waitForTimeout(100)
+          await page.screenshot({ path: `${outDirPath}${file}_focused.png`, fullPage: false })
+          await composer.evaluate((el) => el.blur())
+        }
+      }
     }
   }
 

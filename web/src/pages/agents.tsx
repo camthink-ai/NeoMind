@@ -672,7 +672,10 @@ export function AgentsPage() {
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-1 md:grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,280px),1fr))] md:gap-5">
+          <div className={isMobile
+            ? "grid grid-cols-1 gap-2"
+            : "grid grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,280px),1fr))] gap-5"
+          }>
             {paginatedAgents.map((agent, index) => (
               <div
                 key={agent.id}

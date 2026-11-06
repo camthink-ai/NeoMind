@@ -95,7 +95,7 @@ export function DeviceList({
               and empty states — a bare map() renders as a blank void. */}
           {loading && paginatedDevices.length === 0 && (
             [0, 1, 2].map((i) => (
-              <div key={i} className="animate-pulse py-4">
+              <div key={i} className="animate-pulse rounded-2xl border border-border bg-card px-4 py-4">
                 <div className="h-4 w-36 rounded bg-muted" />
                 <div className="mt-2 h-3 w-52 rounded bg-muted" />
               </div>
@@ -122,7 +122,7 @@ export function DeviceList({
                 key={device.id}
                 role="button"
                 tabIndex={0}
-                className="cursor-pointer rounded-2xl border border-border bg-card px-4 py-3.5 transition-[background-color,transform] active:scale-[0.99] active:bg-muted"
+                className="cursor-pointer rounded-2xl border border-border bg-card px-4 py-3.5 transition-colors active:bg-muted"
                 onClick={() => onViewDetails(device)}
                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onViewDetails(device) }}
               >

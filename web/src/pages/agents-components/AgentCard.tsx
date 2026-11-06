@@ -105,7 +105,7 @@ export function AgentCard({
         tabIndex={0}
         onClick={onClick}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() } }}
-        className="flex min-h-[4.5rem] cursor-pointer items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3.5 transition-[background-color,transform] active:scale-[0.99] active:bg-muted"
+        className="flex min-h-[4.5rem] cursor-pointer items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3.5 transition-colors active:bg-muted"
       >
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">

@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next'
 import { PageLayout } from '@/components/layout/PageLayout'
 import { useStore } from '@/store'
 import { Card } from '@/components/ui/card'
-import { interactiveCardHover } from '@/design-system/tokens/size'
 import { ResponsiveTable, type TableColumn, Pagination, EmptyState, EmptyStateCard, SearchInput } from '@/components/shared'
 import { PageTabsBar, PageTabsContent, PageTabsBottomNav } from '@/components/shared/PageTabs'
 import { Badge } from '@/components/ui/badge'
@@ -382,7 +381,7 @@ export function DataExplorerPage() {
       <div className="space-y-2">
         {pageData.length === 0 && loading && (
           [0, 1, 2].map((i) => (
-            <Card key={i} className="overflow-hidden border-border">
+            <Card key={i} className="overflow-hidden rounded-2xl border-border bg-card shadow-none">
               <div className="px-3 py-2.5 animate-pulse space-y-2">
                 <div className="flex items-center gap-2.5">
                   <div className="h-5 w-14 rounded-full bg-muted" />
@@ -404,8 +403,7 @@ export function DataExplorerPage() {
           <Card
             key={source.id}
             className={cn(
-              "overflow-hidden border-border shadow-sm cursor-pointer active:scale-[0.99]",
-              interactiveCardHover,
+              "cursor-pointer overflow-hidden rounded-2xl border border-border bg-card shadow-none transition-colors active:bg-muted",
             )}
             onClick={() => setSelectedSource(source)}
           >

@@ -896,12 +896,10 @@ export default function MessagesPage() {
 
           {/* Messages Table - Responsive (Desktop: Table, Mobile: Cards) */}
           {isMobile ? (
-            <div className={cn(
-              messages.length > 0 && "overflow-hidden rounded-2xl border border-border bg-card divide-y divide-border/70"
-            )}>
+            <div className="space-y-2">
               {messages.length === 0 && loading ? (
                 Array.from({ length: 4 }).map((_, i) => (
-                  <div key={i} className="border-b border-border/70 p-3.5 last:border-b-0">
+                  <div key={i} className="rounded-2xl border border-border bg-card p-3.5">
                     <div className="space-y-2">
                       <div className="flex items-center gap-2">
                         <div className="flex-1 space-y-1">
@@ -930,7 +928,7 @@ export default function MessagesPage() {
                       type="button"
                       key={message.id}
                       className={cn(
-                        "block w-full px-4 py-3 text-left transition-[background-color,opacity] active:bg-muted",
+                        "block w-full rounded-2xl border border-border bg-card px-4 py-3 text-left transition-[background-color,opacity] active:bg-muted",
                         isDimmed && "opacity-50"
                       )}
                       onClick={() => setSelectedMessage(message)}
@@ -1121,9 +1119,7 @@ export default function MessagesPage() {
         <PageTabsContent value="channels" activeTab={activeTab}>
           {/* Channels Responsive Table */}
           {isMobile ? (
-            <div className={cn(
-              channels.length > 0 && "overflow-hidden rounded-2xl border border-border bg-card divide-y divide-border/70"
-            )}>
+            <div className="space-y-2">
               {loading ? (
                 Array.from({ length: 3 }).map((_, i) => (
                   <Card key={i} className="overflow-hidden rounded-none border-0 shadow-none">
@@ -1169,7 +1165,7 @@ export default function MessagesPage() {
                     <button
                       type="button"
                       key={channel.name}
-                      className="block w-full px-4 py-3 text-left transition-colors active:bg-muted"
+                      className="block w-full rounded-2xl border border-border bg-card px-4 py-3 text-left transition-colors active:bg-muted"
                       onClick={() => handleViewChannel(channel.name)}
                     >
                       <div className="flex items-center gap-3">
