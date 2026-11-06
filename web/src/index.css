@@ -1568,11 +1568,17 @@ html {
 }
 
 /* Chat is a fullscreen surface: the bottom navigation capsule is not
-   rendered there (section navigation lives in the chat header's menu), so
-   the composer rests directly above the safe-area edge. */
+   rendered there, so the composer rests directly above the safe-area edge. */
 @media (max-width: 767px) {
   .chat-composer-dock {
     padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  .message-bubble-user .prose,
+  .message-bubble-user .prose *,
+  .prose[data-variant="user"],
+  .prose[data-variant="user"] * {
+    color: var(--foreground) !important;
   }
 }
 

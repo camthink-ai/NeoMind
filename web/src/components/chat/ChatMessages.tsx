@@ -234,7 +234,7 @@ export function ChatMessages({
               <div
                 className={cn(
                   message.role === "user"
-                    ? "rounded-xl px-3 py-2 sm:px-4 sm:py-3 bg-chat-user-bg text-chat-user-text"
+                    ? "rounded-xl bg-chat-user-bg px-3 py-2 text-chat-user-text max-md:rounded-[1.25rem] max-md:bg-muted max-md:px-4 max-md:py-3 max-md:text-foreground sm:px-4 sm:py-3"
                     : ""
                 )}
               >
@@ -361,7 +361,7 @@ export function ChatMessages({
                 </div>
               </div>
 
-              <div className="mt-1.5 flex items-center gap-2 max-md:mt-1">
+              <div className="mt-1.5 flex items-center gap-2 max-md:hidden">
                 <time
                   title={statsTitle}
                   className="text-xs text-muted-foreground tabular-nums max-md:hidden"

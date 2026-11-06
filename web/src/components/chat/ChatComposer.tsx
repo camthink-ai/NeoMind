@@ -10,7 +10,7 @@
 
 import { useRef, useState, type RefObject } from "react"
 import { useTranslation } from "react-i18next"
-import { Archive, ArrowUp, Check, ChevronDown, Eye, Image as ImageIcon, Loader2, Sparkles, Trash2, Wrench, X } from "lucide-react"
+import { Archive, ArrowUp, Check, ChevronDown, Eye, Image as ImageIcon, Loader2, Plus, Sparkles, Trash2, Wrench, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useConfirm } from "@/components/ui/use-confirm"
 import {
@@ -215,7 +215,10 @@ export function ChatComposer({
       )}
 
       {/* Single unified input box — everything inside one container */}
-      <div className="rounded-lg border border-input bg-card shadow-sm transition-colors max-sm:rounded-[1.6rem] max-sm:border-glass-border max-sm:bg-surface-glass max-sm:shadow-[0_10px_32px_rgba(0,0,0,0.10)] max-sm:backdrop-blur-xl">
+      <div className={cn(
+        "rounded-lg border border-input bg-card shadow-sm transition-colors",
+        isMobile && "flex items-end gap-0.5 rounded-[1.6rem] border-border bg-background p-1.5 shadow-lg",
+      )}>
         {/* Textarea — fills the top, borderless */}
         <textarea
           ref={textareaRef}
@@ -226,13 +229,14 @@ export function ChatComposer({
           rows={1}
           disabled={inputDisabled}
           className={cn(
-            "w-full block px-4 pt-3 pb-1 resize-none text-base sm:text-sm leading-5 bg-transparent",
+            "block w-full resize-none bg-transparent px-4 pb-1 pt-3 text-base leading-5 sm:text-sm",
+            isMobile && "min-w-0 flex-1 px-2 py-3",
             "placeholder:text-muted-foreground",
             "focus:outline-none",
             "max-h-[100px] scroll-mb-32",
             "disabled:opacity-60"
           )}
-          style={{ minHeight: `${minHeight}px` }}
+          style={{ minHeight: `${isMobile ? 44 : minHeight}px` }}
           onInput={(e) => {
             const target = e.target as HTMLTextAreaElement
             target.style.height = "auto"
@@ -241,7 +245,7 @@ export function ChatComposer({
         />
 
         {/* Bottom toolbar — left: image + model + context, right: send */}
-        <div className="flex items-center gap-1 px-2 pb-2">
+        <div className={isMobile ? "contents" : "flex items-center gap-1 px-2 pb-2"}>
           {/* Image upload */}
           {canAttach && (
             <>
@@ -261,6 +265,7 @@ export function ChatComposer({
                 disabled={inputDisabled || !supportsMultimodal}
                 className={cn(
                   "rounded-lg flex-shrink-0 text-muted-foreground hover:text-foreground",
+                  isMobile && "order-first h-11 w-11 rounded-full p-0",
                   !supportsMultimodal && "opacity-50"
                 )}
                 title={supportsMultimodal ? (visionDelegate ? t("chat:model.visionViaCompanion") : t("chat:model.addImage")) : t("chat:model.notSupportImage")}
@@ -275,14 +280,14 @@ export function ChatComposer({
                     </span>
                   </div>
                 ) : (
-                  <ImageIcon className="h-4 w-4" />
+                  <Plus className="h-5 w-5" />
                 )}
               </Button>
             </>
           )}
 
           {/* Model selector */}
-          {backends && backends.length > 0 && (isMobile ? (
+          {backends && backends.length > 0 && (!isMobile || backends.length > 1) && (isMobile ? (
             <>
               <Button
                 type="button"
@@ -427,6 +432,7 @@ export function ChatComposer({
             ]
             const availableRows = rows.filter(r => r.value != null)
             return (
+              <div className="max-sm:hidden">
               <TooltipProvider delayDuration={150}>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -522,10 +528,11 @@ export function ChatComposer({
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
+              </div>
             )
           })()}
 
-          <div className="flex-1" />
+          <div className="flex-1 max-sm:hidden" />
 
           {/* Send or Cancel button */}
           {isStreaming ? (

@@ -7,7 +7,7 @@ import { useStore } from "@/store"
 import { shallow } from "zustand/shallow"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { generateId } from "@/lib/id"
-import { MessageSquare, Loader2, Plus } from "lucide-react"
+import { ChevronDown, Loader2, Menu, SquarePen } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SessionSidebar } from "@/components/session/SessionSidebar"
 import { WelcomeArea } from "@/components/chat/WelcomeArea"
@@ -15,7 +15,6 @@ import { ChatMessages } from "@/components/chat/ChatMessages"
 import { ChatComposer } from "@/components/chat/ChatComposer"
 import { ChatScrollPill } from "@/components/chat/ChatScrollPill"
 import { ConnectionStatus } from "@/components/chat/ConnectionStatus"
-import { MobilePageHeader } from "@/components/layout/MobilePageHeader"
 import { ws, type ConnectionState } from "@/lib/websocket"
 import { api } from "@/lib/api"
 import type { Message, ChatImage } from "@/types"
@@ -931,6 +930,10 @@ export function ChatPage() {
     return <LlmSetupGuide />
   })()
 
+  const mobileChatTitle = noLlmContent
+    ? t('common:llmGuide.title')
+    : sessions.find((session) => session.sessionId === urlSessionId)?.title || t('chat:input.newChat')
+
   // Manual context compaction — force a summary now (backend bypasses the
   // auto threshold). Usage normalizes on the next turn.
   const handleCompact = async () => {
@@ -1084,49 +1087,53 @@ export function ChatPage() {
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-        {/* Mobile header: menu + local conversation actions. Chat hides the
-            bottom capsule (the composer owns the bottom edge), so the menu
-            here is the only section exit. */}
-        <MobilePageHeader
-          menu
-          title={noLlmContent
-            ? t('common:llmGuide.title')
-            : (() => {
-              const s = sessions.find((x) => x.sessionId === urlSessionId)
-              return s?.title || t('chat:input.newChat')
-            })()}
-          actions={
-            // No "+" while the LLM setup guide owns the screen — a new session
-            // can't be talked to yet; the guide's two CTAs are the actions.
-            !isDesktop && !noLlmContent ? (
-              <>
-                {(sessions.length > 0 || !isWelcomeMode) && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="shrink-0"
-                    onClick={() => setSidebarOpen(true)}
-                    aria-label={t('common:session.history')}
-                  >
-                    <MessageSquare className="h-5 w-5" />
-                  </Button>
-                )}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="shrink-0"
-                  onClick={async () => {
-                    const id = await createSession()
-                    if (id) navigate(`/chat/${id}`)
-                  }}
-                  aria-label={t('chat:input.newChat')}
-                >
-                  <Plus className="h-5 w-5" />
-                </Button>
-              </>
-            ) : undefined
-          }
-        />
+        {/* Chat uses its own restrained header: workspace, centered session
+            history, and compose. It deliberately avoids the business-page
+            title/action chrome shown elsewhere in the app. */}
+        {!isDesktop && (
+          <div
+            className="safe-top sticky top-0 z-30 grid shrink-0 grid-cols-[3rem_minmax(0,1fr)_3rem] items-center px-2"
+            style={{
+              height: 'calc(4rem + env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))',
+              backgroundColor: 'var(--chrome)',
+            }}
+          >
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-11 w-11 rounded-full bg-transparent p-0 shadow-none"
+              onClick={() => navigate('/system')}
+              aria-label={t('common:system.menu')}
+              data-testid="chat-workspace-button"
+            >
+              <Menu className="h-5 w-5" />
+            </Button>
+            <button
+              type="button"
+              className="flex min-w-0 items-center justify-center gap-1 px-2 text-base font-semibold tracking-[-0.01em] disabled:pointer-events-none"
+              onClick={() => setSidebarOpen(true)}
+              disabled={sessions.length === 0 && isWelcomeMode}
+              aria-label={t('common:session.history')}
+            >
+              <span className="truncate">{mobileChatTitle}</span>
+              {(sessions.length > 0 || !isWelcomeMode) && <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />}
+            </button>
+            {!noLlmContent ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-11 w-11 rounded-full bg-transparent p-0 shadow-none"
+                onClick={async () => {
+                  const id = await createSession()
+                  if (id) navigate(`/chat/${id}`)
+                }}
+                aria-label={t('chat:input.newChat')}
+              >
+                <SquarePen className="h-5 w-5" />
+              </Button>
+            ) : <span />}
+          </div>
+        )}
         {/* Chat Content Area */}
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
         {noLlmContent ? (
@@ -1144,7 +1151,7 @@ export function ChatPage() {
         ) : isWelcomeMode ? (
           /* Welcome Area - shown on /chat (no sessionId), scrollable on mobile */
           <div
-            className={cn("touch-scroll flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-3 pb-8 sm:px-6 sm:py-6 sm:pb-6", isDesktop && "pt-14")}
+            className={cn("touch-scroll flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] sm:px-6 sm:py-6", isDesktop && "pt-14")}
             onClick={(e) => {
               // If clicking outside interactive elements, dismiss keyboard
               if ((e.target as HTMLElement).closest('button, a, input, textarea, [role="button"]')) return
@@ -1163,7 +1170,7 @@ export function ChatPage() {
              store's sessionId is still null for the first frame — without
              the second condition the "Empty chat" default flashes for one
              frame before the real messages arrive. */
-          <div className={cn("flex-1 min-h-0 overflow-y-auto px-2 sm:px-4 py-2 sm:py-4", isDesktop && "pt-12")}>
+          <div className={cn("flex-1 min-h-0 overflow-y-auto px-4 py-2 sm:py-4", isDesktop && "pt-12")}>
             <div className="max-w-3xl mx-auto space-y-4 sm:space-y-6">
               {/* Skeleton message - user */}
               <div className="flex gap-2 sm:gap-3 justify-end animate-pulse">
@@ -1204,7 +1211,7 @@ export function ChatPage() {
             <div
               ref={scrollContainerRef}
               onScroll={handleScroll}
-              className={cn("touch-scroll h-full overflow-y-auto px-2 sm:px-4 pt-6 pb-2 sm:pb-4 md:pt-20")}
+              className={cn("touch-scroll h-full overflow-y-auto px-4 pt-6 pb-2 sm:pb-4 md:pt-20")}
               onClick={(e) => {
                 // If clicking outside interactive elements, dismiss keyboard
                 if ((e.target as HTMLElement).closest('button, a, input, textarea, [role="button"]')) return

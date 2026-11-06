@@ -147,8 +147,7 @@ const navigationResults = []
 
 async function waitForRouteReady(page, route) {
   await page.waitForFunction(() => document.querySelector('#root')?.childElementCount, null, { timeout: 5000 })
-  const isChatRoute = route === "/chat" || route.startsWith("/chat/")
-  if (isChatRoute) {
+  if (route.startsWith("/chat")) {
     await page.waitForSelector("textarea", { state: "visible", timeout: 10000 })
   } else if ((page.viewportSize()?.width ?? 0) < 768) {
     await page.waitForSelector(".mobile-primary-nav", { state: "visible", timeout: 10000 })
@@ -159,7 +158,7 @@ async function waitForRouteReady(page, route) {
       { timeout: 10000 },
     )
   }
-  if ((page.viewportSize()?.width ?? 0) < 768) {
+  if ((page.viewportSize()?.width ?? 0) < 768 && !route.startsWith("/chat")) {
     await page.waitForFunction(
       () => (document.querySelector(".safe-top h1")?.textContent?.trim().length ?? 0) > 0,
       null,
@@ -242,19 +241,21 @@ for (const viewport of viewports) {
 
   if (viewport.name === "standard") {
     try {
-      // Chat special case: no bottom capsule on chat routes — the header's
-      // hamburger drawer is the section exit. Verify the capsule is absent,
-      // then leave Chat through the drawer.
+      // Chat special case: no bottom capsule on chat routes. Verify the
+      // capsule is absent, then leave through the direct workspace button.
       await page.goto("http://127.0.0.1:5173/chat", { waitUntil: "domcontentloaded" })
       await waitForRouteReady(page, "/chat")
-      const navCountOnChat = await page.evaluate(() => document.querySelectorAll(".mobile-primary-nav").length)
-      await page.getByRole("button", { name: "菜单" }).first().click()
-      await page.waitForTimeout(400)
-      await page.getByRole("button", { name: "设备", exact: true }).first().click()
+      const navCountOnChat = await page.locator(".mobile-primary-nav").count()
+      await page.locator(".chat-mobile-shell textarea").focus()
+      await page.evaluate(() => (document.activeElement instanceof HTMLElement) && document.activeElement.blur())
+      await page.getByTestId("chat-workspace-button").click()
+      await page.waitForURL(/\/system$/)
+      const workspacePath = new URL(page.url()).pathname
+      const primaryNav = page.locator(".mobile-primary-nav")
+      await primaryNav.locator("button").nth(1).click()
       await page.waitForURL(/\/devices$/)
       const devicesPath = new URL(page.url()).pathname
       // Devices has the capsule: its chat entry returns to Chat.
-      const primaryNav = page.locator(".mobile-primary-nav")
       await primaryNav.locator("button").nth(0).click()
       await page.waitForURL(/\/chat$/)
       const chatPath = new URL(page.url()).pathname
@@ -262,13 +263,12 @@ for (const viewport of viewports) {
       await waitForRouteReady(page, "/automation")
       await page.getByRole("button", { name: /返回|Back/i }).first().click()
       await page.waitForURL(/\/system$/)
-      navigationResults.push({ name: "primary-navigation", navCountOnChat, devicesPath, chatPath, backPath: new URL(page.url()).pathname })
+      navigationResults.push({ name: "primary-navigation", workspacePath, devicesPath, chatPath, backPath: new URL(page.url()).pathname, navCountOnChat })
     } catch (error) {
       navigationResults.push({ name: "primary-navigation", error: String(error) })
     }
 
     const interactions = [
-      { name: "chat-model", route: "/chat", button: "Qwen3 8B" },
       { name: "device-create", route: "/devices", button: "添加设备" },
       { name: "agent-create", route: "/agents", button: "创建 AI 智能体" },
       { name: "message-create", route: "/messages", button: "创建消息" },
@@ -324,13 +324,18 @@ const expectedNavCount = (r) =>
 
 const failures = results.filter((r) =>
   r.horizontalOverflow || r.contentHorizontalOverflow || r.contentScrollLeft !== 0 || r.pageErrors.length ||
-  (r.viewport !== "landscape" && r.primaryNavCount !== expectedNavCount(r))
+  (r.viewport === "landscape"
+    ? r.primaryNavCount !== 0
+    : r.route.startsWith("/chat")
+      ? r.primaryNavCount !== 0
+      : r.primaryNavCount !== 1)
 )
 const interactionFailures = interactionResults.filter((r) =>
   r.error || r.dialogCount < 1 || r.horizontalOverflow || r.pageErrors?.length || r.fields?.some((field) => Number.parseFloat(field.fontSize) < 16)
 )
 const navigationFailures = navigationResults.filter((r) =>
-  r.error || r.navCountOnChat !== 0 || r.devicesPath !== "/devices" || r.chatPath !== "/chat" || r.backPath !== "/system"
+  r.error || r.workspacePath !== "/system" || r.devicesPath !== "/devices" || r.chatPath !== "/chat" ||
+  r.backPath !== "/system" || r.navCountOnChat !== 0
 )
 console.log(JSON.stringify({ checked: results.length, failures, interactionResults, interactionFailures, navigationResults, navigationFailures, reports: `${outDirPath}report.json` }, null, 2))
 if (failures.length || interactionFailures.length || navigationFailures.length) process.exitCode = 1

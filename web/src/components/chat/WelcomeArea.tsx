@@ -46,7 +46,7 @@ export function WelcomeArea({ className, onQuickAction, children }: WelcomeAreaP
   ]
 
   return (
-    <div className={cn("relative flex min-h-full w-full flex-col items-center overflow-hidden px-0 py-6 sm:p-6", className)}>
+    <div className={cn("relative flex min-h-full w-full flex-col items-center overflow-hidden px-0 py-0 sm:p-6", className)}>
       {/* Dot field backdrop — each dot an edge device, masked to fade toward
           the edges (see .welcome-dots in index.css). Decorative. */}
       <div aria-hidden="true" className="welcome-dots max-sm:hidden" />
