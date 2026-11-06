@@ -40,6 +40,10 @@ const messages = [
   { id: "m1", title: "入口摄像头离线", message: "设备已离线 12 分钟", category: "alert", severity: "warning", status: "active", timestamp: new Date().toISOString(), source: "camera-entry" },
   { id: "m2", title: "冷库温度传感器离线", message: "设备已离线 7 分钟", category: "alert", severity: "critical", status: "active", timestamp: new Date().toISOString(), source: "cold-room-02" },
 ]
+const notificationChannels = [
+  { name: "warehouse-email", channel_type: "email", enabled: true, recipients: ["ops@example.com", "owner@example.com"], config: {} },
+  { name: "incident-webhook", channel_type: "webhook", enabled: false, config: { url: "https://example.com/hooks/incidents" } },
+]
 const agents = [
   { id: "a1", name: "仓库巡检", description: "检查离线设备与异常告警", user_prompt: "检查仓库设备", status: "Active", execution_mode: "free", memory_mode: "assistant", execution_count: 18, success_count: 17, last_execution_at: new Date().toISOString() },
   { id: "a2", name: "冷库温度监控", description: "监控冷库温度变化", user_prompt: "分析温度趋势", status: "Paused", execution_mode: "free", memory_mode: "assistant", execution_count: 8, success_count: 8, last_execution_at: new Date().toISOString() },
@@ -107,12 +111,17 @@ const backend = {
   active: true, healthy: true, context_window: 32768,
   capabilities: { supports_tools: true, supports_multimodal: false, supports_thinking: true },
 }
+const fallbackBackend = {
+  id: "qwen3-cloud", name: "Qwen3 Cloud", model: "qwen3-max", backend_type: "openai_compatible",
+  active: false, healthy: true, context_window: 65536,
+  capabilities: { supports_tools: true, supports_multimodal: true, supports_thinking: true },
+}
 
 function bodyFor(url) {
   const path = new URL(url).pathname.replace(/^\/api/, "")
   if (path === "/setup/status") return { setup_required: false }
   if (path.includes("/auth/me") || path.includes("/auth/current")) return { id: "u1", username: "shenmingming", role: "admin" }
-  if (path.startsWith("/llm-backends")) return { backends: [backend], count: 1, active_id: backend.id }
+  if (path.startsWith("/llm-backends")) return { backends: [backend, fallbackBackend], count: 2, active_id: backend.id }
   if (path === "/devices") return { devices, count: devices.length }
   if (path === "/devices/cold-room-02") return detailDevice
   if (path === "/devices/cold-room-02/current") return {
@@ -135,7 +144,7 @@ function bodyFor(url) {
   if (path.startsWith("/agents/skills")) return { skills: [], total: 0 }
   if (path.startsWith("/agents/tools")) return { tools: [] }
   if (path === "/agents" || path.startsWith("/agents?")) return { agents, count: agents.length }
-  if (path.includes("/channels")) return { channels: [] }
+  if (path.includes("/channels")) return { channels: notificationChannels, count: notificationChannels.length }
   if (path.includes("/messages")) return { messages, count: messages.length, total: messages.length }
   if (path.includes("/onboarding")) return { dismissed: true, steps: { llm: { completed: true }, device: { completed: true } } }
   if (path.includes("/extensions/pages")) return { pages: [] }

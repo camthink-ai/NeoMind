@@ -163,9 +163,9 @@ export function ResponsiveTable<T extends object>({
           </table>
         </div>
         {/* Mobile skeleton */}
-        <div className="space-y-1 md:hidden">
+        <div className="overflow-hidden rounded-2xl border border-border bg-card divide-y divide-border/70 md:hidden">
           {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="rounded-xl px-2 py-3.5">
+            <div key={i} className="px-4 py-3.5">
               <div>
                 <Skeleton className="h-4 w-1/3" />
               </div>
@@ -304,10 +304,13 @@ export function ResponsiveTable<T extends object>({
         </table>
       </div>
 
-      {/* Mobile flat list — the same compact, whitespace-led treatment used
-          by the device list. Rows keep a generous touch target without
-          repeating card borders or divider rules. */}
-      <div className="space-y-1 md:hidden">
+      {/* Mobile grouped list — one calm surface with subtle row dividers.
+          This keeps the hierarchy visible without repeating a card border
+          around every record. */}
+      <div className={cn(
+        "md:hidden",
+        data.length > 0 && "overflow-hidden rounded-2xl border border-border bg-card divide-y divide-border/70"
+      )}>
         {data.length === 0 ? (
           <div className="py-8">
               {emptyState || defaultEmpty}
@@ -323,8 +326,8 @@ export function ResponsiveTable<T extends object>({
                 role={onRowClick ? "button" : undefined}
                 tabIndex={onRowClick ? 0 : undefined}
                 className={cn(
-                  'animate-fade-in-up rounded-xl px-2 py-3.5 transition-[background-color,transform]',
-                  onRowClick && 'cursor-pointer active:scale-[0.99] active:bg-muted',
+                  'animate-fade-in-up px-4 py-3.5 transition-colors',
+                  onRowClick && 'cursor-pointer active:bg-muted',
                   rowClass
                 )}
                 onClick={() => onRowClick?.(rowData)}
@@ -345,7 +348,24 @@ export function ResponsiveTable<T extends object>({
                         {renderCell(columns[0].key, rowData)}
                       </div>
                     </div>
-                    {visibleActions && visibleActions.length > 0 ? (
+                    {visibleActions?.length === 1 ? (
+                      <IconButton
+                        size="sm"
+                        className={cn(
+                          "h-10 w-10 shrink-0 hover:bg-muted",
+                          visibleActions[0].variant === 'destructive' && "text-error"
+                        )}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          visibleActions[0].onClick(rowData)
+                        }}
+                        disabled={visibleActions[0].disabled}
+                        aria-label={visibleActions[0].label}
+                        title={visibleActions[0].label}
+                      >
+                        {visibleActions[0].icon}
+                      </IconButton>
+                    ) : visibleActions && visibleActions.length > 1 ? (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <IconButton

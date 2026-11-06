@@ -265,7 +265,7 @@ export function ChatComposer({
                 disabled={inputDisabled || !supportsMultimodal}
                 className={cn(
                   "rounded-lg flex-shrink-0 text-muted-foreground hover:text-foreground",
-                  isMobile && "order-first h-11 w-11 rounded-full p-0",
+                  isMobile && "order-first h-10 w-10 rounded-full p-0",
                   !supportsMultimodal && "opacity-50"
                 )}
                 title={supportsMultimodal ? (visionDelegate ? t("chat:model.visionViaCompanion") : t("chat:model.addImage")) : t("chat:model.notSupportImage")}
@@ -292,16 +292,22 @@ export function ChatComposer({
               <Button
                 type="button"
                 variant="ghost"
-                size="sm"
+                size="icon-sm"
                 onClick={() => setModelSheetOpen(true)}
-                className="h-11 max-w-[132px] gap-1 rounded-lg px-2 text-xs text-muted-foreground"
+                className="relative h-10 w-10 shrink-0 rounded-full p-0 text-muted-foreground"
+                aria-label={`${t("chat:input.selectLLMModel")}: ${
+                  backends.find(b => b.id === activeBackendId)?.name ||
+                  backends.find(b => b.id === activeBackendId)?.model ||
+                  t("chat:input.selectModel")
+                }`}
+                title={
+                  backends.find(b => b.id === activeBackendId)?.name ||
+                  backends.find(b => b.id === activeBackendId)?.model ||
+                  t("chat:input.selectModel")
+                }
               >
-                <span className="truncate">
-                  {backends.find(b => b.id === activeBackendId)?.name ||
-                   backends.find(b => b.id === activeBackendId)?.model ||
-                   t("chat:input.selectModel")}
-                </span>
-                <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                <Sparkles className="h-[18px] w-[18px]" aria-hidden="true" />
+                <ChevronDown className="absolute bottom-1 right-0.5 h-2.5 w-2.5" aria-hidden="true" />
               </Button>
               <Sheet open={modelSheetOpen} onOpenChange={setModelSheetOpen}>
                 <SheetContent
@@ -540,7 +546,7 @@ export function ChatComposer({
               type="button"
               onClick={onCancel}
               variant="outline"
-              className="h-11 w-11 rounded-full flex-shrink-0 p-0 border-destructive text-destructive hover:bg-destructive-light"
+              className="h-10 w-10 rounded-full flex-shrink-0 p-0 border-destructive text-destructive hover:bg-destructive-light"
               title={t("chat:input.cancel")}
               aria-label={t("chat:input.cancel")}
             >
@@ -552,7 +558,7 @@ export function ChatComposer({
               onClick={onSend}
               disabled={!canSend}
               className={cn(
-                "h-11 w-11 rounded-full flex-shrink-0 p-0 transition-all",
+                "h-10 w-10 rounded-full flex-shrink-0 p-0 transition-all",
                 !canSend
                   ? "bg-muted text-muted-foreground"
                   : "bg-primary hover:bg-primary-hover text-primary-foreground"

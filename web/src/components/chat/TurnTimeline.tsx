@@ -17,7 +17,6 @@ import {
   AlertCircle,
   CheckCircle2,
   ChevronDown,
-  Circle,
   Loader2,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -137,7 +136,6 @@ export function TurnTimeline({
 
   const totalTools = toolCalls.length
   const hasError = toolCalls.some(isToolError)
-  const allComplete = totalTools > 0 && toolCalls.every(tc => tc.result != null) && !isStreaming
   const activeRound = isStreaming ? (currentRound ?? 1) : undefined
   const counts = [
     t("chat:toolCall.roundsCount", { count: rounds.length }),
@@ -157,30 +155,16 @@ export function TurnTimeline({
           type="button"
           className="flex min-h-10 w-full items-center gap-2 px-0 py-1.5 text-left text-muted-foreground transition-colors hover:text-foreground"
         >
-          <div
-            className={cn(
-              "flex h-4 w-4 shrink-0 items-center justify-center",
-              hasError && !isStreaming && "text-error",
-              !hasError && allComplete && "text-muted-foreground",
-              isStreaming && "text-muted-foreground",
-              !allComplete && !isStreaming && !hasError && "text-muted-foreground"
-            )}
-          >
-            {isStreaming ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-            ) : hasError ? (
-              <AlertCircle className="h-4 w-4" aria-hidden="true" />
-            ) : allComplete ? (
-              <span className="h-2 w-2 rounded-full bg-current" aria-hidden="true" />
-            ) : (
-              <Circle className="h-3.5 w-3.5" aria-hidden="true" />
-            )}
-          </div>
           <span className="truncate text-sm">
             {t("chat:timeline.title")} · {counts}
             {!isStreaming && duration > 0 ? ` · ${Math.round(duration / 100) / 10} s` : ""}
           </span>
           <div className="flex-1" />
+          {isStreaming ? (
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" />
+          ) : hasError ? (
+            <AlertCircle className="h-4 w-4 shrink-0 text-error" aria-hidden="true" />
+          ) : null}
           <ChevronDown
             className={cn(
               "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-normal",
