@@ -34,6 +34,7 @@ import {
   AlertTriangle,
   Loader2,
   Clock,
+  ChevronRight,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { formatTimestamp } from "@/lib/utils/format"
@@ -104,7 +105,7 @@ export function AgentCard({
         tabIndex={0}
         onClick={onClick}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() } }}
-        className="flex min-h-[4.5rem] cursor-pointer items-center gap-3 rounded-xl px-2 py-3 transition-[background-color,transform] active:scale-[0.99] active:bg-muted"
+        className="flex min-h-[4.5rem] cursor-pointer items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3.5 transition-[background-color,transform] active:scale-[0.99] active:bg-muted"
       >
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -126,25 +127,7 @@ export function AgentCard({
           onClick={(e) => e.stopPropagation()}
           aria-label={t('agents:card.toggleStatus', { name: agent.name })}
         />
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <IconButton className="h-11 w-11" onClick={(e) => e.stopPropagation()} aria-label={t('agents:card.moreOptions')}>
-              <MoreVertical className="h-4 w-4" />
-            </IconButton>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-40">
-            <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onEdit(agent) }}>
-              <Edit className="mr-2 h-4 w-4" />{t('common:edit')}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onExecute(agent) }} disabled={isExecuting}>
-              <Play className="mr-2 h-4 w-4" />{t('agents:execute')}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onDelete(agent) }} className="text-error">
-              <Trash2 className="mr-2 h-4 w-4" />{t('common:delete')}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
       </div>
     )
   }

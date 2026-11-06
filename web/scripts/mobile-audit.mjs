@@ -166,7 +166,11 @@ const standardRoutes = [
   "/automation", "/automation/transforms",
   "/data", "/extensions", "/visual-dashboard",
 ]
-const routes = process.env.AUDIT_CHAT_ONLY === "1" ? ["/chat"] : standardRoutes
+const routes = process.env.AUDIT_ROUTE
+  ? [process.env.AUDIT_ROUTE]
+  : process.env.AUDIT_CHAT_ONLY === "1"
+    ? ["/chat"]
+    : standardRoutes
 const allViewports = process.env.AUDIT_DESKTOP_ONLY === "1" ? [
   { name: "desktop", width: 1440, height: 960 },
 ] : [
@@ -243,6 +247,9 @@ for (const viewport of viewports) {
     await waitForRouteReady(page, route)
     const audit = await page.evaluate((routePath) => {
       const pageScroller = document.querySelector("[data-page-scroll-container]")
+      const primaryNav = document.querySelector(".mobile-primary-nav")
+      const primaryNavStyle = primaryNav ? getComputedStyle(primaryNav) : null
+      const primaryNavRect = primaryNav?.getBoundingClientRect()
       const visible = (el) => {
         const style = getComputedStyle(el)
         const rect = el.getBoundingClientRect()
@@ -266,6 +273,16 @@ for (const viewport of viewports) {
           : false,
         contentScrollLeft: pageScroller?.scrollLeft ?? 0,
         primaryNavCount: document.querySelectorAll(".mobile-primary-nav").length,
+        primaryNavVisible: primaryNav ? visible(primaryNav) : false,
+        primaryNavState: primaryNavRect && primaryNavStyle ? {
+          x: Math.round(primaryNavRect.x), y: Math.round(primaryNavRect.y),
+          width: Math.round(primaryNavRect.width), height: Math.round(primaryNavRect.height),
+          display: primaryNavStyle.display,
+          visibility: primaryNavStyle.visibility,
+          opacity: primaryNavStyle.opacity,
+          transform: primaryNavStyle.transform,
+          bodyClass: document.body.className,
+        } : null,
         tinyTargets: tinyTargets.slice(0, 12),
       }
     }, route)
@@ -288,15 +305,16 @@ for (const viewport of viewports) {
       await page.evaluate(() => (document.activeElement instanceof HTMLElement) && document.activeElement.blur())
       await page.getByTestId("chat-workspace-button").click()
       await page.waitForURL(/\/system$/)
+      await waitForRouteReady(page, "/system")
       const workspacePath = new URL(page.url()).pathname
-      const primaryNav = page.locator(".mobile-primary-nav")
-      await page.getByTestId("mobile-primary-dashboard").click()
+      const primaryNavItems = await page.locator(".mobile-primary-nav button").count()
+      await page.getByRole("button", { name: /可视化仪表板/ }).click()
       await page.waitForURL(/\/visual-dashboard$/)
       const dashboardPath = new URL(page.url()).pathname
       await page.getByTestId("mobile-primary-system").click()
       await page.waitForURL(/\/system$/)
       const systemPath = new URL(page.url()).pathname
-      await page.getByTestId("mobile-primary-devices").click()
+      await page.getByRole("button", { name: /^设备/ }).click()
       await page.waitForURL(/\/devices$/)
       const devicesPath = new URL(page.url()).pathname
       // Devices has the capsule: its chat entry returns to Chat.
@@ -307,7 +325,7 @@ for (const viewport of viewports) {
       await waitForRouteReady(page, "/automation")
       await page.getByRole("button", { name: /返回|Back/i }).first().click()
       await page.waitForURL(/\/system$/)
-      navigationResults.push({ name: "primary-navigation", workspacePath, dashboardPath, systemPath, devicesPath, chatPath, backPath: new URL(page.url()).pathname, navCountOnChat })
+      navigationResults.push({ name: "primary-navigation", workspacePath, primaryNavItems, dashboardPath, systemPath, devicesPath, chatPath, backPath: new URL(page.url()).pathname, navCountOnChat })
     } catch (error) {
       navigationResults.push({ name: "primary-navigation", error: String(error) })
     }
@@ -356,10 +374,9 @@ for (const viewport of viewports) {
 
     try {
       pageErrors.length = 0
-      await page.goto("http://127.0.0.1:5173/devices", { waitUntil: "domcontentloaded" })
-      await waitForRouteReady(page, "/devices")
-      await page.locator("button:has(svg.lucide-ellipsis-vertical), button:has(svg.lucide-more-vertical)").first().click()
-      await page.getByRole("menuitem", { name: "删除" }).click()
+      await page.goto("http://127.0.0.1:5173/agents", { waitUntil: "domcontentloaded" })
+      await waitForRouteReady(page, "/agents")
+      await page.getByRole("switch").first().click()
       const sheet = page.getByRole("alertdialog")
       await sheet.waitFor({ state: "visible" })
       const bounds = await sheet.evaluate((el) => {
@@ -398,16 +415,16 @@ const expectedNavCount = (r) =>
 const failures = results.filter((r) =>
   r.horizontalOverflow || r.contentHorizontalOverflow || r.contentScrollLeft !== 0 || r.pageErrors.length ||
   (r.viewport === "landscape" || r.viewportWidth >= 768
-    ? r.primaryNavCount !== 0
+    ? r.primaryNavCount !== 0 || r.primaryNavVisible
     : r.route.startsWith("/chat")
-      ? r.primaryNavCount !== 0
-      : r.primaryNavCount !== 1)
+      ? r.primaryNavCount !== 0 || r.primaryNavVisible
+      : r.primaryNavCount !== 1 || !r.primaryNavVisible)
 )
 const interactionFailures = interactionResults.filter((r) =>
   r.error || r.dialogCount < 1 || r.horizontalOverflow || r.pageErrors?.length || r.fields?.some((field) => Number.parseFloat(field.fontSize) < 16)
 )
 const navigationFailures = navigationResults.filter((r) =>
-  r.error || r.workspacePath !== "/system" || r.dashboardPath !== "/visual-dashboard" || r.systemPath !== "/system" ||
+  r.error || r.workspacePath !== "/system" || r.primaryNavItems !== 2 || r.dashboardPath !== "/visual-dashboard" || r.systemPath !== "/system" ||
   r.devicesPath !== "/devices" || r.chatPath !== "/chat" ||
   r.backPath !== "/system" || r.navCountOnChat !== 0
 )

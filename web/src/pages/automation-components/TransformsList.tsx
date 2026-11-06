@@ -9,7 +9,7 @@ import { Card } from "@/components/ui/card"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu"
 import { IconButton } from "@/components/ui/button"
 import { ResponsiveTable, EmptyState } from "@/components/shared"
-import { Edit, Trash2, Code, Globe, Cpu, HardDrive, Download, MoreVertical } from "lucide-react"
+import { ChevronRight, Edit, Trash2, Code, Globe, Cpu, HardDrive, Download, MoreVertical } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
 import { formatTimestamp } from "@/lib/utils/format"
@@ -154,7 +154,7 @@ export function TransformsList({
 
   return (
     isMobile ? (
-      <div className="space-y-1">
+      <div className="space-y-2">
         {/* Mobile has no ResponsiveTable — carry its own loading skeleton. */}
         {loading && paginatedTransforms.length === 0 && (
           [0, 1, 2].map((i) => (
@@ -174,12 +174,12 @@ export function TransformsList({
             <Card
               key={transform.id}
               className={cn(
-                "cursor-pointer overflow-hidden rounded-xl border-0 bg-transparent shadow-none transition-[background-color,transform] active:scale-[0.99] active:bg-muted",
+                "cursor-pointer overflow-hidden rounded-2xl border border-border bg-card shadow-none transition-[background-color,transform] active:scale-[0.99] active:bg-muted",
                 !transform.enabled && "opacity-50"
               )}
               onClick={() => onEdit(transform)}
             >
-              <div className="px-2 py-3">
+              <div className="px-4 py-3.5">
                 <div className="flex items-center gap-2">
                   <div className="flex-1 min-w-0">
                     <div className="truncate text-[15px] font-medium">{transform.name}</div>
@@ -192,32 +192,7 @@ export function TransformsList({
                     onCheckedChange={() => onToggleStatus(transform)}
                     onClick={(e) => e.stopPropagation()}
                   />
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                      <IconButton>
-                        <MoreVertical className="h-4 w-4" />
-                      </IconButton>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onEdit(transform) }}>
-                        <Edit className="h-4 w-4 mr-2" />
-                        {t('common:edit')}
-                      </DropdownMenuItem>
-                      {onExport && (
-                        <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onExport(transform) }}>
-                          <Download className="h-4 w-4 mr-2" />
-                          {t('common:export')}
-                        </DropdownMenuItem>
-                      )}
-                      <DropdownMenuItem
-                        className="text-error"
-                        onClick={(e) => { e.stopPropagation(); onDelete(transform) }}
-                      >
-                        <Trash2 className="h-4 w-4 mr-2" />
-                        {t('common:delete')}
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                 </div>
               </div>
             </Card>

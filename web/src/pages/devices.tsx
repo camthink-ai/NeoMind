@@ -11,7 +11,7 @@ import { fetchCache } from "@/lib/utils/async"
 import { useNavigate, useLocation, useParams } from "react-router-dom"
 import { PageLayout } from "@/components/layout/PageLayout"
 import { PageTabsBar, PageTabsContent, PageTabsBottomNav, Pagination, SearchInput, type TabAction } from "@/components/shared"
-import { Upload, Download, Settings, Server, Layers, FileEdit, Cloud, ChevronLeft } from "lucide-react"
+import { Upload, Download, Settings, Server, Layers, FileEdit, Cloud, ChevronLeft, Pencil } from "lucide-react"
 import { LoadingState } from "@/components/shared/LoadingState"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api"
@@ -770,6 +770,16 @@ export function DevicesPage() {
     <>
       <PageLayout
         title={deviceDetailView ? undefined : t('devices:title')}
+        actions={deviceDetailView && deviceDetails ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => handleEditDevice(deviceDetails)}
+            aria-label={t('common:edit')}
+          >
+            <Pencil className="h-4 w-4" />
+          </Button>
+        ) : undefined}
         noPadding={!!deviceDetailView}
         hideFooterOnMobile
         mobileHeader={

@@ -83,7 +83,7 @@ export default function SystemPage() {
     <div className="flex h-full flex-col bg-background">
       <MobilePageHeader title={t("common:system.pageTitle")} />
       <div className="flex-1 overflow-y-auto overscroll-contain">
-        <div className="mx-auto w-full max-w-2xl px-5 pb-10 pt-4">
+        <div className="mx-auto w-full max-w-2xl px-5 pb-[calc(6rem+env(safe-area-inset-bottom,0px))] pt-4">
           <button
             type="button"
             onClick={() => setInstanceManagerOpen(true)}
@@ -109,6 +109,8 @@ export default function SystemPage() {
           </button>
 
           <Section title={t("common:system.sectionBusiness")}>
+            <MoreRow title={t("common:nav.devices")} description={t("common:system.cards.devices")} onClick={() => navigate("/devices")} />
+            <MoreRow title={t("common:nav.agents")} description={t("common:system.cards.agents")} onClick={() => navigate("/agents")} />
             <MoreRow title={t("common:nav.visual-dashboard")} description={t("common:system.cards.dashboard")} onClick={() => navigate("/visual-dashboard")} />
             <MoreRow title={t("common:nav.automation")} description={t("common:system.cards.automation")} onClick={() => navigate("/automation")} />
             <MoreRow title={t("common:nav.data")} description={t("common:system.cards.data")} onClick={() => navigate("/data")} />

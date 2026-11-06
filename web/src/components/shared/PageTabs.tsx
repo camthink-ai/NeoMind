@@ -653,7 +653,7 @@ function TabActionsOverflow({
           <Button
             variant="ghost"
             size="icon"
-            className="h-11 w-11 shrink-0 sm:h-9 sm:w-9"
+            className="h-10 w-10 shrink-0 sm:h-9 sm:w-9"
             aria-label={moreText}
           >
             <MoreHorizontal className="h-5 w-5" />
@@ -700,8 +700,8 @@ function TabActionsOverflow({
 
 /**
  * MobileTabActionsCompact - compact rendering for the MobilePageHeader's
- * actions slot. The first action is an icon button (h-9 w-9, matching the
- * hamburger tap target); the rest collapse into a MoreHorizontal dropdown.
+ * actions slot. The first action is a compact icon button; the rest collapse
+ * into a MoreHorizontal dropdown.
  *
  * Note: `actionsExtra` (search/filter/wide controls) is NOT handled here —
  * those are routed to the sticky content toolbar via the "content" slot of
@@ -731,7 +731,7 @@ function MobileTabActionsCompact({
           size={primaryIcon ? 'icon' : 'sm'}
           onClick={primary.onClick}
           disabled={primary.disabled || primary.loading}
-          className={primaryIcon ? 'h-11 w-11 shrink-0 sm:h-9 sm:w-9' : 'h-11 shrink-0 px-2 text-xs sm:h-9'}
+          className={primaryIcon ? 'h-10 w-10 shrink-0 sm:h-9 sm:w-9' : 'h-10 shrink-0 px-2 text-xs sm:h-9'}
           aria-label={primary.label}
           title={primary.label}
         >

@@ -48,7 +48,7 @@ export function MobilePageHeader({
   const setDrawerOpen = useMobileNav((s) => s.setOpen)
   if (!isMobile) return null
 
-  const systemChildRoots = ["/visual-dashboard", "/automation", "/data", "/messages", "/extensions", "/settings"]
+  const systemChildRoots = ["/devices", "/agents", "/visual-dashboard", "/automation", "/data", "/messages", "/extensions", "/settings"]
   const showSystemBack = systemChildRoots.some(
     (path) => location.pathname === path || location.pathname.startsWith(`${path}/`),
   )
@@ -75,18 +75,18 @@ export function MobilePageHeader({
           <Button
             variant="ghost"
             size="icon"
-            className="-ml-1.5 h-9 w-9 shrink-0"
+            className="-ml-1.5 h-10 w-10 shrink-0"
             onClick={() => setDrawerOpen(true)}
             aria-label={t("system.menu")}
           >
             <Menu className="h-5 w-5" />
           </Button>
         )}
-        {showSystemBack && (
+        {showSystemBack && !leftExtra && (
           <Button
             variant="ghost"
             size="icon"
-            className="-ml-1.5 h-9 w-9 shrink-0"
+            className="-ml-1.5 h-10 w-10 shrink-0"
             onClick={() => navigate("/system")}
             aria-label={t("back", { defaultValue: "Back" })}
           >
@@ -97,7 +97,7 @@ export function MobilePageHeader({
       </div>
       <h1 className={cn(
         "min-w-0 flex-1 truncate text-left tracking-[-0.02em] text-foreground",
-        leftExtra ? "text-lg font-semibold leading-6" : "text-2xl font-bold leading-8",
+        leftExtra || showSystemBack ? "text-lg font-semibold leading-6" : "text-2xl font-bold leading-8",
       )}>
         {title}
       </h1>

@@ -157,7 +157,7 @@ export function PageLayout({
     : showFooter
       ? '14rem'                                          // footer clearance (224px)
       : isMobile
-        ? 'calc(1.5rem + env(safe-area-inset-bottom, 0px))'
+        ? 'calc(6rem + env(safe-area-inset-bottom, 0px))'
         : '2rem'
 
   return (
@@ -233,7 +233,7 @@ export function PageLayout({
             unaffected (those actions render in the desktop tab bar instead). */}
         {isMobile && collectedMobileContentActions.length > 0 && (
           <div className="shrink-0  bg-background px-3 py-2">
-            <div className="flex items-center gap-2 overflow-x-auto scrollbar-none [&_button]:min-h-11">
+            <div className="flex items-center gap-2 overflow-x-auto scrollbar-none [&_button]:min-h-10">
               {collectedMobileContentActions.map((node, i) => (
                 <Fragment key={i}>{node}</Fragment>
               ))}

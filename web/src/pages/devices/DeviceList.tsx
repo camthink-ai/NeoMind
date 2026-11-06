@@ -4,7 +4,7 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { IconButton } from "@/components/ui/button"
 import { ResponsiveTable, EmptyState, EmptyStateCard } from "@/components/shared"
 import { DeviceStatusBadge } from "@/components/shared/DeviceStatusBadge"
-import { Eye, MoreVertical, Trash2, Cpu, Database, Waves, Pencil } from "lucide-react"
+import { ChevronRight, Eye, MoreVertical, Trash2, Cpu, Database, Waves, Pencil } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { interactiveCardHover } from "@/design-system/tokens/size"
 import { textMini } from "@/design-system/tokens/typography"
@@ -90,7 +90,7 @@ export function DeviceList({
       {addDeviceDialog}
 
       {isMobile ? (
-        <div className="space-y-1">
+        <div className="space-y-2">
           {/* Mobile has no ResponsiveTable, so it must carry its own loading
               and empty states — a bare map() renders as a blank void. */}
           {loading && paginatedDevices.length === 0 && (
@@ -122,7 +122,7 @@ export function DeviceList({
                 key={device.id}
                 role="button"
                 tabIndex={0}
-                className="cursor-pointer rounded-xl px-2 py-3.5 transition-[background-color,transform] active:scale-[0.99] active:bg-muted"
+                className="cursor-pointer rounded-2xl border border-border bg-card px-4 py-3.5 transition-[background-color,transform] active:scale-[0.99] active:bg-muted"
                 onClick={() => onViewDetails(device)}
                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onViewDetails(device) }}
               >
@@ -139,32 +139,7 @@ export function DeviceList({
                       {device.device_type} · {device.adapter_type || 'mqtt'}
                     </div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-1">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                        <IconButton className="h-11 w-11">
-                          <MoreVertical className="h-4 w-4" />
-                        </IconButton>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onViewDetails(device) }}>
-                          <Eye className="h-4 w-4 mr-2" />
-                          {t('devices:actions.viewDetails')}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onEdit(device) }}>
-                          <Pencil className="h-4 w-4 mr-2" />
-                          {t('common:edit')}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          className="text-error"
-                          onClick={(e) => { e.stopPropagation(); onDelete(device.id) }}
-                        >
-                          <Trash2 className="h-4 w-4 mr-2" />
-                          {t('common:delete')}
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                 </div>
               </div>
             )

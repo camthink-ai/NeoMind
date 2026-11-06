@@ -789,6 +789,8 @@
     "preferences": "Preferences and account",
     "account": "Account",
     "cards": {
+      "devices": "Devices and device types",
+      "agents": "AI agents and capabilities",
       "dashboard": "Visual dashboards",
       "automation": "Transforms and data push",
       "data": "Telemetry data explorer",

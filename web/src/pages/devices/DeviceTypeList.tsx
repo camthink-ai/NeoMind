@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/card"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu"
 import { IconButton } from "@/components/ui/button"
 import { ResponsiveTable, EmptyState, EmptyStateCard } from "@/components/shared"
-import { Eye, Pencil, Trash2, Download, MoreVertical, Database } from "lucide-react"
+import { ChevronRight, Eye, Pencil, Trash2, Download, MoreVertical, Database } from "lucide-react"
 import type { DeviceType } from "@/types"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -76,7 +76,7 @@ export function DeviceTypeList({
       {addTypeDialog}
 
       {isMobile ? (
-        <div className="space-y-1">
+        <div className="space-y-2">
           {/* Mobile has no ResponsiveTable — carry its own empty state. */}
           {!loading && paginatedDeviceTypes.length === 0 && (
             <EmptyStateCard>
@@ -103,11 +103,11 @@ export function DeviceTypeList({
             <Card
               key={dt.device_type}
               className={cn(
-                "cursor-pointer overflow-hidden rounded-xl border-0 bg-transparent shadow-none transition-[background-color,transform] active:scale-[0.99] active:bg-muted",
+                "cursor-pointer overflow-hidden rounded-2xl border border-border bg-card shadow-none transition-[background-color,transform] active:scale-[0.99] active:bg-muted",
               )}
               onClick={() => onViewDetails(dt)}
             >
-              <div className="px-2 py-3">
+              <div className="px-4 py-3.5">
                 <div className="flex items-center gap-2">
                   <div className="flex-1 min-w-0">
                     <div className="truncate text-[15px] font-medium">{dt.name}</div>
@@ -121,34 +121,7 @@ export function DeviceTypeList({
                       {t('devices:types.builtinBadge')}
                     </Badge>
                   )}
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                      <IconButton className="shrink-0">
-                        <MoreVertical className="h-4 w-4" />
-                      </IconButton>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onViewDetails(dt) }}>
-                        <Eye className="h-4 w-4 mr-2" />
-                        {t('devices:types.actions.view')}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleExport(dt) }}>
-                        <Download className="h-4 w-4 mr-2" />
-                        {t('devices:types.actions.export')}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onEdit(dt) }}>
-                        <Pencil className="h-4 w-4 mr-2" />
-                        {t('common:edit')}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        className="text-error"
-                        onClick={(e) => { e.stopPropagation(); onDelete(dt.device_type) }}
-                      >
-                        <Trash2 className="h-4 w-4 mr-2" />
-                        {t('common:delete')}
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                 </div>
               </div>
             </Card>
