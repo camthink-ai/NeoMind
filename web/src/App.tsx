@@ -7,7 +7,6 @@ import { useStore } from "@/store"
 import { shallow } from "zustand/shallow"
 import { AppSidebar } from "@/components/layout/AppSidebar"
 import { GlobalControlsFloating } from "@/components/layout/GlobalControls"
-import { MobileNav } from "@/components/layout/MobileNav"
 import { MobilePrimaryNav } from "@/components/layout/MobilePrimaryNav"
 import { SwipeNavigation } from "@/components/layout/SwipeNavigation"
 import { NavigationProgress } from "@/components/layout/NavigationProgress"
@@ -586,7 +585,6 @@ function App() {
                       area. Empty (0 width) on pages that don't use it. */}
                   {!isMobile && <div id="page-sidebar-slot" className="flex shrink-0" />}
                   <div className="flex flex-col flex-1 min-w-0">
-                    <MobileNav />
                     {/* Skip link — keyboard users tab past the nav straight to content.
                         Visually hidden until focused. */}
                     <a

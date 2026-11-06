@@ -55,21 +55,21 @@ export function WelcomeArea({ className, onQuickAction, children }: WelcomeAreaP
       {/* max-w-3xl — same width as the conversation view's composer, so the
           slotted input keeps its conversational width and the suggestion
           grid spans it too. relative keeps it painting above the aurora. */}
-      <div className="relative flex min-h-full w-full max-w-3xl shrink-0 flex-col gap-5 sm:block sm:min-h-0 sm:space-y-8">
+      <div className="relative grid min-h-full w-full max-w-3xl shrink-0 grid-rows-[1fr_auto_auto] gap-4 sm:block sm:min-h-0 sm:space-y-8">
         {/* Greeting */}
-        <div className="order-1 text-left sm:text-center">
+        <div className="order-1 flex flex-col justify-end pb-3 text-center sm:block sm:pb-0">
           {/* Horizontal brand wordmark — same image as the expanded sidebar,
               theme-adaptive (logo-light / logo-dark) */}
           <div className="mb-4 hidden justify-center sm:flex">
             <BrandLogoHorizontal className="h-9" />
           </div>
-          <h1 className="text-[22px] font-semibold leading-snug tracking-tight text-foreground sm:text-xl">
+          <h1 className="text-[22px] font-semibold leading-snug tracking-[-0.02em] text-foreground sm:text-xl">
             {t('common:welcome.askLine', { greeting: t(getGreetingKey()) })}
           </h1>
         </div>
 
         {/* Slotted composer — the input lives inside the centered group */}
-        <div className="order-3 mt-auto w-full pt-3 sm:mt-0 sm:pt-0">
+        <div className="chat-welcome-composer order-3 mt-1 w-full sm:mt-0">
           {children}
         </div>
 
@@ -96,16 +96,15 @@ export function WelcomeArea({ className, onQuickAction, children }: WelcomeAreaP
           ]
           return (
             <>
-              <div className="order-2 space-y-1 sm:hidden">
-                {mobileSuggestions.slice(0, 3).map(({ label, prompt }) => (
+              <div className="order-2 grid grid-cols-2 gap-2 sm:hidden">
+                {mobileSuggestions.map(({ label, prompt }) => (
                   <button
                     key={label}
                     type="button"
                     onClick={() => onQuickAction?.(prompt)}
-                    className="flex min-h-12 w-full items-center justify-between rounded-xl px-2 py-3 text-left text-sm text-foreground transition-[background-color,transform] active:scale-[0.99] active:bg-muted"
+                    className="flex min-h-12 w-full items-center rounded-2xl bg-muted/60 px-3 py-3 text-left text-sm text-foreground transition-[background-color,transform] active:scale-[0.98] active:bg-muted"
                   >
                     <span>{label}</span>
-                    <ArrowRight className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
                   </button>
                 ))}
               </div>

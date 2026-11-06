@@ -290,7 +290,7 @@ export function ImBridgesTab() {
   if (view === 'list') {
     const available = IM_PLATFORMS.filter(p => p.available)
     return (
-      <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,260px),1fr))]">
+      <div className="grid grid-cols-1 gap-1 md:grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,260px),1fr))] md:gap-4">
         {available.map(def => {
           const PlatformIcon = def.icon
           const bridge = bridges.find(b => b.platform === def.id)
@@ -298,12 +298,12 @@ export function ImBridgesTab() {
           return (
             <Card
               key={def.id}
-              className="cursor-pointer transition-all duration-normal hover:shadow-md"
+              className="cursor-pointer rounded-xl border-0 bg-transparent shadow-none transition-[background-color,transform] active:scale-[0.99] active:bg-muted md:border md:bg-card md:transition-all md:hover:shadow-md"
               onClick={() => (bridge ? openDetail(bridge) : handlePlatformSelect(def))}
             >
-              <CardContent className="p-4">
+              <CardContent className="px-2 py-3.5 md:p-4">
                 <div className="flex items-start gap-3">
-                  <div className={cn('flex items-center justify-center h-10 w-10 rounded-lg shrink-0', def.iconBg)}>
+                  <div className={cn('hidden items-center justify-center h-10 w-10 rounded-lg shrink-0 md:flex', def.iconBg)}>
                     <PlatformIcon className="h-5 w-5" />
                   </div>
                   <div className="min-w-0 flex-1">
@@ -323,7 +323,7 @@ export function ImBridgesTab() {
                   </div>
                 </div>
                 {bridge && (
-                  <div className="mt-3 flex items-center justify-end gap-1">
+                  <div className="mt-3 hidden items-center justify-end gap-1 md:flex">
                     <IconButton
                       size="sm"
                       aria-label={t('settings:im.manage')}

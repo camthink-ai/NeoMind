@@ -7,7 +7,7 @@ import { useStore } from "@/store"
 import { shallow } from "zustand/shallow"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { generateId } from "@/lib/id"
-import { Sparkles, MessageSquare, Loader2, Plus } from "lucide-react"
+import { MessageSquare, Loader2, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SessionSidebar } from "@/components/session/SessionSidebar"
 import { WelcomeArea } from "@/components/chat/WelcomeArea"
@@ -1004,7 +1004,7 @@ export function ChatPage() {
 
   return (
     <>
-    <div className="fixed left-0 right-0 flex flex-row overflow-hidden safe-top" style={{
+    <div className="chat-mobile-shell fixed left-0 right-0 flex flex-row overflow-hidden safe-top" style={{
       // Offset past BOTH the desktop AppSidebar and the page sidebar column
       // (sessions list, hoisted to the shell slot). Both are 0 on mobile.
       left: 'calc(var(--app-sidebar-width, 0px) + var(--page-sidebar-width, 0px))',
@@ -1084,7 +1084,9 @@ export function ChatPage() {
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-        {/* Mobile per-page header: hamburger (nav drawer) + sessions toggle + new session */}
+        {/* Mobile header: local conversation actions only. Global destinations
+            stay in the bottom capsule, so no second navigation drawer is
+            involved when leaving Chat. */}
         <MobilePageHeader
           title={noLlmContent
             ? t('common:llmGuide.title')
@@ -1092,35 +1094,35 @@ export function ChatPage() {
               const s = sessions.find((x) => x.sessionId === urlSessionId)
               return s?.title || t('chat:input.newChat')
             })()}
-          leftExtra={
-            !isDesktop && !noLlmContent && (sessions.length > 0 || !isWelcomeMode) ? (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="shrink-0"
-                onClick={() => setSidebarOpen(true)}
-                aria-label={t('common:session.history')}
-              >
-                <MessageSquare className="h-5 w-5" />
-              </Button>
-            ) : undefined
-          }
           actions={
             // No "+" while the LLM setup guide owns the screen — a new session
             // can't be talked to yet; the guide's two CTAs are the actions.
             !isDesktop && !noLlmContent ? (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="shrink-0"
-                onClick={async () => {
-                  const id = await createSession()
-                  if (id) navigate(`/chat/${id}`)
-                }}
-                aria-label={t('chat:input.newChat')}
-              >
-                <Plus className="h-5 w-5" />
-              </Button>
+              <>
+                {(sessions.length > 0 || !isWelcomeMode) && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="shrink-0"
+                    onClick={() => setSidebarOpen(true)}
+                    aria-label={t('common:session.history')}
+                  >
+                    <MessageSquare className="h-5 w-5" />
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="shrink-0"
+                  onClick={async () => {
+                    const id = await createSession()
+                    if (id) navigate(`/chat/${id}`)
+                  }}
+                  aria-label={t('chat:input.newChat')}
+                >
+                  <Plus className="h-5 w-5" />
+                </Button>
+              </>
             ) : undefined
           }
         />
@@ -1141,7 +1143,7 @@ export function ChatPage() {
         ) : isWelcomeMode ? (
           /* Welcome Area - shown on /chat (no sessionId), scrollable on mobile */
           <div
-            className={cn("touch-scroll flex min-h-0 flex-1 flex-col overflow-y-auto px-4 sm:px-6 py-4 sm:py-6 pb-6", isDesktop && "pt-14")}
+            className={cn("touch-scroll flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-3 pb-24 sm:px-6 sm:py-6 sm:pb-6", isDesktop && "pt-14")}
             onClick={(e) => {
               // If clicking outside interactive elements, dismiss keyboard
               if ((e.target as HTMLElement).closest('button, a, input, textarea, [role="button"]')) return
@@ -1242,12 +1244,9 @@ export function ChatPage() {
               handleBackdropClick()
             }}
           >
-            <div className="text-center space-y-4 max-w-md">
-              <div className="w-16 h-16 rounded-xl bg-muted flex items-center justify-center mx-auto">
-                <Sparkles className="h-8 w-8 text-muted-foreground" />
-              </div>
+            <div className="max-w-md space-y-2 text-center">
               <div>
-                <h3 className="text-lg font-semibold">{t('chat:input.newChat')}</h3>
+                <h3 className="text-xl font-semibold tracking-tight">{t('chat:input.newChat')}</h3>
                 <p className="text-sm text-muted-foreground mt-1">
                   {t('chat:input.startNewConversation')}
                 </p>
@@ -1269,8 +1268,7 @@ export function ChatPage() {
             doesn't either — there is no backend to send to. */}
         {!isWelcomeMode && !noLlmContent && (
         <div
-          className="shrink-0 px-2.5 sm:px-4 pt-3 pb-[calc(1.25rem+env(safe-area-inset-bottom,0px))] sm:pt-3 sm:pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] border-0"
-          style={isDesktop ? undefined : { paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 12px))' }}
+          className="chat-composer-dock shrink-0 border-0 px-2.5 pt-3 sm:px-4 sm:pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:pt-3"
         >
           <div className="max-w-3xl mx-auto">
             {/* Connection status — only surfaces when the WebSocket is not

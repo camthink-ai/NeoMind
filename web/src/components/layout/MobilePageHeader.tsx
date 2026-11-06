@@ -1,7 +1,7 @@
 /**
  * MobilePageHeader - Per-page sticky top bar (mobile-only)
  *
- * Layout: [☰ drawer] [leftExtra?] [left-aligned title] [actions?]
+ * Layout: [leftExtra?] [left-aligned title] [actions?]
  * The title grows into the available space and truncates before the actions.
  *
  * The bar is h-16 (64px) + safe-area-top, sticky to the top of the scroll
@@ -12,19 +12,18 @@
 
 import { type ReactNode } from "react"
 import { useTranslation } from "react-i18next"
-import { Menu } from "lucide-react"
+import { useLocation, useNavigate } from "react-router-dom"
+import { ChevronLeft } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/useMobile"
-import { useMobileNav } from "@/store/mobileNav"
 import { Button } from "@/components/ui/button"
-import { useLocation } from "react-router-dom"
 
 export interface MobilePageHeaderProps {
   /** Left-aligned page title (required). */
   title: ReactNode
   /** Right slot for page actions (add, search, refresh). */
   actions?: ReactNode
-  /** Hide the hamburger (default: false). Useful when a custom back button replaces it. */
+  /** Kept for caller compatibility; global navigation now lives in the bottom capsule. */
   hideMenu?: boolean
   /** Optional left slot rendered AFTER the hamburger (e.g., back chevron on sub-pages). */
   leftExtra?: ReactNode
@@ -34,19 +33,19 @@ export interface MobilePageHeaderProps {
 export function MobilePageHeader({
   title,
   actions,
-  hideMenu = false,
   leftExtra,
   className,
 }: MobilePageHeaderProps) {
   const isMobile = useIsMobile()
   const { t } = useTranslation("common")
-  const setOpen = useMobileNav((s) => s.setOpen)
   const location = useLocation()
+  const navigate = useNavigate()
   if (!isMobile) return null
 
-  // The global bottom bar is the navigation entry on regular mobile pages.
-  // Chat hides that bar to protect the composer, so it keeps the menu button.
-  const showMenu = !hideMenu && (location.pathname === "/" || location.pathname.startsWith("/chat"))
+  const systemChildRoots = ["/visual-dashboard", "/automation", "/data", "/messages", "/extensions", "/settings"]
+  const showSystemBack = systemChildRoots.some(
+    (path) => location.pathname === path || location.pathname.startsWith(`${path}/`),
+  )
 
   return (
     <div
@@ -63,21 +62,17 @@ export function MobilePageHeader({
         height: 'calc(4rem + env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))',
       }}
     >
-      {/* Left slot: hamburger + leftExtra (e.g. back chevron) */}
+      {/* Optional local navigation, such as a back or history button. */}
       <div className="flex min-w-0 shrink-0 items-center gap-1 [&_button]:rounded-full [&_button]:border [&_button]:border-glass-border [&_button]:bg-surface-glass [&_button]:shadow-sm [&_button]:backdrop-blur-xl">
-        {showMenu && (
+        {showSystemBack && (
           <Button
             variant="ghost"
             size="icon"
-            // 44×44 = Apple HIG / Material minimum touch target. The previous
-            // h-9 w-9 (36px) was below the recommended minimum and small
-            // finger drift would miss the tap, making it feel like the menu
-            // "didn't open" on first try.
-            className="-ml-2 h-11 w-11 shrink-0 hover:border-glass-border-hover hover:bg-muted"
-            onClick={() => setOpen(true)}
-            aria-label={t("system.menu")}
+            className="-ml-2 h-11 w-11 shrink-0"
+            onClick={() => navigate("/system")}
+            aria-label={t("back", { defaultValue: "Back" })}
           >
-            <Menu className="h-6 w-6" />
+            <ChevronLeft className="h-6 w-6" />
           </Button>
         )}
         {leftExtra}

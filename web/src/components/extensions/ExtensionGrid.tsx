@@ -202,9 +202,9 @@ export function ExtensionGrid({
           {t("empty.description")}
         </p>
 
-        <div className="mt-8 w-full divide-y divide-border border-y border-border text-sm sm:hidden">
+        <div className="mt-8 w-full space-y-1 text-sm sm:hidden">
           {showcaseExtensions.slice(0, 4).map((ext) => (
-            <div key={ext.name} className="py-3.5">
+            <div key={ext.name} className="rounded-xl px-1 py-3">
               <div className="flex items-baseline justify-between gap-3">
                 <span className="font-medium text-foreground">{ext.name}</span>
                 <span className="shrink-0 text-xs text-muted-foreground">{ext.category}</span>
@@ -304,7 +304,7 @@ export function ExtensionGrid({
                 key={option.value}
                 onClick={() => setStatusFilter(option.value)}
                 className={cn(
-                  "inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-xs font-medium transition-all border",
+                  "inline-flex h-10 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-all md:h-7 md:rounded-md md:px-2.5",
                   isSelected
                     ? "bg-primary text-primary-foreground border-primary shadow-sm"
                     : "bg-card hover:bg-muted-50 text-muted-foreground border-border hover:border-input"
@@ -324,7 +324,7 @@ export function ExtensionGrid({
             )
           })}
           {hasActiveFilters && (
-            <Button variant="ghost" size="xs" onClick={clearFilters} className="h-7">
+            <Button variant="ghost" size="xs" onClick={clearFilters} className="h-10 md:h-7">
               <X className="h-3 w-3 mr-1" />
               {t("clearFilters", { ns: "common" })}
             </Button>

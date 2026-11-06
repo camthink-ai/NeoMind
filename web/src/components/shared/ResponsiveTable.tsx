@@ -163,9 +163,9 @@ export function ResponsiveTable<T extends object>({
           </table>
         </div>
         {/* Mobile skeleton */}
-        <div className="divide-y divide-border border-y border-border md:hidden">
+        <div className="space-y-1 md:hidden">
           {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="py-4">
+            <div key={i} className="rounded-xl px-2 py-3.5">
               <div>
                 <Skeleton className="h-4 w-1/3" />
               </div>
@@ -304,9 +304,10 @@ export function ResponsiveTable<T extends object>({
         </table>
       </div>
 
-      {/* Mobile flat list — page hierarchy comes from type, spacing and
-          dividers. Repeating card chrome made dense operational lists noisy. */}
-      <div className="divide-y divide-border border-y border-border md:hidden">
+      {/* Mobile flat list — the same compact, whitespace-led treatment used
+          by the device list. Rows keep a generous touch target without
+          repeating card borders or divider rules. */}
+      <div className="space-y-1 md:hidden">
         {data.length === 0 ? (
           <div className="py-8">
               {emptyState || defaultEmpty}
@@ -322,8 +323,8 @@ export function ResponsiveTable<T extends object>({
                 role={onRowClick ? "button" : undefined}
                 tabIndex={onRowClick ? 0 : undefined}
                 className={cn(
-                  'animate-fade-in-up py-3.5',
-                  onRowClick && 'cursor-pointer active:opacity-60',
+                  'animate-fade-in-up rounded-xl px-2 py-3.5 transition-[background-color,transform]',
+                  onRowClick && 'cursor-pointer active:scale-[0.99] active:bg-muted',
                   rowClass
                 )}
                 onClick={() => onRowClick?.(rowData)}

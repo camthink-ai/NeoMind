@@ -215,7 +215,7 @@ export function ChatComposer({
       )}
 
       {/* Single unified input box — everything inside one container */}
-      <div className="rounded-lg border border-input bg-card shadow-sm transition-colors max-sm:rounded-[1.4rem]">
+      <div className="rounded-lg border border-input bg-card shadow-sm transition-colors max-sm:rounded-[1.6rem] max-sm:border-glass-border max-sm:bg-surface-glass max-sm:shadow-[0_10px_32px_rgba(0,0,0,0.10)] max-sm:backdrop-blur-xl">
         {/* Textarea — fills the top, borderless */}
         <textarea
           ref={textareaRef}

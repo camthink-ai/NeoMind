@@ -21,22 +21,23 @@ function activeItem(pathname: string) {
   return "more"
 }
 
-/** Global mobile destinations. Chat intentionally opts out so its composer is
- * the only control docked to the bottom edge. Business tabs live at the top of
- * their page and never compete with this bar. */
+/** Global mobile destinations. The same four direct destinations stay visible
+ * on every top-level page, including Chat, so changing sections never requires
+ * opening an intermediate drawer. Chat reserves space above this capsule for
+ * its composer and hides it while the software keyboard is open. */
 export function MobilePrimaryNav() {
   const isMobile = useIsMobile()
   const location = useLocation()
   const navigate = useNavigate()
   const { t } = useTranslation("common")
 
-  if (!isMobile || location.pathname === "/" || location.pathname.startsWith("/chat")) return null
+  if (!isMobile) return null
 
   const active = activeItem(location.pathname)
   return (
     <nav
       aria-label={t("common:nav.mobilePrimary")}
-      className="mobile-primary-nav fixed inset-x-3 z-40 overflow-hidden rounded-[1.65rem] border border-border/80 shadow-[0_8px_28px_rgba(0,0,0,0.12)] backdrop-blur-xl"
+      className="mobile-primary-nav fixed inset-x-3 z-40 overflow-hidden rounded-[1.65rem] border border-border/80 shadow-[0_8px_28px_rgba(0,0,0,0.12)] backdrop-blur-xl transition-[opacity,transform] duration-200"
       style={{
         bottom: "calc(0.5rem + env(safe-area-inset-bottom, 0px))",
         backgroundColor: "color-mix(in srgb, var(--chrome) 94%, transparent)",

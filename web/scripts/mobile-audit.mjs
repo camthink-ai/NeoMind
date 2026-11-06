@@ -49,6 +49,32 @@ const transforms = [
     js_code: "return input;", created_at: Date.now() - 86400000, updated_at: Date.now(), execution_count: 0, last_executed: null,
   },
 ]
+const extensions = [
+  {
+    id: "mqtt-bridge", name: "MQTT Bridge", version: "1.4.0",
+    description: "Connect MQTT devices and normalize telemetry", author: "NeoMind",
+    state: "Active", health_status: "healthy", enabled: true, commands: [], metrics: [],
+  },
+  {
+    id: "vision-analyzer", name: "Vision Analyzer", version: "2.1.0",
+    description: "Analyze camera frames with local vision models", author: "NeoMind",
+    state: "Warning", health_status: "degraded", enabled: true, commands: [], metrics: [],
+  },
+]
+const imBridge = { id: "telegram", platform: "telegram", status: "running" }
+const imSessions = [
+  { chat_id: "warehouse-ops", bound_agent_id: "仓库巡检", neo_session_id: "s1", last_active: Date.now(), created_at: Date.now() - 86400000 },
+  { chat_id: "cold-room-alerts", bound_agent_id: "冷库温度监控", neo_session_id: "s2", last_active: Date.now() - 3600000, created_at: Date.now() - 86400000 },
+]
+const chatSessions = [
+  { sessionId: "audit-chat", id: "audit-chat", createdAt: Date.now() - 3600000, updatedAt: Date.now(), messageCount: 4, title: "冷库状态分析", preview: "建议先检查二号传感器" },
+]
+const chatMessages = [
+  { id: "cm1", role: "user", content: "帮我看一下冷库现在的状态", timestamp: Date.now() - 120000 },
+  { id: "cm2", role: "assistant", content: "当前冷库温度为 **4.2°C**，整体处于正常范围。二号传感器最近一次上报稍有延迟，建议检查网络连接。", timestamp: Date.now() - 90000 },
+  { id: "cm3", role: "user", content: "需要马上处理吗？", timestamp: Date.now() - 60000 },
+  { id: "cm4", role: "assistant", content: "暂时不需要停机。可以先观察下一次上报；如果 10 分钟内仍无数据，再安排现场检查。", timestamp: Date.now() - 30000 },
+]
 const backend = {
   id: "qwen3", name: "Qwen3 8B", model: "qwen3-8b", backend_type: "builtin",
   active: true, healthy: true, context_window: 32768,
@@ -63,7 +89,11 @@ function bodyFor(url) {
   if (path === "/devices") return { devices, count: devices.length }
   if (path === "/device-types") return { device_types: [{ device_type: "temperature_sensor", name: "温度传感器", description: "", categories: [] }], count: 1 }
   if (path.startsWith("/devices/drafts")) return { devices: [], drafts: [], count: 0 }
-  if (path.startsWith("/sessions")) return []
+  if (path === "/sessions/pending") return { sessionIds: [], count: 0 }
+  if (/\/sessions\/audit-chat\/history/.test(path)) return { messages: chatMessages, count: chatMessages.length, total: chatMessages.length, has_more: false }
+  if (path === "/sessions/audit-chat") return { sessionId: "audit-chat", state: { id: "audit-chat", created_at: Date.now() - 3600000, last_activity: Date.now(), message_count: chatMessages.length } }
+  if (path === "/sessions") return chatSessions
+  if (path.startsWith("/sessions?")) return chatSessions
   if (path === "/skills" || path.startsWith("/skills?")) return { skills: [], total: 0, page: 1, page_size: 10, total_pages: 0 }
   if (path.startsWith("/agents/skills")) return { skills: [], total: 0 }
   if (path.startsWith("/agents/tools")) return { tools: [] }
@@ -72,18 +102,19 @@ function bodyFor(url) {
   if (path.includes("/messages")) return { messages, count: messages.length, total: messages.length }
   if (path.includes("/onboarding")) return { dismissed: true, steps: { llm: { completed: true }, device: { completed: true } } }
   if (path.includes("/extensions/pages")) return { pages: [] }
-  if (path === "/extensions" || path.startsWith("/extensions?")) return []
+  if (path === "/extensions" || path.startsWith("/extensions?")) return extensions
   if (path.includes("/transforms")) return { transforms, count: transforms.length }
   if (path.includes("/automation") || path.includes("/rules")) return { rules, count: rules.length }
   if (path.includes("/dashboard")) return { dashboards: [], count: 0 }
-  if (path.includes("/im/bridges")) return { bridges: [] }
+  if (/\/im-bridges\/[^/]+\/sessions/.test(path)) return { sessions: imSessions }
+  if (path === "/im-bridges") return { bridges: [imBridge] }
   if (path.includes("/mqtt/status")) return { status: { connected: true, server_ip: "192.168.1.10" } }
   return {}
 }
 
 const browser = await chromium.launch({ executablePath: "/usr/bin/chromium", headless: true })
 const routes = [
-  "/chat",
+  "/chat", "/chat/audit-chat",
   "/devices", "/devices/types", "/devices/drafts",
   "/agents", "/agents/memory", "/agents/skills", "/agents/tools",
   "/system",
@@ -102,6 +133,7 @@ const viewports = process.env.AUDIT_STANDARD_ONLY === "1"
   : allViewports
 const results = []
 const interactionResults = []
+const navigationResults = []
 
 async function waitForRouteReady(page, route) {
   await page.waitForFunction(() => document.querySelector('#root')?.childElementCount, null, { timeout: 5000 })
@@ -198,6 +230,33 @@ for (const viewport of viewports) {
   }
 
   if (viewport.name === "standard") {
+    try {
+      await page.goto("http://127.0.0.1:5173/chat", { waitUntil: "domcontentloaded" })
+      await waitForRouteReady(page, "/chat")
+      const primaryNav = page.locator(".mobile-primary-nav")
+      await page.locator(".chat-mobile-shell textarea").focus()
+      await page.waitForTimeout(250)
+      const navWhileTyping = await primaryNav.evaluate((element) => ({
+        opacity: getComputedStyle(element).opacity,
+        pointerEvents: getComputedStyle(element).pointerEvents,
+      }))
+      await page.evaluate(() => (document.activeElement instanceof HTMLElement) && document.activeElement.blur())
+      await page.waitForTimeout(250)
+      await primaryNav.locator("button").nth(1).click()
+      await page.waitForURL(/\/devices$/)
+      const devicesPath = new URL(page.url()).pathname
+      await primaryNav.locator("button").nth(0).click()
+      await page.waitForURL(/\/chat$/)
+      const chatPath = new URL(page.url()).pathname
+      await page.goto("http://127.0.0.1:5173/automation", { waitUntil: "domcontentloaded" })
+      await waitForRouteReady(page, "/automation")
+      await page.getByRole("button", { name: /返回|Back/i }).first().click()
+      await page.waitForURL(/\/system$/)
+      navigationResults.push({ name: "primary-navigation", devicesPath, chatPath, backPath: new URL(page.url()).pathname, navWhileTyping })
+    } catch (error) {
+      navigationResults.push({ name: "primary-navigation", error: String(error) })
+    }
+
     const interactions = [
       { name: "chat-model", route: "/chat", button: "Qwen3 8B" },
       { name: "device-create", route: "/devices", button: "添加设备" },
@@ -247,13 +306,18 @@ for (const viewport of viewports) {
 await browser.close()
 await fs.writeFile(new URL("report.json", outDir), JSON.stringify(results, null, 2))
 await fs.writeFile(new URL("interaction-report.json", outDir), JSON.stringify(interactionResults, null, 2))
+await fs.writeFile(new URL("navigation-report.json", outDir), JSON.stringify(navigationResults, null, 2))
 
 const failures = results.filter((r) =>
   r.horizontalOverflow || r.contentHorizontalOverflow || r.contentScrollLeft !== 0 || r.pageErrors.length ||
-  ((r.route === "/chat") ? r.primaryNavCount !== 0 : (r.viewport !== "landscape" && r.primaryNavCount !== 1))
+  (r.viewport !== "landscape" && r.primaryNavCount !== 1)
 )
 const interactionFailures = interactionResults.filter((r) =>
   r.error || r.dialogCount < 1 || r.horizontalOverflow || r.pageErrors?.length || r.fields?.some((field) => Number.parseFloat(field.fontSize) < 16)
 )
-console.log(JSON.stringify({ checked: results.length, failures, interactionResults, interactionFailures, reports: new URL("report.json", outDir).pathname }, null, 2))
-if (failures.length || interactionFailures.length) process.exitCode = 1
+const navigationFailures = navigationResults.filter((r) =>
+  r.error || r.devicesPath !== "/devices" || r.chatPath !== "/chat" || r.backPath !== "/system" ||
+  r.navWhileTyping?.opacity !== "0" || r.navWhileTyping?.pointerEvents !== "none"
+)
+console.log(JSON.stringify({ checked: results.length, failures, interactionResults, interactionFailures, navigationResults, navigationFailures, reports: new URL("report.json", outDir).pathname }, null, 2))
+if (failures.length || interactionFailures.length || navigationFailures.length) process.exitCode = 1
