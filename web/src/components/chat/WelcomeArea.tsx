@@ -96,13 +96,13 @@ export function WelcomeArea({ className, onQuickAction, children }: WelcomeAreaP
           ]
           return (
             <>
-              <div className="order-2 divide-y divide-border sm:hidden">
+              <div className="order-2 space-y-1 sm:hidden">
                 {mobileSuggestions.slice(0, 3).map(({ label, prompt }) => (
                   <button
                     key={label}
                     type="button"
                     onClick={() => onQuickAction?.(prompt)}
-                    className="flex min-h-12 w-full items-center justify-between py-3 text-left text-sm text-foreground"
+                    className="flex min-h-12 w-full items-center justify-between rounded-xl px-2 py-3 text-left text-sm text-foreground transition-[background-color,transform] active:scale-[0.99] active:bg-muted"
                   >
                     <span>{label}</span>
                     <ArrowRight className="h-4 w-4 text-muted-foreground" aria-hidden="true" />

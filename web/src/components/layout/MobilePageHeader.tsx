@@ -61,7 +61,7 @@ export function MobilePageHeader({
       style={{ backgroundColor: 'var(--chrome)' }}
     >
       {/* Left slot: hamburger + leftExtra (e.g. back chevron) */}
-      <div className="flex min-w-0 shrink-0 items-center gap-1">
+      <div className="flex min-w-0 shrink-0 items-center gap-1 [&_button]:rounded-full [&_button]:border [&_button]:border-glass-border [&_button]:bg-surface-glass [&_button]:shadow-sm [&_button]:backdrop-blur-xl">
         {showMenu && (
           <Button
             variant="ghost"
@@ -70,7 +70,7 @@ export function MobilePageHeader({
             // h-9 w-9 (36px) was below the recommended minimum and small
             // finger drift would miss the tap, making it feel like the menu
             // "didn't open" on first try.
-            className="-ml-2 h-11 w-11 shrink-0"
+            className="-ml-2 h-11 w-11 shrink-0 hover:border-glass-border-hover hover:bg-muted"
             onClick={() => setOpen(true)}
             aria-label={t("system.menu")}
           >
@@ -83,7 +83,7 @@ export function MobilePageHeader({
         {title}
       </h1>
       {/* Right slot: actions */}
-      <div className="flex min-w-0 shrink-0 items-center gap-1">
+      <div className="flex min-w-0 shrink-0 items-center gap-1 [&_button]:rounded-full [&_button]:border [&_button]:border-glass-border [&_button]:bg-surface-glass [&_button]:shadow-sm [&_button]:backdrop-blur-xl [&_button:hover]:border-glass-border-hover [&_button:hover]:bg-muted">
         {actions}
       </div>
     </div>

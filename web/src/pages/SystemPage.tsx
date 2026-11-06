@@ -27,8 +27,8 @@ function MoreRow({ title, description, trailing, onClick, destructive }: MoreRow
       type={onClick ? "button" : undefined}
       onClick={onClick}
       className={cn(
-        "flex min-h-[3.75rem] w-full items-center gap-3 border-b border-border py-3 text-left last:border-b-0",
-        onClick && "active:opacity-60",
+        "flex min-h-[3.75rem] w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition-[background-color,transform]",
+        onClick && "active:scale-[0.99] active:bg-muted",
       )}
     >
       <span className="min-w-0 flex-1">
@@ -45,8 +45,8 @@ function MoreRow({ title, description, trailing, onClick, destructive }: MoreRow
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="mt-7 first:mt-0">
-      <h2 className="mb-1 text-xs font-medium text-muted-foreground">{title}</h2>
-      <div>{children}</div>
+      <h2 className="mb-2 ml-1 text-xs font-medium text-muted-foreground">{title}</h2>
+      <div className="glass overflow-hidden rounded-2xl p-1">{children}</div>
     </section>
   )
 }
@@ -87,7 +87,7 @@ export default function SystemPage() {
           <button
             type="button"
             onClick={() => setInstanceManagerOpen(true)}
-            className="flex min-h-20 w-full items-center border-y border-border py-4 text-left active:opacity-60"
+            className="glass flex min-h-20 w-full items-center rounded-2xl px-4 py-4 text-left transition-transform active:scale-[0.99]"
           >
             <span className="min-w-0 flex-1">
               <span className="flex items-center gap-2 text-base font-semibold text-foreground">

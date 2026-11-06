@@ -138,6 +138,7 @@ export default {
         "glass-heavy": "var(--glass-heavy)",
         "surface-glass": "var(--surface-glass)",
         "glass-border": "var(--glass-border)",
+        "glass-border-hover": "var(--glass-border-hover)",
         // Overlay (semi-transparent black masks for modals, loading screens, etc.)
         overlay: {
           light: "var(--overlay-light)",

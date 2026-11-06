@@ -15,7 +15,7 @@ const buttonVariants = cva(
   // now safe AND actually renders. 1px + no offset = visible for keyboard a11y
   // without reading as a brand accent. Per-variant hover:bg-* + active:scale
   // handle pointer feedback.
-  "inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors duration-fast focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 disabled:saturate-50",
+  "inline-flex items-center justify-center whitespace-nowrap rounded-lg text-sm font-medium transition-[color,background-color,border-color,box-shadow,transform] duration-fast active:scale-[0.98] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 disabled:saturate-50 disabled:active:scale-100",
   {
     variants: {
       variant: {
@@ -91,7 +91,7 @@ const IconButton = React.forwardRef<HTMLButtonElement, IconButtonProps>(
       variant={variant}
       size={size === "sm" ? "icon-sm" : "icon"}
       className={cn(
-        "shrink-0 text-muted-foreground hover:text-foreground hover:bg-muted",
+        "shrink-0 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted",
         className,
       )}
       {...props}

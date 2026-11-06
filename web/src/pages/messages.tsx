@@ -895,7 +895,7 @@ export default function MessagesPage() {
 
           {/* Messages Table - Responsive (Desktop: Table, Mobile: Cards) */}
           {isMobile ? (
-            <div className="divide-y divide-border border-y border-border">
+            <div className="space-y-1">
               {messages.length === 0 && loading ? (
                 Array.from({ length: 4 }).map((_, i) => (
                   <Card key={i} className="overflow-hidden rounded-none border-0 shadow-none">
@@ -928,7 +928,7 @@ export default function MessagesPage() {
                     <Card
                       key={message.id}
                       className={cn(
-                        "overflow-hidden rounded-none border-0 shadow-none cursor-pointer active:opacity-60 transition-opacity",
+                        "overflow-hidden rounded-xl border-0 shadow-none cursor-pointer transition-[background-color,transform,opacity] active:scale-[0.99] active:bg-muted",
                         isDimmed && "opacity-50"
                       )}
                       onClick={() => setSelectedMessage(message)}
@@ -1167,7 +1167,7 @@ export default function MessagesPage() {
         <PageTabsContent value="channels" activeTab={activeTab}>
           {/* Channels Responsive Table */}
           {isMobile ? (
-            <div className="divide-y divide-border border-y border-border">
+            <div className="space-y-1">
               {loading ? (
                 Array.from({ length: 3 }).map((_, i) => (
                   <Card key={i} className="overflow-hidden rounded-none border-0 shadow-none">
@@ -1212,7 +1212,7 @@ export default function MessagesPage() {
                   return (
                     <Card
                       key={channel.name}
-                      className="overflow-hidden rounded-none border-0 shadow-none cursor-pointer active:opacity-60 transition-opacity"
+                      className="overflow-hidden rounded-xl border-0 shadow-none cursor-pointer transition-[background-color,transform] active:scale-[0.99] active:bg-muted"
                       onClick={() => handleViewChannel(channel.name)}
                     >
                       <div className="px-3 py-2.5">

@@ -90,7 +90,7 @@ export function DeviceList({
       {addDeviceDialog}
 
       {isMobile ? (
-        <div className="divide-y divide-border border-y border-border">
+        <div className="space-y-1">
           {/* Mobile has no ResponsiveTable, so it must carry its own loading
               and empty states — a bare map() renders as a blank void. */}
           {loading && paginatedDevices.length === 0 && (
@@ -122,7 +122,7 @@ export function DeviceList({
                 key={device.id}
                 role="button"
                 tabIndex={0}
-                className="cursor-pointer py-3.5 active:opacity-60"
+                className="cursor-pointer rounded-xl px-2 py-3.5 transition-[background-color,transform] active:scale-[0.99] active:bg-muted"
                 onClick={() => onViewDetails(device)}
                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onViewDetails(device) }}
               >
