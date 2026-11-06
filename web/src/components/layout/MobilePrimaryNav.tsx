@@ -1,4 +1,4 @@
-import { Bot, Cpu, LayoutDashboard, MessageSquare, Settings2 } from "lucide-react"
+import { Bot, Cpu, LayoutDashboard, MessageSquare, Settings } from "lucide-react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
@@ -9,7 +9,7 @@ const items = [
   { id: "devices", path: "/devices", icon: Cpu, label: "nav.devices" },
   { id: "agents", path: "/agents", icon: Bot, label: "nav.agents" },
   { id: "dashboard", path: "/visual-dashboard", icon: LayoutDashboard, label: "nav.dashboardShort" },
-  { id: "system", path: "/system", icon: Settings2, label: "system.pageTitle" },
+  { id: "system", path: "/system", icon: Settings, label: "system.pageTitle" },
 ] as const
 
 const systemRoutes = ["/system", "/automation", "/data", "/messages", "/extensions", "/settings"]
