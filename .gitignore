@@ -168,3 +168,6 @@ eval/perception/reports/
 # for the canonical locations (HF private repo + local archives).
 eval/baselines/
 !eval/baselines/README.md
+
+# Mobile-audit / scratch output written by web/scripts/mobile-audit.mjs
+work/
