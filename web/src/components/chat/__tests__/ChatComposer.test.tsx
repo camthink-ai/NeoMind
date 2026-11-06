@@ -85,6 +85,23 @@ describe('ChatComposer', () => {
     unmount()
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: previousWidth })
   })
+
+  it('focuses the mobile textarea from the surrounding composer surface', () => {
+    const previousWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
+    const { unmount } = render(
+      <ChatComposer value="" onChange={vi.fn()} onSend={vi.fn()} />,
+    )
+    const textarea = screen.getByRole('textbox')
+    const box = textarea.parentElement as HTMLElement
+
+    fireEvent.pointerDown(box)
+
+    expect(document.activeElement).toBe(textarea)
+    expect(textarea.classList.contains('caret-foreground')).toBe(true)
+    unmount()
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: previousWidth })
+  })
 })
 
 /// Context usage card actions — the manual compact/clear affordances added

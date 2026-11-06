@@ -10,7 +10,7 @@
 
 import { useRef, useState, type RefObject } from "react"
 import { useTranslation } from "react-i18next"
-import { Archive, ArrowUp, Check, ChevronDown, Eye, Image as ImageIcon, Loader2, Plus, Sparkles, Trash2, Wrench, X } from "lucide-react"
+import { Archive, ArrowUp, Check, Eye, Image as ImageIcon, Loader2, Plus, Sparkles, Trash2, Wrench, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useConfirm } from "@/components/ui/use-confirm"
 import {
@@ -107,6 +107,8 @@ export function ChatComposer({
   const { confirm } = useConfirm()
   const isMobile = useIsMobile()
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const internalTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const activeTextareaRef = textareaRef ?? internalTextareaRef
   const [isUploadingImage, setIsUploadingImage] = useState(false)
   const [modelSheetOpen, setModelSheetOpen] = useState(false)
   const [mobileExpanded, setMobileExpanded] = useState(false)
@@ -221,6 +223,13 @@ export function ChatComposer({
         isMobile && "rounded-[1.4rem] border-glass-border bg-card p-1.5 shadow-md",
         isMobile && mobileExpanded ? "flex flex-col" : isMobile ? "flex items-end gap-0.5" : "",
       )}
+      onPointerDown={(event) => {
+        if (!isMobile || inputDisabled) return
+        const target = event.target as HTMLElement
+        if (target.closest('button, input, textarea, [role="button"]')) return
+        event.preventDefault()
+        activeTextareaRef.current?.focus()
+      }}
       onBlur={(event) => {
         if (!isMobile) return
         const next = event.relatedTarget as Node | null
@@ -228,7 +237,7 @@ export function ChatComposer({
       }}>
         {/* Textarea — fills the top, borderless */}
         <textarea
-          ref={textareaRef}
+          ref={activeTextareaRef}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onFocus={() => { if (isMobile) setMobileExpanded(true) }}
@@ -241,7 +250,7 @@ export function ChatComposer({
             isMobile && mobileExpanded && "min-w-0 px-3 pb-1.5 pt-2.5",
             isMobile && !mobileExpanded && "min-w-0 flex-1 px-2 py-3",
             "placeholder:text-muted-foreground",
-            "focus:outline-none",
+            "cursor-text caret-foreground focus:outline-none",
             "max-h-[100px] scroll-mb-32",
             "disabled:opacity-60"
           )}
@@ -319,7 +328,6 @@ export function ChatComposer({
                 }
               >
                 <Sparkles className="h-[18px] w-[18px]" aria-hidden="true" />
-                <ChevronDown className="absolute bottom-1 right-0.5 h-2.5 w-2.5" aria-hidden="true" />
               </Button>
               <Sheet open={modelSheetOpen} onOpenChange={setModelSheetOpen}>
                 <SheetContent
@@ -380,7 +388,6 @@ export function ChatComposer({
                      backends.find(b => b.id === activeBackendId)?.model ||
                      t("chat:input.selectModel")}
                   </span>
-                  <ChevronDown className="h-3.5 w-3.5 shrink-0" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-[min(21rem,calc(100vw-2rem))] max-h-[min(24rem,60vh)] overflow-y-auto scrollbar-none rounded-xl p-1.5 shadow-md">
