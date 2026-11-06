@@ -1,10 +1,10 @@
 /**
  * MobilePageHeader - Per-page sticky top bar (mobile-only)
  *
- * Layout: [☰ drawer] [leftExtra?] [title — centered] [actions?]
- * The center holds ONLY the title. No subtitle, no extra content.
+ * Layout: [☰ drawer] [leftExtra?] [left-aligned title] [actions?]
+ * The title grows into the available space and truncates before the actions.
  *
- * The bar is h-12 (48px) + safe-area-top, sticky to the top of the scroll
+ * The bar is h-16 (64px) + safe-area-top, sticky to the top of the scroll
  * container, with bg-background that extends under the status bar.
  *
  * Desktop layout does not render this component.
@@ -20,7 +20,7 @@ import { Button } from "@/components/ui/button"
 import { useLocation } from "react-router-dom"
 
 export interface MobilePageHeaderProps {
-  /** Center title (required). */
+  /** Left-aligned page title (required). */
   title: ReactNode
   /** Right slot for page actions (add, search, refresh). */
   actions?: ReactNode
@@ -51,22 +51,17 @@ export function MobilePageHeader({
   return (
     <div
       className={cn(
-        // 3-column grid: [left 1fr][title auto][right 1fr]. Equal side
-        // columns make the title visually centered regardless of how many
-        // action buttons either side has — flex-1 + text-center was offset
-        // when the action stack was wider than the hamburger.
-        //
         // bg via inline style using --chrome (solid white in light mode,
         // solid elevated gray in dark mode) — this is the dedicated token
         // for stable chrome layers per index.css. Using bg-background would
         // tint the header gray after the background token was darkened.
-        "safe-top sticky top-0 z-30 grid h-14 grid-cols-[1fr_auto_1fr] items-center gap-1 px-3",
+        "safe-top sticky top-0 z-30 flex h-16 items-center gap-2 px-4",
         className,
       )}
       style={{ backgroundColor: 'var(--chrome)' }}
     >
       {/* Left slot: hamburger + leftExtra (e.g. back chevron) */}
-      <div className="flex min-w-0 items-center gap-1 justify-self-start">
+      <div className="flex min-w-0 shrink-0 items-center gap-1">
         {showMenu && (
           <Button
             variant="ghost"
@@ -75,7 +70,7 @@ export function MobilePageHeader({
             // h-9 w-9 (36px) was below the recommended minimum and small
             // finger drift would miss the tap, making it feel like the menu
             // "didn't open" on first try.
-            className="-ml-1 h-11 w-11 shrink-0"
+            className="-ml-2 h-11 w-11 shrink-0"
             onClick={() => setOpen(true)}
             aria-label={t("system.menu")}
           >
@@ -84,13 +79,11 @@ export function MobilePageHeader({
         )}
         {leftExtra}
       </div>
-      {/* Center title — clamp width so very long titles truncate instead of
-          pushing the side columns and breaking centering. */}
-      <span className="min-w-0 max-w-[65vw] truncate text-center text-[17px] font-semibold tracking-tight text-foreground">
+      <h1 className="min-w-0 flex-1 truncate text-left text-2xl font-bold leading-8 tracking-[-0.025em] text-foreground">
         {title}
-      </span>
+      </h1>
       {/* Right slot: actions */}
-      <div className="flex min-w-0 items-center gap-1 justify-self-end">
+      <div className="flex min-w-0 shrink-0 items-center gap-1">
         {actions}
       </div>
     </div>

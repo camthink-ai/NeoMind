@@ -115,7 +115,7 @@ export function PageTabsBar({
         />
         <div
           role="tablist"
-          className={cn("flex min-w-0 gap-1 overflow-x-auto px-4 pb-2 scrollbar-none", tabsClassName)}
+          className={cn("flex min-w-0 gap-1 overflow-x-auto px-3 pb-2 scrollbar-none", tabsClassName)}
         >
           {tabs.map((tab) => {
             const selected = tab.value === activeTab
