@@ -1567,23 +1567,12 @@ html {
   font-variant-numeric: tabular-nums;
 }
 
-/* Chat shares the global navigation capsule with every other mobile page.
-   Keep the composer above it at rest; when the software keyboard opens the
-   capsule gets out of the way and the composer returns to the safe-area edge. */
+/* Chat is a fullscreen surface: the bottom navigation capsule is not
+   rendered there (section navigation lives in the chat header's menu), so
+   the composer rests directly above the safe-area edge. */
 @media (max-width: 767px) {
   .chat-composer-dock {
-    padding-bottom: calc(5.25rem + env(safe-area-inset-bottom, 0px));
-    transition: padding-bottom 180ms ease;
-  }
-
-  body:has(.chat-mobile-shell textarea:focus) .mobile-primary-nav {
-    opacity: 0;
-    pointer-events: none;
-    transform: translateY(calc(100% + 1rem));
-  }
-
-  body:has(.chat-mobile-shell textarea:focus) .chat-composer-dock {
-    padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
   }
 }
 

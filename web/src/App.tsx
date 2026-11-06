@@ -8,6 +8,7 @@ import { shallow } from "zustand/shallow"
 import { AppSidebar } from "@/components/layout/AppSidebar"
 import { GlobalControlsFloating } from "@/components/layout/GlobalControls"
 import { MobilePrimaryNav } from "@/components/layout/MobilePrimaryNav"
+import { MobileNav } from "@/components/layout/MobileNav"
 import { SwipeNavigation } from "@/components/layout/SwipeNavigation"
 import { NavigationProgress } from "@/components/layout/NavigationProgress"
 import { useIsMobile } from "@/hooks/useMobile"
@@ -673,6 +674,9 @@ function App() {
                     </ErrorBoundary>
                     </div>
                     <MobilePrimaryNav />
+                    {/* Drawer behind the Chat header's hamburger — Chat hides
+                        the bottom capsule, so this is its section navigation. */}
+                    <MobileNav />
                   </main>
                   <Suspense fallback={null}>
                     <SettingsDialog />

@@ -21,17 +21,23 @@ function activeItem(pathname: string) {
   return "more"
 }
 
-/** Global mobile destinations. The same four direct destinations stay visible
- * on every top-level page, including Chat, so changing sections never requires
- * opening an intermediate drawer. Chat reserves space above this capsule for
- * its composer and hides it while the software keyboard is open. */
+/** Chat is the immersive home surface: the composer owns the bottom edge, so
+ * the capsule would only compete with it for space. Section navigation on
+ * Chat lives in the page header's menu drawer instead. */
+function isChatRoute(pathname: string) {
+  return pathname === "/" || pathname === "/chat" || pathname.startsWith("/chat/")
+}
+
+/** Global mobile destinations for every page EXCEPT Chat — the four direct
+ * destinations stay visible on all top-level pages, so changing sections
+ * never requires opening an intermediate drawer. */
 export function MobilePrimaryNav() {
   const isMobile = useIsMobile()
   const location = useLocation()
   const navigate = useNavigate()
   const { t } = useTranslation("common")
 
-  if (!isMobile) return null
+  if (!isMobile || isChatRoute(location.pathname)) return null
 
   const active = activeItem(location.pathname)
   return (

@@ -1,7 +1,10 @@
 import { chromium } from "@playwright/test"
 import fs from "node:fs/promises"
+import { existsSync } from "node:fs"
+import { fileURLToPath } from "node:url"
 
 const outDir = new URL("../../work/mobile-audit/", import.meta.url)
+const outDirPath = fileURLToPath(outDir)
 await fs.mkdir(outDir, { recursive: true })
 
 const devices = [
@@ -112,7 +115,14 @@ function bodyFor(url) {
   return {}
 }
 
-const browser = await chromium.launch({ executablePath: "/usr/bin/chromium", headless: true })
+// CI containers pin /usr/bin/chromium; locally set MOBILE_AUDIT_CHROME to a
+// Playwright-cached build (or leave unset for the bundled default).
+const browser = await chromium.launch({
+  ...(process.env.MOBILE_AUDIT_CHROME || existsSync("/usr/bin/chromium")
+    ? { executablePath: process.env.MOBILE_AUDIT_CHROME || "/usr/bin/chromium" }
+    : {}),
+  headless: true,
+})
 const routes = [
   "/chat", "/chat/audit-chat",
   "/devices", "/devices/types", "/devices/drafts",
@@ -137,7 +147,8 @@ const navigationResults = []
 
 async function waitForRouteReady(page, route) {
   await page.waitForFunction(() => document.querySelector('#root')?.childElementCount, null, { timeout: 5000 })
-  if (route === "/chat") {
+  const isChatRoute = route === "/chat" || route.startsWith("/chat/")
+  if (isChatRoute) {
     await page.waitForSelector("textarea", { state: "visible", timeout: 10000 })
   } else if ((page.viewportSize()?.width ?? 0) < 768) {
     await page.waitForSelector(".mobile-primary-nav", { state: "visible", timeout: 10000 })
@@ -225,26 +236,25 @@ for (const viewport of viewports) {
     results.push({ viewport: viewport.name, ...audit, pageErrors: [...pageErrors] })
     if (viewport.name === "standard") {
       const file = route.replaceAll("/", "_") || "_root"
-      await page.screenshot({ path: new URL(`${file}.png`, outDir).pathname, fullPage: false })
+      await page.screenshot({ path: `${outDirPath}${file}.png`, fullPage: false })
     }
   }
 
   if (viewport.name === "standard") {
     try {
+      // Chat special case: no bottom capsule on chat routes — the header's
+      // hamburger drawer is the section exit. Verify the capsule is absent,
+      // then leave Chat through the drawer.
       await page.goto("http://127.0.0.1:5173/chat", { waitUntil: "domcontentloaded" })
       await waitForRouteReady(page, "/chat")
-      const primaryNav = page.locator(".mobile-primary-nav")
-      await page.locator(".chat-mobile-shell textarea").focus()
-      await page.waitForTimeout(250)
-      const navWhileTyping = await primaryNav.evaluate((element) => ({
-        opacity: getComputedStyle(element).opacity,
-        pointerEvents: getComputedStyle(element).pointerEvents,
-      }))
-      await page.evaluate(() => (document.activeElement instanceof HTMLElement) && document.activeElement.blur())
-      await page.waitForTimeout(250)
-      await primaryNav.locator("button").nth(1).click()
+      const navCountOnChat = await page.evaluate(() => document.querySelectorAll(".mobile-primary-nav").length)
+      await page.getByRole("button", { name: "菜单" }).first().click()
+      await page.waitForTimeout(400)
+      await page.getByRole("button", { name: "设备", exact: true }).first().click()
       await page.waitForURL(/\/devices$/)
       const devicesPath = new URL(page.url()).pathname
+      // Devices has the capsule: its chat entry returns to Chat.
+      const primaryNav = page.locator(".mobile-primary-nav")
       await primaryNav.locator("button").nth(0).click()
       await page.waitForURL(/\/chat$/)
       const chatPath = new URL(page.url()).pathname
@@ -252,7 +262,7 @@ for (const viewport of viewports) {
       await waitForRouteReady(page, "/automation")
       await page.getByRole("button", { name: /返回|Back/i }).first().click()
       await page.waitForURL(/\/system$/)
-      navigationResults.push({ name: "primary-navigation", devicesPath, chatPath, backPath: new URL(page.url()).pathname, navWhileTyping })
+      navigationResults.push({ name: "primary-navigation", navCountOnChat, devicesPath, chatPath, backPath: new URL(page.url()).pathname })
     } catch (error) {
       navigationResults.push({ name: "primary-navigation", error: String(error) })
     }
@@ -293,7 +303,7 @@ for (const viewport of viewports) {
           }
         })
         interactionResults.push({ name: item.name, ...state, pageErrors: [...pageErrors] })
-        await page.screenshot({ path: new URL(`interaction-${item.name}.png`, outDir).pathname, fullPage: false })
+        await page.screenshot({ path: `${outDirPath}interaction-${item.name}.png`, fullPage: false })
         await page.keyboard.press("Escape")
       } catch (error) {
         interactionResults.push({ name: item.name, error: String(error) })
@@ -307,17 +317,20 @@ await browser.close()
 await fs.writeFile(new URL("report.json", outDir), JSON.stringify(results, null, 2))
 await fs.writeFile(new URL("interaction-report.json", outDir), JSON.stringify(interactionResults, null, 2))
 await fs.writeFile(new URL("navigation-report.json", outDir), JSON.stringify(navigationResults, null, 2))
+// Chat routes render no bottom capsule (header menu drawer instead); every
+// other mobile page renders exactly one.
+const expectedNavCount = (r) =>
+  r.route === "/chat" || r.route.startsWith("/chat/") ? 0 : 1
 
 const failures = results.filter((r) =>
   r.horizontalOverflow || r.contentHorizontalOverflow || r.contentScrollLeft !== 0 || r.pageErrors.length ||
-  (r.viewport !== "landscape" && r.primaryNavCount !== 1)
+  (r.viewport !== "landscape" && r.primaryNavCount !== expectedNavCount(r))
 )
 const interactionFailures = interactionResults.filter((r) =>
   r.error || r.dialogCount < 1 || r.horizontalOverflow || r.pageErrors?.length || r.fields?.some((field) => Number.parseFloat(field.fontSize) < 16)
 )
 const navigationFailures = navigationResults.filter((r) =>
-  r.error || r.devicesPath !== "/devices" || r.chatPath !== "/chat" || r.backPath !== "/system" ||
-  r.navWhileTyping?.opacity !== "0" || r.navWhileTyping?.pointerEvents !== "none"
+  r.error || r.navCountOnChat !== 0 || r.devicesPath !== "/devices" || r.chatPath !== "/chat" || r.backPath !== "/system"
 )
-console.log(JSON.stringify({ checked: results.length, failures, interactionResults, interactionFailures, navigationResults, navigationFailures, reports: new URL("report.json", outDir).pathname }, null, 2))
+console.log(JSON.stringify({ checked: results.length, failures, interactionResults, interactionFailures, navigationResults, navigationFailures, reports: `${outDirPath}report.json` }, null, 2))
 if (failures.length || interactionFailures.length || navigationFailures.length) process.exitCode = 1

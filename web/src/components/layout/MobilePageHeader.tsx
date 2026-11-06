@@ -13,9 +13,10 @@
 import { type ReactNode } from "react"
 import { useTranslation } from "react-i18next"
 import { useLocation, useNavigate } from "react-router-dom"
-import { ChevronLeft } from "lucide-react"
+import { ChevronLeft, Menu } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/useMobile"
+import { useMobileNav } from "@/store/mobileNav"
 import { Button } from "@/components/ui/button"
 
 export interface MobilePageHeaderProps {
@@ -25,6 +26,9 @@ export interface MobilePageHeaderProps {
   actions?: ReactNode
   /** Kept for caller compatibility; global navigation now lives in the bottom capsule. */
   hideMenu?: boolean
+  /** Renders a hamburger that opens the MobileNav drawer. Used on pages
+   * WITHOUT the bottom capsule (Chat) — it is their only section exit. */
+  menu?: boolean
   /** Optional left slot rendered AFTER the hamburger (e.g., back chevron on sub-pages). */
   leftExtra?: ReactNode
   className?: string
@@ -33,6 +37,7 @@ export interface MobilePageHeaderProps {
 export function MobilePageHeader({
   title,
   actions,
+  menu,
   leftExtra,
   className,
 }: MobilePageHeaderProps) {
@@ -40,6 +45,7 @@ export function MobilePageHeader({
   const { t } = useTranslation("common")
   const location = useLocation()
   const navigate = useNavigate()
+  const setDrawerOpen = useMobileNav((s) => s.setOpen)
   if (!isMobile) return null
 
   const systemChildRoots = ["/visual-dashboard", "/automation", "/data", "/messages", "/extensions", "/settings"]
@@ -62,17 +68,29 @@ export function MobilePageHeader({
         height: 'calc(4rem + env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))',
       }}
     >
-      {/* Optional local navigation, such as a back or history button. */}
-      <div className="flex min-w-0 shrink-0 items-center gap-1 [&_button]:rounded-full [&_button]:border [&_button]:border-glass-border [&_button]:bg-surface-glass [&_button]:shadow-sm [&_button]:backdrop-blur-xl">
+      {/* Local navigation (menu, back) — plain ghost buttons, no glass chip:
+          reads as part of the title line instead of a floating bubble. */}
+      <div className="flex min-w-0 shrink-0 items-center">
+        {menu && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="-ml-1.5 h-9 w-9 shrink-0"
+            onClick={() => setDrawerOpen(true)}
+            aria-label={t("system.menu")}
+          >
+            <Menu className="h-5 w-5" />
+          </Button>
+        )}
         {showSystemBack && (
           <Button
             variant="ghost"
             size="icon"
-            className="-ml-2 h-11 w-11 shrink-0"
+            className="-ml-1.5 h-9 w-9 shrink-0"
             onClick={() => navigate("/system")}
             aria-label={t("back", { defaultValue: "Back" })}
           >
-            <ChevronLeft className="h-6 w-6" />
+            <ChevronLeft className="h-5 w-5" />
           </Button>
         )}
         {leftExtra}

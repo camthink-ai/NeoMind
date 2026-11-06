@@ -1084,10 +1084,11 @@ export function ChatPage() {
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-        {/* Mobile header: local conversation actions only. Global destinations
-            stay in the bottom capsule, so no second navigation drawer is
-            involved when leaving Chat. */}
+        {/* Mobile header: menu + local conversation actions. Chat hides the
+            bottom capsule (the composer owns the bottom edge), so the menu
+            here is the only section exit. */}
         <MobilePageHeader
+          menu
           title={noLlmContent
             ? t('common:llmGuide.title')
             : (() => {
@@ -1143,7 +1144,7 @@ export function ChatPage() {
         ) : isWelcomeMode ? (
           /* Welcome Area - shown on /chat (no sessionId), scrollable on mobile */
           <div
-            className={cn("touch-scroll flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-3 pb-24 sm:px-6 sm:py-6 sm:pb-6", isDesktop && "pt-14")}
+            className={cn("touch-scroll flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-3 pb-8 sm:px-6 sm:py-6 sm:pb-6", isDesktop && "pt-14")}
             onClick={(e) => {
               // If clicking outside interactive elements, dismiss keyboard
               if ((e.target as HTMLElement).closest('button, a, input, textarea, [role="button"]')) return
