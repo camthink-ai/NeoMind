@@ -56,15 +56,10 @@ export function MobilePageHeader({
   return (
     <div
       className={cn(
-        // bg via inline style using --chrome (solid white in light mode,
-        // solid elevated gray in dark mode) — this is the dedicated token
-        // for stable chrome layers per index.css. Using bg-background would
-        // tint the header gray after the background token was darkened.
-        "safe-top sticky top-0 z-30 flex items-center gap-2 px-4",
+        "safe-top sticky top-0 z-30 flex items-center gap-2 bg-background px-4",
         className,
       )}
       style={{
-        backgroundColor: 'var(--chrome)',
         height: 'calc(4rem + env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))',
       }}
     >

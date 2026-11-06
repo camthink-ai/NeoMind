@@ -348,7 +348,7 @@ export function ResponsiveTable<T extends object>({
                       <IconButton
                         size="sm"
                         className={cn(
-                          "h-10 w-10 shrink-0 hover:bg-muted",
+                          "shrink-0 hover:bg-muted",
                           visibleActions[0].variant === 'destructive' && "text-error"
                         )}
                         onClick={(e) => {
@@ -366,7 +366,7 @@ export function ResponsiveTable<T extends object>({
                         <DropdownMenuTrigger asChild>
                           <IconButton
                             size="sm"
-                            className="h-11 w-11 shrink-0 hover:bg-muted"
+                            className="shrink-0 hover:bg-muted"
                             onClick={(e) => e.stopPropagation()}
                             aria-label={t('actions', { defaultValue: 'Actions' })}
                           >

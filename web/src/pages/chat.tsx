@@ -1090,10 +1090,9 @@ export function ChatPage() {
             title/action chrome shown elsewhere in the app. */}
         {!isDesktop && (
           <div
-            className="safe-top sticky top-0 z-30 grid shrink-0 grid-cols-[3rem_minmax(0,1fr)_3rem] items-center px-2"
+            className="safe-top sticky top-0 z-30 grid shrink-0 grid-cols-[3rem_minmax(0,1fr)_3rem] items-center bg-background px-2"
             style={{
               height: 'calc(4rem + env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))',
-              backgroundColor: 'var(--chrome)',
             }}
           >
             <Button
@@ -1271,7 +1270,7 @@ export function ChatPage() {
             doesn't either — there is no backend to send to. */}
         {!isWelcomeMode && !noLlmContent && (
         <div
-          className="chat-composer-dock shrink-0 border-0 px-2.5 pt-3 sm:px-4 sm:pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:pt-3"
+          className="chat-composer-dock shrink-0 border-0 px-3 pt-2 sm:px-4 sm:pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:pt-3"
         >
           <div className="max-w-3xl mx-auto">
             {/* Connection status — only surfaces when the WebSocket is not

@@ -565,7 +565,7 @@ export function AgentsPage() {
   const skillsActionsExtra = activeTab === 'tools' ? (
     <div className="flex items-center gap-2">
       <Select value={toolsSourceFilter} onValueChange={(v) => setToolsSourceFilter(v as ToolSourceFilter)}>
-        <SelectTrigger className="h-9 w-[140px]">
+        <SelectTrigger className="h-10 w-[140px] md:h-9">
           <SelectValue placeholder={tAgent('detail.toolsFilterAllSources', 'All sources')} />
         </SelectTrigger>
         <SelectContent>

@@ -81,9 +81,10 @@ export function FullScreenDialog({
       <div
         className={cn(
           "flex min-h-0 flex-1 flex-col overflow-hidden",
-          // Full-bleed: opaque bg-background on desktop (page-like, max space
-          // for heavy editors); --chrome on mobile via inline style.
-          isMobile ? "" : "bg-popover",
+          // Keep the whole mobile surface on one background token. Using
+          // --chrome here made the header/footer visibly lighter than scroll
+          // content in dark mode.
+          isMobile ? "bg-background" : "bg-popover",
           className
         )}
         onClick={(e) => e.stopPropagation()}
@@ -91,12 +92,7 @@ export function FullScreenDialog({
           // Reserve the macOS title-bar (traffic-light) inset so the
           // header/content isn't covered by the overlay traffic lights.
           paddingTop: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))",
-          ...(isMobile
-            ? {
-                backgroundColor: "var(--chrome)",
-                paddingBottom: "env(safe-area-inset-bottom, 0px)",
-              }
-            : {}),
+          ...(isMobile ? { paddingBottom: "env(safe-area-inset-bottom, 0px)" } : {}),
         }}
       >
         <FullScreenDialogTitleContext.Provider value={titleId}>
@@ -139,7 +135,7 @@ export function FullScreenDialogHeader({
 
   if (isMobile) {
     return (
-      <header className="grid h-16 shrink-0 grid-cols-[1fr_auto_1fr] items-center px-3">
+      <header className="grid h-16 shrink-0 grid-cols-[1fr_auto_1fr] items-center bg-background px-3">
         <button
           type="button"
           onClick={onClose}
@@ -149,7 +145,7 @@ export function FullScreenDialogHeader({
           <ChevronLeft className="h-5 w-5" />
         </button>
         <h1 id={titleId} className="max-w-[56vw] truncate text-center text-[17px] font-semibold text-foreground">{title}</h1>
-        <div className="flex min-w-0 items-center justify-self-end [&>button]:h-11 [&>button]:w-11 [&>button]:px-0 [&>button]:text-[0px] [&>button>svg]:m-0">
+        <div className="flex min-w-0 items-center justify-self-end gap-2 [&>button]:h-10 [&>button]:w-10 [&>button]:rounded-full [&>button]:px-0 [&>button]:text-[0px] [&>button>svg]:m-0">
           {actions}
         </div>
       </header>

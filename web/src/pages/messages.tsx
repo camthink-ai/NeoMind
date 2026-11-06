@@ -814,7 +814,7 @@ export default function MessagesPage() {
             activeTab={activeTab}
             onTabChange={(v) => handleTabChange(v as TabValue)}
             actions={actions}
-            actionsExtra={filterExtra}
+            actionsExtra={isMobile ? undefined : filterExtra}
           />
         }
         footer={

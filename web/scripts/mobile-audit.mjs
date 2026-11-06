@@ -134,6 +134,22 @@ const fallbackBackend = {
   active: false, healthy: true, context_window: 65536,
   capabilities: { supports_tools: true, supports_multimodal: true, supports_thinking: true },
 }
+const skills = [
+  { id: "device-inspection", name: "设备巡检", category: "device", priority: 80, keywords: ["离线", "巡检", "状态"], body_length: 1260 },
+  { id: "alert-response", name: "告警处置", category: "message", priority: 70, keywords: ["告警", "通知"], body_length: 840 },
+]
+const agentTools = [
+  {
+    name: "device_status", description: "读取设备连接状态和最近一次上报时间", source: "built-in", category: "device",
+    namespace: "device", version: "1.2.6", deprecated: false, disabled: false,
+    parameters: { type: "object", properties: { device_id: { type: "string" } }, required: ["device_id"] },
+  },
+  {
+    name: "send_notification", description: "通过已配置的消息渠道发送通知", source: "built-in", category: "message",
+    namespace: "message", version: "1.2.6", deprecated: false, disabled: false,
+    parameters: { type: "object", properties: { title: { type: "string" }, message: { type: "string" } }, required: ["message"] },
+  },
+]
 
 function bodyFor(url) {
   const path = new URL(url).pathname.replace(/^\/api/, "")
@@ -158,13 +174,13 @@ function bodyFor(url) {
   if (path === "/sessions/audit-chat") return { sessionId: "audit-chat", state: { id: "audit-chat", created_at: Date.now() - 3600000, last_activity: Date.now(), message_count: chatMessages.length } }
   if (path === "/sessions") return chatSessions
   if (path.startsWith("/sessions?")) return chatSessions
-  if (path === "/skills" || path.startsWith("/skills?")) return { skills: [], total: 0, page: 1, page_size: 10, total_pages: 0 }
+  if (path === "/skills" || path.startsWith("/skills?")) return { skills, total: skills.length, page: 1, page_size: 10, total_pages: 1 }
   if (path === "/agents/a1/executions") return { executions: [] }
   if (path === "/agents/a1/memory") return { memories: [], files: [], knowledge_files: [] }
   if (path === "/agents/a1/available-resources") return { devices: [], device_types: [], extensions: [] }
   if (path === "/agents/a1") return detailAgent
-  if (path.startsWith("/agents/skills")) return { skills: [], total: 0 }
-  if (path.startsWith("/agents/tools")) return { tools: [] }
+  if (path.startsWith("/agents/skills")) return { skills, total: skills.length }
+  if (path.startsWith("/agents/tools")) return { tools: agentTools }
   if (path === "/agents" || path.startsWith("/agents?")) return { agents, count: agents.length }
   if (path.includes("/channels")) return { channels: notificationChannels, count: notificationChannels.length }
   if (path.includes("/messages")) return { messages, count: messages.length, total: messages.length }
@@ -281,6 +297,8 @@ for (const viewport of viewports) {
       const primaryNav = document.querySelector(".mobile-primary-nav")
       const primaryNavStyle = primaryNav ? getComputedStyle(primaryNav) : null
       const primaryNavRect = primaryNav?.getBoundingClientRect()
+      const mobileHeader = document.querySelector(".safe-top")
+      const mobileHeaderRect = mobileHeader?.getBoundingClientRect()
       const visible = (el) => {
         const style = getComputedStyle(el)
         const rect = el.getBoundingClientRect()
@@ -303,6 +321,11 @@ for (const viewport of viewports) {
           ? pageScroller.scrollWidth > pageScroller.clientWidth + 1
           : false,
         contentScrollLeft: pageScroller?.scrollLeft ?? 0,
+        windowScrollY: window.scrollY,
+        mobileHeaderRect: mobileHeaderRect ? {
+          x: Math.round(mobileHeaderRect.x), y: Math.round(mobileHeaderRect.y),
+          width: Math.round(mobileHeaderRect.width), height: Math.round(mobileHeaderRect.height),
+        } : null,
         primaryNavCount: document.querySelectorAll(".mobile-primary-nav").length,
         primaryNavVisible: primaryNav ? visible(primaryNav) : false,
         primaryNavState: primaryNavRect && primaryNavStyle ? {

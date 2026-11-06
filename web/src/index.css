@@ -1561,7 +1561,7 @@ html {
    rendered there, so the composer rests directly above the safe-area edge. */
 @media (max-width: 767px) {
   .chat-composer-dock {
-    padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
   }
 
   .message-bubble-user .prose,

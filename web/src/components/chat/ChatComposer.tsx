@@ -218,7 +218,7 @@ export function ChatComposer({
       {/* Single unified input box — everything inside one container */}
       <div className={cn(
         "rounded-lg border border-input bg-card shadow-sm transition-colors",
-        isMobile && "rounded-[1.4rem] border-border bg-background p-1.5",
+        isMobile && "rounded-[1.4rem] border-glass-border bg-card p-1.5 shadow-md",
         isMobile && mobileExpanded ? "flex flex-col" : isMobile ? "flex items-end gap-0.5" : "",
       )}
       onBlur={(event) => {
