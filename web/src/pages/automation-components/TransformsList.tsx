@@ -9,7 +9,6 @@ import { Card } from "@/components/ui/card"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu"
 import { IconButton } from "@/components/ui/button"
 import { ResponsiveTable, EmptyState } from "@/components/shared"
-import { interactiveCardHover } from "@/design-system/tokens/size"
 import { Edit, Trash2, Code, Globe, Cpu, HardDrive, Download, MoreVertical } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
@@ -155,7 +154,7 @@ export function TransformsList({
 
   return (
     isMobile ? (
-      <div className="space-y-2">
+      <div className="space-y-1">
         {/* Mobile has no ResponsiveTable — carry its own loading skeleton. */}
         {loading && paginatedTransforms.length === 0 && (
           [0, 1, 2].map((i) => (
@@ -171,30 +170,22 @@ export function TransformsList({
           ))
         )}
         {paginatedTransforms.map((transform) => {
-          const scopeInfo = getScopeInfo(transform.scope)
-          const ScopeIcon = scopeInfo.icon
-
           return (
             <Card
               key={transform.id}
               className={cn(
-                "overflow-hidden border-border shadow-sm cursor-pointer active:scale-[0.99]",
-                interactiveCardHover,
+                "cursor-pointer overflow-hidden rounded-xl border-0 bg-transparent shadow-none transition-[background-color,transform] active:scale-[0.99] active:bg-muted",
                 !transform.enabled && "opacity-50"
               )}
               onClick={() => onEdit(transform)}
             >
-              <div className="px-3 py-2.5">
-                {/* Row 1: icon + name + switch + actions */}
-                <div className="flex items-center gap-2.5">
-                  <div className={cn(
-                    "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
-                    transform.enabled ? "bg-accent-cyan-light text-accent-cyan" : "bg-muted text-muted-foreground"
-                  )}>
-                    <Code className="h-4 w-4" />
-                  </div>
+              <div className="px-2 py-3">
+                <div className="flex items-center gap-2">
                   <div className="flex-1 min-w-0">
-                    <div className="font-medium text-sm truncate">{transform.name}</div>
+                    <div className="truncate text-[15px] font-medium">{transform.name}</div>
+                    <p className="mt-1 truncate text-xs text-muted-foreground">
+                      {getScopeLabel(transform.scope)}
+                    </p>
                   </div>
                   <Switch
                     checked={transform.enabled}
@@ -227,29 +218,6 @@ export function TransformsList({
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
-                </div>
-                {/* Row 2: scope badge + last executed */}
-                <div className="flex items-center gap-1.5 mt-1.5 ml-[42px]">
-                  <Badge variant="outline" className={cn(textMini, "h-5 px-1.5 gap-0.5", scopeInfo.color)}>
-                    <ScopeIcon className="h-3 w-3" />
-                    {getScopeLabel(transform.scope)}
-                  </Badge>
-                  {(() => {
-                    const hasExecuted = transform.last_executed && transform.last_executed !== 0
-                    const execCount = transform.execution_count || 0
-                    return (
-                      <span className={cn(textMini, "text-muted-foreground ml-auto flex items-center gap-1")}>
-                        {hasExecuted ? (
-                          <>
-                            {formatTimestamp(transform.last_executed ?? undefined)}
-                            {execCount > 1 && <span>{execCount}x</span>}
-                          </>
-                        ) : (
-                          t('automation:never', 'Never')
-                        )}
-                      </span>
-                    )
-                  })()}
                 </div>
               </div>
             </Card>

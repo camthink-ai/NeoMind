@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/card"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu"
 import { IconButton } from "@/components/ui/button"
 import { ResponsiveTable, EmptyState, EmptyStateCard } from "@/components/shared"
-import { Eye, Pencil, Trash2, Download, MoreVertical, Cpu, Database, Activity, Boxes } from "lucide-react"
+import { Eye, Pencil, Trash2, Download, MoreVertical, Database } from "lucide-react"
 import type { DeviceType } from "@/types"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -12,8 +12,7 @@ import { useToast } from "@/hooks/use-toast"
 import { TransformsBadge } from "@/components/automation"
 import { useIsMobile } from "@/hooks/useMobile"
 import { useTransformCounts } from "@/hooks/useTransformCounts"
-import { textNano, textMini } from "@/design-system/tokens/typography"
-import { interactiveCardHover } from "@/design-system/tokens/size"
+import { textNano } from "@/design-system/tokens/typography"
 
 interface DeviceTypeListProps {
   deviceTypes: DeviceType[]
@@ -50,8 +49,6 @@ export function DeviceTypeList({
   const isMobile = useIsMobile()
   const { deviceTypeCounts, refresh: refreshTransformCounts } = useTransformCounts()
 
-  const metricCountOf = (dt: DeviceType) => dt.metrics?.length ?? dt.metric_count ?? 0
-
   // Export single device type as JSON file
   const handleExport = async (deviceType: DeviceType) => {
     try {
@@ -79,7 +76,7 @@ export function DeviceTypeList({
       {addTypeDialog}
 
       {isMobile ? (
-        <div className="space-y-2">
+        <div className="space-y-1">
           {/* Mobile has no ResponsiveTable — carry its own empty state. */}
           {!loading && paginatedDeviceTypes.length === 0 && (
             <EmptyStateCard>
@@ -106,41 +103,24 @@ export function DeviceTypeList({
             <Card
               key={dt.device_type}
               className={cn(
-                "overflow-hidden border-border shadow-sm cursor-pointer active:scale-[0.99]",
-                interactiveCardHover,
+                "cursor-pointer overflow-hidden rounded-xl border-0 bg-transparent shadow-none transition-[background-color,transform] active:scale-[0.99] active:bg-muted",
               )}
               onClick={() => onViewDetails(dt)}
             >
-              <div className="px-3 py-2.5">
-                {/* Row 1: icon + name + stats + actions */}
+              <div className="px-2 py-3">
                 <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 bg-info-light text-info">
-                    <Database className="h-4 w-4" />
-                  </div>
                   <div className="flex-1 min-w-0">
-                    <div className="font-medium text-sm truncate">{dt.name}</div>
+                    <div className="truncate text-[15px] font-medium">{dt.name}</div>
+                    <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                      <code className="shrink-0 truncate font-mono">{dt.device_type}</code>
+                      {dt.description && <span className="truncate">· {dt.description}</span>}
+                    </div>
                   </div>
                   {dt.builtin_version && (
                     <Badge variant="outline" className={cn("shrink-0", textNano, "bg-muted-30 text-muted-foreground border-muted")}>
                       {t('devices:types.builtinBadge')}
                     </Badge>
                   )}
-                  {/* Compact stats: icon + count */}
-                  <span className={cn("flex items-center gap-0.5", textMini, "text-info shrink-0")}>
-                    <Activity className="h-3 w-3" />
-                    {metricCountOf(dt)}
-                  </span>
-                  <span className={cn("flex items-center gap-0.5", textMini, "text-accent-purple shrink-0")}>
-                    <Cpu className="h-3 w-3" />
-                    {dt.commands?.length ?? dt.command_count ?? 0}
-                  </span>
-                  <span
-                    className={cn("flex items-center gap-0.5", textMini, "text-muted-foreground shrink-0")}
-                    title={t('devices:types.headers.devices')}
-                  >
-                    <Boxes className="h-3 w-3" />
-                    {deviceCounts[dt.device_type] ?? 0}
-                  </span>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
                       <IconButton className="shrink-0">
@@ -169,18 +149,6 @@ export function DeviceTypeList({
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
-                </div>
-                {/* Row 2: device_type code + description */}
-                <div className="flex items-center gap-1.5 mt-1 ml-[40px]">
-                  <code className={cn(textNano, "text-muted-foreground font-mono shrink-0")}>{dt.device_type}</code>
-                  {dt.description && (
-                    <>
-                      <span className={cn(textNano, "text-muted-foreground")}>·</span>
-                      <span className={cn(textNano, "text-muted-foreground truncate min-w-0")}>
-                        {dt.description}
-                      </span>
-                    </>
-                  )}
                 </div>
               </div>
             </Card>

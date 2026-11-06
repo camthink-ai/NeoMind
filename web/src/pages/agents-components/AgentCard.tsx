@@ -104,7 +104,7 @@ export function AgentCard({
         tabIndex={0}
         onClick={onClick}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() } }}
-        className="flex min-h-[5.25rem] cursor-pointer items-center gap-3 rounded-xl px-2 py-3.5 transition-[background-color,transform] active:scale-[0.99] active:bg-muted"
+        className="flex min-h-[4.5rem] cursor-pointer items-center gap-3 rounded-xl px-2 py-3 transition-[background-color,transform] active:scale-[0.99] active:bg-muted"
       >
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -118,10 +118,6 @@ export function AgentCard({
             {isExecuting
               ? (agent.currentThinking || t('agents:thinking.executing'))
               : (agent.user_prompt || agent.description || t('agents:card.noDescription'))}
-          </p>
-          <p className="mt-1 truncate text-xs text-muted-foreground">
-            {agent.last_execution_at ? formatTimestamp(agent.last_execution_at, false) : t('agents:card.neverExecuted')}
-            {successRate !== null ? ` · ${agent.execution_count}${t('agents:card.runsSuffix')} · ${successRate}%` : ''}
           </p>
         </div>
         <Switch

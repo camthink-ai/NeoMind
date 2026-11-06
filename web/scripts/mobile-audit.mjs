@@ -17,6 +17,38 @@ const agents = [
   { id: "a1", name: "仓库巡检", description: "检查离线设备与异常告警", user_prompt: "检查仓库设备", status: "Active", execution_mode: "free", memory_mode: "assistant", execution_count: 18, success_count: 17, last_execution_at: new Date().toISOString() },
   { id: "a2", name: "冷库温度监控", description: "监控冷库温度变化", user_prompt: "分析温度趋势", status: "Paused", execution_mode: "free", memory_mode: "assistant", execution_count: 8, success_count: 8, last_execution_at: new Date().toISOString() },
 ]
+const rules = [
+  {
+    id: "r1", name: "冷库高温告警", enabled: true, trigger_count: 12,
+    created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    last_triggered: new Date(Date.now() - 3600000).toISOString(),
+    trigger: { trigger_type: "data_change", sources: ["device:cold-room-02:temperature"] },
+    condition: { condition_type: "comparison", source: "device:cold-room-02:temperature", operator: ">", threshold: 30 },
+    actions: [{ type: "notify", message: "冷库温度过高", severity: "warning" }],
+    dsl_preview: "WHEN device:cold-room-02:temperature > 30\nDO\n    NOTIFY warning \"冷库温度过高\"\nEND",
+  },
+  {
+    id: "r2", name: "入口设备离线提醒", enabled: false, trigger_count: 3,
+    created_at: new Date(Date.now() - 86400000).toISOString(), updated_at: new Date().toISOString(),
+    trigger: { trigger_type: "data_change", sources: ["device:camera-entry:online"] },
+    condition: { condition_type: "comparison", source: "device:camera-entry:online", operator: "==", threshold_value: "false" },
+    actions: [{ type: "notify", message: "入口设备已离线", severity: "critical" }],
+    dsl_preview: "WHEN device:camera-entry:online == false\nDO\n    NOTIFY critical \"入口设备已离线\"\nEND",
+  },
+]
+const transforms = [
+  {
+    id: "t1", name: "温度单位标准化", description: "摄氏温度标准化", enabled: true,
+    type: "transform", scope: { device_type: "temperature_sensor" }, output_prefix: "normalized",
+    complexity: 1, js_code: "return { temperature: input.temperature };",
+    created_at: Date.now(), updated_at: Date.now(), execution_count: 42, last_executed: Date.now() - 60000,
+  },
+  {
+    id: "t2", name: "设备状态摘要", description: "生成状态摘要", enabled: false,
+    type: "transform", scope: "global", output_prefix: "summary", complexity: 1,
+    js_code: "return input;", created_at: Date.now() - 86400000, updated_at: Date.now(), execution_count: 0, last_executed: null,
+  },
+]
 const backend = {
   id: "qwen3", name: "Qwen3 8B", model: "qwen3-8b", backend_type: "builtin",
   active: true, healthy: true, context_window: 32768,
@@ -41,7 +73,8 @@ function bodyFor(url) {
   if (path.includes("/onboarding")) return { dismissed: true, steps: { llm: { completed: true }, device: { completed: true } } }
   if (path.includes("/extensions/pages")) return { pages: [] }
   if (path === "/extensions" || path.startsWith("/extensions?")) return []
-  if (path.includes("/automation") || path.includes("/rules") || path.includes("/transforms")) return { rules: [], transforms: [], count: 0 }
+  if (path.includes("/transforms")) return { transforms, count: transforms.length }
+  if (path.includes("/automation") || path.includes("/rules")) return { rules, count: rules.length }
   if (path.includes("/dashboard")) return { dashboards: [], count: 0 }
   if (path.includes("/im/bridges")) return { bridges: [] }
   if (path.includes("/mqtt/status")) return { status: { connected: true, server_ip: "192.168.1.10" } }
@@ -79,6 +112,13 @@ async function waitForRouteReady(page, route) {
   } else {
     await page.waitForFunction(
       () => (document.querySelector("#main-scroll-container")?.textContent?.trim().length ?? 0) > 0,
+      null,
+      { timeout: 10000 },
+    )
+  }
+  if ((page.viewportSize()?.width ?? 0) < 768) {
+    await page.waitForFunction(
+      () => (document.querySelector(".safe-top h1")?.textContent?.trim().length ?? 0) > 0,
       null,
       { timeout: 10000 },
     )
@@ -123,6 +163,7 @@ for (const viewport of viewports) {
     await page.goto(`http://127.0.0.1:5173${route}`, { waitUntil: "domcontentloaded" })
     await waitForRouteReady(page, route)
     const audit = await page.evaluate((routePath) => {
+      const pageScroller = document.querySelector("[data-page-scroll-container]")
       const visible = (el) => {
         const style = getComputedStyle(el)
         const rect = el.getBoundingClientRect()
@@ -141,6 +182,10 @@ for (const viewport of viewports) {
         horizontalOverflow: document.documentElement.scrollWidth > window.innerWidth + 1,
         scrollWidth: document.documentElement.scrollWidth,
         viewportWidth: window.innerWidth,
+        contentHorizontalOverflow: pageScroller
+          ? pageScroller.scrollWidth > pageScroller.clientWidth + 1
+          : false,
+        contentScrollLeft: pageScroller?.scrollLeft ?? 0,
         primaryNavCount: document.querySelectorAll(".mobile-primary-nav").length,
         tinyTargets: tinyTargets.slice(0, 12),
       }
@@ -204,7 +249,7 @@ await fs.writeFile(new URL("report.json", outDir), JSON.stringify(results, null,
 await fs.writeFile(new URL("interaction-report.json", outDir), JSON.stringify(interactionResults, null, 2))
 
 const failures = results.filter((r) =>
-  r.horizontalOverflow || r.pageErrors.length ||
+  r.horizontalOverflow || r.contentHorizontalOverflow || r.contentScrollLeft !== 0 || r.pageErrors.length ||
   ((r.route === "/chat") ? r.primaryNavCount !== 0 : (r.viewport !== "landscape" && r.primaryNavCount !== 1))
 )
 const interactionFailures = interactionResults.filter((r) =>

@@ -38,7 +38,7 @@ export function MobilePrimaryNav() {
       aria-label={t("common:nav.mobilePrimary")}
       className="mobile-primary-nav fixed inset-x-3 z-40 overflow-hidden rounded-[1.65rem] border border-border/80 shadow-[0_8px_28px_rgba(0,0,0,0.12)] backdrop-blur-xl"
       style={{
-        bottom: "max(0.5rem, env(safe-area-inset-bottom, 0px))",
+        bottom: "calc(0.5rem + env(safe-area-inset-bottom, 0px))",
         backgroundColor: "color-mix(in srgb, var(--chrome) 94%, transparent)",
       }}
     >

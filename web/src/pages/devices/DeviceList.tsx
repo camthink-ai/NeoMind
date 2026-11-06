@@ -131,18 +131,15 @@ export function DeviceList({
                     <div className="flex items-center gap-2">
                       <div className="truncate text-[15px] font-medium text-foreground">{device.name || "-"}</div>
                       <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", device.online ? "bg-success" : "bg-muted-foreground")} />
+                      <span className="sr-only">
+                        {device.online ? t('common:online', '在线') : t('common:offline', '离线')}
+                      </span>
                     </div>
                     <div className="mt-1 truncate text-xs text-muted-foreground">
                       {device.device_type} · {device.adapter_type || 'mqtt'}
                     </div>
-                    <div className="mt-1 text-xs text-muted-foreground">
-                      {t('devices:headers.lastReport')} {formatTimestamp(device.last_seen, false)}
-                    </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
-                    <span className="pt-2 text-xs text-muted-foreground">
-                      {device.online ? t('common:online', '在线') : t('common:offline', '离线')}
-                    </span>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
                         <IconButton className="h-11 w-11">

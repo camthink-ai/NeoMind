@@ -55,10 +55,13 @@ export function MobilePageHeader({
         // solid elevated gray in dark mode) — this is the dedicated token
         // for stable chrome layers per index.css. Using bg-background would
         // tint the header gray after the background token was darkened.
-        "safe-top sticky top-0 z-30 flex h-16 items-center gap-2 px-4",
+        "safe-top sticky top-0 z-30 flex items-center gap-2 px-4",
         className,
       )}
-      style={{ backgroundColor: 'var(--chrome)' }}
+      style={{
+        backgroundColor: 'var(--chrome)',
+        height: 'calc(4rem + env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))',
+      }}
     >
       {/* Left slot: hamburger + leftExtra (e.g. back chevron) */}
       <div className="flex min-w-0 shrink-0 items-center gap-1 [&_button]:rounded-full [&_button]:border [&_button]:border-glass-border [&_button]:bg-surface-glass [&_button]:shadow-sm [&_button]:backdrop-blur-xl">
