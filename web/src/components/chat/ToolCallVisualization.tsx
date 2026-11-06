@@ -179,7 +179,7 @@ export function ToolCallItem({
         )}
       </button>
       {isExpanded && hasDetails && (
-        <div id={detailsId} className="ml-5.5 mt-0.5 mb-1 space-y-1">
+        <div id={detailsId} className="mb-1 mt-0.5 space-y-1 sm:ml-5.5">
           {hasArguments && (
             <div className="rounded bg-muted-30 p-1.5">
               <div className={cn(textMini, "text-muted-foreground mb-0.5 flex items-center gap-1")}>

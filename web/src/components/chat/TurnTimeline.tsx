@@ -176,7 +176,7 @@ export function TurnTimeline({
       </CollapsibleTrigger>
 
       <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down">
-        <div className="ml-6 overflow-hidden rounded-lg border border-border bg-muted-20">
+        <div className="overflow-hidden rounded-lg border border-border bg-muted-20 sm:ml-6">
           {rounds.map(group => {
             const isOpen = openRounds[group.round] ?? true
             const isActive = activeRound === group.round
