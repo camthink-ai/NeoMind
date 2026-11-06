@@ -614,9 +614,6 @@ function App() {
                     <div
                       className="w-full h-full overflow-hidden"
                       id="main-scroll-container"
-                      style={isMobile && currentPath !== '/' && !currentPath.startsWith('/chat')
-                        ? { paddingBottom: 'calc(5rem + env(safe-area-inset-bottom, 0px))' }
-                        : undefined}
                     >
                     <ErrorBoundary>
                     <div key={location.pathname.split('/')[1] || 'root'} className="animate-page-enter w-full h-full overflow-hidden">
