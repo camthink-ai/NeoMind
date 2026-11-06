@@ -1,4 +1,4 @@
-import { Bot, Cpu, MessageSquare, MoreHorizontal } from "lucide-react"
+import { Bot, Cpu, LayoutDashboard, MessageSquare, Settings2 } from "lucide-react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
@@ -8,17 +8,19 @@ const items = [
   { id: "chat", path: "/chat", icon: MessageSquare, label: "nav.dashboard" },
   { id: "devices", path: "/devices", icon: Cpu, label: "nav.devices" },
   { id: "agents", path: "/agents", icon: Bot, label: "nav.agents" },
-  { id: "more", path: "/system", icon: MoreHorizontal, label: "system.pageTitle" },
+  { id: "dashboard", path: "/visual-dashboard", icon: LayoutDashboard, label: "nav.dashboardShort" },
+  { id: "system", path: "/system", icon: Settings2, label: "system.pageTitle" },
 ] as const
 
-const moreRoutes = ["/system", "/visual-dashboard", "/automation", "/data", "/messages", "/extensions", "/settings"]
+const systemRoutes = ["/system", "/automation", "/data", "/messages", "/extensions", "/settings"]
 
 function activeItem(pathname: string) {
   if (pathname === "/" || pathname.startsWith("/chat")) return "chat"
   if (pathname.startsWith("/devices")) return "devices"
   if (pathname.startsWith("/agents")) return "agents"
-  if (moreRoutes.some((path) => pathname === path || pathname.startsWith(`${path}/`))) return "more"
-  return "more"
+  if (pathname.startsWith("/visual-dashboard")) return "dashboard"
+  if (systemRoutes.some((path) => pathname === path || pathname.startsWith(`${path}/`))) return "system"
+  return "system"
 }
 
 /** Chat is the immersive home surface: the composer owns the bottom edge, so
@@ -28,7 +30,7 @@ function isChatRoute(pathname: string) {
   return pathname === "/" || pathname === "/chat" || pathname.startsWith("/chat/")
 }
 
-/** Global mobile destinations for every page EXCEPT Chat — the four direct
+/** Global mobile destinations for every page EXCEPT Chat — the five direct
  * destinations stay visible on all top-level pages, so changing sections
  * never requires opening an intermediate drawer. */
 export function MobilePrimaryNav() {
@@ -49,13 +51,14 @@ export function MobilePrimaryNav() {
         backgroundColor: "color-mix(in srgb, var(--chrome) 94%, transparent)",
       }}
     >
-      <div className="grid h-[3.75rem] grid-cols-4 gap-1 p-1.5">
+      <div className="grid h-[3.75rem] grid-cols-5 gap-0.5 p-1.5">
         {items.map(({ id, path, icon: Icon, label }) => {
           const selected = active === id
           return (
             <button
               key={id}
               type="button"
+              data-testid={`mobile-primary-${id}`}
               aria-current={selected ? "page" : undefined}
               onClick={() => navigate(path)}
               className={cn(

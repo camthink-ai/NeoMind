@@ -282,6 +282,7 @@
   },
   "nav": {
     "dashboard": "Chat",
+    "dashboardShort": "Dashboard",
     "visual-dashboard": "Visual Dashboard",
     "devices": "Devices",
     "automation": "Automation",

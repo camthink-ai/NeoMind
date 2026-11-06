@@ -252,18 +252,24 @@ for (const viewport of viewports) {
       await page.waitForURL(/\/system$/)
       const workspacePath = new URL(page.url()).pathname
       const primaryNav = page.locator(".mobile-primary-nav")
-      await primaryNav.locator("button").nth(1).click()
+      await page.getByTestId("mobile-primary-dashboard").click()
+      await page.waitForURL(/\/visual-dashboard$/)
+      const dashboardPath = new URL(page.url()).pathname
+      await page.getByTestId("mobile-primary-system").click()
+      await page.waitForURL(/\/system$/)
+      const systemPath = new URL(page.url()).pathname
+      await page.getByTestId("mobile-primary-devices").click()
       await page.waitForURL(/\/devices$/)
       const devicesPath = new URL(page.url()).pathname
       // Devices has the capsule: its chat entry returns to Chat.
-      await primaryNav.locator("button").nth(0).click()
+      await page.getByTestId("mobile-primary-chat").click()
       await page.waitForURL(/\/chat$/)
       const chatPath = new URL(page.url()).pathname
       await page.goto("http://127.0.0.1:5173/automation", { waitUntil: "domcontentloaded" })
       await waitForRouteReady(page, "/automation")
       await page.getByRole("button", { name: /返回|Back/i }).first().click()
       await page.waitForURL(/\/system$/)
-      navigationResults.push({ name: "primary-navigation", workspacePath, devicesPath, chatPath, backPath: new URL(page.url()).pathname, navCountOnChat })
+      navigationResults.push({ name: "primary-navigation", workspacePath, dashboardPath, systemPath, devicesPath, chatPath, backPath: new URL(page.url()).pathname, navCountOnChat })
     } catch (error) {
       navigationResults.push({ name: "primary-navigation", error: String(error) })
     }
@@ -334,7 +340,8 @@ const interactionFailures = interactionResults.filter((r) =>
   r.error || r.dialogCount < 1 || r.horizontalOverflow || r.pageErrors?.length || r.fields?.some((field) => Number.parseFloat(field.fontSize) < 16)
 )
 const navigationFailures = navigationResults.filter((r) =>
-  r.error || r.workspacePath !== "/system" || r.devicesPath !== "/devices" || r.chatPath !== "/chat" ||
+  r.error || r.workspacePath !== "/system" || r.dashboardPath !== "/visual-dashboard" || r.systemPath !== "/system" ||
+  r.devicesPath !== "/devices" || r.chatPath !== "/chat" ||
   r.backPath !== "/system" || r.navCountOnChat !== 0
 )
 console.log(JSON.stringify({ checked: results.length, failures, interactionResults, interactionFailures, navigationResults, navigationFailures, reports: `${outDirPath}report.json` }, null, 2))
