@@ -217,7 +217,7 @@ export function ChatComposer({
       {/* Single unified input box — everything inside one container */}
       <div className={cn(
         "rounded-lg border border-input bg-card shadow-sm transition-colors",
-        isMobile && "flex items-end gap-0.5 rounded-[1.6rem] border-border bg-background p-1.5 shadow-lg",
+        isMobile && "flex items-end gap-0.5 rounded-[1.6rem] border-border bg-background p-1.5",
       )}>
         {/* Textarea — fills the top, borderless */}
         <textarea
