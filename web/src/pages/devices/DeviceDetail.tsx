@@ -405,13 +405,12 @@ export function DeviceDetail({
   return (
     <>
       <div className="flex flex-col flex-1 h-full overflow-hidden bg-background">
-        {/* Header — relative z-20: sits above the app's window-drag strip
-            (z-10, top 56px) so the back/edit/delete buttons stay clickable.
-            Top padding adds the traffic-light / safe-area clearance (the
-            detail view is full-bleed with no page title row). */}
+        {/* Compact device summary. Mobile safe-area and back navigation live
+            in MobilePageHeader above this view; desktop still reserves the
+            title-bar inset for the full-bleed detail surface. */}
         <div
-          className={cn("relative z-[15] flex items-center justify-between shrink-0 gap-2", isMobile ? "px-3 py-3" : "px-4 sm:px-6 md:px-8 py-5")}
-          style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px) + 2.75rem)" }}
+          className={cn("relative z-[15] flex shrink-0 items-center justify-between gap-2", isMobile ? "px-4 pb-3 pt-1" : "px-4 py-5 sm:px-6 md:px-8")}
+          style={isMobile ? undefined : { paddingTop: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px) + 2.75rem)" }}
         >
           <div className="flex items-center gap-3 min-w-0 flex-1">
             <Button
@@ -435,10 +434,15 @@ export function DeviceDetail({
                 )} />
               </div>
               <div className="min-w-0">
-                <h1 className="text-lg sm:text-xl font-semibold truncate">{device.name || device.id}</h1>
-                <p className="text-xs sm:text-sm text-muted-foreground mt-0.5 truncate">
-                  {device.device_type} · {device.device_id || device.id}
+                {!isMobile && <h1 className="truncate text-xl font-semibold">{device.name || device.id}</h1>}
+                <p className={cn("truncate text-muted-foreground", isMobile ? "text-xs" : "mt-0.5 text-sm")}>
+                  {device.device_type}
                 </p>
+                {isMobile && (
+                  <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
+                    {device.device_id || device.id}
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -448,11 +452,11 @@ export function DeviceDetail({
         </div>
 
         {/* Content */}
-        <div className={cn("flex-1 overflow-auto", isMobile ? "px-3 pb-3" : "px-6 pb-6")}>
+        <div className={cn("flex-1 overflow-auto", isMobile ? "px-4 pb-[calc(6rem+env(safe-area-inset-bottom,0px))]" : "px-6 pb-6")}>
           <div className="max-w-6xl mx-auto space-y-5">
 
             {/* Device Info Card */}
-            <div className={cn("bg-card border border-border rounded-lg shadow-sm", isMobile ? "p-4" : "p-6")}>
+            <div className={cn("rounded-lg", isMobile ? "py-2" : "border border-border bg-card p-6 shadow-sm")}>
               <div className="flex items-center gap-2 mb-3 sm:mb-4">
                 <Info className="h-5 w-5 text-muted-foreground" />
                 <h2 className="font-semibold">{t('devices:detailPage.deviceInfo')}</h2>

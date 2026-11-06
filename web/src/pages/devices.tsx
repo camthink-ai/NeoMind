@@ -777,16 +777,15 @@ export function DevicesPage() {
             ? {
                 // Show the device name as the MobilePageHeader title instead of
                 // an empty header. Lift the back chevron into the header's
-                // leftExtra and hide the hamburger — the in-page header still
-                // has its own back button for redundancy, but the top-of-screen
-                // header is the primary touch target.
+                // leftExtra and hide the hamburger. The top-of-screen header
+                // is the detail view's single mobile back target.
                 titleOverride: deviceDetails?.name || t('devices:detailTitle', 'Device detail'),
                 hideMenu: true,
                 leftExtra: (
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="-ml-1.5 h-9 w-9 shrink-0"
+                    className="-ml-2 h-11 w-11 shrink-0 rounded-full"
                     onClick={handleCloseDeviceDetail}
                     aria-label={t('common:back', 'Back')}
                   >

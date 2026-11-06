@@ -95,7 +95,10 @@ export function MobilePageHeader({
         )}
         {leftExtra}
       </div>
-      <h1 className="min-w-0 flex-1 truncate text-left text-2xl font-bold leading-8 tracking-[-0.025em] text-foreground">
+      <h1 className={cn(
+        "min-w-0 flex-1 truncate text-left tracking-[-0.02em] text-foreground",
+        leftExtra ? "text-lg font-semibold leading-6" : "text-2xl font-bold leading-8",
+      )}>
         {title}
       </h1>
       {/* Right slot: actions */}

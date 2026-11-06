@@ -7,7 +7,7 @@ import { useStore } from "@/store"
 import { shallow } from "zustand/shallow"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { generateId } from "@/lib/id"
-import { ChevronDown, Loader2, Menu, Plus } from "lucide-react"
+import { ChevronDown, Loader2, MessageSquarePlus, PanelsTopLeft } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SessionSidebar } from "@/components/session/SessionSidebar"
 import { WelcomeArea } from "@/components/chat/WelcomeArea"
@@ -794,6 +794,11 @@ export function ChatPage() {
   const imagesAllowed = supportsMultimodal || companionRunning
   const visionDelegate = !supportsMultimodal && companionRunning
 
+  const handleQuickAction = (prompt: string) => {
+    setInput(prompt)
+    inputRef.current?.focus()
+  }
+
   // Pre-fill input from ?q= URL param (e.g. onboarding prompt navigation).
   // Do NOT auto-send — user reviews and presses Enter.
   useEffect(() => {
@@ -1099,7 +1104,7 @@ export function ChatPage() {
               aria-label={t('common:system.menu')}
               data-testid="chat-workspace-button"
             >
-              <Menu className="h-5 w-5" />
+              <PanelsTopLeft className="h-[21px] w-[21px]" strokeWidth={1.8} />
             </Button>
             <button
               type="button"
@@ -1122,7 +1127,7 @@ export function ChatPage() {
                 }}
                 aria-label={t('chat:input.newChat')}
               >
-                <Plus className="h-6 w-6" strokeWidth={2} />
+                <MessageSquarePlus className="h-[22px] w-[22px]" strokeWidth={1.8} />
               </Button>
             ) : <span />}
           </div>
@@ -1151,7 +1156,7 @@ export function ChatPage() {
               handleBackdropClick()
             }}
           >
-            <WelcomeArea className="min-h-full">
+            <WelcomeArea className="min-h-full" onQuickAction={handleQuickAction}>
               {composerEl}
             </WelcomeArea>
           </div>

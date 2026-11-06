@@ -49,14 +49,14 @@ export function SearchInput({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="pl-9 pr-8 h-9 bg-card"
+        className="h-11 bg-card pl-9 pr-11 md:h-9 md:pr-8"
         {...rest}
       />
       {!hideClear && value && (
         <button
           onClick={() => onChange("")}
           aria-label={t("clear", { defaultValue: "Clear" })}
-          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+          className="absolute right-0 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center text-muted-foreground transition-colors hover:text-foreground md:right-1 md:h-9 md:w-9"
         >
           <X className="h-4 w-4" />
         </button>

@@ -12,6 +12,30 @@ const devices = [
   { id: "cold-room-02", device_id: "cold-room-02", name: "冷库温度传感器", device_type: "temperature_sensor", adapter_type: "mqtt", status: "offline", online: false, last_seen: new Date(Date.now() - 420000).toISOString() },
   { id: "door-01", device_id: "door-01", name: "仓库门磁", device_type: "door_sensor", adapter_type: "webhook", status: "online", online: true, last_seen: new Date().toISOString() },
 ]
+const detailDevice = {
+  ...devices[1],
+  adapter_id: "internal-mqtt",
+  transport_connected: true,
+  effective_offline_timeout_secs: 300,
+  metric_count: 2,
+  command_count: 1,
+  connection_config: {
+    telemetry_topic: "warehouse/cold-room-02/telemetry",
+    command_topic: "warehouse/cold-room-02/command",
+  },
+  current_values: { temperature: 4.2, humidity: 68 },
+}
+const detailDeviceType = {
+  device_type: "temperature_sensor",
+  name: "温度传感器",
+  description: "冷库温湿度监测",
+  categories: ["environment"],
+  metrics: [
+    { name: "temperature", display_name: "温度", data_type: "float", unit: "°C" },
+    { name: "humidity", display_name: "湿度", data_type: "float", unit: "%" },
+  ],
+  commands: [{ name: "calibrate", display_name: "校准传感器", parameters: [] }],
+}
 const messages = [
   { id: "m1", title: "入口摄像头离线", message: "设备已离线 12 分钟", category: "alert", severity: "warning", status: "active", timestamp: new Date().toISOString(), source: "camera-entry" },
   { id: "m2", title: "冷库温度传感器离线", message: "设备已离线 7 分钟", category: "alert", severity: "critical", status: "active", timestamp: new Date().toISOString(), source: "cold-room-02" },
@@ -90,7 +114,17 @@ function bodyFor(url) {
   if (path.includes("/auth/me") || path.includes("/auth/current")) return { id: "u1", username: "shenmingming", role: "admin" }
   if (path.startsWith("/llm-backends")) return { backends: [backend], count: 1, active_id: backend.id }
   if (path === "/devices") return { devices, count: devices.length }
+  if (path === "/devices/cold-room-02") return detailDevice
+  if (path === "/devices/cold-room-02/current") return {
+    device: detailDevice,
+    metrics: {
+      temperature: { name: "temperature", display_name: "温度", data_type: "float", unit: "°C", value: 4.2, is_virtual: false },
+      humidity: { name: "humidity", display_name: "湿度", data_type: "float", unit: "%", value: 68, is_virtual: false },
+    },
+    commands: detailDeviceType.commands,
+  }
   if (path === "/device-types") return { device_types: [{ device_type: "temperature_sensor", name: "温度传感器", description: "", categories: [] }], count: 1 }
+  if (path === "/device-types/temperature_sensor") return detailDeviceType
   if (path.startsWith("/devices/drafts")) return { devices: [], drafts: [], count: 0 }
   if (path === "/sessions/pending") return { sessionIds: [], count: 0 }
   if (/\/sessions\/audit-chat\/history/.test(path)) return { messages: chatMessages, count: chatMessages.length, total: chatMessages.length, has_more: false }
@@ -123,16 +157,19 @@ const browser = await chromium.launch({
     : {}),
   headless: true,
 })
-const routes = [
+const standardRoutes = [
   "/chat", "/chat/audit-chat",
-  "/devices", "/devices/types", "/devices/drafts",
+  "/devices", "/devices/cold-room-02", "/devices/types", "/devices/drafts",
   "/agents", "/agents/memory", "/agents/skills", "/agents/tools",
   "/system",
   "/messages", "/messages/channels", "/messages/im",
   "/automation", "/automation/transforms",
   "/data", "/extensions", "/visual-dashboard",
 ]
-const allViewports = [
+const routes = process.env.AUDIT_CHAT_ONLY === "1" ? ["/chat"] : standardRoutes
+const allViewports = process.env.AUDIT_DESKTOP_ONLY === "1" ? [
+  { name: "desktop", width: 1440, height: 960 },
+] : [
   { name: "narrow", width: 320, height: 700 },
   { name: "standard", width: 390, height: 844 },
   { name: "large", width: 430, height: 932 },
@@ -233,9 +270,10 @@ for (const viewport of viewports) {
       }
     }, route)
     results.push({ viewport: viewport.name, ...audit, pageErrors: [...pageErrors] })
-    if (viewport.name === "standard") {
+    if (viewport.name === "standard" || viewport.name === "desktop") {
       const file = route.replaceAll("/", "_") || "_root"
-      await page.screenshot({ path: `${outDirPath}${file}.png`, fullPage: false })
+      const suffix = viewport.name === "desktop" ? "_desktop" : ""
+      await page.screenshot({ path: `${outDirPath}${file}${suffix}.png`, fullPage: false })
     }
   }
 
@@ -315,6 +353,35 @@ for (const viewport of viewports) {
         interactionResults.push({ name: item.name, error: String(error) })
       }
     }
+
+    try {
+      pageErrors.length = 0
+      await page.goto("http://127.0.0.1:5173/devices", { waitUntil: "domcontentloaded" })
+      await waitForRouteReady(page, "/devices")
+      await page.locator("button:has(svg.lucide-ellipsis-vertical), button:has(svg.lucide-more-vertical)").first().click()
+      await page.getByRole("menuitem", { name: "删除" }).click()
+      const sheet = page.getByRole("alertdialog")
+      await sheet.waitFor({ state: "visible" })
+      const bounds = await sheet.evaluate((el) => {
+        const r = el.getBoundingClientRect()
+        return {
+          x: Math.round(r.x), y: Math.round(r.y),
+          width: Math.round(r.width), height: Math.round(r.height),
+        }
+      })
+      interactionResults.push({
+        name: "confirm-sheet",
+        dialogCount: 1,
+        bounds,
+        horizontalOverflow: await sheet.evaluate((el) => el.scrollWidth > el.clientWidth + 1),
+        fields: [],
+        pageErrors: [...pageErrors],
+      })
+      await page.screenshot({ path: `${outDirPath}interaction-confirm-sheet.png`, fullPage: false })
+      await page.keyboard.press("Escape")
+    } catch (error) {
+      interactionResults.push({ name: "confirm-sheet", error: String(error) })
+    }
   }
   await context.close()
 }
@@ -330,7 +397,7 @@ const expectedNavCount = (r) =>
 
 const failures = results.filter((r) =>
   r.horizontalOverflow || r.contentHorizontalOverflow || r.contentScrollLeft !== 0 || r.pageErrors.length ||
-  (r.viewport === "landscape"
+  (r.viewport === "landscape" || r.viewportWidth >= 768
     ? r.primaryNavCount !== 0
     : r.route.startsWith("/chat")
       ? r.primaryNavCount !== 0

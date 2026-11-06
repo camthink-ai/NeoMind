@@ -19,7 +19,7 @@ import { getPortalRoot } from '@/lib/portal'
 import { ReactNode, useEffect, useRef, useCallback, useId } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import { X, Loader2, AlertCircle } from 'lucide-react'
+import { ChevronLeft, X, Loader2, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { dialogHeader } from '@/design-system/tokens/size'
@@ -257,16 +257,17 @@ export function UnifiedFormDialog({
           <div className="flex h-full w-full flex-col">
             {/* Header */}
             <div
-              className={cn(dialogHeader, "grid grid-cols-[1fr_auto_1fr]")}
-              style={{ paddingTop: `calc(1rem + ${insets.top}px)` }}
+              className={cn(dialogHeader, "grid min-h-16 grid-cols-[1fr_auto_1fr] border-b-0 bg-transparent px-3 py-2")}
+              style={{ paddingTop: `calc(0.5rem + ${insets.top}px)` }}
             >
               <button
                 type="button"
                 onClick={handleClose}
                 disabled={isSubmitting && preventCloseOnSubmit}
-                className="min-h-11 justify-self-start px-1 text-sm text-foreground disabled:opacity-50"
+                className="flex h-11 w-11 items-center justify-center justify-self-start rounded-full text-foreground active:bg-muted disabled:opacity-50"
+                aria-label={cancelText}
               >
-                {cancelText}
+                <ChevronLeft className="h-5 w-5" />
               </button>
               <h1 id={titleId} className="max-w-[56vw] truncate text-center text-base font-semibold">{title}</h1>
               <div aria-hidden="true" />
@@ -277,7 +278,10 @@ export function UnifiedFormDialog({
               ref={contentRef}
               className={cn("flex-1 overflow-y-auto overflow-x-hidden", contentClassName)}
             >
-              <div className="p-4 space-y-4">
+              <div className="space-y-4 p-4">
+                {description && (
+                  <p className="text-sm leading-6 text-muted-foreground">{description}</p>
+                )}
                 {loading ? (
                   <div className="flex items-center justify-center py-8">
                     <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -307,8 +311,8 @@ export function UnifiedFormDialog({
                 // makes the footer read as a different color from the body
                 // of the dialog. The border-t alone provides enough visual
                 // separation between content and actions.
-                className="flex shrink-0 items-center gap-3 border-t px-4 py-3 [&>button]:min-h-11 [&>button]:flex-1"
-                style={{ paddingBottom: `calc(1rem + ${insets.bottom}px)` }}
+                className="flex shrink-0 items-center gap-3 border-t px-4 py-3 [&>button]:min-h-11 [&>button]:flex-1 [&>button]:rounded-xl"
+                style={{ paddingBottom: `calc(0.75rem + ${insets.bottom}px)` }}
               >
                 {footerContent}
               </div>

@@ -1,6 +1,6 @@
 import * as React from "react"
 import * as DialogPrimitive from "@radix-ui/react-dialog"
-import { X } from "lucide-react"
+import { ChevronLeft, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { getPortalRoot } from "@/lib/portal"
 import { useIsMobile, useSafeAreaInsets } from "@/hooks/useMobile"
@@ -83,7 +83,7 @@ const DialogContent = React.forwardRef<
         <DialogPrimitive.Content
           ref={ref}
           className={cn(
-            "fixed !left-0 !top-0 !right-0 !bottom-0 !w-full !h-full !max-w-full !translate-x-0 !translate-y-0 !rounded-none z-50 bg-popover flex flex-col",
+            "fixed !bottom-0 !left-0 !right-0 !top-0 z-50 flex !h-full min-h-0 !w-full !max-w-full !translate-x-0 !translate-y-0 flex-col !rounded-none bg-popover",
             "data-[state=open]:animate-in data-[state=closed]:animate-out",
             "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
             className
@@ -161,7 +161,7 @@ const DialogHeader = function DialogHeader({
           ? "grid grid-cols-[2.75rem_minmax(0,1fr)_2.75rem] items-center gap-1"
           : "flex items-center justify-between gap-2",
         // Mobile styling
-        isMobile && "px-4 py-4 border-b shrink-0 bg-popover",
+        isMobile && "h-16 shrink-0 px-2",
         className
       )}
       {...props}
@@ -177,9 +177,9 @@ const DialogHeader = function DialogHeader({
       <DialogPrimitive.Close className={cn(
         "inline-flex items-center justify-center rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground",
         // Mobile: larger button
-        isMobile ? "col-start-1 row-start-1 h-11 w-11 p-0" : "p-0.5"
+        isMobile ? "col-start-1 row-start-1 h-11 w-11 rounded-full p-0 opacity-100 active:bg-muted" : "p-0.5"
       )}>
-        <X className={cn("h-4 w-4", isMobile && "h-5 w-5")} />
+        {isMobile ? <ChevronLeft className="h-5 w-5" /> : <X className="h-4 w-4" />}
         <span className="sr-only">Close</span>
       </DialogPrimitive.Close>
     </div>
@@ -199,7 +199,7 @@ const DialogFooter = ({
       className={cn(
         "flex flex-row justify-end gap-2 sm:gap-3",
         "mt-4 sm:mt-0",
-        isMobile && "px-4 py-3 border-t shrink-0 bg-popover sticky bottom-0 z-10",
+        isMobile && "sticky bottom-0 z-10 shrink-0 border-t bg-popover px-4 py-3 [&>button]:min-h-11 [&>button]:flex-1",
         className
       )}
       {...props}
@@ -218,7 +218,7 @@ const DialogContentBody = React.forwardRef<
       ref={ref}
       className={cn(
         "flex-1 overflow-y-auto",
-        isMobile && "px-4",
+        isMobile && "min-h-0 px-4 pb-4",
         className
       )}
       {...props}

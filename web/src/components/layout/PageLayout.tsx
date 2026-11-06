@@ -233,7 +233,7 @@ export function PageLayout({
             unaffected (those actions render in the desktop tab bar instead). */}
         {isMobile && collectedMobileContentActions.length > 0 && (
           <div className="shrink-0  bg-background px-3 py-2">
-            <div className="flex items-center gap-2 overflow-x-auto scrollbar-none">
+            <div className="flex items-center gap-2 overflow-x-auto scrollbar-none [&_button]:min-h-11">
               {collectedMobileContentActions.map((node, i) => (
                 <Fragment key={i}>{node}</Fragment>
               ))}

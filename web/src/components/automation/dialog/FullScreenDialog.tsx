@@ -7,7 +7,7 @@
 
 import { ReactNode, createContext, useContext, useEffect, useId } from 'react'
 import { createPortal } from 'react-dom'
-import { X } from 'lucide-react'
+import { ChevronLeft, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
 import { useIsMobile, useSafeAreaInsets } from '@/hooks/useMobile'
@@ -139,15 +139,16 @@ export function FullScreenDialogHeader({
 
   if (isMobile) {
     return (
-      <header className="grid h-14 shrink-0 grid-cols-[1fr_auto_1fr] items-center border-b border-border px-3">
+      <header className="grid h-16 shrink-0 grid-cols-[1fr_auto_1fr] items-center px-3">
         <button
           type="button"
           onClick={onClose}
-          className="min-h-11 justify-self-start px-1 text-sm text-foreground"
+          className="flex h-11 w-11 items-center justify-center justify-self-start rounded-full text-foreground active:bg-muted"
+          aria-label={t('cancel')}
         >
-          {t('cancel')}
+          <ChevronLeft className="h-5 w-5" />
         </button>
-        <h1 id={titleId} className="max-w-[56vw] truncate text-center text-base font-semibold text-foreground">{title}</h1>
+        <h1 id={titleId} className="max-w-[56vw] truncate text-center text-[17px] font-semibold text-foreground">{title}</h1>
         <div className="flex min-w-0 items-center justify-self-end [&>button]:h-11 [&>button]:w-11 [&>button]:px-0 [&>button]:text-[0px] [&>button>svg]:m-0">
           {actions}
         </div>
@@ -223,6 +224,7 @@ export function FullScreenDialogFooter({
         "px-3 md:px-5 lg:px-6 py-3 md:py-4",
         "border-t border-border",
         "max-md:[&>button]:min-h-11 max-md:[&>button]:flex-1",
+        "max-md:[&>button]:rounded-xl",
         // No bg: footer inherits the container's bg-popover (white) so it
         // matches the body. A bg-black/[0.02] tint here read as #FBFBFC,
         // a visible mismatch vs the white content (the old "glassmorphism
