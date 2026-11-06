@@ -7,7 +7,7 @@ import { useStore } from "@/store"
 import { shallow } from "zustand/shallow"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { generateId } from "@/lib/id"
-import { ChevronDown, Loader2, Menu, SquarePen } from "lucide-react"
+import { ChevronDown, Loader2, Menu, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SessionSidebar } from "@/components/session/SessionSidebar"
 import { WelcomeArea } from "@/components/chat/WelcomeArea"
@@ -794,12 +794,6 @@ export function ChatPage() {
   const imagesAllowed = supportsMultimodal || companionRunning
   const visionDelegate = !supportsMultimodal && companionRunning
 
-  // Handle quick action
-  const handleQuickAction = (prompt: string) => {
-    setInput(prompt)
-    inputRef.current?.focus()
-  }
-
   // Pre-fill input from ?q= URL param (e.g. onboarding prompt navigation).
   // Do NOT auto-send — user reviews and presses Enter.
   useEffect(() => {
@@ -971,9 +965,8 @@ export function ChatPage() {
     }
   }
 
-  // One composer element shared by its two hosts: centered in the welcome
-  // screen (mainstream empty-state pattern — greeting, input, suggestions as
-  // one centered group) and docked at the bottom during a conversation. A
+  // One composer element shared by its two hosts: below the welcome title on
+  // an empty chat and docked at the bottom during a conversation. A
   // React element is immutable, so only one instance is ever mounted.
   const composerEl = (
     <ChatComposer
@@ -1129,7 +1122,7 @@ export function ChatPage() {
                 }}
                 aria-label={t('chat:input.newChat')}
               >
-                <SquarePen className="h-5 w-5" />
+                <Plus className="h-6 w-6" strokeWidth={2} />
               </Button>
             ) : <span />}
           </div>
@@ -1158,9 +1151,7 @@ export function ChatPage() {
               handleBackdropClick()
             }}
           >
-            {/* Composer slots in as the middle of the centered group
-                (greeting → input → suggestions), ChatGPT-style */}
-            <WelcomeArea className="min-h-full" onQuickAction={handleQuickAction}>
+            <WelcomeArea className="min-h-full">
               {composerEl}
             </WelcomeArea>
           </div>
