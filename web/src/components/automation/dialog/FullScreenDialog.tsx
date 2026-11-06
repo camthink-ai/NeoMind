@@ -80,7 +80,7 @@ export function FullScreenDialog({
       {/* Inner container - prevents click propagation */}
       <div
         className={cn(
-          "flex flex-col flex-1 overflow-hidden",
+          "flex min-h-0 flex-1 flex-col overflow-hidden",
           // Full-bleed: opaque bg-background on desktop (page-like, max space
           // for heavy editors); --chrome on mobile via inline style.
           isMobile ? "" : "bg-popover",
@@ -198,7 +198,7 @@ export function FullScreenDialogContent({
   className,
 }: FullScreenDialogContentProps) {
   return (
-    <div className={cn("flex-1 overflow-hidden flex", className)}>
+    <div className={cn("flex min-h-0 flex-1 overflow-hidden", className)}>
       {children}
     </div>
   )

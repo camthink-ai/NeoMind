@@ -48,6 +48,24 @@ const agents = [
   { id: "a1", name: "仓库巡检", description: "检查离线设备与异常告警", user_prompt: "检查仓库设备", status: "Active", execution_mode: "free", memory_mode: "assistant", execution_count: 18, success_count: 17, last_execution_at: new Date().toISOString() },
   { id: "a2", name: "冷库温度监控", description: "监控冷库温度变化", user_prompt: "分析温度趋势", status: "Paused", execution_mode: "free", memory_mode: "assistant", execution_count: 8, success_count: 8, last_execution_at: new Date().toISOString() },
 ]
+const detailAgent = {
+  ...agents[0],
+  execution_mode: "free",
+  memory_mode: "assistant",
+  priority: 5,
+  llm_backend_id: "qwen3",
+  created_at: new Date(Date.now() - 86400000 * 10).toISOString(),
+  updated_at: new Date().toISOString(),
+  avg_duration_ms: 2400,
+  error_count: 1,
+  output_schema: [],
+  resources: [
+    { resource_type: "device", resource_id: "camera-entry", name: "入口摄像头" },
+    { resource_type: "device", resource_id: "cold-room-02", name: "冷库温度传感器" },
+  ],
+  schedule: { schedule_type: "manual" },
+  stats: { total_executions: 18, successful_executions: 17, failed_executions: 1, avg_duration_ms: 2400 },
+}
 const rules = [
   {
     id: "r1", name: "冷库高温告警", enabled: true, trigger_count: 12,
@@ -141,6 +159,10 @@ function bodyFor(url) {
   if (path === "/sessions") return chatSessions
   if (path.startsWith("/sessions?")) return chatSessions
   if (path === "/skills" || path.startsWith("/skills?")) return { skills: [], total: 0, page: 1, page_size: 10, total_pages: 0 }
+  if (path === "/agents/a1/executions") return { executions: [] }
+  if (path === "/agents/a1/memory") return { memories: [], files: [], knowledge_files: [] }
+  if (path === "/agents/a1/available-resources") return { devices: [], device_types: [], extensions: [] }
+  if (path === "/agents/a1") return detailAgent
   if (path.startsWith("/agents/skills")) return { skills: [], total: 0 }
   if (path.startsWith("/agents/tools")) return { tools: [] }
   if (path === "/agents" || path.startsWith("/agents?")) return { agents, count: agents.length }
@@ -314,6 +336,41 @@ for (const viewport of viewports) {
 
   if (viewport.name === "standard") {
     try {
+      pageErrors.length = 0
+      await page.goto("http://127.0.0.1:5173/agents", { waitUntil: "domcontentloaded" })
+      await waitForRouteReady(page, "/agents")
+      await page.getByText("仓库巡检", { exact: true }).first().click()
+      const detail = page.getByRole("dialog", { name: "仓库巡检" })
+      await detail.waitFor({ state: "visible" })
+      const viewport = detail.locator('[data-radix-scroll-area-viewport]').last()
+      const scrollState = await viewport.evaluate((el) => {
+        const before = el.scrollTop
+        el.scrollTop = el.scrollHeight
+        return {
+          before,
+          after: el.scrollTop,
+          clientHeight: el.clientHeight,
+          scrollHeight: el.scrollHeight,
+        }
+      })
+      interactionResults.push({
+        name: "agent-detail-scroll",
+        dialogCount: 1,
+        bounds: await detail.evaluate((el) => {
+          const r = el.getBoundingClientRect()
+          return { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) }
+        }),
+        horizontalOverflow: await detail.evaluate((el) => el.scrollWidth > el.clientWidth + 1),
+        scrollState,
+        pageErrors: [...pageErrors],
+      })
+      await page.screenshot({ path: `${outDirPath}interaction-agent-detail.png`, fullPage: false })
+      await page.keyboard.press("Escape")
+    } catch (error) {
+      interactionResults.push({ name: "agent-detail-scroll", error: String(error) })
+    }
+
+    try {
       // Chat special case: no bottom capsule on chat routes. Verify the
       // capsule is absent, then leave through the direct workspace button.
       await page.goto("http://127.0.0.1:5173/chat", { waitUntil: "domcontentloaded" })
@@ -439,7 +496,9 @@ const failures = results.filter((r) =>
       : r.primaryNavCount !== 1 || !r.primaryNavVisible)
 )
 const interactionFailures = interactionResults.filter((r) =>
-  r.error || r.dialogCount < 1 || r.horizontalOverflow || r.pageErrors?.length || r.fields?.some((field) => Number.parseFloat(field.fontSize) < 16)
+  r.error || r.dialogCount < 1 || r.horizontalOverflow || r.pageErrors?.length ||
+  r.fields?.some((field) => Number.parseFloat(field.fontSize) < 16) ||
+  (r.name === "agent-detail-scroll" && (!r.scrollState || r.scrollState.scrollHeight <= r.scrollState.clientHeight || r.scrollState.after <= r.scrollState.before))
 )
 const navigationFailures = navigationResults.filter((r) =>
   r.error || r.workspacePath !== "/system" || r.primaryNavItems !== 2 || r.dashboardPath !== "/visual-dashboard" || r.systemPath !== "/system" ||

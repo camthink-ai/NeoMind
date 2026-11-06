@@ -23,7 +23,7 @@ import { useStore } from "@/store"
 import { useIsMobile } from "@/hooks/useMobile"
 import { useBodyScrollLock } from "@/hooks/useBodyScrollLock"
 import { useThemeColor } from "@/hooks/useThemeColor"
-import { cn } from "@/lib/utils"
+import { MobileTabStrip } from "@/components/shared/MobileTabStrip"
 import { AboutTab } from "@/pages/settings/AboutTab"
 import { PreferencesTab } from "@/pages/settings/PreferencesTab"
 import { UnifiedLLMBackendsTab } from "@/components/llm/UnifiedLLMBackendsTab"
@@ -115,26 +115,13 @@ export function SettingsDialog() {
           </div>
 
           {isMobile && (
-            <div className="-mx-6 mb-4 flex shrink-0 overflow-x-auto border-b border-border px-3 scrollbar-none" role="tablist">
-              {sections.map((section) => {
-                const active = activeSection === section.value
-                return (
-                  <button
-                    key={section.value}
-                    type="button"
-                    role="tab"
-                    aria-selected={active}
-                    onClick={() => setActiveSection(section.value)}
-                    className={cn(
-                      "relative min-h-11 shrink-0 px-3 text-sm font-medium after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full",
-                      active ? "text-foreground after:bg-foreground" : "text-muted-foreground after:bg-transparent",
-                    )}
-                  >
-                    {section.label}
-                  </button>
-                )
-              })}
-            </div>
+            <MobileTabStrip
+              items={sections}
+              value={activeSection}
+              onValueChange={setActiveSection}
+              ariaLabel={t("common:nav.settings")}
+              className="-mx-6 mb-4 px-4"
+            />
           )}
 
           {/* Fixed sidebar (desktop) + independently scrolling content */}
