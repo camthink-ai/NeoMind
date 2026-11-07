@@ -176,7 +176,10 @@ export function TurnTimeline({
       </CollapsibleTrigger>
 
       <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down">
-        <div className="overflow-hidden rounded-lg border border-border bg-muted-20 sm:ml-6">
+        {/* Flush left like the trigger row and the answer below it — the
+            redesign's sm:ml-6 indent left the expanded card misaligned with
+            the rest of the message content on desktop. */}
+        <div className="overflow-hidden rounded-lg border border-border bg-muted-20">
           {rounds.map(group => {
             const isOpen = openRounds[group.round] ?? true
             const isActive = activeRound === group.round
