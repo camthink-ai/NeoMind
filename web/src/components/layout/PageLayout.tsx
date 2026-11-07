@@ -232,8 +232,8 @@ export function PageLayout({
             container so it stays visible while content scrolls. Desktop is
             unaffected (those actions render in the desktop tab bar instead). */}
         {isMobile && collectedMobileContentActions.length > 0 && (
-          <div className="shrink-0  bg-background px-3 py-2">
-            <div className="flex items-center gap-2 overflow-x-auto scrollbar-none [&_button]:min-h-10">
+          <div className="shrink-0 bg-background px-4 py-1.5">
+            <div className="flex min-w-0 items-center gap-2 overflow-x-auto scrollbar-none [&_button]:min-h-10">
               {collectedMobileContentActions.map((node, i) => (
                 <Fragment key={i}>{node}</Fragment>
               ))}

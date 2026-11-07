@@ -469,7 +469,7 @@ export function DataExplorerPage() {
 
   const sourceFilter = sourceOptions.length > 1 ? (
     <Select value={selectedSourceName} onValueChange={setSelectedSourceName}>
-      <SelectTrigger className="w-[132px] shrink-0 md:w-[200px] h-10 md:h-9 text-sm">
+      <SelectTrigger className="h-10 w-32 shrink-0 text-sm md:h-9 md:w-[200px]">
         <SelectValue placeholder={t('data:filterSource', 'Filter source...')} />
       </SelectTrigger>
       <SelectContent>

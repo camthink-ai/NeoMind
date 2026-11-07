@@ -148,7 +148,7 @@ export function ExtensionsPage() {
           // in the tab slot, page actions anchor the right edge (aligned with
           // the content below) — the mirrored layout to tabbed pages'
           // "tabs left, search middle, actions right".
-          <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-end bg-background px-4 pt-2 sm:px-6 md:px-8">
+          <div className="flex shrink-0 flex-col gap-2 bg-background px-4 pt-1 sm:flex-row sm:items-end sm:px-6 md:px-8 md:pt-2">
             {/* Search leads (utility), actions anchor the trailing edge
                 (primary CTA) — the same order as PageTabsBar's group. */}
             <SearchInput
@@ -182,7 +182,7 @@ export function ExtensionsPage() {
       >
         {/* Extensions Grid — mt-4 mirrors PageTabsContent's tabs→content
             gap (16px) so the no-tab toolbar doesn't touch the cards. */}
-        <div className="mt-4">
+        <div className="mt-2 md:mt-4">
           <ExtensionGrid
             extensions={extensions}
             loading={extensionsLoading}

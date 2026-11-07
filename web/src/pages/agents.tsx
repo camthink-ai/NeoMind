@@ -563,9 +563,9 @@ export function AgentsPage() {
     : []
 
   const skillsActionsExtra = activeTab === 'tools' ? (
-    <div className="flex items-center gap-2">
+    <div className="flex w-full min-w-0 items-center gap-2">
       <Select value={toolsSourceFilter} onValueChange={(v) => setToolsSourceFilter(v as ToolSourceFilter)}>
-        <SelectTrigger className="h-10 w-[140px] md:h-9">
+        <SelectTrigger className="h-10 w-32 shrink-0 md:h-9 md:w-[140px]">
           <SelectValue placeholder={tAgent('detail.toolsFilterAllSources', 'All sources')} />
         </SelectTrigger>
         <SelectContent>
@@ -579,7 +579,7 @@ export function AgentsPage() {
         onChange={setToolsSearch}
         placeholder={tAgent('detail.toolsSearchPlaceholder', 'Search tools…')}
         aria-label={tAgent('detail.toolsSearchPlaceholder', 'Search tools…')}
-        className="w-[180px] md:w-[240px]"
+        className="min-w-0 flex-1 md:w-[240px] md:flex-none"
       />
     </div>
   ) : undefined
