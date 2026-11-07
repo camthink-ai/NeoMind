@@ -232,6 +232,7 @@ const viewports = process.env.AUDIT_STANDARD_ONLY === "1"
 const results = []
 const interactionResults = []
 const navigationResults = []
+const auditTheme = process.env.AUDIT_THEME === "dark" ? "dark" : "light"
 
 async function waitForRouteReady(page, route) {
   await page.waitForFunction(() => document.querySelector('#root')?.childElementCount, null, { timeout: 5000 })
@@ -265,12 +266,13 @@ for (const viewport of viewports) {
     hasTouch: true,
     isMobile: true,
   })
-  await context.addInitScript(() => {
+  await context.addInitScript((theme) => {
     sessionStorage.setItem("neomind_token_session", "audit-token")
     sessionStorage.setItem("neomind_user_session", JSON.stringify({ id: "u1", username: "shenmingming", role: "admin" }))
     localStorage.setItem("neomind_has_llm_backends", "1")
     localStorage.setItem("i18nextLng", "zh")
-  })
+    localStorage.setItem("theme", theme)
+  }, auditTheme)
   const page = await context.newPage()
   const pageErrors = []
   page.on("pageerror", (error) => pageErrors.push(error.message))

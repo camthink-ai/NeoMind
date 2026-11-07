@@ -1005,7 +1005,7 @@ export function ChatPage() {
 
   return (
     <>
-    <div className="chat-mobile-shell fixed left-0 right-0 flex flex-row overflow-hidden safe-top" style={{
+    <div className="chat-mobile-shell fixed left-0 right-0 flex flex-row overflow-hidden bg-background safe-top" style={{
       // Offset past BOTH the desktop AppSidebar and the page sidebar column
       // (sessions list, hoisted to the shell slot). Both are 0 on mobile.
       left: 'calc(var(--app-sidebar-width, 0px) + var(--page-sidebar-width, 0px))',
@@ -1090,7 +1090,7 @@ export function ChatPage() {
             title/action chrome shown elsewhere in the app. */}
         {!isDesktop && (
           <div
-            className="safe-top sticky top-0 z-30 grid shrink-0 grid-cols-[3rem_minmax(0,1fr)_3rem] items-center bg-background px-2"
+            className="safe-top sticky top-0 z-30 grid shrink-0 grid-cols-[3rem_minmax(0,1fr)_3rem] items-center bg-transparent px-2"
             style={{
               height: 'calc(4rem + env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))',
             }}
