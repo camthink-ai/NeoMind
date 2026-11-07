@@ -19,6 +19,7 @@ import {
 } from "@/components/automation/dialog"
 import { Button } from "@/components/ui/button"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
+import { useIsMobile } from "@/hooks/useMobile"
 import { useTranslation } from "react-i18next"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -102,6 +103,7 @@ interface ToolRow {
 export function ToolsPanel({ onPaginationChange, searchQuery = "", sourceFilter = 'all' }: ToolsPanelProps = {}) {
   const { handleError } = useErrorHandler()
   const { t } = useTranslation(["agents", "common"])
+  const isMobile = useIsMobile()
 
   const [tools, setTools] = useState<AgentToolCatalogItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -243,59 +245,18 @@ export function ToolsPanel({ onPaginationChange, searchQuery = "", sourceFilter 
           return row.disabled ? "bg-muted-30 text-muted-foreground" : ""
         }}
         renderMobileBody={(rowData) => {
-          // Tailored mobile body: the default key-value dump reads like a
-          // spec sheet on a 375px card. Meta collapses to one badge row +
-          // the parameter chips.
+          // Mobile is a catalog index: source, parameter count and version
+          // are enough here. Full schemas remain available in the detail.
           const row = rowData as ToolRow
           const src = resolveSource(row.source)
-          const SrcIcon = src.icon
-          const namespace = row.namespace || (row.category && row.category !== "Unknown" ? row.category.toLowerCase() : "")
-          const requiredSet = new Set(row.required_params)
           return (
-            <div className="space-y-2">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                {row.version && (
-                  <code className="text-mini font-mono bg-muted-30 text-muted-foreground rounded px-1.5 py-0.5">
-                    v{row.version}
-                  </code>
-                )}
-                <Badge variant="outline" className={cn("h-6 gap-1", src.color)}>
-                  <SrcIcon className="h-3 w-3" />
-                  {t(src.labelKey)}
-                </Badge>
-                {namespace && (
-                  <code className="text-mini font-mono text-muted-foreground truncate max-w-[140px]" title={namespace}>
-                    {namespace}
-                  </code>
-                )}
-              </div>
-              {row.param_names.length > 0 ? (
-                <div className="flex flex-wrap gap-1">
-                  {row.param_names.slice(0, 6).map((name) => (
-                    <span
-                      key={name}
-                      className={cn(
-                        "text-mini font-mono px-1.5 py-0.5 rounded border",
-                        requiredSet.has(name)
-                          ? "bg-accent-orange-light text-accent-orange border-accent-orange-light"
-                          : "bg-muted text-muted-foreground border-border"
-                      )}
-                      title={requiredSet.has(name) ? t("agents:detail.toolsParamRequired", "required") : undefined}
-                    >
-                      {name}
-                    </span>
-                  ))}
-                  {row.param_names.length > 6 && (
-                    <span className="text-mini text-muted-foreground self-center">
-                      +{row.param_names.length - 6}
-                    </span>
-                  )}
-                </div>
-              ) : (
-                <span className="text-xs text-muted-foreground italic">
-                  {t("agents:detail.toolsNoParameters")}
-                </span>
-              )}
+            <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+              <span className="truncate">{t(src.labelKey)}</span>
+              <span aria-hidden="true">·</span>
+              <span className="shrink-0">
+                {row.param_count} {t("agents:detail.toolsColumnParams", "Parameters")}
+              </span>
+              {row.version && <code className="ml-auto shrink-0 font-mono">v{row.version}</code>}
             </div>
           )
         }}
@@ -308,9 +269,9 @@ export function ToolsPanel({ onPaginationChange, searchQuery = "", sourceFilter 
             case "name":
               return (
                 <div className="flex items-center gap-2.5 min-w-0 w-full overflow-hidden">
-                    <div
+                  <div
                     className={cn(
-                      "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
+                      "hidden w-8 h-8 rounded-lg items-center justify-center shrink-0 md:flex",
                       src.color
                     )}
                   >
@@ -332,7 +293,7 @@ export function ToolsPanel({ onPaginationChange, searchQuery = "", sourceFilter 
                         </span>
                       )}
                     </div>
-                    <div className="text-xs text-muted-foreground line-clamp-2 break-words overflow-hidden">
+                    <div className="hidden text-xs text-muted-foreground line-clamp-2 break-words overflow-hidden md:block">
                       {row.description}
                     </div>
                   </div>
@@ -408,7 +369,7 @@ export function ToolsPanel({ onPaginationChange, searchQuery = "", sourceFilter 
               return null
           }
         }}
-        actions={[
+        actions={isMobile ? undefined : [
           {
             label: t("agents:detail.toolsActionView", "View"),
             icon: <Eye className="h-4 w-4" />,
