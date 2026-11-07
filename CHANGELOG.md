@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.7] - 2026-11-07 — the mobile experience redesign
+
+The web app gets a dedicated mobile interface. Phones now navigate through a bottom capsule (chat, devices, agents, dashboard, system), browse flat lists sized for touch, open full-screen dialogs with standardized tab strips, and use a Chat page rebuilt as an immersive surface — the composer owns the bottom edge, the navigation capsule steps aside, and section navigation moves into the header's menu drawer. This release is web-only; backend behavior is unchanged.
+
+### Added
+- **Bottom capsule navigation**: a floating five-destination capsule (chat, devices, agents, dashboard, system with a gear icon) on every mobile page, with safe-area-aware placement, thumb-sized targets, and a highlight that follows the active section.
+- **Chat as an immersive surface**: on chat routes the capsule is not rendered at all — the composer rests directly above the safe-area edge, and leaving Chat happens through the header's hamburger, which opens the section drawer (all destinations, theme, language, user card).
+- **Mobile audit harness** (`web/scripts/mobile-audit.mjs`): a Playwright pass over 19 routes × 4 viewports asserting no horizontal overflow, exactly one bottom capsule (none on chat), ≥16px inputs in dialogs, touch-target sizes, and a walked chat→devices→chat navigation path; runnable locally via `MOBILE_AUDIT_CHROME`.
+
+### Changed
+- **Page headers**: a 64px sticky header with safe-area top inset on every mobile page; sub-page back buttons are compact 36px ghost buttons aligned to the title line instead of floating glass chips.
+- **One tab language everywhere**: page tabs, settings, extension details, the component library and add-device dialogs share a single `MobileTabStrip` (underline indicator, horizontal scroll, active item kept in view); extension details drop its bespoke five-column icon grid.
+- **Flat mobile lists**: devices, agents, rules, transforms, data sources and messages render as divider-separated rows instead of stacked cards; density, safe areas and list spacing tightened throughout.
+- **Unified mobile cards and dialogs**: one card surface across agents/extensions/knowledge lists, one full-screen dialog chrome (64px title row, tab strip, footer), and a wider chat composer with reduced shadow and fixed focus behavior.
+
+### Fixed
+- Sub-page back buttons visually competed with page titles; they now read as part of the title line (36px, no border/shadow, vertically centered with the title).
+- The chat composer previously reserved space for a navigation capsule that Chat no longer renders; dead keyboard-collapse CSS rules for that arrangement were removed.
+- i18n frozen-baseline recalibrations after the main rebase and the messages detail badge (263→249→250; the last step is a documented scanner false positive on the `messages.type.notification` default-namespace key, which exists in both locales).
+
+---
+
 ## [1.2.6] - 2026-11-05 — honest turn endings, retained conversation memory, a truthful context meter, and image-tool recovery
 
 Chat turns now end with grounded answers instead of looping or claiming unexecuted work; conversation summaries survive every compaction cycle; the context ring reports the measured tokens of the last model request instead of accumulating the whole execution; and vision/image failures recover through platform-owned references. API contracts (rules, agent storage) fail loudly instead of succeeding silently. Dashboard config controls now do what they say, and the interface converges on one tab, search and card language.
