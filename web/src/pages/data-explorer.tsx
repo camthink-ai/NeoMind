@@ -469,7 +469,7 @@ export function DataExplorerPage() {
 
   const sourceFilter = sourceOptions.length > 1 ? (
     <Select value={selectedSourceName} onValueChange={setSelectedSourceName}>
-      <SelectTrigger className="w-[160px] md:w-[200px] h-9 text-sm">
+      <SelectTrigger className="w-[132px] shrink-0 md:w-[200px] h-10 md:h-9 text-sm">
         <SelectValue placeholder={t('data:filterSource', 'Filter source...')} />
       </SelectTrigger>
       <SelectContent>
@@ -509,7 +509,7 @@ export function DataExplorerPage() {
             }
             actionsExtra={
               activeTab === 'data' ? (
-                <div className="flex items-center gap-2">
+                <div className="flex w-full min-w-0 items-center gap-2">
                   {sourceFilter}
                   <SearchInput
                     placeholder={t('data:search', 'Search data sources...')}
@@ -517,7 +517,7 @@ export function DataExplorerPage() {
                     onChange={setSearch}
                     pending={isSearchPending}
                     aria-label={t('data:search', 'Search data sources...')}
-                    className="w-[180px] md:w-[240px]"
+                    className="min-w-0 flex-1 md:w-[240px] md:flex-none"
                     // No autofocus on mobile: the input lifts into the sticky
                     // page header, so it would pop the keyboard over the list.
                     autoFocus={!isMobile}

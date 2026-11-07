@@ -118,12 +118,12 @@ export function ExtensionCard({
       onClick={() => onDetails?.()}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onDetails?.() } }}
       className={cn(
-        "group h-full overflow-hidden flex flex-col cursor-pointer rounded-xl border-0 bg-transparent shadow-none active:scale-[0.99] md:border md:bg-card md:shadow-sm",
+        "group h-full overflow-hidden flex flex-col cursor-pointer rounded-2xl border bg-card shadow-none active:scale-[0.99] md:rounded-xl md:shadow-sm",
         "md:transition-all md:duration-fast md:ease-out md:hover:border-[var(--border-hover)] md:hover:shadow-md",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
       )}
     >
-      <CardContent className="flex flex-1 flex-col px-2 py-3.5 md:p-4">
+      <CardContent className="flex flex-1 flex-col px-4 py-3.5 md:p-4">
         {/* Header: status-tinted icon + name + state + actions.
             On mobile the icon tile is hidden, so the state pill next to the
             name is the only status indicator — keep both signals. */}
