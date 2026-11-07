@@ -6,8 +6,6 @@ import { useState, useEffect } from "react"
 import { Switch } from "@/components/ui/switch"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
-import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu"
-import { IconButton } from "@/components/ui/button"
 import {
   FullScreenDialog,
   FullScreenDialogHeader,
@@ -15,7 +13,7 @@ import {
   FullScreenDialogMain,
 } from "@/components/automation/dialog"
 import { ResponsiveTable, EmptyState, EmptyStateCard, Pagination } from "@/components/shared"
-import { ChevronRight, Edit, Play, Trash2, Bell, Bot, Sparkles, Zap, MoreVertical, Timer, History, CheckCircle2, XCircle, Clock, Download } from "lucide-react"
+import { ChevronRight, Edit, Play, Trash2, Bell, Bot, Sparkles, Zap, Timer, History, CheckCircle2, XCircle, Clock, Download } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import type { Rule, RuleAction, RuleExecutionResult } from "@/types"
 import { cn } from "@/lib/utils"

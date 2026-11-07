@@ -126,10 +126,10 @@ export function EmptyStateCard({ children, className }: { children: React.ReactN
 export function EmptyStateCompact({
   title,
   description,
-  icon,
 }: {
   title: string
   description?: string
+  /** Compact renders title only; kept for caller compatibility. */
   icon?: React.ReactNode
 }) {
   return (

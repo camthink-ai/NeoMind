@@ -20,7 +20,7 @@ import type { MessageChain } from '@/lib/api/onboarding'
 
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Button, IconButton } from '@/components/ui/button'
+import { Button } from '@/components/ui/button'
 import {
   Select,
   SelectContent,
@@ -43,14 +43,6 @@ import { FormSection } from '@/components/ui/form-section'
 import { Input } from '@/components/ui/input'
 import { FormField } from '@/components/ui/field'
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-
-} from '@/components/ui/dropdown-menu'
-import {
   Popover,
   PopoverContent,
   PopoverTrigger,
@@ -63,7 +55,6 @@ import {
   Trash2,
   Bell,
   Megaphone,
-  MoreVertical,
   Eye,
   RefreshCw,
 
@@ -997,7 +988,6 @@ export default function MessagesPage() {
                 const severityConfig = SEVERITY_CONFIG[message.severity] || SEVERITY_CONFIG.info
                 const categoryConfig = getCategoryConfig(message.category)
                 const statusConfig = STATUS_CONFIG[message.status] || STATUS_CONFIG.active
-                const SeverityIcon = severityConfig.icon
                 const CategoryIcon = categoryConfig.icon
 
                 switch (columnKey) {

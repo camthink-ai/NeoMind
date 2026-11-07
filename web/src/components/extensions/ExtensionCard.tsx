@@ -93,7 +93,6 @@ export function ExtensionCard({
   const hasCrashed = extension.state === "Crashed"
   const hasWarning = extension.state === "Warning"
   const isFailed = extension.state === "Failed" || extension.state === "Stopped"
-  const isRunning = !hasError && !hasCrashed && !hasWarning && !isFailed
 
   const displayState = hasError
     ? t('error', { defaultValue: 'Error' })

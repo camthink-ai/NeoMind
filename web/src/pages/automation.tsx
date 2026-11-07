@@ -25,7 +25,7 @@ import type { AlertChannel, Device, DeviceType } from '@/types'
 import { useTranslation } from "react-i18next"
 import { useNavigate, useLocation } from "react-router-dom"
 import { PageLayout } from "@/components/layout/PageLayout"
-import { PageTabsBar, PageTabsContent, PageTabsBottomNav, Pagination, SearchInput } from "@/components/shared"
+import { PageTabsBar, PageTabsContent, Pagination, SearchInput } from "@/components/shared"
 import { Sparkles, GitBranch, Download, Upload } from "lucide-react"
 import { api } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
