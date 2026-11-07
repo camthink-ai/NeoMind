@@ -18,7 +18,7 @@
 import { useEffect, useState } from "react"
 import { createPortal } from "react-dom"
 import { useTranslation } from "react-i18next"
-import { ArrowLeft } from "lucide-react"
+import { ChevronLeft } from "lucide-react"
 import { useStore } from "@/store"
 import { useIsMobile } from "@/hooks/useMobile"
 import { useBodyScrollLock } from "@/hooks/useBodyScrollLock"
@@ -95,21 +95,18 @@ export function SettingsDialog() {
     >
       <div className="flex-1 min-h-0 flex">
         <div className="w-full min-h-0 flex flex-col px-6 md:px-8 md:pt-12">
-          {/* Mobile header bar — h-12 (48px) to match MobilePageHeader so the
-              back button sits at the same Y as every other page's top chrome.
-              The old pt-12 whitespace left it floating ~48px too low with no
-              visual anchor. Full-bleed (-mx-6 px-6) so the border spans the
-              overlay width. Desktop keeps pt-12; its back link is in sidebar. */}
-          <div className="relative -mx-6 flex h-12 items-center border-b border-border px-4 md:hidden">
+          {/* Match FullScreenDialogHeader: 64px title row followed immediately
+              by the shared underline tab strip. */}
+          <div className="relative -mx-6 flex h-16 items-center px-3 md:hidden">
             <button
               type="button"
               onClick={closeSettings}
-              className="inline-flex min-h-11 items-center gap-1 px-1 text-sm text-foreground transition-opacity active:opacity-60"
+              className="flex h-11 w-11 items-center justify-center rounded-full text-foreground active:bg-muted"
+              aria-label={t("common:back", { defaultValue: "Back" })}
             >
-              <ArrowLeft className="w-4 h-4" />
-              {t("common:back", { defaultValue: "Back" })}
+              <ChevronLeft className="h-5 w-5" />
             </button>
-            <h1 className="pointer-events-none absolute inset-x-16 truncate text-center text-base font-semibold">
+            <h1 className="pointer-events-none absolute inset-x-16 truncate text-center text-[17px] font-semibold">
               {t("common:nav.settings")}
             </h1>
           </div>

@@ -52,6 +52,7 @@ import { useIsMobile } from "@/hooks/useMobile"
 import { cn } from "@/lib/utils"
 import { FormSection, FormSectionGroup } from "@/components/ui/form-section"
 import { Sparkline } from '@/components/dashboard/generic/Sparkline'
+import { MobileTabStrip } from '@/components/shared/MobileTabStrip'
 
 interface ExtensionDetailsDialogProps {
   extension: Extension | null
@@ -1114,29 +1115,14 @@ export function ExtensionDetailsDialog({
     </div>
   )
 
-  // Mobile tabs renderer — 5-column grid, single row, no scroll, no divider
+  // Mobile uses the same underline strip as every other full-screen detail.
   const mobileTabs = (
-    <div className="shrink-0 px-2 pt-3 pb-2">
-      <div className="grid grid-cols-5 gap-1">
-        {sections.map((s) => (
-          <button
-            key={s.id}
-            onClick={() => handleSectionChange(s.id)}
-            className={cn(
-              "flex flex-col items-center justify-center gap-1 py-1.5 min-w-0 rounded-lg transition-colors",
-              activeSection === s.id
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted-30 text-muted-foreground"
-            )}
-          >
-            <s.icon className="h-4 w-4 shrink-0" />
-            <span className="text-mini font-medium leading-none truncate w-full text-center">
-              {s.label}
-            </span>
-          </button>
-        ))}
-      </div>
-    </div>
+    <MobileTabStrip
+      items={sections.map((section) => ({ value: section.id, label: section.label }))}
+      value={activeSection}
+      onValueChange={handleSectionChange}
+      ariaLabel={extension.name}
+    />
   )
 
   return (

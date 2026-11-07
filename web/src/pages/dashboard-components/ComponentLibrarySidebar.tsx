@@ -19,7 +19,7 @@ import {
 import { cn } from '@/lib/utils'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { MobileTabStrip } from '@/components/shared/MobileTabStrip'
 import { dynamicRegistry } from '@/components/dashboard/registry/DynamicRegistry'
 import {
   FullScreenDialog, FullScreenDialogHeader, FullScreenDialogContent,
@@ -557,25 +557,36 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
           `}</style>
 
           {isMobile ? (
-            /* Mobile: no room for a rail — compact tab strip + contextual
+            /* Mobile: no room for a rail — standard tab strip + contextual
                action + inline search above the shared scroll content. */
             <div className="flex-1 flex flex-col overflow-hidden">
-              <div className="px-4 pt-3 pb-3 shrink-0 space-y-3">
-                <div className="flex items-center gap-3">
-                  <Tabs value={libraryTab} onValueChange={(v) => onLibraryTabChange(v as ComponentLibraryTab)}>
-                    <TabsList className="h-9">
-                      {sourceButtons.map(({ id, icon: Icon, label }) => (
-                        <TabsTrigger key={id} value={id} className="gap-1.5 text-xs px-3">
-                          <Icon className="w-3.5 h-3.5" />
-                          {label}
-                        </TabsTrigger>
-                      ))}
-                    </TabsList>
-                  </Tabs>
-                  {libraryTab === 'custom' && importButton()}
+              <MobileTabStrip
+                items={sourceButtons.map(({ id, label }) => ({ value: id, label }))}
+                value={libraryTab}
+                onValueChange={onLibraryTabChange}
+                ariaLabel={t('visualDashboard.componentLibrary')}
+              />
+              {(libraryTab === 'components' || libraryTab === 'custom') && (
+                <div className="shrink-0 px-4 py-2">
+                  {libraryTab === 'components' ? searchInput : importButton()}
                 </div>
-                {libraryTab === 'components' && searchInput}
-              </div>
+              )}
+              {libraryTab === 'marketplace' && (
+                <div className="shrink-0 px-4 py-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-10 gap-1.5 text-xs"
+                    disabled={marketLoading}
+                    onClick={() => onRefreshMarket()}
+                  >
+                    {marketLoading
+                      ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      : <RefreshCw className="w-3.5 h-3.5" />}
+                    {t('componentLibrary.refreshMarket')}
+                  </Button>
+                </div>
+              )}
               {paneFor(libraryTab)}
             </div>
           ) : (

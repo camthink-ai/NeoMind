@@ -459,10 +459,13 @@ for (const viewport of viewports) {
           })
           const dialog = dialogs.at(-1)
           const r = dialog?.getBoundingClientRect()
+          const tablist = dialog?.querySelector('[role="tablist"]')
+          const tr = tablist?.getBoundingClientRect()
           const fields = dialog ? [...dialog.querySelectorAll('input, textarea, select')] : []
           return {
             dialogCount: dialogs.length,
             bounds: r ? { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) } : null,
+            tabBounds: tr ? { x: Math.round(tr.x), y: Math.round(tr.y), width: Math.round(tr.width), height: Math.round(tr.height) } : null,
             horizontalOverflow: dialog ? dialog.scrollWidth > dialog.clientWidth + 1 : false,
             fields: fields.map((el) => ({
               fontSize: getComputedStyle(el).fontSize,
@@ -477,6 +480,42 @@ for (const viewport of viewports) {
       } catch (error) {
         interactionResults.push({ name: item.name, error: String(error) })
       }
+    }
+
+    // Tabbed full-screen surfaces that are reached from list/detail actions.
+    // These catch header→tab spacing regressions outside the create flows.
+    const captureTabbedDialog = async (name) => {
+      await page.waitForTimeout(350)
+      const state = await page.evaluate(() => {
+        const dialogs = [...document.querySelectorAll('[role="dialog"]')].filter((el) => {
+          const r = el.getBoundingClientRect()
+          return r.width > 0 && r.height > 0
+        })
+        const dialog = dialogs.at(-1)
+        const r = dialog?.getBoundingClientRect()
+        const tablist = dialog?.querySelector('[role="tablist"]')
+        const tr = tablist?.getBoundingClientRect()
+        return {
+          dialogCount: dialogs.length,
+          bounds: r ? { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) } : null,
+          tabBounds: tr ? { x: Math.round(tr.x), y: Math.round(tr.y), width: Math.round(tr.width), height: Math.round(tr.height) } : null,
+          horizontalOverflow: dialog ? dialog.scrollWidth > dialog.clientWidth + 1 : false,
+          fields: [],
+        }
+      })
+      interactionResults.push({ name, ...state, pageErrors: [...pageErrors] })
+      await page.screenshot({ path: `${outDirPath}interaction-${name}.png`, fullPage: false })
+      await page.keyboard.press("Escape")
+    }
+
+    try {
+      pageErrors.length = 0
+      await page.goto("http://127.0.0.1:5173/extensions", { waitUntil: "domcontentloaded" })
+      await waitForRouteReady(page, "/extensions")
+      await page.getByText("MQTT Bridge", { exact: true }).first().click()
+      await captureTabbedDialog("extension-detail")
+    } catch (error) {
+      interactionResults.push({ name: "extension-detail", error: String(error) })
     }
 
     try {
@@ -530,6 +569,8 @@ const failures = results.filter((r) =>
 const interactionFailures = interactionResults.filter((r) =>
   r.error || r.dialogCount < 1 || r.horizontalOverflow || r.pageErrors?.length ||
   r.fields?.some((field) => Number.parseFloat(field.fontSize) < 16) ||
+  (["device-create", "settings", "extension-detail"].includes(r.name) &&
+    (!r.tabBounds || r.tabBounds.y !== 64 || r.tabBounds.height !== 44)) ||
   (r.name === "agent-detail-scroll" && (!r.scrollState || r.scrollState.scrollHeight <= r.scrollState.clientHeight || r.scrollState.after <= r.scrollState.before))
 )
 const navigationFailures = navigationResults.filter((r) =>

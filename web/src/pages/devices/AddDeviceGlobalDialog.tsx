@@ -19,6 +19,7 @@ import {
   FullScreenDialogFooter,
 } from '@/components/automation/dialog/FullScreenDialog'
 import { Button } from '@/components/ui/button'
+import { MobileTabStrip } from '@/components/shared/MobileTabStrip'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -184,32 +185,17 @@ export function AddDeviceGlobalDialog({
 
         {/* Center column: main + footer stacked vertically */}
         <div className="flex-1 flex flex-col overflow-hidden">
+          {isMobile && (
+            <MobileTabStrip
+              items={allTabs.map((tab) => ({ value: tab.value, label: t(tab.labelKey) }))}
+              value={activeTab}
+              onValueChange={setActiveTab}
+              ariaLabel={t('devices:addDevice')}
+            />
+          )}
           {/* Main scrollable content */}
           <FullScreenDialogMain>
-            <div className={cn("max-w-2xl mx-auto py-6", isMobile ? "px-3" : "px-5 md:px-8")}>
-              {/* Mobile modes are local form navigation, so they use a quiet
-                  top text strip rather than a second icon navigation bar. */}
-              {isMobile && (
-                <div className="-mx-3 mb-5 flex overflow-x-auto border-b border-border px-3 scrollbar-none">
-                  {allTabs.map((tab) => {
-                    const isActive = activeTab === tab.value
-                    return (
-                      <button
-                        key={tab.value}
-                        onClick={() => setActiveTab(tab.value)}
-                        className={cn(
-                          'relative min-h-12 shrink-0 px-3 text-sm font-medium transition-colors after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full',
-                          isActive
-                            ? 'text-foreground after:bg-foreground'
-                            : 'text-muted-foreground after:bg-transparent active:text-foreground'
-                        )}
-                      >
-                        <span className="leading-tight">{t(tab.labelKey)}</span>
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
+            <div className={cn("max-w-2xl mx-auto", isMobile ? "px-3 py-4" : "px-5 py-6 md:px-8")}>
 
               {/* Tab content */}
               {activeTab === 'ble' && open && (
