@@ -5,7 +5,7 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { PageLayout } from '@/components/layout/PageLayout'
-import { PageTabsBar, PageTabsContent, PageTabsBottomNav, Pagination, ResponsiveTable, EmptyState, EmptyStateCard } from '@/components/shared'
+import { PageTabsBar, PageTabsContent, Pagination, ResponsiveTable, EmptyState, EmptyStateCard } from '@/components/shared'
 import { MessageSquare, Network, Settings, Filter as FilterIcon, Loader2 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useStore } from '@/store'
@@ -80,6 +80,7 @@ import {
   Hash,
   MessagesSquare,
   Radio,
+  ChevronRight,
 } from 'lucide-react'
 import { CreateMessageDialog } from '@/components/messages/CreateMessageDialog'
 import { ChannelEditorDialog } from '@/components/messages/ChannelEditorDialog'
@@ -807,14 +808,13 @@ export default function MessagesPage() {
       <PageLayout
         title={t('messages.title')}
         hideFooterOnMobile
-        hasBottomNav
         headerContent={
           <PageTabsBar
             tabs={tabs}
             activeTab={activeTab}
             onTabChange={(v) => handleTabChange(v as TabValue)}
             actions={actions}
-            actionsExtra={filterExtra}
+            actionsExtra={isMobile ? undefined : filterExtra}
           />
         }
         footer={
@@ -899,17 +899,16 @@ export default function MessagesPage() {
             <div className="space-y-2">
               {messages.length === 0 && loading ? (
                 Array.from({ length: 4 }).map((_, i) => (
-                  <Card key={i} className="overflow-hidden border-border">
-                    <div className="p-3 space-y-2">
+                  <div key={i} className="rounded-2xl border border-border bg-card p-3.5">
+                    <div className="space-y-2">
                       <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-lg bg-muted animate-pulse" />
                         <div className="flex-1 space-y-1">
                           <div className="h-4 bg-muted rounded w-2/3 animate-pulse" />
                           <div className="h-3 bg-muted rounded w-1/3 animate-pulse" />
                         </div>
                       </div>
                     </div>
-                  </Card>
+                  </div>
                 ))
               ) : messages.length === 0 ? (
                 <EmptyStateCard>
@@ -922,83 +921,35 @@ export default function MessagesPage() {
                 messages.map((message) => {
                   const severityConfig = SEVERITY_CONFIG[message.severity] || SEVERITY_CONFIG.info
                   const statusConfig = STATUS_CONFIG[message.status] || STATUS_CONFIG.active
-                  const SeverityIcon = severityConfig.icon
                   const isDimmed = message.status === 'resolved' || message.status === 'archived'
 
                   return (
-                    <Card
+                    <button
+                      type="button"
                       key={message.id}
                       className={cn(
-                        "overflow-hidden border-border shadow-sm cursor-pointer active:scale-[0.99] transition-all",
+                        "block w-full rounded-2xl border border-border bg-card px-4 py-3 text-left transition-[background-color,opacity] active:bg-muted",
                         isDimmed && "opacity-50"
                       )}
                       onClick={() => setSelectedMessage(message)}
                     >
-                      <div className="px-3 py-2.5">
-                        {/* Row 1: severity icon + title + status + actions */}
-                        <div className="flex items-center gap-2.5">
-                          <div className={cn(
-                            "w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border",
-                            severityConfig.bgColor
-                          )}>
-                            <SeverityIcon className={cn("h-4 w-4", severityConfig.color)} />
+                      <div className="flex items-center gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className="min-w-0 flex-1 truncate text-sm font-medium">{message.title}</span>
+                            <span className={cn(textNano, "shrink-0 text-muted-foreground")}>{t(statusConfig.label)}</span>
                           </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="font-medium text-sm truncate">{message.title}</div>
+                          <div className={cn(textMini, "mt-1 flex min-w-0 items-center gap-1.5 text-muted-foreground")}>
+                            <span className={severityConfig.color}>{t(`messages.severity.${message.severity}`)}</span>
+                            <span aria-hidden="true">·</span>
+                            <span className="truncate">{message.category}</span>
+                            <span aria-hidden="true">·</span>
+                            <span className="shrink-0">{formatTimestamp(message.timestamp, false)}</span>
                           </div>
-                          <Badge variant={statusConfig.variant} className={cn(textNano, "h-5 px-1.5 shrink-0")}>
-                            {t(statusConfig.label)}
-                          </Badge>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                              <IconButton>
-                                <MoreVertical className="h-4 w-4" />
-                              </IconButton>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-40">
-                              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); setSelectedMessage(message) }}>
-                                <Eye className="mr-2 h-4 w-4" />
-                                {t('messages.viewDetails', 'View Details')}
-                              </DropdownMenuItem>
-                              {message.status === 'active' && (
-                                <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleAcknowledge(message.id) }}>
-                                  <Eye className="mr-2 h-4 w-4" />
-                                  {t('messages.acknowledge')}
-                                </DropdownMenuItem>
-                              )}
-                              {message.status !== 'resolved' && message.status !== 'archived' && (
-                                <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleResolve(message.id) }}>
-                                  <CheckCircle2 className="mr-2 h-4 w-4" />
-                                  {t('messages.resolve')}
-                                </DropdownMenuItem>
-                              )}
-                              <DropdownMenuItem
-                                className="text-error"
-                                onClick={(e) => { e.stopPropagation(); handleDelete(message.id) }}
-                              >
-                                <Trash2 className="mr-2 h-4 w-4" />
-                                {t('delete')}
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
                         </div>
-                        {/* Row 2: type badge + category + time */}
-                        <div className="flex items-center gap-1.5 mt-1.5 ml-[42px]">
-                          <Badge variant="outline" className={cn(
-                            textNano, "h-5 px-1.5 shrink-0",
-                            "bg-info-light text-info border-info"
-                          )}>
-                            {t('messages.type.notification')}
-                          </Badge>
-                          <Badge variant="outline" className={cn(textNano, "h-5 px-1.5 shrink-0")}>
-                            {message.category}
-                          </Badge>
-                          <span className={cn(textMini, "text-muted-foreground ml-auto shrink-0")}>
-                            {formatTimestamp(message.timestamp, false)}
-                          </span>
-                        </div>
+                        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/60" aria-hidden="true" />
                       </div>
-                    </Card>
+                    </button>
                   )
                 })
               )}
@@ -1171,7 +1122,7 @@ export default function MessagesPage() {
             <div className="space-y-2">
               {loading ? (
                 Array.from({ length: 3 }).map((_, i) => (
-                  <Card key={i} className="overflow-hidden border-border">
+                  <Card key={i} className="overflow-hidden rounded-none border-0 shadow-none">
                     <div className="p-3 space-y-2">
                       <div className="flex items-center gap-2">
                         <div className="w-8 h-8 rounded-lg bg-muted animate-pulse" />
@@ -1211,110 +1162,37 @@ export default function MessagesPage() {
                   const testResult = testResults[channel.name]
 
                   return (
-                    <Card
+                    <button
+                      type="button"
                       key={channel.name}
-                      className="overflow-hidden border-border shadow-sm cursor-pointer active:scale-[0.99] transition-all"
+                      className="block w-full rounded-2xl border border-border bg-card px-4 py-3 text-left transition-colors active:bg-muted"
                       onClick={() => handleViewChannel(channel.name)}
                     >
-                      <div className="px-3 py-2.5">
-                        {/* Row 1: icon + name + status + actions */}
-                        <div className="flex items-center gap-2.5">
-                          <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center shrink-0", channelConfig.color)}>
+                      <div className="flex items-center gap-3">
+                          <div className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-xl", channelConfig.color)}>
                             <ChannelIcon className="h-4 w-4" />
                           </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="font-medium text-sm truncate">{channel.name}</div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex min-w-0 items-center gap-2">
+                              <span className="min-w-0 flex-1 truncate text-sm font-medium">{channel.name}</span>
+                              <span className={cn(textNano, "inline-flex shrink-0 items-center gap-1 text-muted-foreground")}>
+                                <span className={cn("h-1.5 w-1.5 rounded-full", channel.enabled ? "bg-success" : "bg-muted-foreground/50")} />
+                                {channel.enabled ? t('enabled') : t('disabled')}
+                              </span>
+                            </div>
+                            <div className={cn(textMini, "mt-1 flex items-center gap-1.5 text-muted-foreground")}>
+                              <span>{channel.channel_type}</span>
+                              {channel.channel_type === 'email' && channel.recipients && channel.recipients.length > 0 && (
+                                <><span aria-hidden="true">·</span><span>{channel.recipients.length} {t('messages.channels.recipients', 'recipients')}</span></>
+                              )}
+                              {testResult && (
+                                <><span aria-hidden="true">·</span><span className={testResult.success ? 'text-success' : 'text-error'}>{testResult.success ? '✓' : '✗'} {testResult.message}</span></>
+                              )}
+                            </div>
                           </div>
-                          <Badge variant={channel.enabled ? 'default' : 'secondary'} className={cn(textNano, "h-5 px-1.5 shrink-0")}>
-                            {channel.enabled ? t('enabled') : t('disabled')}
-                          </Badge>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                              <IconButton>
-                                <MoreVertical className="h-4 w-4" />
-                              </IconButton>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-40">
-                              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleViewChannel(channel.name) }}>
-                                <Eye className="mr-2 h-4 w-4" />
-                                {t('view')}
-                              </DropdownMenuItem>
-                              {['webhook', 'email', 'telegram', 'wecom', 'dingtalk', 'slack', 'feishu'].includes(channel.channel_type) && (
-                                <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleEditChannel(channel) }}>
-                                  <Settings className="mr-2 h-4 w-4" />
-                                  {t('edit', 'Edit')}
-                                </DropdownMenuItem>
-                              )}
-                              {channel.channel_type !== 'console' && channel.channel_type !== 'memory' && (
-                                <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleOpenFilterDialog(channel) }}>
-                                  <FilterIcon className="mr-2 h-4 w-4" />
-                                  {t('messages.channels.configureFilter', 'Configure Filter')}
-                                </DropdownMenuItem>
-                              )}
-                              {channel.channel_type === 'email' && (
-                                <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleManageRecipients(channel) }}>
-                                  <UserPlus className="mr-2 h-4 w-4" />
-                                  {t('messages.channels.manageRecipients', 'Manage Recipients')}
-                                </DropdownMenuItem>
-                              )}
-                              {channel.channel_type !== 'console' && channel.channel_type !== 'memory' && (
-                                <>
-                                  {!channel.enabled && (
-                                    <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleToggleEnabled(channel.name, true) }}>
-                                      <CheckCircle2 className="mr-2 h-4 w-4" />
-                                      {t('enable')}
-                                    </DropdownMenuItem>
-                                  )}
-                                  {channel.enabled && (
-                                    <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleToggleEnabled(channel.name, false) }}>
-                                      <X className="mr-2 h-4 w-4" />
-                                      {t('disable')}
-                                    </DropdownMenuItem>
-                                  )}
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuItem
-                                    className="text-error"
-                                    onClick={(e) => { e.stopPropagation(); handleDeleteChannel(channel.name) }}
-                                  >
-                                    <Trash2 className="mr-2 h-4 w-4" />
-                                    {t('delete')}
-                                  </DropdownMenuItem>
-                                </>
-                              )}
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </div>
-                        {/* Row 2: type badge + details + test */}
-                        <div className="flex items-center gap-1.5 mt-1.5 ml-[42px]">
-                          <Badge variant="outline" className={cn(textNano, "h-5 px-1.5 shrink-0")}>
-                            {channel.channel_type}
-                          </Badge>
-                          {['webhook', 'email', 'telegram', 'wecom', 'dingtalk', 'slack', 'feishu'].includes(channel.channel_type) && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className={cn("h-5 px-1.5", textNano)}
-                              onClick={(e) => { e.stopPropagation(); handleTestChannel(channel.name) }}
-                              disabled={testingChannel === channel.name}
-                            >
-                              <TestTube className="h-3 w-3 mr-0.5" />
-                              {testingChannel === channel.name ? '...' : 'Test'}
-                            </Button>
-                          )}
-                          {channel.channel_type === 'email' && channel.recipients && channel.recipients.length > 0 && (
-                            <span className={cn(textNano, "text-muted-foreground flex items-center gap-0.5")}>
-                              <Mail className="h-3 w-3" />
-                              {channel.recipients.length}
-                            </span>
-                          )}
-                          {testResult && (
-                            <span className={cn(textNano, testResult.success ? 'text-success' : 'text-error')}>
-                              {testResult.success ? '✓' : '✗'} {testResult.message}
-                            </span>
-                          )}
-                        </div>
+                          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/60" aria-hidden="true" />
                       </div>
-                    </Card>
+                    </button>
                   )
                 })
               )}
@@ -1528,13 +1406,6 @@ export default function MessagesPage() {
           <ImSessionsTab />
         </PageTabsContent>
       </PageLayout>
-
-      {/* Mobile Bottom Navigation */}
-      <PageTabsBottomNav
-        tabs={tabs}
-        activeTab={activeTab}
-        onTabChange={(v) => handleTabChange(v as TabValue)}
-      />
 
       <CreateMessageDialog
         open={createDialogOpen}

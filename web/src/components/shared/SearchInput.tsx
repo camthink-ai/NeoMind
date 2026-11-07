@@ -3,7 +3,7 @@
  * anchored to the content's right edge").
  *
  * One implementation of the pattern every list page hand-rolled before:
- * search glyph left, `h-9` input with `pl-9 bg-card`, clear (×) button when
+ * search glyph left, compact responsive height, and a clear (×) button when
  * non-empty. Controlled component — debounce and server wiring stay at the
  * call site.
  */
@@ -49,14 +49,14 @@ export function SearchInput({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="pl-9 pr-8 h-9 bg-card"
+        className="h-10 bg-card pl-9 pr-10 md:h-9 md:pr-8"
         {...rest}
       />
       {!hideClear && value && (
         <button
           onClick={() => onChange("")}
           aria-label={t("clear", { defaultValue: "Clear" })}
-          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+          className="absolute right-0 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center text-muted-foreground transition-colors hover:text-foreground md:right-1 md:h-9 md:w-9"
         >
           <X className="h-4 w-4" />
         </button>

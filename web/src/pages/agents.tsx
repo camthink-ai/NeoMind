@@ -563,9 +563,9 @@ export function AgentsPage() {
     : []
 
   const skillsActionsExtra = activeTab === 'tools' ? (
-    <div className="flex items-center gap-2">
+    <div className="flex w-full min-w-0 items-center gap-2">
       <Select value={toolsSourceFilter} onValueChange={(v) => setToolsSourceFilter(v as ToolSourceFilter)}>
-        <SelectTrigger className="h-9 w-[140px]">
+        <SelectTrigger className="h-10 w-32 shrink-0 md:h-9 md:w-[140px]">
           <SelectValue placeholder={tAgent('detail.toolsFilterAllSources', 'All sources')} />
         </SelectTrigger>
         <SelectContent>
@@ -579,7 +579,7 @@ export function AgentsPage() {
         onChange={setToolsSearch}
         placeholder={tAgent('detail.toolsSearchPlaceholder', 'Search tools…')}
         aria-label={tAgent('detail.toolsSearchPlaceholder', 'Search tools…')}
-        className="w-[180px] md:w-[240px]"
+        className="min-w-0 flex-1 md:w-[240px] md:flex-none"
       />
     </div>
   ) : undefined
@@ -597,7 +597,6 @@ export function AgentsPage() {
         />
       }
       hideFooterOnMobile
-      hasBottomNav
       footer={
         activeTab === 'agents' && agents.length > AGENTS_PER_PAGE ? (
           <Pagination
@@ -673,7 +672,10 @@ export function AgentsPage() {
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,280px),1fr))] gap-5">
+          <div className={isMobile
+            ? "grid grid-cols-1 gap-2"
+            : "grid grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,280px),1fr))] gap-5"
+          }>
             {paginatedAgents.map((agent, index) => (
               <div
                 key={agent.id}
@@ -709,13 +711,6 @@ export function AgentsPage() {
           sourceFilter={toolsSourceFilter}
         />
       </PageTabsContent>
-
-      {/* Mobile: Bottom navigation bar */}
-      <PageTabsBottomNav
-        tabs={tabs}
-        activeTab={activeTab}
-        onTabChange={handleTabChange}
-      />
 
       {/* Agent Editor Full Screen */}
       <AgentEditorFullScreen

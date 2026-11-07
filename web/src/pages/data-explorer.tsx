@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next'
 import { PageLayout } from '@/components/layout/PageLayout'
 import { useStore } from '@/store'
 import { Card } from '@/components/ui/card'
-import { interactiveCardHover } from '@/design-system/tokens/size'
 import { ResponsiveTable, type TableColumn, Pagination, EmptyState, EmptyStateCard, SearchInput } from '@/components/shared'
 import { PageTabsBar, PageTabsContent, PageTabsBottomNav } from '@/components/shared/PageTabs'
 import { Badge } from '@/components/ui/badge'
@@ -382,7 +381,7 @@ export function DataExplorerPage() {
       <div className="space-y-2">
         {pageData.length === 0 && loading && (
           [0, 1, 2].map((i) => (
-            <Card key={i} className="overflow-hidden border-border">
+            <Card key={i} className="overflow-hidden rounded-2xl border-border bg-card shadow-none">
               <div className="px-3 py-2.5 animate-pulse space-y-2">
                 <div className="flex items-center gap-2.5">
                   <div className="h-5 w-14 rounded-full bg-muted" />
@@ -404,8 +403,7 @@ export function DataExplorerPage() {
           <Card
             key={source.id}
             className={cn(
-              "overflow-hidden border-border shadow-sm cursor-pointer active:scale-[0.99]",
-              interactiveCardHover,
+              "cursor-pointer overflow-hidden rounded-2xl border border-border bg-card shadow-none transition-colors active:bg-muted",
             )}
             onClick={() => setSelectedSource(source)}
           >
@@ -471,7 +469,7 @@ export function DataExplorerPage() {
 
   const sourceFilter = sourceOptions.length > 1 ? (
     <Select value={selectedSourceName} onValueChange={setSelectedSourceName}>
-      <SelectTrigger className="w-[160px] md:w-[200px] h-9 text-sm">
+      <SelectTrigger className="h-10 w-32 shrink-0 text-sm md:h-9 md:w-[200px]">
         <SelectValue placeholder={t('data:filterSource', 'Filter source...')} />
       </SelectTrigger>
       <SelectContent>
@@ -494,7 +492,6 @@ export function DataExplorerPage() {
       <PageLayout
         title={t('data:title', 'Data Explorer')}
         hideFooterOnMobile
-        hasBottomNav
         headerContent={
           <PageTabsBar
             tabs={tabs}
@@ -512,7 +509,7 @@ export function DataExplorerPage() {
             }
             actionsExtra={
               activeTab === 'data' ? (
-                <div className="flex items-center gap-2">
+                <div className="flex w-full min-w-0 items-center gap-2">
                   {sourceFilter}
                   <SearchInput
                     placeholder={t('data:search', 'Search data sources...')}
@@ -520,7 +517,7 @@ export function DataExplorerPage() {
                     onChange={setSearch}
                     pending={isSearchPending}
                     aria-label={t('data:search', 'Search data sources...')}
-                    className="w-[180px] md:w-[240px]"
+                    className="min-w-0 flex-1 md:w-[240px] md:flex-none"
                     // No autofocus on mobile: the input lifts into the sticky
                     // page header, so it would pop the keyboard over the list.
                     autoFocus={!isMobile}
@@ -549,12 +546,6 @@ export function DataExplorerPage() {
           <PushTargetsTab />
         </PageTabsContent>
       </PageLayout>
-
-      <PageTabsBottomNav
-        tabs={tabs}
-        activeTab={activeTab}
-        onTabChange={(v) => setActiveTab(v as TabValue)}
-      />
 
       <FullScreenDialog
         open={!!selectedSource}

@@ -11,7 +11,7 @@ import { fetchCache } from "@/lib/utils/async"
 import { useNavigate, useLocation, useParams } from "react-router-dom"
 import { PageLayout } from "@/components/layout/PageLayout"
 import { PageTabsBar, PageTabsContent, PageTabsBottomNav, Pagination, SearchInput, type TabAction } from "@/components/shared"
-import { Upload, Download, Settings, Server, Layers, FileEdit, Cloud, ChevronLeft } from "lucide-react"
+import { Upload, Download, Settings, Server, Layers, FileEdit, Cloud, ChevronLeft, Pencil } from "lucide-react"
 import { LoadingState } from "@/components/shared/LoadingState"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api"
@@ -770,24 +770,32 @@ export function DevicesPage() {
     <>
       <PageLayout
         title={deviceDetailView ? undefined : t('devices:title')}
+        actions={deviceDetailView && deviceDetails ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => handleEditDevice(deviceDetails)}
+            aria-label={t('common:edit')}
+          >
+            <Pencil className="h-4 w-4" />
+          </Button>
+        ) : undefined}
         noPadding={!!deviceDetailView}
         hideFooterOnMobile
-        hasBottomNav
         mobileHeader={
           deviceDetailView
             ? {
                 // Show the device name as the MobilePageHeader title instead of
                 // an empty header. Lift the back chevron into the header's
-                // leftExtra and hide the hamburger — the in-page header still
-                // has its own back button for redundancy, but the top-of-screen
-                // header is the primary touch target.
+                // leftExtra and hide the hamburger. The top-of-screen header
+                // is the detail view's single mobile back target.
                 titleOverride: deviceDetails?.name || t('devices:detailTitle', 'Device detail'),
                 hideMenu: true,
                 leftExtra: (
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-9 w-9 shrink-0"
+                    className="-ml-2 h-11 w-11 shrink-0 rounded-full"
                     onClick={handleCloseDeviceDetail}
                     aria-label={t('common:back', 'Back')}
                   >
@@ -946,19 +954,6 @@ export function DevicesPage() {
           </>
         )}
       </PageLayout>
-
-      {/* Mobile: Bottom navigation bar */}
-      {!deviceDetailView && (
-        <PageTabsBottomNav
-          tabs={[
-            { value: 'devices', label: t('devices:deviceList'), icon: <Server className="h-4 w-4" /> },
-            { value: 'types', label: t('devices:deviceTypes'), icon: <Layers className="h-4 w-4" /> },
-            { value: 'drafts', label: t('devices:pending.tab'), icon: <FileEdit className="h-4 w-4" /> },
-          ]}
-          activeTab={activeTab}
-          onTabChange={(v) => handleTabChange(v as DeviceTabValue)}
-        />
-      )}
 
       {/* Device Edit Dialog */}
       <EditDeviceDialog

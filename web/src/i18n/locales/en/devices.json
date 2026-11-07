@@ -497,8 +497,12 @@
   },
   "id": {
     "autoGenerate": "Auto-generate 10-char random ID",
-    "regenerate": "Regenerate random ID"
+    "regenerate": "Regenerate random ID",
+    "invalid": "Device ID can only contain letters, numbers, hyphens, and underscores"
   },
+  "advanced": "Advanced",
+  "offlineTimeoutInvalid": "Enter a number of seconds greater than zero",
+  "offlineTimeoutHelp": "Leave blank to use the device type or system default",
   "adding": "Adding...",
   "editing": "Saving...",
   "yes": "Yes",

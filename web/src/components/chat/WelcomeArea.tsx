@@ -1,6 +1,7 @@
 /**
  * WelcomeArea - Clean welcome area shown when no active conversation
- * Shows greeting and suggested prompts (composer slots in between)
+ * Mobile keeps a quiet title and composer; desktop retains the richer brand
+ * welcome and prompt suggestions.
  */
 
 import { ReactNode } from "react"
@@ -8,21 +9,18 @@ import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
 import { ArrowRight } from "lucide-react"
 import { BrandLogoHorizontal } from "@/components/shared/BrandName"
+import { useIsMobile } from "@/hooks/useMobile"
 
 interface WelcomeAreaProps {
   className?: string
   onQuickAction?: (prompt: string) => void
-  /**
-   * Slotted in as the middle of the centered group — the chat composer.
-   * Sits between the greeting block and the prompt suggestions so
-   * the whole group (greeting → input → suggestions) reads as one unit,
-   * the mainstream empty-state pattern (ChatGPT / Claude).
-   */
+  /** The composer stays anchored at the bottom of the empty chat. */
   children?: ReactNode
 }
 
 export function WelcomeArea({ className, onQuickAction, children }: WelcomeAreaProps) {
   const { t } = useTranslation("common")
+  const isMobile = useIsMobile()
 
   // Get greeting based on time
   const getGreetingKey = () => {
@@ -33,7 +31,6 @@ export function WelcomeArea({ className, onQuickAction, children }: WelcomeAreaP
     return "welcome.greeting.evening"
   }
 
-  // Prompt suggestions
   const promptSuggestions = [
     t("welcome.suggestionPrompts.checkDevices"),
     t("welcome.suggestionPrompts.createRule"),
@@ -45,66 +42,56 @@ export function WelcomeArea({ className, onQuickAction, children }: WelcomeAreaP
     t("welcome.suggestionPrompts.createVirtualDevice"),
   ]
 
+  if (isMobile) {
+    return (
+      <div className={cn("relative flex min-h-full w-full flex-col items-center overflow-hidden", className)}>
+        <div className="relative flex min-h-full w-full max-w-3xl flex-col">
+          <div className="flex min-h-0 flex-1 items-center justify-center px-4 pb-6 text-center">
+            <h1 className="text-[22px] font-semibold leading-snug tracking-[-0.02em] text-foreground">
+              {t('common:welcome.askLine', { greeting: t(getGreetingKey()) })}
+            </h1>
+          </div>
+
+          <div className="chat-welcome-composer w-full shrink-0">
+            {children}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className={cn("relative flex min-h-full w-full flex-col items-center overflow-hidden p-6", className)}>
-      {/* Dot field backdrop — each dot an edge device, masked to fade toward
-          the edges (see .welcome-dots in index.css). Decorative. */}
       <div aria-hidden="true" className="welcome-dots" />
-      {/* Top spacer */}
       <div className="min-h-0 flex-1 shrink" />
-      {/* max-w-3xl — same width as the conversation view's composer, so the
-          slotted input keeps its conversational width and the suggestion
-          grid spans it too. relative keeps it painting above the aurora. */}
       <div className="relative w-full max-w-3xl shrink-0 space-y-8">
-        {/* Greeting */}
         <div className="text-center">
-          {/* Horizontal brand wordmark — same image as the expanded sidebar,
-              theme-adaptive (logo-light / logo-dark) */}
           <div className="mb-4 flex justify-center">
             <BrandLogoHorizontal className="h-9" />
           </div>
-          <h1 className="text-xl font-semibold text-foreground">
+          <h1 className="text-xl font-semibold leading-snug tracking-[-0.02em] text-foreground">
             {t('common:welcome.askLine', { greeting: t(getGreetingKey()) })}
           </h1>
         </div>
 
-        {/* Slotted composer — the input lives inside the centered group */}
-        {children}
+        <div className="chat-welcome-composer w-full">
+          {children}
+        </div>
 
-        {/* Prompt suggestions — quiet pill chips, self-explanatory: no
-            "try these questions" caption needed above them. Mobile shows a
-            curated short set: short labels (2 tidy rows on 390px) that send
-            the full desktop prompts; sm+ shows the full set, centered. */}
-        {(() => {
-          const renderChip = (label: string, prompt: string) => (
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          {promptSuggestions.map((prompt) => (
             <button
-              key={label}
+              key={prompt}
+              type="button"
               onClick={() => onQuickAction?.(prompt)}
-              className="group inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-transparent px-4 h-9 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground hover:border-border-hover"
+              className="group inline-flex h-9 max-w-full items-center gap-1 rounded-full border border-border bg-transparent px-4 text-sm text-muted-foreground transition-colors hover:border-border-hover hover:bg-muted hover:text-foreground"
             >
-              <span className="truncate">{label}</span>
-              <ArrowRight className="h-3.5 w-3.5 shrink-0 transition-all opacity-0 -ml-1.5 w-0 group-hover:opacity-100 group-hover:ml-0 group-hover:w-3.5" />
+              <span className="truncate">{prompt}</span>
+              <ArrowRight className="-ml-1.5 h-3.5 w-0 shrink-0 opacity-0 transition-all group-hover:ml-0 group-hover:w-3.5 group-hover:opacity-100" />
             </button>
-          )
-          const mobileSuggestions = [
-            { label: t("welcome.mobileSuggestions.devices"), prompt: t("welcome.suggestionPrompts.checkDevices") },
-            { label: t("welcome.mobileSuggestions.alerts"), prompt: t("welcome.suggestionPrompts.checkAlerts") },
-            { label: t("welcome.mobileSuggestions.rules"), prompt: t("welcome.suggestionPrompts.createRule") },
-            { label: t("welcome.mobileSuggestions.agent"), prompt: t("welcome.suggestionPrompts.createAgent") },
-          ]
-          return (
-            <>
-              <div className="flex flex-wrap items-center justify-center gap-2 sm:hidden">
-                {mobileSuggestions.map(({ label, prompt }) => renderChip(label, prompt))}
-              </div>
-              <div className="hidden flex-wrap items-center justify-center gap-2 sm:flex">
-                {promptSuggestions.map((prompt) => renderChip(prompt, prompt))}
-              </div>
-            </>
-          )
-        })()}
+          ))}
+        </div>
       </div>
-      {/* Bottom spacer */}
       <div className="min-h-0 flex-1 shrink" />
     </div>
   )

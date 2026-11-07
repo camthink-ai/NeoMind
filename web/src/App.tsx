@@ -7,6 +7,7 @@ import { useStore } from "@/store"
 import { shallow } from "zustand/shallow"
 import { AppSidebar } from "@/components/layout/AppSidebar"
 import { GlobalControlsFloating } from "@/components/layout/GlobalControls"
+import { MobilePrimaryNav } from "@/components/layout/MobilePrimaryNav"
 import { MobileNav } from "@/components/layout/MobileNav"
 import { SwipeNavigation } from "@/components/layout/SwipeNavigation"
 import { NavigationProgress } from "@/components/layout/NavigationProgress"
@@ -585,7 +586,6 @@ function App() {
                       area. Empty (0 width) on pages that don't use it. */}
                   {!isMobile && <div id="page-sidebar-slot" className="flex shrink-0" />}
                   <div className="flex flex-col flex-1 min-w-0">
-                    <MobileNav />
                     {/* Skip link — keyboard users tab past the nav straight to content.
                         Visually hidden until focused. */}
                     <a
@@ -611,7 +611,10 @@ function App() {
                         onMouseDown={handleWindowDragMouseDown}
                       />
                     )}
-                    <div className="w-full h-full overflow-hidden" id="main-scroll-container">
+                    <div
+                      className="w-full h-full overflow-hidden"
+                      id="main-scroll-container"
+                    >
                     <ErrorBoundary>
                     <div key={location.pathname.split('/')[1] || 'root'} className="animate-page-enter w-full h-full overflow-hidden">
                     <Routes>
@@ -667,6 +670,10 @@ function App() {
                     </div>
                     </ErrorBoundary>
                     </div>
+                    <MobilePrimaryNav />
+                    {/* Drawer behind the Chat header's hamburger — Chat hides
+                        the bottom capsule, so this is its section navigation. */}
+                    <MobileNav />
                   </main>
                   <Suspense fallback={null}>
                     <SettingsDialog />

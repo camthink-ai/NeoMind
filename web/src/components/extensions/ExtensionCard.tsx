@@ -1,5 +1,4 @@
 import { Card, CardContent } from "@/components/ui/card"
-import { interactiveCardLift } from "@/design-system/tokens/size"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -119,29 +118,25 @@ export function ExtensionCard({
       onClick={() => onDetails?.()}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onDetails?.() } }}
       className={cn(
-        "group h-full overflow-hidden flex flex-col cursor-pointer active:scale-[0.99]",
-        interactiveCardLift,
+        "group h-full overflow-hidden flex flex-col cursor-pointer rounded-2xl border bg-card shadow-none active:scale-[0.99] md:rounded-xl md:shadow-sm",
+        "md:transition-all md:duration-fast md:ease-out md:hover:border-[var(--border-hover)] md:hover:shadow-md",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
       )}
     >
-      <CardContent className="p-4 flex flex-col flex-1">
-        {/* Header: status-tinted icon + name + actions.
-            Status is expressed by the tinted tile + corner dot alone — the
-            old state pill triple-encoded the same signal. The icon tile
-            carries a hover title so Error/Crashed states keep their
-            explanation (crash count + reason) one hover away. */}
-        <div className="flex items-start justify-between mb-3">
+      <CardContent className="flex flex-1 flex-col px-4 py-3.5 md:p-4">
+        {/* Header: status-tinted icon + name + state + actions.
+            On mobile the icon tile is hidden, so the state pill next to the
+            name is the only status indicator — keep both signals. */}
+        <div className="flex items-start justify-between md:mb-3">
           <div className="flex items-center gap-3 min-w-0">
-            <div
-              className={cn(
-                "relative w-11 h-11 rounded-lg flex items-center justify-center shrink-0 transition-colors",
-                hasError || hasCrashed ? "bg-error-light text-error" :
-                hasWarning ? "bg-warning-light text-warning" :
-                isFailed ? "bg-muted text-muted-foreground" :
-                "bg-success-light text-success",
-              )}
-              title={hasCrashed ? crashTitle : !isRunning ? displayState : undefined}
-            >
+            {/* Icon with status-tinted background (mirrors AgentCard) */}
+            <div className={cn(
+              "relative hidden w-11 h-11 rounded-xl items-center justify-center shrink-0 transition-colors md:flex",
+              hasError || hasCrashed ? "bg-error-light text-error" :
+              hasWarning ? "bg-warning-light text-warning" :
+              isFailed ? "bg-muted text-muted-foreground" :
+              "bg-success-light text-success",
+            )}>
             <CategoryIcon className="h-5 w-5" />
               {/* Status indicator dot */}
               <div className={cn(
@@ -150,7 +145,18 @@ export function ExtensionCard({
               )} />
             </div>
             <div className="min-w-0">
-              <h3 className="font-semibold text-[15px] truncate" title={extension.name}>{extension.name}</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="font-semibold text-sm truncate" title={extension.name}>{extension.name}</h3>
+                <span className={cn(
+                  textNano, "shrink-0 rounded-full px-1.5 py-0.5",
+                  hasError || hasCrashed ? "bg-error-light text-error" :
+                  hasWarning ? "bg-warning-light text-warning" :
+                  isFailed ? "bg-muted-30 text-muted-foreground" :
+                  "bg-success-light text-success"
+                )} title={crashTitle}>
+                  {displayState}
+                </span>
+              </div>
               <div className="flex items-center gap-2 mt-0.5">
                 <span className={cn(textMini, "text-muted-foreground font-mono truncate max-w-[160px]")} title={extension.id}>{extension.id}</span>
                 {extension.version && (
@@ -180,21 +186,21 @@ export function ExtensionCard({
 
         {/* Description */}
         {extension.description && (
-          <p className="text-xs text-muted-foreground line-clamp-2 mb-3 leading-relaxed">
+          <p className="mb-3 hidden text-xs leading-relaxed text-muted-foreground line-clamp-2 md:block">
             {extension.description}
           </p>
         )}
 
         {/* Error summary — the card shows WHY it's red without opening details */}
         {hasError && extension.last_error && (
-          <p className="text-xs text-error line-clamp-2 mb-3 leading-relaxed break-words">
+          <p className="mb-3 hidden break-words text-xs leading-relaxed text-error line-clamp-2 md:block">
             {extension.last_error}
           </p>
         )}
 
         {/* Footer: capabilities + (optional) AI-tools-off badge + author.
             Single line, stable height whether tools are on or off. */}
-        <div className="mt-auto flex items-center gap-2 pt-2">
+        <div className="mt-auto hidden items-center gap-2 pt-2 md:flex">
           {extension.commands?.length > 0 && (
             <span className={cn(textMini, "text-muted-foreground flex items-center gap-1 shrink-0")}>
               <Terminal className="h-3 w-3" />

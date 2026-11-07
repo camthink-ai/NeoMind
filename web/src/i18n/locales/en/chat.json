@@ -36,7 +36,12 @@
     "notSupportImage": "Current model doesn't support images",
     "visionError": "The current model doesn't support image input.\n\nPlease select a model that supports vision (like qwen3.5:4b), or remove the image and try again.\n\nModels that support vision show the 👁️ icon.",
     "supportsTools": "Supports Tools",
-    "visionViaCompanion": "Images will be described by the local vision model"
+    "visionViaCompanion": "Images will be described by the local vision model",
+    "forConversation": "Model used for this conversation"
+  },
+  "capability": {
+    "tools": "Tool use",
+    "vision": "Vision"
   },
   "thinking": {
     "title": "Thinking process",

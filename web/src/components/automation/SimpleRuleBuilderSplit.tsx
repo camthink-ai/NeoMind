@@ -808,7 +808,7 @@ function ConditionCanvas({
       {triggerType === 'data_change' && (
         <>
           <div className="flex items-center gap-2 pb-4 border-b">
-            <div className="p-2 rounded-full bg-accent-indigo-light">
+            <div className="hidden p-2 rounded-full bg-accent-indigo-light md:block">
               <Lightbulb className="h-5 w-5 text-accent-indigo" />
             </div>
             <div>
@@ -818,7 +818,7 @@ function ConditionCanvas({
           </div>
 
           {!condition && (
-            <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] md:grid-cols-5 gap-3">
+            <div className="grid grid-cols-1 divide-y divide-border overflow-hidden rounded-lg border border-border md:grid-cols-5 md:gap-3 md:divide-y-0 md:overflow-visible md:rounded-none md:border-0">
               <ConditionTypeButton
                 label={tBuilder('simpleCondition')}
                 icon={<Lightbulb className="h-5 w-5" />}
@@ -1073,7 +1073,7 @@ function ActionCanvas({ actions, onActionsChange, devices, deviceTypes, extensio
     <div className="space-y-4 p-4 rounded-lg border border-border">
       {/* Header — emerald accent to differentiate from Condition (indigo) */}
       <div className="flex items-center gap-2 pb-3 border-b">
-        <div className="p-2 rounded-full bg-accent-emerald-light">
+        <div className="hidden p-2 rounded-full bg-accent-emerald-light md:block">
           <Zap className="h-5 w-5 text-accent-emerald" />
         </div>
         <div>
@@ -1089,15 +1089,15 @@ function ActionCanvas({ actions, onActionsChange, devices, deviceTypes, extensio
           const commands = firstDevice ? getCommandsForResource(firstDevice.id, devices, deviceTypes, extensions) : []
           onActionsChange([...actions, { type: 'execute' as const, target: firstDevice?.id || '', target_type: 'device' as const, command: commands[0]?.name || 'turn_on', params: {}, _key: generateId() } as UIAction])
         }}>
-          <Zap className="h-4 w-4 mr-1" />
+          <Zap className="mr-1 hidden h-4 w-4 md:block" />
           {tBuilder('executeCommand') || 'Execute'}
         </Button>
         <Button size="sm" variant="outline" onClick={() => onActionsChange([...actions, { type: 'notify' as const, message: '', severity: 'info' as const, _key: generateId() } as UIAction])}>
-          <Bell className="h-4 w-4 mr-1" />
+          <Bell className="mr-1 hidden h-4 w-4 md:block" />
           {tBuilder('sendNotification') || 'Notify'}
         </Button>
         <Button size="sm" variant="outline" onClick={() => onActionsChange([...actions, { type: 'trigger_agent' as const, agent_id: '', _key: generateId() } as UIAction])}>
-          <Bot className="h-4 w-4 mr-1" />
+          <Bot className="mr-1 hidden h-4 w-4 md:block" />
           {tBuilder('triggerAgent') || 'Trigger Agent'}
         </Button>
       </div>
@@ -1106,7 +1106,6 @@ function ActionCanvas({ actions, onActionsChange, devices, deviceTypes, extensio
       <div className="space-y-2">
         {actions.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">
-            <Zap className="h-8 w-8 mx-auto mb-2 opacity-50" />
             <p className="text-sm">{tBuilder('noActionsHint') || 'No actions yet, click buttons above to add'}</p>
           </div>
         ) : (
@@ -1137,10 +1136,10 @@ function ConditionTypeButton({ label, icon, onClick }: { label: string; icon: Re
   return (
     <button
       onClick={onClick}
-      className="p-4 rounded-lg border-2 border-border hover:border-accent-indigo hover:transition-all text-left min-w-0"
+      className="min-h-12 min-w-0 px-3 py-2 text-left hover:bg-muted md:rounded-lg md:border-2 md:border-border md:p-4 md:hover:border-accent-indigo md:hover:bg-transparent md:hover:transition-all"
     >
       <div className="flex items-center gap-3 min-w-0">
-        <div className="p-2 rounded-lg shrink-0">{icon}</div>
+        <div className="hidden shrink-0 rounded-lg p-2 md:block">{icon}</div>
         <span className="font-medium min-w-0 break-words">{label}</span>
       </div>
     </button>

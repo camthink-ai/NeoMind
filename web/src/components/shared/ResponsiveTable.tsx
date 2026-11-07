@@ -15,7 +15,6 @@ import { MoreVertical } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyStateCompact } from '@/components/shared/EmptyState'
 import { cn } from '@/lib/utils'
-import { interactiveCardHover } from '@/design-system/tokens/size'
 import { textMini } from "@/design-system/tokens/typography"
 
 export interface TableColumn {
@@ -164,13 +163,13 @@ export function ResponsiveTable<T extends object>({
           </table>
         </div>
         {/* Mobile skeleton */}
-        <div className="md:hidden space-y-3">
+        <div className="space-y-2 md:hidden">
           {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="rounded-lg border bg-card overflow-hidden">
-              <div className="bg-muted px-4 py-3 border-b">
+            <div key={i} className="rounded-2xl border border-border bg-card px-4 py-3.5">
+              <div>
                 <Skeleton className="h-4 w-1/3" />
               </div>
-              <div className="p-4 space-y-3">
+              <div className="mt-3 space-y-2">
                 {columns.slice(1).map((column) => (
                   <div key={column.key} className="flex items-center justify-between gap-3">
                     <Skeleton className="h-3 w-24 shrink-0" />
@@ -305,47 +304,69 @@ export function ResponsiveTable<T extends object>({
         </table>
       </div>
 
-      {/* Mobile Card List */}
-      <div className="md:hidden space-y-2">
+      {/* Mobile card list — every record owns a clear surface, with one
+          consistent radius, border and vertical rhythm across pages. */}
+      <div className="space-y-2 md:hidden">
         {data.length === 0 ? (
-          <Card className="overflow-hidden border-border">
-            <div className="p-8">
+          <div className="py-8">
               {emptyState || defaultEmpty}
-            </div>
-          </Card>
+          </div>
         ) : (
           data.map((rowData) => {
             const rowClass = getRowClassName?.(rowData)
             const visibleActions = actions?.filter(a => a.show?.(rowData) !== false)
 
             return (
-              <Card
+              <div
                 key={rowKey(rowData)}
+                role={onRowClick ? "button" : undefined}
+                tabIndex={onRowClick ? 0 : undefined}
                 className={cn(
-                  'overflow-hidden border-border',
-                  interactiveCardHover,
-                  onRowClick && 'cursor-pointer active:scale-[0.99]',
+                  'animate-fade-in-up rounded-2xl border border-border bg-card px-4 py-3.5 transition-colors',
+                  onRowClick && 'cursor-pointer active:bg-muted',
                   rowClass
                 )}
                 onClick={() => onRowClick?.(rowData)}
+                onKeyDown={(e) => {
+                  if (!onRowClick || (e.key !== 'Enter' && e.key !== ' ')) return
+                  e.preventDefault()
+                  onRowClick(rowData)
+                }}
               >
                 {/* Card Header - First column as title. Flat single-surface
                     card: no banded header strip — the grey band read as
                     admin-table chrome and isn't part of the app's card
                     language (AgentCard & co. are single-surface). */}
-                <div className="px-3 pt-2.5 pb-1">
+                <div>
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
                       <div className="min-w-0 flex-1 truncate">
                         {renderCell(columns[0].key, rowData)}
                       </div>
                     </div>
-                    {visibleActions && visibleActions.length > 0 ? (
+                    {visibleActions?.length === 1 ? (
+                      <IconButton
+                        size="sm"
+                        className={cn(
+                          "shrink-0 hover:bg-muted",
+                          visibleActions[0].variant === 'destructive' && "text-error"
+                        )}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          visibleActions[0].onClick(rowData)
+                        }}
+                        disabled={visibleActions[0].disabled}
+                        aria-label={visibleActions[0].label}
+                        title={visibleActions[0].label}
+                      >
+                        {visibleActions[0].icon}
+                      </IconButton>
+                    ) : visibleActions && visibleActions.length > 1 ? (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <IconButton
                             size="sm"
-                            className="shrink-0"
+                            className="shrink-0 hover:bg-muted"
                             onClick={(e) => e.stopPropagation()}
                             aria-label={t('actions', { defaultValue: 'Actions' })}
                           >
@@ -387,7 +408,7 @@ export function ResponsiveTable<T extends object>({
                     callers can pass renderMobileBody to swap in a tailored
                     layout without losing the shared Card chrome, header,
                     and actions menu. */}
-                <div className="p-3">
+                <div className="pt-1.5">
                   {renderMobileBody ? (
                     renderMobileBody(rowData)
                   ) : (
@@ -415,7 +436,7 @@ export function ResponsiveTable<T extends object>({
                     </div>
                   )}
                 </div>
-              </Card>
+              </div>
             )
           })
         )}

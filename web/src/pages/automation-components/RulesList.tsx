@@ -6,7 +6,6 @@ import { useState, useEffect } from "react"
 import { Switch } from "@/components/ui/switch"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
-import { interactiveCardHover } from "@/design-system/tokens/size"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu"
 import { IconButton } from "@/components/ui/button"
 import {
@@ -16,7 +15,7 @@ import {
   FullScreenDialogMain,
 } from "@/components/automation/dialog"
 import { ResponsiveTable, EmptyState, EmptyStateCard, Pagination } from "@/components/shared"
-import { Edit, Play, Trash2, Bell, Bot, Sparkles, Zap, MoreVertical, Timer, History, CheckCircle2, XCircle, Clock, Download } from "lucide-react"
+import { ChevronRight, Edit, Play, Trash2, Bell, Bot, Sparkles, Zap, MoreVertical, Timer, History, CheckCircle2, XCircle, Clock, Download } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import type { Rule, RuleAction, RuleExecutionResult } from "@/types"
 import { cn } from "@/lib/utils"
@@ -356,7 +355,7 @@ export function RulesList({
         {/* Mobile has no ResponsiveTable — carry its own loading skeleton. */}
         {loading && paginatedRules.length === 0 && (
           [0, 1, 2].map((i) => (
-            <Card key={i} className="overflow-hidden border-border">
+            <Card key={i} className="overflow-hidden rounded-2xl border-border bg-card shadow-none">
               <div className="px-3 py-2.5 animate-pulse space-y-2">
                 <div className="flex items-center gap-2.5">
                   <div className="w-8 h-8 rounded-lg bg-muted" />
@@ -376,100 +375,31 @@ export function RulesList({
           </EmptyStateCard>
         ) : null}
         {paginatedRules.map((rule) => {
-          const actions = rule.actions && rule.actions.length > 0
-            ? rule.actions
-            : parseActionsFromDSL(rule.dsl_preview)
           const condition = formatConditionDisplay(rule)
-          const hasTriggered = rule.last_triggered && rule.last_triggered !== '-'
-          const forClause = parseForClause(rule)
 
           return (
             <Card
               key={rule.id}
               className={cn(
-                "overflow-hidden border-border shadow-sm cursor-pointer active:scale-[0.99]",
-                interactiveCardHover,
+                "cursor-pointer overflow-hidden rounded-2xl border border-border bg-card shadow-none transition-colors active:bg-muted",
                 !rule.enabled && "opacity-50"
               )}
               onClick={() => onView(rule)}
             >
-              <div className="px-3 py-2.5">
-                {/* Row 1: icon + name + switch + actions */}
-                <div className="flex items-center gap-2.5">
-                  <div className={cn(
-                    "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
-                    rule.enabled ? "bg-warning-light text-warning" : "bg-muted text-muted-foreground"
-                  )}>
-                    <Sparkles className="h-4 w-4" />
-                  </div>
+              <div className="px-4 py-3.5">
+                <div className="flex items-center gap-2">
                   <div className="flex-1 min-w-0">
-                    <div className="font-medium text-sm truncate">{rule.name}</div>
+                    <div className="truncate text-[15px] font-medium">{rule.name}</div>
+                    <p className="mt-1 truncate text-xs text-muted-foreground" title={condition.full}>
+                      {condition.text}
+                    </p>
                   </div>
                   <Switch
                     checked={rule.enabled}
                     onCheckedChange={() => onToggleStatus(rule)}
                     onClick={(e) => e.stopPropagation()}
                   />
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                      <IconButton>
-                        <MoreVertical className="h-4 w-4" />
-                      </IconButton>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onEdit(rule) }}>
-                        <Edit className="h-4 w-4 mr-2" />
-                        {t('common:edit')}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onExecute(rule) }}>
-                        <Play className="h-4 w-4 mr-2" />
-                        {t('automation:execute')}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleExportRule(rule) }}>
-                        <Download className="h-4 w-4 mr-2" />
-                        {t('common:export')}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={(e) => { e.stopPropagation(); setHistoryRule(rule); setShowHistory(true) }}>
-                        <History className="h-4 w-4 mr-2" />
-                        {t('automation:executionHistory', 'History')}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        className="text-error"
-                        onClick={(e) => { e.stopPropagation(); onDelete(rule) }}
-                      >
-                        <Trash2 className="h-4 w-4 mr-2" />
-                        {t('common:delete')}
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
-                {/* Row 2: condition + action badges + last triggered */}
-                <div className="mt-1.5 ml-[42px]">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <code className={cn(textMini, "font-mono bg-muted px-1.5 py-0.5 rounded truncate max-w-[180px]")}>
-                      {condition.text}
-                    </code>
-                    {forClause && (
-                      <Badge variant="outline" className={cn(textMini, "h-5 px-1.5 gap-0.5 text-info border-info")}>
-                        <Timer className="h-3 w-3" />
-                        {forClause.duration}{forClause.unit}
-                      </Badge>
-                    )}
-                    {actions.slice(0, 2).map((action, i) => {
-                      const config = ACTION_CONFIG[action.type] || ACTION_CONFIG.execute
-                      return (
-                        <Badge key={i} variant="outline" className={cn(textMini, "h-5 px-1.5 gap-0.5", config.color)}>
-                          {t(config.label)}
-                        </Badge>
-                      )
-                    })}
-                    {actions.length > 2 && (
-                      <span className={cn(textMini, "text-muted-foreground")}>+{actions.length - 2}</span>
-                    )}
-                    <span className={cn(textMini, "text-muted-foreground ml-auto")}>
-                      {hasTriggered ? formatTimestamp(rule.last_triggered) : t('automation:never', 'Never')}
-                    </span>
-                  </div>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                 </div>
               </div>
             </Card>

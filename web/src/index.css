@@ -12,6 +12,23 @@ input[type="number"]::-webkit-outer-spin-button {
   -webkit-appearance: none;
   margin: 0;
 }
+
+/* A soft keyboard already owns the lower viewport. Hiding the global mobile
+   navigation prevents it from jumping above the keyboard and competing with
+   the focused form control. */
+body.keyboard-open .mobile-primary-nav {
+  display: none;
+}
+
+/* iOS zooms the viewport when a focused form control renders below 16px.
+   Keep the editing surface stable; surrounding helper copy remains compact. */
+@media (max-width: 767px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
 input[type="number"] {
   -moz-appearance: textfield;
 }
@@ -1190,39 +1207,29 @@ html {
   }
 }
 
-/* ============================================================================
- * Chat message prose text color override
- * User messages: white text in light theme, dark text in dark theme
- * AI messages: use theme variables
- * ============================================================================ */
-
-/* Light theme - User messages: white text on blue background.
-   `.prose *` covers every descendant (p/li/span/strong/em/h1-h6/td/th/blockquote/
-   code/pre). The element enumeration that used to follow is redundant — these
-   rules all carry `!important`, so specificity is irrelevant and `*` suffices. */
+/* User Markdown inherits the bubble's foreground. The bubble changes surface
+   on mobile and by theme; hard-coded light/dark colors can make a freshly sent
+   message disappear when those two states cross. */
 .message-bubble-user .prose,
 .message-bubble-user .prose * {
-  color: #fff !important;
+  color: inherit !important;
 }
 
-/* Dark theme - User messages: dark text on blue background */
 .dark .message-bubble-user .prose,
 .dark .message-bubble-user .prose *,
 .dark .message-bubble-user .dark\:prose-invert,
 .dark .message-bubble-user .dark\:prose-invert * {
-  color: #1a1a1a !important;
+  color: inherit !important;
 }
 
-/* Target using data-variant attribute - light theme */
 .prose[data-variant="user"],
 .prose[data-variant="user"] * {
-  color: #fff !important;
+  color: inherit !important;
 }
 
-/* Target using data-variant attribute - dark theme */
 .dark .prose[data-variant="user"],
 .dark .prose[data-variant="user"] * {
-  color: #1a1a1a !important;
+  color: inherit !important;
 }
 
 /* AI messages - use theme variables */
@@ -1548,5 +1555,20 @@ html {
    (e.g. large display numerals). */
 html {
   font-variant-numeric: tabular-nums;
+}
+
+/* Chat is a fullscreen surface: the bottom navigation capsule is not
+   rendered there, so the composer rests directly above the safe-area edge. */
+@media (max-width: 767px) {
+  .chat-composer-dock {
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  .message-bubble-user .prose,
+  .message-bubble-user .prose *,
+  .prose[data-variant="user"],
+  .prose[data-variant="user"] * {
+    color: var(--foreground) !important;
+  }
 }
 

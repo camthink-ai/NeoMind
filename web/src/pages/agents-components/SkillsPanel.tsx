@@ -357,41 +357,20 @@ anti_triggers:
         loading={loading}
         onRowClick={(row: SkillRow) => handleView(row.id)}
         renderMobileBody={(rowData) => {
-          // Tailored mobile body: category + priority + size as one meta row,
-          // keyword chips below — not a key-value dump.
+          // Mobile keeps only the metadata needed to distinguish skills.
+          // Keywords stay in the detail view where they can be read in full.
           const row = rowData as SkillRow
           const catConf = categoryConfig[row.category] || categoryConfig.general
-          const Icon = catConf.icon
           return (
-            <div className="space-y-2">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <Badge variant="outline" className={cn("h-6 gap-1", catConf.color)}>
-                  <Icon className="h-3 w-3" />
-                  {catConf.label}
-                </Badge>
-                <span className="text-xs text-muted-foreground">
-                  {t("skills.columnPriority")} {row.priority}
-                </span>
-                <span className="text-xs text-muted-foreground font-mono ml-auto">
-                  {row.body_length > 1024
-                    ? `${(row.body_length / 1024).toFixed(1)} KB`
-                    : `${row.body_length} B`}
-                </span>
-              </div>
-              {row.keywords.length > 0 && (
-                <div className="flex flex-wrap gap-1">
-                  {row.keywords.slice(0, 3).map((kw, i) => (
-                    <span key={i} className="text-xs bg-muted px-1.5 py-0.5 rounded">
-                      {kw}
-                    </span>
-                  ))}
-                  {row.keywords.length > 3 && (
-                    <span className="text-xs text-muted-foreground self-center">
-                      +{row.keywords.length - 3}
-                    </span>
-                  )}
-                </div>
-              )}
+            <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+              <span className="truncate">{catConf.label}</span>
+              <span aria-hidden="true">·</span>
+              <span className="shrink-0">{t("skills.columnPriority")} {row.priority}</span>
+              <span className="ml-auto shrink-0 font-mono">
+                {row.body_length > 1024
+                  ? `${(row.body_length / 1024).toFixed(1)} KB`
+                  : `${row.body_length} B`}
+              </span>
             </div>
           )
         }}
@@ -407,9 +386,9 @@ anti_triggers:
               // header stays a single-line anchor point, not a multi-row info dump.
               return (
                 <div className="flex items-center gap-2.5">
-                    <div
+                  <div
                     className={cn(
-                      "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
+                      "hidden w-8 h-8 rounded-lg items-center justify-center shrink-0 md:flex",
                       catConf.color
                     )}
                   >
@@ -472,7 +451,24 @@ anti_triggers:
               return null
           }
         }}
-        actions={[
+        actions={isMobile ? [
+          {
+            label: t("skills.actionEdit"),
+            icon: <Pencil className="h-4 w-4" />,
+            onClick: (rowData) => {
+              const row = rowData
+              handleEdit(row.id)
+            },
+          },
+          {
+            label: t("skills.actionDelete"),
+            icon: <Trash2 className="h-4 w-4" />,
+            onClick: (rowData) => {
+              const row = rowData
+              handleDelete(row.id, row.name)
+            },
+          },
+        ] : [
           {
             label: t("skills.actionView"),
             icon: <Eye className="h-4 w-4" />,

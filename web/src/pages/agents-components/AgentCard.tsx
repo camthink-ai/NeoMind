@@ -34,11 +34,13 @@ import {
   AlertTriangle,
   Loader2,
   Clock,
+  ChevronRight,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { formatTimestamp } from "@/lib/utils/format"
 import { interactiveCardLift } from "@/design-system/tokens/size"
 import type { AiAgent } from "@/types"
+import { useIsMobile } from "@/hooks/useMobile"
 
 interface AgentCardProps {
   agent: AiAgent & { currentThinking?: string | null }
@@ -59,6 +61,7 @@ export function AgentCard({
 }: AgentCardProps) {
   const { t } = useTranslation(['common', 'agents'])
   const { confirm } = useConfirm()
+  const isMobile = useIsMobile()
 
   const handleToggleStatus = async () => {
     const isCurrentlyActive = agent.status === 'Active' || agent.status === 'Executing'
@@ -94,6 +97,40 @@ export function AgentCard({
 
   const isExecuting = agent.status === 'Executing'
   const isError = agent.status === 'Error'
+
+  if (isMobile) {
+    return (
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onClick}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() } }}
+        className="flex min-h-[4.5rem] cursor-pointer items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3.5 transition-colors active:bg-muted"
+      >
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h3 className="truncate text-[15px] font-medium text-foreground">{agent.name}</h3>
+            <span className={cn(
+              "h-1.5 w-1.5 shrink-0 rounded-full",
+              isError ? "bg-error" : isExecuting ? "bg-info" : agent.status === 'Paused' ? "bg-muted-foreground" : "bg-success",
+            )} />
+          </div>
+          <p className="mt-1 truncate text-xs text-muted-foreground">
+            {isExecuting
+              ? (agent.currentThinking || t('agents:thinking.executing'))
+              : (agent.user_prompt || agent.description || t('agents:card.noDescription'))}
+          </p>
+        </div>
+        <Switch
+          checked={agent.status === 'Active'}
+          onCheckedChange={handleToggleStatus}
+          onClick={(e) => e.stopPropagation()}
+          aria-label={t('agents:card.toggleStatus', { name: agent.name })}
+        />
+        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+      </div>
+    )
+  }
 
   return (
     <Card

@@ -19,6 +19,7 @@ import {
   FullScreenDialogFooter,
 } from '@/components/automation/dialog/FullScreenDialog'
 import { Button } from '@/components/ui/button'
+import { MobileTabStrip } from '@/components/shared/MobileTabStrip'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -184,33 +185,17 @@ export function AddDeviceGlobalDialog({
 
         {/* Center column: main + footer stacked vertically */}
         <div className="flex-1 flex flex-col overflow-hidden">
+          {isMobile && (
+            <MobileTabStrip
+              items={allTabs.map((tab) => ({ value: tab.value, label: t(tab.labelKey) }))}
+              value={activeTab}
+              onValueChange={setActiveTab}
+              ariaLabel={t('devices:addDevice')}
+            />
+          )}
           {/* Main scrollable content */}
           <FullScreenDialogMain>
-            <div className={cn("max-w-2xl mx-auto py-6", isMobile ? "px-3" : "px-5 md:px-8")}>
-              {/* Mobile tab bar - grid layout for equal width */}
-              {isMobile && (
-                <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2 mb-5">
-                  {allTabs.map((tab) => {
-                    const Icon = tab.icon
-                    const isActive = activeTab === tab.value
-                    return (
-                      <button
-                        key={tab.value}
-                        onClick={() => setActiveTab(tab.value)}
-                        className={cn(
-                          'flex flex-col items-center gap-1.5 py-3 rounded-lg text-xs font-medium transition-all',
-                          isActive
-                            ? 'bg-primary text-primary-foreground'
-                            : 'bg-muted-30 text-muted-foreground active:bg-muted'
-                        )}
-                      >
-                        <Icon className="h-5 w-5" />
-                        <span className="leading-tight">{t(tab.labelKey)}</span>
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
+            <div className={cn("max-w-2xl mx-auto", isMobile ? "px-3 py-4" : "px-5 py-6 md:px-8")}>
 
               {/* Tab content */}
               {activeTab === 'ble' && open && (
@@ -704,6 +689,7 @@ export function ManualAddForm({
   const [selectedDeviceType, setSelectedDeviceType] = useState('')
   const [deviceId, setDeviceId] = useState('')
   const [deviceName, setDeviceName] = useState('')
+  const [offlineTimeout, setOfflineTimeout] = useState('')
   const [adapterType, setAdapterType] = useState<'mqtt' | 'webhook'>('mqtt')
   const [connectionConfig, setConnectionConfig] = useState<ConnectionConfig>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -772,6 +758,12 @@ export function ManualAddForm({
     if (!selectedDeviceType) {
       newErrors.deviceType = t('devices:deviceType') + ' is required'
     }
+    if (deviceId && !/^[A-Za-z0-9_-]+$/.test(deviceId)) {
+      newErrors.deviceId = t('devices:id.invalid', '设备 ID 只能包含字母、数字、- 和 _')
+    }
+    if (offlineTimeout && (!Number.isFinite(Number(offlineTimeout)) || Number(offlineTimeout) <= 0)) {
+      newErrors.offlineTimeout = t('devices:offlineTimeoutInvalid', '请输入大于 0 的秒数')
+    }
     setErrors(newErrors)
     if (Object.keys(newErrors).length > 0) return
 
@@ -784,6 +776,7 @@ export function ManualAddForm({
         ...connectionConfig,
         ...(adapterType === 'webhook' && webhookToken ? { webhook_token: webhookToken } : {}),
       },
+      offline_timeout_secs: offlineTimeout ? Number(offlineTimeout) : undefined,
     }
 
     const success = await onAdd(request)
@@ -800,7 +793,7 @@ export function ManualAddForm({
         variant: 'destructive',
       })
     }
-  }, [selectedDeviceType, adapterType, connectionConfig, deviceId, deviceName, onAdd, onSuccess, t])
+  }, [selectedDeviceType, adapterType, connectionConfig, deviceId, deviceName, offlineTimeout, onAdd, onSuccess, t])
 
   // Push footer button to parent
   useEffect(() => {
@@ -833,11 +826,14 @@ export function ManualAddForm({
 
         {/* Device ID & Name */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <FormField label={t('devices:deviceId')}>
+          <FormField label={t('devices:deviceId')} error={errors.deviceId} helpText={t('devices:id.autoGenerate')}>
             <div className="flex gap-2">
               <Input
                 value={deviceId}
-                onChange={(e) => setDeviceId(e.target.value)}
+                onChange={(e) => {
+                  setDeviceId(e.target.value)
+                  setErrors((prev) => { const next = { ...prev }; delete next.deviceId; return next })
+                }}
                 placeholder={t('devices:id.autoGenerate')}
                 className="font-mono"
               />
@@ -867,9 +863,10 @@ export function ManualAddForm({
         title={t('devices:add.connectionSettings')}
         description={t('devices:add.connectionSettingsDesc')}
       >
-        {/* Adapter type — visual cards */}
-        <div className={cn("gap-2", isMobile ? "grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)]" : "grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)]")}>
-          {ADAPTER_TYPES.map(({ value, icon: AdapterIcon, color, bg }) => {
+        {/* Adapter type — compact segmented choice; the labels carry enough
+            meaning without two decorative icon cards. */}
+        <div className="grid grid-cols-2 rounded-lg bg-muted p-1">
+          {ADAPTER_TYPES.map(({ value }) => {
             const isActive = adapterType === value
             return (
               <button
@@ -877,29 +874,13 @@ export function ManualAddForm({
                 type="button"
                 onClick={() => setAdapterType(value)}
                 className={cn(
-                  'flex flex-col items-center gap-2 p-3 rounded-xl border-2 transition-all text-center',
+                  'min-h-11 rounded-md px-3 text-sm font-medium transition-colors',
                   isActive
-                    ? 'border-primary bg-card'
-                    : 'border-transparent bg-muted-30 hover:bg-card hover:border-border'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground'
                 )}
               >
-                <div className={cn(
-                  'w-9 h-9 rounded-lg flex items-center justify-center',
-                  bg
-                )}>
-                  <AdapterIcon className={cn('h-4 w-4', color)} />
-                </div>
-                <div className="min-w-0">
-                  <span className={cn(
-                    'text-sm font-medium block',
-                    isActive ? 'text-foreground' : 'text-muted-foreground'
-                  )}>
-                    {t(`devices:add.adapterLabel_${value}`)}
-                  </span>
-                  <span className={cn(textMini, "text-muted-foreground leading-tight block mt-0.5 truncate max-w-[140px]")}>
-                    {t(`devices:add.adapterDesc_${value}`)}
-                  </span>
-                </div>
+                {t(`devices:add.adapterLabel_${value}`)}
               </button>
             )
           })}
@@ -1150,6 +1131,26 @@ export function ManualAddForm({
           </div>
         )}
 
+      </FormSection>
+
+      <FormSection title={t('devices:advanced', '高级')}>
+        <FormField
+          label={t('devices:detailPage.offlineTimeout', '离线判定时间')}
+          helpText={t('devices:offlineTimeoutHelp', '留空时使用设备类型或系统默认值')}
+          error={errors.offlineTimeout}
+        >
+          <Input
+            type="number"
+            inputMode="numeric"
+            min={1}
+            value={offlineTimeout}
+            onChange={(e) => {
+              setOfflineTimeout(e.target.value)
+              setErrors((prev) => { const next = { ...prev }; delete next.offlineTimeout; return next })
+            }}
+            placeholder="300"
+          />
+        </FormField>
       </FormSection>
     </FormSectionGroup>
   )

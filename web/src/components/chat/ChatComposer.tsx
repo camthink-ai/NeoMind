@@ -10,7 +10,7 @@
 
 import { useRef, useState, type RefObject } from "react"
 import { useTranslation } from "react-i18next"
-import { Archive, ArrowUp, Check, ChevronDown, Eye, Image as ImageIcon, Loader2, Sparkles, Trash2, Wrench, X } from "lucide-react"
+import { Archive, ArrowUp, Check, Eye, Image as ImageIcon, Loader2, Plus, Sparkles, Trash2, Wrench, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useConfirm } from "@/components/ui/use-confirm"
 import {
@@ -19,6 +19,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useToast } from "@/hooks/use-toast"
 import { useIsMobile } from "@/hooks/useMobile"
@@ -106,7 +107,11 @@ export function ChatComposer({
   const { confirm } = useConfirm()
   const isMobile = useIsMobile()
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const internalTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const activeTextareaRef = textareaRef ?? internalTextareaRef
   const [isUploadingImage, setIsUploadingImage] = useState(false)
+  const [modelSheetOpen, setModelSheetOpen] = useState(false)
+  const [mobileExpanded, setMobileExpanded] = useState(false)
 
   const canAttach = !!onAttachmentsChange
   const inputDisabled = disabled || isStreaming
@@ -213,24 +218,43 @@ export function ChatComposer({
       )}
 
       {/* Single unified input box — everything inside one container */}
-      <div className="rounded-lg border border-input bg-card shadow-sm transition-colors">
+      <div className={cn(
+        "rounded-lg border border-input bg-card shadow-sm transition-colors",
+        isMobile && "rounded-[1.4rem] border-glass-border bg-card p-1.5 shadow-md",
+        isMobile && mobileExpanded ? "flex flex-col" : isMobile ? "flex items-end gap-0.5" : "",
+      )}
+      onPointerDown={(event) => {
+        if (!isMobile || inputDisabled) return
+        const target = event.target as HTMLElement
+        if (target.closest('button, input, textarea, [role="button"]')) return
+        event.preventDefault()
+        activeTextareaRef.current?.focus()
+      }}
+      onBlur={(event) => {
+        if (!isMobile) return
+        const next = event.relatedTarget as Node | null
+        if (!next || !event.currentTarget.contains(next)) setMobileExpanded(false)
+      }}>
         {/* Textarea — fills the top, borderless */}
         <textarea
-          ref={textareaRef}
+          ref={activeTextareaRef}
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          onFocus={() => { if (isMobile) setMobileExpanded(true) }}
           onKeyDown={onKeyDown}
           placeholder={isStreaming && streamingPlaceholder ? streamingPlaceholder : placeholder}
           rows={1}
           disabled={inputDisabled}
           className={cn(
-            "w-full block px-4 pt-3 pb-1 resize-none text-sm leading-5 bg-transparent",
+            "block w-full resize-none bg-transparent px-4 pb-1 pt-3 text-base leading-5 sm:text-sm",
+            isMobile && mobileExpanded && "min-w-0 px-3 pb-1.5 pt-2.5",
+            isMobile && !mobileExpanded && "min-w-0 flex-1 px-2 py-3",
             "placeholder:text-muted-foreground",
-            "focus:outline-none",
+            "cursor-text caret-foreground focus:outline-none",
             "max-h-[100px] scroll-mb-32",
             "disabled:opacity-60"
           )}
-          style={{ minHeight: `${minHeight}px` }}
+          style={{ minHeight: `${isMobile ? 44 : minHeight}px` }}
           onInput={(e) => {
             const target = e.target as HTMLTextAreaElement
             target.style.height = "auto"
@@ -239,7 +263,10 @@ export function ChatComposer({
         />
 
         {/* Bottom toolbar — left: image + model + context, right: send */}
-        <div className="flex items-center gap-1 px-2 pb-2">
+        <div className={isMobile
+          ? (mobileExpanded ? "flex w-full items-center gap-0.5 px-0.5 pb-0.5" : "contents")
+          : "flex items-center gap-1 px-2 pb-2"
+        }>
           {/* Image upload */}
           {canAttach && (
             <>
@@ -259,6 +286,7 @@ export function ChatComposer({
                 disabled={inputDisabled || !supportsMultimodal}
                 className={cn(
                   "rounded-lg flex-shrink-0 text-muted-foreground hover:text-foreground",
+                  isMobile && "order-first h-10 w-10 rounded-full p-0",
                   !supportsMultimodal && "opacity-50"
                 )}
                 title={supportsMultimodal ? (visionDelegate ? t("chat:model.visionViaCompanion") : t("chat:model.addImage")) : t("chat:model.notSupportImage")}
@@ -273,14 +301,81 @@ export function ChatComposer({
                     </span>
                   </div>
                 ) : (
-                  <ImageIcon className="h-4 w-4" />
+                  <Plus className="h-5 w-5" />
                 )}
               </Button>
             </>
           )}
 
           {/* Model selector */}
-          {backends && backends.length > 0 && (
+          {backends && backends.length > 0 && (!isMobile || backends.length > 1) && (isMobile ? (
+            <>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => setModelSheetOpen(true)}
+                className="relative h-10 w-10 shrink-0 rounded-full p-0 text-muted-foreground"
+                aria-label={`${t("chat:input.selectLLMModel")}: ${
+                  backends.find(b => b.id === activeBackendId)?.name ||
+                  backends.find(b => b.id === activeBackendId)?.model ||
+                  t("chat:input.selectModel")
+                }`}
+                title={
+                  backends.find(b => b.id === activeBackendId)?.name ||
+                  backends.find(b => b.id === activeBackendId)?.model ||
+                  t("chat:input.selectModel")
+                }
+              >
+                <Sparkles className="h-[18px] w-[18px]" aria-hidden="true" />
+              </Button>
+              <Sheet open={modelSheetOpen} onOpenChange={setModelSheetOpen}>
+                <SheetContent
+                  side="bottom"
+                  className="max-h-[70dvh] rounded-t-[1.75rem] border-t border-border px-0 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] pt-3 [&>button]:hidden"
+                >
+                  <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-border" aria-hidden="true" />
+                  <div className="px-5 pb-3">
+                    <SheetTitle className="text-left text-xl font-semibold">
+                      {t("chat:input.selectLLMModel")}
+                    </SheetTitle>
+                    <SheetDescription className="mt-1 text-left text-sm text-muted-foreground">
+                      {t("chat:model.forConversation", "本次对话使用的模型")}
+                    </SheetDescription>
+                  </div>
+                  <div className="overflow-y-auto px-5">
+                    {backends.map((backend) => {
+                      const active = backend.id === activeBackendId
+                      const capability = [
+                        backend.backend_type,
+                        backend.capabilities?.supports_tools ? t("chat:capability.tools", "工具调用") : null,
+                        backend.capabilities?.supports_multimodal ? t("chat:capability.vision", "视觉") : null,
+                      ].filter(Boolean).join(" · ")
+                      return (
+                        <button
+                          key={backend.id}
+                          type="button"
+                          onClick={() => {
+                            onActivateBackend?.(backend.id)
+                            setModelSheetOpen(false)
+                          }}
+                          className="flex min-h-16 w-full items-center gap-3 border-b border-border py-3 text-left last:border-b-0"
+                        >
+                          <span className="min-w-0 flex-1">
+                            <span className={cn("block truncate text-base", active && "font-semibold")}>
+                              {backend.name || backend.model}
+                            </span>
+                            <span className="mt-0.5 block truncate text-xs text-muted-foreground">{capability}</span>
+                          </span>
+                          {active && <Check className="h-5 w-5 shrink-0" aria-hidden="true" />}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </SheetContent>
+              </Sheet>
+            </>
+          ) : (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -293,7 +388,6 @@ export function ChatComposer({
                      backends.find(b => b.id === activeBackendId)?.model ||
                      t("chat:input.selectModel")}
                   </span>
-                  <ChevronDown className="h-3.5 w-3.5 shrink-0" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-[min(21rem,calc(100vw-2rem))] max-h-[min(24rem,60vh)] overflow-y-auto scrollbar-none rounded-xl p-1.5 shadow-md">
@@ -338,7 +432,7 @@ export function ChatComposer({
                 </div>
               </DropdownMenuContent>
             </DropdownMenu>
-          )}
+          ))}
 
           {/* Context usage — progress ring; hover for the breakdown card */}
           {contextUsage && (() => {
@@ -363,6 +457,7 @@ export function ChatComposer({
             ]
             const availableRows = rows.filter(r => r.value != null)
             return (
+              <div className="max-sm:hidden">
               <TooltipProvider delayDuration={150}>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -458,10 +553,11 @@ export function ChatComposer({
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
+              </div>
             )
           })()}
 
-          <div className="flex-1" />
+          <div className={cn("flex-1", isMobile && !mobileExpanded && "hidden")} />
 
           {/* Send or Cancel button */}
           {isStreaming ? (
@@ -469,7 +565,7 @@ export function ChatComposer({
               type="button"
               onClick={onCancel}
               variant="outline"
-              className="h-8 w-8 rounded-full flex-shrink-0 p-0 border-destructive text-destructive hover:bg-destructive-light"
+              className="h-10 w-10 rounded-full flex-shrink-0 p-0 border-destructive text-destructive hover:bg-destructive-light"
               title={t("chat:input.cancel")}
               aria-label={t("chat:input.cancel")}
             >
@@ -481,7 +577,7 @@ export function ChatComposer({
               onClick={onSend}
               disabled={!canSend}
               className={cn(
-                "h-8 w-8 rounded-full flex-shrink-0 p-0 transition-all",
+                "h-10 w-10 rounded-full flex-shrink-0 p-0 transition-all",
                 !canSend
                   ? "bg-muted text-muted-foreground"
                   : "bg-primary hover:bg-primary-hover text-primary-foreground"

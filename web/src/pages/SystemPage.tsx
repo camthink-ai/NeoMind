@@ -1,337 +1,165 @@
-/**
- * SystemPage - iOS-Settings-style container page (mobile-only entry point)
- *
- * Aggregates demoted routes (automation/data/messages/extensions/settings) and
- * global actions (theme/language/instance/health/onboarding/help/about/logout)
- * into grouped card lists.
- *
- * Renders on desktop too via /system route for deep-link safety, but is
- * primarily designed for mobile where the bottom 系统 tab routes here.
- */
-
-import { useState, useMemo, type ReactNode } from "react"
+import { useMemo, useState, type ReactNode } from "react"
 import { useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next"
-import {
-  Workflow,
-  Database,
-  Bell,
-  Puzzle,
-  Settings,
-  Palette,
-  Languages,
-  Server,
-  Activity,
-  Rocket,
-  HelpCircle,
-  LogOut,
-  ChevronRight,
-  type LucideIcon,
-} from "lucide-react"
+import { ChevronRight } from "lucide-react"
 import { useStore } from "@/store"
 import { version as appVersion } from "../../package.json"
-import { cn } from "@/lib/utils"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { Badge } from "@/components/ui/badge"
-import { BrandLogoWithName } from "@/components/shared/BrandName"
-import { ThemeToggle } from "@/components/layout/ThemeToggle"
-import { SystemHealthButton } from "@/components/layout/SystemHealthButton"
+import { MobilePageHeader } from "@/components/layout/MobilePageHeader"
 import { InstanceManagerDialog } from "@/components/instances/InstanceManagerDialog"
 import { OnboardingDialog } from "@/components/onboarding/OnboardingDialog"
-import { LanAccessSection } from "@/components/settings/LanAccessSection"
 import { useOnboarding } from "@/hooks/useOnboarding"
-import { useBrand } from "@/hooks/useBrand"
-import { MobilePageHeader } from "@/components/layout/MobilePageHeader"
+import { useExtensionPages } from "@/hooks/useExtensionPages"
+import { useTheme } from "@/components/ui/theme"
+import { cn } from "@/lib/utils"
 
-interface CardDef {
-  id: string
-  icon: LucideIcon
-  iconTone: string
-  titleKey: string
-  descKey?: string
-  /** Right-side trailing node (badge, toggle, chevron). */
+interface MoreRowProps {
+  title: ReactNode
+  description?: ReactNode
   trailing?: ReactNode
   onClick?: () => void
+  destructive?: boolean
 }
 
-function tintedTile(Icon: LucideIcon, tone: string, size = "h-5 w-5") {
+function MoreRow({ title, description, trailing, onClick, destructive }: MoreRowProps) {
+  const Component = onClick ? "button" : "div"
   return (
-    <span className={cn("flex h-7 w-7 items-center justify-center rounded-md", tone)}>
-      <Icon className={size} />
-    </span>
-  )
-}
-
-function Card({ card }: { card: CardDef }) {
-  const { t } = useTranslation("common")
-  return (
-    <button
-      type="button"
-      onClick={card.onClick}
-      className="flex w-full items-center gap-3 px-3 py-2.5 text-left active:bg-muted-30 transition-colors"
-    >
-      {tintedTile(card.icon, card.iconTone)}
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium text-foreground">{t(card.titleKey)}</span>
-        {card.descKey && (
-          <span className="block truncate text-mini text-muted-foreground">{t(card.descKey)}</span>
-        )}
-      </span>
-      {card.trailing ?? (
-        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+    <Component
+      type={onClick ? "button" : undefined}
+      onClick={onClick}
+      className={cn(
+        "flex min-h-[3.75rem] w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition-[background-color,transform]",
+        onClick && "active:scale-[0.99] active:bg-muted",
       )}
-    </button>
-  )
-}
-
-function CardWithDropdown({
-  card,
-  children,
-}: {
-  card: Omit<CardDef, "onClick">
-  children: ReactNode
-}) {
-  const { t } = useTranslation("common")
-  // Wrap a custom dropdown trigger (e.g. ThemeToggle) — the whole card is
-  // visual only, the embedded control handles interaction.
-  return (
-    <div className="relative flex w-full items-center gap-3 px-3 py-2.5">
-      {tintedTile(card.icon, card.iconTone)}
+    >
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium text-foreground">{t(card.titleKey)}</span>
-        {card.descKey && (
-          <span className="block truncate text-mini text-muted-foreground">{t(card.descKey)}</span>
-        )}
+        <span className={cn("block truncate text-[15px] font-medium", destructive ? "text-error" : "text-foreground")}>
+          {title}
+        </span>
+        {description && <span className="mt-0.5 block truncate text-xs text-muted-foreground">{description}</span>}
       </span>
-      <span className="shrink-0">{children}</span>
-    </div>
+      {trailing ?? (onClick ? <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" /> : null)}
+    </Component>
   )
 }
 
-function SectionLabel({ children }: { children: ReactNode }) {
+function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="px-4 pb-1.5 pt-4 text-mini font-semibold uppercase tracking-wide text-muted-foreground">
-      {children}
-    </div>
+    <section className="mt-7 first:mt-0">
+      <h2 className="mb-2 ml-1 text-xs font-medium text-muted-foreground">{title}</h2>
+      <div className="glass overflow-hidden rounded-2xl p-1">{children}</div>
+    </section>
   )
 }
 
 export default function SystemPage() {
   const { t, i18n } = useTranslation("common")
-  const { name: brandName } = useBrand()
   const navigate = useNavigate()
-
   const user = useStore((s) => s.user)
+  const devices = useStore((s) => s.devices)
+  const alerts = useStore((s) => s.alerts)
+  const wsConnected = useStore((s) => s.wsConnected)
   const openSettings = useStore((s) => s.openSettings)
   const logout = useStore((s) => s.logout)
-  const alerts = useStore((s) => s.alerts)
+  const { pages: extensionPages } = useExtensionPages()
+  const { theme, setTheme } = useTheme()
   const { status: onboardingStatus, dismiss: dismissOnboarding } = useOnboarding()
-
   const [instanceManagerOpen, setInstanceManagerOpen] = useState(false)
   const [onboardingOpen, setOnboardingOpen] = useState(false)
 
+  const onlineCount = useMemo(() => devices.filter((device) => device.online).length, [devices])
   const unreadCount = useMemo(
-    () =>
-      alerts.filter(
-        (a) => !a.acknowledged && a.status !== "resolved" && a.status !== "acknowledged",
-      ).length,
+    () => alerts.filter((alert) => !alert.acknowledged && alert.status !== "resolved" && alert.status !== "acknowledged").length,
     [alerts],
   )
-
-  const toggleLanguage = () => i18n.changeLanguage(i18n.language === "zh" ? "en" : "zh")
-
-  const businessCards: CardDef[] = [
-    {
-      id: "automation",
-      icon: Workflow,
-      iconTone: "bg-primary-light text-primary",
-      titleKey: "nav.automation",
-      descKey: "system.cards.automation",
-      onClick: () => navigate("/automation"),
-    },
-    {
-      id: "data",
-      icon: Database,
-      iconTone: "bg-info-light text-info",
-      titleKey: "nav.data",
-      descKey: "system.cards.data",
-      onClick: () => navigate("/data"),
-    },
-    {
-      id: "messages",
-      icon: Bell,
-      iconTone: "bg-warning-light text-warning",
-      titleKey: "nav.messages",
-      descKey: "system.cards.messages",
-      trailing: unreadCount > 0 ? (
-        <Badge variant="destructive" className="h-5 min-w-5 justify-center px-1 text-xs">
-          {unreadCount > 99 ? "99+" : unreadCount}
-        </Badge>
-      ) : (
-        <ChevronRight className="h-4 w-4 text-muted-foreground" />
-      ),
-      onClick: () => navigate("/messages"),
-    },
-  ]
-
-  const systemCardsTop: CardDef[] = [
-    {
-      id: "extensions",
-      icon: Puzzle,
-      iconTone: "bg-accent-purple-light text-accent-purple",
-      titleKey: "nav.extensions",
-      descKey: "system.cards.extensions",
-      onClick: () => navigate("/extensions"),
-    },
-    {
-      id: "theme",
-      icon: Palette,
-      iconTone: "bg-primary-light text-primary",
-      titleKey: "theme.title",
-      descKey: "system.cards.theme",
-    },
-    {
-      id: "language",
-      icon: Languages,
-      iconTone: "bg-info-light text-info",
-      titleKey: "system.language",
-      descKey: "system.cards.language",
-      trailing: (
-        <span className="text-xs text-muted-foreground">
-          {i18n.language === "zh" ? "中文" : "English"}
-        </span>
-      ),
-      onClick: toggleLanguage,
-    },
-    {
-      id: "instance",
-      icon: Server,
-      iconTone: "bg-success-light text-success",
-      titleKey: "system.instanceManager",
-      descKey: "system.cards.instance",
-      onClick: () => setInstanceManagerOpen(true),
-    },
-    {
-      id: "settings",
-      icon: Settings,
-      iconTone: "bg-muted text-foreground",
-      titleKey: "nav.settings",
-      descKey: "system.cards.settings",
-      onClick: () => openSettings(),
-    },
-  ]
-
-  const aboutCards: CardDef[] = [
-    {
-      id: "health",
-      icon: Activity,
-      iconTone: "bg-success-light text-success",
-      titleKey: "systemHealth.title",
-      descKey: "system.cards.health",
-    },
-    {
-      id: "onboarding",
-      icon: Rocket,
-      iconTone: "bg-primary-light text-primary",
-      titleKey: "onboarding.title",
-      descKey: "system.cards.onboarding",
-      onClick: () => setOnboardingOpen(true),
-    },
-    {
-      id: "about",
-      icon: HelpCircle,
-      iconTone: "bg-muted text-foreground",
-      titleKey: "system.about",
-      descKey: "system.cards.about",
-      onClick: () => openSettings("about"),
-    },
-    {
-      id: "logout",
-      icon: LogOut,
-      iconTone: "bg-error-light text-error",
-      titleKey: "logout",
-      onClick: () => logout(),
-    },
-  ]
-
-  const userInitials = (user?.username ?? "").slice(0, 2).toUpperCase()
+  const contributedPages = extensionPages.filter((page) => page.nav_section && page.nav_section !== "add-device")
+  const nextTheme = theme === "light" ? "dark" : theme === "dark" ? "system" : "light"
+  const themeLabel = theme === "light"
+    ? t("common:theme.light")
+    : theme === "dark"
+      ? t("common:theme.dark")
+      : t("common:theme.system")
 
   return (
-    <div className="h-full overflow-y-auto overscroll-contain bg-background">
-      <MobilePageHeader title={t("system.pageTitle")} />
-      {/* Brand + user header (mobile ~70px) */}
-      <div className=" bg-background px-4 pb-3 pt-3">
-        <div className="flex items-center gap-2.5">
-          <BrandLogoWithName logoClassName="h-8" />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-lg font-bold leading-tight text-foreground">{brandName}</div>
-            <div className="truncate text-mini text-muted-foreground">
-              {t("system.version", { version: appVersion })}
-            </div>
-          </div>
+    <div className="flex h-full flex-col bg-background">
+      <MobilePageHeader title={t("common:system.pageTitle")} />
+      <div className="flex-1 overflow-y-auto overscroll-contain">
+        <div className="mx-auto w-full max-w-2xl px-5 pb-[calc(6rem+env(safe-area-inset-bottom,0px))] pt-4">
+          <button
+            type="button"
+            onClick={() => setInstanceManagerOpen(true)}
+            className="glass flex min-h-20 w-full items-center rounded-2xl px-4 py-4 text-left transition-transform active:scale-[0.99]"
+          >
+            <span className="min-w-0 flex-1">
+              <span className="flex items-center gap-2 text-base font-semibold text-foreground">
+                {t("common:system.localInstance")}
+                <span className={cn("h-2 w-2 rounded-full", wsConnected ? "bg-success" : "bg-error")} aria-hidden="true" />
+                <span className="text-sm font-normal text-muted-foreground">
+                  {wsConnected ? t("common:system.connected") : t("common:system.disconnected")}
+                </span>
+              </span>
+              <span className="mt-1 block text-sm text-muted-foreground">
+                {t("common:system.mobileSummary", {
+                  online: onlineCount,
+                  total: devices.length,
+                  alerts: unreadCount,
+                })}
+              </span>
+            </span>
+            <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+          </button>
+
+          <Section title={t("common:system.sectionBusiness")}>
+            <MoreRow title={t("common:nav.devices")} description={t("common:system.cards.devices")} onClick={() => navigate("/devices")} />
+            <MoreRow title={t("common:nav.agents")} description={t("common:system.cards.agents")} onClick={() => navigate("/agents")} />
+            <MoreRow title={t("common:nav.visual-dashboard")} description={t("common:system.cards.dashboard")} onClick={() => navigate("/visual-dashboard")} />
+            <MoreRow title={t("common:nav.automation")} description={t("common:system.cards.automation")} onClick={() => navigate("/automation")} />
+            <MoreRow title={t("common:nav.data")} description={t("common:system.cards.data")} onClick={() => navigate("/data")} />
+            <MoreRow
+              title={t("common:nav.messages")}
+              description={t("common:system.cards.messages")}
+              trailing={unreadCount > 0 ? <span className="rounded-full bg-muted px-2 py-0.5 text-xs tabular-nums">{unreadCount > 99 ? "99+" : unreadCount}</span> : undefined}
+              onClick={() => navigate("/messages")}
+            />
+          </Section>
+
+          <Section title={t("common:system.sectionSystem")}>
+            <MoreRow title={t("common:nav.extensions")} description={t("common:system.cards.extensions")} onClick={() => navigate("/extensions")} />
+            <MoreRow title={t("common:nav.settings")} description={t("common:system.cards.settings")} onClick={() => openSettings()} />
+            <MoreRow title={t("common:system.instanceManager")} description={t("common:system.cards.instance")} onClick={() => setInstanceManagerOpen(true)} />
+            {contributedPages.map((page) => (
+              <MoreRow
+                key={`${page.extension_id}-${page.type}`}
+                title={page.nav_label ?? page.title}
+                description={t("common:system.extensionPage")}
+                trailing={<span className="flex items-center gap-2 text-xs text-muted-foreground">{t("common:nav.extensions")}<ChevronRight className="h-4 w-4" /></span>}
+                onClick={() => navigate(page.route)}
+              />
+            ))}
+          </Section>
+
+          <Section title={t("common:system.preferences")}>
+            {user && (
+              <MoreRow
+                title={user.username}
+                description={user.role || t("common:system.account")}
+                onClick={() => openSettings("preferences")}
+              />
+            )}
+            <MoreRow
+              title={t("common:system.language")}
+              trailing={<span className="text-sm text-muted-foreground">{i18n.language === "zh" ? "中文" : "English"}</span>}
+              onClick={() => i18n.changeLanguage(i18n.language === "zh" ? "en" : "zh")}
+            />
+            <MoreRow
+              title={t("common:theme.title")}
+              trailing={<span className="text-sm text-muted-foreground">{themeLabel}</span>}
+              onClick={() => setTheme(nextTheme)}
+            />
+            <MoreRow title={t("common:onboarding.title")} onClick={() => setOnboardingOpen(true)} />
+            <MoreRow title={t("common:system.about")} description={t("common:system.version", { version: appVersion })} onClick={() => openSettings("about")} />
+            <MoreRow title={t("logout")} destructive onClick={() => logout()} />
+          </Section>
         </div>
-        {user && (
-          <div className="mt-2 flex items-center gap-2 rounded-lg bg-muted-30 px-2.5 py-1.5">
-            <Avatar className="h-6 w-6 rounded-full">
-              <AvatarFallback className="bg-muted text-nano font-medium text-foreground">
-                {userInitials}
-              </AvatarFallback>
-            </Avatar>
-            <span className="truncate text-xs text-foreground">{user.username}</span>
-            {user.role && (
-              <Badge variant="outline" className="ml-auto text-nano">
-                {user.role}
-              </Badge>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Section 1 — Business */}
-      <SectionLabel>{t("system.sectionBusiness")}</SectionLabel>
-      <div className="mx-3 overflow-hidden rounded-xl border border-border bg-surface">
-        {businessCards.map((c, i) => (
-          <div key={c.id} className={cn(i > 0 && "border-t border-border")}>
-            <Card card={c} />
-          </div>
-        ))}
-      </div>
-
-      {/* Section 2 — System */}
-      <SectionLabel>{t("system.sectionSystem")}</SectionLabel>
-      <div className="mx-3 overflow-hidden rounded-xl border border-border bg-surface">
-        {systemCardsTop.map((c, i) => (
-          <div key={c.id} className={cn(i > 0 && "border-t border-border")}>
-            {c.id === "theme" ? (
-              <CardWithDropdown card={c}>
-                <ThemeToggle />
-              </CardWithDropdown>
-            ) : (
-              <Card card={c} />
-            )}
-          </div>
-        ))}
-      </div>
-
-      {/* Desktop LAN access (renders nothing in web builds) */}
-      <div className="mt-4">
-        <LanAccessSection compact />
-      </div>
-
-      {/* Section 3 — About */}
-      <SectionLabel>{t("system.sectionAbout")}</SectionLabel>
-      <div className="mx-3 overflow-hidden rounded-xl border border-border bg-surface">
-        {aboutCards.map((c, i) => (
-          <div key={c.id} className={cn(i > 0 && "border-t border-border")}>
-            {c.id === "health" ? (
-              <CardWithDropdown card={c}>
-                <SystemHealthButton />
-              </CardWithDropdown>
-            ) : (
-              <Card card={c} />
-            )}
-          </div>
-        ))}
       </div>
 
       <InstanceManagerDialog open={instanceManagerOpen} onOpenChange={setInstanceManagerOpen} />

@@ -43,6 +43,7 @@ import remarkGfm from 'remark-gfm'
 import type { AgentExecutionStartedEvent, AgentExecutionCompletedEvent } from "@/lib/events"
 import { FullScreenDialogSidebar } from "@/components/automation/dialog/FullScreenDialog"
 import { useEvents } from "@/hooks/useEvents"
+import { MobileTabStrip } from "@/components/shared/MobileTabStrip"
 
 // Import sub-components
 import { AgentExecutionTimeline } from "./AgentExecutionTimeline"
@@ -238,7 +239,7 @@ export function AgentDetailPanel({
   }
 
   return (
-    <div className="flex flex-col gap-3 h-full">
+    <div className="flex h-full min-h-0 flex-col">
       {/* Left-rail section nav + content — matches the app's quiet list language.
           Mobile stacks: the section chips must sit ABOVE the content, never
           beside it — as a row child they were squeezing content into a sliver. */}
@@ -282,31 +283,20 @@ export function AgentDetailPanel({
 
         {/* Mobile: horizontal section chips */}
         {isMobile && (
-          <div className="flex shrink-0 gap-1 overflow-x-auto px-2 pt-2">
-            {([
+          <MobileTabStrip
+            items={[
               { value: 'overview', label: t('agents:detail.overview') },
               { value: 'history', label: t('agents:detail.history') },
               { value: 'memory', label: t('agents:detail.memory') },
               { value: 'messages', label: t('agents:detail.messages') },
-            ] as const).map(({ value, label }) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => setSection(value)}
-                className={cn(
-                  "shrink-0 rounded-full border px-3 py-1 text-xs transition-colors",
-                  section === value
-                    ? "border-foreground bg-foreground text-background"
-                    : "border-border text-muted-foreground"
-                )}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+            ] as const}
+            value={section}
+            onValueChange={setSection}
+            ariaLabel={t('agents:detailTitle')}
+          />
         )}
 
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/* Messages owns its own scroll container — a native overflow div with a
             definite height (flex-1 in this column) lets h-full/min-h-full work,
             so the empty state can flex-centre. Radix ScrollArea's inner content
@@ -325,7 +315,7 @@ export function AgentDetailPanel({
             </div>
           </div>
         ) : (
-        <ScrollArea className="min-h-0 flex-1 bg-muted-20">
+        <ScrollArea className="h-0 min-h-0 flex-1 bg-muted-20">
           <div className={cn(
             "space-y-5",
             isMobile ? "px-3 py-3" : "px-5 py-4"
@@ -352,7 +342,7 @@ export function AgentDetailPanel({
                                     </>
                                   )
                                 })()}
-                                <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+                                <span className={cn("text-xs text-muted-foreground tabular-nums", isMobile ? "w-full" : "ml-auto")}>
                                   {t('common:updatedAt')} {new Date(agent.updated_at).toLocaleDateString()}
                                   {agent.last_execution_at && (
                                     <> · {t('agents:lastExecution')} {new Date(agent.last_execution_at).toLocaleString()}</>
@@ -360,7 +350,7 @@ export function AgentDetailPanel({
                                 </span>
                               </div>
 
-                              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 rounded-lg bg-card p-3 border border-border">
+                              <div className="grid grid-cols-2 gap-3 rounded-2xl border border-border bg-card p-4 md:grid-cols-4 md:rounded-lg md:p-3">
                                 <div>
                                   <div className="text-base font-semibold tabular-nums leading-tight">{formatCount(agent.stats?.total_executions ?? agent.execution_count)}</div>
                                   <div className="text-xs text-muted-foreground">{t('agents:detail.executions')}</div>
@@ -439,7 +429,7 @@ export function AgentDetailPanel({
                                 </DetailSection>
                               )}
 
-                              <div className="rounded-lg bg-card border border-border p-4">
+                              <div className="rounded-2xl border border-border bg-card p-4 md:rounded-lg">
                                 <div className="space-y-1.5">
                                   <h4 className="text-sm font-medium">{t('agents:detail.schedule')}</h4>
                                   <InfoRow label={t('agents:detail.type')} value={agent.schedule.schedule_type} />
@@ -482,7 +472,7 @@ export function AgentDetailPanel({
                                 </div>
                               </div>
 
-                              <div className="rounded-lg bg-card border border-border p-4">
+                              <div className="md:rounded-lg md:border md:border-border md:bg-card md:p-4">
                 <DetailSection title={`${t('agents:detail.resources')} (${(agent.resources || []).length})`} icon={Zap}>
                                 <div className="space-y-2">
                                   {(agent.resources || []).length > 0 && (
@@ -575,7 +565,7 @@ interface DetailSectionProps {
 
 function DetailSection({ title, icon: Icon, children }: DetailSectionProps) {
   return (
-    <div>
+    <div className="rounded-2xl border border-border bg-card p-4 md:rounded-none md:border-0 md:bg-transparent md:p-0">
       {title && Icon && (
         <h3 className="text-sm font-medium flex items-center gap-2 mb-3 text-foreground">
           <Icon className="h-4 w-4" />

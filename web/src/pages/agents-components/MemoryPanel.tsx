@@ -26,7 +26,6 @@ import {
   Trash2,
   Plus,
 } from "lucide-react"
-import { Card } from "@/components/ui/card"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu"
 import { ResponsiveTable, EmptyState, LoadingState } from "@/components/shared"
 import { Button, IconButton } from "@/components/ui/button"
@@ -404,21 +403,27 @@ export const MemoryPanel = forwardRef<MemoryPanelRef, MemoryPanelProps>(function
       {isMobile ? (
         <div className="space-y-2">
           {tableData.map((row) => {
-            const Icon = row.icon
             return (
-              <Card
+              <div
                 key={row.id}
-                className="overflow-hidden border-border shadow-sm cursor-pointer active:scale-[0.99] transition-all"
+                role="button"
+                tabIndex={0}
+                className="cursor-pointer overflow-hidden rounded-2xl border border-border bg-card px-4 py-2.5 transition-[background-color,transform] active:scale-[0.99] active:bg-muted"
                 onClick={() => handleViewEdit(row.isCustom ? row.name : row.id, row.isCustom)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return
+                  event.preventDefault()
+                  handleViewEdit(row.isCustom ? row.name : row.id, row.isCustom)
+                }}
               >
-                <div className="px-3 py-2.5">
-                  <div className="flex items-center gap-2.5">
-                    <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center shrink-0", row.color)}>
-                      <Icon className="h-4 w-4" />
+                <div className="flex min-h-10 items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium">{row.name}</div>
+                    <div className={cn(textMini, "mt-0.5 truncate font-mono text-muted-foreground")}>
+                      {formatCharsUsage(row.chars, row.charLimit)} {t("systemMemory.headers.chars", "chars")}
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium text-sm truncate">{row.name}</div>
-                    </div>
+                  </div>
+                  {row.isCustom ? (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
                         <IconButton aria-label={t("systemMemory.actions", "Actions")}>
@@ -426,35 +431,29 @@ export const MemoryPanel = forwardRef<MemoryPanelRef, MemoryPanelProps>(function
                         </IconButton>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleViewEdit(row.isCustom ? row.name : row.id, row.isCustom) }}>
-                          <Eye className="h-4 w-4 mr-2" />
-                          {t("systemMemory.viewEdit", "View/Edit")}
-                        </DropdownMenuItem>
                         <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleExport(row.id) }}>
                           <Download className="h-4 w-4 mr-2" />
                           {t("systemMemory.export", "Export")}
                         </DropdownMenuItem>
-                        {row.isCustom && (
-                          <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleDelete(row.name) }} className="text-error focus:text-error">
-                            <Trash2 className="h-4 w-4 mr-2" />
-                            {t("systemMemory.custom.delete", "Delete")}
-                          </DropdownMenuItem>
-                        )}
+                        <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleDelete(row.name) }} className="text-error focus:text-error">
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          {t("systemMemory.custom.delete", "Delete")}
+                        </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
-                  </div>
-                  <div className="flex items-center gap-1.5 mt-1.5 ml-[42px]">
-                    <span className={cn(textMini, "font-mono text-muted-foreground")}>
-                      {formatCharsUsage(row.chars, row.charLimit)} {t("systemMemory.headers.chars", "chars")}
-                    </span>
-                    {!row.isCustom && row.modified_at > 0 && (
-                      <span className={cn(textMini, "text-muted-foreground ml-auto")}>
-                        {formatTimestamp(row.modified_at, false)}
-                      </span>
-                    )}
-                  </div>
+                  ) : (
+                    <IconButton
+                      aria-label={t("systemMemory.export", "Export")}
+                      disabled={exporting === row.id}
+                      onClick={(e) => { e.stopPropagation(); handleExport(row.id) }}
+                    >
+                      {exporting === row.id
+                        ? <Loader2 className="h-4 w-4 animate-spin" />
+                        : <Download className="h-4 w-4" />}
+                    </IconButton>
+                  )}
                 </div>
-              </Card>
+              </div>
             )
           })}
         </div>

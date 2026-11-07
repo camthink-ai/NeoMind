@@ -282,6 +282,7 @@
   },
   "nav": {
     "dashboard": "Chat",
+    "dashboardShort": "Dashboard",
     "visual-dashboard": "Visual Dashboard",
     "devices": "Devices",
     "automation": "Automation",
@@ -289,7 +290,8 @@
     "data": "Data Explorer",
     "messages": "Messages",
     "extensions": "Extensions",
-    "settings": "Settings"
+    "settings": "Settings",
+    "mobilePrimary": "Primary navigation"
   },
   "add": "Add",
   "edit": "Edit",
@@ -779,7 +781,17 @@
     "about": "Help / About",
     "version": "v{{version}}",
     "back": "Back",
+    "localInstance": "Local instance",
+    "connected": "Connected",
+    "disconnected": "Disconnected",
+    "mobileSummary": "{{online}} / {{total}} devices online · {{alerts}} unresolved alerts",
+    "extensionPage": "Extension page",
+    "preferences": "Preferences and account",
+    "account": "Account",
     "cards": {
+      "devices": "Devices and device types",
+      "agents": "AI agents and capabilities",
+      "dashboard": "Visual dashboards",
       "automation": "Transforms and data push",
       "data": "Telemetry data explorer",
       "messages": "Notification center",

@@ -156,7 +156,7 @@ export function ExtensionGrid({
 
   if (loading) {
     return (
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,280px),1fr))] gap-5">
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,280px),1fr))] gap-2 md:gap-5">
         {Array.from({ length: 6 }).map((_, i) => (
           <div
             key={i}
@@ -192,18 +192,30 @@ export function ExtensionGrid({
     const marqueeItems = [...showcaseExtensions, ...showcaseExtensions]
 
     return (
-      <div className="flex flex-col items-center py-12 px-4">
+      <div className="flex flex-col items-center px-1 py-10 sm:px-4 sm:py-12">
         {/* Hero */}
-        <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-muted ring-1 ring-border mb-5">
+        <div className="mb-5 hidden h-16 w-16 items-center justify-center rounded-xl bg-muted ring-1 ring-border sm:flex">
           <Plug className="h-8 w-8 text-muted-foreground" />
         </div>
-        <h3 className="text-xl font-semibold">{t("empty.title")}</h3>
-        <p className="mt-2 text-sm text-muted-foreground max-w-md text-center leading-relaxed">
+        <h3 className="text-lg font-semibold sm:text-xl">{t("empty.title")}</h3>
+        <p className="mt-2 max-w-md text-center text-sm leading-relaxed text-muted-foreground">
           {t("empty.description")}
         </p>
 
+        <div className="mt-8 w-full space-y-1 text-sm sm:hidden">
+          {showcaseExtensions.slice(0, 4).map((ext) => (
+            <div key={ext.name} className="rounded-xl px-1 py-3">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="font-medium text-foreground">{ext.name}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">{ext.category}</span>
+              </div>
+              <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">{ext.desc}</p>
+            </div>
+          ))}
+        </div>
+
         {/* Marquee */}
-        <div className="mt-8 w-full max-w-3xl overflow-hidden relative">
+        <div className="relative mt-8 hidden w-full max-w-3xl overflow-hidden sm:block">
           {/* Edge fades */}
           <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-16 bg-gradient-to-r from-background to-transparent" />
           <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-16 bg-gradient-to-l from-background to-transparent" />
@@ -236,7 +248,7 @@ export function ExtensionGrid({
         </div>
 
         {/* Category tags */}
-        <div className="mt-8 flex flex-wrap items-center justify-center gap-2">
+        <div className="mt-8 hidden flex-wrap items-center justify-center gap-2 sm:flex">
           {categories.map((c) => (
             <div
               key={c.label}
@@ -292,7 +304,7 @@ export function ExtensionGrid({
                 key={option.value}
                 onClick={() => setStatusFilter(option.value)}
                 className={cn(
-                  "inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-xs font-medium transition-all border",
+                  "inline-flex h-10 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-all md:h-7 md:rounded-md md:px-2.5",
                   isSelected
                     ? "bg-primary text-primary-foreground border-primary shadow-sm"
                     : "bg-card hover:bg-muted-50 text-muted-foreground border-border hover:border-input"
@@ -312,7 +324,7 @@ export function ExtensionGrid({
             )
           })}
           {hasActiveFilters && (
-            <Button variant="ghost" size="xs" onClick={clearFilters} className="h-7">
+            <Button variant="ghost" size="xs" onClick={clearFilters} className="h-10 md:h-7">
               <X className="h-3 w-3 mr-1" />
               {t("clearFilters", { ns: "common" })}
             </Button>
@@ -330,7 +342,7 @@ export function ExtensionGrid({
       )}
 
       {/* Extension Cards Grid */}
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,280px),1fr))] gap-5">
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,280px),1fr))] gap-2 md:gap-5">
         {filteredExtensions.map((extension, index) => (
           <div
             key={extension.id}
