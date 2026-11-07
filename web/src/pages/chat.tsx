@@ -7,7 +7,7 @@ import { useStore } from "@/store"
 import { shallow } from "zustand/shallow"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { generateId } from "@/lib/id"
-import { Loader2, MessageSquarePlus, PanelsTopLeft } from "lucide-react"
+import { ChevronDown, Loader2, MessageSquarePlus, PanelsTopLeft } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SessionSidebar } from "@/components/session/SessionSidebar"
 import { WelcomeArea } from "@/components/chat/WelcomeArea"
@@ -1107,12 +1107,24 @@ export function ChatPage() {
             </Button>
             <button
               type="button"
-              className="flex min-w-0 items-center justify-start px-1 text-left text-base font-semibold tracking-[-0.01em] disabled:pointer-events-none"
+              className="group flex min-w-0 items-center justify-start gap-1.5 justify-self-start rounded-lg px-2 py-2 text-left text-base font-semibold tracking-[-0.01em] transition-colors active:bg-muted disabled:pointer-events-none"
               onClick={() => setSidebarOpen(true)}
               disabled={sessions.length === 0 && isWelcomeMode}
               aria-label={t('common:session.history')}
+              aria-expanded={sidebarOpen}
+              aria-haspopup="dialog"
             >
-              <span className="truncate">{mobileChatTitle}</span>
+              <span className="min-w-0 truncate">{mobileChatTitle}</span>
+              {(sessions.length > 0 || !isWelcomeMode) && (
+                <ChevronDown
+                  className={cn(
+                    "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 group-active:text-foreground",
+                    sidebarOpen && "rotate-180",
+                  )}
+                  strokeWidth={1.8}
+                  aria-hidden="true"
+                />
+              )}
             </button>
             {!noLlmContent ? (
               <Button
