@@ -109,7 +109,7 @@ export function PageTabsBar({
   if (isMobile) {
     return (
       <>
-        <MobilePageTabsActionsLift
+        <MobilePageActionsLift
           actions={[...actions, ...secondaryActions]}
           actionsExtra={actionsExtra}
         />
@@ -540,7 +540,7 @@ export function PageTabsGrid({
 }
 
 /**
- * MobilePageTabsActionsLift - renders nothing on its own. Instead, it
+ * MobilePageActionsLift - renders nothing on its own. Instead, it
  * registers the tab actions into two host slots via MobileHeaderActionsContext:
  *
  *   - primary actions (Add/Refresh/…) → MobilePageHeader's actions slot
@@ -550,9 +550,10 @@ export function PageTabsGrid({
  *     These controls don't fit in an icon-only header slot, so they stay
  *     with the content.
  *
- * Used internally by PageTabsBar's mobile branch.
+ * Used by PageTabsBar and no-tab pages that follow the same mobile header
+ * action + content-toolbar pattern.
  */
-function MobilePageTabsActionsLift({
+export function MobilePageActionsLift({
   actions,
   actionsExtra,
 }: {

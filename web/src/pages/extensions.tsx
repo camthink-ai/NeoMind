@@ -7,7 +7,8 @@ import { ExtensionUploadDialog } from "@/components/extensions"
 import { useToast } from "@/hooks/use-toast"
 import { RefreshCw, Upload, Globe } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { SearchInput } from "@/components/shared"
+import { MobilePageActionsLift, SearchInput } from "@/components/shared"
+import { useIsMobile } from "@/hooks/useMobile"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,6 +25,7 @@ import type { Extension } from "@/types"
 export function ExtensionsPage() {
   const { t } = useTranslation(["extensions", "common"])
   const { toast } = useToast()
+  const isMobile = useIsMobile()
 
   // Use the main store to access extension state and actions
   const extensions = useStore((state) => state.extensions)
@@ -138,12 +140,38 @@ export function ExtensionsPage() {
     // Dialog will be closed by ExtensionUploadDialog after showing success message
   }
 
+  const mobileActions = [
+    {
+      label: t("extensions:marketplace", { defaultValue: "Marketplace" }),
+      icon: <Globe className="h-4 w-4" />,
+      onClick: () => setMarketplaceDialogOpen(true),
+    },
+    {
+      label: t("extensions:uploadExtension", { defaultValue: "Upload" }),
+      icon: <Upload className="h-4 w-4" />,
+      onClick: () => setUploadDialogOpen(true),
+    },
+  ]
+
+  const extensionSearch = (
+    <SearchInput
+      value={searchQuery}
+      onChange={setSearchQuery}
+      placeholder={t("searchPlaceholder", { defaultValue: "Search extensions and commands..." })}
+      aria-label={t("searchPlaceholder", { defaultValue: "Search extensions and commands..." })}
+      className="w-full sm:max-w-md sm:mr-auto"
+    />
+  )
+
   return (
     <>
       <PageLayout
         title={t("extensions:title", { defaultValue: "Extensions" })}
         borderedHeader={false}
         headerContent={
+          isMobile ? (
+            <MobilePageActionsLift actions={mobileActions} actionsExtra={extensionSearch} />
+          ) : (
           // No-tab page standard (actions-left variant): page actions sit
           // in the tab slot, page actions anchor the right edge (aligned with
           // the content below) — the mirrored layout to tabbed pages'
@@ -151,13 +179,7 @@ export function ExtensionsPage() {
           <div className="flex shrink-0 flex-col gap-2 bg-background px-4 pt-1 sm:flex-row sm:items-end sm:px-6 md:px-8 md:pt-2">
             {/* Search leads (utility), actions anchor the trailing edge
                 (primary CTA) — the same order as PageTabsBar's group. */}
-            <SearchInput
-              value={searchQuery}
-              onChange={setSearchQuery}
-              placeholder={t("searchPlaceholder", { defaultValue: "Search extensions and commands..." })}
-              aria-label={t("searchPlaceholder", { defaultValue: "Search extensions and commands..." })}
-              className="w-full sm:max-w-md sm:mr-auto"
-            />
+            {extensionSearch}
             <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
               <Button
                 variant="default"
@@ -178,6 +200,7 @@ export function ExtensionsPage() {
               </Button>
             </div>
           </div>
+          )
         }
       >
         {/* Extensions Grid — mt-4 mirrors PageTabsContent's tabs→content

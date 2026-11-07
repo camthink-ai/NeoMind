@@ -443,7 +443,14 @@ for (const viewport of viewports) {
         pageErrors.length = 0
         await page.goto(`http://127.0.0.1:5173${item.route}`, { waitUntil: "domcontentloaded" })
         await waitForRouteReady(page, item.route)
-        await page.getByRole("button", { name: item.button, exact: item.name !== "settings" }).first().click()
+        if (item.name === "extension-upload") {
+          // Extension page keeps secondary operations in the standard mobile
+          // header overflow so search remains the only content toolbar.
+          await page.getByRole("button", { name: /更多|More/i }).first().click()
+          await page.getByRole("menuitem", { name: item.button }).click()
+        } else {
+          await page.getByRole("button", { name: item.button, exact: item.name !== "settings" }).first().click()
+        }
         await page.waitForTimeout(350)
         const state = await page.evaluate(() => {
           const dialogs = [...document.querySelectorAll('[role="dialog"]')].filter((el) => {
