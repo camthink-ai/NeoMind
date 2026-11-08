@@ -275,6 +275,56 @@ Verdict mechanics hardened the same day:
   match cannot see. Flags are checked against the CLI manifest in CI
   (`check_cli_drift.py`).
 
+### Tier split, time-to-pass, failure modes (added 2026-11-06)
+
+Three summary dimensions requested by leaderboard readers, now printed by the
+gate itself and carried per line in `scores.jsonl`:
+
+- **Tier split** (`tier: simple|multi`) — case-id prefixes
+  `multi/guided/deep/full-lifecycle/agent/extension/api/haccp` are the
+  planning-heavy tier (20 of the 69 gate ids × 2 langs = the 40-execution
+  "multi" cut of the 2026-10-29 official report; rule in
+  `hard_signal.tier_of`). The gate prints per-tier product pass rates.
+- **Time-to-pass** — median wall clock over PASS executions only
+  (`latency_ms`, which sums server-side per-turn processing times; retries
+  inside the ReAct loop are included, seeding/spawn is not). This is the axis
+  pass rate hides: a tiny model that needs three attempts to finish a
+  two-tool workflow pays for them here.
+- **Failure modes** (`hard_signal.classify_failure` — pure, works
+  retroactively on archived `hard` blocks): one deterministic tag per
+  product-view failure, priority order:
+  `timeout` (case wall cap) → `agent_error` (turn died mid-flight) →
+  `harness_error` (seed/config — not about the model) → `wrong_tool`
+  (clearly-wrong tool grabbed) → `missing_tool` (expected family never
+  successfully called) → `rejected_args` (CLI refused the call: malformed
+  flags/values) → `wrong_args` (right family, authored substrings didn't
+  match) → `state_mismatch` (commands matched, end state didn't hold).
+  Buckets sum to the product-fail count. **"Lost context" is deliberately
+  absent** — it needs semantic judgement and stays with the opt-in judge's
+  `context_retention` dimension.
+
+`scores.jsonl` rows now also carry `category` / `workflow` / `scenario_type`
+/ `tier` / `failure_mode`. `run` command rows gained the same fields. Old
+runs without them degrade gracefully (aggregate ignores missing keys).
+
+### Controls provenance (`controls.json`)
+
+Every gate run writes `controls.json` next to the scores: backend
+type/model/endpoint-host (never the API key), the full sampling block
+(temperature/top_p/top_k/thinking), budgets (per-case wall cap, per-turn
+stream and runner caps, rounds), case-set path + id count, and the
+`neomind` binary + `--version` (the tool-schema control). Sampling params
+are per-vendor-official **by design** (wrong-param runs lose 10-23pp); cross-
+model comparisons must pair runs with their controls block, and the
+context length (`llama-server -c`) is set outside the runner — record it in
+the run notes. This answers "were tool schemas, context limits, and
+time/token budgets held constant?" from the artifacts alone.
+
+Replay: `_print_tier_summary(row_details)` (in `run_eval.py`) regenerates
+the tier/time-to-pass/failure-mode summary from any archived `scores.jsonl`
+(join `cases.jsonl` when present to distinguish `timeout` from
+`agent_error`; without it, agent-failed rows fall into `agent_error`).
+
 - **Use `--rounds 2` for verdicts you act on.** Single-round runs have a
   ~7pp noise floor (observed 2026-09-01: 3/33 flagged regressions on a
   single round, all three PASS on rerun). A single round is fine as a

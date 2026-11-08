@@ -32,9 +32,12 @@ import json
 import os
 import re
 import signal
+import subprocess
 import sys
 import time
+from collections import Counter
 from pathlib import Path
+from urllib.parse import urlsplit
 
 # Make lib/ importable.
 sys.path.insert(0, str(Path(__file__).parent / "lib"))
@@ -704,7 +707,11 @@ def cmd_run(args):
                 "case_id": case.get("id"),
                 "lang": case.get("lang"),
                 "category": case.get("category"),
+                "workflow": case.get("workflow"),
+                "scenario_type": case.get("scenario_type"),
+                "tier": hard_signal.tier_of(case.get("id") or ""),
                 "hard": hard,
+                "failure_mode": hard_signal.classify_failure(case, rec, hard),
                 "suspected_fallback": bool(rec.get("suspected_fallback")),
                 "guards": rec.get("guards") or {},
                 "status": rec.get("status"),
@@ -833,6 +840,128 @@ def _run_case_timeout(p: Path, cap: int):
         signal.alarm(0)
 
 
+def _bin_version() -> str | None:
+    """Best-effort `neomind --version` — the tool-schema control of the run."""
+    try:
+        out = subprocess.run(
+            [str(server._resolve_neomind_bin()), "--version"],
+            capture_output=True, text=True, timeout=15,
+        )
+        for stream in (out.stdout, out.stderr):
+            line = (stream or "").strip().splitlines()
+            if line:
+                return line[0]
+    except Exception:  # noqa: BLE001 — provenance only
+        pass
+    return None
+
+
+def _controls_block(cap: int, rounds: int, set_path: Path, n_ids: int) -> dict:
+    """Everything held constant (or deliberately not) across models in this
+    run, frozen next to the scores — so "were the controls equal?" is answered
+    by the data instead of memory. NEVER includes the API key or full
+    endpoint (scheme+host only). Sampling params are per-vendor-official BY
+    DESIGN (the 2026-10 batch: wrong-param runs lose 10-23pp) — they are
+    recorded per run, not normalized across models.
+    """
+    endpoint = os.environ.get("AGENT_LLM_ENDPOINT") or ""
+    return {
+        "agent_backend": {
+            "backend_type": os.environ.get("AGENT_LLM_BACKEND_TYPE", "openai"),
+            "model": os.environ.get("AGENT_LLM_MODEL"),
+            "endpoint_host": urlsplit(endpoint).netloc or None,
+            "sampling": {
+                "temperature": float(os.environ.get("AGENT_LLM_TEMPERATURE", "0.6")),
+                "top_p": float(os.environ.get("AGENT_LLM_TOP_P", "0.85")),
+                "top_k": (int(os.environ["AGENT_LLM_TOP_K"])
+                          if os.environ.get("AGENT_LLM_TOP_K") else None),
+                "note": "per-vendor-official by design; compare runs with "
+                        "identical sampling blocks only",
+            },
+            "thinking_enabled": os.environ.get(
+                "AGENT_LLM_THINKING", "false").lower() in ("1", "true"),
+            "token_budget": "not set by the runner — bounded by model context "
+                            "only; record the server's -c value in run notes",
+        },
+        "budgets": {
+            "per_case_wall_s": cap,
+            "per_turn_stream_s": 1200,
+            "per_turn_runner_s": float(os.environ.get("EVAL_CHAT_TIMEOUT", "1400")),
+            "rounds": rounds,
+        },
+        "case_set": {"path": str(set_path), "case_ids": n_ids},
+        "tool_schemas": {"neomind_bin": str(server._resolve_neomind_bin()),
+                         "neomind_version": _bin_version()},
+        "judge": None,  # the gate is hard-signal only; run `run --judge` for soft scores
+        "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+
+
+def _print_tier_summary(row_details: dict[str, list]):
+    """Tier split / time-to-pass / failure-mode distribution for the gate.
+
+    Extracted from cmd_regression so archived runs can regenerate the exact
+    summary (replay = rebuild row_details from scores.jsonl, call this).
+    row_details: key → [{tier, latency_ms, verdict_prod, failure_mode}, …].
+    """
+    # Tier split (single-step vs multi-step planning) — the 2026-10-29
+    # official report's most decision-relevant cut, in the gate summary itself
+    # instead of a post-hoc analysis. unasserted (None) verdicts stay excluded,
+    # same as rates_for.
+    tier_verdicts: dict[str, list] = {}
+    for rows in row_details.values():
+        for d in rows:
+            if d["verdict_prod"] is not None:
+                tier_verdicts.setdefault(d["tier"], []).append(d["verdict_prod"])
+    if tier_verdicts:
+        parts = []
+        for tier in ("simple", "multi"):
+            vs = tier_verdicts.get(tier) or []
+            if not vs:
+                continue
+            p = sum(1 for v in vs if v is True)
+            parts.append(f"{tier} {p}/{len(vs)} = {p/len(vs):.1%}")
+        if parts:
+            print("  pass rate by tier [product]:            " + " | ".join(parts))
+
+    # Time to a CORRECT end state (median wall clock over PASS executions,
+    # retries included — a tiny model that needs three attempts to finish a
+    # two-tool workflow pays for them here). latency_ms sums the server-side
+    # per-turn processing times, which is pure agent time (seed/spawn excluded).
+    ttp_rows = [d for rows in row_details.values() for d in rows
+                if d["verdict_prod"] is True
+                and isinstance(d["latency_ms"], (int, float))]
+    if ttp_rows:
+        def _med_ms(vals: list) -> int:
+            s = sorted(vals)
+            return int(s[len(s) // 2])
+        parts = []
+        for tier in ("simple", "multi", None):
+            vals = [d["latency_ms"] for d in ttp_rows
+                    if tier is None or d["tier"] == tier]
+            if vals:
+                label = tier or "all"
+                parts.append(f"{label} ~{max(1, round(_med_ms(vals)/1000))}s (n={len(vals)})")
+        print("  time-to-pass [PASS only, retries incl.]: " + " | ".join(parts))
+
+    # Failure-mode distribution (user-facing taxonomy; one deterministic tag
+    # per product-view failure). "lost context" is deliberately absent — it
+    # needs semantic judgement and stays with the opt-in judge.
+    fail_rows = [d for rows in row_details.values() for d in rows
+                 if d["verdict_prod"] is False]
+
+    def _fmt_modes(rows: list) -> str:
+        c = Counter(d["failure_mode"] or "other" for d in rows)
+        return ", ".join(f"{m} {c[m]}" for m in hard_signal.FAILURE_MODES if c.get(m))
+
+    if fail_rows:
+        print(f"  failure modes [product-fail n={len(fail_rows)}]: {_fmt_modes(fail_rows)}")
+        for tier in ("simple", "multi"):
+            t_rows = [d for d in fail_rows if d["tier"] == tier]
+            if t_rows:
+                print(f"    {tier}: {_fmt_modes(t_rows)}")
+
+
 def cmd_regression(args):
     """Fast prompt/agent regression gate on a curated case set.
 
@@ -878,6 +1007,15 @@ def cmd_regression(args):
     # otherwise hang the whole gate forever. run_case's `finally: srv.shutdown()`
     # kills the spawned server as the timeout exception unwinds, so no zombie.
     cap = max(30, int(args.case_timeout))
+    # Controls provenance — written once per run dir: everything held constant
+    # (or deliberately not) across models, so comparisons are auditable from
+    # the artifacts alone. No secrets (API key never lands here).
+    controls_path = run_dir / "controls.json"
+    if not controls_path.exists():
+        controls_path.write_text(json.dumps(
+            _controls_block(cap=cap, rounds=rounds, set_path=set_path,
+                            n_ids=len(case_ids)),
+            ensure_ascii=False, indent=2))
     old_handler = signal.signal(signal.SIGALRM, _on_alarm)
     timed_out: list[str] = []
     # key = "<case_id>[<lang>]": with --lang both every case runs its en AND
@@ -885,6 +1023,9 @@ def cmd_regression(args):
     # silently "en" and zh/en spread never entered model rankings).
     results: dict[str, list] = {}
     results_prod: dict[str, list] = {}
+    # Per-execution detail rows backing the tier/latency/failure-mode summary
+    # lines (kept in-memory; scores.jsonl carries the same fields per line).
+    row_details: dict[str, list] = {}
     try:
         with scores_path.open("w") as sf, cases_path.open("w") as cf:
             for cid in case_ids:
@@ -898,6 +1039,7 @@ def cmd_regression(args):
                     case = _load_case(case_path)
                     lang = case.get("lang") or "en"
                     key = f"{cid}[{lang}]"
+                    tier = hard_signal.tier_of(cid)
                     vds = []
                     vds_prod = []
                     for ridx in range(rounds):
@@ -925,14 +1067,24 @@ def cmd_regression(args):
                         latency_ms = sum(
                             (t.get("processing_time_ms") or 0)
                             for t in (rec.get("turn_records") or []))
+                        fmode = hard_signal.classify_failure(case, rec, hard)
                         sf.write(json.dumps({"case_id": cid, "lang": lang,
+                                             "category": case.get("category"),
+                                             "workflow": case.get("workflow"),
+                                             "scenario_type": case.get("scenario_type"),
+                                             "tier": tier,
                                              "hard": hard,
+                                             "failure_mode": fmode,
                                              "guards": rec.get("guards") or {},
                                              "latency_ms": latency_ms,
                                              "round": ridx}, ensure_ascii=False) + "\n")
                         sf.flush()
                         vds.append(hard_signal.pass_for_case(hard))
                         vds_prod.append(hard_signal.pass_for_case_product(hard))
+                        row_details.setdefault(key, []).append(
+                            {"tier": tier, "latency_ms": latency_ms,
+                             "verdict_prod": vds_prod[-1],
+                             "failure_mode": fmode})
                     results[key] = vds
                     results_prod[key] = vds_prod
                     tag = ("PASS" if all(v is True for v in vds)
@@ -972,6 +1124,7 @@ def cmd_regression(args):
     print(f"\n=== Regression gate: {len(results)} case-variants × {rounds} round(s) ===")
     print("  pass rate [product, timeouts=fail]:      " + "  |  ".join(rates_for(results_prod)))
     print("  pass rate [diagnostic, timeouts excl.]:  " + "  |  ".join(rates_for(results)))
+    _print_tier_summary(row_details)
 
     # Wall-clock per variant — the axis the score never shows. A 2B at 120 t/s
     # and a 35B at 50 t/s can tie on verdicts and feel nothing alike; ranking

@@ -427,6 +427,86 @@ def pass_for_case(hard: dict) -> bool | None:
     return all(results) if results else None
 
 
+# Multi-step planning tier — gate ids under these prefixes are the
+# planning-heavy cut (2026-10-29 official report's 40-execution "multi" bucket:
+# exactly 20 of the 69 gate ids × 2 langs). Single-command CRUD reads/writes
+# are the "simple" tier. Kept here (not in run_eval) so offline analyses of
+# archived scores reproduce the published split.
+MULTI_STEP_PREFIXES = (
+    "multi", "guided", "deep", "full-lifecycle", "agent", "extension", "api",
+    "haccp",
+)
+
+# Fixed display order for failure_mode (most runtime-severe → most specific).
+FAILURE_MODES = (
+    "timeout", "agent_error", "harness_error", "wrong_tool", "missing_tool",
+    "rejected_args", "wrong_args", "state_mismatch", "other",
+)
+
+
+def tier_of(case_id: str) -> str:
+    """"multi" | "simple" — the planning tier of a gate case id."""
+    return "multi" if (case_id or "").lower().startswith(MULTI_STEP_PREFIXES) else "simple"
+
+
+def classify_failure(case: dict, record: dict, hard: dict | None = None) -> str | None:
+    """Deterministic failure-mode tag for one FAILED execution.
+
+    Returns None when this execution says nothing rankable about the model
+    (passed, or no hard signal to fail against). One tag per failure — the
+    first matching bucket wins, so the buckets sum to the product-view fail
+    count. Buckets, in priority order:
+
+      timeout         per-case wall clock exceeded (wedged agent)
+      agent_error     turn died mid-flight (transport/stream error)
+      harness_error   seeding/config/schema failures — not about the model
+      wrong_tool      grabbed a clearly-wrong tool while a neomind op was
+                      expected (the tiny-model failure mode behind WRONG_TOOLS)
+      missing_tool    expected tool/command family never successfully called
+      rejected_args   a call in the expected family was REJECTED by the CLI
+                      (non-zero exit: malformed flags / invalid values)
+      wrong_args      right command family succeeded but authored
+                      argument-level substrings did not match
+      state_mismatch  commands matched, asserted end state did not hold
+      other           failed with none of the above signals
+
+    NOT covered on purpose: "lost context" needs semantic judgement of the
+    model's replies — that stays with the opt-in judge's context_retention
+    dimension (multi-turn cases failing state_mismatch are the closest hard
+    proxy). Pure function: recompute-free on archived runs when `hard` is
+    supplied (case is then unused).
+    """
+    if hard is None:
+        hard = compute(case, record)
+    status = record.get("status")
+    if hard.get("agent_failed"):
+        if status in ("timeout", "agent_timeout"):
+            return "timeout"
+        if status in ("seed_failure", "llm_config_error", "schema_error"):
+            return "harness_error"
+        return "agent_error"
+    if hard.get("unasserted"):
+        return None
+    if pass_for_case(hard) is True:
+        return None
+
+    if hard.get("wrong_tool"):
+        return "wrong_tool"
+    failed = hard.get("failed_cmds") or []
+    exp = hard.get("expected_commands") or []
+    if hard.get("cmd_ok") is False and any(
+        f == e or f.startswith(e + " ") for f in failed for e in exp
+    ):
+        return "rejected_args"
+    if hard.get("tool_ok") is False or hard.get("cmd_ok") is False:
+        return "missing_tool"
+    if hard.get("substrings_ok") is False:
+        return "wrong_args"
+    if hard.get("sq_all_pass") is False:
+        return "state_mismatch"
+    return "other"
+
+
 def pass_for_case_product(hard: dict) -> bool | None:
     """Product view of the same verdict: a wedged/timed-out agent FAILED.
 
