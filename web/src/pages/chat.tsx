@@ -1162,7 +1162,7 @@ export function ChatPage() {
             className={cn("touch-scroll flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] sm:px-6 sm:py-6", isDesktop && "pt-14")}
             onClick={(e) => {
               // If clicking outside interactive elements, dismiss keyboard
-              if ((e.target as HTMLElement).closest('button, a, input, textarea, [role="button"]')) return
+              if ((e.target as HTMLElement).closest('button, a, input, textarea, [role="button"], [data-chat-composer]')) return
               handleBackdropClick()
             }}
           >
@@ -1220,7 +1220,7 @@ export function ChatPage() {
               className={cn("touch-scroll h-full overflow-y-auto px-4 pt-6 pb-2 sm:pb-4 md:pt-20")}
               onClick={(e) => {
                 // If clicking outside interactive elements, dismiss keyboard
-                if ((e.target as HTMLElement).closest('button, a, input, textarea, [role="button"]')) return
+                if ((e.target as HTMLElement).closest('button, a, input, textarea, [role="button"], [data-chat-composer]')) return
                 handleBackdropClick()
               }}
             >
@@ -1254,7 +1254,7 @@ export function ChatPage() {
             className="flex-1 min-h-0 flex items-center justify-center px-4 py-4 sm:py-6"
             onClick={(e) => {
               // If clicking outside interactive elements, dismiss keyboard
-              if ((e.target as HTMLElement).closest('button, a, input, textarea, [role="button"]')) return
+              if ((e.target as HTMLElement).closest('button, a, input, textarea, [role="button"], [data-chat-composer]')) return
               handleBackdropClick()
             }}
           >

@@ -188,7 +188,7 @@ export function ChatComposer({
   // Single root: hosts apply `space-y-*` to their direct children, which
   // would otherwise insert a gap between the preview strip and the box.
   return (
-    <div>
+    <div data-chat-composer>
       {/* Image previews */}
       {hasAttachments && (
         <div className="flex flex-wrap gap-1.5 mb-1">
@@ -221,14 +221,14 @@ export function ChatComposer({
       <div className={cn(
         "rounded-lg border border-input bg-card shadow-sm transition-colors",
         isMobile && "rounded-[1.4rem] border-glass-border bg-card p-1.5 shadow-md",
-        isMobile && mobileExpanded ? "flex flex-col" : isMobile ? "flex items-end gap-0.5" : "",
+        isMobile && mobileExpanded ? "flex flex-col" : isMobile ? "flex items-center gap-0.5" : "",
       )}
-      onPointerDown={(event) => {
+      data-chat-composer-surface
+      onClick={(event) => {
         if (!isMobile || inputDisabled) return
         const target = event.target as HTMLElement
         if (target.closest('button, input, textarea, [role="button"]')) return
-        event.preventDefault()
-        activeTextareaRef.current?.focus()
+        activeTextareaRef.current?.focus({ preventScroll: true })
       }}
       onBlur={(event) => {
         if (!isMobile) return
