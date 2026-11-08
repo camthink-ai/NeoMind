@@ -221,7 +221,7 @@ export function ChatComposer({
       <div className={cn(
         "rounded-lg border border-input bg-card shadow-sm transition-colors",
         isMobile && "rounded-[1.4rem] border-glass-border bg-card p-1.5 shadow-md",
-        isMobile && mobileExpanded ? "flex flex-col" : isMobile ? "flex items-end gap-0.5" : "",
+        isMobile && mobileExpanded ? "flex flex-col" : isMobile ? "flex items-center gap-0.5" : "",
       )}
       data-chat-composer-surface
       onClick={(event) => {

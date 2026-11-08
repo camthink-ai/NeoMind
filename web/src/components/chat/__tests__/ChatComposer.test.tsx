@@ -76,6 +76,7 @@ describe('ChatComposer', () => {
     const textarea = screen.getByRole('textbox')
     const box = textarea.parentElement as HTMLElement
     expect(box.classList.contains('flex-col')).toBe(false)
+    expect(box.classList.contains('items-center')).toBe(true)
 
     fireEvent.focus(textarea)
     expect(box.classList.contains('flex-col')).toBe(true)
