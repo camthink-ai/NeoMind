@@ -401,7 +401,11 @@ for (const viewport of viewports) {
       await page.goto("http://127.0.0.1:5173/chat", { waitUntil: "domcontentloaded" })
       await waitForRouteReady(page, "/chat")
       const navCountOnChat = await page.locator(".mobile-primary-nav").count()
-      await page.locator(".chat-mobile-shell textarea").focus()
+      const chatInput = page.locator(".chat-mobile-shell textarea")
+      const composerSurface = page.locator("[data-chat-composer-surface]")
+      const composerBounds = await composerSurface.boundingBox()
+      await composerSurface.tap({ position: { x: (composerBounds?.width ?? 100) / 2, y: 3 } })
+      const chatInputFocused = await chatInput.evaluate((el) => document.activeElement === el)
       await page.evaluate(() => (document.activeElement instanceof HTMLElement) && document.activeElement.blur())
       await page.getByTestId("chat-workspace-button").click()
       await page.waitForURL(/\/system$/)
@@ -425,7 +429,7 @@ for (const viewport of viewports) {
       await waitForRouteReady(page, "/automation")
       await page.getByRole("button", { name: /返回|Back/i }).first().click()
       await page.waitForURL(/\/system$/)
-      navigationResults.push({ name: "primary-navigation", workspacePath, primaryNavItems, dashboardPath, systemPath, devicesPath, chatPath, backPath: new URL(page.url()).pathname, navCountOnChat })
+      navigationResults.push({ name: "primary-navigation", workspacePath, primaryNavItems, dashboardPath, systemPath, devicesPath, chatPath, backPath: new URL(page.url()).pathname, navCountOnChat, chatInputFocused })
     } catch (error) {
       navigationResults.push({ name: "primary-navigation", error: String(error) })
     }
@@ -576,7 +580,7 @@ const interactionFailures = interactionResults.filter((r) =>
 const navigationFailures = navigationResults.filter((r) =>
   r.error || r.workspacePath !== "/system" || r.primaryNavItems !== 2 || r.dashboardPath !== "/visual-dashboard" || r.systemPath !== "/system" ||
   r.devicesPath !== "/devices" || r.chatPath !== "/chat" ||
-  r.backPath !== "/system" || r.navCountOnChat !== 0
+  r.backPath !== "/system" || r.navCountOnChat !== 0 || !r.chatInputFocused
 )
 console.log(JSON.stringify({ checked: results.length, failures, interactionResults, interactionFailures, navigationResults, navigationFailures, reports: `${outDirPath}report.json` }, null, 2))
 if (failures.length || interactionFailures.length || navigationFailures.length) process.exitCode = 1
