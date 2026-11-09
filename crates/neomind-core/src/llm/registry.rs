@@ -1,8 +1,8 @@
 //! Curated model capability registry, embedded at compile time.
 //!
 //! The data file `data/model_registry.json` is sourced from LiteLLM's
-//! community-maintained `model_prices_and_context_window.json` (4504 keys
-//! as of 2026-10-08, 1792 marked `supports_vision`, 1785
+//! community-maintained `model_prices_and_context_window.json` (4871 keys
+//! as of 2026-11-08, 1847 marked `supports_vision`, 1921
 //! `supports_reasoning`; refresh via scripts/update-model-registry.sh).
 //!
 //! This module implements the same 3-tier fallback chain LiteLLM uses:
@@ -156,13 +156,25 @@ fn aliases_for(model: &str) -> Vec<&'static str> {
     // takes the first that exists, so upstream pruning of any single key
     // no longer breaks the family.
     if model.starts_with("claude-3-5-sonnet") {
-        return vec!["vertex_ai/claude-3-5-sonnet"];
+        return vec![
+            "vertex_ai/claude-3-5-sonnet",
+            "anthropic.claude-3-5-sonnet-20240620-v1:0",
+        ];
     }
     if model.starts_with("claude-3-5-haiku") {
-        return vec!["vertex_ai/claude-3-5-haiku"];
+        return vec![
+            "vertex_ai/claude-3-5-haiku",
+            "anthropic.claude-3-5-haiku-20241022-v1:0",
+        ];
     }
     if model.starts_with("claude-3-opus") {
-        return vec!["vertex_ai/claude-3-opus", "claude-3-opus-20240229"];
+        // 2026-11 snapshot pruned BOTH bare targets; the bedrock-style
+        // dated form survives and carries supports_vision=true.
+        return vec![
+            "vertex_ai/claude-3-opus",
+            "claude-3-opus-20240229",
+            "anthropic.claude-3-opus-20240229-v1:0",
+        ];
     }
     if model.starts_with("claude-3-sonnet") {
         return vec!["vertex_ai/claude-3-sonnet", "claude-3-sonnet-20240229"];
@@ -186,19 +198,23 @@ fn aliases_for(model: &str) -> Vec<&'static str> {
     if model == "gpt-4-turbo" || model == "gpt-4-turbo-latest" {
         return vec!["gpt-4-turbo-2024-04-09"];
     }
-    // Gemini aliases — the 2.0-generation bare keys were pruned upstream
-    // (2026-10 snapshot) and the surviving vertex_ai forms are deprecated
-    // entries whose supports_vision flag was stripped. The exp-image-
-    // generation entries carry the (true) flag. The 2.5 successors were
-    // REMOVED from the chains: the borrow also carried reasoning=TRUE
-    // across generations, and a 2.0-flash advertised as reasoning-capable
-    // is wrong in the other direction. Family-level borrows must carry
-    // ONLY flags that hold for the WHOLE family.
+    // Gemini aliases — the 2026-10 snapshot pruned the 2.0-generation bare
+    // keys, and the 2026-11 snapshot pruned the exp-image-generation forms
+    // too (the last entries that carried supports_vision=true for the
+    // family). What survives are deprecated vertex_ai entries with the
+    // flags stripped — usable for token limits, useless for capabilities;
+    // vision for the deprecated generations now comes from
+    // heuristic_vision_match. The 2.5 successors were REMOVED from the
+    // chains: the borrow also carried reasoning=TRUE across generations,
+    // and a 2.0-flash advertised as reasoning-capable is wrong in the
+    // other direction. Family-level borrows must carry ONLY flags that
+    // hold for the WHOLE family.
     if model.starts_with("gemini-2.0-flash") {
         return vec![
             "gemini-2.0-flash",
             "gemini-2.0-flash-exp-image-generation",
             "gemini-2.0-flash-lite", // present in older snapshots
+            "vertex_ai/gemini-2.0-flash",
         ];
     }
     if model.starts_with("gemini-2.0-pro") {
@@ -253,6 +269,17 @@ pub fn heuristic_vision_match(model: &str) -> bool {
         || m.starts_with("qwen3.7")
         || m.starts_with("gemma3")
     {
+        return true;
+    }
+    // Gemini 1.5 / 2.x: natively multimodal — every flash/pro/flash-lite
+    // variant accepts images. The 2026-11 LiteLLM snapshot deprecated the
+    // whole pre-2.5 lineage and stripped its supports_vision flags, so the
+    // registry returns "unknown" for these names and this family knowledge
+    // is the only source left. 2.5+/3 resolve through the registry with
+    // their flags intact and are deliberately NOT matched here.
+    // `contains` (not starts_with) so provider-prefixed forms
+    // ("vertex_ai/gemini-2.0-flash") resolve too.
+    if m.contains("gemini-1.5") || m.contains("gemini-2.0") {
         return true;
     }
     false
