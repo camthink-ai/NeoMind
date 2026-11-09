@@ -522,7 +522,7 @@ impl ShellTool {
                 None
             }
             Ok(Err(neomind_cli_ops::dispatch::DispatchError::Parse(msg))) => {
-                let mut stderr = format!("error: {}", msg);
+                let mut stderr = parse_error_stderr(&msg);
                 // A rejected flag needs the CLI usage, not an unrelated path
                 // quoting hint. Inspect the offending token and its adjacent
                 // argv fragment instead of quotes anywhere in the command.
@@ -1088,6 +1088,32 @@ fn tokenize_neomind_command(input: &str) -> std::result::Result<Vec<String>, Str
     Ok(tokens)
 }
 
+/// Build the stderr text for a clap parse failure.
+///
+/// clap's own `Display` already prefixes `error: ...`, so the wrapper adds
+/// its own prefix only when missing — the 2026-11-08 eval batch archived
+/// doubled `error: error: unexpected argument ...` stderr from the
+/// unconditional prefix. For the `rule create` fast-path/JSON flag conflict,
+/// append an either-or hint (the clap contract itself is unchanged).
+fn parse_error_stderr(parse_error: &str) -> String {
+    let mut stderr = if parse_error.starts_with("error:") {
+        parse_error.to_string()
+    } else {
+        format!("error: {parse_error}")
+    };
+    if parse_error.contains("cannot be used with")
+        && parse_error.contains("--name")
+        && parse_error.contains("--body")
+    {
+        stderr.push_str(
+            "\nHint: choose ONE form — fast path: --name <N> --trigger-device <D> \
+             --metric <M> --operator <OP> --threshold <V>; or full JSON rule: \
+             --body '<rule JSON>'. `neomind rule create --help` shows both.",
+        );
+    }
+    stderr
+}
+
 /// Conservatively recognize the split-path parse failure without guessing at
 /// arbitrary extra words. Tokenization preserves quoted/escaped spaces inside
 /// one argument, so only adjacent, whitespace-free path fragments qualify.
@@ -1571,6 +1597,32 @@ fn fabricated_tool_output(command: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_error_stderr_carries_exactly_one_error_prefix() {
+        // clap's Display already prefixes "error:" — the wrapper must not
+        // double it (2026-11-08 batch archived "error: error: ...").
+        let s = parse_error_stderr("error: unexpected argument '--x' found");
+        assert!(s.starts_with("error: "));
+        assert_eq!(s.matches("error:").count(), 1);
+        // Defensive: a message without clap's prefix still gets exactly one.
+        let s2 = parse_error_stderr("unexpected argument");
+        assert!(s2.starts_with("error: unexpected"));
+        assert_eq!(s2.matches("error:").count(), 1);
+    }
+
+    #[test]
+    fn parse_error_stderr_hints_rule_create_name_body_conflict() {
+        let s = parse_error_stderr(
+            "error: the argument '--name <NAME>' cannot be used with '--body <BODY>'",
+        );
+        assert!(s.contains("choose ONE form"));
+        assert!(s.contains("--trigger-device"));
+        // Conflicts NOT involving both --name and --body get no hint.
+        let other =
+            parse_error_stderr("error: the argument '--force' cannot be used with '--json'");
+        assert!(!other.contains("choose ONE form"));
+    }
 
     #[test]
     fn truncation_pipeline_splits_head_decorations() {
