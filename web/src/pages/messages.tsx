@@ -10,6 +10,7 @@ import { MessageSquare, Network, Settings, Filter as FilterIcon, Loader2 } from 
 import { api } from '@/lib/api'
 import { useStore } from '@/store'
 import { useDataVersion } from '@/hooks/useDataVersion'
+import { useLiveMessageRefresh } from '@/hooks/useLiveMessageRefresh'
 import { useToast } from '@/hooks/use-toast'
 import { Flag } from 'lucide-react'
 import { confirm } from '@/hooks/use-confirm'
@@ -538,6 +539,12 @@ export default function MessagesPage() {
     }
     // 'im' tab manages its own data lifecycle via ImSessionsTab
   }, [activeTab, fetchMessages, fetchChannels, dataVersion])
+
+  // Live updates: the backend publishes MessageCreated on the event bus and
+  // the WS bridge forwards it, so new messages appear without Refresh. The
+  // coalesced refetch reuses fetchMessages, so the user's filters, page and
+  // scroll state survive the refresh.
+  useLiveMessageRefresh(activeTab === 'messages', fetchMessages)
 
   // Message actions - using messages API endpoints
   const handleAcknowledge = async (id: string) => {

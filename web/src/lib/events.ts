@@ -17,6 +17,7 @@ export type EventType =
   | 'RuleExecuted'
   | 'AlertCreated'
   | 'AlertAcknowledged'
+  | 'MessageCreated'
   | 'AgentExecutionStarted'
   | 'AgentThinking'
   | 'AgentDecision'
