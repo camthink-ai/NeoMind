@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.8] - 2026-11-08 — retuned session snapshots, live messages, refreshed model registry
+
+### Fixed
+- **Editing a non-active backend retunes the sessions bound to it**: a session's request defaults (temperature/top_p/top_k/max_tokens, thinking enable/effort) are snapshotted when its backend is bound, and the backend PATCH refreshed those snapshots only when the edited backend was the globally ACTIVE one — a mid-session thinking-effort or sampling edit on any other backend left every bound session stale until a restart or manual re-activation. Snapshots now record their source backend id, and a PATCH refreshes exactly the sessions holding that backend's snapshot; sessions bound to other backends keep their own settings (isolation by design).
+- **Mobile composer tap-to-focus**: tapping the chat composer's surface now focuses the textarea without scrolling it out of view, and taps inside the composer no longer fall through to the page's tap-outside-to-close handler; the mobile audit walks a navigation path and asserts the chat input ends up focused. The collapsed composer's action row aligns with its expanded counterpart.
+- **Extensions page drops the status filter pills** ("All Statuses 4 / Active 3 / Stopped 1"): the pills only echoed the totals next to cards that already show their own state badges, and filtering by status had no real use. Search (page toolbar) is unchanged; while a search is active the row shows just the clear control and an "x / y" filtered count. Orphaned locale keys (`allStatuses`, `categories.active/error/stopped`) removed from both locales; the i18n frozen baseline recalibrated 250→249.
+- **Dropped by decision — Spark-X2.6 thinking detection**: teaching `detect_thinking` the sparkx2.6 family (so the primary builtin model reports `supports_thinking=true` and gets thinking-model prompt budgeting) was validated on the frozen 138-case set as a full two-arm paired regression (Mac, Spark-1.7B, identical model/runtime/sampling/evaluator, 276 trials). MEASURED regression: 70.3% → 64.5% (-5.80pp, 11 gained / 19 lost, exact McNemar p=0.20 — not statistically confirmed, but a consistent one-directional lean concentrated in English and onboarding/agent cases). The mechanism is the budget table: thinking classification trims the prompt share from 70% to 65%, and the 1.7B model measurably needs the history. The change was reverted entire before release; the capability-reporting half (UI truthfulness without the budget change) can return as its own round if it ever matters.
+
+### Added
+- **Messages arrive live on the messages page**: the backend already publishes `MessageCreated` on the event bus and the WS bridge forwards every event type — the page now subscribes while its messages tab is open and refetches the current page when one arrives, coalesced to one fetch per 1.5s burst so a rule storm cannot become a fetch storm. Manual Refresh stays as the fallback; the user's filters, page and scroll state survive the refresh, and a pending live refetch is cancelled when the tab is left.
+
+### Changed
+- **Model capability registry refreshed to LiteLLM's 2026-11-08 snapshot** (4504 → 4871 keys; 925 added and 558 pruned upstream, 33 capability-flag corrections on existing keys — reasoning flags among them). The Claude-3 alias chains gained fallback candidates because this cycle pruned the bare dated Claude-3 keys; `claude-3-opus` / `claude-3-5-sonnet` / `claude-3-5-haiku` lookups still resolve, now via the surviving bedrock-style entries.
+- **Eval harness failure taxonomy** (dev tooling): `classify_failure` / `tier_of` label each failed trial from its own execution record with a pinned priority order (wrong_tool beats missing_tool beats rejected_args beats state_mismatch beats timeout), wired into `run_eval.py` and covered by a standalone test suite — scores alone do not explain failures; the taxonomy makes the dominant failure types enumerable per iteration round.
+
+---
+
 ## [1.2.7] - 2026-11-07 — the mobile experience redesign
 
 The web app gets a dedicated mobile interface. Phones now navigate through a bottom capsule (chat, devices, agents, dashboard, system), browse flat lists sized for touch, open full-screen dialogs with standardized tab strips, and use a Chat page rebuilt as an immersive surface — the composer owns the bottom edge, the navigation capsule steps aside, and section navigation moves into the header's menu drawer. This release is web-only; backend behavior is unchanged.

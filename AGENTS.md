@@ -196,3 +196,96 @@ history/compaction and scheduled-agent memory are unchanged. Test artifacts:
 + clippy verified, and live-use tool gaps fixed (memory rewrite action, 200-char
 list previews, file tools barred from <data_dir>/memory). The unrelated
 model-override hunk in capability_providers.rs stays uncommitted. No push.
+(Note 2026-11-08: that hunk landed same evening as baf22a02 and shipped in 1.2.7.)
+
+## 1.2.8 round (2026-11-08, user-approved checklist)
+
+Scope approved by the user ("做吧" on the reviewed list): mobile commits already
+on main (composer tap-to-focus, collapsed-actions alignment), eval failure
+taxonomy (committed ee55fd2f), detect_thinking sparkx2.6 family fix, effort-PATCH
+stale-snapshot fix (snapshots record backend_id; PATCH retunes exactly the
+sessions bound to the edited non-active backend), LiteLLM registry refresh to
+2026-11-08 snapshot (4871 keys; Claude-3 alias chains gained bedrock-style
+fallbacks after upstream pruned the bare dated keys; gemini-1.5/2.0 vision moved
+to heuristic_vision_match after upstream deprecated the lineage and stripped
+flags), and messages-page live update (frontend-only: MessageCreated over the
+existing events WS, 1.5s-coalesced refetch; no backend change needed — the WS
+bridge already forwards all event types). Version bumped 1.2.8 across the five
+files + both locks (--locked verified); CHANGELOG [1.2.8] written and
+extract_changelog both modes verified. All local gates green: eslint errors 0 /
+warnings 470 = baseline, tsc, vitest 351/351, fmt, clippy -D warnings,
+cargo test --workspace 94 groups 0 failed (incl. new B1/B2/live-refresh tests),
+skill-cli drift, llama pin sync b12024. The 1.2.8 release commit is NOT made;
+no push/tag.
+
+User decisions: B3 model-override hunk — moot (already committed baf22a02).
+D1/D2 — no action (probes stay experimental; web_search keeps the
+English-keyword mitigation). D3 deferred to 1.2.9 by design: leak residuals
+(plain-prose marker swallow, thinking-on stray-closer stripped-only, >2048
+prefixes), OpenAI-compatible backend think filter, model/server content
+misclassification — one mechanism per round per the iteration protocol.
+
+T4 138 gate (approved in the same checklist): root
+/tmp/neomind-t4-128gate-20261108-a prepared and source shipped (tarball sha
+4e9e4a8a…, Mac HEAD ee55fd2f + 1.2.8 worktree); binary built and prelaunch
+verified (sha 7aba80e6…95284; model/runtime shas match the frozen asserts).
+An active multi-arm study occupies T4 (batch-controller PID 2835094, root
+/tmp/neomind-t4-16refresh-20261106-a, ~930 trials done at discovery) — nothing
+of it was touched. At the user's question the T4 auto-launcher was DISARMED;
+the user then redirected validation to the Mac ("就用mac"), and later cut the
+full run for time ("太久了吧 验证"). T4 gate root stays prepared but
+UNLAUNCHED — launching it later still requires an explicit user go.
+
+## 1.2.8 Mac paired screen (2026-11-08 night, user-directed)
+
+Mac-local two-arm paired screen replacing the T4 gate: /tmp/neomind-128-mac/
+(acceptance.json has the full pre-registration + result). Arms = ee55fd2f
+(v1.2.7, bin 12a4a9d6…) vs 1.2.8 worktree (bin 16799a34…), frozen 138 case
+set + digests from the T4 552 plan (all verified locally), T4 552 SNAP
+evaluator pulled byte-identical (453 source_sha256 asserts pass), same Spark
+model file (sha 7abd9859… = T4's), b12024 Mac runtime, .3/.75/20,
+thinking=true, 600s cap, llama-server restart per cohort, arm order
+alternates. Full 276-trial run launched first, CUT at 15 trials by user
+("太久了吧") and rescoped to a 32-trial screen (first 16 shuffled cases × 2
+arms, seed 20261103; the 15 finished trials reused verbatim). Screen result:
+baseline 12/16 vs candidate 11/16 (0 gained / 1 lost; no signal at n=16).
+
+## 1.2.8 Mac FULL paired regression (2026-11-08 night → 2026-11-09 morning)
+
+User then ordered the full run overnight ("今晚mac跑全量看看"). Same frozen
+design, all 276 trials (the 32 screen trials reused; ~9.3 h wall; caffeinate
+pinned to the controller; production desktop app untouched; controller and
+eval llama-server exited clean). RESULT: baseline 97/138 (70.3%) vs
+candidate 89/138 (64.5%), paired delta -5.80pp; 11 gained / 19 lost
+(both-pass 78, both-fail 30); exact McNemar two-sided p = 0.2005 — a
+MEASURED regression, NOT statistically confirmed. The lean is English-heavy
+(en 51→44; zh 46→45) and clusters in device-onboarding and agent-family
+cases; agent_error 6→10; 0 timeouts both arms. Wire: sampling rules
+identical across arms; candidate max prompt_chars 61.6K vs baseline 72.0K —
+the detect_thinking sparkx2.6 65%-vs-70% prompt-budget mechanism is live and
+is the eval-visible delta (B2/B4/C1 off-path). Per the iteration protocol
+this is evidence against keeping B1's budget mechanism as-is: options
+recorded for the user — revert B1 for 1.2.8 (ship B2/B4/C1+mobile), or split
+B1 (capability truth yes, budget-ratio change no) as its own next round.
+Full verdict in /tmp/neomind-128-mac/acceptance.json (full_run_result). No
+commit/push/publish; 1.2.8 release decision pending this result.
+
+USER DECISION (2026-11-09 morning, "回退 B1 整体"): B1 was reverted ENTIRE
+from the 1.2.8 worktree (detect_thinking sparkx2.6 heuristic + its tests);
+CHANGELOG documents the withdrawal with the measured evidence ("Dropped by
+decision"). Final 1.2.8 changeset = B2 + B4 + C1 + mobile commits + eval
+taxonomy (committed ee55fd2f) + version bump. Rust gates re-run green after
+the revert. sparkx2.6 stays classified non-thinking by the name heuristic;
+if the capability-truth half ever matters, it returns as its own round
+decoupled from the prompt-budget table.
+
+Post-revert spot check (user-requested, /tmp/neomind-128-mac/run-lost/):
+the 19 lost cases re-run on the post-revert binary (sha 6dacc3ff…) — 14/19
+recovered. The 5 unrecovered are heavy onboarding cases (two at the 600s
+cap); a baseline-binary control re-run passed only 1/3 of them before the
+user cut it ("没必要浪费时间了") — case-level pass/fail flakiness, not a
+residual defect. Verification accepted by user; artifacts under
+run-lost/ + run-lost-base/. Also folded into 1.2.8 (user request): the
+extensions page status filter pills removed (search kept; orphaned locale
+keys cleaned, i18n frozen baseline 250→249, lint ratchet still 470, vitest
+351/351, tsc 0). All Mac eval controllers/llama-servers exited clean.
