@@ -814,6 +814,39 @@ impl SessionManager {
         Ok(())
     }
 
+    /// Refresh the request-defaults snapshot of sessions bound to `instance`.
+    ///
+    /// Snapshots are captured at bind time (activation, session creation, or
+    /// a per-call `backend_id`), so editing a backend must retune every
+    /// session still holding its snapshot — otherwise a mid-session
+    /// thinking-effort or sampling PATCH applies only after a restart or
+    /// manual re-activation. The backend PATCH handler historically retuned
+    /// only when the edited backend was the globally ACTIVE one, leaving
+    /// sessions pinned to a non-active backend stale. Matching is by the
+    /// snapshot's recorded backend id; sessions bound elsewhere keep their
+    /// own settings (isolation by design). Returns how many sessions were
+    /// retuned, for the caller's log line.
+    pub async fn retune_sessions_bound_to_instance(&self, instance: &LlmBackendInstance) -> usize {
+        let defaults = BackendRequestDefaults::from(instance);
+        let agents: Vec<_> = self.sessions.read().await.values().cloned().collect();
+        let mut retuned = 0usize;
+        for agent in agents {
+            if agent
+                .llm_interface()
+                .bound_backend_id()
+                .await
+                .is_some_and(|bound| bound == instance.id)
+            {
+                agent
+                    .llm_interface()
+                    .set_backend_defaults(defaults.clone())
+                    .await;
+                retuned += 1;
+            }
+        }
+        retuned
+    }
+
     /// Get the default LLM backend if configured.
     pub async fn get_llm_backend(&self) -> Result<Option<LlmBackend>> {
         Ok(self

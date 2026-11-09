@@ -727,6 +727,24 @@ pub async fn update_backend_handler(
             .set_llm_backend_instance(&instance)
             .await
             .map_err(|e| ErrorResponse::internal(e.to_string()))?;
+    } else {
+        // Sessions pinned to this (non-active) backend still hold the
+        // snapshot captured at bind time; refresh those so a mid-session
+        // effort/toggle/sampling edit applies without a restart or manual
+        // re-activation. Sessions bound to other backends are untouched
+        // (isolation by design).
+        let retuned = state
+            .agents
+            .session_manager
+            .retune_sessions_bound_to_instance(&instance)
+            .await;
+        if retuned > 0 {
+            tracing::info!(
+                backend_id = %id,
+                sessions = retuned,
+                "Refreshed request defaults for sessions bound to edited backend"
+            );
+        }
     }
 
     ok(json!({

@@ -163,3 +163,85 @@ async fn selected_backend_defaults_reach_http_and_sessions_remain_isolated() {
         .unwrap();
     assert_sampling(&mut requests, 0.4, 0.95).await;
 }
+
+/// Editing a NON-active backend retunes the sessions bound to it (their
+/// request-defaults snapshot refreshes) while sessions bound to the active
+/// backend keep theirs — the backend PATCH path calls
+/// `retune_sessions_bound_to_instance` for exactly this case; previously a
+/// mid-session effort/sampling edit on a non-active backend left every
+/// bound session stale until restart or manual re-activation.
+#[serial_test::serial]
+#[tokio::test]
+async fn editing_non_active_backend_retunes_only_bound_sessions() {
+    let (endpoint, mut requests) = capture_endpoint().await;
+    let dir = tempfile::tempdir().unwrap();
+    let store = neomind_storage::LlmBackendStore::open(dir.path().join("backends.redb")).unwrap();
+    let backends = Arc::new(LlmBackendInstanceManager::new(store));
+    for (id, temperature, top_p) in [("first", 1.0, 0.95), ("pinned", 0.2, 0.6)] {
+        let mut instance = LlmBackendInstance::new(
+            id.into(),
+            id.into(),
+            neomind_storage::LlmBackendType::LlamaCpp,
+        );
+        instance.endpoint = Some(endpoint.clone());
+        instance.model = "test".into();
+        instance.temperature = temperature;
+        instance.top_p = top_p;
+        instance.top_k = 40;
+        backends.upsert_instance(instance).await.unwrap();
+    }
+    backends.set_active("first").await.unwrap();
+    crate::llm_backends::set_instance_manager(backends.clone());
+    let sessions = SessionManager::with_path(dir.path().join("sessions.redb")).unwrap();
+    sessions
+        .configure_llm_from_instance_manager()
+        .await
+        .unwrap();
+
+    // One session follows the active backend; one is explicitly pinned to
+    // the non-active "pinned" backend (the per-call backend_id path).
+    let active_session = sessions.create_session().await.unwrap();
+    let pinned_session = sessions.create_session().await.unwrap();
+    sessions
+        .configure_agent_by_backend_id(&pinned_session, "pinned")
+        .await
+        .unwrap();
+    sessions
+        .get_session(&pinned_session)
+        .await
+        .unwrap()
+        .llm_interface()
+        .chat("before the edit")
+        .await
+        .unwrap();
+    assert_sampling(&mut requests, 0.2, 0.6).await;
+
+    // PATCH-equivalent: edit the non-active backend's sampling settings and
+    // upsert. The refresh must reach ONLY the pinned session's snapshot.
+    let mut edited = backends.get_instance("pinned").unwrap();
+    edited.temperature = 0.9;
+    edited.top_p = 0.8;
+    edited.top_k = 40;
+    backends.upsert_instance(edited.clone()).await.unwrap();
+    let retuned = sessions.retune_sessions_bound_to_instance(&edited).await;
+    assert_eq!(retuned, 1, "only the pinned session holds that snapshot");
+
+    sessions
+        .get_session(&pinned_session)
+        .await
+        .unwrap()
+        .llm_interface()
+        .chat("after the edit")
+        .await
+        .unwrap();
+    assert_sampling(&mut requests, 0.9, 0.8).await;
+    sessions
+        .get_session(&active_session)
+        .await
+        .unwrap()
+        .llm_interface()
+        .chat("active session untouched")
+        .await
+        .unwrap();
+    assert_sampling(&mut requests, 1.0, 0.95).await;
+}

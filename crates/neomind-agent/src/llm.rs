@@ -258,6 +258,10 @@ struct TransientSkillContext {
 /// Credential-free request defaults captured from the backend selected for a session.
 #[derive(Clone)]
 pub(crate) struct BackendRequestDefaults {
+    /// Id of the instance this snapshot was captured from. A later edit of
+    /// that backend uses it to refresh exactly the sessions still holding
+    /// this snapshot (sessions bound elsewhere keep their own settings).
+    backend_id: String,
     params: (f32, f32, usize, usize),
     thinking: (Option<bool>, Option<neomind_core::ThinkingEffort>),
     thinking_is_integral: bool,
@@ -266,6 +270,7 @@ pub(crate) struct BackendRequestDefaults {
 impl From<&neomind_storage::LlmBackendInstance> for BackendRequestDefaults {
     fn from(instance: &neomind_storage::LlmBackendInstance) -> Self {
         Self {
+            backend_id: instance.id.clone(),
             params: (
                 instance.temperature,
                 instance.top_p,
@@ -745,6 +750,16 @@ impl LlmInterface {
 
     pub(crate) async fn set_backend_defaults(&self, defaults: BackendRequestDefaults) {
         *self.backend_defaults.write().await = Some(defaults);
+    }
+
+    /// Backend id this session's request-defaults snapshot was captured
+    /// from, if any (None = direct runtime / unbound).
+    pub(crate) async fn bound_backend_id(&self) -> Option<String> {
+        self.backend_defaults
+            .read()
+            .await
+            .as_ref()
+            .map(|d| d.backend_id.clone())
     }
 
     pub(crate) async fn set_temperature_override(&self, temperature: f32) {
