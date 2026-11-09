@@ -3,11 +3,57 @@
 
 import type { ToolCall } from "@/types"
 
-/** A failed tool is either flagged by the live event or carries an error result. */
+/** Parse a tool result into an object regardless of transport shape (live
+ * events deliver objects; some persisted/eval records store JSON strings). */
+function asResultObject(result: unknown): Record<string, unknown> | null {
+  if (!result) return null
+  if (typeof result === "string") {
+    const s = result.trim()
+    if (!s.startsWith("{")) return null
+    try {
+      const parsed: unknown = JSON.parse(s)
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : null
+    } catch {
+      return null
+    }
+  }
+  return typeof result === "object" && !Array.isArray(result)
+    ? (result as Record<string, unknown>)
+    : null
+}
+
+/** A failed tool is flagged by the live event, carries a shell/CLI failure
+ * envelope, or carries a non-empty domain error envelope. The shell branch
+ * mirrors the backend's `effective_success` (stream_core judges retries and
+ * progress with it — the UI must not disagree): exit_code != 0, timed_out,
+ * or pipeline-masked "command not found" are failures even when the
+ * transport-level `success` flag is true (2026-11-10: exit_code=2 commands
+ * were rendered as successful). Persisted history has no `success` flag at
+ * all, so the envelope checks are the only signal after a reload. */
 export function isToolError(toolCall: ToolCall): boolean {
   if (toolCall.success === false) return true
-  const result = toolCall.result
-  return !!result && typeof result === "object" && "error" in (result as Record<string, unknown>)
+  const r = asResultObject(toolCall.result)
+  if (!r) return false
+  const isShell = toolCall.name === "shell" || "exit_code" in r || "timed_out" in r
+  if (isShell) {
+    if (r.timed_out === true) return true
+    if (typeof r.exit_code === "number" && r.exit_code !== 0) return true
+    if (["stdout", "stderr"].some(
+      (k) => typeof r[k] === "string" && (r[k] as string).toLowerCase().includes("command not found"),
+    )) {
+      return true
+    }
+    // No shell-envelope failure — FALL THROUGH to the error-envelope check:
+    // legacy records carry {"error": "Tool execution failed"} with no exit
+    // code, and must not render as successful (2026-11-10 review regression).
+  }
+  // Domain tools (and shell fall-through): a non-empty error envelope is a
+  // failure; payloads that merely CONTAIN an `error` field (e.g. {"error":
+  // null} business data) are not.
+  const err: unknown = r.error
+  return err != null && err !== ""
 }
 
 /** "device list --yes" → "device list" */
