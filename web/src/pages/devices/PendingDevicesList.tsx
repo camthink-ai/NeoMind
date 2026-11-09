@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { Badge } from "@/components/ui/badge"
 import { ResponsiveTable, EmptyState } from "@/components/shared"
-import { Cpu, Activity, Check, ChevronDown, ChevronRight, Copy, Loader2, Search as SearchIcon, Hourglass, CheckCircle2, XCircle, AlertTriangle } from "lucide-react"
+import { Cpu, Check, CheckCircle2, ChevronDown, ChevronRight, Copy } from "lucide-react"
 import { UnifiedFormDialog } from "@/components/dialog/UnifiedFormDialog"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
@@ -481,28 +481,29 @@ export function PendingDevicesList({
     return status.toLowerCase().replace(/[^a-z]/g, '_')
   }
 
-  // Get status badge — "waiting for the user" is a calm, informational
-  // state, not a warning: orange read as an error cue. Blue keeps the
-  // reserved warning color for states that actually need attention
-  // (offline devices, failures).
+  // Get status badge — same visual language as the shared StatusBadge
+  // (text-only tinted pill): the tint alone encodes the state, per-status
+  // icons only duplicated it at a size that dwarfed the label.
+  // "Waiting for the user" is a calm, informational state, not a warning:
+  // blue keeps the reserved warning color for states that actually need
+  // attention (offline devices, failures).
   const getStatusBadge = (status: string) => {
-    const statusMap: Record<string, { color: string; label: string; icon: React.ReactNode }> = {
-      collecting: { color: "bg-info-light text-info", label: t('devices:pending.status.collecting'), icon: <Loader2 className="h-4 w-4" /> },
-      analyzing: { color: "bg-accent-purple-light text-accent-purple", label: t('devices:pending.status.analyzing'), icon: <SearchIcon className="h-4 w-4" /> },
-      waiting_processing: { color: "bg-info-light text-info", label: t('devices:pending.status.waitingProcessing'), icon: <Hourglass className="h-4 w-4" /> },
-      registered: { color: "bg-success-light text-success", label: t('devices:pending.status.registered'), icon: <CheckCircle2 className="h-4 w-4" /> },
-      rejected: { color: "bg-error-light text-error", label: t('devices:pending.status.rejected'), icon: <XCircle className="h-4 w-4" /> },
-      failed: { color: "bg-error-light text-error", label: t('devices:pending.status.failed'), icon: <AlertTriangle className="h-4 w-4" /> },
+    const statusMap: Record<string, { color: string; label: string }> = {
+      collecting: { color: "bg-info-light text-info", label: t('devices:pending.status.collecting') },
+      analyzing: { color: "bg-accent-purple-light text-accent-purple", label: t('devices:pending.status.analyzing') },
+      waiting_processing: { color: "bg-info-light text-info", label: t('devices:pending.status.waitingProcessing') },
+      registered: { color: "bg-success-light text-success", label: t('devices:pending.status.registered') },
+      rejected: { color: "bg-error-light text-error", label: t('devices:pending.status.rejected') },
+      failed: { color: "bg-error-light text-error", label: t('devices:pending.status.failed') },
     }
 
     const key = normalizeStatus(status)
-    const info = statusMap[key] || { color: "bg-muted text-foreground", label: status, icon: <Activity className="h-4 w-4" /> }
+    const info = statusMap[key] || { color: "bg-muted text-muted-foreground", label: status }
 
     return (
-      <Badge className={cn("font-normal gap-1", info.color)}>
-        {info.icon}
+      <span className={cn("inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium", info.color)}>
         {info.label}
-      </Badge>
+      </span>
     )
   }
 
