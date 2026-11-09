@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.9] - 2026-11-10 — honest tool-call status, aligned extension cards, cleaner CLI errors
+
+### Fixed
+- **Chat shows failed tool calls as failed**: `isToolError` only trusted the transport-level `success` flag or a top-level `error` key, so a shell command rejected by the CLI (exit_code 2/1) or timed out (`timed_out`) rendered as successful while the backend's `effective_success` counted it as a failure — retries, loop guards and the UI disagreed. The check now mirrors `effective_success` for shell results (exit code, timeout flag, pipeline-masked "command not found"), accepts object and JSON-string result shapes, falls through to the error envelope when the shell envelope is clean (legacy `{"error": ...}` records), and does not misflag business payloads that merely contain a null/absent `error` field. Reloaded history — which carries no `success` flag at all — now detects failures through the result envelope alone.
+- **Extension cards align in the grid**: description and error blocks reserve a fixed two-line height so every card is equally tall whether the text is absent, one line, or clamped; responsive visibility moved to the wrapper because `line-clamp`'s `display:-webkit-box` loses to display utilities on the same element.
+- **Shell parse errors carry a single `error:` prefix** (was the doubled `error: error: unexpected argument …` seen in eval traces): clap's own rendering already prefixes `error:`, so the wrapper adds one only when missing.
+- **`neomind rule create` flag conflicts point at the two valid forms**: a `--name` + `--body` rejection now appends a choose-one hint (fast-path flags vs full JSON body) instead of leaving the bare clap conflict text. The argument contract itself is unchanged.
+
+### Test
+- **Eval harness timeout integrity** (dev tooling): the per-case SIGALRM `_CaseTimeout` was swallowed by the turn-level handler and mislabeled `agent_error` — every cap timeout in the 2026-11-08 batch (66/66) was actually a timeout. It now propagates from turns and all prep phases, salvage runs on a daemon thread with a hard total deadline (timely return AND timely process exit, both tested), scores rows carry full wall-clock (`elapsed_ms`) and status, failed commands are bucketed by real exit reason (unexpected-argument / mutually-exclusive / missing-required / business-or-runtime), and `relabel_timeouts.py` re-labels archived runs from their raw records with explicit result-status conflict reporting.
+
+---
+
 ## [1.2.8] - 2026-11-08 — retuned session snapshots, live messages, refreshed model registry
 
 ### Fixed
