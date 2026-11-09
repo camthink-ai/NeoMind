@@ -183,18 +183,30 @@ export function ExtensionCard({
           </DropdownMenu>
         </div>
 
-        {/* Description */}
-        {extension.description && (
-          <p className="mb-3 hidden text-xs leading-relaxed text-muted-foreground line-clamp-2 md:block">
-            {extension.description}
-          </p>
-        )}
+        {/* Description — the wrapper always reserves the two-line height
+            (min-h-10 ≈ 2 lines of text-xs/leading-relaxed) so every card in
+            the grid is equally tall whether the text is absent, one line, or
+            clamped at two; same pattern as BuiltinModelWizard's model cards.
+            The clamp needs display:-webkit-box, which a display utility on
+            the same element would override (responsive variants sort later
+            in the compiled CSS), so visibility lives on this wrapper and the
+            inner p keeps the same clamp classes as AgentCard's description. */}
+        <div className="mb-3 hidden min-h-10 md:block">
+          {extension.description && (
+            <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+              {extension.description}
+            </p>
+          )}
+        </div>
 
-        {/* Error summary — the card shows WHY it's red without opening details */}
+        {/* Error summary — the card shows WHY it's red without opening
+            details; min-h-10 keeps error cards uniform among themselves. */}
         {hasError && extension.last_error && (
-          <p className="mb-3 hidden break-words text-xs leading-relaxed text-error line-clamp-2 md:block">
-            {extension.last_error}
-          </p>
+          <div className="mb-3 hidden min-h-10 md:block">
+            <p className="line-clamp-2 break-words text-xs leading-relaxed text-error">
+              {extension.last_error}
+            </p>
+          </div>
         )}
 
         {/* Footer: capabilities + (optional) AI-tools-off badge + author.
