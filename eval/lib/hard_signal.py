@@ -395,6 +395,7 @@ def compute(case: dict, record: dict) -> dict:
         "tool_ok": tool_ok,
         "substrings_ok": sub_ok,
         "failed_cmds": failed_cmds,
+        "failed_cmd_reasons": failure_reasons(record),
         "wrong_tool": wrong_tool,
         "wrong_tools_used": wrong_used,
         "distractor_tools": distractor_used,
@@ -505,6 +506,57 @@ def classify_failure(case: dict, record: dict, hard: dict | None = None) -> str 
     if hard.get("sq_all_pass") is False:
         return "state_mismatch"
     return "other"
+
+
+def _stderr_of(tc: dict) -> str:
+    """Best-effort stderr/stdout text of a shell tool call (dict or JSON str)."""
+    result = tc.get("result")
+    if isinstance(result, dict):
+        return str(result.get("stderr") or result.get("stdout") or "")
+    if isinstance(result, str):
+        s = result.strip()
+        if s.startswith("{"):
+            try:
+                d = json.loads(s)
+                return str(d.get("stderr") or d.get("stdout") or "")
+            except Exception:
+                return ""
+        return s
+    return ""
+
+
+def failure_reasons(record: dict) -> dict:
+    """Classify WHY each rejected shell call failed, from its stderr.
+
+    Complements ``failed_cmds`` (the WHAT): the failure-mode taxonomy stops at
+    ``rejected_args``, which mixes flag-parse errors with mutual-exclusion
+    enforcement, missing resources and business validation (2026-11-09 review:
+    these labels triage trajectories; alone they do not decide product fixes).
+    Buckets: ``unexpected_argument`` | ``mutually_exclusive`` |
+    ``missing_required`` | ``business_or_runtime`` | ``no_stderr``.
+    Pure — retroactive on archived cases.jsonl.
+    """
+    reasons: dict[str, int] = {}
+    for turn in record.get("turn_records") or []:
+        for tc in (turn.get("tool_calls") or []):
+            if (tc.get("name") or "") != "shell":
+                continue
+            if _shell_exit_code(tc) in (None, 0):
+                continue
+            err = _stderr_of(tc)
+            e = err.lower()
+            if "unexpected argument" in e:
+                r = "unexpected_argument"
+            elif "cannot be used with" in e:
+                r = "mutually_exclusive"
+            elif "the following required arguments" in e or "requires a value" in e:
+                r = "missing_required"
+            elif not err.strip():
+                r = "no_stderr"
+            else:
+                r = "business_or_runtime"
+            reasons[r] = reasons.get(r, 0) + 1
+    return reasons
 
 
 def pass_for_case_product(hard: dict) -> bool | None:

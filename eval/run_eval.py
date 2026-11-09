@@ -34,6 +34,7 @@ import re
 import signal
 import subprocess
 import sys
+import threading
 import time
 from collections import Counter
 from pathlib import Path
@@ -245,13 +246,22 @@ def run_case(case_path: str) -> dict:
 
     srv = server.TestServer()
     try:
+        # Prep-phase calls each re-raise _CaseTimeout: the case-cap alarm can
+        # fire during spawn/configure/seed/session-create too, and the generic
+        # handlers below would mislabel it (2026-11-10 review: spawn raising
+        # _CaseTimeout came back as "seed_failure: spawn failed:"). The raise
+        # reaches the case-level handler, which records status="timeout".
         try:
             srv.spawn(case_id=case.get("id"))
+        except _CaseTimeout:
+            raise
         except Exception as e:
             return _error_record(case, "seed_failure", f"spawn failed: {e}")
 
         try:
             srv.configure_llm_backend()
+        except _CaseTimeout:
+            raise
         except Exception as e:
             return _error_record(case, "llm_config_error", str(e))
 
@@ -260,12 +270,16 @@ def run_case(case_path: str) -> dict:
             fix = _load_fixture(case["setup"]["fixture"])
             seed.seed_fixture(srv, fix)
             seed.seed_extras(srv, case["setup"].get("extras", {}) or {})
+        except _CaseTimeout:
+            raise
         except Exception as e:
             return _error_record(case, "seed_failure", str(e))
 
         # Create session + run turns via HTTP chat.
         try:
             sid = srv.create_chat_session()
+        except _CaseTimeout:
+            raise
         except Exception as e:
             return _error_record(case, "seed_failure", f"create session: {e}")
 
@@ -275,6 +289,19 @@ def run_case(case_path: str) -> dict:
             try:
                 resp = srv.chat(sid, turn["user"],
                                 images=turn.get("images") or case.get("images"))
+            except _CaseTimeout:
+                # The per-case SIGALRM cap fired inside this turn's WS wait.
+                # This is a TIMEOUT, not an agent error: before 2026-11-09 the
+                # generic handler below swallowed it, mislabeling every cap
+                # timeout as agent_error ("zero timeouts, frequent stream
+                # breaks" was this bug — 66/66 in the 2026-11-08 batch).
+                # Return a timeout record WITH the bounded server-history
+                # salvage (2026-08-17: plain re-raise lost all trace data) so
+                # the case-level bookkeeping sees status == "timeout".
+                return _timeout_record(
+                    case, turn_records, turn["user"],
+                    salvaged=_salvage_server_history(srv, sid),
+                    guards=_parse_guard_metrics(srv.log_lines()))
             except Exception as e:
                 # Record the turn we have so far, then bail with timeout-style
                 # status so the judge can mark it as agent error.
@@ -784,21 +811,29 @@ def _on_alarm(signum, frame):
     raise _CaseTimeout()
 
 
-def _salvage_server_history(srv, sid: str, limit: int = 80):
+def _salvage_server_history(srv, sid: str, limit: int = 80,
+                            total_cap_s: float = 15.0):
     """Fetch a compact copy of the server-side session history.
 
     Used on the agent-error/timeout path: a wedged turn leaves no local
     turn_records, and the server (holding the partial tool calls) is about to
     be shut down. Returns a list of {role, tools, content} dicts, or None if
     the history endpoint is unreachable (best-effort by design).
+
+    TOTAL wall time is hard-bounded by `total_cap_s`: requests' `timeout`
+    only bounds connect and EACH read wait, so a trickling server could
+    otherwise stretch the fetch well past it. The fetch runs on a DAEMON
+    thread so a lingering read can never block interpreter exit either
+    (2026-11-09 review: executor threads are joined at exit — daemon=True is
+    what actually guarantees both bounds; both are covered by tests).
     """
-    try:
-        r = srv.get(f"/api/sessions/{sid}/history")
+    def _fetch():
+        r = srv.get(f"/api/sessions/{sid}/history", timeout=10)
         r.raise_for_status()
-        data = r.json()
-        msgs = data.get("data") if isinstance(data, dict) else data
-        if not isinstance(msgs, list):
+        data = r.json().get("data", r.json())
+        if not isinstance(data, dict):
             return None
+        msgs = data.get("messages") or []
         out = []
         for m in msgs[-limit:]:
             if not isinstance(m, dict):
@@ -816,8 +851,50 @@ def _salvage_server_history(srv, sid: str, limit: int = 80):
                 "content": str(m.get("content") or "")[:200],
             })
         return out or None
-    except Exception:  # noqa: BLE001 — best-effort salvage
-        return None
+
+    box: dict = {}
+    done = threading.Event()
+
+    def _worker():
+        try:
+            box["v"] = _fetch()
+        except BaseException:  # noqa: BLE001 — best-effort by contract
+            pass
+        finally:
+            done.set()
+
+    worker = threading.Thread(target=_worker, daemon=True)
+    worker.start()
+    if done.wait(total_cap_s):
+        return box.get("v")
+    return None
+
+
+def _timeout_record(case: dict, turn_records: list, turn_user: str,
+                    salvaged=None, guards=None) -> dict:
+    """Pure builder for the case-cap timeout record (unit-tested).
+
+    Contract (2026-11-09 review): the record PRESERVES the turn records
+    already captured, carries status=="timeout", and attaches salvage/guards
+    when available. elapsed coverage is the caller's wall clock around
+    run_case, which inherently includes the dying turn.
+    """
+    rec = _error_record_at(
+        case, "timeout",
+        f"case wall-clock cap exceeded during turn ({turn_user[:60]!r})",
+        turn_records)
+    if salvaged:
+        rec["server_history"] = salvaged
+    if guards:
+        rec["guards"] = guards
+    return rec
+
+
+def _note_timeout(timed_out: list, key: str, rec: dict) -> None:
+    """Register a case-cap timeout exactly once, from either return-path or
+    exception-path records (dedup shared so the summary never double-counts)."""
+    if rec.get("status") == "timeout" and key not in timed_out:
+        timed_out.append(key)
 
 
 def _run_case_timeout(p: Path, cap: int):
@@ -923,6 +1000,25 @@ def _print_tier_summary(row_details: dict[str, list]):
             parts.append(f"{tier} {p}/{len(vs)} = {p/len(vs):.1%}")
         if parts:
             print("  pass rate by tier [product]:            " + " | ".join(parts))
+
+    # Complete wall-clock view over ALL trials (timeouts included). latency_ms
+    # sums recorded turn time only and structurally under-counts capped turns
+    # (the dying turn never reports processing_time — 2026-11-09 finding).
+    all_rows = [d for rows in row_details.values() for d in rows]
+    if all_rows:
+        vals = sorted(d["elapsed_ms"] for d in all_rows
+                      if isinstance(d.get("elapsed_ms"), (int, float)))
+        if vals:
+            med = int(vals[len(vals) // 2] / 1000)
+            to = sum(1 for d in all_rows if d.get("status") == "timeout")
+            print(f"  wall-clock [ALL trials, timeouts incl.]: median ~{med}s | timeouts {to}/{len(all_rows)}")
+        reasons = Counter()
+        for d in all_rows:
+            for r, n in (d.get("failed_cmd_reasons") or {}).items():
+                reasons[r] += n
+        if reasons:
+            print("  rejected-cmd reasons:                   "
+                  + ", ".join(f"{k} {v}" for k, v in reasons.most_common()))
 
     # Time to a CORRECT end state (median wall clock over PASS executions,
     # retries included — a tiny model that needs three attempts to finish a
@@ -1043,9 +1139,11 @@ def cmd_regression(args):
                     vds = []
                     vds_prod = []
                     for ridx in range(rounds):
+                        t_start = time.monotonic()
                         signal.alarm(cap)
                         try:
                             rec = run_case(str(case_path))
+                            _note_timeout(timed_out, key, rec)
                         except _CaseTimeout:
                             # Server already killed by run_case's finally. Record
                             # a timeout: product view counts it as a fail, the
@@ -1053,10 +1151,10 @@ def cmd_regression(args):
                             rec = _error_record(
                                 case, "timeout",
                                 f"exceeded {cap}s wall-clock — agent likely wedged")
-                            if key not in timed_out:
-                                timed_out.append(key)
+                            _note_timeout(timed_out, key, rec)
                         finally:
                             signal.alarm(0)
+                        elapsed_ms = int((time.monotonic() - t_start) * 1000)
                         # Keep the production conversation/tool trace, not just
                         # its verdict. Flush before scoring so a later analysis
                         # failure cannot erase the evidence for this execution.
@@ -1077,14 +1175,19 @@ def cmd_regression(args):
                                              "failure_mode": fmode,
                                              "guards": rec.get("guards") or {},
                                              "latency_ms": latency_ms,
+                                             "elapsed_ms": elapsed_ms,
+                                             "status": rec.get("status"),
                                              "round": ridx}, ensure_ascii=False) + "\n")
                         sf.flush()
                         vds.append(hard_signal.pass_for_case(hard))
                         vds_prod.append(hard_signal.pass_for_case_product(hard))
                         row_details.setdefault(key, []).append(
                             {"tier": tier, "latency_ms": latency_ms,
+                             "elapsed_ms": elapsed_ms,
                              "verdict_prod": vds_prod[-1],
-                             "failure_mode": fmode})
+                             "failure_mode": fmode,
+                             "status": rec.get("status"),
+                             "failed_cmd_reasons": hard.get("failed_cmd_reasons") or {}})
                     results[key] = vds
                     results_prod[key] = vds_prod
                     tag = ("PASS" if all(v is True for v in vds)

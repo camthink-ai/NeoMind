@@ -170,6 +170,47 @@ def test_hard_supplied_skips_compute():
     assert hs.classify_failure({}, _record(status="timeout"), hard=hard) == "timeout"
 
 
+# ------------------------------------------------- failure-reason buckets ----
+
+def _rejected_call(command: str, stderr: str = "") -> dict:
+    return {"name": "shell", "arguments": {"command": command},
+            "result": {"exit_code": 2, "stdout": "", "stderr": stderr}}
+
+
+def test_failure_reasons_buckets():
+    rec = _record(turns=[_turn(
+        _rejected_call("neomind rule create --device-id x",
+                       "error: unexpected argument '--device-id' found"),
+        _rejected_call("neomind rule create --name a --body {}",
+                       "error: the argument '--name' cannot be used with '--body'"),
+        _rejected_call("neomind rule create",
+                       "error: the following required arguments were not provided"),
+        _rejected_call("neomind rule create --name x",
+                       "error: device not found"),
+        _rejected_call("neomind rule create --name x"),
+    )])
+    r = hs.failure_reasons(rec)
+    assert r == {"unexpected_argument": 1, "mutually_exclusive": 1,
+                 "missing_required": 1, "business_or_runtime": 1, "no_stderr": 1}
+
+
+def test_failure_reasons_string_result_and_success_excluded():
+    # String-form results (the majority in archived records) parse correctly;
+    # successful calls are not counted.
+    ok_str = {"name": "shell", "arguments": {"command": "neomind device list"},
+              "result": '{"exit_code":0,"stdout":"[]","stderr":""}'}
+    bad_str = {"name": "shell", "arguments": {"command": "neomind rule create --oops"},
+               "result": '{"exit_code":2,"stdout":"","stderr":"error: unexpected argument \'--oops\' found"}'}
+    r = hs.failure_reasons(_record(turns=[_turn(ok_str, bad_str)]))
+    assert r == {"unexpected_argument": 1}
+
+
+def test_compute_carries_failed_cmd_reasons():
+    hard = hs.compute(_DEVICE_CASE, _record(turns=[_turn(
+        _rejected_call("neomind device create --oops", "error: unexpected argument '--oops'"))]))
+    assert hard["failed_cmd_reasons"] == {"unexpected_argument": 1}
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
