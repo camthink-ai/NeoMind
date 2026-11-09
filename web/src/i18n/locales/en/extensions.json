@@ -42,7 +42,6 @@
   "refreshed": "Refreshed",
   "add": "Add",
   "totalCount": "{{count}} extensions total",
-  "allStatuses": "All Statuses",
   "searchPlaceholder": "Search extensions and commands...",
   "noMatchingExtensions": "No matching extensions",
   "uploadExtension": "Upload Extension",
@@ -92,10 +91,7 @@
   },
   "categories": {
     "all": "All",
-    "running": "Running",
-    "stopped": "Stopped",
-    "error": "Error",
-    "active": "Active"
+    "running": "Running"
   },
   "retry": "Retry",
   "selectedCount": "{{count}} selected",

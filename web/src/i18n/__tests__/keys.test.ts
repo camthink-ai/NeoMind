@@ -238,7 +238,9 @@ describe('translation keys referenced from source', () => {
     // badge calls t('messages.type.notification') on the default (common)
     // namespace, where the key exists — the regex misreads the leading dotted
     // segment as a `messages` namespace, which has no bundle.
-    const FROZEN = 250
+    // 250 -> 249 (1.2.8): extensions status-filter removal dropped the
+    // defaulted-but-missing categories.active pill label.
+    const FROZEN = 249
     const soft = [...referenced.values()].filter(
       (r) => r.bare.length === 0 && resolve(bundleOf('en', r.ns) ?? {}, r.key) === undefined,
     )

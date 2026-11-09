@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react"
+import { useMemo } from "react"
 import { useTranslation } from "react-i18next"
 import { ExtensionCard } from "./ExtensionCard"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -7,7 +7,6 @@ import { EmptyState } from "@/components/shared/EmptyState"
 import {
   Search,
   X,
-  Grid3x3,
   Brain,
   Wrench,
   Plug,
@@ -21,7 +20,6 @@ import {
   Wifi,
   CloudSun,
 } from "lucide-react"
-import { cn } from "@/lib/utils"
 import type { Extension } from "@/types"
 
 // Extension showcase data for the marquee (matches real NeoMind-Extensions)
@@ -59,13 +57,6 @@ interface ExtensionGridProps {
 }
 
 // Status filter options with counts
-interface StatusOption {
-  value: string
-  label: string
-  icon: React.ReactNode
-  className: string
-}
-
 export function ExtensionGrid({
   extensions,
   loading = false,
@@ -78,38 +69,18 @@ export function ExtensionGrid({
   const { t } = useTranslation(["extensions", "common"])
 
   // Search is owned by the page (lifted into the toolbar row, per the
-  // no-tab standard: content controls left, actions right). Only the
-  // status filter stays local.
-  const [statusFilter, setStatusFilter] = useState<string>("all")
+  // no-tab standard: content controls left, actions right).
 
   // Clear filters
   const clearFilters = () => {
     onSearchChange("")
-    setStatusFilter("all")
   }
 
-  // Filter extensions and compute stats
-  const { filteredExtensions, stats, statusOptions, hasActiveFilters } = useMemo(() => {
+  // Filter extensions by the page-owned search query. The status filter
+  // pills (All/Active/Error/Stopped counts) were removed in 1.2.8: they
+  // only echoed the totals and status filtering had no real use.
+  const { filteredExtensions, stats } = useMemo(() => {
     const exts = extensions || []
-
-    // In V2 system, extensions are always active once registered
-    // Error/Warning/Stopped indicate problems
-    // Crashed = stopped by crash-loop — error-class: it must NOT count as
-    // active, and must be findable in the error filter (it was missing from
-    // both sides, making crashed extensions invisible except in "all").
-    const isErrorState = (s: string) => s === "Error" || s === "Warning" || s === "Crashed"
-    const isStoppedState = (s: string) => s === "Stopped" || s === "Failed"
-    const activeCount = exts.filter((ext) => !isErrorState(ext.state) && !isStoppedState(ext.state)).length
-    const errorCount = exts.filter((ext) => isErrorState(ext.state)).length
-    const stoppedCount = exts.filter((ext) => isStoppedState(ext.state)).length
-
-    // Build status options (only show categories that have items)
-    const options: StatusOption[] = [
-      { value: "all", label: t("allStatuses"), icon: <Grid3x3 className="h-3 w-3" />, className: "text-muted-foreground" },
-      { value: "active", label: t("categories.active", { defaultValue: "Active" }), icon: <div className="w-2 h-2 rounded-full bg-success" />, className: "text-success" },
-      { value: "error", label: t("categories.error"), icon: <div className="w-2 h-2 rounded-full bg-error" />, className: "text-error" },
-      { value: "stopped", label: t("categories.stopped"), icon: <div className="w-2 h-2 rounded-full bg-muted-foreground" />, className: "text-muted-foreground" },
-    ].filter((opt) => opt.value === "all" || (opt.value === "active" && activeCount > 0) || (opt.value === "error" && errorCount > 0) || (opt.value === "stopped" && stoppedCount > 0))
 
     let filtered = exts
 
@@ -128,31 +99,8 @@ export function ExtensionGrid({
       )
     }
 
-    // Status filter
-    if (statusFilter !== "all") {
-      filtered = filtered.filter((ext) => {
-        switch (statusFilter) {
-          case "active":
-            return !isErrorState(ext.state) && !isStoppedState(ext.state)
-          case "error":
-            return isErrorState(ext.state)
-          case "stopped":
-            return ext.state === "Stopped" || ext.state === "Failed"
-          default:
-            return true
-        }
-      })
-    }
-
-    const computedStats = {
-      total: exts.length,
-      active: activeCount,
-      error: errorCount,
-      stopped: stoppedCount,
-    }
-
-    return { filteredExtensions: filtered, stats: computedStats, statusOptions: options, hasActiveFilters: searchQuery || statusFilter !== "all" }
-  }, [extensions, searchQuery, statusFilter, t])
+    return { filteredExtensions: filtered, stats: { total: exts.length } }
+  }, [extensions, searchQuery])
 
   if (loading) {
     return (
@@ -282,63 +230,20 @@ export function ExtensionGrid({
 
   return (
     <div className="space-y-4">
-      {/* Status filter row — pills left (content controls), filtered count
-          right only while filters are active (unfiltered counts duplicate
-          the pill counts). Search lives in the page toolbar row.
-          Hidden entirely when every extension shares one state ("all" +
-          one category): status filtering means nothing there, and the
-          pills just echo the total twice. Appears once a second category
-          (error/stopped) exists. */}
-      {statusOptions.length >= 3 && (
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        {/* Left: status filter pills */}
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {statusOptions.map((option) => {
-            const isSelected = statusFilter === option.value
-            const count = option.value === "all" ? stats.total :
-                         option.value === "active" ? stats.active :
-                         option.value === "error" ? stats.error : stats.stopped
-
-            return (
-              <button
-                key={option.value}
-                onClick={() => setStatusFilter(option.value)}
-                className={cn(
-                  "inline-flex h-10 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-all md:h-7 md:rounded-md md:px-2.5",
-                  isSelected
-                    ? "bg-primary text-primary-foreground border-primary shadow-sm"
-                    : "bg-card hover:bg-muted-50 text-muted-foreground border-border hover:border-input"
-                )}
-              >
-                {option.icon}
-                <span>{option.label}</span>
-                <span className={cn(
-                  "inline-flex items-center justify-center min-w-[18px] h-[16px] px-1 rounded text-nano font-semibold tabular-nums",
-                  isSelected
-                    ? "bg-white/20 text-primary-foreground"
-                    : "bg-muted text-muted-foreground"
-                )}>
-                  {count}
-                </span>
-              </button>
-            )
-          })}
-          {hasActiveFilters && (
-            <Button variant="ghost" size="xs" onClick={clearFilters} className="h-10 md:h-7">
-              <X className="h-3 w-3 mr-1" />
-              {t("clearFilters", { ns: "common" })}
-            </Button>
-          )}
-        </div>
-
-        {/* Right: filtered count — only while filters are active.
-            Language-neutral "x / y" beats the old label-only string. */}
-        {hasActiveFilters && (
+      {/* Search-active row: clear control left, filtered count right.
+          The status filter pills were removed (1.2.8) — they only echoed
+          the totals and status filtering had no real use; search lives in
+          the page toolbar row. */}
+      {searchQuery && (
+        <div className="flex items-center justify-between gap-3">
+          <Button variant="ghost" size="xs" onClick={clearFilters} className="h-10 md:h-7">
+            <X className="h-3 w-3 mr-1" />
+            {t("clearFilters", { ns: "common" })}
+          </Button>
           <span className="text-sm text-muted-foreground tabular-nums whitespace-nowrap">
             {filteredExtensions.length} / {stats.total}
           </span>
-        )}
-      </div>
+        </div>
       )}
 
       {/* Extension Cards Grid */}

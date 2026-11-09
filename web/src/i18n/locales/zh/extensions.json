@@ -42,7 +42,6 @@
   "refreshed": "已刷新",
   "add": "添加",
   "totalCount": "共 {{count}} 个扩展",
-  "allStatuses": "全部状态",
   "searchPlaceholder": "搜索扩展和命令...",
   "noMatchingExtensions": "没有匹配的扩展",
   "uploadExtension": "上传扩展",
@@ -92,10 +91,7 @@
   },
   "categories": {
     "all": "全部",
-    "running": "运行中",
-    "stopped": "已停止",
-    "error": "错误",
-    "active": "活跃"
+    "running": "运行中"
   },
   "retry": "重试",
   "selectedCount": "已选 {{count}} 个",
