@@ -2012,6 +2012,7 @@ fn agent_event_to_json(event: &AgentEvent) -> Value {
 ///
 /// Extensions that need a picture described (tuyun watermark) use this instead
 /// of `chat_session_open`. Nothing is written to the chat session store.
+#[derive(Default)]
 pub struct LlmCompleteCapabilityProvider;
 
 impl LlmCompleteCapabilityProvider {
@@ -2055,8 +2056,8 @@ impl LlmCompleteCapabilityProvider {
         let manager = neomind_agent::llm_backends::get_instance_manager().map_err(|e| {
             CapabilityError::ProviderError(format!("LLM instance manager unavailable: {e}"))
         })?;
-        let (backend_id, runtime) = resolve_completion_runtime(&manager, model.as_deref(), has_images)
-            .await?;
+        let (backend_id, runtime) =
+            resolve_completion_runtime(&manager, model.as_deref(), has_images).await?;
 
         let messages = build_completion_messages(&system_prompt, message, images);
         let input = neomind_core::llm::backend::LlmInput {
@@ -2081,13 +2082,13 @@ impl LlmCompleteCapabilityProvider {
             max_tokens,
             "llm_complete: generating without a chat session"
         );
-        let output = tokio::time::timeout(
-            std::time::Duration::from_secs(120),
-            runtime.generate(input),
-        )
-        .await
-        .map_err(|_| CapabilityError::ProviderError("llm_complete timed out after 120s".into()))?
-        .map_err(|e| CapabilityError::ProviderError(format!("llm_complete failed: {e}")))?;
+        let output =
+            tokio::time::timeout(std::time::Duration::from_secs(120), runtime.generate(input))
+                .await
+                .map_err(|_| {
+                    CapabilityError::ProviderError("llm_complete timed out after 120s".into())
+                })?
+                .map_err(|e| CapabilityError::ProviderError(format!("llm_complete failed: {e}")))?;
         let text = output.text.trim().to_string();
         if text.is_empty() {
             return Err(CapabilityError::ProviderError(
@@ -2098,7 +2099,9 @@ impl LlmCompleteCapabilityProvider {
     }
 }
 
-fn image_parts(value: Option<&Value>) -> Result<Vec<neomind_core::message::ContentPart>, CapabilityError> {
+fn image_parts(
+    value: Option<&Value>,
+) -> Result<Vec<neomind_core::message::ContentPart>, CapabilityError> {
     use neomind_core::message::ContentPart;
     let Some(value) = value else {
         return Ok(Vec::new());
@@ -2159,7 +2162,13 @@ async fn resolve_completion_runtime(
     manager: &neomind_agent::llm_backends::LlmBackendInstanceManager,
     model: Option<&str>,
     has_images: bool,
-) -> Result<(String, std::sync::Arc<dyn neomind_core::llm::backend::LlmRuntime>), CapabilityError> {
+) -> Result<
+    (
+        String,
+        std::sync::Arc<dyn neomind_core::llm::backend::LlmRuntime>,
+    ),
+    CapabilityError,
+> {
     if let Some(id) = model {
         let runtime = manager.get_runtime(id).await.map_err(|e| {
             CapabilityError::ProviderError(format!("model '{id}' is not available: {e}"))

@@ -25,7 +25,6 @@ import { useToast } from "@/hooks/use-toast"
 import { useIsMobile } from "@/hooks/useMobile"
 import type { ChatImage, LlmBackendInstance } from "@/types"
 import { cn } from "@/lib/utils"
-import { textNano } from "@/design-system/tokens/typography"
 import { compressImage, MAX_ORIGINAL_IMAGE_MB, COMPRESSED_IMAGE_MB } from "@/lib/image"
 
 interface ChatComposerProps {

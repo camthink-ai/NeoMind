@@ -151,7 +151,11 @@ async fn enable_tools_false_drops_tools_and_keeps_session_prompt() {
     agent.update_tool_definitions().await;
 
     assert!(
-        agent.llm_interface().get_tool_definitions().await.is_empty(),
+        agent
+            .llm_interface()
+            .get_tool_definitions()
+            .await
+            .is_empty(),
         "enable_tools=false must publish an empty tool schema"
     );
     let prompt = agent.llm_interface().get_system_prompt().await;

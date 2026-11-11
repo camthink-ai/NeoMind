@@ -549,9 +549,8 @@ async fn test_all_capabilities() {
     let all_caps = ExtensionCapability::all_capabilities();
 
     // 15 standard + ChatStreamCancel + 4 ChatSession capabilities
-    // (Open/Send/Close/CancelTurn) added by Phase 2 of the ChatStream
-    // refactor (persistent session-stream + direct routing).
-    assert_eq!(all_caps.len(), 20);
+    // (Open/Send/Close/CancelTurn) + LlmComplete (1.2.10 headless VLM).
+    assert_eq!(all_caps.len(), 21);
 
     let cap_names: Vec<String> = all_caps.iter().map(|c| c.name()).collect();
 
@@ -569,6 +568,7 @@ async fn test_all_capabilities() {
     assert!(cap_names.contains(&"device_template_register".to_string()));
     assert!(cap_names.contains(&"device_register".to_string()));
     assert!(cap_names.contains(&"device_unregister".to_string()));
+    assert!(cap_names.contains(&"llm_complete".to_string()));
 }
 
 #[tokio::test]
