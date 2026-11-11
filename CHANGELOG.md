@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.2.10] - 2026-11-12 — context-safe tool history, truthful telemetry pages, and a headless VLM path
+## [1.2.10] - 2026-11-13 — context-safe tool history, truthful telemetry pages, headless VLM, and mobile chrome polish
 
 Frozen 138-case gate (Mac, Spark-1.7B): **97/138 (70.3%)**, identical to the 1.2.7 baseline and within the ±8 noise band of the R1 token+pagination arm (99/138). A withdrawn CJK/digit rate calibration that scored 88/138 is pinned out by `revert_parity`.
 
@@ -27,6 +27,13 @@ Frozen 138-case gate (Mac, Spark-1.7B): **97/138 (70.3%)**, identical to the 1.2
 - **`query_telemetry` returns the exact range total** from `query_range_rev` instead of the fetch-limited page length, so page-1 `total` matches the series.
 - **An exactly-full last page no longer emits `next_cursor`**: `has_more` requires both a full page and remaining points past `offset + page_len`.
 - **CLI image/history summaries prefer an attributable total** for `truncated` (a spurious cursor on a complete page no longer overrides `total == page_count`); timestamps are treated as Unix seconds, and “latest” is the max-timestamp point.
+
+### Fixed — mobile / web chrome
+- **Chat and Settings top safe-area match page chrome** (dark header / `bg-background`) instead of leaving a mismatched strip under the notch.
+- **Dashboard mobile capsule clearance and config header chrome** no longer collide with the primary nav; selected-component ring and empty-state copy use design tokens + i18n.
+- **Mobile primary nav is text-only** in the capsule; redundant trailing chevrons are dropped on agent/device/list cards where the whole row already navigates.
+- **Agents tools list appends on mobile infinite scroll** instead of replacing earlier pages.
+- **System page hydrates instance stats on first open**; the route-change top progress bar is removed.
 
 ### Added
 - **`llm_complete` host capability**: one-shot completion with optional images, no chat session and no tools — for headless VLM callers (e.g. watermark description); thinking disabled; 120s timeout.
