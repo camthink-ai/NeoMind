@@ -13,7 +13,7 @@ import {
   FullScreenDialogMain,
 } from "@/components/automation/dialog"
 import { ResponsiveTable, EmptyState, EmptyStateCard, Pagination } from "@/components/shared"
-import { ChevronRight, Edit, Play, Trash2, Bell, Bot, Sparkles, Zap, Timer, History, CheckCircle2, XCircle, Clock, Download } from "lucide-react"
+import { Edit, Play, Trash2, Bell, Bot, Sparkles, Zap, Timer, History, CheckCircle2, XCircle, Clock, Download } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import type { Rule, RuleAction, RuleExecutionResult } from "@/types"
 import { cn } from "@/lib/utils"
@@ -403,7 +403,6 @@ export function RulesList({
                     onCheckedChange={() => onToggleStatus(rule)}
                     onClick={(e) => e.stopPropagation()}
                   />
-                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                 </div>
               </div>
             </Card>

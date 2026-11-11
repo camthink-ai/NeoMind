@@ -7,7 +7,7 @@ import { Switch } from "@/components/ui/switch"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
 import { ResponsiveTable, EmptyState } from "@/components/shared"
-import { ChevronRight, Edit, Trash2, Code, Globe, Cpu, HardDrive, Download } from "lucide-react"
+import { Edit, Trash2, Code, Globe, Cpu, HardDrive, Download } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
 import { formatTimestamp } from "@/lib/utils/format"
@@ -195,7 +195,6 @@ export function TransformsList({
                     onCheckedChange={() => onToggleStatus(transform)}
                     onClick={(e) => e.stopPropagation()}
                   />
-                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                 </div>
               </div>
             </Card>

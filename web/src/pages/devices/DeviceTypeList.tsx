@@ -2,7 +2,7 @@ import { useTranslation } from "react-i18next"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
 import { ResponsiveTable, EmptyState, EmptyStateCard } from "@/components/shared"
-import { ChevronRight, Eye, Pencil, Trash2, Download, Database } from "lucide-react"
+import { Eye, Pencil, Trash2, Download, Database } from "lucide-react"
 import type { DeviceType } from "@/types"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -119,7 +119,6 @@ export function DeviceTypeList({
                       {t('devices:types.builtinBadge')}
                     </Badge>
                   )}
-                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                 </div>
               </div>
             </Card>
