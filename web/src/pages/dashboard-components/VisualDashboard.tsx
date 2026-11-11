@@ -940,7 +940,13 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
     return (
       <div className="flex h-full flex-col bg-background">
         {isMobile && <MobilePageHeader title={t('common:nav.visual-dashboard')} />}
-        <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-5 py-8">
+        <div
+          className={cn(
+            "flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-5 py-8",
+            // Clear Chat|System capsule (same clearance as SystemPage / DeviceDetail).
+            isMobile && "pb-[calc(6rem+env(safe-area-inset-bottom,0px))]",
+          )}
+        >
         <div className="max-w-md text-center">
           <div className="mx-auto mb-5 hidden size-14 items-center justify-center rounded-xl bg-primary-light text-primary sm:flex">
             <LayoutDashboard className="size-7" />
@@ -1135,8 +1141,13 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
           onImportDialogOpenChange={setImportDialogOpen}
         />
 
-        {/* Dashboard Grid */}
-        <div className="flex-1 overflow-auto p-4 relative">
+        {/* Dashboard Grid — mobile pb clears MobilePrimaryNav capsule */}
+        <div
+          className={cn(
+            "flex-1 overflow-auto p-4 relative",
+            isMobile && "pb-[calc(6rem+env(safe-area-inset-bottom,0px))]",
+          )}
+        >
           {(currentDashboard.components?.length ?? 0) === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-muted-foreground">
               <LayoutDashboard className="h-16 w-16 mb-4 opacity-50" />

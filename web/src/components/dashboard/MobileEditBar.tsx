@@ -11,7 +11,7 @@
  * - Context menu for multiple actions
  */
 
-import { memo, useCallback, useState } from 'react'
+import { memo, useCallback, useEffect, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { useTranslation } from 'react-i18next'
 import {
@@ -152,6 +152,15 @@ export const MobileEditBar = memo(function MobileEditBar({
   const insets = useSafeAreaInsets()
   const [showConfirm, setShowConfirm] = useState(false)
 
+  // Hide MobilePrimaryNav while the edit sheet owns the bottom edge.
+  useEffect(() => {
+    if (!isOpen) return
+    document.body.classList.add('mobile-edit-chrome-open')
+    return () => {
+      document.body.classList.remove('mobile-edit-chrome-open')
+    }
+  }, [isOpen])
+
   const handleDeletePress = useCallback(() => {
     if (showConfirm) {
       onDelete()
@@ -275,6 +284,14 @@ export const CompactMobileEditBar = memo(function CompactMobileEditBar({
 }: CompactMobileEditBarProps) {
   const { t } = useTranslation('dashboardComponents')
   const insets = useSafeAreaInsets()
+
+  useEffect(() => {
+    if (!isOpen) return
+    document.body.classList.add('mobile-edit-chrome-open')
+    return () => {
+      document.body.classList.remove('mobile-edit-chrome-open')
+    }
+  }, [isOpen])
 
   if (!isOpen) return null
 

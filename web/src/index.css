@@ -20,6 +20,13 @@ body.keyboard-open .mobile-primary-nav {
   display: none;
 }
 
+/* Dashboard MobileEditBar owns the bottom edge while a component is selected.
+   Hide the Chat|System capsule so confirm/delete actions are not competing
+   with the pill footprint (same pattern as keyboard-open). */
+body.mobile-edit-chrome-open .mobile-primary-nav {
+  display: none;
+}
+
 /* iOS zooms the viewport when a focused form control renders below 16px.
    Keep the editing surface stable; surrounding helper copy remains compact. */
 @media (max-width: 767px) {

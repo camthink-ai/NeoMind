@@ -68,7 +68,8 @@ export function MobileItemSelector({
       <div className="flex h-full w-full flex-col">
         {/* Header */}
         <div
-          className={cn(dialogHeader, 'gap-3')}
+          // Body is bg-background; keep header on the same token (not bg-popover).
+          className={cn(dialogHeader, 'gap-3 bg-background')}
           style={{ paddingTop: `calc(1rem + ${insets.top}px)` }}
         >
           <Button variant="ghost" size="icon" onClick={onClose} className="shrink-0">
