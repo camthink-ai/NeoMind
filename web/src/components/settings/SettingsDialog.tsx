@@ -1,11 +1,11 @@
 /**
- * SettingsDialog — full-bleed settings overlay (Onboarding-style chrome).
+ * SettingsDialog — full-bleed settings overlay (page-chrome / MobilePageHeader tokens).
  *
  * Replaces the old /settings page so settings no longer has to match the
- * standard PageLayout of every other menu. Mirrors OnboardingDialog: opaque
- * full-bleed background, a back button (top-left, closes the dialog), and
- * centered content. The sidebar is a non-scrolling sibling of the scrolling
- * content area, so it stays put while only content scrolls.
+ * standard PageLayout of every other menu. Opaque full-bleed `bg-background`
+ * (matches MobilePageHeader), a back button (top-left, closes the dialog),
+ * and centered content. The sidebar is a non-scrolling sibling of the
+ * scrolling content area, so it stays put while only content scrolls.
  *
  * Open state is GLOBAL (store: settingsDialogOpen / settingsSection) so any
  * page can call openSettings(tab); the dialog is mounted once at the app
@@ -22,7 +22,7 @@ import { ChevronLeft } from "lucide-react"
 import { useStore } from "@/store"
 import { useIsMobile } from "@/hooks/useMobile"
 import { useBodyScrollLock } from "@/hooks/useBodyScrollLock"
-import { useThemeColor } from "@/hooks/useThemeColor"
+import { cn } from "@/lib/utils"
 import { MobileTabStrip } from "@/components/shared/MobileTabStrip"
 import { AboutTab } from "@/pages/settings/AboutTab"
 import { PreferencesTab } from "@/pages/settings/PreferencesTab"
@@ -48,10 +48,8 @@ export function SettingsDialog() {
 
   const [activeSection, setActiveSection] = useState<SettingsSection>(initialSection)
 
-  // Sync the PWA status-bar/safe-area color to the popover surface while the
-  // dialog is open, so the notch strip doesn't read as a different color than
-  // the dialog body (see useThemeColor).
-  useThemeColor("popover", open)
+  // ThemeColorSync already keeps theme-color on --background. Settings uses
+  // the same token as MobilePageHeader, so no overlay override is needed.
 
   // Sync the active section to the store's requested section each time the
   // dialog opens (openSettings(tab) sets both atomically).
@@ -88,16 +86,29 @@ export function SettingsDialog() {
       role="dialog"
       aria-modal="true"
       aria-label={t("common:nav.settings")}
-      className="fixed inset-0 z-[100] flex flex-col bg-popover animate-fade-in"
-      style={{
-        paddingTop: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))",
-      }}
+      className="fixed inset-0 z-[100] flex flex-col bg-background animate-fade-in"
+      style={
+        // Desktop: shell owns the macOS titlebar inset. Mobile: the header
+        // owns safe-top (MobilePageHeader contract) so the notch strip is
+        // painted by the header token, not a second transparent pad.
+        !isMobile
+          ? { paddingTop: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))" }
+          : undefined
+      }
     >
       <div className="flex-1 min-h-0 flex">
         <div className="w-full min-h-0 flex flex-col px-6 md:px-8 md:pt-12">
-          {/* Match FullScreenDialogHeader: 64px title row followed immediately
-              by the shared underline tab strip. */}
-          <div className="relative -mx-6 flex h-16 items-center px-3 md:hidden">
+          {/* Mobile header owns safe-top + bg-background — same contract as
+              MobilePageHeader / chat mobile chrome. */}
+          <div
+            className={cn(
+              "relative -mx-6 flex items-center bg-background px-3 md:hidden",
+              "safe-top",
+            )}
+            style={{
+              height: "calc(4rem + env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))",
+            }}
+          >
             <button
               type="button"
               onClick={closeSettings}

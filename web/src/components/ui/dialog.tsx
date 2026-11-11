@@ -83,7 +83,9 @@ const DialogContent = React.forwardRef<
         <DialogPrimitive.Content
           ref={ref}
           className={cn(
-            "fixed !bottom-0 !left-0 !right-0 !top-0 z-50 flex !h-full min-h-0 !w-full !max-w-full !translate-x-0 !translate-y-0 flex-col !rounded-none bg-popover",
+            // bg-background matches MobilePageHeader / ThemeColorSync; the
+            // overlay-heavy behind this content prevents dark-mode alpha bleed.
+            "fixed !bottom-0 !left-0 !right-0 !top-0 z-50 flex !h-full min-h-0 !w-full !max-w-full !translate-x-0 !translate-y-0 flex-col !rounded-none bg-background",
             "data-[state=open]:animate-in data-[state=closed]:animate-out",
             "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
             className
@@ -199,7 +201,7 @@ const DialogFooter = ({
       className={cn(
         "flex flex-row justify-end gap-2 sm:gap-3",
         "mt-4 sm:mt-0",
-        isMobile && "sticky bottom-0 z-10 shrink-0 border-t bg-popover px-4 py-3 [&>button]:min-h-11 [&>button]:flex-1",
+        isMobile && "sticky bottom-0 z-10 shrink-0 border-t bg-background px-4 py-3 [&>button]:min-h-11 [&>button]:flex-1",
         className
       )}
       {...props}

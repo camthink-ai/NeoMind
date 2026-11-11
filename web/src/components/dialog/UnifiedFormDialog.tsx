@@ -244,21 +244,28 @@ export function UnifiedFormDialog({
           role="dialog"
           aria-modal="true"
           aria-labelledby={titleId}
-          className={cn("fixed inset-0 animate-in fade-in duration-normal", overlayZIndex)}
-          // Use opaque --chrome (matches MobilePageHeader) instead of
-          // bg-background which has /97% alpha in dark mode and lets the
-          // previous layer bleed through, creating a visible color split.
-          style={{ backgroundColor: 'var(--chrome)' }}
+          className={cn(
+            "fixed inset-0 animate-in fade-in duration-normal bg-overlay-light",
+            overlayZIndex,
+          )}
           // Portal content bubbles through the React tree (not the DOM tree).
           // Without this, every tap inside the dialog — including the close
           // button — reaches ancestor handlers like a table row's onRowClick.
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="flex h-full w-full flex-col">
-            {/* Header */}
+          {/* Inner surface uses bg-background over the overlay (same contract
+              as FullScreenDialog mobile) so the notch/status strip matches
+              MobilePageHeader / ThemeColorSync without --chrome tint. */}
+          <div className="flex h-full w-full flex-col bg-background">
+            {/* Header owns safe-top — MobilePageHeader pattern. */}
             <div
-              className={cn(dialogHeader, "grid min-h-16 grid-cols-[1fr_auto_1fr] border-b-0 bg-transparent px-3 py-2")}
-              style={{ paddingTop: `calc(0.5rem + ${insets.top}px)` }}
+              className={cn(
+                dialogHeader,
+                "safe-top sticky top-0 z-30 grid grid-cols-[1fr_auto_1fr] border-b-0 bg-background px-3",
+              )}
+              style={{
+                height: "calc(4rem + env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))",
+              }}
             >
               <button
                 type="button"
@@ -305,12 +312,10 @@ export function UnifiedFormDialog({
             {/* Footer */}
             {footerContent && (
               <div
-                // No bg class — footer inherits the container's chrome bg
-                // (set on the outer mobile portal). Adding bg-background here
-                // re-introduces the dark-mode /97% alpha see-through that
-                // makes the footer read as a different color from the body
-                // of the dialog. The border-t alone provides enough visual
-                // separation between content and actions.
+                // No bg class — footer inherits the container's bg-background
+                // (set on the inner mobile surface). The underlay overlay
+                // behind that surface prevents dark-mode alpha bleed.
+                // border-t alone separates content from actions.
                 className="flex shrink-0 items-center gap-3 border-t px-4 py-3 [&>button]:min-h-11 [&>button]:flex-1 [&>button]:rounded-xl"
                 style={{ paddingBottom: `calc(0.75rem + ${insets.bottom}px)` }}
               >

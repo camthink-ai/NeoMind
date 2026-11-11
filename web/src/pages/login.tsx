@@ -293,11 +293,15 @@ export function LoginPage() {
   // Full-screen instance picker
   if (showInstancePicker) {
     return (
-      <div className="flex flex-col bg-popover viewport-full">
-        {/* Header */}
+      <div className="flex flex-col bg-background viewport-full">
+        {/* Header paints bg-background into the notch (same token as
+            MobilePageHeader / ThemeColorSync). Single top pad — no safe-top
+            class on top of this inline padding. */}
         <header
-          className="flex items-center gap-3 px-4 sm:px-6 py-3.5 border-b border-border"
-          style={{ paddingTop: "calc(0.875rem + env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))" }}
+          className="flex items-center gap-3 border-b border-border bg-background px-4 py-3.5 sm:px-6"
+          style={{
+            paddingTop: "calc(0.875rem + env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))",
+          }}
         >
           <Button variant="ghost" size="sm" onClick={() => setShowInstancePicker(false)}>
             <ArrowLeft className="h-4 w-4 mr-1" />
