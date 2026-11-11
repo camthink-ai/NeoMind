@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
 import { useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import { ChevronRight } from "lucide-react"
@@ -57,6 +57,8 @@ export default function SystemPage() {
   const user = useStore((s) => s.user)
   const devices = useStore((s) => s.devices)
   const alerts = useStore((s) => s.alerts)
+  const fetchDevices = useStore((s) => s.fetchDevices)
+  const fetchAlerts = useStore((s) => s.fetchAlerts)
   const wsConnected = useStore((s) => s.wsConnected)
   const openSettings = useStore((s) => s.openSettings)
   const logout = useStore((s) => s.logout)
@@ -65,6 +67,13 @@ export default function SystemPage() {
   const { status: onboardingStatus, dismiss: dismissOnboarding } = useOnboarding()
   const [instanceManagerOpen, setInstanceManagerOpen] = useState(false)
   const [onboardingOpen, setOnboardingOpen] = useState(false)
+
+  // Mobile primary nav lands here without AppSidebar (SystemHealthButton /
+  // AlertsMenu), so hydrate the instance summary on first open.
+  useEffect(() => {
+    void fetchDevices()
+    void fetchAlerts()
+  }, [fetchDevices, fetchAlerts])
 
   const onlineCount = useMemo(() => devices.filter((device) => device.online).length, [devices])
   const unreadCount = useMemo(
