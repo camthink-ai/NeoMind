@@ -34,7 +34,6 @@ import {
   AlertTriangle,
   Loader2,
   Clock,
-  ChevronRight,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { formatTimestamp } from "@/lib/utils/format"
@@ -127,7 +126,6 @@ export function AgentCard({
           onClick={(e) => e.stopPropagation()}
           aria-label={t('agents:card.toggleStatus', { name: agent.name })}
         />
-        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
       </div>
     )
   }
