@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next"
 import { ResponsiveTable, EmptyState, EmptyStateCard } from "@/components/shared"
 import { DeviceStatusBadge } from "@/components/shared/DeviceStatusBadge"
-import { ChevronRight, Eye, Trash2, Cpu, Database, Waves, Pencil } from "lucide-react"
+import { Eye, Trash2, Cpu, Database, Waves, Pencil } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { formatTimestamp } from "@/lib/utils/format"
 import type { Device } from "@/types"
@@ -134,7 +134,6 @@ export function DeviceList({
                       {device.device_type} · {device.adapter_type || 'mqtt'}
                     </div>
                   </div>
-                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                 </div>
               </div>
             )
