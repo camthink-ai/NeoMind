@@ -734,8 +734,13 @@ mod tests {
     /// every HTTP request carries Host, and its value just echoes the URL
     /// the client typed. A user browsing `http://localhost:9375` would
     /// otherwise trick the server into advertising localhost as the canonical URL.
+    #[serial_test::serial]
     #[test]
     fn test_resolve_server_url_host_alone_not_trusted() {
+        const KEY: &str = "NEOMIND_SERVER_URL";
+        let prev = std::env::var(KEY).ok();
+        std::env::remove_var(KEY);
+
         let (url, src) = resolve_server_url(Some(&make_headers(Some("localhost:9375"), None)));
         assert_eq!(src, ServerUrlSource::Fallback);
         assert!(
@@ -748,15 +753,30 @@ mod tests {
             "Host-only header must not yield localhost URL: {}",
             url
         );
+
+        match prev {
+            Some(v) => std::env::set_var(KEY, v),
+            None => std::env::remove_var(KEY),
+        }
     }
 
     /// `X-Forwarded-Host` alone (no X-Forwarded-Proto) is also a valid reverse-proxy signal.
+    #[serial_test::serial]
     #[test]
     fn test_resolve_server_url_forwarded_host_alone_trusted() {
+        const KEY: &str = "NEOMIND_SERVER_URL";
+        let prev = std::env::var(KEY).ok();
+        std::env::remove_var(KEY);
+
         let mut h = axum::http::HeaderMap::new();
         h.insert("x-forwarded-host", "example.com".parse().unwrap());
         let (url, src) = resolve_server_url(Some(&h));
         assert_eq!(src, ServerUrlSource::ProxyHeader);
         assert_eq!(url, "http://example.com");
+
+        match prev {
+            Some(v) => std::env::set_var(KEY, v),
+            None => std::env::remove_var(KEY),
+        }
     }
 }

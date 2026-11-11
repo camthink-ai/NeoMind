@@ -240,7 +240,9 @@ describe('translation keys referenced from source', () => {
     // segment as a `messages` namespace, which has no bundle.
     // 250 -> 249 (1.2.8): extensions status-filter removal dropped the
     // defaulted-but-missing categories.active pill label.
-    const FROZEN = 249
+    // 249 -> 248 (1.2.10): dashboard empty/error states moved defaulted
+    // English strings into dashboard-components.json i18n keys.
+    const FROZEN = 248
     const soft = [...referenced.values()].filter(
       (r) => r.bare.length === 0 && resolve(bundleOf('en', r.ns) ?? {}, r.key) === undefined,
     )
