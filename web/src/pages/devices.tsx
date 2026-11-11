@@ -665,20 +665,22 @@ export function DevicesPage() {
       if (successCount > 0) {
         toast({
           title: t('common:success'),
-          description: `Imported ${successCount} device type${successCount > 1 ? 's' : ''}${errorCount > 0 ? ` (${errorCount} failed)` : ''}`
+          description: errorCount > 0
+            ? t('devices:types.importTypesPartial', { count: successCount, failed: errorCount })
+            : t('devices:types.importTypesSuccess', { count: successCount }),
         })
         fetchDeviceTypes()
       } else {
         toast({
           title: t('common:failed'),
-          description: 'No device types were imported',
+          description: t('devices:types.importTypesNone'),
           variant: 'destructive'
         })
       }
     } catch (error) {
       toast({
         title: t('common:failed'),
-        description: 'Failed to parse JSON file',
+        description: t('devices:types.importTypesParseFailed'),
         variant: 'destructive'
       })
     } finally {

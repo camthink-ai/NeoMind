@@ -15,6 +15,7 @@ import i18n from '@/i18n/config'
 import { fetchAPI } from '@/lib/api'
 import { AlertTriangle, Eye, Zap, EyeOff } from 'lucide-react'
 import { LoadingState } from '@/components/shared/LoadingState'
+import { EmptyStateCompact } from '@/components/shared/EmptyState'
 import { ThemeToggle } from '@/components/layout/ThemeToggle'
 import { DashboardGrid } from '@/components/dashboard/DashboardGrid'
 import { renderDashboardComponent } from '@/pages/dashboard-components/Renderers'
@@ -230,13 +231,11 @@ export function SharedDashboard() {
       </header>
 
       {/* Dashboard Content - reuse same rendering pipeline */}
-      <div className="flex-1 overflow-auto p-4 relative">
+      <div className="flex-1 overflow-auto p-4 pb-safe relative">
         {data.dashboard.components && data.dashboard.components.length > 0 ? (
           <SharedDashboardContent dashboard={data.dashboard} />
         ) : (
-          <div className="flex items-center justify-center h-64 text-muted-foreground text-sm">
-            {t('sharedDashboard.noComponents')}
-          </div>
+          <EmptyStateCompact title={t('sharedDashboard.noComponents')} />
         )}
       </div>
     </div>

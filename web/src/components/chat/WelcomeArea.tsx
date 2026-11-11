@@ -47,7 +47,7 @@ export function WelcomeArea({ className, onQuickAction, children }: WelcomeAreaP
       <div className={cn("relative flex min-h-full w-full flex-col items-center overflow-hidden", className)}>
         <div className="relative flex min-h-full w-full max-w-3xl flex-col">
           <div className="flex min-h-0 flex-1 items-center justify-center px-4 pb-6 text-center">
-            <h1 className="text-[22px] font-semibold leading-snug tracking-[-0.02em] text-foreground">
+            <h1 className="text-xl font-semibold leading-snug tracking-[-0.02em] text-foreground">
               {t('common:welcome.askLine', { greeting: t(getGreetingKey()) })}
             </h1>
           </div>

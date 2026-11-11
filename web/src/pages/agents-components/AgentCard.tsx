@@ -108,7 +108,7 @@ export function AgentCard({
       >
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <h3 className="truncate text-[15px] font-medium text-foreground">{agent.name}</h3>
+            <h3 className="truncate text-heading font-medium text-foreground">{agent.name}</h3>
             <span className={cn(
               "h-1.5 w-1.5 shrink-0 rounded-full",
               isError ? "bg-error" : isExecuting ? "bg-info" : agent.status === 'Paused' ? "bg-muted-foreground" : "bg-success",
@@ -163,10 +163,10 @@ export function AgentCard({
         </div>
 
         <div className="min-w-0 flex-1">
-          <h3 className="truncate text-[15px] font-semibold leading-snug" title={agent.name}>
+          <h3 className="truncate text-heading font-semibold leading-snug" title={agent.name}>
             {agent.name}
           </h3>
-          <p className="mt-1 truncate text-[11px] text-muted-foreground">
+          <p className="mt-1 truncate text-mini text-muted-foreground">
             {t(`agents:card.role.${roleKey}`)}
             <span className="mx-1.5 text-border">·</span>
             {t(`agents:card.memory.${isToolMemory ? 'tool' : 'assistant'}`)}
@@ -233,7 +233,7 @@ export function AgentCard({
 
       {/* ── Footer: freshness + collapsed stats + toggle ──────────── */}
       <div className="mt-3 flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground">
+        <div className="flex min-w-0 items-center gap-1 text-mini text-muted-foreground">
           <Clock className="h-3 w-3 shrink-0" />
           <span className="truncate">
             {agent.last_execution_at

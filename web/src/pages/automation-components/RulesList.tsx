@@ -345,7 +345,13 @@ export function RulesList({
   const _totalPages = Math.ceil(rules.length / ITEMS_PER_PAGE) || 1
   const startIndex = (page - 1) * ITEMS_PER_PAGE
   const endIndex = startIndex + ITEMS_PER_PAGE
-  const paginatedRules = propsPaginatedRules ?? rules.slice(startIndex, endIndex)
+  // Mobile infinite-scroll parents pass a cumulative window; if props are
+  // omitted, mirror that here so footer load-more cannot replace-slice.
+  const paginatedRules = propsPaginatedRules ?? (
+    isMobile
+      ? rules.slice(0, page * ITEMS_PER_PAGE)
+      : rules.slice(startIndex, endIndex)
+  )
 
   const content = (
     isMobile ? (
@@ -387,7 +393,7 @@ export function RulesList({
               <div className="px-4 py-3.5">
                 <div className="flex items-center gap-2">
                   <div className="flex-1 min-w-0">
-                    <div className="truncate text-[15px] font-medium">{rule.name}</div>
+                    <div className="truncate text-heading font-medium">{rule.name}</div>
                     <p className="mt-1 truncate text-xs text-muted-foreground" title={condition.full}>
                       {condition.text}
                     </p>

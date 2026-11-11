@@ -988,7 +988,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
             ].map((label, i) => (
               <span key={label} className="flex items-center gap-1.5 whitespace-nowrap">
                 {i > 0 && <ChevronRight className="size-3 opacity-50 mr-1" />}
-                <span className="flex size-4 items-center justify-center rounded-full bg-muted text-[10px] font-medium">
+                <span className="flex size-4 items-center justify-center rounded-full bg-muted text-nano font-medium">
                   {i + 1}
                 </span>
                 {label}
@@ -1184,6 +1184,14 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
               onLayoutChange={handleLayoutChange}
               selectedId={mobileSelectedId}
             />
+          )}
+          {/* Lightweight edit affordance — toolbar Edit is tooltip-only on touch */}
+          {isMobile && editMode && !mobileSelectedId && (currentDashboard.components?.length ?? 0) > 0 && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-[calc(5.5rem+env(safe-area-inset-bottom,0px))] z-30 flex justify-center px-4">
+              <div className="rounded-full border border-border bg-bg-95 px-3 py-1.5 text-mini text-muted-foreground shadow-sm backdrop-blur-md">
+                {t('visualDashboard.tapToEditHint')}
+              </div>
+            </div>
           )}
         </div>
       </div>

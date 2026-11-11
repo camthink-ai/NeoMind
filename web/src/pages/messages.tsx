@@ -945,7 +945,7 @@ export default function MessagesPage() {
                             <span className="shrink-0">{formatTimestamp(message.timestamp, false)}</span>
                           </div>
                         </div>
-                        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/60" aria-hidden="true" />
+                        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground opacity-60" aria-hidden="true" />
                       </div>
                     </button>
                   )
@@ -1187,7 +1187,7 @@ export default function MessagesPage() {
                               )}
                             </div>
                           </div>
-                          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/60" aria-hidden="true" />
+                          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground opacity-60" aria-hidden="true" />
                       </div>
                     </button>
                   )

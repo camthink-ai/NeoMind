@@ -1017,11 +1017,13 @@ CSS variables:
 --bottom-nav-height: 0px;
 /* Mobile (set dynamically by useVisualViewport) */
 --topnav-height: calc(0px + env(safe-area-inset-top, 0px));
---bottom-nav-height: calc(3.5rem + env(safe-area-inset-bottom, 0px));
+/* Floating Chat|System capsule is NOT a full-width bar — keep 0 and clear
+   content with explicit pb (see MobilePrimaryNav below). */
+--bottom-nav-height: 0px;
 --chat-content-padding-top: calc(6.5rem + env(safe-area-inset-top, 0px));
 ```
 
-### Mobile Layout: Hamburger Menu + Per-Page Header
+### Mobile Layout: Hamburger Menu + Per-Page Header + Primary Capsule
 
 Mobile-only navigation restructure (desktop unchanged).
 
@@ -1046,8 +1048,17 @@ slide-in `Sheet` rendered once at the App shell. Contains brand header
 Agent / 设备 / 仪表板; System: 自动化 / 数据 / 消息 / 扩展 / 设置), and a
 logout entry. Messages entry shows unread-alerts badge.
 
-**`--bottom-nav-height`** is `0px` on mobile (no bottom nav in the hamburger
-approach). `--topnav-height` is `0px`; page headers carry their own `safe-top`.
+**Floating primary capsule** (`MobilePrimaryNav`, `@/components/layout/MobilePrimaryNav`):
+on non-chat mobile routes, a centered Chat | System pill floats above the
+home indicator (`fixed`, `z-40`, ≈`3.75rem` tall + `0.5rem` bottom offset +
+`safe-area-inset-bottom`). Chat hides it (composer owns the bottom edge).
+Hide/dim while the keyboard is open (`body.keyboard-open`) or while the
+dashboard `MobileEditBar` owns the bottom edge (`body.mobile-edit-chrome-open`).
+Scrollable page content must clear the capsule — prefer
+`pb-[calc(6rem+env(safe-area-inset-bottom))]` (see `PageLayout`,
+`SystemPage`, `VisualDashboard`). `--bottom-nav-height` stays `0px` because
+this is a floating capsule, not a layout-consuming bottom bar.
+`--topnav-height` is `0px`; page headers carry their own `safe-top`.
 
 **Desktop is fully unchanged.**
 

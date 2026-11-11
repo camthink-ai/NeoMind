@@ -388,7 +388,14 @@
       "seconds": "秒"
     },
     "adding": "添加中",
-    "builtinBadge": "内置"
+    "builtinBadge": "内置",
+    "viewDescription": "设备类型详情与能力",
+    "rawDataModeBadge": "原始数据模式",
+    "virtualMetric": "虚拟指标",
+    "importTypesSuccess": "已导入 {{count}} 个设备类型",
+    "importTypesPartial": "已导入 {{count}} 个设备类型（{{failed}} 个失败）",
+    "importTypesNone": "没有导入任何设备类型",
+    "importTypesParseFailed": "无法解析 JSON 文件"
   },
   "pending": {
     "tab": "待注册设备",

@@ -388,7 +388,14 @@
       "seconds": "seconds"
     },
     "adding": "Adding",
-    "builtinBadge": "Built-in"
+    "builtinBadge": "Built-in",
+    "viewDescription": "Device type details and capabilities",
+    "rawDataModeBadge": "Raw Data Mode",
+    "virtualMetric": "Virtual Metric",
+    "importTypesSuccess": "Imported {{count}} device type(s)",
+    "importTypesPartial": "Imported {{count}} device type(s) ({{failed}} failed)",
+    "importTypesNone": "No device types were imported",
+    "importTypesParseFailed": "Failed to parse JSON file"
   },
   "pending": {
     "tab": "Pending Devices",

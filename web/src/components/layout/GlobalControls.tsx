@@ -27,7 +27,7 @@ export function GlobalControlsFloating() {
   // stays readable.
   return (
     <div className="pointer-events-none absolute right-4 sm:right-6 z-20" style={{ top: "calc(env(safe-area-inset-top, 0px) + 0.5rem)" }}>
-      <div className="pointer-events-auto rounded-full bg-background/60 px-1 py-0.5 backdrop-blur-sm">
+      <div className="pointer-events-auto rounded-full bg-bg-90 px-1 py-0.5 backdrop-blur-sm">
     <TooltipProvider delayDuration={500}>
       <div className="flex shrink-0 items-center gap-1.5">
         <UpdateAvailableButton />

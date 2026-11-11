@@ -1087,7 +1087,7 @@ export function AgentMonitorWidget({
         <div className="shrink-0 p-3 border-t border-border bg-muted-20">
           <div className="flex gap-2">
             <Textarea
-              placeholder="Add task hints or context..."
+              placeholder={t('dashboardComponents:agentMonitorWidget.messagePlaceholder')}
               value={newMessage}
               onChange={(e) => setNewMessage(e.target.value)}
               onKeyDown={(e) => {

@@ -224,7 +224,8 @@
     "emptyAskAi": "Ask AI to build one",
     "emptyStep1": "Create a dashboard",
     "emptyStep2": "Add widgets",
-    "emptyStep3": "Bind device data"
+    "emptyStep3": "Bind device data",
+    "tapToEditHint": "Tap a component to edit"
   },
   "mobileEditBar": {
     "component": "Component",
@@ -391,7 +392,8 @@
     "lastExecution": "Last Execution",
     "pause": "Pause",
     "resume": "Resume",
-    "execute": "Execute Now"
+    "execute": "Execute Now",
+    "messagePlaceholder": "Add task hints or context..."
   },
   "aiAnalyst": {
     "systemPrompt": "System Prompt",

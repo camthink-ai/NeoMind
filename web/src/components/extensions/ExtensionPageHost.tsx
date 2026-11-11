@@ -107,7 +107,7 @@ export class ExtensionPageHost extends Component<ExtensionPageHostProps, HostSta
     if (error) {
       return (
         <div className="flex h-full items-center justify-center p-8">
-          <div className="max-w-md rounded-lg border border-destructive/40 bg-destructive/10 p-6 text-center">
+          <div className="max-w-md rounded-lg border border-error bg-error-light p-6 text-center">
             <div className="mb-1 font-semibold text-destructive">扩展页面加载失败</div>
             <div className="text-sm text-muted-foreground">{title}: {error}</div>
           </div>

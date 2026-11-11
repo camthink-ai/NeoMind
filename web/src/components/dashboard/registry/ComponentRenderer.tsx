@@ -160,7 +160,7 @@ function UnknownComponent({ type, className }: UnknownComponentProps) {
             <Puzzle className="h-5 w-5 mx-auto mb-2 opacity-70" />
             <p className="font-medium">{t('renderer.componentUnavailable')}</p>
             <p className="text-sm text-muted-foreground mt-1">{hint}</p>
-            <p className="text-xs text-muted-foreground/70 mt-2">
+            <p className="text-xs text-muted-foreground opacity-70 mt-2">
               <code className="bg-muted px-1 py-0.5 rounded">{type}</code>
             </p>
           </div>

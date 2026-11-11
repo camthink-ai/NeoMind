@@ -661,7 +661,7 @@ function MemoryContent({ memory, loading }: MemoryContentProps) {
   if (!memory) {
     return (
       <div className="flex flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-border py-12 text-center">
-        <Brain className="h-8 w-8 text-muted-foreground/40" />
+        <Brain className="h-8 w-8 text-muted-foreground opacity-40" />
         <p className="text-sm text-muted-foreground">{t('agents:detail.noMemory')}</p>
       </div>
     )
@@ -674,9 +674,9 @@ function MemoryContent({ memory, loading }: MemoryContentProps) {
   if (isEmptyMemory) {
     return (
       <div className="flex flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-border py-12 text-center">
-        <Brain className="h-8 w-8 text-muted-foreground/40" />
+        <Brain className="h-8 w-8 text-muted-foreground opacity-40" />
         <p className="text-sm text-muted-foreground">{t('agents:detail.noMemory')}</p>
-        <p className="text-xs text-muted-foreground/70">{t('agents:memory.emptyHint')}</p>
+        <p className="text-xs text-muted-foreground opacity-70">{t('agents:memory.emptyHint')}</p>
       </div>
     )
   }

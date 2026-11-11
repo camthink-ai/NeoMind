@@ -429,7 +429,7 @@ export function RuntimeUpgradeDialog({ open, onClose, runtime, onChanged }: Runt
                         {t(`plugins:llm.${labelKey}`)}
                       </label>
                       {custom && (
-                        <span className="rounded bg-warning-light px-1.5 py-0.5 text-[10px] text-warning">
+                        <span className="rounded bg-warning-light px-1.5 py-0.5 text-nano text-warning">
                           {t('plugins:llm.runtimeSourceCustom')}
                         </span>
                       )}

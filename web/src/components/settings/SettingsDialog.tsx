@@ -117,7 +117,7 @@ export function SettingsDialog() {
             >
               <ChevronLeft className="h-5 w-5" />
             </button>
-            <h1 className="pointer-events-none absolute inset-x-16 truncate text-center text-[17px] font-semibold">
+            <h1 className="pointer-events-none absolute inset-x-16 truncate text-center text-base font-semibold">
               {t("common:nav.settings")}
             </h1>
           </div>

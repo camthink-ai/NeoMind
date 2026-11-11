@@ -52,7 +52,7 @@ export function MobilePrimaryNav() {
               aria-current={selected ? "page" : undefined}
               onClick={() => navigate(path)}
               className={cn(
-                "flex min-w-0 flex-col items-center justify-center gap-0.5 rounded-[1.15rem] px-1 text-[11px] font-medium transition-[background-color,color,transform] active:scale-[0.97]",
+                "flex min-w-0 flex-col items-center justify-center gap-0.5 rounded-[1.15rem] px-1 text-mini font-medium transition-[background-color,color,transform] active:scale-[0.97]",
                 selected
                   ? "bg-foreground text-background"
                   : "text-muted-foreground active:bg-muted active:text-foreground",

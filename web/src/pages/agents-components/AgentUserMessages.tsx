@@ -94,9 +94,9 @@ export function AgentUserMessages({ agentId, onMessageAdded, refreshToken = 0 }:
               </div>
             ) : messages.length === 0 ? (
               <div className="flex flex-1 flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-border text-center">
-                <MessageSquare className="h-8 w-8 text-muted-foreground/40" />
+                <MessageSquare className="h-8 w-8 text-muted-foreground opacity-40" />
                 <p className="text-sm text-muted-foreground">{t('agents:userMessages.empty')}</p>
-                <p className="text-xs text-muted-foreground/70">{t('agents:userMessages.emptyHint')}</p>
+                <p className="text-xs text-muted-foreground opacity-70">{t('agents:userMessages.emptyHint')}</p>
               </div>
             ) : (
               <>
@@ -211,7 +211,7 @@ function MessageBubble({ message, onDelete }: MessageBubbleProps) {
       <p className="pr-6 text-sm leading-relaxed whitespace-pre-wrap break-words">
         {message.content}
       </p>
-      <p className="mt-1 text-[11px] tabular-nums text-muted-foreground">
+      <p className="mt-1 text-mini tabular-nums text-muted-foreground">
         {formatTimestamp(message.timestamp, false)}
         {message.message_type ? ` · ${message.message_type}` : ''}
       </p>

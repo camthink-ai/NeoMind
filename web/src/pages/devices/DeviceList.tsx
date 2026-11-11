@@ -124,7 +124,7 @@ export function DeviceList({
                 <div className="flex items-start gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <div className="truncate text-[15px] font-medium text-foreground">{device.name || "-"}</div>
+                      <div className="truncate text-heading font-medium text-foreground">{device.name || "-"}</div>
                       <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", device.online ? "bg-success" : "bg-muted-foreground")} />
                       <span className="sr-only">
                         {device.online ? t('common:online', '在线') : t('common:offline', '离线')}

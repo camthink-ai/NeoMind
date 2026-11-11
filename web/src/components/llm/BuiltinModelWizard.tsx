@@ -606,7 +606,7 @@ export function BuiltinModelWizard({
                   return hint ? (
                     <div className="flex items-start gap-1.5 rounded-md bg-muted-30 px-2.5 py-2">
                       <Info className="h-3.5 w-3.5 shrink-0 mt-0.5 text-muted-foreground" />
-                      <span className="text-[11px] leading-snug text-muted-foreground">
+                      <span className="text-mini leading-snug text-muted-foreground">
                         {t(`plugins:llm.${hint}`)}
                       </span>
                     </div>
@@ -662,7 +662,7 @@ export function BuiltinModelWizard({
                           <span className="min-w-0 flex-1 truncate text-sm font-medium">{modelName}</span>
                           {m.vision && (
                             <span
-                              className="flex shrink-0 items-center gap-1 rounded-full bg-info-light px-1.5 py-0.5 text-[10px] font-medium text-info"
+                              className="flex shrink-0 items-center gap-1 rounded-full bg-info-light px-1.5 py-0.5 text-nano font-medium text-info"
                               title={t('plugins:llm.builtinVisionHint')}
                             >
                               <Eye className="h-3 w-3" />
@@ -670,18 +670,18 @@ export function BuiltinModelWizard({
                             </span>
                           )}
                           {m.recommended && (
-                            <span className="shrink-0 rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">
+                            <span className="shrink-0 rounded-full bg-primary px-1.5 py-0.5 text-nano font-medium text-primary-foreground">
                               {t('common:llmGuide.recommended')}
                             </span>
                           )}
                           {m.custom && (
-                            <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                            <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-nano font-medium text-muted-foreground">
                               {t('plugins:llm.customModel')}
                             </span>
                           )}
                           {m.min_runtime && (
                             <span
-                              className="shrink-0 rounded-full bg-warning-light px-1.5 py-0.5 text-[10px] font-medium text-warning"
+                              className="shrink-0 rounded-full bg-warning-light px-1.5 py-0.5 text-nano font-medium text-warning"
                               title={t('plugins:llm.builtinMinRuntimeHint', { tag: m.min_runtime })}
                             >
                               {t('plugins:llm.builtinMinRuntime', { tag: m.min_runtime })}
@@ -700,7 +700,7 @@ export function BuiltinModelWizard({
                             {(m.size_bytes / 1e9).toFixed(1)} GB · {m.quant}
                           </span>
                           {m.installed && (
-                            <span className="rounded-full bg-success-light px-1.5 py-0.5 text-[10px] font-medium text-success">
+                            <span className="rounded-full bg-success-light px-1.5 py-0.5 text-nano font-medium text-success">
                               {t('plugins:llm.installed')}
                             </span>
                           )}
@@ -708,7 +708,7 @@ export function BuiltinModelWizard({
                         {m.memory_ok === false && (
                           <div className="flex items-start gap-1.5 rounded-md bg-warning-light px-2 py-1.5 text-warning">
                             <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                            <span className="text-[11px] leading-snug">
+                            <span className="text-mini leading-snug">
                               {t('plugins:llm.builtinMemLow', {
                                 min: (m.min_ram_mb / 1024).toFixed(0),
                               })}
@@ -735,20 +735,20 @@ export function BuiltinModelWizard({
                   const companionInstalled = vlmEntries.some((m) => m.installed)
                   if (selMainHasVision && !companionInstalled) {
                     return (
-                      <div className="flex items-center gap-1.5 rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                      <div className="flex items-center gap-1.5 rounded-lg bg-muted-30 px-3 py-2 text-xs text-muted-foreground">
                         <Eye className="h-3.5 w-3.5 shrink-0 text-info" />
                         {t('plugins:llm.companionNotNeeded')}
                       </div>
                     )
                   }
                   return (
-                  <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
+                  <div className="space-y-2 rounded-lg border border-border bg-muted-30 p-3">
                     <div className="flex items-center gap-2">
                       <Eye className="h-4 w-4 text-info" />
                       <span className="text-xs font-medium text-foreground">
                         {t('plugins:llm.companionGroup')}
                       </span>
-                      <span className="text-[10px] text-muted-foreground">
+                      <span className="text-nano text-muted-foreground">
                         {t('plugins:llm.companionHint')}
                       </span>
                     </div>
@@ -768,12 +768,12 @@ export function BuiltinModelWizard({
                                   {t(`plugins:llm.models.${m.id}.name`, { defaultValue: m.name })}
                                 </span>
                                 {isInstalledCompanion && (
-                                  <span className="rounded-full bg-success-light px-1.5 py-0.5 text-[10px] font-medium text-success">
+                                  <span className="rounded-full bg-success-light px-1.5 py-0.5 text-nano font-medium text-success">
                                     {t('plugins:llm.installed')}
                                   </span>
                                 )}
                                 {running && (
-                                  <span className="rounded-full bg-info-light px-1.5 py-0.5 text-[10px] font-medium text-info">
+                                  <span className="rounded-full bg-info-light px-1.5 py-0.5 text-nano font-medium text-info">
                                     {t('plugins:llm.companionRunning')}
                                   </span>
                                 )}

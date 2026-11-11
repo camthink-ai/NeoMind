@@ -32,7 +32,7 @@ function MoreRow({ title, description, trailing, onClick, destructive }: MoreRow
       )}
     >
       <span className="min-w-0 flex-1">
-        <span className={cn("block truncate text-[15px] font-medium", destructive ? "text-error" : "text-foreground")}>
+        <span className={cn("block truncate text-heading font-medium", destructive ? "text-error" : "text-foreground")}>
           {title}
         </span>
         {description && <span className="mt-0.5 block truncate text-xs text-muted-foreground">{description}</span>}

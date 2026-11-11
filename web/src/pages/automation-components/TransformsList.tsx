@@ -121,7 +121,13 @@ export function TransformsList({
   const _totalPages = Math.ceil(transforms.length / ITEMS_PER_PAGE) || 1
   const startIndex = (page - 1) * ITEMS_PER_PAGE
   const endIndex = startIndex + ITEMS_PER_PAGE
-  const paginatedTransforms = propsPaginatedTransforms ?? transforms.slice(startIndex, endIndex)
+  // Mobile infinite-scroll parents pass a cumulative window; if props are
+  // omitted, mirror that here so footer load-more cannot replace-slice.
+  const paginatedTransforms = propsPaginatedTransforms ?? (
+    isMobile
+      ? transforms.slice(0, page * ITEMS_PER_PAGE)
+      : transforms.slice(startIndex, endIndex)
+  )
 
   function getScopeInfo(scope: any): { label: string; icon: typeof Globe; color: string } {
     if (!scope || scope === 'global' || (typeof scope === 'string' && scope === 'global')) {
@@ -179,7 +185,7 @@ export function TransformsList({
               <div className="px-4 py-3.5">
                 <div className="flex items-center gap-2">
                   <div className="flex-1 min-w-0">
-                    <div className="truncate text-[15px] font-medium">{transform.name}</div>
+                    <div className="truncate text-heading font-medium">{transform.name}</div>
                     <p className="mt-1 truncate text-xs text-muted-foreground">
                       {getScopeLabel(transform.scope)}
                     </p>

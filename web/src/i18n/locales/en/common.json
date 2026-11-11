@@ -844,5 +844,6 @@
   "size": "Size",
   "saveChanges": "Save Changes",
   "priority": "Priority",
-  "send": "Send"
+  "send": "Send",
+  "selectPlaceholder": "Select..."
 }

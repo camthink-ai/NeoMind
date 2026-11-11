@@ -48,7 +48,7 @@ export function LlmSetupGuide() {
             onClick={() => setWizardOpen(true)}
             className="group relative flex flex-col rounded-xl border border-primary bg-primary-light p-4 transition-all hover:shadow-md text-left"
           >
-            <span className="absolute right-3 top-3 rounded-full bg-primary text-primary-foreground px-2 py-0.5 text-[10px] font-medium">
+            <span className="absolute right-3 top-3 rounded-full bg-primary text-primary-foreground px-2 py-0.5 text-nano font-medium">
               {t('common:llmGuide.recommended')}
             </span>
             <div className="flex size-10 items-center justify-center rounded-lg bg-primary text-primary-foreground">

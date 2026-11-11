@@ -120,7 +120,7 @@ export function EntityIconPicker({
           </div>
 
           {/* Icon grid */}
-          <div className="p-3 max-h-80 overflow-y-auto scrollbar-thin scrollbar-thumb-muted-foreground/20 scrollbar-track-transparent hover:scrollbar-thumb-muted-foreground/40">
+          <div className="p-3 max-h-80 overflow-y-auto scrollbar-thin scrollbar-thumb-muted scrollbar-track-transparent hover:scrollbar-thumb-muted-foreground">
             {filteredIcons.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground text-sm">
                 {t('entityIconPicker.notFound')}

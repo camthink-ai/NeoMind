@@ -1793,6 +1793,7 @@ interface ViewDeviceTypeDialogProps {
 }
 
 export function ViewDeviceTypeDialog({ open, onOpenChange, deviceType }: ViewDeviceTypeDialogProps) {
+  const { t } = useTranslation(['common', 'devices'])
   // Hooks must be called before any early returns
   // Fetch transforms that apply to this device type
   const [virtualMetrics, setVirtualMetrics] = React.useState<Array<{
@@ -1940,7 +1941,7 @@ export function ViewDeviceTypeDialog({ open, onOpenChange, deviceType }: ViewDev
 
     return outputs.length > 0 ? outputs : [{
       name: `${prefix}.*`,
-      display_name: 'Virtual Metric',
+      display_name: t('devices:types.virtualMetric'),
       data_type: 'float',
     }]
   }
@@ -1950,7 +1951,7 @@ export function ViewDeviceTypeDialog({ open, onOpenChange, deviceType }: ViewDev
       open={open}
       onOpenChange={onOpenChange}
       title={deviceType.name}
-      description="Device type details and capabilities"
+      description={t('devices:types.viewDescription')}
       width="3xl"
       contentClassName="flex-1 overflow-y-auto"
       footer={
@@ -1961,12 +1962,12 @@ export function ViewDeviceTypeDialog({ open, onOpenChange, deviceType }: ViewDev
           {isRawMode && (
             <Badge variant="secondary" className="text-xs">
               <Zap className="h-4 w-4 mr-1" />
-              Raw Data Mode
+              {t('devices:types.rawDataModeBadge')}
             </Badge>
           )}
           <div className="flex-1" />
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Close
+            {t('common:close')}
           </Button>
         </div>
       }
@@ -2047,7 +2048,7 @@ export function ViewDeviceTypeDialog({ open, onOpenChange, deviceType }: ViewDev
                 {isRawMode && (
                   <Badge variant="secondary" className="text-xs">
                     <Zap className="h-4 w-4 mr-1" />
-                    Raw Data Mode
+                    {t('devices:types.rawDataModeBadge')}
                   </Badge>
                 )}
               </div>

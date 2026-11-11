@@ -439,7 +439,7 @@ export function DeviceDetail({
                   {device.device_type}
                 </p>
                 {isMobile && (
-                  <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
+                  <p className="mt-0.5 truncate font-mono text-mini text-muted-foreground">
                     {device.device_id || device.id}
                   </p>
                 )}

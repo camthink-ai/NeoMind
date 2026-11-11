@@ -234,7 +234,7 @@ export function AgentExecutionTimeline({
             <LoadingState size="md" className="py-12" />
           ) : executions.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-border py-12 text-center">
-              <History className="h-8 w-8 text-muted-foreground/40" />
+              <History className="h-8 w-8 text-muted-foreground opacity-40" />
               <p className="text-sm text-muted-foreground">{t('agents:noExecutions')}</p>
             </div>
           ) : (

@@ -238,7 +238,7 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
               <category.categoryIcon className="h-3.5 w-3.5" />
             </span>
             <span className="text-sm font-medium text-foreground">{category.categoryLabel}</span>
-            <span className="text-[10px] tabular-nums text-muted-foreground bg-muted rounded-full px-1.5 py-0.5 leading-none">
+            <span className="text-nano tabular-nums text-muted-foreground bg-muted rounded-full px-1.5 py-0.5 leading-none">
               {category.items.length}
             </span>
           </div>

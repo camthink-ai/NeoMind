@@ -430,7 +430,7 @@ export function ExtensionDetailsDialog({
               </Label>
               <Select value={value as string ?? ""} onValueChange={(v) => updateConfigValue(paramName, v)}>
                 <SelectTrigger id={paramName}>
-                  <SelectValue placeholder="Select..." />
+                  <SelectValue placeholder={t("common:selectPlaceholder")} />
                 </SelectTrigger>
                 <SelectContent>
                   {param.enum.map((opt: string) => (
@@ -501,7 +501,7 @@ export function ExtensionDetailsDialog({
               <Label className="text-sm">{param.title || paramName}</Label>
               <Select value={value as string ?? ""} onValueChange={(v) => updateCommandArg(commandId, paramName, v)}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Select..." />
+                  <SelectValue placeholder={t("common:selectPlaceholder")} />
                 </SelectTrigger>
                 <SelectContent>
                   {param.enum.map((opt: string) => (

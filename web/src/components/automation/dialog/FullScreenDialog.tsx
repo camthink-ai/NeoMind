@@ -144,7 +144,7 @@ export function FullScreenDialogHeader({
         >
           <ChevronLeft className="h-5 w-5" />
         </button>
-        <h1 id={titleId} className="max-w-[56vw] truncate text-center text-[17px] font-semibold text-foreground">{title}</h1>
+        <h1 id={titleId} className="max-w-[56vw] truncate text-center text-base font-semibold text-foreground">{title}</h1>
         <div className="flex min-w-0 items-center justify-self-end gap-2 [&>button]:h-10 [&>button]:w-10 [&>button]:rounded-full [&>button]:px-0 [&>button]:text-[0px] [&>button>svg]:m-0">
           {actions}
         </div>

@@ -224,7 +224,8 @@
     "emptyAskAi": "让 AI 帮我搭",
     "emptyStep1": "创建仪表板",
     "emptyStep2": "添加组件",
-    "emptyStep3": "绑定设备数据"
+    "emptyStep3": "绑定设备数据",
+    "tapToEditHint": "点选组件进行编辑"
   },
   "mobileEditBar": {
     "component": "组件",
@@ -391,7 +392,8 @@
     "lastExecution": "最后执行",
     "pause": "暂停",
     "resume": "启动",
-    "execute": "立即执行"
+    "execute": "立即执行",
+    "messagePlaceholder": "添加任务提示或上下文…"
   },
   "aiAnalyst": {
     "systemPrompt": "系统提示词",

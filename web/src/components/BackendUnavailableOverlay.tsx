@@ -53,7 +53,7 @@ export function BackendUnavailableOverlay({
         </p>
 
         {!portConflict && error && (
-          <p className="text-xs text-muted-foreground/70 break-all font-mono max-w-sm">
+          <p className="text-xs text-muted-foreground opacity-70 break-all font-mono max-w-sm">
             {error}
           </p>
         )}

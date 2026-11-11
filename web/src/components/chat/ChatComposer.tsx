@@ -422,8 +422,8 @@ export function ChatComposer({
                             </span>
                           </div>
                           <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
-                            <span className="shrink-0 rounded bg-muted px-1 py-px text-[10px] leading-4 text-muted-foreground">{backend.backend_type}</span>
-                            <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">{backend.model}</span>
+                            <span className="shrink-0 rounded bg-muted px-1 py-px text-nano leading-4 text-muted-foreground">{backend.backend_type}</span>
+                            <span className="min-w-0 flex-1 truncate text-mini text-muted-foreground">{backend.model}</span>
                           </div>
                         </div>
                       </DropdownMenuItem>

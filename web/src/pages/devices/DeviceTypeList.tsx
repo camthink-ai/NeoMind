@@ -108,7 +108,7 @@ export function DeviceTypeList({
               <div className="px-4 py-3.5">
                 <div className="flex items-center gap-2">
                   <div className="flex-1 min-w-0">
-                    <div className="truncate text-[15px] font-medium">{dt.name}</div>
+                    <div className="truncate text-heading font-medium">{dt.name}</div>
                     <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                       <code className="shrink-0 truncate font-mono">{dt.device_type}</code>
                       {dt.description && <span className="truncate">· {dt.description}</span>}
