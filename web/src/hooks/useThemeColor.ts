@@ -5,14 +5,16 @@ import { useTheme } from "@/components/ui/theme"
  * useThemeColor — sync the PWA `theme-color` meta with a full-screen overlay's
  * effective background so the status-bar / safe-area strip matches the overlay
  * body on iOS/Android. Without it, the notch area keeps the base theme-color
- * (#f7f7f7 light / #000 dark, which matches --background) and reads as a
- * colored band above dialogs whose surface differs (bg-popover = white, etc.).
+ * (light/dark media fallbacks in index.html; runtime sync uses --background)
+ * and reads as a colored band above dialogs whose surface differs
+ * (bg-popover = white, etc.).
  *
  * Accepts a CSS var name WITHOUT the `--` prefix (e.g. "popover", "bg-90") or a
  * literal color. Resolves the var to its current value, converts oklch/rgb to
  * hex, and — for semi-transparent tokens — composites over `--background` so the
  * emitted color is opaque (theme-color with alpha is unreliable on iOS).
- * On unmount / inactive restores the previous theme-color.
+ * Updates every `meta[name=theme-color]` (light + dark media variants).
+ * On unmount / inactive restores the previous theme-color values.
  */
 
 function oklchToHex(L: number, C: number, H: number, alpha: number): { rgb: [number, number, number]; a: number } {
@@ -85,8 +87,14 @@ export function useThemeColor(
   useEffect(() => {
     if (!active) return
 
-    const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
-    const prev = meta?.getAttribute("content") ?? null
+    // index.html ships light+dark media variants. querySelector alone would
+    // only ever update the first (light) tag, leaving the dark-mode status
+    // bar / safe-area strip stuck on the static fallback (#000).
+    const metas = Array.from(
+      document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]'),
+    )
+    if (metas.length === 0) return
+    const prev = metas.map((meta) => meta.getAttribute("content"))
 
     // Resolve token → raw CSS var value (e.g. "popover" → "oklch(1 0 0)").
     let raw = tokenOrHex
@@ -98,7 +106,12 @@ export function useThemeColor(
 
     // Composite semi-transparent token over the app background so theme-color
     // stays opaque and matches what the frosted overlay visually reads as.
-    if (color && color.a < 1) {
+    // When the token IS --background (already translucent), keep the opaque
+    // oklch rgb from toHex above — blending it over itself is a no-op, but
+    // blending over a mismatched canvas would tint the status bar wrong.
+    if (color && color.a < 1 && tokenOrHex !== "background") {
+      // Underlay uses the opaque channel of --background (dark canvas is
+      // translucent too; its rgb is the charcoal we want beneath overlays).
       const bg = parseColor(getComputedStyle(document.documentElement).getPropertyValue("--background").trim()) ?? { rgb: [247, 247, 247], a: 1 }
       const blended: [number, number, number] = [
         color.rgb[0] * color.a + bg.rgb[0] * (1 - color.a),
@@ -108,13 +121,24 @@ export function useThemeColor(
       hex = toHex({ rgb: blended, a: 1 })
     }
 
-    meta?.setAttribute("content", hex)
+    for (const meta of metas) {
+      meta.setAttribute("content", hex)
+    }
     return () => {
-      if (prev === null) {
-        meta?.removeAttribute("content")
-      } else {
-        meta?.setAttribute("content", prev)
-      }
+      metas.forEach((meta, i) => {
+        const previous = prev[i]
+        if (previous === null) {
+          meta.removeAttribute("content")
+        } else {
+          meta.setAttribute("content", previous)
+        }
+      })
     }
   }, [tokenOrHex, active, resolvedTheme])
+}
+
+/** Keep PWA/OS theme-color aligned with --background for the active app theme. */
+export function ThemeColorSync() {
+  useThemeColor("background", true)
+  return null
 }

@@ -10,9 +10,11 @@
 
     <!-- PWA / standalone meta — improves "Add to Home Screen" on iOS & Android.
          theme-color uses neutral app background (NOT brand orange) so the OS
-         chrome / Android title bar / desktop PWA frame matches the app surface. -->
-    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f7f7" />
-    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000" />
+         chrome / Android title bar / desktop PWA frame matches the app surface.
+         Values match --background (light oklch(1 0 0), dark oklch(0.135…));
+         ThemeProvider keeps them synced at runtime from the CSS token. -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#07080c" />
     <meta name="application-name" content="NeoMind" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />

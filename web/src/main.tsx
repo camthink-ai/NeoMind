@@ -7,6 +7,7 @@ import "./index.css"
 import "./i18n/config"
 import App from "./App"
 import { ThemeProvider } from "@/components/ui/theme"
+import { ThemeColorSync } from "@/hooks/useThemeColor"
 import { initVisualViewport } from "@/hooks/useVisualViewport"
 import { installGlobalTauriWindowDrag } from "@/lib/windowDrag"
 
@@ -287,6 +288,7 @@ createRoot(document.getElementById("root")!).render(
         only behaviours — the old `future` prop no longer exists. */}
     <BrowserRouter>
       <ThemeProvider>
+        <ThemeColorSync />
         <App />
       </ThemeProvider>
     </BrowserRouter>

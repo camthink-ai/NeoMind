@@ -80,6 +80,9 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     const root = document.documentElement
     root.classList.remove("light", "dark")
     root.classList.add(resolvedTheme)
+    // Keep UA chrome (status bar / form controls / scrollbars) aligned with
+    // the app theme even when it diverges from prefers-color-scheme.
+    root.style.colorScheme = resolvedTheme
     localStorage.setItem("theme", theme)
   }, [resolvedTheme, theme, mounted])
 
