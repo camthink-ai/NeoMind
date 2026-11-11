@@ -10,7 +10,6 @@ import { GlobalControlsFloating } from "@/components/layout/GlobalControls"
 import { MobilePrimaryNav } from "@/components/layout/MobilePrimaryNav"
 import { MobileNav } from "@/components/layout/MobileNav"
 import { SwipeNavigation } from "@/components/layout/SwipeNavigation"
-import { NavigationProgress } from "@/components/layout/NavigationProgress"
 import { useIsMobile } from "@/hooks/useMobile"
 import { useDataChangeEvents } from "@/hooks/useDataChangeEvents"
 import { Toaster } from "@/components/ui/toaster"
@@ -553,7 +552,6 @@ function App() {
 
   return (
     <>
-      <NavigationProgress />
       <BrandGradientDef />
       <Suspense fallback={<PageLoading />}>
         <Routes>
