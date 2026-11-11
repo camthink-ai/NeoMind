@@ -621,6 +621,7 @@ mod tests {
             capability_constants::CHAT_STREAM_CANCEL_TURN,
             "chat_stream_cancel_turn"
         );
+        assert_eq!(capability_constants::LLM_COMPLETE, "llm_complete");
         assert_eq!(capability_constants::RULE_TRIGGER, "rule_trigger");
     }
 

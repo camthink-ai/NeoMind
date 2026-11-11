@@ -1862,7 +1862,7 @@ impl DeviceService {
         start_time: Option<i64>,
         end_time: Option<i64>,
         limit: Option<usize>,
-    ) -> Result<Vec<(i64, MetricValue)>, DeviceError> {
+    ) -> Result<(Vec<(i64, MetricValue)>, usize), DeviceError> {
         // Get device config and template
         let (_config, template) = self.get_device_with_template(device_id).await?;
 
@@ -1899,8 +1899,8 @@ impl DeviceService {
             let start = start_time.unwrap_or(i64::MIN);
             let end = end_time.unwrap_or(i64::MAX);
 
-            let points = storage
-                .query_limited(
+            let (points, total) = storage
+                .query_limited_with_total(
                     &format!("device:{}", device_id),
                     metric_name,
                     start,
@@ -1918,7 +1918,10 @@ impl DeviceService {
                     DeviceError::Communication(format!("Telemetry query failed: {}", e))
                 })?;
 
-            Ok(points.into_iter().map(|p| (p.timestamp, p.value)).collect())
+            Ok((
+                points.into_iter().map(|p| (p.timestamp, p.value)).collect(),
+                total,
+            ))
         } else {
             tracing::warn!(
                 "Telemetry storage not configured when querying {}/{}",

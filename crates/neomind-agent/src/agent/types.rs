@@ -908,6 +908,18 @@ pub struct CachedLargeResult {
     pub size_bytes: usize,
     /// Timestamp when cached
     pub cached_at: i64,
+    /// Monotonic insertion sequence. Eviction order is FIFO by `seq`:
+    /// `cached_at` is second-granular, so same-second insertions tied under
+    /// the old min-by-timestamp eviction and HashMap iteration order picked
+    /// the victim — "newest survives" was luck, not a contract.
+    pub seq: u64,
+}
+
+/// Source of monotonic cache insertion sequence numbers.
+static CACHED_ENTRY_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn next_cache_seq() -> u64 {
+    CACHED_ENTRY_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Cache for large tool results that must not enter LLM context.
@@ -918,9 +930,37 @@ pub struct LargeDataCache {
     entries: std::collections::HashMap<String, CachedLargeResult>,
 }
 
+/// One character window of a cached blob, read back via
+/// `file_read(path="$cached:…")`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CachedReadWindow {
+    pub content: String,
+    /// Total chars of the cached blob (windows concatenate to this).
+    pub total_chars: usize,
+    pub returned_chars: usize,
+    /// Offset for the next window; `None` when this window reached the end.
+    pub next_offset: Option<usize>,
+    pub content_type: String,
+}
+
+/// Default character window for cached-text read-back. 8K (down from the
+/// original 16K): with results retained in history, two 16K windows alone
+/// overflowed a 32K-context session in the 2026-11-09 A2 replay. 8K keeps
+/// a useful window while several reads + history still fit; oversized
+/// history results are additionally previewed by `compact_tool_results`.
+const CACHED_READ_DEFAULT_CHARS: usize = 8_000;
+/// Hard cap on a single read-back window, regardless of what the caller
+/// asks for.
+const CACHED_READ_MAX_CHARS: usize = 64_000;
+/// Hard BYTE cap on a single read-back window. Chars alone under-bound
+/// the payload: 64,000 CJK chars ≈ 192KB of UTF-8 — the read-back fix
+/// must not reintroduce context bloat through multi-byte text. The window
+/// stops at whichever limit binds first.
+const CACHED_READ_MAX_BYTES: usize = 64 * 1024;
+
 /// Threshold below which we don't cache — just pass through.
 /// Set to 32KB: compact time-series format (2000 points ≈ 14KB) should reach LLM intact.
-/// Only truly large payloads (images, huge JSON) get cached with a summary reference.
+/// Only truly large payloads (images, huge base64) get cached with a summary reference.
 const CACHE_THRESHOLD_BYTES: usize = 32 * 1024;
 
 /// Threshold used by `slim_large_strings_in_json` to decide when a
@@ -945,14 +985,29 @@ impl LargeDataCache {
         Self::default()
     }
 
-    /// Evict oldest entries if cache exceeds limits.
+    /// Cache entry keys, sorted by insertion sequence — test/introspection
+    /// accessor so integration tests can extract the REAL `$cached:` key
+    /// the slim layer generated instead of reconstructing key derivation.
+    pub fn entry_keys(&self) -> Vec<String> {
+        let mut keys: Vec<(String, u64)> = self
+            .entries
+            .iter()
+            .map(|(k, v)| (k.clone(), v.seq))
+            .collect();
+        keys.sort_by_key(|(_, seq)| *seq);
+        keys.into_iter().map(|(k, _)| k).collect()
+    }
+
+    /// Evict oldest entries if cache exceeds limits. FIFO by insertion
+    /// `seq` — deterministic regardless of HashMap iteration order or
+    /// same-second timestamps.
     fn evict_if_needed(&mut self) {
         // Evict by count
         while self.entries.len() > MAX_CACHE_ENTRIES {
             if let Some(oldest_key) = self
                 .entries
                 .iter()
-                .min_by_key(|(_, v)| v.cached_at)
+                .min_by_key(|(_, v)| v.seq)
                 .map(|(k, _)| k.clone())
             {
                 tracing::debug!("Evicting cache entry '{}' (count limit)", oldest_key);
@@ -965,13 +1020,13 @@ impl LargeDataCache {
         // Evict by total size
         let total_size: usize = self.entries.values().map(|e| e.size_bytes).sum();
         if total_size > MAX_CACHE_TOTAL_BYTES {
-            // Sort by age (oldest first) and evict until under budget
-            let mut sorted: Vec<(String, i64)> = self
+            // Sort by insertion age (oldest first) and evict until under budget
+            let mut sorted: Vec<(String, u64)> = self
                 .entries
                 .iter()
-                .map(|(k, v)| (k.clone(), v.cached_at))
+                .map(|(k, v)| (k.clone(), v.seq))
                 .collect();
-            sorted.sort_by_key(|(_, ts)| *ts);
+            sorted.sort_by_key(|(_, seq)| *seq);
 
             let mut current_size = total_size;
             for (key, _) in sorted {
@@ -1009,6 +1064,7 @@ impl LargeDataCache {
             data: result.to_string(),
             size_bytes,
             cached_at: chrono::Utc::now().timestamp(),
+            seq: next_cache_seq(),
         };
         self.entries.insert(tool_name.to_string(), cached);
 
@@ -1029,13 +1085,13 @@ impl LargeDataCache {
             // JSON data: extract key summary values for LLM context
             let summary = Self::smart_json_summary(tool_name, result, 500);
             format!(
-                "[Data: {}, {}. Use \"{}\" to reference. {}]",
+                "[Data: {}, {}. Read it back with file_read(path=\"{}\", char_offset=0) — windows of char_offset/char_length. {}]",
                 content_type, human_size, cached_ref, summary
             )
         } else {
             let preview: String = result.chars().take(300).collect();
             format!(
-                "[Data: {}, {}. Use \"{}\" to reference. Preview: {}]",
+                "[Data: {}, {}. Read it back with file_read(path=\"{}\", char_offset=0) — windows of char_offset/char_length. Preview: {}]",
                 content_type, human_size, cached_ref, preview
             )
         }
@@ -1102,6 +1158,7 @@ impl LargeDataCache {
             data: data_url.to_string(),
             size_bytes: data_url.len(),
             cached_at: chrono::Utc::now().timestamp(),
+            seq: next_cache_seq(),
         };
         self.entries.insert("agent_image".to_string(), cached);
         self.evict_if_needed();
@@ -1133,6 +1190,7 @@ impl LargeDataCache {
             data: data_url.to_string(),
             size_bytes: data_url.len(),
             cached_at: chrono::Utc::now().timestamp(),
+            seq: next_cache_seq(),
         };
         self.entries.insert(key.to_string(), cached);
         self.evict_if_needed();
@@ -1194,6 +1252,128 @@ impl LargeDataCache {
             &cached.data,
             std::path::Path::new(&data_dir),
         ))
+    }
+
+    /// Read a CHARACTER window of a cached blob — the text read-back half
+    /// of the `$cached:` contract (`file_read(path="$cached:…")`).
+    ///
+    /// Unlike [`resolve_reference`](Self::resolve_reference) (which digs
+    /// for image data), this returns the RAW cached text so the model can
+    /// actually read what a large tool produced. Slicing is char-based, so
+    /// multi-byte text (中文) never splits mid-character and concatenated
+    /// windows reproduce the original exactly.
+    ///
+    /// Refs are looked up in THIS cache only — a ref from another
+    /// session/execution, or one evicted by size/count limits, is an
+    /// explicit ERROR, never empty content ("cannot read" must not be
+    /// answered as "nothing there").
+    pub fn read_cached_window(
+        &self,
+        reference: &str,
+        char_offset: usize,
+        char_length: Option<usize>,
+    ) -> Result<CachedReadWindow, String> {
+        let key = reference
+            .strip_prefix("$cached:")
+            .ok_or_else(|| format!("not a $cached: reference: {}", reference))?;
+        let entry = self.entries.get(key).ok_or_else(|| {
+            format!(
+                "Unknown $cached reference '{}' — it was evicted (size/count limits), belongs to another session, or never existed. Re-run the command that produced the original output.",
+                reference
+            )
+        })?;
+        let total_chars = entry.data.chars().count();
+        if char_offset > total_chars {
+            return Err(format!(
+                "char_offset {} is beyond the end of the cached content (total_chars {})",
+                char_offset, total_chars
+            ));
+        }
+        let requested = char_length
+            .unwrap_or(CACHED_READ_DEFAULT_CHARS)
+            .clamp(1, CACHED_READ_MAX_CHARS);
+        // Dual cap: `requested` bounds chars, the byte budget bounds the
+        // UTF-8 payload (CJK is 3 bytes/char). Always admit at least one
+        // char so a window can never come back empty while data remains
+        // (an empty-but-truncated window would loop the model).
+        let mut content = String::new();
+        let mut used_bytes = 0usize;
+        for ch in entry.data.chars().skip(char_offset).take(requested) {
+            let ch_bytes = ch.len_utf8();
+            if !content.is_empty() && used_bytes + ch_bytes > CACHED_READ_MAX_BYTES {
+                break;
+            }
+            used_bytes += ch_bytes;
+            content.push(ch);
+        }
+        let returned_chars = content.chars().count();
+        let next_offset = if char_offset + returned_chars < total_chars {
+            Some(char_offset + returned_chars)
+        } else {
+            None
+        };
+        Ok(CachedReadWindow {
+            content,
+            total_chars,
+            returned_chars,
+            next_offset,
+            content_type: entry.content_type.clone(),
+        })
+    }
+
+    /// Serve `file_read(path="$cached:…")` from this cache, shaping the
+    /// window as a file_read-style tool result. Cached content is NOT a
+    /// file: no `state` snapshot is returned, and the message says so —
+    /// it must not be passed to file_edit/file_write.
+    pub fn file_read_cached(
+        &self,
+        reference: &str,
+        char_offset: usize,
+        char_length: Option<usize>,
+    ) -> crate::toolkit::ToolOutput {
+        match self.read_cached_window(reference, char_offset, char_length) {
+            Ok(window) => {
+                // Audit parity: a served cached read-back must be visible
+                // in logs exactly like a regular tool execution.
+                tracing::info!(
+                    reference = %reference,
+                    char_offset = char_offset,
+                    returned_chars = window.returned_chars,
+                    total_chars = window.total_chars,
+                    "Served $cached read-back via file_read"
+                );
+                let tail = match window.next_offset {
+                    Some(next) => format!(" More exists — continue with char_offset={}.", next),
+                    None => " (complete).".to_string(),
+                };
+                crate::toolkit::ToolOutput::success(serde_json::json!({
+                    "reference": reference,
+                    "content_type": window.content_type,
+                    "total_chars": window.total_chars,
+                    "char_offset": char_offset,
+                    "returned_chars": window.returned_chars,
+                    "content": window.content,
+                    "next_char_offset": window.next_offset,
+                    "truncated": window.next_offset.is_some(),
+                    "message": format!(
+                        "Cached tool output, chars {}..{} of {}.{} Cached content is not a file: no state snapshot, and it cannot be edited (do not pass to file_edit/file_write).",
+                        char_offset,
+                        char_offset + window.returned_chars,
+                        window.total_chars,
+                        tail
+                    ),
+                }))
+            }
+            Err(message) => {
+                tracing::warn!(
+                    reference = %reference,
+                    char_offset = char_offset,
+                    "Failed $cached read-back via file_read: {}",
+                    message
+                );
+                crate::toolkit::ToolOutput::error(message)
+            }
+        }
     }
 
     /// Extract image/base64 data from a cached result string.
@@ -1636,6 +1816,7 @@ impl LargeDataCache {
                         data: s.clone(),
                         size_bytes: bytes,
                         cached_at: chrono::Utc::now().timestamp(),
+                        seq: next_cache_seq(),
                     };
                     self.entries.insert(key, cached);
 
@@ -1654,7 +1835,7 @@ impl LargeDataCache {
                         )
                     } else {
                         format!(
-                            "{kind} ({size}) cached as {ref} — pass this reference to downstream tools that accept `$cached:` references to access the full data.",
+                            "{kind} ({size}) cached as {ref} — read it back with file_read(path=\"{ref}\", char_offset=0) in char_offset/char_length windows.",
                             kind = kind,
                             size = size_str,
                             ref = cached_ref
@@ -2307,6 +2488,234 @@ mod tests {
         let n = cache.slim_large_strings_in_json(&mut value, "device_list");
         assert_eq!(n, 0);
         assert!(value["success"].is_boolean());
+    }
+
+    // ===== $cached read-back (file_read door, 2026-11-09 round) =====
+
+    /// Acceptance 1+2: a real large single-line JSON (with multi-byte
+    /// text) is cached, then read back via file_read windows — the
+    /// concatenated windows reproduce the original exactly, with no loss
+    /// and no duplication, even where a window edge lands mid-中文.
+    #[test]
+    fn cached_read_back_roundtrip_single_line_json_with_cjk() {
+        let mut cache = LargeDataCache::new();
+        // ~45KB single-line JSON with Chinese values — the shape that made
+        // line-windowed reads useless.
+        let mut payload = String::from(r#"{"events":[""#);
+        while payload.chars().count() < 45_000 {
+            payload.push_str("温度传感器读数升高警报，");
+        }
+        payload.push_str(r#""]}"#);
+
+        let summary = cache.store("shell.stdout", &payload);
+        assert!(summary.contains("$cached:shell.stdout"), "{}", summary);
+
+        // Walk the windows via next_char_offset and concatenate.
+        let mut rebuilt = String::new();
+        let mut offset = 0usize;
+        loop {
+            let out = cache.file_read_cached("$cached:shell.stdout", offset, Some(977));
+            assert!(out.success, "read-back must succeed");
+            let data = &out.data;
+            let content = data["content"].as_str().unwrap();
+            rebuilt.push_str(content);
+            match data["next_char_offset"].as_u64() {
+                Some(next) => {
+                    assert_eq!(data["truncated"], serde_json::json!(true));
+                    assert_eq!(next as usize, offset + content.chars().count());
+                    offset = next as usize;
+                }
+                None => {
+                    assert_eq!(data["truncated"], serde_json::json!(false));
+                    break;
+                }
+            }
+        }
+        assert_eq!(
+            rebuilt.chars().count(),
+            payload.chars().count(),
+            "no loss, no duplication across windows"
+        );
+        assert_eq!(rebuilt, payload, "char-exact reconstruction incl. CJK");
+        // Shape: totals, no file state, not-editable warning.
+        let first_out = cache.file_read_cached("$cached:shell.stdout", 0, None);
+        assert!(first_out.success);
+        let first = &first_out.data;
+        assert_eq!(
+            first["total_chars"],
+            serde_json::json!(payload.chars().count())
+        );
+        assert_eq!(first["char_offset"], serde_json::json!(0));
+        assert!(
+            first.get("state").is_none(),
+            "cached content carries no file state"
+        );
+        let message = first["message"].as_str().unwrap();
+        assert!(
+            message.contains("not a file"),
+            "message must disclaim file semantics: {}",
+            message
+        );
+    }
+
+    /// Acceptance 3: hard cap clamps oversized requests; offsets beyond
+    /// the end error instead of returning empty "nothing there".
+    #[test]
+    fn cached_read_window_cap_and_boundaries() {
+        let mut cache = LargeDataCache::new();
+        let payload = "烫".repeat(80_000); // 240KB of 3-byte chars
+        cache.store("big", &payload);
+
+        // Hard cap: an absurd request is clamped, not honored.
+        let capped = cache
+            .read_cached_window("$cached:big", 0, Some(1_000_000))
+            .unwrap();
+        assert!(
+            capped.returned_chars <= 64_000,
+            "hard cap respected: {}",
+            capped.returned_chars
+        );
+        assert!(capped.next_offset.is_some(), "capped window is truncated");
+
+        // Default window when char_length is omitted (8K — see the A2
+        // overflow note on CACHED_READ_DEFAULT_CHARS).
+        let default = cache.read_cached_window("$cached:big", 0, None).unwrap();
+        assert_eq!(default.returned_chars, 8_000);
+
+        // Offset exactly at the end → empty window, no next.
+        let total = default.total_chars;
+        let tail = cache
+            .read_cached_window("$cached:big", total, None)
+            .unwrap();
+        assert_eq!(tail.returned_chars, 0);
+        assert!(tail.next_offset.is_none());
+
+        // Offset BEYOND the end → explicit error (never silent empty).
+        let err = cache
+            .read_cached_window("$cached:big", total + 1, None)
+            .unwrap_err();
+        assert!(err.contains("beyond the end"), "{}", err);
+    }
+
+    /// Acceptance 3 (stale/cross-session): an unknown reference — evicted,
+    /// from another session, or never existed — is an explicit error
+    /// result, never empty content.
+    #[test]
+    fn cached_read_unknown_ref_is_explicit_error() {
+        let cache = LargeDataCache::new(); // fresh session: nothing cached
+        let out = cache.file_read_cached("$cached:shell.stdout#deadbeef", 0, None);
+        assert!(!out.success, "unknown ref must fail loudly");
+        let err = out.error.unwrap_or_default();
+        assert!(err.contains("Unknown $cached reference"), "error: {}", err);
+        assert!(
+            err.contains("Re-run the command"),
+            "error tells the model how to recover: {}",
+            err
+        );
+
+        // Not a reference at all → rejected too.
+        let out = cache.file_read_cached("not-a-ref", 0, None);
+        assert!(!out.success);
+    }
+
+    /// Eviction is DETERMINISTIC FIFO by insertion sequence (2026-11-09
+    /// review fix): 21 stores into 20 slots evict EXACTLY the oldest
+    /// entry — not "some same-second entry picked by HashMap order" — and
+    /// the evicted read is an EXPLICIT error, never a silent empty
+    /// success.
+    #[test]
+    fn cached_read_eviction_is_deterministic_fifo() {
+        let mut cache = LargeDataCache::new();
+        let payload = "x".repeat(33_000); // over the 32KB store() threshold
+        for i in 0..21 {
+            // MAX_CACHE_ENTRIES = 20 → exactly one entry was evicted.
+            cache.store(&format!("t{i}"), &payload);
+        }
+        // Exactly t0 (the oldest) is gone, with an explicit error.
+        let evicted = cache.file_read_cached("$cached:t0", 0, Some(10));
+        assert!(!evicted.success, "oldest entry must be evicted");
+        assert!(
+            evicted
+                .error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Unknown $cached reference"),
+            "evicted read says so explicitly"
+        );
+        // Everything else survives — including all same-second siblings.
+        for i in 1..21 {
+            let out = cache.file_read_cached(&format!("$cached:t{i}"), 0, Some(10));
+            assert!(out.success, "t{i} must survive FIFO eviction");
+            assert_eq!(out.data["returned_chars"], serde_json::json!(10));
+        }
+        // Introspection accessor agrees: insertion order, oldest first.
+        assert_eq!(
+            cache.entry_keys().first().map(String::as_str),
+            Some("t1"),
+            "survivors keep insertion order"
+        );
+    }
+
+    /// Acceptance (same-session lifetime): a reference created in one
+    /// round stays readable in later rounds of the SAME session/execution
+    /// — the continuation case. Only a different session (fresh cache)
+    /// loses it.
+    #[test]
+    fn cached_refs_survive_across_rounds_in_same_session() {
+        let mut session = LargeDataCache::new();
+        session.store("round1", &("a".repeat(40_000)));
+        // Rounds 2-3 do other work (entries stay ≤ 20 → no eviction).
+        session.store("round2", &("b".repeat(40_000)));
+        session.store("round3", &("c".repeat(40_000)));
+        let out = session.file_read_cached("$cached:round1", 0, Some(50));
+        assert!(out.success, "same-session ref stays valid across rounds");
+        assert_eq!(out.data["content"].as_str().unwrap(), "a".repeat(50));
+
+        // A DIFFERENT session is a fresh cache → explicit rejection.
+        let other = LargeDataCache::new();
+        let denied = other.file_read_cached("$cached:round1", 0, None);
+        assert!(!denied.success, "cross-session ref must be rejected");
+    }
+
+    /// Acceptance (byte budget): 64K chars of CJK ≈ 192KB of UTF-8 — the
+    /// window must stop at the BYTE cap for multi-byte text and at the
+    /// CHAR cap for ASCII, whichever binds first.
+    #[test]
+    fn cached_read_window_dual_char_and_byte_caps() {
+        let mut cache = LargeDataCache::new();
+        let cjk = "烫".repeat(80_000); // 240KB
+        cache.store("cjk", &cjk);
+
+        // CJK regime: requesting 60,000 chars (180KB) is byte-capped.
+        let w = cache
+            .read_cached_window("$cached:cjk", 0, Some(60_000))
+            .unwrap();
+        assert!(
+            w.content.len() <= 64 * 1024,
+            "byte cap binds for CJK: {} bytes",
+            w.content.len()
+        );
+        assert!(
+            w.returned_chars < 60_000,
+            "char request was not honored past bytes"
+        );
+        assert!(w.next_offset.is_some(), "byte-capped window is truncated");
+        assert!(
+            w.returned_chars >= 1,
+            "never an empty truncated window (loop guard)"
+        );
+
+        // ASCII regime: the char cap binds instead.
+        cache.store("ascii", &"z".repeat(100_000));
+        let w = cache
+            .read_cached_window("$cached:ascii", 0, Some(1_000_000))
+            .unwrap();
+        assert_eq!(w.returned_chars, 64_000, "char cap binds for ASCII");
+        assert_eq!(
+            w.content.len(),
+            64_000,
+            "64,000 ASCII chars = 64,000 bytes < 65,536 (64 KiB) — char cap binds first, byte cap does not"
+        );
     }
 
     /// Arrays of images (e.g. a tool returning a list of frames) all get

@@ -1,6 +1,6 @@
 {
   "device_type": "ne301_camera",
-  "name": "CamThink Edge AI Camera",
+  "name": "CamThink NE301 Edge AI Camera",
   "description": "CamThink NE301 Edge AI Camera with built-in YOLOv8 Nano object detection model supporting 80-class recognition. Features WiFi connectivity and battery power.",
   "categories": ["Camera", "AI", "Edge Computing"],
   "mode": "full",

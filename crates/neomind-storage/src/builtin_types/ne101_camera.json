@@ -1,6 +1,6 @@
 {
   "device_type": "ne101_camera",
-  "name": "CamThink Sensing Camera",
+  "name": "CamThink NE101 Sensing Camera",
   "description": "CamThink NE101 sensing camera with low-power battery support and button-triggered capture. Ideal for remote monitoring and photo capture scenarios.",
   "categories": ["Camera", "Sensing"],
   "mode": "full",

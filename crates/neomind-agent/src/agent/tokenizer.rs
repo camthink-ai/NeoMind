@@ -4,10 +4,16 @@
 
 /// Estimate token count for a text string.
 ///
-/// This uses a heuristic approach that's more accurate than simple character division:
+/// Heuristic rates. NOTE (2026-11-11): the earlier "accurate" calibration
+/// (CJK 1.0/char, digits 1.5/char) regressed the 138-case gate to 88/138
+/// from 99/138 — inflated CLI-output estimates over-compacted history and
+/// caused re-work. These conservative rates are load-bearing as compaction
+/// headroom; don't re-calibrate without real trial wire data + a gate run.
 /// - Chinese characters: ~1.8 tokens each
-/// - English words: ~0.8 tokens each
-/// - Special characters/punctuation: ~1.2 tokens each
+/// - English: ~0.25 tokens per character
+/// - Digits: ~0.3 tokens each
+/// - Other: ~0.5 tokens each
+/// - Global ×1.1 safety margin
 pub fn estimate_tokens(text: &str) -> usize {
     let mut tokens = 0f64;
 
@@ -17,20 +23,12 @@ pub fn estimate_tokens(text: &str) -> usize {
         let number_count = line.chars().filter(|c| c.is_ascii_digit()).count() as f64;
         let special_count = line.chars().filter(|c| !c.is_alphanumeric()).count() as f64;
 
-        // Chinese characters (CJK Unified Ideographs)
         tokens += chinese_count * 1.8;
-
-        // English words (rough estimate: 4 chars = 1 word = 0.8 tokens)
         tokens += english_count * 0.25;
-
-        // Numbers (similar to English)
         tokens += number_count * 0.3;
-
-        // Special characters and punctuation
         tokens += special_count * 0.5;
     }
 
-    // Add a small buffer for safety
     (tokens * 1.1).ceil() as usize
 }
 
@@ -69,6 +67,14 @@ pub fn estimate_message_tokens(message: &crate::agent::AgentMessage) -> usize {
             // Tool name + arguments roughly (convert JSON to string for estimation)
             let args_str = tool_call.arguments.to_string();
             tokens += 10 + estimate_tokens(&args_str);
+            // RESULTS ship in the prompt too. The 2026-11-09 A2 replay
+            // overflowed 32K exactly because this was missing: two cached
+            // read-back windows (16K+20K chars) sat in tool_call.result,
+            // invisible to the estimator, so history assembly believed
+            // everything fit and sent 33.8K tokens.
+            if let Some(result) = &tool_call.result {
+                tokens += estimate_tokens(&result.to_string());
+            }
         }
     }
 
@@ -382,10 +388,74 @@ mod tests {
 
     #[test]
     fn test_estimate_chinese() {
-        // Chinese text: ~1.8 tokens per character
+        // Conservative rate (reverted calibration): 4 chars × 1.8 × 1.1 ≈ 8.
         let tokens = estimate_tokens("你好世界");
         assert!(tokens > 4, "Chinese should count more than char count");
         assert!(tokens < 15, "Should be reasonable");
+    }
+
+    /// Rate guard (2026-11-11, reverted calibration): the conservative
+    /// rates ARE compaction headroom. A "more accurate" CJK/digit rate
+    /// regressed the gate (99 -> 88/138). Assert the shipped rates so a
+    /// future calibration attempt must consciously update this test.
+    #[test]
+    fn test_token_rates_are_the_conservative_ones() {
+        // 100 CJK chars: 1.8 × 100 × 1.1 = 198
+        let cjk = "知".repeat(100);
+        let t = estimate_tokens(&cjk);
+        assert!(
+            (190..=205).contains(&t),
+            "CJK rate drifted: {t} (expect ~198)"
+        );
+        // 100 digits: 0.3 × 100 × 1.1 = 33
+        let digits = "1".repeat(100);
+        let d = estimate_tokens(&digits);
+        assert!(
+            (30..=36).contains(&d),
+            "digit rate drifted: {d} (expect ~33)"
+        );
+        // 100 ascii letters: 0.25 × 100 × 1.1 = 28
+        let alpha = "a".repeat(100);
+        let a = estimate_tokens(&alpha);
+        assert!(
+            (25..=31).contains(&a),
+            "alpha rate drifted: {a} (expect ~28)"
+        );
+    }
+
+    /// Results ship in the prompt, so they MUST ship in the estimate. The
+    /// 2026-11-09 A2 replay overflowed 32K because two cached read-back
+    /// windows in tool_call.result were invisible here — history assembly
+    /// "fit" a prompt that actually needed 33.8K tokens.
+    #[test]
+    fn tool_call_results_count_toward_the_estimate() {
+        let base = crate::agent::AgentMessage::assistant("done");
+        let with_args = crate::agent::AgentMessage {
+            tool_calls: Some(vec![crate::agent::types::ToolCall {
+                name: "file_read".to_string(),
+                id: String::new(),
+                arguments: serde_json::json!({"path": "$cached:shell.stdout#ab12cd34"}),
+                result: None,
+                round: None,
+            }]),
+            ..base.clone()
+        };
+        let with_result = crate::agent::AgentMessage {
+            tool_calls: Some(vec![crate::agent::types::ToolCall {
+                name: "file_read".to_string(),
+                id: String::new(),
+                arguments: serde_json::json!({"path": "$cached:shell.stdout#ab12cd34"}),
+                result: Some(serde_json::json!({"content": "x".repeat(8_000)})),
+                round: None,
+            }]),
+            ..base
+        };
+        let args_only = estimate_message_tokens(&with_args);
+        let with_payload = estimate_message_tokens(&with_result);
+        assert!(
+            with_payload > args_only + 1_500,
+            "8K-char result must move the estimate: {args_only} vs {with_payload}"
+        );
     }
 
     #[test]
@@ -473,9 +543,8 @@ mod tests {
 
     #[test]
     fn truncate_to_tokens_caps_cjk_under_budget() {
-        // 5000 Chinese chars ≈ 9900 tokens — over an 8000-token budget. The
-        // char-based truncate_to would leave all 5000 chars (5000 < 8000),
-        // injecting ~9900 tokens; token-based truncation must cap under budget.
+        // Conservative rate: 5000 CJK chars ≈ 9900 tokens — over an
+        // 8000-token budget, so truncation must fire.
         let big = "知".repeat(5000);
         let capped = truncate_to_tokens(&big, 8000);
         assert!(

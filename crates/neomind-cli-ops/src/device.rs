@@ -599,8 +599,8 @@ pub async fn get_telemetry_history(
 
 /// If the telemetry history response contains image-bearing metrics,
 /// replace each such metric's data-point array with a compact summary
-/// object. This prevents the response from being dominated by hundreds
-/// of 271KB+ base64 strings when the LLM asks for image history (e.g.
+/// object. This prevents the response from being dominated by hundreds of
+/// 271KB+ base64 strings when the LLM asks for image history (e.g.
 /// `device history <ID> --metric values.image --time-range 24h` would
 /// otherwise return 288 snapshots × 271KB ≈ 78MB of base64).
 ///
@@ -608,16 +608,77 @@ pub async fn get_telemetry_history(
 /// is a `data:image/` URL or an HTTP(S) URL ending in a known image
 /// extension, the metric is treated as image-bearing.
 ///
-/// The summary preserves the LATEST snapshot's full value as
+/// The summary preserves the newest snapshot's full value as
 /// `latest_value` so the downstream streaming-layer slim can cache it
 /// as a `$cached:` reference for the `vision` tool. All earlier
-/// snapshots are summarized away (count, time range, average interval,
-/// actionable note).
+/// snapshots are summarized away (page count, time range, average
+/// interval, actionable note).
+///
+/// Extremes are computed from timestamps, never from array position —
+/// the telemetry API returns newest-first pages, and the original
+/// first/last implementation ended up with `earliest_ts` holding the
+/// NEWEST point and `latest_value` pointing at the OLDEST frame.
+///
+/// Counting contract: telemetry stores ONE point per
+/// (device, metric, second) — same-key writes overwrite
+/// (`timeseries/write.rs`), so a camera bursting several frames in one
+/// second leaves a single point. Point counts therefore UNDERCOUNT saved
+/// frames and must never be presented as "number of images". This summary
+/// reports `page_count`, `truncated`, and (single-metric queries only)
+/// `telemetry_point_total` from pagination; exact frame counting belongs
+/// to the image FILE store (one file per frame), not to telemetry points.
 ///
 /// Non-image metrics pass through untouched, so a multi-metric history
 /// request (no `--metric` filter) only transforms the image-bearing ones.
 fn summarize_image_history(data: &serde_json::Value, device_id: &str) -> serde_json::Value {
     let mut result = data.clone();
+
+    // Pagination context from the outer API wrapper: `/data/pagination`.
+    // Two response generations, both supported:
+    // - single-metric (and legacy servers): top-level {total, next_cursor}
+    //   describe THE queried metric;
+    // - multi-metric (2026-11-10 contract): top-level total/next_cursor are
+    //   omitted (no single value can represent independent per-metric
+    //   paging) and `per_metric: {<name>: {total, next_cursor}}` carries
+    //   the truth. Resolve per-metric stats so the summary stops reporting
+    //   "truncation unknown" when the real totals are one field away.
+    let page_limit = data
+        .pointer("/data/pagination/limit")
+        .and_then(|v| v.as_u64());
+    let top_total = data
+        .pointer("/data/pagination/total")
+        .and_then(|v| v.as_u64());
+    let top_cursor = data
+        .pointer("/data/pagination/next_cursor")
+        .map(|v| !v.is_null())
+        .unwrap_or(false);
+    let single_metric_query = data
+        .pointer("/data/metrics")
+        .and_then(|v| v.as_array())
+        .map(|m| m.len() == 1)
+        .unwrap_or(false);
+    let query_total = if single_metric_query { top_total } else { None };
+    let has_next_page = if single_metric_query {
+        top_cursor
+    } else {
+        false
+    };
+    // Per-metric stats from the multi-metric contract (absent on legacy /
+    // single-metric responses).
+    let per_metric_pagination = data.pointer("/data/pagination/per_metric");
+    let metric_stats = |name: &str| -> Option<(u64, bool)> {
+        if single_metric_query {
+            // Backward-compatible path: top-level fields ARE this metric's.
+            return top_total.map(|t| (t, top_cursor));
+        }
+        let entry = per_metric_pagination?.get(name)?;
+        let total = entry.get("total").and_then(|v| v.as_u64())?;
+        let has_cursor = entry
+            .get("next_cursor")
+            .map(|v| !v.is_null())
+            .unwrap_or(false);
+        Some((total, has_cursor))
+    };
 
     // Navigate to result.data.data (outer API wrapper → inner telemetry
     // payload whose `data` field maps metric names to data-point arrays).
@@ -652,19 +713,57 @@ fn summarize_image_history(data: &serde_json::Value, device_id: &str) -> serde_j
             continue; // non-image metric — pass through untouched
         }
 
-        let count = points.len();
-        let earliest_ts = points
-            .first()
-            .and_then(|p| p.get("timestamp"))
-            .and_then(|v| v.as_i64());
-        let latest_point = points.last();
-        let latest_ts = latest_point
-            .and_then(|p| p.get("timestamp"))
-            .and_then(|v| v.as_i64());
-        let latest_value = latest_point.and_then(|p| p.get("value")).cloned();
+        let page_count = points.len();
 
-        let interval_avg_ms = match (earliest_ts, latest_ts, count) {
-            (Some(e), Some(l), c) if c > 1 => Some(((l - e) / (c as i64 - 1)).max(0)),
+        // Ordering-independent extremes: the API returns newest-first, so
+        // never trust array position. earliest/latest are min/max over the
+        // page's timestamps; `latest_value` belongs to the max-timestamp
+        // point.
+        let mut earliest_ts: Option<i64> = None;
+        let mut latest_ts: Option<i64> = None;
+        let mut latest_value: Option<serde_json::Value> = None;
+        for point in points.iter() {
+            if let Some(ts) = point.get("timestamp").and_then(|v| v.as_i64()) {
+                if earliest_ts.is_none_or(|e| ts < e) {
+                    earliest_ts = Some(ts);
+                }
+                if latest_ts.is_none_or(|l| ts >= l) {
+                    latest_ts = Some(ts);
+                    latest_value = point.get("value").cloned();
+                }
+            }
+        }
+
+        // Page-level truncation. An attributable total is authoritative:
+        // a cursor on an exactly-full last page must not override
+        // `total == page_count` (the handler used to emit that cursor
+        // whenever the page length merely equalled the limit). Without a
+        // total, a cursor means more pages; a page shorter than the limit
+        // is complete; a full page with neither signal is UNKNOWN.
+        let (_, metric_has_cursor) =
+            metric_stats(metric_name).unwrap_or((query_total.unwrap_or(0), has_next_page));
+        let attributable_total = if single_metric_query {
+            query_total
+        } else {
+            metric_stats(metric_name).map(|(t, _)| t)
+        };
+        let truncated: Option<bool> = if let Some(total) = attributable_total {
+            Some((page_count as u64) < total)
+        } else if metric_has_cursor {
+            Some(true)
+        } else {
+            page_limit
+                .filter(|limit| (page_count as u64) < *limit)
+                .map(|_| false)
+        };
+
+        // Interval in true milliseconds. The old formula divided
+        // second-resolution timestamps and mislabeled the result as ms —
+        // and with newest-first pages (l < e) clamped to a constant 0.
+        let interval_avg_ms = match (earliest_ts, latest_ts) {
+            (Some(e), Some(l)) if page_count > 1 && l > e => {
+                Some(((l - e) * 1000) / (page_count as i64 - 1))
+            }
             _ => None,
         };
 
@@ -677,7 +776,15 @@ fn summarize_image_history(data: &serde_json::Value, device_id: &str) -> serde_j
         summary.insert("_image_history_summary".to_string(), json!(true));
         summary.insert("metric".to_string(), json!(metric_name));
         summary.insert("device_id".to_string(), json!(device_id));
-        summary.insert("count".to_string(), json!(count));
+        summary.insert("page_count".to_string(), json!(page_count));
+        if let Some(t) = truncated {
+            summary.insert("truncated".to_string(), json!(t));
+        }
+        // Exact point total: top-level only for single-metric queries
+        // (legacy + current), otherwise the per-metric contract.
+        if let Some(total) = attributable_total {
+            summary.insert("telemetry_point_total".to_string(), json!(total));
+        }
         if let Some(e) = earliest_ts {
             summary.insert("earliest_ts".to_string(), json!(e));
         }
@@ -693,9 +800,14 @@ fn summarize_image_history(data: &serde_json::Value, device_id: &str) -> serde_j
         summary.insert(
             "note".to_string(),
             json!(format!(
-                "{count} historical image snapshot(s){window}. The latest snapshot is in `latest_value` and is ready for analysis via the `vision` tool. For other snapshots, narrow the --time-range or filter to a specific window.",
-                count = count,
-                window = time_window
+                "{page_count} telemetry point(s){window}{more}. Points are deduplicated per second: a camera bursting several frames in one second leaves ONE point, so point counts undercount saved images — the image file store keeps one file per frame (data/images/<device_id>/<metric>/, filename timestamp = platform ingest time in seconds). The newest frame is in `latest_value` and is ready for analysis via the `vision` tool.",
+                page_count = page_count,
+                window = time_window,
+                more = match truncated {
+                    Some(true) => " (page truncated — more follow)",
+                    Some(false) => "",
+                    None => " (truncation unknown — more pages may follow)",
+                },
             )),
         );
 
@@ -727,13 +839,14 @@ fn is_image_value(s: &str) -> bool {
     false
 }
 
-/// Format a millisecond Unix timestamp as an RFC 3339 string for human-
-/// readable display in summary notes. Falls back to the raw integer if
-/// the timestamp is out of range.
-fn format_ts(ts_ms: i64) -> String {
-    chrono::DateTime::from_timestamp_millis(ts_ms)
+/// Format a second-resolution Unix timestamp as an RFC 3339 string for
+/// human-readable display in summary notes. Point timestamps are SECONDS —
+/// feeding them to `from_timestamp_millis` rendered 1970-01-xx dates.
+/// Falls back to the raw integer if the timestamp is out of range.
+fn format_ts(ts_s: i64) -> String {
+    chrono::DateTime::from_timestamp(ts_s, 0)
         .map(|dt| dt.to_rfc3339())
-        .unwrap_or_else(|| ts_ms.to_string())
+        .unwrap_or_else(|| ts_s.to_string())
 }
 
 /// Parse a human-readable time range string (e.g., "1h", "24h", "7d", "30d") to a start timestamp.
@@ -1064,19 +1177,23 @@ mod tests {
 
         let summary = &out["data"]["data"][metric];
         assert_eq!(summary["_image_history_summary"], true);
-        assert_eq!(summary["count"], 3);
+        assert_eq!(summary["page_count"], 3);
         assert_eq!(summary["metric"], metric);
         assert_eq!(summary["device_id"], device_id);
         assert_eq!(summary["earliest_ts"], 1000);
         assert_eq!(summary["latest_ts"], 3000);
-        assert_eq!(summary["interval_avg_ms"], 1000); // (3000-1000)/(3-1) = 1000ms
-                                                      // latest_value carries the FULL data URL (slim layer will cache it).
+        assert_eq!(
+            summary["interval_avg_ms"],
+            1_000_000, // (3000-1000)*1000/(3-1) — true milliseconds
+        );
+        // latest_value carries the FULL data URL of the NEWEST point
+        // (slim layer will cache it).
         assert_eq!(summary["latest_value"], url);
         // Note mentions count + vision hint.
         let note = summary["note"].as_str().unwrap();
         assert!(
-            note.contains("3 historical"),
-            "note should mention count: {}",
+            note.contains("3 telemetry point"),
+            "note should mention point count: {}",
             note
         );
         assert!(
@@ -1111,7 +1228,12 @@ mod tests {
             out["data"]["data"]["values.image"]["_image_history_summary"],
             true
         );
-        assert_eq!(out["data"]["data"]["values.image"]["count"], 1);
+        assert_eq!(out["data"]["data"]["values.image"]["page_count"], 1);
+        // Multi-metric query → no per-metric point total (pagination total
+        // spans all metrics and cannot be attributed).
+        assert!(out["data"]["data"]["values.image"]
+            .get("telemetry_point_total")
+            .is_none());
 
         // Numeric metric untouched.
         assert!(out["data"]["data"]["values.temperature"].is_array());
@@ -1152,7 +1274,7 @@ mod tests {
         let out = summarize_image_history(&response, device_id);
         let summary = &out["data"]["data"]["snapshots"];
         assert_eq!(summary["_image_history_summary"], true);
-        assert_eq!(summary["count"], 2);
+        assert_eq!(summary["page_count"], 2);
         assert_eq!(
             summary["latest_value"],
             "https://camera.example.com/snapshots/img2.jpg?token=abc"
@@ -1178,10 +1300,242 @@ mod tests {
         let out = summarize_image_history(&response, device_id);
         let summary = &out["data"]["data"]["values.image"];
         assert_eq!(summary["_image_history_summary"], true);
-        assert_eq!(summary["count"], 2);
+        assert_eq!(summary["page_count"], 2);
         assert_eq!(
             summary["latest_value"],
             "/api/images/dev-004b/values.image/1700000001.jpg"
+        );
+    }
+
+    /// The telemetry API returns newest-first pages; extremes and
+    /// `latest_value` must come from timestamps, not array position.
+    /// Truncation and the single-metric point total come from pagination.
+    #[test]
+    fn test_summarize_descending_page_and_pagination() {
+        let device_id = "dev-101";
+        let mut response = wrap_telemetry(
+            device_id,
+            json!({
+                "image_data": [
+                    // Newest first — the API's actual order. Two of these
+                    // are same-second burst frames (one telemetry point).
+                    {"timestamp": 1794221191, "value": "/api/images/dev-101/image_data/1794221191_new.jpg"},
+                    {"timestamp": 1794185758, "value": "/api/images/dev-101/image_data/1794185758_mid1.jpg"},
+                    {"timestamp": 1794185758, "value": "/api/images/dev-101/image_data/1794185758_mid2.jpg"},
+                    {"timestamp": 1794183570, "value": "/api/images/dev-101/image_data/1794183570_old.jpg"}
+                ]
+            }),
+        );
+        response["data"]["metrics"] = json!(["image_data"]);
+        response["data"]["pagination"] = json!({
+            "offset": 0, "limit": 100, "total": 356, "next_cursor": 1794183570
+        });
+
+        let out = summarize_image_history(&response, device_id);
+        let summary = &out["data"]["data"]["image_data"];
+        assert_eq!(summary["page_count"], 4);
+        assert_eq!(summary["truncated"], true, "next_cursor present");
+        assert_eq!(summary["telemetry_point_total"], 356);
+        assert_eq!(
+            summary["earliest_ts"], 1794183570,
+            "min regardless of order"
+        );
+        assert_eq!(summary["latest_ts"], 1794221191, "max regardless of order");
+        assert_eq!(
+            summary["latest_value"], "/api/images/dev-101/image_data/1794221191_new.jpg",
+            "latest_value is the NEWEST frame, not points.last()"
+        );
+        assert_eq!(
+            summary["interval_avg_ms"],
+            (1794221191 - 1794183570) * 1000 / 3
+        );
+        let note = summary["note"].as_str().unwrap();
+        assert!(
+            note.contains("one file per frame"),
+            "note states the frame-count basis (file store, not points): {}",
+            note
+        );
+        assert!(note.contains("undercount"));
+        assert!(
+            !note.contains("1970-01-21"),
+            "note must render real dates, not 1970: {}",
+            note
+        );
+    }
+
+    /// Untruncated single page → truncated=false, exact total reported,
+    /// no truncation tag in the note.
+    #[test]
+    fn test_summarize_untruncated_single_page() {
+        let device_id = "dev-102";
+        let mut response = wrap_telemetry(
+            device_id,
+            json!({
+                "image_data": [
+                    {"timestamp": 1794183570, "value": "/api/images/dev-102/image_data/a.jpg"},
+                    {"timestamp": 1794183580, "value": "/api/images/dev-102/image_data/b.jpg"},
+                    {"timestamp": 1794183590, "value": "/api/images/dev-102/image_data/c.jpg"}
+                ]
+            }),
+        );
+        response["data"]["metrics"] = json!(["image_data"]);
+        response["data"]["pagination"] = json!({
+            "offset": 0, "limit": 100, "total": 3, "next_cursor": null
+        });
+
+        let out = summarize_image_history(&response, device_id);
+        let summary = &out["data"]["data"]["image_data"];
+        assert_eq!(summary["truncated"], false);
+        assert_eq!(summary["telemetry_point_total"], 3);
+        assert_eq!(
+            summary["latest_value"],
+            "/api/images/dev-102/image_data/c.jpg"
+        );
+        let note = summary["note"].as_str().unwrap();
+        assert!(!note.contains("truncated"), "note: {}", note);
+    }
+
+    /// Exactly-full page, no cursor, total says all points delivered →
+    /// truncated=false. A page whose length equals the limit must NOT be
+    /// reported as "more follow" when the total proves otherwise.
+    #[test]
+    fn test_summarize_exactly_full_page_not_truncated() {
+        let device_id = "dev-103";
+        let mut points = Vec::new();
+        for i in 0..100 {
+            points.push(json!({
+                "timestamp": 1794183570 + i,
+                "value": format!("/api/images/dev-103/image_data/{i}.jpg")
+            }));
+        }
+        let mut response = wrap_telemetry(device_id, json!({"image_data": points}));
+        response["data"]["metrics"] = json!(["image_data"]);
+        response["data"]["pagination"] = json!({
+            "offset": 0, "limit": 100, "total": 100, "next_cursor": null
+        });
+
+        let out = summarize_image_history(&response, device_id);
+        let summary = &out["data"]["data"]["image_data"];
+        assert_eq!(summary["page_count"], 100);
+        assert_eq!(
+            summary["truncated"], false,
+            "total == page count — all delivered"
+        );
+        assert_eq!(summary["telemetry_point_total"], 100);
+        let note = summary["note"].as_str().unwrap();
+        assert!(!note.contains("truncated"), "note: {}", note);
+        assert!(!note.contains("unknown"), "note: {}", note);
+    }
+
+    /// A cursor on an exactly-full page must not win over `total == page`.
+    /// The handler used to set next_cursor whenever page_len >= limit.
+    #[test]
+    fn test_summarize_cursor_does_not_override_exact_total() {
+        let device_id = "dev-103b";
+        let mut points = Vec::new();
+        for i in 0..100 {
+            points.push(json!({
+                "timestamp": 1794183570 + i,
+                "value": format!("/api/images/dev-103b/image_data/{i}.jpg")
+            }));
+        }
+        let mut response = wrap_telemetry(device_id, json!({"image_data": points}));
+        response["data"]["metrics"] = json!(["image_data"]);
+        response["data"]["pagination"] = json!({
+            "offset": 0, "limit": 100, "total": 100, "next_cursor": 1794183570
+        });
+
+        let out = summarize_image_history(&response, device_id);
+        let summary = &out["data"]["data"]["image_data"];
+        assert_eq!(summary["truncated"], false);
+        assert_eq!(summary["telemetry_point_total"], 100);
+    }
+
+    /// CONSUMPTION-contract test (2026-11-10): a hand-built API response
+    /// in the exact shape `build_pagination` emits — this validates the
+    /// CLI consumer, NOT the handler's assembly (that is covered by the
+    /// api-side contract tests and the zero-model isolated-API smoke).
+    /// Scenario: first metric EMPTY (the incident shape), image metric
+    /// with a full 100-point page but 400 total + a next_cursor in
+    /// `per_metric`. The summary must read per_metric BY METRIC NAME —
+    /// reporting the image metric's real total/cursor instead of
+    /// "truncation unknown" — while legacy single-metric responses keep
+    /// the top-level path.
+    #[test]
+    fn test_summarize_consumes_per_metric_pagination_contract() {
+        let device_id = "dev-110";
+        let mut points = Vec::new();
+        for i in 0..100 {
+            points.push(json!({
+                "timestamp": 1794183570 + i,
+                "value": format!("/api/images/dev-110/image_data/{i}.jpg")
+            }));
+        }
+        let mut response = wrap_telemetry(
+            device_id,
+            json!({
+                "values.devSn": [],       // first metric: EMPTY (incident shape)
+                "image_data": points
+            }),
+        );
+        response["data"]["metrics"] = json!(["values.devSn", "image_data"]);
+        // Golden multi-metric pagination EXACTLY as the API's
+        // build_pagination(None, ...) emits: no top-level total/cursor,
+        // per_metric carries each metric's truth.
+        response["data"]["pagination"] = json!({
+            "offset": 0,
+            "limit": 100,
+            "per_metric": {
+                "values.devSn": {"total": 0},
+                "image_data": {"total": 400, "next_cursor": 1794183600}
+            }
+        });
+
+        let out = summarize_image_history(&response, device_id);
+        let summary = &out["data"]["data"]["image_data"];
+        assert_eq!(summary["page_count"], 100);
+        assert_eq!(
+            summary["truncated"], true,
+            "per_metric cursor => more pages"
+        );
+        assert_eq!(
+            summary["telemetry_point_total"], 400,
+            "per_metric total surfaces instead of 'truncation unknown'"
+        );
+        // The empty first metric is NOT summarized (no points) and never
+        // leaks a page-level total again.
+        assert!(out["data"]["data"]["values.devSn"].is_array());
+        // Legacy single-metric responses (top-level total/cursor, no
+        // per_metric key) still work — covered by the dedicated tests above.
+    }
+
+    /// No pagination context at all (synthetic/legacy shape) → truncation
+    /// is UNKNOWN: the field is omitted and the note says so, rather than
+    /// guessing false.
+    #[test]
+    fn test_summarize_truncation_unknown_omitted() {
+        let device_id = "dev-104";
+        let response = wrap_telemetry(
+            device_id,
+            json!({
+                "image_data": [
+                    {"timestamp": 1794183570, "value": "/api/images/dev-104/image_data/a.jpg"}
+                ]
+            }),
+        );
+
+        let out = summarize_image_history(&response, device_id);
+        let summary = &out["data"]["data"]["image_data"];
+        assert!(
+            summary.get("truncated").is_none(),
+            "unknown truncation must be omitted, got {}",
+            summary["truncated"]
+        );
+        let note = summary["note"].as_str().unwrap();
+        assert!(
+            note.contains("truncation unknown"),
+            "note flags the unknown: {}",
+            note
         );
     }
 
@@ -1321,12 +1675,13 @@ mod tests {
         assert_eq!(out, "23.5");
     }
 
-    /// format_ts converts millisecond timestamps to RFC 3339.
+    /// format_ts converts SECOND timestamps to RFC 3339 (point timestamps
+    /// are seconds; the old millis interpretation rendered 1970 dates).
     #[test]
-    fn test_format_ts_converts_millis() {
-        // 2026-07-08T18:00:09Z ≈ 1783504809000 ms (within rounding).
-        let ts = 1_783_504_809_000_i64;
-        let s = format_ts(ts);
-        assert!(s.starts_with("2026-07-08"), "expected 2026-07-08 in {}", s);
+    fn test_format_ts_converts_seconds() {
+        // 2026-11-09T00:19:30Z — the first NE301 frame of 2026-11-09
+        // (08:19:30 Asia/Shanghai).
+        let s = format_ts(1_794_183_570_i64);
+        assert!(s.starts_with("2026-11-09T00:19:30"), "got {}", s);
     }
 }

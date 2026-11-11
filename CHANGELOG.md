@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.10] - 2026-11-12 — context-safe tool history, truthful telemetry pages, and a headless VLM path
+
+Frozen 138-case gate (Mac, Spark-1.7B): **97/138 (70.3%)**, identical to the 1.2.7 baseline and within the ±8 noise band of the R1 token+pagination arm (99/138). A withdrawn CJK/digit rate calibration that scored 88/138 is pinned out by `revert_parity`.
+
+### Upgrade notes
+- Single-metric telemetry `pagination.total` is now the exact point count in the queried range (was the fetch cap, often `page_size × 2`). End-of-series detection must use `next_cursor` / page length, not “total equals the fetch cap”.
+- Multi-metric telemetry queries omit top-level `total` / `next_cursor` (they never described every metric); read `pagination.per_metric.<name>.{total,next_cursor}` instead.
+
+### Fixed — agent context and compaction
+- **Tool-call results count toward the token estimate**: `tool_call.result` (including `$cached` read-back windows) was invisible to history assembly, so a prompt that “fit” could still need ~33.8K tokens on a 32K window; results are estimated with the same rates as message text.
+- **`$cached:` text is readable via `file_read`**: large tool blobs stay out of the prompt; `file_read(path="$cached:…", char_offset/char_length)` serves char windows (8K default, 64K char / 64KB byte caps) from the session cache, with explicit errors for unknown/evicted refs — resolve no longer expands the blob into the path argument.
+- **Stale cached windows are previewed before budgeting**: older `file_read` `$cached` windows shrink to a structured summary; the newest window (within 32KB serialized) stays intact so multi-window synthesis still works.
+- **Executor completion budget no longer double-counts the system prompt**: tool schemas are the only overhead subtracted beside `messages` (which already include the system message); an unknown window keeps the historical 4_000 cap instead of collapsing to 512.
+- **Protected recent messages are truncated in tokens, not bytes**: a byte-length cap kept ~¼ of intended English text and still let several CJK results exceed the history budget; each protected message is capped at a quarter of the budget in tokens, with room reserved for the system prompt and empty residuals when the budget is spent.
+- **Context-overflow retry uses the backend-reported prompt size**: a blind half-window compact could still overflow when the estimator under-counted; the retry targets `window − tools − 512 − over_by`.
+
+### Fixed — telemetry pagination and device history
+- **`query_telemetry` returns the exact range total** from `query_range_rev` instead of the fetch-limited page length, so page-1 `total` matches the series.
+- **An exactly-full last page no longer emits `next_cursor`**: `has_more` requires both a full page and remaining points past `offset + page_len`.
+- **CLI image/history summaries prefer an attributable total** for `truncated` (a spurious cursor on a complete page no longer overrides `total == page_count`); timestamps are treated as Unix seconds, and “latest” is the max-timestamp point.
+
+### Added
+- **`llm_complete` host capability**: one-shot completion with optional images, no chat session and no tools — for headless VLM callers (e.g. watermark description); thinking disabled; 120s timeout.
+- **Tool-less vision sessions**: `enable_tools=false` publishes an empty tool schema and keeps the caller system prompt only; llama.cpp image turns set `cache_prompt=false` so mtmd placement is not broken by KV reuse.
+
+### Changed
+- Builtin NE101/NE301/NE302 camera display names include the model code (device_type ids unchanged).
+- Chat welcome quick-action arrows keep a fixed icon slot so hover no longer reflows the wrap.
+
+### Test
+- `revert_parity` pins shipped token rates and 8K/16K/32K compaction goldens (5688 / 14038).
+- Protection-cap, `$cached` door/FIFO/dual-cap, cached-read-chain (`test-utils`), telemetry `has_more` / multi-metric pagination, and CLI summarize cursor-vs-total tests cover the gate-critical contracts.
+
+---
+
 ## [1.2.9] - 2026-11-10 — honest tool-call status, aligned extension cards, cleaner CLI errors
 
 ### Fixed

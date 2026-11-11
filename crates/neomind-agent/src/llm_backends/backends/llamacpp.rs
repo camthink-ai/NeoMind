@@ -353,6 +353,20 @@ impl LlamaCppRuntime {
         })
     }
 
+    /// KV-cache reuse breaks mtmd image placement, so image requests opt out.
+    fn cache_prompt_for(&self, messages: &[ApiMessage]) -> bool {
+        if !self.config.cache_prompt {
+            return false;
+        }
+        let has_image = messages.iter().any(|m| match &m.content {
+            ApiContent::Parts(parts) => parts
+                .iter()
+                .any(|p| matches!(p, ApiContentPart::ImageUrl { .. })),
+            ApiContent::Text(_) => false,
+        });
+        !has_image
+    }
+
     /// Convert messages to OpenAI-compatible format.
     fn messages_to_api(&self, messages: &[Message]) -> Vec<ApiMessage> {
         messages
@@ -493,10 +507,12 @@ impl LlmRuntime for LlamaCppRuntime {
             self.capabilities().function_calling,
         );
 
+        let api_messages = self.messages_to_api(&messages);
+        let cache_prompt = self.cache_prompt_for(&api_messages);
         let mut req_body = serde_json::json!({
-            "messages": self.messages_to_api(&messages),
+            "messages": api_messages,
             "stream": false,
-            "cache_prompt": self.config.cache_prompt,
+            "cache_prompt": cache_prompt,
         });
         apply_thinking_override(&mut req_body, &input.params);
         let content_grace = think_grace_for_request(&req_body);
@@ -739,7 +755,6 @@ impl LlmRuntime for LlamaCppRuntime {
         let url = format!("{}/v1/chat/completions", self.config.base_url());
         let api_key = self.config.api_key.clone();
         let client = self.client.clone();
-        let cache_prompt = self.config.cache_prompt;
 
         // Handle max_tokens: llama.cpp will error if max_tokens exceeds the model's
         // context window. When the caller delegates (sentinel usize::MAX or unset),
@@ -781,6 +796,10 @@ impl LlmRuntime for LlamaCppRuntime {
         );
         let api_messages = self.messages_to_api(&messages);
         let msg_count = api_messages.len();
+        // Image turns must not reuse KV. llama.cpp's mtmd path reports
+        // `find_slot: non-consecutive token position` and the model replies
+        // as if the picture was never sent.
+        let cache_prompt = self.cache_prompt_for(&api_messages);
 
         let mut req_body = serde_json::json!({
             "messages": api_messages,

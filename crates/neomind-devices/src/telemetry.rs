@@ -389,6 +389,26 @@ impl TimeSeriesStorage {
         end_timestamp: i64,
         limit: Option<usize>,
     ) -> Result<Vec<DataPoint>, DeviceError> {
+        Ok(self
+            .query_limited_with_total(source_id, metric, start_timestamp, end_timestamp, limit)
+            .await?
+            .0)
+    }
+
+    /// Same as [`query_limited`](Self::query_limited), plus the exact number of
+    /// points in `[start, end]`.
+    ///
+    /// `query_range_rev` already scans the whole range to fill `total_count`.
+    /// Dropping that count and reporting `points.len()` made pagination treat
+    /// a fetch cap (`limit`, often `page_size * 2`) as the series total.
+    pub async fn query_limited_with_total(
+        &self,
+        source_id: &str,
+        metric: &str,
+        start_timestamp: i64,
+        end_timestamp: i64,
+        limit: Option<usize>,
+    ) -> Result<(Vec<DataPoint>, usize), DeviceError> {
         tracing::debug!(
             "TimeSeriesStorage::query: source_id={}, metric={}, start={}, end={}, limit={:?}",
             source_id,
@@ -398,7 +418,7 @@ impl TimeSeriesStorage {
             limit,
         );
 
-        let result = if limit.is_some() {
+        let (result, total) = if limit.is_some() {
             // Reverse scan → newest N points, then reverse to ASC for callers.
             let rev = self
                 .store()
@@ -408,13 +428,14 @@ impl TimeSeriesStorage {
                     tracing::error!("query_range_rev failed for {}/{}: {}", source_id, metric, e);
                     DeviceError::Io(std::io::Error::other(e.to_string()))
                 })?;
+            let total = rev.total_count.unwrap_or(rev.points.len());
             let mut pts: Vec<DataPoint> = rev
                 .points
                 .into_iter()
                 .filter_map(DataPoint::from_storage)
                 .collect();
             pts.reverse(); // DESC → ASC
-            pts
+            (pts, total)
         } else {
             // No limit → standard ASC scan (unchanged behaviour).
             let fwd = self
@@ -425,10 +446,13 @@ impl TimeSeriesStorage {
                     tracing::error!("query_range failed for {}/{}: {}", source_id, metric, e);
                     DeviceError::Io(std::io::Error::other(e.to_string()))
                 })?;
-            fwd.points
+            let pts: Vec<DataPoint> = fwd
+                .points
                 .into_iter()
                 .filter_map(DataPoint::from_storage)
-                .collect()
+                .collect();
+            let total = pts.len();
+            (pts, total)
         };
 
         if result.is_empty() {
@@ -442,13 +466,14 @@ impl TimeSeriesStorage {
         }
 
         tracing::debug!(
-            "query result: {} points for {}/{}",
+            "query result: {} points for {}/{} (total={})",
             result.len(),
             source_id,
-            metric
+            metric,
+            total
         );
 
-        Ok(result)
+        Ok((result, total))
     }
 
     /// Query data points for a time range with an optional limit.

@@ -20,6 +20,15 @@ pub(crate) fn resolve_cached_arguments(
     cache: &LargeDataCache,
     tool_name: &str,
 ) -> serde_json::Value {
+    // file_read is the `$cached:` READ-BACK door: its `path` may BE a
+    // reference, and expanding it here would inject the whole blob where a
+    // path belongs — the exact "91,680 bytes resolved into a path argument"
+    // failure observed on 2026-11-09. Pass file_read arguments through
+    // VERBATIM; the dispatch layer serves the reference from the cache
+    // itself (`try_cached_file_read`).
+    if crate::tools::resolve_tool_name(tool_name) == "file_read" {
+        return arguments.clone();
+    }
     match arguments {
         // Explicit $cached: reference → resolve
         serde_json::Value::String(s) if s.starts_with("$cached:") => {
@@ -117,6 +126,58 @@ pub(crate) fn resolve_tool_name(simplified_name: &str) -> String {
     crate::tools::resolve_tool_name(simplified_name)
 }
 
+/// The `$cached:` TEXT read-back door (2026-11-09 round).
+///
+/// `file_read(path="$cached:<ref>")` reads the blob from the CURRENT
+/// session/execution cache — the reference reaches the reader VERBATIM
+/// (`resolve_cached_arguments` deliberately leaves file_read args
+/// untouched). Serves character windows with a hard cap; unknown/evicted/
+/// cross-session references produce an explicit error, never empty
+/// content. Image references keep their existing consumers
+/// (vision/image_edit via `resolve_cached_arguments`) — this door only
+/// serves file_read.
+///
+/// Registry-gated (2026-11-09 review round): the door serves a read ONLY
+/// when the tool is registered and NOT disabled — otherwise it returns
+/// `None` and the call falls through to the regular registry execution,
+/// which produces the same `Disabled`/`NotFound` error any other disabled
+/// tool call gets. A cache short-circuit must never bypass the registry's
+/// defense-in-depth checks.
+///
+/// Returns `None` when the call is not a (servable) cached read: normal
+/// file reads, disabled/unregistered file_read, and every other tool flow
+/// through the regular execution path unchanged.
+pub fn try_cached_file_read(
+    registry: &crate::toolkit::registry::ToolRegistry,
+    tool_name: &str,
+    arguments: &serde_json::Value,
+    cache: &LargeDataCache,
+) -> Option<crate::toolkit::ToolOutput> {
+    let resolved = crate::tools::resolve_tool_name(tool_name);
+    if resolved != "file_read" {
+        return None;
+    }
+    // Existence + disabled-state check BEFORE touching the cache. Falling
+    // through to registry execution preserves the exact Disabled/NotFound
+    // errors the normal path would produce.
+    if registry.get(&resolved).is_none() || registry.is_disabled(&resolved) {
+        return None;
+    }
+    let path = arguments.get("path")?.as_str()?;
+    if !path.starts_with("$cached:") {
+        return None;
+    }
+    let char_offset = arguments
+        .get("char_offset")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let char_length = arguments
+        .get("char_length")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize);
+    Some(cache.file_read_cached(path, char_offset, char_length))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,6 +234,132 @@ mod tests {
         // Unknown simplified names should pass through unchanged
         let result = resolve_tool_name("unknown_tool");
         assert_eq!(result, "unknown_tool");
+    }
+
+    fn registry_with_file_read() -> crate::toolkit::registry::ToolRegistry {
+        let mut registry = crate::toolkit::registry::ToolRegistry::new();
+        registry.register(std::sync::Arc::new(
+            crate::toolkit::file_read::FileReadTool::new(std::env::temp_dir()),
+        ));
+        registry
+    }
+
+    /// The `$cached:` read-back door only serves file_read with a
+    /// reference path — every other call (other tools, plain file reads,
+    /// DISABLED or unregistered file_read) flows through the regular
+    /// execution path unchanged.
+    #[test]
+    fn try_cached_file_read_door_contract() {
+        let mut cache = LargeDataCache::new();
+        let payload = "{\"history\":[1,2,3]} ".repeat(4_000); // >32KB
+        cache.store("shell.stdout", &payload);
+        let registry = registry_with_file_read();
+        let ref_args = serde_json::json!({"path": "$cached:shell.stdout", "char_offset": 10, "char_length": 500});
+
+        // Not file_read → None (vision/shell keep their own paths).
+        assert!(try_cached_file_read(
+            &registry,
+            "vision",
+            &serde_json::json!({"image": "$cached:shell.stdout"}),
+            &cache
+        )
+        .is_none());
+        assert!(try_cached_file_read(
+            &registry,
+            "shell",
+            &serde_json::json!({"command": "cat x"}),
+            &cache
+        )
+        .is_none());
+        // file_read with a NORMAL path → None (regular file execution).
+        assert!(try_cached_file_read(
+            &registry,
+            "file_read",
+            &serde_json::json!({"path": "logs/app.log", "offset": 1}),
+            &cache
+        )
+        .is_none());
+        // UNREGISTERED file_read → None (registry NotFound governs).
+        let empty = crate::toolkit::registry::ToolRegistry::new();
+        assert!(try_cached_file_read(&empty, "file_read", &ref_args, &cache).is_none());
+        // DISABLED file_read → None (falls through to the registry gate).
+        let disabled = registry_with_file_read();
+        disabled.set_disabled(std::collections::HashSet::from(["file_read".to_string()]));
+        assert!(try_cached_file_read(&disabled, "file_read", &ref_args, &cache).is_none());
+
+        // Registered + enabled + reference → served from the cache, verbatim
+        // ref in, windowed content out, char params honored.
+        let out = try_cached_file_read(&registry, "file_read", &ref_args, &cache)
+            .expect("door serves cached reads");
+        assert!(out.success);
+        let data = &out.data;
+        assert_eq!(data["reference"], "$cached:shell.stdout");
+        assert_eq!(data["char_offset"], serde_json::json!(10));
+        assert_eq!(data["returned_chars"], serde_json::json!(500));
+        assert_eq!(
+            data["content"].as_str().unwrap(),
+            &payload.chars().skip(10).take(500).collect::<String>()
+        );
+
+        // Unknown ref → the door still answers, with an explicit error.
+        let out = try_cached_file_read(
+            &registry,
+            "file_read",
+            &serde_json::json!({"path": "$cached:gone#1234abcd"}),
+            &cache,
+        )
+        .expect("door answers even on failure");
+        assert!(!out.success);
+        assert!(
+            out.error
+                .unwrap_or_default()
+                .contains("Unknown $cached reference"),
+            "explicit unknown-ref error"
+        );
+    }
+
+    /// Fallthrough contract: when the door declines a DISABLED file_read,
+    /// the regular registry execution produces the Disabled error — the
+    /// same refusal any other disabled tool call gets.
+    #[tokio::test]
+    async fn disabled_file_read_gets_registry_disabled_error() {
+        let registry = registry_with_file_read();
+        registry.set_disabled(std::collections::HashSet::from(["file_read".to_string()]));
+        let err = registry
+            .execute("file_read", serde_json::json!({"path": "x"}))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, crate::toolkit::error::ToolError::Disabled(ref n) if n == "file_read"),
+            "registry refuses disabled tool: {:?}",
+            err
+        );
+    }
+
+    /// The resolver must NOT expand `$cached:` references inside file_read
+    /// arguments — the ref has to reach the read-back door VERBATIM (the
+    /// 2026-11-09 incident had 91,680 bytes resolved INTO the path arg).
+    #[test]
+    fn resolver_leaves_file_read_refs_verbatim() {
+        let mut cache = LargeDataCache::new();
+        let payload = "x".repeat(91_680);
+        cache.store("shell.stdout", &payload);
+
+        let args = serde_json::json!({"path": "$cached:shell.stdout", "char_offset": 0});
+        let resolved = resolve_cached_arguments(&args, &cache, "file_read");
+        assert_eq!(
+            resolved["path"], "$cached:shell.stdout",
+            "path stays the REFERENCE, not the expanded blob"
+        );
+        assert_eq!(resolved["char_offset"], serde_json::json!(0));
+
+        // Control: image consumers keep full resolution (unchanged path).
+        let img_args = serde_json::json!({"image": "$cached:user_image"});
+        let resolved_img = resolve_cached_arguments(&img_args, &cache, "vision");
+        assert_eq!(
+            resolved_img["image"], "$cached:user_image",
+            "unknown image ref still passes through as-is for vision"
+        );
     }
 
     /// Regression: when the LLM omits the `image` field entirely but the user

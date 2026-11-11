@@ -1131,3 +1131,76 @@ async fn invalidate_latest_restores_disk_truth() {
         "after invalidation, latest must report the persisted truth, not the phantom"
     );
 }
+
+/// Two DIFFERENT frames written in the same second leave ONE point: the
+/// table key is (source, metric, timestamp) and `insert` overwrites. This
+/// is why image frame counts must come from the image file store — a
+/// camera bursting N frames in one second persists N files but 1 point.
+#[tokio::test]
+async fn same_second_frames_collapse_to_one_point() {
+    let dir = tempfile::tempdir().unwrap();
+    let store =
+        TimeSeriesStore::with_config(dir.path().join("ts.redb"), TimeSeriesConfig::default())
+            .unwrap();
+
+    let frame = |url: &str| DataPoint {
+        timestamp: 1_794_185_758,
+        value: serde_json::Value::String(url.into()),
+        quality: None,
+        metadata: None,
+    };
+    store
+        .write(
+            "cam",
+            "image_data",
+            frame("/api/images/cam/image_data/a.jpg"),
+        )
+        .await
+        .unwrap();
+    store
+        .write(
+            "cam",
+            "image_data",
+            frame("/api/images/cam/image_data/b.jpg"),
+        )
+        .await
+        .unwrap();
+    store.flush().unwrap();
+
+    let result = store
+        .query_range("cam", "image_data", 1_794_185_700, 1_794_185_800, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        result.points.len(),
+        1,
+        "same-second distinct frames collapse to one point"
+    );
+    // Last write wins for the surviving point.
+    assert_eq!(
+        result.points[0].value,
+        serde_json::json!("/api/images/cam/image_data/b.jpg")
+    );
+
+    // A frame in a DIFFERENT second gets its own point — the dedup is
+    // per-timestamp, not global.
+    store
+        .write(
+            "cam",
+            "image_data",
+            DataPoint {
+                timestamp: 1_794_185_759,
+                value: serde_json::Value::String("/api/images/cam/image_data/c.jpg".into()),
+                quality: None,
+                metadata: None,
+            },
+        )
+        .await
+        .unwrap();
+    store.flush().unwrap();
+    let result = store
+        .query_range("cam", "image_data", 1_794_185_700, 1_794_185_800, None)
+        .await
+        .unwrap();
+    assert_eq!(result.points.len(), 2, "distinct seconds keep both points");
+}

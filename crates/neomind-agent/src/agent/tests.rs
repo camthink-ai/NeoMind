@@ -128,6 +128,41 @@ async fn allowed_tools_filters_definitions_but_keeps_interaction_tools() {
 }
 
 #[tokio::test]
+async fn enable_tools_false_drops_tools_and_keeps_session_prompt() {
+    use crate::toolkit::ToolRegistryBuilder;
+    let mut registry = ToolRegistryBuilder::new().build();
+    registry.register(std::sync::Arc::new(MockShellTool));
+    use crate::tools::{AskUserTool, ClarifyIntentTool, ConfirmActionTool};
+    registry.register(std::sync::Arc::new(AskUserTool::new()));
+    registry.register(std::sync::Arc::new(ConfirmActionTool::new()));
+    registry.register(std::sync::Arc::new(ClarifyIntentTool::new()));
+
+    let config = AgentConfig {
+        enable_tools: false,
+        system_prompt: "VLM_ONLY_PROMPT".to_string(),
+        allowed_tools: vec!["__none__".to_string()],
+        ..Default::default()
+    };
+    let agent = Agent::with_tools(
+        config,
+        "vlm-session".to_string(),
+        std::sync::Arc::new(registry),
+    );
+    agent.update_tool_definitions().await;
+
+    assert!(
+        agent.llm_interface().get_tool_definitions().await.is_empty(),
+        "enable_tools=false must publish an empty tool schema"
+    );
+    let prompt = agent.llm_interface().get_system_prompt().await;
+    assert_eq!(prompt, "VLM_ONLY_PROMPT");
+    assert!(
+        !prompt.contains("Available Tools"),
+        "tool catalog must not be appended to a vision session prompt"
+    );
+}
+
+#[tokio::test]
 async fn dynamic_prompt_contains_capability_index() {
     let agent = Agent::with_session("test_capability".to_string());
     let prompt = agent.generate_dynamic_system_prompt().await;

@@ -314,17 +314,27 @@ pub async fn process_multimodal_stream_events_with_safeguards(
             };
 
             // Execute tool calls with bounded concurrency (max 6 parallel)
-            let tool_inputs: Vec<(String, serde_json::Value)> = tool_calls_to_execute
-                .iter()
-                .map(|tc| {
-                    (
-                        tc.name.clone(),
-                        resolve_cached_arguments(&tc.arguments, &large_cache, &tc.name),
-                    )
-                })
-                .collect();
+            // The 3rd tuple element is the `$cached:` read-back short-circuit
+            // (file_read with a $cached path is served from the cache itself).
+            let tool_inputs: Vec<(String, serde_json::Value, Option<crate::toolkit::ToolOutput>)> =
+                tool_calls_to_execute
+                    .iter()
+                    .map(|tc| {
+                        let cached_read = super::resolve::try_cached_file_read(
+                            &tools,
+                            &tc.name,
+                            &tc.arguments,
+                            &large_cache,
+                        );
+                        (
+                            tc.name.clone(),
+                            resolve_cached_arguments(&tc.arguments, &large_cache, &tc.name),
+                            cached_read,
+                        )
+                    })
+                    .collect();
 
-            let tool_futures = futures::stream::iter(tool_inputs.into_iter().map(|(name, arguments)| {
+            let tool_futures = futures::stream::iter(tool_inputs.into_iter().map(|(name, arguments, cached_read)| {
                 let tools_clone = tools.clone();
                 let cache_clone = cache.clone();
 
@@ -332,7 +342,10 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                     (name.clone(), ToolExecutionResult {
                         _name: name.clone(),
                         arguments: arguments.clone(),
-                        result: execute_tool_with_retry(&tools_clone, &cache_clone, &name, arguments.clone()).await,
+                        result: match cached_read {
+                            Some(output) => Ok(output),
+                            None => execute_tool_with_retry(&tools_clone, &cache_clone, &name, arguments.clone()).await,
+                        },
                     })
                 }
             })).buffer_unordered(6);
@@ -541,23 +554,34 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                             let state = internal_state.read().await;
                             (state.large_data_cache.clone(), state.tool_result_cache.clone())
                         };
-                        let cont_inputs: Vec<(String, serde_json::Value)> = cont_tool_calls
-                            .iter()
-                            .map(|tc| {
-                                (
-                                    tc.name.clone(),
-                                    resolve_cached_arguments(&tc.arguments, &large_cache_cont, &tc.name),
-                                )
-                            })
-                            .collect();
-                        let cont_futures = futures::stream::iter(cont_inputs.into_iter().map(|(name, arguments)| {
+                        let cont_inputs: Vec<(String, serde_json::Value, Option<crate::toolkit::ToolOutput>)> =
+                            cont_tool_calls
+                                .iter()
+                                .map(|tc| {
+                                    let cached_read = super::resolve::try_cached_file_read(
+                                        &tools,
+                                        &tc.name,
+                                        &tc.arguments,
+                                        &large_cache_cont,
+                                    );
+                                    (
+                                        tc.name.clone(),
+                                        resolve_cached_arguments(&tc.arguments, &large_cache_cont, &tc.name),
+                                        cached_read,
+                                    )
+                                })
+                                .collect();
+                        let cont_futures = futures::stream::iter(cont_inputs.into_iter().map(|(name, arguments, cached_read)| {
                             let tools_clone = tools.clone();
                             let cache_clone = cache_cont.clone();
                             async move {
                                 (name.clone(), ToolExecutionResult {
                                     _name: name.clone(),
                                     arguments: arguments.clone(),
-                                    result: execute_tool_with_retry(&tools_clone, &cache_clone, &name, arguments.clone()).await,
+                                    result: match cached_read {
+                                        Some(output) => Ok(output),
+                                        None => execute_tool_with_retry(&tools_clone, &cache_clone, &name, arguments.clone()).await,
+                                    },
                                 })
                             }
                         })).buffer_unordered(6);
@@ -824,28 +848,54 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                         let state = internal_state.read().await;
                         (state.large_data_cache.clone(), state.tool_result_cache.clone())
                     };
-                    let nudge_inputs: Vec<(String, serde_json::Value)> = nudge_tool_calls
+                    let nudge_inputs: Vec<(
+                        String,
+                        serde_json::Value,
+                        Option<crate::toolkit::ToolOutput>,
+                    )> = nudge_tool_calls
                         .iter()
                         .map(|tc| {
+                            let cached_read = super::resolve::try_cached_file_read(
+                                &tools,
+                                &tc.name,
+                                &tc.arguments,
+                                &large_cache_n,
+                            );
                             (
                                 tc.name.clone(),
                                 resolve_cached_arguments(&tc.arguments, &large_cache_n, &tc.name),
+                                cached_read,
                             )
                         })
                         .collect();
                     let nudge_futures = futures::stream::iter(nudge_inputs.into_iter().map(
-                        |(name, arguments)| {
+                        |(name, arguments, cached_read)| {
                             let tools_clone = tools.clone();
                             let cache_clone = cache_n.clone();
                             async move {
-                                (name.clone(), ToolExecutionResult {
-                                    _name: name.clone(),
-                                    arguments: arguments.clone(),
-                                    result: execute_tool_with_retry(&tools_clone, &cache_clone, &name, arguments.clone()).await,
-                                })
+                                (
+                                    name.clone(),
+                                    ToolExecutionResult {
+                                        _name: name.clone(),
+                                        arguments: arguments.clone(),
+                                        result: match cached_read {
+                                            Some(output) => Ok(output),
+                                            None => {
+                                                execute_tool_with_retry(
+                                                    &tools_clone,
+                                                    &cache_clone,
+                                                    &name,
+                                                    arguments.clone(),
+                                                )
+                                                .await
+                                            }
+                                        },
+                                    },
+                                )
                             }
                         },
-                    )).buffer_unordered(6);
+                    ))
+                    .buffer_unordered(6);
                     let nudge_results: Vec<_> = nudge_futures.collect().await;
 
                     // Record the assistant-with-tools message + results.

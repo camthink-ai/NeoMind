@@ -1884,8 +1884,19 @@ impl LlmInterface {
         let max_ctx = self.max_context_length().await;
         let _prompt_budget = (max_ctx * 50) / 100;
 
-        // Build system prompt (with or without tools based on phase)
-        let system_prompt = if include_tools {
+        // Build system prompt (with or without tools based on phase).
+        // A tool-less vision turn must send the session prompt (the VLM
+        // contract) rather than the platform tool catalog. The catalog is
+        // what pushed MiniCPM image embeddings out of alignment.
+        let tools_disabled = self.tool_definitions.read().await.is_empty();
+        let system_prompt = if has_user_images && tools_disabled {
+            let custom = self.system_prompt.read().await.clone();
+            if custom.trim().is_empty() {
+                self.build_base_system_prompt().await
+            } else {
+                custom
+            }
+        } else if include_tools {
             self.build_system_prompt_with_tools(None).await
         } else {
             // Simple system prompt for non-tool calls

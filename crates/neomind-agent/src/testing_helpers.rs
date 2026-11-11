@@ -247,6 +247,15 @@ pub mod mock_llm {
             self
         }
 
+        /// Advertise a specific context window via `capabilities()` — lets
+        /// tests exercise context-budget behavior at realistic sizes (e.g.
+        /// 32768 for the cached read-back budget integration tests; the
+        /// 4096 default sends history assembly down its aggressive path).
+        pub fn with_max_context(self, max_context: usize) -> Self {
+            self.state.lock().unwrap().max_context = max_context;
+            self
+        }
+
         /// Number of times any generation method was invoked.
         pub fn call_count(&self) -> usize {
             self.state.lock().unwrap().call_count
@@ -308,7 +317,7 @@ pub mod mock_llm {
                 multimodal: false,
                 function_calling: self.function_calling,
                 multiple_models: false,
-                max_context: Some(4096),
+                max_context: Some(self.state.lock().unwrap().max_context),
                 modalities: vec!["text".to_string()],
                 reasoning: Default::default(),
                 supports_images: false,

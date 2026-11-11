@@ -1367,27 +1367,46 @@ pub async fn process_stream_events_with_safeguards(
                     // Carry the emission index so we can restore LLM-emission order after
                     // `buffer_unordered` (which completes out of order) — the stuck
                     // detector's ping-pong pattern needs chronological action order.
-                    let tool_inputs: Vec<(usize, String, serde_json::Value)> = tool_calls_to_execute
-                        .iter()
-                        .enumerate()
-                        .map(|(i, tc)| {
-                            (
-                                i,
-                                tc.name.clone(),
-                                resolve_cached_arguments(&tc.arguments, &large_cache, &tc.name),
-                            )
-                        })
-                        .collect();
+                    // The 4th element is the `$cached:` read-back short-circuit:
+                    // file_read with a $cached path is served from the cache itself.
+                    let tool_inputs: Vec<(usize, String, serde_json::Value, Option<crate::toolkit::ToolOutput>)> =
+                        tool_calls_to_execute
+                            .iter()
+                            .enumerate()
+                            .map(|(i, tc)| {
+                                let cached_read = super::resolve::try_cached_file_read(
+                                    &tools,
+                                    &tc.name,
+                                    &tc.arguments,
+                                    &large_cache,
+                                );
+                                (
+                                    i,
+                                    tc.name.clone(),
+                                    resolve_cached_arguments(&tc.arguments, &large_cache, &tc.name),
+                                    cached_read,
+                                )
+                            })
+                            .collect();
 
                     let reuse_map = executed_tool_signatures.clone();
                     let failed_map = failed_tool_signatures.clone();
-                    let tool_futures = futures::stream::iter(tool_inputs.into_iter().map(|(i, name, arguments)| {
+                    let tool_futures = futures::stream::iter(tool_inputs.into_iter().map(|(i, name, arguments, cached_read)| {
                         let tools_clone = tools.clone();
                         let cache_clone = cache.clone();
                         let reuse_map = reuse_map.clone();
                         let failed_map = failed_map.clone();
 
                         async move {
+                            // `$cached:` read-back: served from the cache in
+                            // full — no registry execution, no reuse bookkeeping.
+                            if let Some(output) = cached_read {
+                                return (i, name.clone(), ToolExecutionResult {
+                                    _name: name.clone(),
+                                    arguments,
+                                    result: Ok(output),
+                                });
+                            }
                             // Enforce the request-scoped exclusion even for a model
                             // that emits an unadvertised tool in plain JSON.
                             if guide_recovery_this_round && crate::tools::resolve_tool_name(&name) == "skill" {

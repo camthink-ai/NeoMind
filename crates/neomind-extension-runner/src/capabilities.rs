@@ -32,6 +32,7 @@ pub(crate) const ALLOWED_CAPABILITIES: &[&str] = &[
     cap::CHAT_SESSION_SEND,
     cap::CHAT_SESSION_CLOSE,
     cap::CHAT_STREAM_CANCEL_TURN,
+    cap::LLM_COMPLETE,
     cap::RULE_TRIGGER,
 ];
 

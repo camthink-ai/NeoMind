@@ -108,7 +108,14 @@ pub fn build_context_window_with_config(
     max_tokens: usize,
     config: &CompactionConfig,
 ) -> Vec<AgentMessage> {
-    // Step 1: Calculate total tokens without any compaction
+    // Step 0: STALE cached read-back windows are previewed before the
+    // token estimate (scoped to this round's feature only — ordinary tool
+    // results keep their budget-driven behavior; the newest window stays
+    // intact so multi-window analysis can still synthesize).
+    let preprocessed = super::super::context::preview_stale_cached_windows(messages);
+    let messages = preprocessed.as_slice();
+
+    // Step 1: Calculate total tokens without any further compaction
     let total_tokens: usize = messages.iter().map(estimate_message_tokens).sum();
 
     // Step 2: Only compact tool results if we're actually over budget

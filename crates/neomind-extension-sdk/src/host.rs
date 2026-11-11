@@ -84,6 +84,7 @@ define_capabilities! {
     ChatSessionSend => CHAT_SESSION_SEND => "chat_session_send" => "Send a message to an open chat session; returns turn_id immediately. LLM events arrive via AgentStreamChunk (chunk.turn_id == returned turn_id)",
     ChatSessionClose => CHAT_SESSION_CLOSE => "chat_session_close" => "Close a chat session subscription and cancel any in-flight turn",
     ChatStreamCancelTurn => CHAT_STREAM_CANCEL_TURN => "chat_stream_cancel_turn" => "Cancel a specific turn within an open chat session (does not close the session)",
+    LlmComplete => LLM_COMPLETE => "llm_complete" => "One-shot LLM completion. No chat session is created and tools are not attached. Optional images.",
     RuleTrigger => RULE_TRIGGER => "rule_trigger" => "Access to trigger rules",
     DeviceTemplateRegister => DEVICE_TEMPLATE_REGISTER => "device_template_register" => "Register device type templates",
     DeviceRegister => DEVICE_REGISTER => "device_register" => "Register device instances",
@@ -109,6 +110,7 @@ impl ExtensionCapability {
             ExtensionCapability::ChatSessionSend => "Chat Session Send".to_string(),
             ExtensionCapability::ChatSessionClose => "Chat Session Close".to_string(),
             ExtensionCapability::ChatStreamCancelTurn => "Chat Stream Cancel Turn".to_string(),
+            ExtensionCapability::LlmComplete => "LLM Complete".to_string(),
             ExtensionCapability::RuleTrigger => "Rule Trigger".to_string(),
             ExtensionCapability::DeviceTemplateRegister => "Device Template Register".to_string(),
             ExtensionCapability::DeviceRegister => "Device Register".to_string(),
@@ -161,6 +163,10 @@ impl ExtensionCapability {
                 "Cancel a specific turn within an open chat session without closing the session"
                     .to_string()
             }
+            ExtensionCapability::LlmComplete => {
+                "Run one LLM completion and return the text. Does not create a chat session or attach tools. Accepts an optional system prompt, model id, and images."
+                    .to_string()
+            }
             ExtensionCapability::RuleTrigger => "Trigger rule engine execution".to_string(),
             ExtensionCapability::DeviceTemplateRegister => {
                 "Register device type templates".to_string()
@@ -194,6 +200,7 @@ impl ExtensionCapability {
             | ExtensionCapability::ChatSessionSend
             | ExtensionCapability::ChatSessionClose
             | ExtensionCapability::ChatStreamCancelTurn => "agent".to_string(),
+            ExtensionCapability::LlmComplete => "llm".to_string(),
             ExtensionCapability::RuleTrigger => "rule".to_string(),
             ExtensionCapability::Custom(_) => "custom".to_string(),
         }

@@ -310,11 +310,18 @@ pub async fn get_device_telemetry_handler(
     //
     // For pagination: we query all data, sort by timestamp (newest first), then apply offset/limit.
     // This ensures consistent pagination even when data is inserted during pagination.
-    let (telemetry_data, total_counts, next_cursor): (
+    // (data per metric, per-metric totals, first cursor, per-metric
+    // pagination stats) — the 4th element feeds the multi-metric contract.
+    type TelemetryBundle = (
         HashMap<String, serde_json::Value>,
         HashMap<String, usize>,
         Option<i64>,
-    ) = if aggregate.is_some() {
+        Vec<(String, usize, Option<i64>)>,
+    );
+    // Bound via an intermediate `bundle` so the big if/else below keeps its
+    // original indentation — annotating the destructure directly made
+    // rustfmt re-indent the whole block (~650 noise lines in the diff).
+    let bundle: TelemetryBundle = if aggregate.is_some() {
         // Aggregate queries - run concurrently
         let aggregate_futures: Vec<_> = target_metrics
             .iter()
@@ -375,7 +382,7 @@ pub async fn get_device_telemetry_handler(
             results.iter().map(|(k, _, c)| (k.clone(), *c)).collect();
         let data: HashMap<String, serde_json::Value> =
             results.into_iter().map(|(k, v, _)| (k, v)).collect();
-        (data, counts, None)
+        (data, counts, None, Vec::new())
     } else if compress {
         // AI compression mode: lossless adaptive series (kept/fluctuated)
         // Query all data points without limit, then compress
@@ -437,7 +444,7 @@ pub async fn get_device_telemetry_handler(
             results.iter().map(|(k, _, c)| (k.clone(), *c)).collect();
         let data: HashMap<String, serde_json::Value> =
             results.into_iter().map(|(k, v, _)| (k, v)).collect();
-        (data, counts, None)
+        (data, counts, None, Vec::new())
     } else {
         // Raw queries - run concurrently with pagination support
         let query_futures: Vec<_> = target_metrics
@@ -547,12 +554,17 @@ pub async fn get_device_telemetry_handler(
                         )
                         .await
                     {
-                        Ok(all_points) => {
+                        Ok((all_points, range_total)) => {
                             // DB returns points in timestamp-asc order.
                             // For "newest first" pagination, take from the end and reverse.
                             // Cursor mode: drop points at-or-after the cursor (the boundary
                             // point was already returned as the previous page's oldest).
-                            let total = all_points.len();
+                            // `range_total` is the exact count in the scanned window, not
+                            // `all_points.len()` (that length is capped by fetch_limit).
+                            let boundary = cursor_ts
+                                .map(|ct| all_points.iter().filter(|(ts, _)| *ts >= ct).count())
+                                .unwrap_or(0);
+                            let total = range_total.saturating_sub(boundary);
                             let paginated: Vec<_> = all_points
                                 .into_iter()
                                 .filter(|(ts, _)| cursor_ts.is_none_or(|ct| *ts < ct))
@@ -591,7 +603,14 @@ pub async fn get_device_telemetry_handler(
                                 .await
                             {
                                 Ok((all_points, total_from_db)) => {
-                                    let total = total_from_db.unwrap_or(all_points.len());
+                                    let boundary = cursor_ts
+                                        .map(|ct| {
+                                            all_points.iter().filter(|p| p.timestamp >= ct).count()
+                                        })
+                                        .unwrap_or(0);
+                                    let total = total_from_db
+                                        .unwrap_or(all_points.len())
+                                        .saturating_sub(boundary);
                                     // DB returns points in timestamp-asc order.
                                     // Reverse for "newest first" without O(n log n) sort.
                                     // Same cursor boundary filter as the primary path.
@@ -624,12 +643,12 @@ pub async fn get_device_telemetry_handler(
                     };
 
                     // Extract next_cursor from the oldest point in the page
-                    // (smallest timestamp). [termination signal] A page
-                    // SHORTER than the limit is the last page — emit None so
-                    // clients can stop without probing for an empty page
-                    // (previously next_cursor was always Some, and the only
-                    // termination signal was receiving an empty page).
-                    let has_more = points.len() >= limit;
+                    // (smallest timestamp). A full page is NOT "more data"
+                    // when `total` says every point in the window was delivered
+                    // — `points.len() >= limit` alone emits a cursor for an
+                    // exactly-full last page and the client probes an empty one.
+                    let has_more =
+                        telemetry_page_has_more(points.len(), limit, total, effective_offset);
                     let next_cursor = if has_more {
                         points
                             .last()
@@ -644,23 +663,21 @@ pub async fn get_device_telemetry_handler(
             .collect();
 
         let results = futures::future::join_all(query_futures).await;
-        // [alloc] same move-not-clone discipline; cursor derived by ref first.
+        // [alloc] same move-not-borrow discipline: derive per-metric stats by
+        // ref first — the multi-metric pagination contract exposes them.
         let counts: HashMap<String, usize> =
             results.iter().map(|(k, _, c, _)| (k.clone(), *c)).collect();
+        let per_metric_stats: Vec<(String, usize, Option<i64>)> = results
+            .iter()
+            .map(|(k, _, c, nc)| (k.clone(), *c, *nc))
+            .collect();
         let next_cursor: Option<i64> = results.first().and_then(|(_, _, _, nc)| *nc);
         let data: HashMap<String, serde_json::Value> =
             results.into_iter().map(|(k, v, _, _)| (k, v)).collect();
-        (data, counts, next_cursor)
+        (data, counts, next_cursor, per_metric_stats)
     };
 
-    // Calculate total count for the queried metric (or first metric if all)
-    let total_count = if let Some(m) = &metric {
-        total_counts.get(m).copied().unwrap_or(0)
-    } else if !target_metrics.is_empty() {
-        total_counts.get(&target_metrics[0]).copied().unwrap_or(0)
-    } else {
-        0
-    };
+    let (telemetry_data, total_counts, next_cursor, per_metric_stats) = bundle;
 
     ok(json!({
         "device_id": device_id,
@@ -669,13 +686,91 @@ pub async fn get_device_telemetry_handler(
         "start": start,
         "end": end,
         "aggregated": aggregate.is_some(),
-        "pagination": {
-            "offset": offset,
-            "limit": limit,
-            "total": total_count,
-            "next_cursor": next_cursor,
-        }
+        "pagination": build_pagination(
+            metric.as_deref(),
+            offset,
+            limit,
+            metric.as_deref()
+                .map(|m| vec![(
+                    m.to_string(),
+                    total_counts.get(m).copied().unwrap_or(0),
+                    next_cursor,
+                )])
+                .unwrap_or(per_metric_stats),
+        ),
     }))
+}
+
+/// Another page exists only when this page filled `limit` AND the window
+/// still has points past `offset + page_len`. An exactly-full last page
+/// (`available == offset + page_len`) is the end.
+pub(crate) fn telemetry_page_has_more(
+    page_len: usize,
+    limit: usize,
+    available: usize,
+    offset: usize,
+) -> bool {
+    page_len >= limit && available > offset.saturating_add(page_len)
+}
+
+/// Pagination block per the multi-metric contract (2026-11-10 round):
+///
+/// - SINGLE-metric query: `total` = that metric's total and `next_cursor` =
+///   its cursor — unchanged semantics.
+/// - MULTI-metric query: metrics paginate INDEPENDENTLY, so a single
+///   top-level `total`/`next_cursor` cannot represent them (the old code
+///   returned the FIRST metric's count as `total` — for a device whose
+///   first template metric is empty that read as `total: 0` next to a page
+///   full of data, and `next_cursor: null` suggested "no more pages" for
+///   metrics that had more). Both fields are OMITTED (unknown, never
+///   guessed) and `per_metric` carries each metric's `{total, next_cursor}`
+///   — already computed by the query loop, zero extra work. Callers that
+///   need precise paging should query one metric at a time.
+pub(crate) fn build_pagination(
+    metric_filter: Option<&str>,
+    offset: usize,
+    limit: usize,
+    per_metric_stats: Vec<(String, usize, Option<i64>)>,
+) -> serde_json::Value {
+    let mut pagination = serde_json::Map::new();
+    pagination.insert("offset".to_string(), json!(offset));
+    pagination.insert("limit".to_string(), json!(limit));
+    match metric_filter {
+        Some(m) => {
+            // Single metric: authoritative total + cursor for it.
+            let stats = per_metric_stats
+                .iter()
+                .find(|(k, _, _)| k == m)
+                .cloned()
+                .unwrap_or_else(|| (m.to_string(), 0, None));
+            pagination.insert("total".to_string(), json!(stats.1));
+            // The cursor key is ALWAYS present for single-metric queries —
+            // `null` on the last page — matching the pre-2026-11-10 shape
+            // byte-for-byte (field presence is part of the compatibility
+            // contract; omitting the key would be a silent breaking change).
+            pagination.insert(
+                "next_cursor".to_string(),
+                stats.2.map(|c| json!(c)).unwrap_or(serde_json::Value::Null),
+            );
+        }
+        None => {
+            // Multi-metric: omit the meaningless single total/cursor; expose
+            // per-metric stats instead.
+            let map: serde_json::Map<String, serde_json::Value> = per_metric_stats
+                .into_iter()
+                .map(|(k, total, cur)| {
+                    let mut v = serde_json::Map::new();
+                    v.insert("total".to_string(), json!(total));
+                    if let Some(c) = cur {
+                        v.insert("next_cursor".to_string(), json!(c));
+                    }
+                    (k, serde_json::Value::Object(v))
+                })
+                .collect();
+            pagination.insert("per_metric".to_string(), serde_json::Value::Object(map));
+        }
+    }
+    serde_json::Value::Object(pagination)
 }
 
 /// Get aggregated device telemetry data (current values and statistics).
@@ -1362,5 +1457,107 @@ mod aggregate_contract_tests {
         agg.last = None;
         assert_eq!(aggregate_value(&agg, Some("avg")), json!(null));
         assert_eq!(aggregate_value(&agg, Some("last")), json!(null));
+    }
+}
+
+#[cfg(test)]
+mod pagination_contract_tests {
+    use super::{build_pagination, telemetry_page_has_more};
+
+    #[test]
+    fn exact_full_page_has_no_more() {
+        assert!(!telemetry_page_has_more(100, 100, 100, 0));
+        assert!(telemetry_page_has_more(100, 100, 101, 0));
+        assert!(!telemetry_page_has_more(40, 100, 40, 0));
+        // offset 50 already consumed; 150 available and a full page means
+        // nothing remains (50 + 100 == 150).
+        assert!(!telemetry_page_has_more(100, 100, 150, 50));
+        assert!(telemetry_page_has_more(100, 100, 151, 50));
+    }
+
+    /// SINGLE-metric: authoritative total + cursor for the metric — the
+    /// long-standing contract, unchanged.
+    #[test]
+    fn single_metric_keeps_total_and_cursor() {
+        let p = build_pagination(
+            Some("note"),
+            0,
+            100,
+            vec![("note".to_string(), 400, Some(1_794_276_646))],
+        );
+        assert_eq!(p["total"], serde_json::json!(400));
+        assert_eq!(p["next_cursor"], serde_json::json!(1_794_276_646));
+        assert_eq!(p["offset"], serde_json::json!(0));
+        assert_eq!(p["limit"], serde_json::json!(100));
+        assert!(p.get("per_metric").is_none());
+    }
+
+    /// MULTI-metric: no single total/cursor is emitted (the old code
+    /// returned the FIRST metric's count — for a device whose first
+    /// template metric is empty that read as `total: 0` beside a full
+    /// page, and `next_cursor: null` implied "no more pages" for metrics
+    /// that had more). per_metric carries each metric's stats instead.
+    #[test]
+    fn multi_metric_omits_single_total_and_gives_per_metric() {
+        let p = build_pagination(
+            None,
+            0,
+            100,
+            vec![
+                ("values.devSn".to_string(), 0, None), // empty first template metric
+                ("note".to_string(), 400, Some(1_794_276_646)),
+            ],
+        );
+        // The misleading single fields are gone.
+        assert!(p.get("total").is_none(), "no single total for multi-metric");
+        assert!(
+            p.get("next_cursor").is_none(),
+            "no single cursor for multi-metric"
+        );
+        // Per-metric truth, including the empty one.
+        assert_eq!(
+            p["per_metric"]["values.devSn"]["total"],
+            serde_json::json!(0)
+        );
+        assert!(
+            p["per_metric"]["values.devSn"].get("next_cursor").is_none(),
+            "no-cursor metrics omit the key"
+        );
+        assert_eq!(p["per_metric"]["note"]["total"], serde_json::json!(400));
+        assert_eq!(
+            p["per_metric"]["note"]["next_cursor"],
+            serde_json::json!(1_794_276_646)
+        );
+    }
+
+    /// The exact 2026-11-10 incident shape: empty first metric must NOT
+    /// surface as a page-level total ever again.
+    #[test]
+    fn incident_shape_empty_first_metric_never_leaks_as_total() {
+        let p = build_pagination(None, 0, 100, vec![("first.empty".to_string(), 0, None)]);
+        assert!(p.get("total").is_none());
+        assert_eq!(
+            p["per_metric"]["first.empty"]["total"],
+            serde_json::json!(0)
+        );
+    }
+
+    /// Single-metric last page: cursor PRESENT as explicit null (the "stop
+    /// without probing" termination signal) — field presence matches the
+    /// legacy response; omitting it would be a silent shape change.
+    #[test]
+    fn single_metric_last_page_keeps_null_cursor() {
+        let p = build_pagination(
+            Some("note"),
+            300,
+            100,
+            vec![("note".to_string(), 400, None)],
+        );
+        assert_eq!(p["total"], serde_json::json!(400));
+        assert!(p["next_cursor"].is_null(), "explicit null on the last page");
+        assert!(
+            p.get("next_cursor").is_some(),
+            "key present for compatibility"
+        );
     }
 }

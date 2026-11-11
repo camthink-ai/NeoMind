@@ -47,7 +47,9 @@ pub fn compact_tool_results(messages: &[AgentMessage], keep_recent: usize) -> Ve
         if msg.tool_calls.is_some() && msg.tool_calls.as_ref().is_some_and(|t| !t.is_empty()) {
             tool_result_count += 1;
 
-            // Keep recent tool results intact
+            // Keep recent tool results intact (stale cached read-back
+            // windows were already previewed by
+            // `preview_stale_cached_windows` before this pass).
             if tool_result_count <= keep_recent {
                 result.push(msg.clone());
             } else {
@@ -1193,4 +1195,448 @@ mod greeting_tests {
             assert!(!is_simple_greeting(s), "{s:?} should NOT be a greeting");
         }
     }
+}
+
+#[cfg(test)]
+mod stale_window_preview_tests {
+    use super::*;
+
+    fn window_result(offset: i64, body_chars: usize) -> serde_json::Value {
+        let next = if offset + (body_chars as i64) < 65600 {
+            serde_json::json!(offset + (body_chars as i64))
+        } else {
+            serde_json::Value::Null
+        };
+        serde_json::json!({
+            "reference": "$cached:shell.stdout#ab12cd34",
+            "content_type": "text/plain",
+            "total_chars": 65600,
+            "char_offset": offset,
+            "returned_chars": body_chars,
+            "content": "z".repeat(body_chars),
+            "next_char_offset": next,
+            "truncated": true
+        })
+    }
+
+    fn window_call(offset: i64, body_chars: usize) -> types::ToolCall {
+        types::ToolCall {
+            name: "file_read".to_string(),
+            id: String::new(),
+            arguments: serde_json::json!({
+                "path": "$cached:shell.stdout#ab12cd34",
+                "char_offset": offset
+            }),
+            result: Some(window_result(offset, body_chars)),
+            round: Some(1),
+        }
+    }
+
+    fn msg_with(calls: Vec<types::ToolCall>, body: &str) -> AgentMessage {
+        AgentMessage {
+            tool_calls: Some(calls),
+            content: body.to_string().into(),
+            ..AgentMessage::assistant("")
+        }
+    }
+
+    /// Stale window → its RESULT is swapped for the structured summary
+    /// (call granularity); the message, sibling calls, and assistant body
+    /// all survive.
+    #[test]
+    fn stale_window_swapped_at_call_granularity() {
+        let older = msg_with(
+            vec![
+                window_call(0, 8_000),
+                types::ToolCall {
+                    name: "device".to_string(),
+                    id: String::new(),
+                    arguments: serde_json::json!({"action": "get", "device_id": "cam-1"}),
+                    result: Some(serde_json::json!({"status": "online", "battery": 84})),
+                    round: Some(1),
+                },
+            ],
+            "并行批次正文",
+        );
+        let newest = msg_with(vec![window_call(8_000, 8_000)], "最新窗");
+        let out = preview_stale_cached_windows(&[older, newest]);
+
+        let stale = &out[0];
+        let calls = stale.tool_calls.as_ref().unwrap();
+        assert_eq!(calls.len(), 2, "sibling call survives");
+        let swapped = calls[0].result.as_ref().unwrap();
+        let summary = swapped.as_str().expect("summary is a string result");
+        assert!(
+            summary.contains("re-read $cached:shell.stdout#ab12cd34"),
+            "{summary}"
+        );
+        assert!(summary.contains("chars 0..8000 of 65600"), "{summary}");
+        assert!(summary.contains("next_char_offset=8000"), "{summary}");
+        assert!(
+            summary.matches('z').count() <= 200,
+            "body collapses to the head"
+        );
+        assert_eq!(
+            calls[1].result,
+            Some(serde_json::json!({"status": "online", "battery": 84})),
+            "sibling device result untouched"
+        );
+        assert!(
+            stale.content.to_string().contains("并行批次正文"),
+            "assistant body survives"
+        );
+        assert!(out[1].tool_calls.is_some(), "newest stays intact");
+    }
+
+    /// Ordinary large tool results are NOT touched by the scoped rule.
+    #[test]
+    fn ordinary_large_results_untouched() {
+        let big = msg_with(
+            vec![types::ToolCall {
+                name: "shell".to_string(),
+                id: String::new(),
+                arguments: serde_json::json!({"command": "cat huge.log"}),
+                result: Some(serde_json::json!({"stdout": "y".repeat(50_000)})),
+                round: Some(1),
+            }],
+            "",
+        );
+        let out = preview_stale_cached_windows(std::slice::from_ref(&big));
+        assert_eq!(
+            out[0].tool_calls.as_ref().map(|c| c.len()),
+            Some(1),
+            "non-window results pass through untouched"
+        );
+        assert!(
+            out[0].tool_calls.as_ref().unwrap()[0]
+                .result
+                .as_ref()
+                .unwrap()
+                .to_string()
+                .contains("yyyy"),
+            "body untouched"
+        );
+    }
+
+    /// A DEFAULT-size CJK window (8,000 chars * 3 bytes ≈ 24KB body +
+    /// metadata) must stay intact as the newest — the keep budget leaves
+    /// headroom for the JSON metadata (2026-11-10 review fix).
+    #[test]
+    fn default_cjk_newest_window_stays_intact() {
+        let mut cjk = window_result(0, 8_000);
+        // 8,000 CJK chars instead of ASCII.
+        cjk["content"] = serde_json::json!("烫".repeat(8_000));
+        let msg = msg_with(
+            vec![types::ToolCall {
+                name: "file_read".to_string(),
+                id: String::new(),
+                arguments: serde_json::json!({"path": "$cached:x"}),
+                result: Some(cjk.clone()),
+                round: Some(1),
+            }],
+            "",
+        );
+        assert!(
+            cjk.to_string().len() > 24_000,
+            "precondition: CJK window exceeds the old 24KB budget"
+        );
+        let out = preview_stale_cached_windows(std::slice::from_ref(&msg));
+        let kept = out[0].tool_calls.as_ref().unwrap()[0]
+            .result
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            kept.get("content")
+                .and_then(|c| c.as_str())
+                .map(|c| c.chars().count()),
+            Some(8_000),
+            "default CJK newest window is delivered INTACT"
+        );
+    }
+
+    /// Same-batch parallel reads: two windows whose TOTALS exceed the keep
+    /// budget but whose NEWEST fits individually — the newest window must
+    /// stay intact (call-granularity selection, 2026-11-10 review fix);
+    /// its same-batch sibling is summarized.
+    #[test]
+    fn same_batch_two_windows_newest_kept_individually() {
+        let mut w1 = window_result(0, 8_000);
+        let mut w2 = window_result(8_000, 8_000);
+        // Two default CJK windows: each ~24.5KB serialized (< 32K budget),
+        // together ~49KB (> 32K) — message-granularity would preview BOTH.
+        w1["content"] = serde_json::json!("烫".repeat(8_000));
+        w2["content"] = serde_json::json!("烫".repeat(8_000));
+        let call = |result: serde_json::Value, offset: i64| types::ToolCall {
+            name: "file_read".to_string(),
+            id: String::new(),
+            arguments: serde_json::json!({
+                "path": "$cached:shell.stdout#ab12cd34",
+                "char_offset": offset
+            }),
+            result: Some(result),
+            round: Some(1),
+        };
+        assert!(
+            w2.to_string().len() <= CACHED_WINDOW_KEEP_MAX_BYTES,
+            "precondition: newest window individually within budget"
+        );
+        let batch = msg_with(vec![call(w1, 0), call(w2, 8_000)], "同批两窗");
+
+        let out = preview_stale_cached_windows(std::slice::from_ref(&batch));
+        let calls = out[0].tool_calls.as_ref().unwrap();
+        assert_eq!(calls.len(), 2);
+        // Older sibling → structured summary.
+        assert!(
+            calls[0]
+                .result
+                .as_ref()
+                .unwrap()
+                .as_str()
+                .is_some_and(|s| s.contains("re-read")),
+            "older same-batch window is summarized"
+        );
+        // Newest → intact original JSON with full body.
+        let kept = calls[1].result.as_ref().unwrap();
+        assert_eq!(
+            kept.get("char_offset").and_then(|v| v.as_i64()),
+            Some(8_000),
+            "newest window kept intact (original object, not a summary string)"
+        );
+        assert_eq!(
+            kept.get("content")
+                .and_then(|c| c.as_str())
+                .map(|c| c.chars().count()),
+            Some(8_000),
+            "newest window body fully present"
+        );
+        assert!(
+            out[0].content.to_string().contains("同批两窗"),
+            "assistant body survives"
+        );
+    }
+
+    /// A max-size window (> CACHED_WINDOW_KEEP_MAX_BYTES serialized) is
+    /// previewed even as the newest — intact retention is budget-bounded.
+    #[test]
+    fn oversized_newest_window_is_previewed() {
+        let huge = msg_with(vec![window_call(0, 60_000)], "");
+        let out = preview_stale_cached_windows(std::slice::from_ref(&huge));
+        let r = out[0].tool_calls.as_ref().unwrap()[0]
+            .result
+            .as_ref()
+            .unwrap();
+        assert!(
+            r.as_str().is_some_and(|s| s.contains("re-read")),
+            "oversized newest previews"
+        );
+    }
+}
+
+/// Byte budget for keeping the NEWEST cached read-back window intact in
+/// history. Unified with the door's default window: 8,000 chars of CJK
+/// (the worst common case) is ~24,000 bytes of body ALONE, so the budget
+/// must leave room for the surrounding JSON metadata — 32,000 bytes keeps
+/// any default-size window intact regardless of language while still
+/// bounding history cost. Max-size windows (64K chars) are previewed.
+/// Bytes, not chars — the check uses `String::len`.
+pub(crate) const CACHED_WINDOW_KEEP_MAX_BYTES: usize = 32_000;
+
+/// Structured metadata extracted EXPLICITLY from a cached read-back window
+/// result — never from serialized-field order (the result object may place
+/// `content` before `next_char_offset`, so a string prefix is not a
+/// contract).
+struct CachedWindowInfo {
+    reference: String,
+    char_offset: i64,
+    returned_chars: i64,
+    total_chars: i64,
+    next_char_offset: Option<i64>,
+    body_head: String,
+}
+
+fn cached_window_info(result: &serde_json::Value) -> Option<CachedWindowInfo> {
+    let reference = result.get("reference")?.as_str()?;
+    if !reference.starts_with("$cached:") {
+        return None;
+    }
+    Some(CachedWindowInfo {
+        reference: reference.to_string(),
+        char_offset: result.get("char_offset")?.as_i64()?,
+        returned_chars: result.get("returned_chars")?.as_i64()?,
+        total_chars: result.get("total_chars")?.as_i64()?,
+        next_char_offset: result.get("next_char_offset").and_then(|v| v.as_i64()),
+        body_head: result
+            .get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .chars()
+            .take(200)
+            .collect(),
+    })
+}
+
+fn window_summary_text(info: &CachedWindowInfo, tool_name: &str) -> String {
+    let next_hint = match info.next_char_offset {
+        Some(n) => format!("next_char_offset={n}"),
+        None => "complete".to_string(),
+    };
+    format!(
+        "[stale cached window: {tool_name} re-read {} covered chars {}..{} of {} ({next_hint}); re-read with file_read(path=\"{ref}\", char_offset=<offset>) if the body is needed again. body head: {head}]",
+        info.reference,
+        info.char_offset,
+        info.char_offset + info.returned_chars,
+        info.total_chars,
+        ref = info.reference,
+        head = info.body_head
+    )
+}
+
+/// History pre-pass for cached read-back windows (2026-11-09 A2 fix,
+/// scoped + call-granular after the 2026-11-10 review rounds):
+///
+/// - ONLY `file_read` results carrying a `$cached:` window are touched —
+///   ordinary tool results keep their existing budget-driven retention.
+/// - Replacement happens at TOOL-CALL granularity: sibling calls in the
+///   same batch, their results, and the assistant body all survive; only
+///   the window call's `result` is swapped for a structured summary.
+/// - The NEWEST window-bearing message stays intact within
+///   `CACHED_WINDOW_KEEP_MAX_BYTES` (sized so a default CJK window fits
+///   with its metadata), so multi-window analysis can still reason over
+///   the page it just read.
+/// - Older windows keep explicitly-extracted metadata (reference, window
+///   range, total, continuation offset) — the body is re-readable via
+///   `file_read` at any time.
+pub(crate) fn preview_stale_cached_windows(messages: &[AgentMessage]) -> Vec<AgentMessage> {
+    // Tool results live in TWO history shapes: assistant messages with
+    // `tool_calls[].result`, AND role="tool" messages whose content is the
+    // serialized result (stream_core pushes both). A window in either shape
+    // must be found or the missed one leaks verbatim. `tool_call_id` is
+    // never set in this codebase, so occurrences can only be ordered by
+    // position (message index, then call index within the message): the
+    // LAST occurrence is kept as "newest", earlier ones are previewed.
+    // This is keep-last-occurrence, NOT proven same-call de-duplication —
+    // without a call identifier, "same result in both shapes" cannot be
+    // established, only observed when it happens to hold.
+    fn window_calls_in(msg: &AgentMessage) -> Vec<usize> {
+        msg.tool_calls
+            .as_ref()
+            .map(|calls| {
+                calls
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, tc)| {
+                        tc.name == "file_read"
+                            && tc
+                                .result
+                                .as_ref()
+                                .is_some_and(|r| cached_window_info(r).is_some())
+                    })
+                    .map(|(i, _)| i)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn window_in_msg(msg: &AgentMessage) -> bool {
+        let in_calls = !window_calls_in(msg).is_empty();
+        let in_tool_role = msg.role == "tool"
+            && msg.tool_call_name.as_deref() == Some("file_read")
+            && serde_json::from_str::<serde_json::Value>(msg.content.as_ref())
+                .ok()
+                .as_ref()
+                .and_then(cached_window_info)
+                .is_some();
+        in_calls || in_tool_role
+    }
+
+    // Locate the NEWEST window occurrence at CALL granularity: the last
+    // window call of the last window-bearing message, or the last
+    // role="tool" window message. (Message-granularity selection would
+    // preview EVERY window of a parallel batch whose totals exceed the
+    // keep budget — losing "newest window intact" exactly when the model
+    // read two pages in one round. 2026-11-10 review fix.)
+    let mut newest: Option<(usize, Option<usize>)> = None; // (msg_idx, call_idx)
+    for (mi, msg) in messages.iter().enumerate() {
+        let calls = window_calls_in(msg);
+        if let Some(&ci) = calls.last() {
+            newest = Some((mi, Some(ci)));
+        } else if msg.role == "tool"
+            && msg.tool_call_name.as_deref() == Some("file_read")
+            && serde_json::from_str::<serde_json::Value>(msg.content.as_ref())
+                .ok()
+                .as_ref()
+                .and_then(cached_window_info)
+                .is_some()
+        {
+            newest = Some((mi, None));
+        }
+    }
+    let Some((newest_msg, newest_call)) = newest else {
+        return messages.to_vec();
+    };
+
+    // Budget check on THAT single window, not the message total.
+    let newest_bytes = match newest_call {
+        Some(ci) => messages[newest_msg].tool_calls.as_ref().unwrap()[ci]
+            .result
+            .as_ref()
+            .map(|r| r.to_string().len())
+            .unwrap_or(0),
+        None => messages[newest_msg].content.len(),
+    };
+    let newest_kept = newest_bytes <= CACHED_WINDOW_KEEP_MAX_BYTES;
+
+    messages
+        .iter()
+        .enumerate()
+        .map(|(mi, msg)| {
+            if !window_in_msg(msg) {
+                return msg.clone();
+            }
+            // Assistant-with-tool_calls shape: rebuild at CALL granularity —
+            // only window calls' results swap; sibling calls, their results,
+            // and the assistant body survive (a parallel batch must not lose
+            // its non-window payloads).
+            if let Some(calls) = msg.tool_calls.as_ref() {
+                let rebuilt: Vec<types::ToolCall> = calls
+                    .iter()
+                    .enumerate()
+                    .map(|(ci, tc)| {
+                        let Some(info) = tc.result.as_ref().and_then(cached_window_info) else {
+                            return tc.clone();
+                        };
+                        let is_newest = mi == newest_msg && newest_call == Some(ci) && newest_kept;
+                        if is_newest {
+                            return tc.clone();
+                        }
+                        let mut swapped = tc.clone();
+                        swapped.result = Some(serde_json::Value::String(window_summary_text(
+                            &info, &tc.name,
+                        )));
+                        swapped
+                    })
+                    .collect();
+                let mut out = msg.clone();
+                out.tool_calls = Some(rebuilt);
+                return out;
+            }
+            // role="tool" shape: the content IS the single result. The
+            // newest occurrence (this shape is pushed AFTER the assistant
+            // message) is the one kept intact.
+            let is_newest = mi == newest_msg && newest_call.is_none() && newest_kept;
+            if is_newest {
+                return msg.clone();
+            }
+            let parsed: serde_json::Value =
+                serde_json::from_str(msg.content.as_ref()).expect("window_in_msg checked");
+            let info = cached_window_info(&parsed).expect("window_in_msg checked");
+            let name = msg
+                .tool_call_name
+                .clone()
+                .unwrap_or_else(|| "file_read".to_string());
+            let mut out = msg.clone();
+            out.content = window_summary_text(&info, &name).into();
+            out
+        })
+        .collect()
 }

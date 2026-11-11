@@ -126,7 +126,7 @@ where
 }
 
 // Re-exports for internal crate use and test access
-pub(crate) use resolve::resolve_cached_arguments;
+pub(crate) use resolve::{resolve_cached_arguments, try_cached_file_read};
 pub(crate) use sanitize::{sanitize_tool_result_for_prompt, truncate_result_utf8};
 
 #[cfg(test)]
@@ -494,9 +494,10 @@ mod tests {
         let english_tokens = crate::agent::tokenizer::estimate_tokens(english);
         let chinese_tokens = crate::agent::tokenizer::estimate_tokens(chinese);
 
-        // Rough estimation: ~4 chars per token for English, ~1.8 tokens per Chinese char
+        // Conservative rates (reverted calibration): ~4 chars/token English,
+        // ~1.98 tokens/Chinese char incl. the 1.1 margin.
         assert!(english_tokens > 0 && english_tokens < 20);
-        // Chinese: ~12 chars × 1.8 × 1.1 buffer ≈ 24 tokens
+        // Chinese: 12 chars × 1.8 × 1.1 ≈ 24 tokens.
         assert!(chinese_tokens > 10 && chinese_tokens < 30);
 
         println!("Token estimation test passed");
@@ -732,3 +733,6 @@ mod tests {
 
 #[cfg(all(test, feature = "test-utils"))]
 mod nudge_tests;
+
+#[cfg(all(test, feature = "test-utils"))]
+mod cached_read_chain_tests;

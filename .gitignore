@@ -4,6 +4,8 @@
 # Build Artifacts
 # =============================================================================
 target/
+# Cross-compile output (CARGO_TARGET_DIR=target-aarch64). Never commit.
+/target-*/
 # Cargo.lock committed for reproducible builds (binary crates should track lockfile)
 docs/superpowers/.superpowers/
 # Runtime-installed extensions (binaries loaded at runtime, not source).

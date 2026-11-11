@@ -276,6 +276,17 @@ pub fn compact_messages(
     let mut removed_count = 0;
     let mut truncated_count = 0;
     let mut current_tokens = 0;
+    // Newest-first allocation would otherwise spend the whole budget on
+    // recent tool results and leave the system prompt (oldest, visited
+    // last) a one-token stub. Reserve each system message's own size,
+    // capped at a quarter, before the recent messages spend anything.
+    let quarter = (max_tokens / 4).max(1);
+    let system_reserve = messages
+        .iter()
+        .filter(|m| MessagePriority::from_role(&m.role) == MessagePriority::System)
+        .map(|m| estimate_message_tokens(&m.content).min(quarter))
+        .fold(0usize, |acc, n| acc.saturating_add(n))
+        .min(max_tokens);
 
     // Process in reverse (most recent first)
     for msg in messages.iter().rev() {
@@ -327,6 +338,28 @@ pub fn compact_messages(
             }
         }
 
+        // Protected messages (system + recent) previously bypassed the
+        // budget check entirely — a handful of oversized recent tool
+        // results could exceed the window on their own, and compaction
+        // became a no-op until the overflow-retry path rescued it (2026-11-10
+        // audit). Each is KEPT, capped at a quarter of the budget in
+        // tokens (not bytes — truncate_message's length is bytes, and the
+        // 1.8×1.1 CJK rate makes that a different quantity). Newer messages
+        // are visited first and get the quarter; the system reserve is
+        // held back so the prompt is not what runs out of room.
+        let protected_cap = if priority == MessagePriority::System {
+            protected_message_token_cap(max_tokens, max_tokens.saturating_sub(system_reserve))
+        } else {
+            protected_message_token_cap(max_tokens, current_tokens.saturating_add(system_reserve))
+        };
+        if should_keep && msg_tokens > protected_cap {
+            truncated_count += 1;
+            let capped = truncate_message_to_tokens(msg, protected_cap);
+            current_tokens += estimate_message_tokens(&capped.content);
+            result.push(capped);
+            continue;
+        }
+
         if !should_keep {
             // Check if adding this would exceed budget
             if current_tokens + msg_tokens > max_tokens {
@@ -360,10 +393,20 @@ pub fn compact_messages(
 
 /// Estimate token count for a text string.
 ///
-/// Uses a heuristic approach:
+/// Heuristic rates. NOTE (2026-11-11): a calibration attempt that lowered
+/// CJK to 1.0/char and raised digits to 1.5/char measured better against
+/// the raw tokenizer on synthetic samples but made the 138-case gate
+/// WORSE (88/138 vs 99/138, paired -11): the higher digit/punct rates
+/// inflated CLI-output/JSON estimates ~1.6x, over-compacting history and
+/// causing re-work (rounds 14->36 on some cases). The deliberately
+/// conservative over-estimate acts as compaction headroom. Do not
+/// re-calibrate without fitting on REAL trial wire data and running the
+/// gate.
 /// - Chinese characters: ~1.8 tokens each
-/// - English words: ~0.25 tokens per character (4 chars = 1 token)
-/// - Special characters: ~0.5 tokens each
+/// - English: ~0.25 tokens per character (4 chars = 1 token)
+/// - Digits: ~0.3 tokens each
+/// - Other (punctuation/whitespace): ~0.5 tokens each
+/// - Global ×1.1 safety margin
 pub fn estimate_tokens(text: &str) -> usize {
     let mut tokens = 0f64;
 
@@ -655,6 +698,76 @@ pub fn truncate_text(text: &str, max_len: usize) -> String {
     }
 }
 
+/// Token budget for the next protected message.
+///
+/// A flat `max_tokens / min_recent` split cuts a single large result far
+/// below the quarter-budget cap `revert_parity` treats as the line where
+/// normal tool results must pass through untouched. The newest message
+/// (this loop walks newest-first, so `current_tokens` is still small) gets
+/// up to a quarter. Later protected messages only get the room that is
+/// left. Callers pass system-prompt tokens as already spent so recent
+/// results cannot consume them.
+fn protected_message_token_cap(max_tokens: usize, current_tokens: usize) -> usize {
+    let quarter = (max_tokens / 4).max(1);
+    // Room may be 0 once the budget (and system reserve) is spent. Forcing
+    // a 1-token floor made truncate_text emit "..." (~2 tokens) and the
+    // residuals walked the total over the budget.
+    let room = max_tokens.saturating_sub(current_tokens);
+    quarter.min(room)
+}
+
+/// Truncate text until `estimate_tokens` is within `max_tokens`.
+///
+/// `truncate_text` counts bytes. Passing a token budget as that byte length
+/// keeps ~1/4 of the intended English text (4 chars/token) and still lets
+/// several CJK messages exceed the history budget.
+pub fn truncate_text_to_tokens(text: &str, max_tokens: usize) -> String {
+    if max_tokens == 0 || estimate_tokens(text) <= max_tokens {
+        return if max_tokens == 0 {
+            String::new()
+        } else {
+            text.to_string()
+        };
+    }
+    let mut best: Option<usize> = None;
+    let mut lo = 0usize;
+    let mut hi = text.len();
+    while lo <= hi {
+        let mid = lo + (hi - lo) / 2;
+        let end = text.floor_char_boundary(mid);
+        if estimate_tokens(&truncate_text(text, end)) <= max_tokens {
+            best = Some(end);
+            if mid == text.len() {
+                break;
+            }
+            lo = mid + 1;
+        } else if mid == 0 {
+            break;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    // `truncate_text(..., 0)` becomes "..." (~2 tokens). When nothing fits
+    // the budget, return empty rather than overshooting with the ellipsis.
+    match best {
+        Some(end) => truncate_text(text, end),
+        None => String::new(),
+    }
+}
+
+/// Truncate a message until its estimated tokens fit `max_tokens`.
+/// Non-text parts are left unchanged (same as `truncate_message`).
+pub fn truncate_message_to_tokens(msg: &Message, max_tokens: usize) -> Message {
+    let mut truncated = msg.clone();
+    truncated.content = match &msg.content {
+        crate::message::Content::Text(text) => {
+            crate::message::Content::Text(truncate_text_to_tokens(text, max_tokens))
+        }
+        other => other.clone(),
+    };
+    truncated
+}
+
 /// Truncate a message's content to fit within max length.
 pub fn truncate_message(msg: &Message, max_len: usize) -> Message {
     let mut truncated = msg.clone();
@@ -674,9 +787,10 @@ mod tests {
 
     #[test]
     fn test_estimate_tokens_chinese() {
+        // Conservative rate (reverted calibration): 4 chars × 1.8 × 1.1 ≈ 8.
         let tokens = estimate_tokens("你好世界");
-        assert!(tokens > 4);
-        assert!(tokens < 15);
+        assert!(tokens >= 7);
+        assert!(tokens <= 9);
     }
 
     #[test]
@@ -732,5 +846,216 @@ mod tests {
         let config = CompactionConfig::aggressive();
         assert_eq!(config.reserve_tokens_floor, 2048);
         assert_eq!(config.max_history_share, 0.85);
+    }
+}
+
+#[cfg(test)]
+mod protection_cap_tests {
+    use super::*;
+    use crate::message::{Content, Message, MessageRole};
+
+    /// Protected recent messages are always KEPT but each is capped so the
+    /// protected set fits the history budget (2026-11-10 audit fix).
+    #[test]
+    fn protected_recent_message_capped_at_quarter_budget() {
+        // 8K CJK chars ≈ 16K tokens at the conservative 1.8×1.1 rate.
+        let big_tool = Message {
+            role: MessageRole::Tool,
+            content: Content::Text("知".repeat(8_000)),
+            tool_name: Some("shell".to_string()),
+            timestamp: None,
+        };
+        let messages = vec![Message::user("hi"), big_tool];
+        let config = CompactionConfig::for_context_size(8192);
+        let result = compact_messages(&messages, &config, 8192);
+        // The recent tool result survives (protection intact)…
+        assert!(
+            result.messages.iter().any(|m| m.role == MessageRole::Tool),
+            "protected recent tool result must be kept"
+        );
+        // …but capped: total compacted tokens must fit well under the
+        // original 8K-token message.
+        assert!(
+            result.compacted_tokens < 3_000,
+            "capped protected message must not blow the budget: {}",
+            result.compacted_tokens
+        );
+        assert!(result.messages_truncated >= 1);
+    }
+
+    /// Normal-size recent messages pass the cap untouched.
+    #[test]
+    fn small_recent_messages_not_capped() {
+        let messages = vec![Message::user("normal".to_string())];
+        let config = CompactionConfig::for_context_size(8192);
+        let result = compact_messages(&messages, &config, 8192);
+        assert_eq!(result.messages_truncated, 0);
+        assert_eq!(result.messages_removed, 0);
+    }
+
+    /// min_recent protected messages, each maxed out, must still sum to the
+    /// history budget. A per-message cap of budget/4 does not, once
+    /// min_recent exceeds 4.
+    #[test]
+    fn protected_set_stays_within_budget() {
+        let big = "知".repeat(4_000);
+        let messages: Vec<Message> = (0..4)
+            .map(|i| Message {
+                role: MessageRole::Tool,
+                content: Content::Text(big.clone()),
+                tool_name: Some(format!("t{i}")),
+                timestamp: None,
+            })
+            .collect();
+        let config = CompactionConfig {
+            reserve_tokens_floor: 0,
+            max_history_share: 1.0,
+            min_recent_messages: 4,
+            max_message_length: 100_000,
+            compact_tool_results: false,
+            keep_recent_tool_results: 4,
+        };
+        let result = compact_messages(&messages, &config, 4_000);
+        assert!(
+            result.compacted_tokens <= 4_000,
+            "protected set exceeded the budget: {}",
+            result.compacted_tokens
+        );
+        assert_eq!(result.messages.len(), 4, "protected messages must be kept");
+    }
+
+    /// English tool output is ~4 chars/token. Capping with a token count
+    /// passed to a byte truncator kept only ~1/4 of the intended text.
+    #[test]
+    fn english_protected_message_is_not_byte_capped() {
+        let text = "abcd ".repeat(4_000);
+        let messages = vec![Message::user(text)];
+        let config = CompactionConfig::for_context_size(8192);
+        let result = compact_messages(&messages, &config, 8192);
+        let kept = result.messages[0].content.as_text();
+        assert!(
+            kept.len() > 2_000,
+            "english recent text was truncated as bytes: {} bytes",
+            kept.len()
+        );
+    }
+
+    /// One oversized result keeps about a quarter of the budget. Splitting
+    /// the budget across every recent slot (~1/9 on a 32K window) would
+    /// drop this below half a quarter and start clipping normal results
+    /// that `revert_parity` requires to pass through.
+    #[test]
+    fn single_protected_message_keeps_a_quarter() {
+        let messages = vec![Message {
+            role: MessageRole::Tool,
+            content: Content::Text("知".repeat(20_000)),
+            tool_name: Some("shell".to_string()),
+            timestamp: None,
+        }];
+        let config = CompactionConfig::for_context_size(32_768);
+        let budget = config.max_history_tokens(32_768);
+        let result = compact_messages(&messages, &config, 32_768);
+        let quarter = budget / 4;
+        assert!(
+            result.compacted_tokens + 32 >= quarter,
+            "single result kept {} tokens, quarter of {budget} is {quarter}",
+            result.compacted_tokens
+        );
+        assert!(
+            result.compacted_tokens <= quarter + 32,
+            "single result exceeded a quarter: {} > {quarter}",
+            result.compacted_tokens
+        );
+    }
+
+    /// When the remaining room is below what "..." costs, the truncator
+    /// must return empty — not an ellipsis that overshoots the cap.
+    #[test]
+    fn truncate_to_tokens_returns_empty_when_ellipsis_would_overshoot() {
+        let out = truncate_text_to_tokens(&"知".repeat(100), 1);
+        assert!(out.is_empty(), "got {out:?}");
+        assert_eq!(truncate_text_to_tokens("hello world", 0), "");
+    }
+
+    /// Residuals after the budget is spent stay empty (not "..."), so the
+    /// protected set cannot creep over the budget one ellipsis at a time.
+    #[test]
+    fn exhausted_budget_residuals_do_not_emit_ellipsis() {
+        let messages: Vec<Message> = (0..6)
+            .map(|i| Message {
+                role: MessageRole::Tool,
+                content: Content::Text("知".repeat(4_000)),
+                tool_name: Some(format!("t{i}")),
+                timestamp: None,
+            })
+            .collect();
+        let config = CompactionConfig {
+            reserve_tokens_floor: 0,
+            max_history_share: 1.0,
+            min_recent_messages: 6,
+            max_message_length: 100_000,
+            compact_tool_results: false,
+            keep_recent_tool_results: 6,
+        };
+        let result = compact_messages(&messages, &config, 4_000);
+        assert!(
+            result.compacted_tokens <= 4_000,
+            "residuals overshot: {}",
+            result.compacted_tokens
+        );
+        let emptyish = result
+            .messages
+            .iter()
+            .filter(|m| m.content.as_text().is_empty())
+            .count();
+        assert!(
+            emptyish >= 1,
+            "expected at least one emptied residual, got {:?}",
+            result
+                .messages
+                .iter()
+                .map(|m| m.content.as_text().chars().count())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// The system prompt is oldest, so a newest-first spend would reduce it
+    /// to a stub once recent results fill the budget. It stays intact.
+    #[test]
+    fn system_prompt_survives_oversized_recent_results() {
+        let mut messages = vec![Message::system("SYSTEM_SENTINEL_KEEP")];
+        for i in 0..8 {
+            messages.push(Message {
+                role: MessageRole::Tool,
+                content: Content::Text("知".repeat(4_000)),
+                tool_name: Some(format!("t{i}")),
+                timestamp: None,
+            });
+        }
+        let config = CompactionConfig {
+            reserve_tokens_floor: 0,
+            max_history_share: 1.0,
+            min_recent_messages: 8,
+            max_message_length: 100_000,
+            compact_tool_results: false,
+            keep_recent_tool_results: 8,
+        };
+        let result = compact_messages(&messages, &config, 4_000);
+        let system = result
+            .messages
+            .iter()
+            .find(|m| m.role == MessageRole::System)
+            .expect("system message kept");
+        assert!(
+            system.content.as_text().contains("SYSTEM_SENTINEL_KEEP"),
+            "system prompt was truncated away: {}",
+            system.content.as_text()
+        );
+        assert_eq!(result.messages.len(), 9);
+        let newest = estimate_message_tokens(&result.messages.last().unwrap().content);
+        assert!(
+            newest + 32 >= 1_000,
+            "newest result kept only {newest} tokens, wanted a quarter"
+        );
     }
 }

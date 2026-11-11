@@ -797,6 +797,14 @@ impl Agent {
     /// user-interaction tools (ask_user / confirm_action / clarify_intent)
     /// are never filtered out — they are UX, not domain capability.
     fn allowed_tool_defs(&self) -> Vec<crate::toolkit::tool::ToolDefinition> {
+        // Headless VLM sessions set enable_tools=false. An empty schema is
+        // required: even the UX tools (ask_user / …) make llama.cpp render a
+        // tool block, and MiniCPM then mis-places image embeddings
+        // (`find_slot: non-consecutive token position`) and answers as if
+        // no picture was attached.
+        if !self.config.enable_tools {
+            return Vec::new();
+        }
         let defs = self.tools.definitions_for_llm();
         if self.config.allowed_tools.is_empty() {
             return defs;
@@ -814,6 +822,13 @@ impl Agent {
     /// Generate a dynamic system prompt with tool descriptions.
     /// This ensures the prompt always reflects the currently available tools.
     async fn generate_dynamic_system_prompt(&self) -> String {
+        // Tool-less sessions (VLM watermark) keep the caller-supplied prompt
+        // only. Appending the tool catalog / capability index both ignores
+        // that prompt and blows the rendered context past the point where
+        // llama.cpp can align image tokens.
+        if !self.config.enable_tools {
+            return self.config.system_prompt.trim().to_string();
+        }
         // Generate base prompt (static parts: system_prompt + tools)
         let mut prompt = self.generate_base_prompt();
 

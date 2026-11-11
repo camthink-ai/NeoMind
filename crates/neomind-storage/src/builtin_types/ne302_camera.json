@@ -1,6 +1,6 @@
 {
   "device_type": "ne302_camera",
-  "name": "CamThink Edge AI Camera 2",
+  "name": "CamThink NE302 Edge AI Camera",
   "description": "CamThink NE302 Edge AI Camera with built-in object detection. Features WiFi HaLow connectivity and external power. Data protocol is compatible with the NE301.",
   "categories": [
     "Camera",

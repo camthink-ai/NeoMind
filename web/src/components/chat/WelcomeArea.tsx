@@ -84,10 +84,14 @@ export function WelcomeArea({ className, onQuickAction, children }: WelcomeAreaP
               key={prompt}
               type="button"
               onClick={() => onQuickAction?.(prompt)}
-              className="group inline-flex h-9 max-w-full items-center gap-1 rounded-full border border-border bg-transparent px-4 text-sm text-muted-foreground transition-colors hover:border-border-hover hover:bg-muted hover:text-foreground"
+              className="group inline-flex h-9 max-w-full items-center gap-1.5 rounded-full border border-border bg-transparent px-4 text-sm text-muted-foreground transition-colors hover:border-border-hover hover:bg-muted hover:text-foreground"
             >
               <span className="truncate">{prompt}</span>
-              <ArrowRight className="-ml-1.5 h-3.5 w-0 shrink-0 opacity-0 transition-all group-hover:ml-0 group-hover:w-3.5 group-hover:opacity-100" />
+              {/* Keep a fixed icon slot — hover width growth reflows flex-wrap and flickers. */}
+              <ArrowRight
+                aria-hidden="true"
+                className="h-3.5 w-3.5 shrink-0 opacity-0 transition-[opacity,transform] duration-150 group-hover:translate-x-0.5 group-hover:opacity-100"
+              />
             </button>
           ))}
         </div>
