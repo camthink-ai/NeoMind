@@ -152,11 +152,26 @@ export function ToolsPanel({ onPaginationChange, searchQuery = "", sourceFilter 
   }, [searchQuery, sourceFilter])
 
   // Pagination: client-side slice of the filtered list.
+  // Mobile infinite scroll must keep prior pages visible (cumulative 0..page),
+  // matching agents.tsx / PushTargetsTab / PendingDevicesList. Desktop keeps
+  // a single-page slice so the footer pager still replaces the list.
   const total = filteredTools.length
   const pageCount = Math.max(1, Math.ceil(total / TOOLS_PAGE_SIZE))
   const safePage = Math.min(currentPage, pageCount)
   const startIdx = (safePage - 1) * TOOLS_PAGE_SIZE
-  const pagedTools = filteredTools.slice(startIdx, startIdx + TOOLS_PAGE_SIZE)
+  const pagedTools = isMobile
+    ? filteredTools.slice(0, safePage * TOOLS_PAGE_SIZE)
+    : filteredTools.slice(startIdx, startIdx + TOOLS_PAGE_SIZE)
+
+  // Desktop page changes replace the list — scroll to top so the new page is
+  // visible. Mobile appends in place; never reset scroll there.
+  const handlePageChange = useCallback((page: number) => {
+    setCurrentPage(page)
+    if (!isMobile) {
+      const scrollContainer = document.querySelector('[data-page-scroll-container]')
+      if (scrollContainer) scrollContainer.scrollTo({ top: 0 })
+    }
+  }, [isMobile])
 
   // Notify parent of pagination state for PageLayout footer (mirror SkillsPanel).
   useEffect(() => {
@@ -164,10 +179,10 @@ export function ToolsPanel({ onPaginationChange, searchQuery = "", sourceFilter 
       total,
       pageSize: TOOLS_PAGE_SIZE,
       currentPage: safePage,
-      onPageChange: (page: number) => setCurrentPage(page),
+      onPageChange: handlePageChange,
       loading,
     })
-  }, [total, safePage, loading, onPaginationChange])
+  }, [total, safePage, loading, onPaginationChange, handlePageChange])
 
   const handleView = (tool: AgentToolCatalogItem) => {
     setDialogTool(tool)
