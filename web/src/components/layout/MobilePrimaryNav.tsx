@@ -1,12 +1,11 @@
-import { MessageSquare, Settings } from "lucide-react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/useMobile"
 
 const items = [
-  { id: "chat", path: "/chat", icon: MessageSquare, label: "nav.dashboard" },
-  { id: "system", path: "/system", icon: Settings, label: "system.pageTitle" },
+  { id: "chat", path: "/chat", label: "nav.dashboard" },
+  { id: "system", path: "/system", label: "system.pageTitle" },
 ] as const
 
 function activeItem(pathname: string) {
@@ -41,8 +40,9 @@ export function MobilePrimaryNav() {
         backgroundColor: "color-mix(in srgb, var(--chrome) 94%, transparent)",
       }}
     >
+      {/* h-[3.75rem] + p-1.5 keeps each segment ≥44px tall (DESIGN_SPEC touch floor). */}
       <div className="grid h-[3.75rem] grid-cols-2 gap-1 p-1.5">
-        {items.map(({ id, path, icon: Icon, label }) => {
+        {items.map(({ id, path, label }) => {
           const selected = active === id
           return (
             <button
@@ -52,13 +52,12 @@ export function MobilePrimaryNav() {
               aria-current={selected ? "page" : undefined}
               onClick={() => navigate(path)}
               className={cn(
-                "flex min-w-0 flex-col items-center justify-center gap-0.5 rounded-[1.15rem] px-1 text-mini font-medium transition-[background-color,color,transform] active:scale-[0.97]",
+                "flex min-h-11 min-w-0 items-center justify-center rounded-[1.15rem] px-2 text-xs font-medium transition-[background-color,color,transform] active:scale-[0.97]",
                 selected
                   ? "bg-foreground text-background"
                   : "text-muted-foreground active:bg-muted active:text-foreground",
               )}
             >
-              <Icon className="h-5 w-5" strokeWidth={selected ? 2.1 : 1.7} aria-hidden="true" />
               <span className="max-w-full truncate">{t(label)}</span>
             </button>
           )
