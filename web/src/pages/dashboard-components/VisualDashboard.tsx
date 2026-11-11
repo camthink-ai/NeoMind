@@ -877,7 +877,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
         ),
       }
     }) ?? []
-  }, [componentsStableKey, editMode, isMobile, installedComponents.length])
+  }, [componentsStableKey, editMode, isMobile, installedComponents.length, mobileSelectedId])
 
   if (!currentDashboard) {
     // Show loading skeleton while dashboards are loading OR
@@ -1182,6 +1182,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
               components={gridComponents}
               editMode={editMode}
               onLayoutChange={handleLayoutChange}
+              selectedId={mobileSelectedId}
             />
           )}
         </div>
@@ -1282,7 +1283,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
       >
         <FullScreenDialogHeader
           icon={<Monitor className="w-5 h-5" />}
-          title="Edit Content"
+          title={t('visualDashboard.editContent')}
           onClose={closeExtFullscreen}
         />
         <FullScreenDialogContent>

@@ -305,6 +305,7 @@ const ComponentRenderer = memo(function ComponentRenderer({
   openFullscreen,
   closeFullscreen,
 }: RenderComponentProps) {
+  const { t } = useTranslation('dashboardComponents')
   const componentType = component.type
   // Built-in types take priority — community components may share the same ID
   // (e.g., a community "toggle-switch" should NOT override the built-in one)
@@ -682,7 +683,7 @@ const ComponentRenderer = memo(function ComponentRenderer({
       <Card className={cn('border-error', className)}>
         <div className="flex items-center justify-center h-full min-h-[120px] p-4 text-center">
           <div className="text-error">
-            <p className="font-medium">Component Load Failed</p>
+            <p className="font-medium">{t('renderer.componentLoadFailed')}</p>
             <p className="text-sm text-muted-foreground mt-1">
               {loadError.message}
             </p>
@@ -691,9 +692,9 @@ const ComponentRenderer = memo(function ComponentRenderer({
                 setLoadError(null)
                 setAttemptCount(0)
               }}
-              className="mt-2 px-3 py-1 text-xs hover:bg-muted rounded hover:bg-muted transition-colors"
+              className="mt-2 px-3 py-1 text-xs hover:bg-muted rounded transition-colors"
             >
-              Retry
+              {t('defaultStates.retry')}
             </button>
           </div>
         </div>

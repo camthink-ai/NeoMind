@@ -171,7 +171,7 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
                     setMobileEditBarOpen(false)
                   }
                 }}
-                className="h-8 w-8 rounded-lg"
+                className="rounded-lg"
               >
                 {editMode ? (
                   <Check className="h-4 w-4" />
@@ -190,7 +190,7 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
               <Button
                 variant="outline"
                 size="icon"
-                className="h-8 w-8 rounded-lg"
+                className="rounded-lg"
                 disabled={!editMode}
                 onClick={() => editMode && setComponentLibraryOpen(true)}
               >
@@ -205,7 +205,7 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
               <Button
                 variant="outline"
                 size="icon"
-                className="h-8 w-8 rounded-lg"
+                className="rounded-lg"
                 onClick={() => onOpenShare()}
               >
                 <Share2 className="h-4 w-4" />
@@ -243,7 +243,7 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 rounded-lg"
+                className="rounded-lg"
                 onClick={onToggleFullscreen}
               >
                 <Maximize className="h-4 w-4" />

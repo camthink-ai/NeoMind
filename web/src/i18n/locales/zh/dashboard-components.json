@@ -53,6 +53,7 @@
     "error": "错误",
     "warning": "警告",
     "unknown": "未知",
+    "editContent": "编辑内容",
     "defaultState": "默认状态（无数据源时）",
     "defaultStateHint": "未连接数据源时显示的状态",
     "lineColor": "线条颜色",
@@ -462,6 +463,8 @@
     "hlsUrlFormat": "HLS URL格式",
     "deviceCameraHint": "将请求访问本地摄像头设备",
     "hlsLabel": "HLS (.m3u8)",
+    "noSource": "无视频源",
+    "configureSource": "请配置视频 URL 或摄像头",
     "loadError": "视频加载错误",
     "couldNotLoad": "无法加载视频源",
     "protocol": {
@@ -988,7 +991,13 @@
     "config": "配置",
     "copy": "复制",
     "remove": "移除",
-    "removeConfirm": "确定要从仪表板移除此组件吗？"
+    "removeConfirm": "确定要从仪表板移除此组件吗？",
+    "select": "选择组件"
+  },
+  "defaultStates": {
+    "noData": "暂无数据",
+    "failedToLoad": "数据加载失败",
+    "retry": "重试"
   },
   "sharedDashboard": {
     "componentUnavailable": "共享视图中不可用的组件",
@@ -1103,6 +1112,7 @@
   "staleDataDevices": "设备：{{names}}",
   "renderer": {
     "componentUnavailable": "组件暂不可用",
-    "componentUnavailableHint": "提供该组件的扩展未运行或未安装，恢复后将自动显示"
+    "componentUnavailableHint": "提供该组件的扩展未运行或未安装，恢复后将自动显示",
+    "componentLoadFailed": "组件加载失败"
   }
 }

@@ -53,6 +53,7 @@
     "error": "Error",
     "warning": "Warning",
     "unknown": "Unknown",
+    "editContent": "Edit Content",
     "defaultState": "Default State (without data)",
     "defaultStateHint": "Which state to show when there's no data source connected",
     "lineColor": "Line Color",
@@ -462,6 +463,8 @@
     "hlsUrlFormat": "HLS URL format",
     "deviceCameraHint": "Will request access to the local camera device",
     "hlsLabel": "HLS (.m3u8)",
+    "noSource": "No Video Source",
+    "configureSource": "Configure a video URL or camera",
     "loadError": "Video Load Error",
     "couldNotLoad": "Could not load video source",
     "protocol": {
@@ -988,7 +991,13 @@
     "config": "Config",
     "copy": "Copy",
     "remove": "Remove",
-    "removeConfirm": "Remove this widget from the dashboard?"
+    "removeConfirm": "Remove this widget from the dashboard?",
+    "select": "Select component"
+  },
+  "defaultStates": {
+    "noData": "No Data Available",
+    "failedToLoad": "Failed to Load Data",
+    "retry": "Retry"
   },
   "sharedDashboard": {
     "componentUnavailable": "Component not available in shared view",
@@ -1103,6 +1112,7 @@
   "staleDataDevices": "Devices: {{names}}",
   "renderer": {
     "componentUnavailable": "Component unavailable",
-    "componentUnavailableHint": "The extension providing this component is not running; it will reappear once the extension returns"
+    "componentUnavailableHint": "The extension providing this component is not running; it will reappear once the extension returns",
+    "componentLoadFailed": "Component Load Failed"
   }
 }

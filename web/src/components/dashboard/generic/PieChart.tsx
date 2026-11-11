@@ -339,7 +339,7 @@ export const PieChart = memo(function PieChart({
 
   // Only show empty state when loading is fully complete
   if (!loading && chartData.length === 0) {
-    return <EmptyState size={size} className={className} message={title ? `${title} - No Data Available` : undefined} />
+    return <EmptyState size={size} className={className} message={title ? `${title} - ${t('defaultStates.noData')}` : undefined} />
   }
 
   const effectiveColors = colors || fallbackColors

@@ -7,6 +7,7 @@
  */
 
 import { useRef, useMemo, memo } from 'react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { toNumberArray } from '@/design-system/utils/format'
 import { dashboardComponentSize, dashboardCardBase } from '@/design-system/tokens/size'
@@ -380,6 +381,7 @@ function SparklineComponent({
   editMode = false,
   className,
 }: SparklineProps) {
+  const { t } = useTranslation('dashboardComponents')
   // Compute default time range from props (preserves 'last_24hours' default).
   // useChartPipeline's sourceTransform prefers each source's own timeWindow
   // when present, falling back to this value.
@@ -496,7 +498,7 @@ function SparklineComponent({
 
   // Empty state - only show when loading is fully complete (not retrying/polling)
   if (!editMode && !loading && hasDataSource && chartData.length < 2) {
-    return <EmptyState size={size} className={className} message={title ? `${title} - No Data Available` : undefined} />
+    return <EmptyState size={size} className={className} message={title ? `${title} - ${t('defaultStates.noData')}` : undefined} />
   }
 
   // Card wrapper mode (default for dashboard use)

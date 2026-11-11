@@ -165,7 +165,7 @@ const LineChartInner = function LineChart({
   dataMapping,
   className,
 }: LineChartProps) {
-  const { t: _t } = useTranslation('dashboardComponents')
+  const { t } = useTranslation('dashboardComponents')
   const config = dashboardComponentSize[size]
 
   // Shared data pipeline
@@ -329,11 +329,11 @@ const LineChartInner = function LineChart({
   // so series will have sample data. Only show empty state when we have a dataSource but
   // the single-source case produced nothing.
   if (dataSource && !loading && series.length === 0) {
-    return <EmptyState size={size} className={className} message={title ? `${title} - No Data Available` : undefined} />
+    return <EmptyState size={size} className={className} message={title ? `${title} - ${t('defaultStates.noData')}` : undefined} />
   }
 
   if (!loading && chartData.length === 0) {
-    return <EmptyState size={size} className={className} message={title ? `${title} - No Data Available` : undefined} />
+    return <EmptyState size={size} className={className} message={title ? `${title} - ${t('defaultStates.noData')}` : undefined} />
   }
 
   return (
@@ -542,7 +542,7 @@ export const AreaChart = memo(function AreaChart({
   dataMapping,
   className,
 }: AreaChartProps) {
-  const { t: _t } = useTranslation('dashboardComponents')
+  const { t } = useTranslation('dashboardComponents')
   const config = dashboardComponentSize[size]
 
   // Shared data pipeline — same pattern as LineChart
@@ -699,11 +699,11 @@ export const AreaChart = memo(function AreaChart({
 
   // Empty state - only when dataSource is configured, data finished loading, and no data at all
   if (dataSource && !loading && series.length === 0) {
-    return <EmptyState size={size} className={className} message={title ? `${title} - No Data Available` : undefined} />
+    return <EmptyState size={size} className={className} message={title ? `${title} - ${t('defaultStates.noData')}` : undefined} />
   }
 
   if (!loading && chartData.length === 0) {
-    return <EmptyState size={size} className={className} message={title ? `${title} - No Data Available` : undefined} />
+    return <EmptyState size={size} className={className} message={title ? `${title} - ${t('defaultStates.noData')}` : undefined} />
   }
 
   return (

@@ -56,6 +56,8 @@ export interface DashboardGridProps {
   editMode?: boolean
   onLayoutChange?: (layout: readonly any[]) => void
   className?: string
+  /** Mobile edit selection — adds `.selected` on the matching grid item for the CSS outline. */
+  selectedId?: string | null
 }
 
 export function DashboardGrid({
@@ -74,6 +76,7 @@ export function DashboardGrid({
   editMode = false,
   onLayoutChange,
   className,
+  selectedId = null,
 }: DashboardGridProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(0)
@@ -276,7 +279,10 @@ export function DashboardGrid({
           {components.map((component) => (
             <div
               key={component.id}
-              className="dashboard-item h-full"
+              className={cn(
+                'dashboard-item h-full',
+                selectedId === component.id && 'selected',
+              )}
             >
               {component.children ?? component.render?.()}
             </div>

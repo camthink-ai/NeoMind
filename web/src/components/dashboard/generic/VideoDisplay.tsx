@@ -8,6 +8,7 @@
 
 import { getPortalRoot } from '@/lib/portal'
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import { createPortal } from 'react-dom'
 import type Hls from 'hls.js'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -643,6 +644,7 @@ export function VideoDisplay({
   className,
   title,
 }: VideoDisplayProps & { title?: string }) {
+  const { t } = useTranslation('dashboardComponents')
   const { data, loading, error } = useDataSource<string>(dataSource, {
     fallback: propSrc,
   })
@@ -700,8 +702,8 @@ export function VideoDisplay({
         size={size}
         className={className}
         icon={<Webcam />}
-        message="No Video Source"
-        subMessage="Configure a video URL or camera"
+        message={t('videoDisplay.noSource')}
+        subMessage={t('videoDisplay.configureSource')}
       />
     )
   }
@@ -727,14 +729,14 @@ export function VideoDisplay({
       )}>
         <AlertCircle className="h-10 w-10 text-muted-foreground" />
         <div className="text-center">
-          <p className="text-muted-foreground text-sm font-medium">Video Load Error</p>
+          <p className="text-muted-foreground text-sm font-medium">{t('videoDisplay.loadError')}</p>
           <p className="text-muted-foreground text-xs mt-1">
-            {errorMessage || 'Could not load video source'}
+            {errorMessage || t('videoDisplay.couldNotLoad')}
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={handleRetry}>
           <RefreshCw className="h-4 w-4 mr-1.5" />
-          Retry
+          {t('videoDisplay.retry')}
         </Button>
       </div>
     )

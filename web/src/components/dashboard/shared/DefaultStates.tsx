@@ -6,6 +6,7 @@
  */
 
 import { useLayoutEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -63,10 +64,12 @@ export function EmptyState({
   size = 'md',
   className,
   icon,
-  message = 'No Data Available',
+  message,
   subMessage,
   action,
 }: EmptyStateProps) {
+  const { t } = useTranslation('dashboardComponents')
+  const resolvedMessage = message ?? t('defaultStates.noData')
   const sizeConfig = dashboardComponentSize[size]
   const { ref, compact } = useCompactCard<HTMLDivElement>()
 
@@ -88,7 +91,7 @@ export function EmptyState({
             {icon}
           </span>
         )}
-        <p className="truncate text-xs font-medium text-muted-foreground">{message}</p>
+        <p className="truncate text-xs font-medium text-muted-foreground">{resolvedMessage}</p>
         {action}
       </div>
     )
@@ -107,7 +110,7 @@ export function EmptyState({
         </div>
       )}
       <div className="text-center">
-        <p className="text-muted-foreground text-sm font-medium">{message}</p>
+        <p className="text-muted-foreground text-sm font-medium">{resolvedMessage}</p>
         {subMessage && (
           <p className="text-muted-foreground text-xs mt-1">{subMessage}</p>
         )}
@@ -131,11 +134,14 @@ export interface ErrorStateProps extends StateProps {
 export function ErrorState({
   size = 'md',
   className,
-  message = 'Failed to Load Data',
+  message,
   subMessage,
   onRetry,
-  retryLabel = 'Retry',
+  retryLabel,
 }: ErrorStateProps) {
+  const { t } = useTranslation('dashboardComponents')
+  const resolvedMessage = message ?? t('defaultStates.failedToLoad')
+  const resolvedRetry = retryLabel ?? t('defaultStates.retry')
   const sizeConfig = dashboardComponentSize[size]
   const { ref, compact } = useCompactCard<HTMLDivElement>()
 
@@ -152,14 +158,14 @@ export function ErrorState({
           className
         )}
       >
-        <p className="truncate text-xs font-medium text-error">{message}</p>
+        <p className="truncate text-xs font-medium text-error">{resolvedMessage}</p>
         {onRetry && (
           <Button
             variant="outline"
             size="icon-sm"
             className="h-7 w-7 shrink-0"
             onClick={onRetry}
-            aria-label={retryLabel}
+            aria-label={resolvedRetry}
           >
             <RefreshCw className="h-3.5 w-3.5" />
           </Button>
@@ -176,7 +182,7 @@ export function ErrorState({
       className
     )}>
       <div className="text-center">
-        <p className="text-error text-sm font-medium">{message}</p>
+        <p className="text-error text-sm font-medium">{resolvedMessage}</p>
         {subMessage && (
           <p className="text-muted-foreground text-xs mt-1">{subMessage}</p>
         )}
@@ -188,7 +194,7 @@ export function ErrorState({
             onClick={onRetry}
           >
             <RefreshCw className="h-4 w-4" />
-            {retryLabel}
+            {resolvedRetry}
           </Button>
         )}
       </div>

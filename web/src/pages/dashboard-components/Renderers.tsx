@@ -379,7 +379,7 @@ const ComponentWrapper = memo(function ComponentWrapper({
         <div className={cn('absolute inset-0 z-10 flex items-center justify-center rounded-lg', isSelected ? 'bg-transparent' : 'bg-muted-30')}>
           {onSelect && (
             <button className={cn('absolute inset-0', isSelected ? 'pointer-events-none' : 'cursor-pointer')}
-              onClick={handleEditButtonMouseEvent} onTouchEnd={handleEditButtonTouchEvent} aria-label="Select component" />
+              onClick={handleEditButtonMouseEvent} onTouchEnd={handleEditButtonTouchEvent} aria-label={t('componentWrapper.select')} />
           )}
         </div>
       )}
