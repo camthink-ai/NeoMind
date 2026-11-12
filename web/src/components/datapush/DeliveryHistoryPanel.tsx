@@ -233,7 +233,7 @@ export function DeliveryHistoryPanel({ targetId, open, onOpenChange }: DeliveryH
         icon={<Eye className="h-5 w-5" />}
         width="xl"
         className="z-[110]"
-        contentClassName="max-h-[70vh]"
+        contentClassName="sm:max-h-[70vh]"
         footer={
           <div className="flex w-full justify-end gap-2">
             <Button

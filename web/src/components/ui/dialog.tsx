@@ -88,7 +88,12 @@ const DialogContent = React.forwardRef<
             "fixed !bottom-0 !left-0 !right-0 !top-0 z-50 flex !h-full min-h-0 !w-full !max-w-full !translate-x-0 !translate-y-0 flex-col !rounded-none bg-background",
             "data-[state=open]:animate-in data-[state=closed]:animate-out",
             "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
-            className
+            className,
+            // Re-assert AFTER className. Callers often pass desktop height caps
+            // (!h-[70vh], max-h-[80vh]) that twMerge would otherwise keep and
+            // shrink this fullscreen shell. This branch is mobile-only, so
+            // desktop still honors sm:!h-* / sm:max-h-* on the other path.
+            "!h-full !max-h-none",
           )}
           style={{
             paddingTop: insets.top,

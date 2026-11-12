@@ -34,6 +34,9 @@ Frozen 138-case gate (Mac, Spark-1.7B): **97/138 (70.3%)**, identical to the 1.2
 - **Mobile primary nav is text-only** in the capsule; redundant trailing chevrons are dropped on agent/device/list cards where the whole row already navigates.
 - **Agents tools list appends on mobile infinite scroll** instead of replacing earlier pages.
 - **System page hydrates instance stats on first open**; the route-change top progress bar is removed.
+- **Mobile dialogs stay full-height** when callers pass desktop `h-[70vh]` / `max-h-[80vh]` (data-source pickers); category tabs scroll horizontally instead of crushing labels in a 4-col grid.
+- **LLM protocol cards distinguish Configured vs Running** (instances present but not the global active backend no longer read as Not Configured).
+- **Device-type metric editor Import JSON / Add Metric** share `size="sm"` height on mobile.
 
 ### Added
 - **`llm_complete` host capability**: one-shot completion with optional images, no chat session and no tools — for headless VLM callers (e.g. watermark description); thinking disabled; 120s timeout.

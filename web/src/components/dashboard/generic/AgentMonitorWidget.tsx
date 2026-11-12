@@ -300,7 +300,8 @@ function ExecutionDetailDialog({ execution, open, onClose, agentId }: ExecutionD
   return (
     <>
       <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-        <DialogContent ref={dialogRef} className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col z-[110]">
+        {/* sm:max-h only — bare max-h-[80vh] caps the mobile fullscreen dialog. */}
+        <DialogContent ref={dialogRef} className="max-w-2xl sm:max-h-[80vh] overflow-hidden flex flex-col z-[110]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base">
               {execution.status === 'Completed' ? (

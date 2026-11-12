@@ -34,6 +34,7 @@
     "back": "返回",
     "running": "运行中",
     "notConfigured": "未配置",
+    "configured": "已配置",
     "active": "活跃",
     "endpoint": "端点",
     "name": "名称",

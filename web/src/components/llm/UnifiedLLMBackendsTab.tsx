@@ -1143,8 +1143,21 @@ export function UnifiedLLMBackendsTab({
             // Protocol label overrides the raw vendor name (Cloud AI buckets).
             const protocolName = t(`plugins:llm.protocol.${type.id}.name`, { defaultValue: info.name })
             const protocolDesc = t(`plugins:llm.protocol.${type.id}.desc`, { defaultValue: type.description })
-            const activeInstance = typeInstances.find(i => i.id === activeBackendId)
-            const hasActive = !!activeInstance
+            // Badge is NOT "has any instance" — NeoMind has one global active
+            // backend. Instances on this card with another type active →
+            // "Configured"; only the active type shows "Running".
+            const hasActive = typeInstances.some(i => i.id === activeBackendId)
+            const hasInstances = typeInstances.length > 0
+            const statusLabel = hasActive
+              ? t('plugins:llm.running')
+              : hasInstances
+                ? t('plugins:llm.configured')
+                : t('plugins:llm.notConfigured')
+            const statusClass = hasActive
+              ? 'text-success'
+              : hasInstances
+                ? 'text-info'
+                : 'text-muted-foreground'
 
             return (
               <Card
@@ -1166,8 +1179,8 @@ export function UnifiedLLMBackendsTab({
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
                         <CardTitle className="text-base truncate min-w-0">{protocolName}</CardTitle>
-                        <span className={cn("text-xs font-medium shrink-0", hasActive ? "text-success" : "text-muted-foreground")}>
-                          {hasActive ? t('plugins:llm.running') : t('plugins:llm.notConfigured')}
+                        <span className={cn("text-xs font-medium shrink-0", statusClass)}>
+                          {statusLabel}
                         </span>
                       </div>
                       <CardDescription className="mt-1 text-xs line-clamp-1">
@@ -1193,6 +1206,17 @@ export function UnifiedLLMBackendsTab({
               i => !i.is_builtin && i.backend_type !== 'ollama' && i.backend_type !== 'llamacpp'
             )
             const hasActive = cloudInstances.some(i => i.id === activeBackendId)
+            const hasInstances = cloudInstances.length > 0
+            const statusLabel = hasActive
+              ? t('plugins:llm.running')
+              : hasInstances
+                ? t('plugins:llm.configured')
+                : t('plugins:llm.notConfigured')
+            const statusClass = hasActive
+              ? 'text-success'
+              : hasInstances
+                ? 'text-info'
+                : 'text-muted-foreground'
             return (
               <Card
                 className={cn(
@@ -1212,8 +1236,8 @@ export function UnifiedLLMBackendsTab({
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
                         <CardTitle className="text-base truncate min-w-0">{t('plugins:llm.protocol.cloudai.name')}</CardTitle>
-                        <span className={cn("text-xs font-medium shrink-0", hasActive ? "text-success" : "text-muted-foreground")}>
-                          {hasActive ? t('plugins:llm.running') : t('plugins:llm.notConfigured')}
+                        <span className={cn("text-xs font-medium shrink-0", statusClass)}>
+                          {statusLabel}
                         </span>
                       </div>
                       <CardDescription className="mt-1 text-xs line-clamp-1">

@@ -807,9 +807,9 @@ function DataDefinitionStep({
                   variant="outline"
                   size="sm"
                   onClick={() => setShowImportDialog(true)}
-                  className="h-8 text-xs"
+                  className="gap-1"
                 >
-                  <Code className="mr-1 h-4 w-4" />
+                  <Code className="h-4 w-4" />
                   {t('devices:metricEditor.generateFromJson')}
                 </Button>
               </div>
@@ -822,18 +822,20 @@ function DataDefinitionStep({
               <h4 className="text-sm font-medium">
                 {t('devices:metricEditor.metricCount', { count: data.metrics?.length || 0 })}
               </h4>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {/* No bare h-8 — size="sm" is h-11 on mobile / h-9 on sm+;
+                    a fixed h-8 made Import JSON shorter than Add Metric. */}
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={() => setShowImportDialog(true)}
-                  className="gap-1 h-8"
+                  className="gap-1"
                 >
                   <Code className="h-4 w-4" />
                   {t('devices:metricEditor.importJson')}
                 </Button>
-                <Button onClick={addMetric} size="sm" variant="outline">
-                  <Plus className="mr-1 h-4 w-4" />
+                <Button onClick={addMetric} size="sm" variant="outline" className="gap-1">
+                  <Plus className="h-4 w-4" />
                   {t('devices:metricEditor.addMetric')}
                 </Button>
               </div>

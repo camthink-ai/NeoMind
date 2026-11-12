@@ -299,7 +299,8 @@ export function DualModeSourceField({
 
       {/* Data source picker dialog */}
       <Dialog open={pickerOpen} onOpenChange={(open) => { if (!open) handleCancel() }}>
-        <DialogContent className="z-[110] max-w-2xl !h-[70vh] flex flex-col !p-0 overflow-hidden">
+        {/* sm:!h-[70vh] only — bare !h-[70vh] overrides DialogContent's mobile !h-full. */}
+        <DialogContent className="z-[110] max-w-2xl sm:!h-[70vh] flex flex-col !p-0 overflow-hidden">
           <DialogHeader className="px-5 py-3 border-b shrink-0">
             <DialogTitle className="text-base">{t('dualMode.selectDataSource')}</DialogTitle>
           </DialogHeader>
