@@ -20,10 +20,12 @@ interface ListToolbarProps {
 
 /**
  * ListToolbar — sticky detail-view header shared by the LLM Backends and
- * Device Connections settings tabs. Back button + icon + title (with optional
- * badges) + description, stuck to the top of the scroll container. The
- * `::before` strip covers the 8px mobile scroll-padding gap so content
- * scrolling under it doesn't show through (see PageLayout mobile pt-2).
+ * IM Bridges settings tabs. Back button + icon + title (with optional
+ * badges) + description, stuck to the top of the scroll container. Uses
+ * `bg-background` (same token as SettingsDialog / page scroll), not
+ * `bg-popover` — in dark mode those diverge and painted a visible band
+ * under the sticky header. The `::before` strip covers the 8px mobile
+ * scroll-padding gap so content scrolling under it doesn't show through.
  */
 export function ListToolbar({
   onBack,
@@ -36,7 +38,7 @@ export function ListToolbar({
   responsiveIcon = false,
 }: ListToolbarProps) {
   return (
-    <div className="sticky top-0 z-10 -mx-4 sm:-mx-6 md:-mx-8 px-4 sm:px-6 md:px-8 pb-2 bg-popover flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 mb-4 before:content-[''] before:absolute before:inset-x-0 before:-top-2 before:h-2 before:bg-popover md:before:hidden">
+    <div className="relative sticky top-0 z-10 -mx-4 mb-4 flex flex-col gap-3 bg-background px-4 pb-2 before:absolute before:inset-x-0 before:-top-2 before:h-2 before:bg-background before:content-[''] sm:-mx-6 sm:flex-row sm:items-center sm:gap-4 sm:px-6 md:-mx-8 md:px-8 md:before:hidden">
       <button
         type="button"
         onClick={onBack}

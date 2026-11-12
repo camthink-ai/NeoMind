@@ -290,7 +290,7 @@ export function ImBridgesTab() {
   if (view === 'list') {
     const available = IM_PLATFORMS.filter(p => p.available)
     return (
-      <div className="grid grid-cols-1 gap-1 md:grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,260px),1fr))] md:gap-4">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,260px),1fr))] md:gap-4">
         {available.map(def => {
           const PlatformIcon = def.icon
           const bridge = bridges.find(b => b.platform === def.id)
@@ -298,26 +298,26 @@ export function ImBridgesTab() {
           return (
             <Card
               key={def.id}
-              className="cursor-pointer rounded-xl border-0 bg-transparent shadow-none transition-[background-color,transform] active:scale-[0.99] active:bg-muted md:border md:bg-card md:transition-all md:hover:shadow-md"
+              className="cursor-pointer rounded-2xl border border-border bg-card transition-[background-color,transform,box-shadow] active:scale-[0.99] active:bg-muted md:rounded-xl md:hover:shadow-md"
               onClick={() => (bridge ? openDetail(bridge) : handlePlatformSelect(def))}
             >
-              <CardContent className="px-2 py-3.5 md:p-4">
+              <CardContent className="px-4 py-3 md:p-4">
                 <div className="flex items-start gap-3">
-                  <div className={cn('hidden items-center justify-center h-10 w-10 rounded-lg shrink-0 md:flex', def.iconBg)}>
+                  <div className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-lg', def.iconBg)}>
                     <PlatformIcon className="h-5 w-5" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
-                      <CardTitle className="text-base truncate min-w-0">{t(def.nameKey)}</CardTitle>
+                      <CardTitle className="min-w-0 truncate text-base">{t(def.nameKey)}</CardTitle>
                       {bridge && st ? (
-                        <Badge className={cn('text-xs border shrink-0', st.className)}>{st.label}</Badge>
+                        <Badge className={cn('shrink-0 border text-xs', st.className)}>{st.label}</Badge>
                       ) : (
-                        <Badge className="text-xs border shrink-0 bg-muted-30 text-muted-foreground border-border">
+                        <Badge className="shrink-0 border border-border bg-muted-30 text-xs text-muted-foreground">
                           {t('settings:im.notConfigured')}
                         </Badge>
                       )}
                     </div>
-                    <CardDescription className="mt-1 text-xs line-clamp-1">
+                    <CardDescription className="mt-1 line-clamp-1 text-xs">
                       {t(def.descriptionKey)}
                     </CardDescription>
                   </div>
@@ -337,7 +337,7 @@ export function ImBridgesTab() {
                     <IconButton
                       size="sm"
                       aria-label={t('common:delete', { defaultValue: 'Delete' })}
-                      className="hover:text-error hover:bg-error-light"
+                      className="hover:bg-error-light hover:text-error"
                       onClick={(e: React.MouseEvent) => {
                         e.stopPropagation()
                         handleDelete(bridge)

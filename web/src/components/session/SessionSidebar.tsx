@@ -14,6 +14,7 @@ import { sessionsApi } from '@/lib/api/sessions'
 import { createPortal } from "react-dom"
 import type { ChatSession } from "@/types"
 import { cn } from "@/lib/utils"
+import { getSessionDisplayTitle } from "@/lib/utils/sessionTitle"
 import { textNano } from "@/design-system/tokens/typography"
 import { formatTimestamp } from "@/lib/utils/format"
 import {
@@ -102,16 +103,6 @@ export function SessionSidebar({
     viewport.addEventListener('scroll', handleScroll, { passive: true })
     return () => viewport.removeEventListener('scroll', handleScroll)
   }, [])
-
-  // Focus search when opened (mobile only)
-  useEffect(() => {
-    if (open && !isDesktop) {
-      const raf = requestAnimationFrame(() => {
-        searchInputRef.current?.focus()
-      })
-      return () => cancelAnimationFrame(raf)
-    }
-  }, [open, isDesktop])
 
   // Infinite scroll using Intersection Observer
   useEffect(() => {
@@ -317,30 +308,33 @@ export function SessionSidebar({
     }
   }
 
-  // Get session title
-  const getSessionTitle = (session: ChatSession): string => {
-    if (session.title && session.title !== "新对话" && session.title !== "New Chat") {
-      return session.title
-    }
-    if (session.preview) {
-      return session.preview.length > 30 ? session.preview.slice(0, 30) + '...' : session.preview
-    }
-    return t('session.defaultTitle')
-  }
+  const defaultTitle = t('session.defaultTitle')
 
-  // Sidebar content - shared between desktop and mobile
+  // Sidebar content - shared between desktop and mobile; mobile uses a
+  // quieter sheet chrome (glass pills, larger rows, no always-on edit strip).
   const SidebarContent = ({ showHeader = true }: { showHeader?: boolean }) => (
     <>
-      {/* Header */}
       {showHeader && (
-        <div className="relative z-[1] flex items-center justify-between px-3 py-2" onMouseDown={handleWindowDragMouseDown}>
-          <h2 className="text-base font-semibold">{t('session.sessions')}</h2>
+        <div
+          className={cn(
+            "relative z-[1] flex items-center justify-between",
+            isDesktop ? "px-3 py-2" : "px-4 pb-3 pt-1",
+          )}
+          onMouseDown={handleWindowDragMouseDown}
+        >
+          <h2 className={cn(
+            "font-semibold tracking-[-0.02em] text-foreground",
+            isDesktop ? "text-base" : "text-lg",
+          )}>
+            {t('session.sessions')}
+          </h2>
           {!isDesktop && (
             <Button
               variant="ghost"
               size="icon"
               onClick={onClose}
-              className="h-6 w-6 rounded-lg"
+              className="h-9 w-9 rounded-lg"
+              aria-label={t('close')}
             >
               <X className="h-4 w-4" />
             </Button>
@@ -348,170 +342,176 @@ export function SessionSidebar({
         </div>
       )}
 
-      {/* Search */}
-      <div className="px-3 py-2">
+      <div className={cn(isDesktop ? "px-3 py-2" : "px-4 pb-3")}>
         <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             ref={searchInputRef}
             type="text"
             placeholder={t('session.search')}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-8 h-8 text-sm rounded-lg bg-muted-50"
-              />
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className={cn(
+              "rounded-lg bg-muted-50 pl-9 text-sm",
+              isDesktop ? "h-8" : "h-10",
+            )}
+          />
+        </div>
+      </div>
+
+      <div className={cn(isDesktop ? "px-3 pb-2" : "px-4 pb-3")}>
+        <Button
+          onClick={handleNewSession}
+          disabled={isCreating}
+          variant="outline"
+          className={cn(
+            "w-full rounded-lg text-sm shadow-none",
+            isDesktop ? "h-8" : "h-10",
+          )}
+        >
+          <Plus className="mr-1.5 h-4 w-4" strokeWidth={2} />
+          {t('session.newChat')}
+        </Button>
+      </div>
+
+      <ScrollArea className="min-h-0 flex-1" viewportRef={scrollViewportRef}>
+        <div className={cn(
+          "overflow-x-hidden",
+          isDesktop ? "space-y-0.5 px-2 pb-2" : "space-y-1 px-3 pb-[calc(1rem+env(safe-area-inset-bottom,0px))]",
+        )}>
+          {sortedSessions.length === 0 ? (
+            <div className="py-8 text-center">
+              <MessageSquare className="mx-auto mb-2 h-8 w-8 text-muted-foreground" />
+              <p className="text-xs text-muted-foreground">
+                {searchQuery ? t('session.noMatch') : t('session.noSessions')}
+              </p>
             </div>
-          </div>
+          ) : (
+            <>
+              {sortedSessions.map((session) => {
+                const isActive = session.sessionId === currentSessionId
+                const isDeleting = deletingId === session.sessionId
+                const isEditing = editingId === session.sessionId
+                const isGenerating = generatingIds.has(session.sessionId)
 
-          {/* New Session Button */}
-          <div className="px-3 pb-2">
-            <Button
-              onClick={handleNewSession}
-              disabled={isCreating}
-              variant="outline"
-              className="w-full h-8 text-sm rounded-lg"
-            >
-              <Plus className="h-4 w-4 mr-1.5" />
-              {t('session.newChat')}
-            </Button>
-          </div>
-
-          {/* Session List */}
-          <ScrollArea className="flex-1 min-h-0" viewportRef={scrollViewportRef}>
-            <div className="px-2 pb-2 space-y-0.5 overflow-x-hidden">
-              {sortedSessions.length === 0 ? (
-                <div className="py-8 text-center">
-                  <MessageSquare className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-                  <p className="text-xs text-muted-foreground">
-                    {searchQuery ? t('session.noMatch') : t('session.noSessions')}
-                  </p>
-                </div>
-              ) : (
-                <>
-                  {sortedSessions.map((session) => {
-                    const isActive = session.sessionId === currentSessionId
-                    const isDeleting = deletingId === session.sessionId
-                    const isEditing = editingId === session.sessionId
-                    const isGenerating = generatingIds.has(session.sessionId)
-
-                    return (
-                      <div
-                        key={session.sessionId}
-                        onClick={() => !isEditing && handleSwitchSession(session.sessionId)}
-                        className={cn(
-                          // Flat list: selected = plain muted block (no
-                          // raised card / shadow — the 3D look was overkill)
-                          "group relative flex items-center gap-2 rounded-lg px-2 py-2 cursor-pointer transition-colors focus-within:bg-muted-50",
-                          isActive
-                            ? "bg-muted"
-                            : "hover:bg-muted-50",
-                          isEditing && "bg-muted"
-                        )}
-                      >
-                        {isEditing ? (
-                          // Edit mode
-                          <div className="flex min-w-0 flex-1 items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                            <Input
-                              ref={editInputRef}
-                              value={editingTitle}
-                              onChange={(e) => setEditingTitle(e.target.value)}
-                              onKeyDown={(e) => handleEditKeyDown(e, session.sessionId)}
-                              className="h-8 min-w-0 flex-1 rounded-md text-sm"
-                              autoFocus
-                              disabled={isUpdating}
-                            />
-                            <button
-                              aria-label={t('common:confirm')}
-                              className="h-6 w-6 shrink-0 flex items-center justify-center rounded-md text-success hover:bg-success-light transition-colors"
-                              onClick={() => handleEditSave(session.sessionId)}
-                              disabled={isUpdating || !editingTitle.trim()}
-                            >
-                              <Check className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              aria-label={t('common:cancel')}
-                              className="h-6 w-6 shrink-0 flex items-center justify-center rounded-md hover:bg-muted transition-colors"
-                              onClick={handleEditCancel}
-                              disabled={isUpdating}
-                            >
-                              <X className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        ) : (
-                          // Normal mode
-                          <>
-                            <div className="flex items-center gap-2 min-w-0 flex-1">
-                              {isGenerating && (
-                                <Loader2
-                                  className="h-4 w-4 shrink-0 animate-spin text-primary motion-reduce:animate-none"
-                                  aria-label={t('session.generating')}
-                                />
-                              )}
-                              <div className="min-w-0 flex-1">
-                                <h4 className={cn(
-                                  "text-sm truncate",
-                                  isActive ? "text-foreground font-medium" : "text-muted-foreground"
-                                )}>
-                                  {getSessionTitle(session)}
-                                </h4>
-                                <div className={cn("flex items-center gap-1.5 mt-0.5 overflow-hidden", textNano, "text-muted-foreground")}>
-                                  <Clock className="h-2.5 w-2.5 shrink-0" />
-                                  <span className="truncate">{session.updatedAt ? formatTimestamp(session.updatedAt / 1000, false) : formatTimestamp(session.createdAt / 1000, false)}</span>
-                                  {session.messageCount ? (
-                                    <>
-                                      <span className="shrink-0">·</span>
-                                      <span className="truncate">{t('session.messages', { count: session.messageCount })}</span>
-                                    </>
-                                  ) : null}
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Action buttons — hover-reveal is desktop-only; touch has no hover */}
-                            <div className={cn(
-                              "flex shrink-0 items-center gap-0.5 overflow-hidden transition-[width] duration-fast",
-                              isDesktop
-                                ? "w-8 group-hover:w-[4.125rem] group-focus-within:w-[4.125rem]"
-                                : "w-[4.125rem]"
-                            )}>
-                              <button
-                                onClick={(e) => handleEditClick(e, session)}
-                                aria-label={t('common:edit')}
-                                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                title={t('session.rename')}
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                onClick={(e) => handleDeleteClick(e, session.sessionId)}
-                                aria-label={t('common:delete')}
-                                disabled={isDeleting}
-                                className={cn(
-                                  "flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-error-light hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                                  isDeleting && "opacity-50"
-                                )}
-                                title={t('delete')}
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                          </>
-                        )}
+                return (
+                  <div
+                    key={session.sessionId}
+                    onClick={() => !isEditing && handleSwitchSession(session.sessionId)}
+                    className={cn(
+                      "group relative flex cursor-pointer items-center gap-2 transition-colors focus-within:bg-muted-50",
+                      "rounded-lg",
+                      isDesktop ? "px-2 py-2" : "px-3 py-2.5",
+                      isActive ? "bg-muted" : "hover:bg-muted-50",
+                      isEditing && "bg-muted",
+                    )}
+                  >
+                    {isEditing ? (
+                      <div className="flex min-w-0 flex-1 items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                        <Input
+                          ref={editInputRef}
+                          value={editingTitle}
+                          onChange={(e) => setEditingTitle(e.target.value)}
+                          onKeyDown={(e) => handleEditKeyDown(e, session.sessionId)}
+                          className="h-8 min-w-0 flex-1 rounded-md text-sm"
+                          autoFocus
+                          disabled={isUpdating}
+                        />
+                        <button
+                          aria-label={t('common:confirm')}
+                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-success hover:bg-success-light transition-colors"
+                          onClick={() => handleEditSave(session.sessionId)}
+                          disabled={isUpdating || !editingTitle.trim()}
+                        >
+                          <Check className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          aria-label={t('common:cancel')}
+                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-muted transition-colors"
+                          onClick={handleEditCancel}
+                          disabled={isUpdating}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
                       </div>
-                    )
-                  })}
-                  {/* Load more trigger */}
-                  <div ref={loadMoreTriggerRef} className="h-1" />
-                  {/* Loading indicator */}
-                  {sessionsLoading && (
-                    <div className="flex items-center justify-center py-3">
-                      <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                    </div>
-                  )}
-                </>
+                    ) : (
+                      <>
+                        <div className="flex min-w-0 flex-1 items-center gap-2">
+                          {isGenerating && (
+                            <Loader2
+                              className="h-4 w-4 shrink-0 animate-spin text-primary motion-reduce:animate-none"
+                              aria-label={t('session.generating')}
+                            />
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <h4 className={cn(
+                              "truncate text-sm",
+                              isActive ? "font-medium text-foreground" : "text-muted-foreground",
+                            )}>
+                              {getSessionDisplayTitle(session, defaultTitle)}
+                            </h4>
+                            <div className={cn("mt-0.5 flex items-center gap-1.5 overflow-hidden text-muted-foreground", textNano)}>
+                              <Clock className="h-2.5 w-2.5 shrink-0" />
+                              <span className="truncate">
+                                {session.updatedAt
+                                  ? formatTimestamp(session.updatedAt / 1000, false)
+                                  : formatTimestamp(session.createdAt / 1000, false)}
+                              </span>
+                              {session.messageCount ? (
+                                <>
+                                  <span className="shrink-0">·</span>
+                                  <span className="truncate">{t('session.messages', { count: session.messageCount })}</span>
+                                </>
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Desktop: hover-reveal. Mobile: single delete to keep rows clean. */}
+                        <div className={cn(
+                          "flex shrink-0 items-center gap-0.5 overflow-hidden transition-[width] duration-fast",
+                          isDesktop
+                            ? "w-8 group-hover:w-[4.125rem] group-focus-within:w-[4.125rem]"
+                            : "w-9",
+                        )}>
+                          {isDesktop && (
+                            <button
+                              onClick={(e) => handleEditClick(e, session)}
+                              aria-label={t('common:edit')}
+                              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              title={t('session.rename')}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          <button
+                            onClick={(e) => handleDeleteClick(e, session.sessionId)}
+                            aria-label={t('common:delete')}
+                            disabled={isDeleting}
+                            className={cn(
+                              "flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-error-light hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                              isDeleting && "opacity-50",
+                            )}
+                            title={t('delete')}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )
+              })}
+              <div ref={loadMoreTriggerRef} className="h-1" />
+              {sessionsLoading && (
+                <div className="flex items-center justify-center py-3">
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                </div>
               )}
-            </div>
-          </ScrollArea>
+            </>
+          )}
+        </div>
+      </ScrollArea>
     </>
   )
 
@@ -581,18 +581,13 @@ export function SessionSidebar({
         />
       )}
 
-      {/* Sidebar */}
+      {/* Sidebar — same bg-background as the chat shell / desktop sidebar so
+          dark mode doesn't pick up the elevated --chrome tint. */}
       <div
         className={cn(
-          "fixed top-0 left-0 h-full w-72 z-50 lg:hidden safe-top pb-safe",
-          // bg-popover matches the desktop persistent sidebar and every
-          // other drawer / popup in the app. Previously bg-background,
-          // which is /97% alpha in dark mode and let the page + backdrop
-          // bleed through, making the drawer read darker than the chrome
-          // layer it slides out from.
-          "bg-popover shadow-xl flex flex-col",
-          "transform transition-transform duration-slow ease-out",
-          open ? "translate-x-0" : "-translate-x-full"
+          "fixed top-0 left-0 z-50 flex h-full w-[min(20rem,88vw)] flex-col border-r border-border bg-background shadow-xl lg:hidden",
+          "safe-top transform transition-transform duration-slow ease-out",
+          open ? "translate-x-0" : "-translate-x-full",
         )}
       >
         {SidebarContent({})}

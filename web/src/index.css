@@ -1568,7 +1568,17 @@ html {
    rendered there, so the composer rests directly above the safe-area edge. */
 @media (max-width: 767px) {
   .chat-composer-dock {
-    padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+    /* Compact bottom pad + short fade. Keep the dock tight to the composer —
+       tall blur bands overflow and hurt the blend more than they help. */
+    padding-bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px));
+    overflow: visible;
+    background-image: linear-gradient(
+      to top,
+      var(--background) 0%,
+      var(--background) 55%,
+      color-mix(in srgb, var(--background) 82%, transparent) 82%,
+      transparent 100%
+    );
   }
 
   .message-bubble-user .prose,

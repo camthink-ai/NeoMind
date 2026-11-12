@@ -44,7 +44,7 @@ export function WelcomeArea({ className, onQuickAction, children }: WelcomeAreaP
 
   if (isMobile) {
     return (
-      <div className={cn("relative flex min-h-full w-full flex-col items-center overflow-hidden", className)}>
+      <div className={cn("relative flex min-h-full w-full flex-col items-center overflow-x-hidden", className)}>
         <div className="relative flex min-h-full w-full max-w-3xl flex-col">
           <div className="flex min-h-0 flex-1 items-center justify-center px-4 pb-6 text-center">
             <h1 className="text-xl font-semibold leading-snug tracking-[-0.02em] text-foreground">
@@ -52,7 +52,9 @@ export function WelcomeArea({ className, onQuickAction, children }: WelcomeAreaP
             </h1>
           </div>
 
-          <div className="chat-welcome-composer w-full shrink-0">
+          {/* px keeps the composer's soft shadow inside the column so parent
+              overflow clips don't square the bottom corners. */}
+          <div className="chat-welcome-composer w-full shrink-0 px-1 pb-1">
             {children}
           </div>
         </div>

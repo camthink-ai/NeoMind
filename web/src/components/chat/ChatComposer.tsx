@@ -216,10 +216,13 @@ export function ChatComposer({
         </div>
       )}
 
-      {/* Single unified input box — everything inside one container */}
+      {/* Single unified input box — everything inside one container.
+          Mobile: radius + shadow live on this same node; avoid overflow:hidden
+          here (it squares the soft shadow). Prefer an upward-biased shadow so
+          ancestors that clip the bottom edge don't leave hard corner ledges. */}
       <div className={cn(
         "rounded-lg border border-input bg-card shadow-sm transition-colors",
-        isMobile && "rounded-[1.4rem] border-glass-border bg-card p-1.5 shadow-md",
+        isMobile && "rounded-[1.4rem] border-glass-border bg-card p-1.5 shadow-[0_-1px_2px_oklch(0_0_0/4%),0_2px_8px_-2px_oklch(0_0_0/10%)]",
         isMobile && mobileExpanded ? "flex flex-col" : isMobile ? "flex items-center gap-0.5" : "",
       )}
       data-chat-composer-surface

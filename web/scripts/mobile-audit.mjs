@@ -397,7 +397,7 @@ for (const viewport of viewports) {
 
     try {
       // Chat special case: no bottom capsule on chat routes. Verify the
-      // capsule is absent, then leave through the direct workspace button.
+      // capsule is absent, then leave through the header → System hub button.
       await page.goto("http://127.0.0.1:5173/chat", { waitUntil: "domcontentloaded" })
       await waitForRouteReady(page, "/chat")
       const navCountOnChat = await page.locator(".mobile-primary-nav").count()
