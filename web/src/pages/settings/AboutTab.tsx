@@ -110,13 +110,13 @@ function MetricTile({
   mono?: boolean
 }) {
   return (
-    <div className="rounded-lg border bg-card p-4 space-y-2 transition-colors hover:bg-muted-50">
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Icon className="h-3.5 w-3.5" />
-        <span className="uppercase tracking-wide truncate">{label}</span>
+    <div className="min-w-0 overflow-hidden rounded-lg border bg-card p-4 space-y-2 transition-colors hover:bg-muted-50">
+      <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+        <Icon className="h-3.5 w-3.5 shrink-0" />
+        <span className="truncate uppercase tracking-wide">{label}</span>
       </div>
       <div
-        className={`text-2xl font-semibold leading-none truncate ${mono ? "font-mono" : ""}`}
+        className={`truncate text-2xl font-semibold leading-none ${mono ? "font-mono" : ""}`}
       >
         {value}
       </div>
@@ -150,27 +150,27 @@ function UsageGauge({
   const textColor = clamped >= 80 ? "text-error" : clamped >= 60 ? "text-info" : "text-success"
 
   return (
-    <div className="rounded-lg border bg-card p-4 space-y-3">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="space-y-1">
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Icon className="h-3.5 w-3.5" />
-            <span className="uppercase tracking-wide">{label}</span>
+    <div className="min-w-0 overflow-hidden rounded-lg border bg-card p-4 space-y-3">
+      <div className="flex min-w-0 flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0 space-y-1">
+          <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+            <Icon className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate uppercase tracking-wide" title={label}>{label}</span>
           </div>
-          <div className="flex items-baseline gap-2">
+          <div className="flex min-w-0 flex-wrap items-baseline gap-2">
             <span className="font-mono text-2xl font-semibold leading-none">
               {clamped}
               <span className="text-lg text-muted-foreground">%</span>
             </span>
-            {sub && <span className={`text-xs font-mono ${textColor}`}>{sub}</span>}
+            {sub && <span className={`min-w-0 truncate text-xs font-mono ${textColor}`}>{sub}</span>}
           </div>
         </div>
         {rightLabel && (
-          <div className="text-right">
+          <div className="min-w-0 text-right">
             <div className="text-xs text-muted-foreground uppercase tracking-wide">
               {rightLabel}
             </div>
-            {rightValue && <div className="font-mono text-sm font-medium">{rightValue}</div>}
+            {rightValue && <div className="truncate font-mono text-sm font-medium">{rightValue}</div>}
           </div>
         )}
       </div>
@@ -205,9 +205,9 @@ function InfoRow({
   children: ReactNode
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 py-3">
-      <span className="text-sm text-muted-foreground">{label}</span>
-      <div className="text-sm text-right">{children}</div>
+    <div className="flex min-w-0 items-center justify-between gap-3 py-3">
+      <span className="shrink-0 text-sm text-muted-foreground">{label}</span>
+      <div className="min-w-0 flex-1 overflow-hidden text-right text-sm">{children}</div>
     </div>
   )
 }
@@ -227,12 +227,12 @@ function TwoLineValue({
   mono?: boolean
 }) {
   return (
-    <span className="flex flex-col items-end min-w-0">
-      <span className="font-medium tabular-nums">{value}</span>
+    <span className="flex min-w-0 max-w-full flex-col items-end">
+      <span className="max-w-full truncate font-medium tabular-nums">{value}</span>
       {caption != null && caption !== "" && (
         <span
           title={captionTitle}
-          className={"max-w-full text-xs text-muted-foreground truncate" + (mono ? " font-mono" : "")}
+          className={"max-w-full truncate text-xs text-muted-foreground" + (mono ? " font-mono" : "")}
         >
           {caption}
         </span>
@@ -247,10 +247,10 @@ function ExternalLinkValue({ href, text }: { href: string; text: string }) {
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="inline-flex items-center gap-1 font-mono text-info hover:underline"
+      className="inline-flex max-w-full min-w-0 items-center gap-1 font-mono text-info hover:underline"
     >
-      <span>{text}</span>
-      <ExternalLink className="h-3 w-3 text-muted-foreground" />
+      <span className="min-w-0 truncate">{text}</span>
+      <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground" />
     </a>
   )
 }
@@ -379,15 +379,15 @@ export function AboutTab() {
         : t("settings:checkForUpdates")
 
   return (
-    <div className="space-y-8">
+    <div className="min-w-0 space-y-8 overflow-x-hidden">
       {/* Hero — brand wordmark + build (borderless) */}
-      <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
-        <div className="space-y-3 min-w-0">
-          <h1 className="text-4xl md:text-5xl font-bold tracking-tight leading-none">
+      <div className="flex min-w-0 flex-col gap-6 md:flex-row md:items-end md:justify-between">
+        <div className="min-w-0 space-y-3">
+          <h1 className="truncate text-4xl font-bold leading-none tracking-tight md:text-5xl">
             <BrandName />
           </h1>
-          <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground font-mono">
-            <span>{t("settings:aboutDesc")}</span>
+          <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs font-mono uppercase tracking-wide text-muted-foreground">
+            <span className="min-w-0 break-words">{t("settings:aboutDesc")}</span>
             <span className="relative flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full rounded-full bg-success opacity-75 animate-ping" />
               <span className="relative inline-flex rounded-full h-2 w-2 bg-success" />
@@ -623,15 +623,17 @@ export function AboutTab() {
                     {(systemInfo.networks ?? []).map((net, idx) => (
                       <div
                         key={`net-${idx}-${net.name}`}
-                        className="flex flex-wrap items-center justify-between gap-2 text-xs"
+                        className="flex min-w-0 flex-wrap items-center justify-between gap-2 text-xs"
                       >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="font-medium">{net.name}</span>
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span className="truncate font-medium" title={net.name}>{net.name}</span>
                           {net.ip && (
-                            <span className="font-mono text-xs text-muted-foreground">{net.ip}</span>
+                            <span className="min-w-0 truncate font-mono text-xs text-muted-foreground" title={net.ip}>
+                              {net.ip}
+                            </span>
                           )}
                         </div>
-                        <div className="flex items-center gap-3 font-mono text-xs">
+                        <div className="flex shrink-0 items-center gap-3 font-mono text-xs">
                           <span className="inline-flex items-center gap-1 text-info">
                             <Download className="h-3 w-3" />
                             {formatBytes(net.rx_bytes)}
@@ -696,10 +698,10 @@ export function AboutTab() {
         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           {t("settings:projectInfo")}
         </h3>
-        <div className="mt-4 rounded-lg border border-border bg-card p-5">
-          <div>
+        <div className="mt-4 min-w-0 overflow-hidden rounded-lg border border-border bg-card p-5">
+          <div className="min-w-0">
             <InfoRow label={t("settings:version")}>
-              <div className="flex items-center gap-2">
+              <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
                 <Badge variant="secondary" className="font-mono">
                   {versionTag || "---"}
                 </Badge>
@@ -707,7 +709,7 @@ export function AboutTab() {
                   updateInfo.version !== systemInfo?.version && (
                     <Badge
                       variant="default"
-                      className="text-xs gap-1 cursor-pointer"
+                      className="cursor-pointer gap-1 text-xs"
                       onClick={() =>
                         isTauriEnv()
                           ? setUpdateDialogOpen(true)

@@ -210,7 +210,7 @@ export function AlertsMenu({
                     <div className="flex items-center gap-1.5">
                       <p
                         className={cn(
-                          "text-xs truncate flex-1",
+                          "min-w-0 flex-1 truncate text-xs",
                           isUnread ? "font-semibold" : "font-medium"
                         )}
                       >

@@ -437,13 +437,13 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
                 <div className={cn("gap-3", isMobile ? "grid grid-cols-1" : "grid grid-cols-2")}>
                   <div className="space-y-1">
                     <span className="text-xs text-muted-foreground">{t('devices:auto.protocol')}</span>
-                    <code className="block text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
+                    <code className="block min-w-0 break-all text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
                       {embeddedConfig?.tls_enabled ? 'mqtts://' : 'mqtt://'}{serverIp}:{brokerPort}
                     </code>
                   </div>
                   <div className="space-y-1">
                     <span className="text-xs text-muted-foreground">{t('devices:auto.brokerAddress')}</span>
-                    <code className="block text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
+                    <code className="block min-w-0 break-all text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
                       {serverIp}:{brokerPort}
                     </code>
                   </div>
@@ -490,7 +490,7 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
                     <span className="text-xs text-muted-foreground">{t('devices:auto.authInfo')}</span>
                     {embeddedConfig.credentials.map((cred) => (
                       <div key={cred.username} className="flex items-center gap-2">
-                        <code className="flex-1 text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
+                        <code className="min-w-0 flex-1 truncate text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
                           {cred.username} / {cred.password}
                         </code>
                         <Button
@@ -541,7 +541,7 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
                     </div>
                     <div className="space-y-1">
                       <span className="text-xs text-muted-foreground">{t('devices:auto.brokerPort')}</span>
-                      <code className="block text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
+                      <code className="block min-w-0 break-all text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
                         {broker.port}
                       </code>
                     </div>
@@ -551,7 +551,7 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
                     <div className="space-y-1">
                       <span className="text-xs text-muted-foreground">{t('devices:auto.authInfo')}</span>
                       <div className="flex items-center gap-2">
-                        <code className="flex-1 text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
+                        <code className="min-w-0 flex-1 truncate text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
                           {broker.username} / ••••••••
                         </code>
                         <Button
@@ -576,7 +576,7 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
                       <div className="space-y-1">
                         {broker.subscribe_topics.map((topic, i) => (
                           <div key={i} className="flex items-center gap-2">
-                            <code className="flex-1 text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5 break-all">
+                            <code className="min-w-0 flex-1 break-all text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
                               {topic}
                             </code>
                             <Button
@@ -938,13 +938,13 @@ export function ManualAddForm({
                   <div className={cn("gap-3", isMobile ? "grid grid-cols-1" : "grid grid-cols-2")}>
                     <div className="space-y-1">
                       <span className="text-xs text-muted-foreground">{t('devices:add.protocol')}</span>
-                      <code className="block text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
+                      <code className="block min-w-0 break-all text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
                         {embeddedConfig.tls_enabled ? 'mqtts' : 'mqtt'}
                       </code>
                     </div>
                     <div className="space-y-1">
                       <span className="text-xs text-muted-foreground">{t('devices:add.serverAddress')}</span>
-                      <code className="block text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
+                      <code className="block min-w-0 break-all text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
                         {serverIp || mqttStatus?.server_ip || 'localhost'}:{embeddedConfig.port}
                       </code>
                     </div>
@@ -989,7 +989,7 @@ export function ManualAddForm({
                       <span className="text-xs text-muted-foreground">{t('devices:auto.authInfo')}</span>
                       {embeddedConfig.credentials.map((cred) => (
                         <div key={cred.username} className="flex items-center gap-2">
-                          <code className="flex-1 text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
+                          <code className="min-w-0 flex-1 truncate text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
                             {cred.username} / {cred.password}
                           </code>
                           <Button
@@ -1018,13 +1018,13 @@ export function ManualAddForm({
                     <div className={cn("gap-3", isMobile ? "grid grid-cols-1" : "grid grid-cols-2")}>
                       <div className="space-y-1">
                         <span className="text-xs text-muted-foreground">{t('devices:add.protocol')}</span>
-                        <code className="block text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
+                        <code className="block min-w-0 break-all text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
                           {broker.tls ? 'mqtts' : 'mqtt'}
                         </code>
                       </div>
                       <div className="space-y-1">
                         <span className="text-xs text-muted-foreground">{t('devices:add.serverAddress')}</span>
-                        <code className="block text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
+                        <code className="block min-w-0 break-all text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
                           {broker.broker}:{broker.port}
                         </code>
                       </div>
@@ -1052,7 +1052,7 @@ export function ManualAddForm({
                       <div className="space-y-1">
                         <span className="text-xs text-muted-foreground">{t('devices:auto.authInfo')}</span>
                         <div className="flex items-center gap-2">
-                          <code className="flex-1 text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
+                          <code className="min-w-0 flex-1 truncate text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
                             {broker.username}{broker.password ? ` / ${broker.password}` : ' / ••••••••'}
                           </code>
                           {broker.password && (

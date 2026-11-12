@@ -157,11 +157,14 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
       )}
 
       <TooltipProvider delayDuration={300}>
-        <div className="flex items-center gap-1">
+        {/* Match TabBar left actions: ghost + h-7. Must set sm:h-7 too —
+            size="icon" ships sm:h-10 which otherwise wins on desktop.
+            ml-* keeps a gap from the tab strip when tabs crowd the row. */}
+        <div className="flex items-center gap-1 shrink-0 ml-3 sm:ml-4">
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
-                variant={editMode ? "default" : "outline"}
+                variant={editMode ? "default" : "ghost"}
                 size="icon"
                 onClick={() => {
                   const nextMode = !editMode
@@ -171,7 +174,7 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
                     setMobileEditBarOpen(false)
                   }
                 }}
-                className="rounded-lg"
+                className="h-7 w-7 sm:h-7 sm:w-7 shrink-0"
               >
                 {editMode ? (
                   <Check className="h-4 w-4" />
@@ -188,9 +191,9 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
-                variant="outline"
+                variant="ghost"
                 size="icon"
-                className="rounded-lg"
+                className="h-7 w-7 sm:h-7 sm:w-7 shrink-0"
                 disabled={!editMode}
                 onClick={() => editMode && setComponentLibraryOpen(true)}
               >
@@ -203,9 +206,9 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
-                variant="outline"
+                variant="ghost"
                 size="icon"
-                className="rounded-lg"
+                className="h-7 w-7 sm:h-7 sm:w-7 shrink-0"
                 onClick={() => onOpenShare()}
               >
                 <Share2 className="h-4 w-4" />
@@ -237,13 +240,12 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
             onImportDialogOpenChange={onImportDialogOpenChange}
           />
 
-          {/* Fullscreen toggle button */}
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
                 variant="ghost"
                 size="icon"
-                className="rounded-lg"
+                className="h-7 w-7 sm:h-7 sm:w-7 shrink-0"
                 onClick={onToggleFullscreen}
               >
                 <Maximize className="h-4 w-4" />

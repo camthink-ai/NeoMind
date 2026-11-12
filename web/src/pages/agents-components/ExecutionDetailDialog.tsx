@@ -349,7 +349,7 @@ export function ExecutionDetailDialog({
                       <div key={idx} className="p-2 bg-background rounded border">
                         <div className="text-xs font-medium mb-1">{decision.description}</div>
                         <div className="flex items-center justify-between">
-                          <span className={cn(textNano, "text-muted-foreground truncate flex-1 mr-2")}>{decision.rationale}</span>
+                          <span className={cn(textNano, "mr-2 min-w-0 flex-1 truncate text-muted-foreground")}>{decision.rationale}</span>
                           <Badge variant="secondary" className={cn(badgeSize.micro, "h-4 px-1 shrink-0")}>{decision.action}</Badge>
                         </div>
                       </div>

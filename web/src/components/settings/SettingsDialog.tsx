@@ -140,8 +140,8 @@ export function SettingsDialog() {
               onSectionChange={(s) => setActiveSection(s)}
               onBack={closeSettings}
             />
-            <main className="flex-1 min-w-0 min-h-0 overflow-y-auto scrollbar-none">
-              <div className="max-w-6xl mx-auto">
+            <main className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto scrollbar-none">
+              <div className="mx-auto max-w-6xl min-w-0">
                 {activeSection !== "about" && (
                   <h2 className="mb-5 hidden text-lg font-semibold tracking-tight sm:text-2xl md:block">
                     {sections.find((s) => s.value === activeSection)?.label}

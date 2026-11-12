@@ -331,11 +331,15 @@ export function DataExplorerPage() {
     switch (columnKey) {
       case 'source_display_name':
         return (
-          <span className="text-sm font-medium text-foreground">{source.source_display_name}</span>
+          <span className="block min-w-0 truncate text-sm font-medium text-foreground" title={source.source_display_name}>
+            {source.source_display_name}
+          </span>
         )
       case 'field_display_name':
         return (
-          <span className="text-sm font-medium">{source.field_display_name}</span>
+          <span className="block min-w-0 truncate text-sm font-medium" title={source.field_display_name}>
+            {source.field_display_name}
+          </span>
         )
       case 'unit':
         return (
@@ -378,7 +382,7 @@ export function DataExplorerPage() {
 
   const dataTable = (
     isMobile ? (
-      <div className="space-y-2">
+      <div className="min-w-0 space-y-2">
         {pageData.length === 0 && loading && (
           [0, 1, 2].map((i) => (
             <Card key={i} className="overflow-hidden rounded-2xl border-border bg-card shadow-none">
@@ -407,14 +411,23 @@ export function DataExplorerPage() {
             )}
             onClick={() => setSelectedSource(source)}
           >
-            <div className="px-3 py-2.5">
-              {/* Row 1: source + field + eye button */}
-              <div className="flex items-center gap-2.5">
-                <SourceTypeBadge type={source.source_type} />
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium text-sm truncate">{source.field_display_name}</div>
+            <div className="min-w-0 px-3 py-2.5">
+              {/* Row 1: type + field/source + actions */}
+              <div className="flex min-w-0 items-center gap-2.5">
+                <div className="shrink-0">
+                  <SourceTypeBadge type={source.source_type} />
                 </div>
-                <div className="flex items-center gap-1">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium" title={source.field_display_name}>
+                    {source.field_display_name}
+                  </div>
+                  {source.source_display_name && (
+                    <div className="truncate text-xs text-muted-foreground" title={source.source_display_name}>
+                      {source.source_display_name}
+                    </div>
+                  )}
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
                   <Button
                     variant="ghost"
                     size="sm"
@@ -434,13 +447,18 @@ export function DataExplorerPage() {
                 </div>
               </div>
               {/* Row 2: ID + data type + time (empty values stay hidden) */}
-              <div className="flex items-center gap-1.5 mt-1.5">
-                <code className={cn(textMini, "text-muted-foreground font-mono truncate flex-1")}>{source.id}</code>
+              <div className="mt-1.5 flex min-w-0 items-center gap-1.5">
+                <code
+                  className={cn(textMini, "min-w-0 flex-1 truncate font-mono text-muted-foreground")}
+                  title={source.id}
+                >
+                  {source.id}
+                </code>
                 {source.data_type && (
-                  <span className={cn(textMini, "text-muted-foreground shrink-0")}>{source.data_type}</span>
+                  <span className={cn(textMini, "shrink-0 text-muted-foreground")}>{source.data_type}</span>
                 )}
                 {formatTime(source.last_update) !== '-' && (
-                  <span className={cn(textMini, "text-muted-foreground shrink-0")}>{formatTime(source.last_update)}</span>
+                  <span className={cn(textMini, "shrink-0 text-muted-foreground")}>{formatTime(source.last_update)}</span>
                 )}
               </div>
             </div>

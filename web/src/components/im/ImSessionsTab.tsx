@@ -145,10 +145,10 @@ export function ImSessionsTab() {
             const s = rowData as unknown as ImSession
             switch (columnKey) {
               case 'chat_id':
-                return <code className="text-xs font-mono">{s.chat_id}</code>
+                return <code className="block min-w-0 truncate text-xs font-mono" title={s.chat_id}>{s.chat_id}</code>
               case 'bound_agent_id':
                 return s.bound_agent_id ? (
-                  <span className="text-sm font-medium">{s.bound_agent_id}</span>
+                  <span className="block min-w-0 truncate text-sm font-medium" title={s.bound_agent_id}>{s.bound_agent_id}</span>
                 ) : (
                   <span className="text-sm text-muted-foreground">-</span>
                 )

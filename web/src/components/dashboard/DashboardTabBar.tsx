@@ -362,7 +362,7 @@ export function DashboardTabBar({
               variant="ghost"
               size="icon"
               onClick={onSwitchToSidebar}
-              className="h-7 w-7 shrink-0"
+              className="h-7 w-7 sm:h-7 sm:w-7 shrink-0"
               aria-label={t('tabBar.switchToSidebar')}
             >
               <PanelLeft className="h-4 w-4" />
@@ -377,7 +377,7 @@ export function DashboardTabBar({
               variant="ghost"
               size="icon"
               onClick={() => setShowCreateInput(true)}
-              className="h-7 w-7 shrink-0"
+              className="h-7 w-7 sm:h-7 sm:w-7 shrink-0"
               aria-label={t('tabBar.newDashboard')}
               disabled={showCreateInput}
             >
@@ -484,15 +484,16 @@ export function DashboardTabBar({
                   >
                     <DropdownMenu open={moreMenuOpen} onOpenChange={setMoreMenuOpen}>
                       <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 rounded-md mr-1"
+                        {/* Plain button — Button size="icon" is h-10/h-11 and its
+                            hover bg overflows the h-8 tab even with h-7 override. */}
+                        <button
+                          type="button"
+                          className="h-6 w-6 shrink-0 flex items-center justify-center rounded-sm mr-1 text-background hover:bg-background hover:text-foreground transition-colors"
                           aria-label={t('sidebar.moreActions')}
                           onClick={(e) => e.stopPropagation()}
                         >
                           <MoreVertical className="h-3.5 w-3.5" />
-                        </Button>
+                        </button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         {canReorder && (

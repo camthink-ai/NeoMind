@@ -138,9 +138,9 @@ export function PushTargetsTab() {
                 ? <Globe className="h-4 w-4" />
                 : <Radio className="h-4 w-4" />}
             </div>
-            <div className="min-w-0">
-              <div className="font-medium text-sm truncate">{target.name}</div>
-              <code className={cn(textMini, "text-muted-foreground font-mono truncate")}>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium" title={target.name}>{target.name}</div>
+              <code className={cn(textMini, "block min-w-0 truncate font-mono text-muted-foreground")}>
                 {target.id.slice(0, 8)}
               </code>
             </div>
@@ -292,14 +292,14 @@ export function PushTargetsTab() {
                   {new Date(target.updated_at * 1000).toLocaleDateString()}
                 </span>
               </div>
-              <div className="flex items-center gap-1.5 min-w-0">
-                <span className={cn(textMini, "text-muted-foreground shrink-0")}>
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span className={cn(textMini, "shrink-0 text-muted-foreground")}>
                   {target.schedule.type === 'event_driven'
                     ? t('common:dataPush.eventDriven', 'Event-driven')
                     : t('common:dataPush.interval', { defaultValue: 'Every {{secs}}s', secs: target.schedule.interval_secs })}
                 </span>
-                <span className="text-muted-foreground shrink-0">·</span>
-                <span className={cn(textMini, "text-muted-foreground truncate min-w-0")}>
+                <span className="shrink-0 text-muted-foreground">·</span>
+                <span className={cn(textMini, "min-w-0 flex-1 truncate text-muted-foreground")}>
                   {target.data_filter.source_patterns.length > 0
                     ? target.data_filter.source_patterns.join(', ')
                     : t('common:dataPush.allSources', 'All sources')}

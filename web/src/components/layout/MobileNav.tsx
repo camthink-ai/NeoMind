@@ -183,7 +183,7 @@ export function MobileNav() {
         />
         <span
           className={cn(
-            "flex-1 truncate text-sm",
+            "min-w-0 flex-1 truncate text-sm",
             active ? "font-medium text-foreground" : "text-muted-foreground",
           )}
         >
@@ -264,7 +264,7 @@ export function MobileNav() {
                       <Monitor className="h-4 w-4 text-muted-foreground" />
                     )}
                   </span>
-                  <span className="flex-1 truncate text-sm text-muted-foreground">
+                  <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
                     {t("theme.label", "Theme")}
                   </span>
                   <span className="shrink-0 text-xs font-medium text-muted-foreground">
@@ -303,7 +303,7 @@ export function MobileNav() {
               <span className="flex h-5 w-5 shrink-0 items-center justify-center">
                 <Globe className="h-4 w-4 text-muted-foreground" />
               </span>
-              <span className="flex-1 truncate text-sm text-muted-foreground">
+              <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
                 {t("system.language")}
               </span>
               <span className="shrink-0 text-xs font-medium text-muted-foreground">
@@ -325,7 +325,7 @@ export function MobileNav() {
               <span className="flex h-5 w-5 shrink-0 items-center justify-center">
                 <Rocket className="h-4 w-4 text-muted-foreground" />
               </span>
-              <span className="flex-1 truncate text-sm text-muted-foreground">
+              <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
                 {t("onboarding.title")}
               </span>
               {onboardingIncomplete && (

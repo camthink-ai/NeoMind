@@ -126,8 +126,8 @@ export function ExtensionCard({
         {/* Header: status-tinted icon + name + state + actions.
             On mobile the icon tile is hidden, so the state pill next to the
             name is the only status indicator — keep both signals. */}
-        <div className="flex items-start justify-between md:mb-3">
-          <div className="flex items-center gap-3 min-w-0">
+        <div className="flex min-w-0 items-start justify-between gap-2 md:mb-3">
+          <div className="flex min-w-0 flex-1 items-center gap-3">
             {/* Icon with status-tinted background (mirrors AgentCard) */}
             <div className={cn(
               "relative hidden w-11 h-11 rounded-xl items-center justify-center shrink-0 transition-colors md:flex",

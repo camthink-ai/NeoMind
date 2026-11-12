@@ -184,18 +184,18 @@ export function DeviceList({
           switch (columnKey) {
             case 'name':
               return (
-                <div className="flex items-center gap-3">
+                <div className="flex min-w-0 items-center gap-3">
                   <div className={cn(
-                    "w-9 h-9 rounded-lg flex items-center justify-center transition-colors",
+                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors",
                     device.status === 'online'
                       ? "bg-success-light text-success"
                       : "bg-muted text-muted-foreground"
                   )}>
                     <Cpu className="h-4 w-4" />
                   </div>
-                  <div>
-                    <div className="font-medium text-sm">{device.name || "-"}</div>
-                    <code className="text-xs text-muted-foreground font-mono">{device.id}</code>
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium" title={device.name || undefined}>{device.name || "-"}</div>
+                    <code className="block min-w-0 truncate text-xs font-mono text-muted-foreground" title={device.id}>{device.id}</code>
                   </div>
                 </div>
               )

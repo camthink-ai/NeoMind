@@ -217,18 +217,18 @@ export function WebDisplay({
         {showHeader && (
           <div className={cn('flex items-center gap-2 px-3 py-2 bg-muted-30 border-b', size === 'sm' ? 'py-1.5' : '')}>
             <Globe className="h-4 w-4 text-muted-foreground shrink-0" />
-            {title && <span className="font-medium text-sm truncate flex-1">{title}</span>}
-            {sandbox && <Lock className="h-4 w-4 text-muted-foreground shrink-0" />}
-            <div className="flex-1" />
+            {title && <span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>}
+            {sandbox && <Lock className="h-4 w-4 shrink-0 text-muted-foreground" />}
+            {!title && <div className="min-w-0 flex-1" />}
             <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={handleRefresh}>
               <RefreshCw className="h-4 w-4" />
             </Button>
           </div>
         )}
-        <div className="flex-1 flex flex-col items-center justify-center gap-4 p-4 bg-muted">
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 bg-muted p-4">
           <Globe className="h-12 w-12 text-muted-foreground" />
-          <div className="text-center">
-            <p className="text-sm text-muted-foreground mb-1">
+          <div className="min-w-0 max-w-full text-center">
+            <p className="mb-1 truncate text-sm text-muted-foreground">
               {title || src.replace(/^https?:\/\//, '').split('/')[0]}
             </p>
             <p className="text-xs text-muted-foreground mb-4">
@@ -248,9 +248,9 @@ export function WebDisplay({
   const headerContent = (
     <div className={cn('flex items-center gap-2 px-3 py-2 bg-muted-30 border-b', size === 'sm' ? 'py-1.5' : '')}>
       <Globe className="h-4 w-4 text-muted-foreground shrink-0" />
-      {title && <span className="font-medium text-sm truncate flex-1">{title}</span>}
-      {sandbox && <Lock className="h-4 w-4 text-muted-foreground shrink-0" />}
-      <div className="flex-1" />
+      {title && <span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>}
+      {sandbox && <Lock className="h-4 w-4 shrink-0 text-muted-foreground" />}
+      {!title && <div className="min-w-0 flex-1" />}
       <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={handleRefresh}>
         <RefreshCw className={cn('h-4 w-4', iframeLoading && 'animate-spin')} />
       </Button>

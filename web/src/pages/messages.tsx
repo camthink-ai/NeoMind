@@ -1863,7 +1863,7 @@ export default function MessagesPage() {
                     key={email}
                     className="flex items-center justify-between bg-muted-50 rounded-lg px-3 py-2"
                   >
-                    <span className="text-sm truncate flex-1">{email}</span>
+                    <span className="min-w-0 flex-1 truncate text-sm">{email}</span>
                     <Button
                       variant="ghost"
                       size="sm"

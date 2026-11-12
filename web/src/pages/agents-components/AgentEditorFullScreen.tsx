@@ -1860,7 +1860,7 @@ export function AgentEditorFullScreen({
                             }
                           />
                           <span className="text-xs font-mono shrink-0">{tool.name}</span>
-                          <span className="text-xs text-muted-foreground truncate flex-1">
+                          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
                             {tool.description}
                           </span>
                         </label>
@@ -2913,7 +2913,7 @@ export function AgentEditorFullScreen({
                                       it disappeared once the chips ran past two
                                       lines. The row wraps instead, so the name
                                       keeps its line and the chips fall below. */}
-                                  <span className="min-w-[8rem] flex-1 truncate text-xs font-medium">{g.name}</span>
+                                  <span className="min-w-0 flex-1 truncate text-xs font-medium" title={g.name}>{g.name}</span>
                                   <span className="flex flex-wrap items-center gap-1">
                                     {hasAll
                                       ? chip(

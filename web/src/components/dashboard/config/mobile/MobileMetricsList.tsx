@@ -157,16 +157,16 @@ export function MobileMetricsList({
               <div className="flex items-center gap-2 flex-wrap">
                 <ItemBadge itemType={item.itemType} t={t} />
                 <span className={cn(
-                  'text-base font-medium',
+                  'min-w-0 truncate text-base font-medium',
                   item.isSelected ? 'text-foreground' : 'text-foreground'
-                )}>
+                )} title={item.propertyDisplayName}>
                   {item.propertyDisplayName}
                 </span>
               </div>
 
               {/* Subtitle */}
-              <div className="space-y-1">
-                <code className="text-xs text-muted-foreground px-2 py-1 bg-muted rounded-md block">
+              <div className="min-w-0 space-y-1">
+                <code className="block min-w-0 truncate rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground" title={item.propertyName}>
                   {item.propertyName}
                 </code>
                 {item.currentValue !== undefined && item.currentValue !== null && (

@@ -178,7 +178,7 @@ export function DeviceTypeList({
                   </div>
                   <div className="min-w-0">
                     <div className="font-medium text-sm truncate">{type.name}</div>
-                    <code className="text-xs text-muted-foreground font-mono">{type.device_type}</code>
+                    <code className="block min-w-0 truncate text-xs font-mono text-muted-foreground" title={type.device_type}>{type.device_type}</code>
                     {type.builtin_version && (
                       <div>
                         <Badge variant="outline" className={cn("mt-0.5", textNano, "bg-muted-30 text-muted-foreground border-muted")}>

@@ -1662,16 +1662,16 @@ export function UnifiedLLMBackendsTab({
                   )}
                 >
                   <CardHeader className="pb-3">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1 min-w-0">
-                          <CardTitle className="text-base truncate min-w-0">{instance.name}</CardTitle>
+                    <div className="flex min-w-0 items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="mb-1 flex min-w-0 items-center gap-2">
+                          <CardTitle className="min-w-0 truncate text-base">{instance.name}</CardTitle>
                           {isCloudAi && (
-                            <Badge variant="outline" className="text-xs shrink-0">{protocolLabel}</Badge>
+                            <Badge variant="outline" className="shrink-0 text-xs">{protocolLabel}</Badge>
                           )}
-                          {isActive && <Badge variant="default" className="text-xs">{t('plugins:llm.active')}</Badge>}
+                          {isActive && <Badge variant="default" className="shrink-0 text-xs">{t('plugins:llm.active')}</Badge>}
                         </div>
-                        <CardDescription className="font-mono text-xs">
+                        <CardDescription className="truncate font-mono text-xs" title={String(instance.config?.model || '-')}>
                           {instance.config?.model as string || '-'}
                         </CardDescription>
                         {/* Capability icons — same monochrome style as chat model dropdown */}

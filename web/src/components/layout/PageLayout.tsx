@@ -248,7 +248,9 @@ export function PageLayout({
         <div
           ref={scrollerRef}
           className={cn(
-            '@container flex-1 flex flex-col overflow-auto bg-background overscroll-none',
+            // overflow-x-hidden: long mono IDs / paths must truncate in-cell,
+            // never widen the page and unlock accidental horizontal scroll.
+            '@container flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto overscroll-none bg-background',
             !noPadding && 'px-4 sm:px-6 md:px-8',
             !noPadding && isMobile && 'pt-2',
           )}
