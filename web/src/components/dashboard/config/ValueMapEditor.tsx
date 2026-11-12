@@ -165,7 +165,7 @@ export function ValueMapEditor({ valueMap, onChange }: ValueMapEditorProps) {
                   variant="ghost"
                   size="sm"
                   onClick={() => removeMapping(mapping.id)}
-                  className="shrink-0 h-8 w-8 p-0 text-muted-foreground hover:text-error"
+                  className="shrink-0 h-8 w-8 p-0 text-muted-foreground hover:text-error sm:h-8 sm:w-8"
                 >
                   <Trash2 className="h-4 w-4" />
                 </Button>

@@ -75,7 +75,7 @@ export function ResourceSelectionDialog({
           <Button
             variant="ghost"
             size="icon"
-            className="h-10 w-10"
+            className="h-10 w-10 sm:h-10 sm:w-10"
             onClick={() => onOpenChange(false)}
           >
             <X className="h-5 w-5" />

@@ -356,7 +356,7 @@ export function LayerEditorDialog({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-6 w-6"
+                className="h-6 w-6 sm:h-6 sm:w-6"
                 onClick={(e) => {
                   e.stopPropagation()
                   if (binding.type === 'text') setEditingTextBinding(binding.id)
@@ -370,7 +370,7 @@ export function LayerEditorDialog({
             <Button
               variant="ghost"
               size="icon"
-              className="h-6 w-6 text-error"
+              className="h-6 w-6 text-error sm:h-6 sm:w-6"
               onClick={(e) => {
                 e.stopPropagation()
                 handleRemoveBinding(binding.id)
@@ -407,7 +407,7 @@ export function LayerEditorDialog({
               <Button
                 size="sm"
                 variant="ghost"
-                className="h-6 px-2 text-xs"
+                className="h-6 px-2 text-xs sm:h-6"
                 onClick={(e) => {
                   e.stopPropagation()
                   setEditingTextBinding(null)
@@ -503,7 +503,7 @@ export function LayerEditorDialog({
               <Button
                 size="sm"
                 variant="ghost"
-                className="h-6 px-2 text-xs"
+                className="h-6 px-2 text-xs sm:h-6"
                 onClick={(e) => {
                   e.stopPropagation()
                   setEditingIconBinding(null)

@@ -907,7 +907,7 @@ export function ExtensionDetailsDialog({
                           key={range}
                           variant={timeRange === range ? "default" : "outline"}
                           size="sm"
-                          className="h-6 text-xs px-2"
+                          className="h-6 text-xs px-2 sm:h-6"
                           onClick={() => {
                             setMetricTimeRange(prev => ({ ...prev, [metric.name]: range }))
                             setMetricHistoryData(prev => ({ ...prev, [metric.name]: [] }))

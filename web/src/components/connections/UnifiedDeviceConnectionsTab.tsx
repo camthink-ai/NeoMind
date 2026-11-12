@@ -242,7 +242,7 @@ function WebhookTokenDisplay({ token }: { token?: string }) {
       <Button
         variant="ghost"
         size="sm"
-        className="h-6 w-6 p-0 shrink-0"
+        className="h-6 w-6 p-0 shrink-0 sm:h-6 sm:w-6"
         onClick={async () => {
           await copyToClipboard(token)
           setCopied(true)
@@ -820,7 +820,7 @@ export function UnifiedDeviceConnectionsTab() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-8 w-8 p-0"
+                            className="h-8 w-8 p-0 sm:h-8 sm:w-8"
                             onClick={(e) => {
                               e.stopPropagation()
                               setBrokerConfigDialogOpen(true)
@@ -835,7 +835,7 @@ export function UnifiedDeviceConnectionsTab() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-8 w-8 p-0"
+                              className="h-8 w-8 p-0 sm:h-8 sm:w-8"
                               disabled={testingId === instance.id}
                               onClick={async () => {
                                 setTestingId(instance.id)
@@ -860,7 +860,7 @@ export function UnifiedDeviceConnectionsTab() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-8 w-8 p-0"
+                              className="h-8 w-8 p-0 sm:h-8 sm:w-8"
                               onClick={() => {
                                 setEditingInstance(instance)
                                 setConfigDialogOpen(true)
@@ -875,7 +875,7 @@ export function UnifiedDeviceConnectionsTab() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-8 w-8 p-0 text-error hover:text-error"
+                            className="h-8 w-8 p-0 text-error hover:text-error sm:h-8 sm:w-8"
                             onClick={() => {
                               setEditingInstance(instance)
                               handleDelete(instance.id)

@@ -1456,7 +1456,7 @@ function CommandEditorCompact({
                     variant="outline"
                     size="sm"
                     onClick={() => applyTemplate(tmpl.template)}
-                    className="h-7 text-xs justify-start"
+                    className="h-7 text-xs justify-start sm:h-7"
                   >
                     {tmpl.name}
                   </Button>
@@ -1498,7 +1498,7 @@ function CommandEditorCompact({
                   variant={previewMode === 'visual' ? 'secondary' : 'ghost'}
                   size="sm"
                   onClick={() => setPreviewMode('visual')}
-                  className="h-6 text-xs"
+                  className="h-6 text-xs sm:h-6"
                 >
                   {t('devices:commandEditor.visual')}
                 </Button>
@@ -1506,7 +1506,7 @@ function CommandEditorCompact({
                   variant={previewMode === 'json' ? 'secondary' : 'ghost'}
                   size="sm"
                   onClick={() => setPreviewMode('json')}
-                  className="h-6 text-xs"
+                  className="h-6 text-xs sm:h-6"
                 >
                   {t('devices:commandEditor.json')}
                 </Button>
@@ -1588,7 +1588,7 @@ function CommandEditorCompact({
                 variant="outline"
                 size="sm"
                 onClick={addParameter}
-                className="h-7 text-xs"
+                className="h-7 text-xs sm:h-7"
               >
                 <Plus className="mr-1 h-4 w-4" />
                 {t('devices:commandEditor.addParam')}
@@ -1694,7 +1694,7 @@ function CommandEditorCompact({
                             variant="ghost"
                             size="icon"
                             onClick={() => removeParameter(pIdx)}
-                            className="h-6 w-6"
+                            className="h-6 w-6 sm:h-6 sm:w-6"
                           >
                             <Trash2 className="h-4 w-4 text-destructive" />
                           </Button>
@@ -1713,7 +1713,7 @@ function CommandEditorCompact({
               variant="ghost"
               size="sm"
               onClick={() => setShowAdvanced(!showAdvanced)}
-              className="h-7 text-xs text-muted-foreground"
+              className="h-7 text-xs text-muted-foreground sm:h-7"
             >
               {showAdvanced ? t('devices:commandEditor.hideAdvanced') : t('devices:commandEditor.advancedOptions')}
             </Button>
@@ -1731,7 +1731,7 @@ function CommandEditorCompact({
                     variant="outline"
                     size="sm"
                     onClick={addFixedValue}
-                    className="h-6 text-xs"
+                    className="h-6 text-xs sm:h-6"
                   >
                     <Plus className="mr-1 h-4 w-4" />
                     {t('devices:commandEditor.add')}
@@ -1763,7 +1763,7 @@ function CommandEditorCompact({
                       variant="ghost"
                       size="icon"
                       onClick={() => removeFixedValue(key)}
-                      className="h-6 w-6"
+                      className="h-6 w-6 sm:h-6 sm:w-6"
                     >
                       <Trash2 className="h-4 w-4 text-destructive" />
                     </Button>

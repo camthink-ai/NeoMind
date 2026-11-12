@@ -664,7 +664,7 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-6 w-6 p-0"
+                  className="h-6 w-6 p-0 sm:h-6 sm:w-6"
                   onClick={handleResetMultimodalOverride}
                   disabled={overrideState.pending}
                   aria-label={t("plugins:llm.resetToAuto")}

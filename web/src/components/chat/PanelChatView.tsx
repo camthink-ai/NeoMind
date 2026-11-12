@@ -731,7 +731,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
             size="icon"
             onClick={handleNewConversation}
             disabled={isStreaming || sendPhase !== "idle"}
-            className="h-8 w-8 rounded-lg text-muted-foreground hover:text-foreground"
+            className="h-8 w-8 rounded-lg text-muted-foreground hover:text-foreground sm:h-8 sm:w-8"
             aria-label={t("newChat", "New conversation")}
           >
             <Plus className="h-4 w-4" />
@@ -740,7 +740,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
             variant="ghost"
             size="icon"
             onClick={onClose}
-            className="h-8 w-8 rounded-lg text-muted-foreground hover:text-foreground"
+            className="h-8 w-8 rounded-lg text-muted-foreground hover:text-foreground sm:h-8 sm:w-8"
             aria-label={t("closePanel")}
           >
             {showMinimize ? <Minimize2 className="h-4 w-4" /> : <X className="h-4 w-4" />}

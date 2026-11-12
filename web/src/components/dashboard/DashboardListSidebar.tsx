@@ -154,7 +154,7 @@ function DashboardSidebarContent({
                     variant="ghost"
                     size="icon"
                     onClick={onSwitchToTabs}
-                    className="h-6 w-6 rounded-lg"
+                    className="h-6 w-6 rounded-lg sm:h-6 sm:w-6"
                     aria-label={t('sidebar.switchToTabs')}
                   >
                     <PanelTop className="h-4 w-4" />
@@ -169,7 +169,7 @@ function DashboardSidebarContent({
               variant="ghost"
               size="icon"
               onClick={() => onOpenChange?.(false)}
-              className="h-6 w-6 rounded-lg"
+              className="h-6 w-6 rounded-lg sm:h-6 sm:w-6"
             >
               <X className="h-4 w-4" />
             </Button>

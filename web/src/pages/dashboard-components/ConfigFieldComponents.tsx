@@ -109,7 +109,7 @@ export function ImageSourceField({ value, onChange }: ImageSourceFieldProps) {
             variant="outline"
             size="sm"
             onClick={handleUploadClick}
-            className="h-9 px-3 shrink-0"
+            className="h-9 px-3 shrink-0 sm:h-9"
           >
             <Upload className="h-4 w-4 mr-1.5" />
             {t('visualDashboard.upload')}
@@ -142,7 +142,7 @@ export function ImageSourceField({ value, onChange }: ImageSourceFieldProps) {
             variant="ghost"
             size="sm"
             onClick={handleClear}
-            className="h-8 text-error hover:text-error"
+            className="h-8 text-error hover:text-error sm:h-8"
           >
             <Trash2 className="h-4 w-4 mr-1" />
             {t('visualDashboard.clear')}

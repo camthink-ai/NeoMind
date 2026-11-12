@@ -405,7 +405,7 @@ export function AiAnalyst({
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8 shrink-0"
+            className="h-8 w-8 shrink-0 sm:h-8 sm:w-8"
             onClick={() => setConfigOpen(true)}
             aria-label={t('aiAnalyst.settingsAriaLabel')}
           >

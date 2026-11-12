@@ -357,7 +357,7 @@ export function DataExplorerPage() {
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 px-2"
+              className="h-7 px-2 sm:h-7"
               onClick={(e) => { e.stopPropagation(); setSelectedSource(source) }}
             >
               <Eye className="h-4 w-4" />
@@ -365,7 +365,7 @@ export function DataExplorerPage() {
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 px-2"
+              className="h-7 px-2 sm:h-7"
               onClick={(e) => { e.stopPropagation(); setExportSource(source) }}
             >
               <Download className="h-4 w-4" />
@@ -431,7 +431,7 @@ export function DataExplorerPage() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-7 px-2"
+                    className="h-7 px-2 sm:h-7"
                     onClick={(e) => { e.stopPropagation(); setSelectedSource(source) }}
                   >
                     <Eye className="h-4 w-4" />
@@ -439,7 +439,7 @@ export function DataExplorerPage() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-7 px-2"
+                    className="h-7 px-2 sm:h-7"
                     onClick={(e) => { e.stopPropagation(); setExportSource(source) }}
                   >
                     <Download className="h-4 w-4" />

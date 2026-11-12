@@ -96,7 +96,7 @@ export function TransformsBadge({ deviceId, deviceTypeId, count: countProp, onRe
       <Button
         variant="ghost"
         size="sm"
-        className="h-7 px-2"
+        className="h-7 px-2 sm:h-7"
         onClick={(e) => { e.stopPropagation(); setDialogOpen(true) }}
       >
         <Database className="h-4 w-4 mr-1 text-accent-purple" />

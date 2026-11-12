@@ -333,7 +333,7 @@ export function SessionSidebar({
               variant="ghost"
               size="icon"
               onClick={onClose}
-              className="h-9 w-9 rounded-lg"
+              className="h-9 w-9 rounded-lg sm:h-9 sm:w-9"
               aria-label={t('close')}
             >
               <X className="h-4 w-4" />

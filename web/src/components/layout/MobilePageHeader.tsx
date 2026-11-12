@@ -92,7 +92,7 @@ export function MobilePageHeader({
           <Button
             variant="ghost"
             size="icon"
-            className="-ml-1.5 h-10 w-10 shrink-0"
+            className="-ml-1.5 h-10 w-10 shrink-0 sm:h-10 sm:w-10"
             onClick={() => setDrawerOpen(true)}
             aria-label={t("system.menu")}
             data-testid="mobile-page-menu"
@@ -104,7 +104,7 @@ export function MobilePageHeader({
           <Button
             variant="ghost"
             size="icon"
-            className="-ml-1.5 h-10 w-10 shrink-0"
+            className="-ml-1.5 h-10 w-10 shrink-0 sm:h-10 sm:w-10"
             onClick={() => navigate("/system")}
             aria-label={t("back", { defaultValue: "Back" })}
           >

@@ -163,7 +163,7 @@ export function EntityIconPicker({
                 variant="ghost"
                 size="sm"
                 onClick={handleClear}
-                className="h-7 px-2 text-xs"
+                className="h-7 px-2 text-xs sm:h-7"
               >
                 <X className="h-4 w-4 mr-1" />
                 {t('entityIconPicker.clear')}

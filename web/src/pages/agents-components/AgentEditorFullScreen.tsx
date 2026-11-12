@@ -1516,7 +1516,7 @@ export function AgentEditorFullScreen({
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="h-7 text-xs"
+                  className="h-7 text-xs sm:h-7"
                   onClick={handleValidateLlm}
                   disabled={llmValidating}
                 >

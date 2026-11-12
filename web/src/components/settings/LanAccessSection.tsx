@@ -95,7 +95,7 @@ export function LanAccessSection({ compact = false }: { compact?: boolean }) {
           <Button
             size="sm"
             variant="outline"
-            className="h-7 gap-1.5 text-xs"
+            className="h-7 gap-1.5 text-xs sm:h-7"
             onClick={() => {
               void invoke("relaunch_app").catch(() => { /* updater relaunch fallback */ })
             }}

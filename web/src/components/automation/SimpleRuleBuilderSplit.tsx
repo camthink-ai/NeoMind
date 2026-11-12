@@ -2020,7 +2020,7 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions
           </Select>
 
           {renderValueInput()}
-          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onChange(null)} aria-label={tBuilder('removeCondition')}>
+          <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-6 sm:w-6" onClick={() => onChange(null)} aria-label={tBuilder('removeCondition')}>
             <X className="h-4 w-4" />
           </Button>
         </div>
@@ -2144,7 +2144,7 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions
             placeholder={tBuilder('maxPlaceholder')}
             disabled={!hasValidId}
           />
-          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onChange(null)} aria-label={tBuilder('removeCondition')}>
+          <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-6 sm:w-6" onClick={() => onChange(null)} aria-label={tBuilder('removeCondition')}>
             <X className="h-4 w-4" />
           </Button>
         </div>
@@ -2168,7 +2168,7 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions
           <span className="text-xs text-muted-foreground flex-1">
             {condition.type === 'and' ? tBuilder('allConditionsMustMeet') : condition.type === 'or' ? tBuilder('anyConditionMustMeet') : tBuilder('conditionNotMet')}
           </span>
-          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onChange(null)} aria-label={tBuilder('removeCondition')}>
+          <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-6 sm:w-6" onClick={() => onChange(null)} aria-label={tBuilder('removeCondition')}>
             <X className="h-4 w-4" />
           </Button>
         </div>
@@ -2207,7 +2207,7 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions
                     className={cn(
                       'h-6 w-6 absolute right-0 top-2',
                       isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                    )}
+                    , "sm:h-6 sm:w-6")}
                     onClick={() => removeNestedCondition(i)}
                     aria-label={tBuilder('removeCondition')}
                   >
@@ -2222,7 +2222,7 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions
             <Button
               variant="outline"
               size="sm"
-              className="w-full border-dashed h-9"
+              className="w-full border-dashed h-9 sm:h-9"
               onClick={() => {
                 // Try devices first, then extensions
                 const firstDevice = devices[0]
@@ -2652,7 +2652,7 @@ function ActionEditorCompact({ action, devices, deviceTypes, extensions, message
               className={cn(
                 'h-6 w-6 flex-shrink-0 transition-opacity',
                 isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-              )}
+              , "sm:h-6 sm:w-6")}
               onClick={onRemove}
               aria-label={tBuilder('removeAction')}
             >

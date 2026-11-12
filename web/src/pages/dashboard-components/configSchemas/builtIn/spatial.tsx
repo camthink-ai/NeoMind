@@ -82,7 +82,7 @@ export function getMapDisplaySchema// eslint-disable-next-line @typescript-eslin
                       variant="outline"
                       size="sm"
                       onClick={() => setCenterPickerOpen(true)}
-                      className="h-9 px-3 shrink-0"
+                      className="h-9 px-3 shrink-0 sm:h-9"
                       title={t('mapDisplay.visualSelectCenter', '可视化选择中心点')}
                     >
                       <MapPin className="h-4 w-4" />
@@ -567,7 +567,7 @@ export function getCustomLayerSchema// eslint-disable-next-line @typescript-esli
                               }
                               input.click()
                             }}
-                            className="h-9 px-3 shrink-0"
+                            className="h-9 px-3 shrink-0 sm:h-9"
                           >
                             <Upload className="h-4 w-4 mr-1.5" />
                             {t('visualDashboard.upload')}
@@ -588,7 +588,7 @@ export function getCustomLayerSchema// eslint-disable-next-line @typescript-esli
                             variant="ghost"
                             size="sm"
                             onClick={() => updateConfig('backgroundImage')('')}
-                            className="h-8 text-error hover:text-error"
+                            className="h-8 text-error hover:text-error sm:h-8"
                           >
                             {t('visualDashboard.clear')}
                           </Button>

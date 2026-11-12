@@ -170,7 +170,7 @@ export function AgentUserMessagesComposer({ agentId, onSent }: AgentUserMessages
         size="icon"
         onClick={() => void handleSend()}
         disabled={!newMessage.trim() || sending}
-        className="h-7 w-7 shrink-0 rounded-md"
+        className="h-7 w-7 shrink-0 rounded-md sm:h-7 sm:w-7"
         aria-label={t('common:send')}
       >
         {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}

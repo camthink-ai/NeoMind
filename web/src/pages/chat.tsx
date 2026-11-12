@@ -1109,7 +1109,7 @@ export function ChatPage() {
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-10 w-10 shrink-0 rounded-full border border-glass-border bg-surface-glass shadow-sm backdrop-blur-xl hover:border-glass-border-hover hover:bg-muted"
+                    className="h-10 w-10 shrink-0 rounded-full border border-glass-border bg-surface-glass shadow-sm backdrop-blur-xl hover:border-glass-border-hover hover:bg-muted sm:h-10 sm:w-10"
                     onClick={() => navigate('/system')}
                     aria-label={t('common:system.menu')}
                     data-testid="chat-workspace-button"
@@ -1146,7 +1146,7 @@ export function ChatPage() {
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-10 w-10"
+                      className="h-10 w-10 sm:h-10 sm:w-10"
                       onClick={async () => {
                         const id = await createSession()
                         if (id) navigate(`/chat/${id}`)

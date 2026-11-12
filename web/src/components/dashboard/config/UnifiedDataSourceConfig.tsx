@@ -1485,7 +1485,7 @@ export function UnifiedDataSourceConfig({
             variant="ghost"
             size="sm"
             onClick={handleClearSelection}
-            className="h-7 px-2 text-xs hover:bg-muted hover:text-error shrink-0"
+            className="h-7 px-2 text-xs hover:bg-muted hover:text-error shrink-0 sm:h-7"
             title={t('dataSource.clearAllSelections')}
           >
             <X className="h-4 w-4" />

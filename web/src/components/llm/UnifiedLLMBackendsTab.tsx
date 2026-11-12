@@ -1735,7 +1735,7 @@ export function UnifiedLLMBackendsTab({
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-8 w-8 p-0"
+                          className="h-8 w-8 p-0 sm:h-8 sm:w-8"
                           onClick={() => handleTest(instance.id)}
                         >
                           <TestTube className="h-4 w-4" />
@@ -1743,7 +1743,7 @@ export function UnifiedLLMBackendsTab({
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-8 w-8 p-0"
+                          className="h-8 w-8 p-0 sm:h-8 sm:w-8"
                           onClick={() => {
                             if (isCloudAi) {
                               // Cloud AI edits go through the add dialog in
@@ -1769,7 +1769,7 @@ export function UnifiedLLMBackendsTab({
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-8 w-8 p-0 text-error hover:text-error"
+                          className="h-8 w-8 p-0 text-error hover:text-error sm:h-8 sm:w-8"
                           onClick={() => handleDelete(instance.id)}
                         >
                           <Trash2 className="h-4 w-4" />

@@ -250,7 +250,7 @@ export function IconPicker({
                   variant="ghost"
                   size="sm"
                   onClick={handleClear}
-                  className="h-7 px-2 text-xs"
+                  className="h-7 px-2 text-xs sm:h-7"
                 >
                   <X className="h-4 w-4 mr-1" />
                   {t('common.clear', 'Clear')}
@@ -267,7 +267,7 @@ export function IconPicker({
             size="sm"
             onClick={handleClear}
             disabled={disabled}
-            className="h-10 w-10 p-0"
+            className="h-10 w-10 p-0 sm:h-10 sm:w-10"
           >
             <X className="h-4 w-4" />
           </Button>

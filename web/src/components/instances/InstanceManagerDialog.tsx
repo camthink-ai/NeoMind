@@ -303,7 +303,7 @@ export function InstanceManagerDialog({ open, onOpenChange }: InstanceManagerDia
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  className="h-8 w-8"
+                                  className="h-8 w-8 sm:h-8 sm:w-8"
                                   disabled={testingId === instance.id}
                                   onClick={(e) => handleTest(e, instance.id)}
                                 >
@@ -318,7 +318,7 @@ export function InstanceManagerDialog({ open, onOpenChange }: InstanceManagerDia
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  className="h-8 w-8"
+                                  className="h-8 w-8 sm:h-8 sm:w-8"
                                   onClick={(e) => openEditForm(e, instance)}
                                 >
                                   <Pencil className="h-4 w-4" />
@@ -326,7 +326,7 @@ export function InstanceManagerDialog({ open, onOpenChange }: InstanceManagerDia
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  className="h-8 w-8 text-error"
+                                  className="h-8 w-8 text-error sm:h-8 sm:w-8"
                                   onClick={(e) => handleDelete(e, instance.id)}
                                 >
                                   <Trash2 className="h-4 w-4" />

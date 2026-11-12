@@ -59,7 +59,7 @@ export function ConnectionStatus({ state, className, onManualReconnect }: Connec
         <Button
           variant="ghost"
           size="sm"
-          className="h-6 px-2 text-xs gap-1 hover:bg-inherit"
+          className="h-6 px-2 text-xs gap-1 hover:bg-inherit sm:h-6"
           onClick={onManualReconnect}
         >
           <RotateCcw className="w-4 h-4" />

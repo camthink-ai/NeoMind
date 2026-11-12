@@ -163,7 +163,7 @@ export function ErrorState({
           <Button
             variant="outline"
             size="icon-sm"
-            className="h-7 w-7 shrink-0"
+            className="h-7 w-7 shrink-0 sm:h-7 sm:w-7"
             onClick={onRetry}
             aria-label={resolvedRetry}
           >

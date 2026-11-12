@@ -291,7 +291,7 @@ export function ChatComposer({
                   isMobile && "order-first h-10 w-10 rounded-full p-0",
                   !supportsMultimodal && "opacity-50"
                 )}
-                title={supportsMultimodal ? (visionDelegate ? t("chat:model.visionViaCompanion") : t("chat:model.addImage")) : t("chat:model.notSupportImage")}
+                title={supportsMultimodal ? (visionDelegate ? t("chat:model.visionViaCompanion") : t("chat:model.addImage")) : t("chat:model.notSupportImage", "sm:h-10 sm:w-10")}
               >
                 {isUploadingImage ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -317,7 +317,7 @@ export function ChatComposer({
                 variant="ghost"
                 size="icon-sm"
                 onClick={() => setModelSheetOpen(true)}
-                className="relative h-10 w-10 shrink-0 rounded-full p-0 text-muted-foreground"
+                className="relative h-10 w-10 shrink-0 rounded-full p-0 text-muted-foreground sm:h-10 sm:w-10"
                 aria-label={`${t("chat:input.selectLLMModel")}: ${
                   backends.find(b => b.id === activeBackendId)?.name ||
                   backends.find(b => b.id === activeBackendId)?.model ||
@@ -383,7 +383,7 @@ export function ChatComposer({
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-8 px-2 rounded-lg text-muted-foreground hover:text-foreground text-xs gap-1 max-w-[120px] sm:max-w-[140px]"
+                  className="h-8 px-2 rounded-lg text-muted-foreground hover:text-foreground text-xs gap-1 max-w-[120px] sm:max-w-[140px] sm:h-8"
                 >
                   <span className="truncate">
                     {backends.find(b => b.id === activeBackendId)?.name ||

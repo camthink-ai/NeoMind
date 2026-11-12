@@ -797,7 +797,7 @@ export function DevicesPage() {
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="-ml-2 h-11 w-11 shrink-0 rounded-full"
+                    className="-ml-2 h-11 w-11 shrink-0 rounded-full sm:h-11 sm:w-11"
                     onClick={handleCloseDeviceDetail}
                     aria-label={t('common:back', 'Back')}
                   >

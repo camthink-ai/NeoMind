@@ -194,7 +194,7 @@ export function DualModeSourceField({
               variant="ghost"
               size="sm"
               onClick={openPicker}
-              className="h-7 px-2 text-xs text-primary"
+              className="h-7 px-2 text-xs text-primary sm:h-7"
             >
               {t('dualMode.changeSource')}
             </Button>
@@ -202,7 +202,7 @@ export function DualModeSourceField({
               variant="ghost"
               size="sm"
               onClick={handleUnbind}
-              className="h-7 w-7 p-0 text-muted-foreground hover:text-error"
+              className="h-7 w-7 p-0 text-muted-foreground hover:text-error sm:h-7 sm:w-7"
             >
               <Unlink className="h-3.5 w-3.5" />
             </Button>
@@ -232,7 +232,7 @@ export function DualModeSourceField({
                   variant="outline"
                   size="sm"
                   onClick={() => fileInputRef.current?.click()}
-                  className="h-9 px-3 shrink-0"
+                  className="h-9 px-3 shrink-0 sm:h-9"
                 >
                   <Upload className="h-4 w-4 mr-1.5" />
                   {t('dualMode.upload')}
@@ -243,7 +243,7 @@ export function DualModeSourceField({
                 variant="outline"
                 size="sm"
                 onClick={openPicker}
-                className="h-9 px-3 shrink-0"
+                className="h-9 px-3 shrink-0 sm:h-9"
                 title={t('dualMode.bindSource')}
               >
                 <Link2 className="h-4 w-4" />
@@ -270,7 +270,7 @@ export function DualModeSourceField({
                     variant="ghost"
                     size="sm"
                     onClick={handleClearImage}
-                    className="h-7 text-error hover:text-error"
+                    className="h-7 text-error hover:text-error sm:h-7"
                   >
                     <Trash2 className="h-3 w-3 mr-1" />
                     {t('dualMode.clear')}

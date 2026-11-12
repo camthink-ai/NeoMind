@@ -189,7 +189,7 @@ export function ShareManagerDialog({
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-8 w-8"
+                      className="h-8 w-8 sm:h-8 sm:w-8"
                       onClick={() => handleCopy(st.token)}
                       aria-label="Copy link"
                     >
@@ -198,7 +198,7 @@ export function ShareManagerDialog({
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-8 w-8 text-error"
+                      className="h-8 w-8 text-error sm:h-8 sm:w-8"
                       onClick={() => handleRevoke(st.token)}
                       aria-label={t('visualDashboard.share.revokeConfirm')}
                     >

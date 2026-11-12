@@ -496,7 +496,7 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="shrink-0 h-7 w-7"
+                          className="shrink-0 h-7 w-7 sm:h-7 sm:w-7"
                           onClick={() => {
                             copyToClipboard(`${cred.username}:${cred.password}`)
                             toast({ title: t('common:copied') })
@@ -557,7 +557,7 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="shrink-0 h-7 w-7"
+                          className="shrink-0 h-7 w-7 sm:h-7 sm:w-7"
                           onClick={() => {
                             broker.username && copyToClipboard(broker.username)
                             toast({ title: t('common:copied') })
@@ -582,7 +582,7 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="shrink-0 h-7 w-7"
+                              className="shrink-0 h-7 w-7 sm:h-7 sm:w-7"
                               onClick={() => {
                                 copyToClipboard(topic)
                                 toast({ title: t('common:copied') })
@@ -622,7 +622,7 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-7 w-7 shrink-0"
+                  className="h-7 w-7 shrink-0 sm:h-7 sm:w-7"
                   onClick={() => {
                     const cmd = `curl -X POST ${serverUrl}/api/devices/my-sensor-001/webhook \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "data": {\n      "temperature": 23.5,\n      "humidity": 65.2\n    }\n  }'`
                     copyToClipboard(cmd)
@@ -995,7 +995,7 @@ export function ManualAddForm({
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="shrink-0 h-7 w-7"
+                            className="shrink-0 h-7 w-7 sm:h-7 sm:w-7"
                             onClick={() => {
                               copyToClipboard(`${cred.username}:${cred.password}`)
                               toast({ title: t('common:copied') })
@@ -1059,7 +1059,7 @@ export function ManualAddForm({
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="shrink-0 h-7 w-7"
+                              className="shrink-0 h-7 w-7 sm:h-7 sm:w-7"
                               onClick={() => {
                                 copyToClipboard(`${broker.username}:${broker.password}`)
                                 toast({ title: t('common:copied') })

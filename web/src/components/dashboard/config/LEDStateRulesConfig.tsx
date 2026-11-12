@@ -129,7 +129,7 @@ export function LEDStateRulesConfig({
               size="sm"
               onClick={() => addRule('threshold')}
               disabled={readonly}
-              className="h-7 text-xs"
+              className="h-7 text-xs sm:h-7"
             >
               <Plus className="h-4 w-4 mr-1" />
               {t('stateMapping.addThreshold')}
@@ -139,7 +139,7 @@ export function LEDStateRulesConfig({
               size="sm"
               onClick={() => addRule('values')}
               disabled={readonly}
-              className="h-7 text-xs"
+              className="h-7 text-xs sm:h-7"
             >
               <Plus className="h-4 w-4 mr-1" />
               {t('stateMapping.addString')}
@@ -247,7 +247,7 @@ export function LEDStateRulesConfig({
                       removeRule(index)
                     }}
                     disabled={readonly}
-                    className="h-6 w-6 p-0 shrink-0 text-muted-foreground hover:text-error"
+                    className="h-6 w-6 p-0 shrink-0 text-muted-foreground hover:text-error sm:h-6 sm:w-6"
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>

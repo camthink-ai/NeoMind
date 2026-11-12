@@ -197,7 +197,7 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
     <Button
       variant="outline"
       size="sm"
-      className={cn('h-9 gap-1.5 text-xs', fullWidth && 'w-full justify-start')}
+      className={cn('h-9 gap-1.5 text-xs', fullWidth && 'w-full justify-start', "sm:h-9")}
       onClick={() => onImportDialogOpenChange(true)}
     >
       <PackagePlus className="w-3.5 h-3.5" />
@@ -362,7 +362,7 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
                       <Button
                         variant="outline"
                         size="sm"
-                        className="flex-1 h-7 text-xs"
+                        className="flex-1 h-7 text-xs sm:h-7"
                         onClick={() => onAddComponent(mc.id)}
                       >
                         <Plus className="w-3.5 h-3.5" />
@@ -371,7 +371,7 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-7 w-7 text-muted-foreground hover:text-error shrink-0"
+                        className="h-7 w-7 text-muted-foreground hover:text-error shrink-0 sm:h-7 sm:w-7"
                         disabled={installingId === mc.id}
                         aria-label={t('componentLibrary.uninstall')}
                         onClick={async () => {
@@ -395,7 +395,7 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
                     <Button
                       variant="outline"
                       size="sm"
-                      className="w-full h-7 text-xs"
+                      className="w-full h-7 text-xs sm:h-7"
                       disabled={installingId === mc.id}
                       onClick={async () => {
                         onSetInstalling(mc.id)
@@ -480,7 +480,7 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
                     <Button
                       variant="outline"
                       size="sm"
-                      className="flex-1 h-7 text-xs"
+                      className="flex-1 h-7 text-xs sm:h-7"
                       onClick={() => onAddComponent(c.id)}
                     >
                       <Plus className="w-3.5 h-3.5" />
@@ -490,7 +490,7 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-7 w-7 text-info shrink-0"
+                        className="h-7 w-7 text-info shrink-0 sm:h-7 sm:w-7"
                         disabled={installingId === c.id}
                         title={t('componentLibrary.updateAvailable', { version: update.latest })}
                         aria-label={t('componentLibrary.updateAvailable', { version: update.latest })}
@@ -504,7 +504,7 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-7 w-7 text-muted-foreground hover:text-error shrink-0"
+                      className="h-7 w-7 text-muted-foreground hover:text-error shrink-0 sm:h-7 sm:w-7"
                       disabled={installingId === c.id}
                       aria-label={t('componentLibrary.uninstall')}
                       onClick={() => handleUninstall(c.id)}
@@ -576,7 +576,7 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
                   <Button
                     variant="outline"
                     size="sm"
-                    className="h-10 gap-1.5 text-xs"
+                    className="h-10 gap-1.5 text-xs sm:h-10"
                     disabled={marketLoading}
                     onClick={() => onRefreshMarket()}
                   >
@@ -676,7 +676,7 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
                       <Button
                         variant="outline"
                         size="sm"
-                        className="h-9 gap-1.5 text-xs"
+                        className="h-9 gap-1.5 text-xs sm:h-9"
                         disabled={marketLoading}
                         onClick={() => onRefreshMarket()}
                       >

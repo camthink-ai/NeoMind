@@ -464,7 +464,7 @@ function VariablesRail({
         {activeTab === 'extension' && (
           <Popover open={extensionPopoverOpen} onOpenChange={setExtensionPopoverOpen}>
             <PopoverTrigger asChild>
-              <Button variant="ghost" size="sm" className="shrink-0 h-6 w-6 p-0" aria-label={tBuilder('selectSources')}>
+              <Button variant="ghost" size="sm" className="shrink-0 h-6 w-6 p-0 sm:h-6 sm:w-6" aria-label={tBuilder('selectSources')}>
                 <Plus className="h-3.5 w-3.5" />
               </Button>
             </PopoverTrigger>

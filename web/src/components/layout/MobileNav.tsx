@@ -221,7 +221,7 @@ export function MobileNav() {
               variant="ghost"
               size="icon"
               onClick={() => setOpen(false)}
-              className="h-8 w-8 rounded-lg"
+              className="h-8 w-8 rounded-lg sm:h-8 sm:w-8"
               aria-label={t("system.back")}
             >
               <X className="h-4 w-4" />
@@ -370,7 +370,7 @@ export function MobileNav() {
                   setOpen(false)
                   logout()
                 }}
-                className="h-9 w-9 shrink-0 rounded-lg text-error hover:text-error hover:bg-error-light"
+                className="h-9 w-9 shrink-0 rounded-lg text-error hover:text-error hover:bg-error-light sm:h-9 sm:w-9"
                 aria-label={t("logout")}
               >
                 <LogOut className="h-4 w-4" />

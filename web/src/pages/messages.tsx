@@ -670,7 +670,7 @@ export default function MessagesPage() {
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 text-xs text-muted-foreground hover:text-foreground px-2"
+              className="h-7 text-xs text-muted-foreground hover:text-foreground px-2 sm:h-7"
               onClick={clearAllFilters}
             >
               <X className="h-3 w-3 mr-1" />
@@ -883,7 +883,7 @@ export default function MessagesPage() {
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-7 px-2 text-xs"
+                className="h-7 px-2 text-xs sm:h-7"
                 onClick={clearAllFilters}
               >
                 {t('messages.filter.clearAll')}
@@ -1248,7 +1248,7 @@ export default function MessagesPage() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-6 px-2 text-xs"
+                              className="h-6 px-2 text-xs sm:h-6"
                               onClick={() => handleTestChannel(channel.name)}
                               disabled={testingChannel === channel.name}
                             >
@@ -1867,7 +1867,7 @@ export default function MessagesPage() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-6 w-6 p-0 text-muted-foreground hover:text-error shrink-0 ml-2"
+                      className="h-6 w-6 p-0 text-muted-foreground hover:text-error shrink-0 ml-2 sm:h-6 sm:w-6"
                       onClick={() => handleRemoveRecipient(email)}
                     >
                       <X className="h-4 w-4" />

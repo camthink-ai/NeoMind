@@ -106,7 +106,12 @@ export function SelectedResourceItem({ resource, setSelectedResources, onRemove,
           variant="ghost"
           size="icon"
           aria-label={`remove ${resource.name}`}
-          className={cn("transition-opacity", isMobile ? "h-9 w-9" : "h-6 w-6", isMobile ? "opacity-100" : "opacity-0 group-hover:opacity-100")}
+          className={cn(
+            "transition-opacity",
+            // Pair desktop compact size with sm: so size="icon"'s sm:h-10 cannot win.
+            isMobile ? "h-9 w-9" : "h-6 w-6 sm:h-6 sm:w-6",
+            isMobile ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+          )}
           onClick={onRemove}
         >
           <X className={cn(isMobile ? "h-4 w-4" : "h-4 w-4")} />

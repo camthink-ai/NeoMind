@@ -304,13 +304,13 @@ export const ImageDisplay = memo(function ImageDisplay({
           {(zoomable || downloadable || openInNewTab) && (
             <div className="absolute top-2 right-2 flex gap-1 opacity-0 hover:opacity-100 transition-opacity">
               {downloadable && (
-                <Button variant="secondary" size="icon" className="h-6 w-6" onClick={handleDownload}
+                <Button variant="secondary" size="icon" className="h-6 w-6 sm:h-6 sm:w-6" onClick={handleDownload}
                   title={normalizedImage?.isBase64 ? t('imageDisplay.downloadAs', { format: normalizedImage.format.toUpperCase() }) : t('imageDisplay.download')}>
                   <Download className="h-4 w-4" />
                 </Button>
               )}
               {zoomable && (
-                <Button variant="secondary" size="icon" className="h-6 w-6" onClick={() => setIsFullscreen(true)} title={t('imageDisplay.viewFullscreen')}>
+                <Button variant="secondary" size="icon" className="h-6 w-6 sm:h-6 sm:w-6" onClick={() => setIsFullscreen(true)} title={t('imageDisplay.viewFullscreen')}>
                   <Maximize2 className="h-4 w-4" />
                 </Button>
               )}

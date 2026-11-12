@@ -38,7 +38,7 @@ export function AnalystInputBar({ onSend, disabled, streaming }: AnalystInputBar
           size="sm"
           onClick={handleSend}
           disabled={!text.trim() || disabled}
-          className="h-9 px-3 shrink-0"
+          className="h-9 px-3 shrink-0 sm:h-9"
         >
           {streaming ? (
             <Loader2 className="h-4 w-4 animate-spin" />

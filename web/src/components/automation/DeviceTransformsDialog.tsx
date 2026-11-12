@@ -396,7 +396,7 @@ export function DeviceTransformsDialog({
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-8 w-8"
+                              className="h-8 w-8 sm:h-8 sm:w-8"
                               onClick={() => {
                                 setTestingTransformId(transform.id)
                                 setTestDialogOpen(true)
@@ -408,7 +408,7 @@ export function DeviceTransformsDialog({
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-8 w-8"
+                              className="h-8 w-8 sm:h-8 sm:w-8"
                               onClick={() => {
                                 setEditingTransform(transform)
                                 setBuilderOpen(true)
@@ -420,7 +420,7 @@ export function DeviceTransformsDialog({
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-8 w-8"
+                              className="h-8 w-8 sm:h-8 sm:w-8"
                               onClick={() => handleDeleteTransform(transform.id)}
                               title={t('common:delete', { defaultValue: 'Delete' })}
                             >

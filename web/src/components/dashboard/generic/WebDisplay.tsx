@@ -220,7 +220,7 @@ export function WebDisplay({
             {title && <span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>}
             {sandbox && <Lock className="h-4 w-4 shrink-0 text-muted-foreground" />}
             {!title && <div className="min-w-0 flex-1" />}
-            <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={handleRefresh}>
+            <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0 sm:h-6 sm:w-6" onClick={handleRefresh}>
               <RefreshCw className="h-4 w-4" />
             </Button>
           </div>
@@ -251,11 +251,11 @@ export function WebDisplay({
       {title && <span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>}
       {sandbox && <Lock className="h-4 w-4 shrink-0 text-muted-foreground" />}
       {!title && <div className="min-w-0 flex-1" />}
-      <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={handleRefresh}>
+      <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0 sm:h-6 sm:w-6" onClick={handleRefresh}>
         <RefreshCw className={cn('h-4 w-4', iframeLoading && 'animate-spin')} />
       </Button>
       {src && (
-        <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" asChild>
+        <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0 sm:h-6 sm:w-6" asChild>
           <a href={src} target="_blank" rel="noopener noreferrer">
             <ExternalLink className="h-4 w-4" />
           </a>

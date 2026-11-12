@@ -721,7 +721,7 @@ function SimpleSvgMap({
           <Button
             variant="secondary"
             size="icon"
-            className="h-6 w-6 bg-glass-heavy backdrop-blur"
+            className="h-6 w-6 bg-glass-heavy backdrop-blur sm:h-6 sm:w-6"
             onClick={onZoomIn}
           >
             <ZoomIn className="h-4 w-4" />
@@ -729,7 +729,7 @@ function SimpleSvgMap({
           <Button
             variant="secondary"
             size="icon"
-            className="h-6 w-6 bg-glass-heavy backdrop-blur"
+            className="h-6 w-6 bg-glass-heavy backdrop-blur sm:h-6 sm:w-6"
             onClick={onZoomOut}
           >
             <ZoomOut className="h-4 w-4" />
@@ -1130,7 +1130,7 @@ export function MapDisplay({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-6 w-6"
+                  className="h-6 w-6 sm:h-6 sm:w-6"
                   onClick={() => setIsFullscreen(true)}
                 >
                   <Maximize2 className="h-4 w-4" />
@@ -1183,7 +1183,7 @@ export function MapDisplay({
           <Button
             variant="ghost"
             size="icon"
-            className="h-6 w-6"
+            className="h-6 w-6 sm:h-6 sm:w-6"
             onClick={() => setIsFullscreen(false)}
           >
             <X className="h-4 w-4" />

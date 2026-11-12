@@ -786,7 +786,7 @@ export function BuiltinModelWizard({
                               <Button
                                 size="sm"
                                 variant="ghost"
-                                className="h-7 px-2 text-xs text-destructive hover:text-destructive"
+                                className="h-7 px-2 text-xs text-destructive hover:text-destructive sm:h-7"
                                 onClick={() => {
                                   api
                                     .deleteBuiltinLlmModel(m.id)
@@ -806,7 +806,7 @@ export function BuiltinModelWizard({
                             ) : (
                               <Button
                                 size="sm"
-                                className="h-7 px-3 text-xs"
+                                className="h-7 px-3 text-xs sm:h-7"
                                 onClick={() => handleStartDownload(m.id)}
                               >
                                 <Download className="mr-1 h-3 w-3" />
@@ -905,7 +905,7 @@ export function BuiltinModelWizard({
                     <Button
                       size="sm"
                       variant="ghost"
-                      className="h-7 px-2 text-xs"
+                      className="h-7 px-2 text-xs sm:h-7"
                       onClick={() => {
                         api.cancelModelDownload().catch(() => {})
                       }}
