@@ -26,5 +26,6 @@
   },
   "claim": "New user turns clear transient skills; TaskState continue/correct/cancel/write-gate survive; multimodal directives before first LLM. No live score.",
   "next": "Live G2/G3+skill probes after 138; D/E/F; human C UX",
-  "head_at_end": "PENDING_COMMIT"
+  "head_at_end": "0a9b148248eb27729c269305f1181e8ec5508cd8",
+  "commit": "0a9b148248eb27729c269305f1181e8ec5508cd8"
 }
