@@ -343,6 +343,191 @@ fn dry_run_policy_is_default_deny_with_explicit_pure_allowlist() {
     assert!(!extension_allowed_in_dry_run("wea", "weather"));
 }
 
+// ---------- legacy TransformOperation::Extension respects DryRun ----------
+
+/// Counting mock so dry-run can prove the extension was never called.
+struct CountingExt {
+    meta: neomind_core::extension::system::ExtensionMetadata,
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[async_trait::async_trait]
+impl neomind_core::extension::system::Extension for CountingExt {
+    fn metadata(&self) -> &neomind_core::extension::system::ExtensionMetadata {
+        &self.meta
+    }
+
+    fn metrics(&self) -> Vec<neomind_core::extension::system::MetricDefinition> {
+        vec![]
+    }
+
+    fn commands(&self) -> Vec<neomind_core::extension::system::ExtensionCommand> {
+        vec![]
+    }
+
+    async fn execute_command(
+        &self,
+        _command: &str,
+        _args: &serde_json::Value,
+    ) -> neomind_core::extension::system::Result<serde_json::Value> {
+        self.calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(json!({"out": 42.0}))
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+async fn engine_with_counting_ext(
+    id: &str,
+) -> (
+    TransformEngine,
+    Arc<SharedAutomationStore>,
+    Arc<std::sync::atomic::AtomicUsize>,
+) {
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let registry = Arc::new(neomind_core::extension::registry::ExtensionRegistry::new());
+    let ext: neomind_core::extension::system::DynExtension =
+        Arc::new(tokio::sync::RwLock::new(Box::new(CountingExt {
+            meta: neomind_core::extension::system::ExtensionMetadata::new(id, id, "1.0.0"),
+            calls: calls.clone(),
+        })));
+    registry.register(id.to_string(), ext).await.unwrap();
+
+    let store = Arc::new(SharedAutomationStore::memory().unwrap());
+    let engine = TransformEngine::with_extension_registry(registry)
+        .with_automation_store(store.clone());
+    (engine, store, calls)
+}
+
+fn legacy_extension_transform(id: &str, extension_id: &str) -> TransformAutomation {
+    let mut t = TransformAutomation::new(id, id, TransformScope::Global);
+    t.operations = Some(vec![TransformOperation::Extension {
+        extension_id: extension_id.to_string(),
+        command: "analyze".to_string(),
+        parameters: HashMap::new(),
+        output_metrics: vec!["out".to_string()],
+        output_mapping: None,
+    }]);
+    t
+}
+
+#[tokio::test]
+async fn legacy_extension_dry_run_does_not_call_extension_and_is_unverified() {
+    // Coverage 1+2+3: dry-run must not call the extension, returns
+    // unverified, and writes neither history nor output registration.
+    let (engine, store, calls) = engine_with_counting_ext("side-effect-ext").await;
+    let t = legacy_extension_transform("legacy-dry", "side-effect-ext");
+    let data = json!({"temperature": 25.5});
+
+    let dry = engine
+        .process_device_data_dry(std::slice::from_ref(&t), "sensor-1", None, &data)
+        .await
+        .expect("dry-run returns a result, not an error");
+
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "legacy Extension must not execute in dry-run"
+    );
+    assert!(
+        dry.unverified
+            .iter()
+            .any(|u| u.contains("legacy Extension") && u.contains("unverified")),
+        "blocked legacy Extension surfaces as unverified: {:?}",
+        dry.unverified
+    );
+    assert!(
+        dry.metrics.is_empty(),
+        "no metrics from a blocked legacy Extension preview"
+    );
+    assert!(
+        store
+            .get_executions("legacy-dry", 10)
+            .await
+            .unwrap()
+            .is_empty(),
+        "dry-run must not write execution history"
+    );
+    assert!(
+        engine
+            .output_registry()
+            .get_transform_outputs("legacy-dry")
+            .await
+            .is_empty(),
+        "dry-run must not register outputs"
+    );
+}
+
+#[tokio::test]
+async fn legacy_extension_production_still_executes() {
+    // Coverage 4: Production path unchanged — extension runs, metrics emit.
+    let (engine, store, calls) = engine_with_counting_ext("prod-ext").await;
+    let t = legacy_extension_transform("legacy-prod", "prod-ext");
+    let data = json!({"temperature": 25.5});
+
+    let prod = engine
+        .process_device_data(&[t], "sensor-1", None, &data)
+        .await
+        .expect("production run");
+
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "production must still call the extension"
+    );
+    assert!(!prod.metrics.is_empty(), "production emits metrics");
+    assert!(prod.unverified.is_empty());
+    let records = store.get_executions("legacy-prod", 10).await.unwrap();
+    assert_eq!(records.len(), 1, "production records history");
+    assert_eq!(records[0].status, ExecutionStatus::Completed);
+}
+
+#[tokio::test]
+async fn multioutput_nested_extension_dry_run_cannot_bypass() {
+    // Coverage 5: nested Extension under MultiOutput uses the same gate.
+    let (engine, _store, calls) = engine_with_counting_ext("nested-ext").await;
+    let mut t = TransformAutomation::new("nested-dry", "nested-dry", TransformScope::Global);
+    t.operations = Some(vec![TransformOperation::MultiOutput {
+        operations: vec![
+            TransformOperation::Single {
+                json_path: "$.temperature".to_string(),
+                output_metric: "temp".to_string(),
+            },
+            TransformOperation::Extension {
+                extension_id: "nested-ext".to_string(),
+                command: "analyze".to_string(),
+                parameters: HashMap::new(),
+                output_metrics: vec!["out".to_string()],
+                output_mapping: None,
+            },
+        ],
+    }]);
+    let data = json!({"temperature": 25.5});
+
+    let dry = engine
+        .process_device_data_dry(std::slice::from_ref(&t), "sensor-1", None, &data)
+        .await
+        .expect("dry-run returns a result");
+
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "nested Extension must not bypass dry-run"
+    );
+    assert!(
+        dry.unverified
+            .iter()
+            .any(|u| u.contains("legacy Extension") && u.contains("nested-ext")),
+        "nested block is unverified: {:?}",
+        dry.unverified
+    );
+    // The Single branch still computes.
+    assert_eq!(dry.metrics.len(), 1, "non-extension sub-op still runs");
+}
+
 // ---------- old records stay deserializable ----------
 
 #[tokio::test]

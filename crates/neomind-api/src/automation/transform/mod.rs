@@ -48,13 +48,17 @@ pub struct TransformResult {
 
 /// Execution mode for transform runs.
 ///
-/// `DryRun` NEVER executes extensions (preprocess commands or
-/// `extensions.invoke`): extension side effects would make a "test" real.
-/// Extension involvement under dry-run surfaces as `unverified` markers,
-/// never as a silent skip reported as success. Capability policy lives
+/// `DryRun` does not execute side-effecting extensions: preprocess
+/// commands, JS `extensions.invoke`, and legacy
+/// `TransformOperation::Extension` (including nested under MultiOutput).
+/// Involvement under dry-run surfaces as `unverified` markers, never as
+/// a silent skip reported as success. Capability policy lives
 /// server-side (`NEOMIND_DRYRUN_PURE_EXTENSIONS` allow-list, default none —
-/// everything is treated as side-effecting; a Mockable tier with simulators
-/// is future work and deliberately not faked here).
+/// everything is treated as side-effecting). Pure allow-listed ids may
+/// still run for preprocess and legacy Extension (same helper:
+/// `extension_allowed_in_dry_run`); JS `extensions.invoke` installs a
+/// blocking stub for all ids in dry-run. A Mockable tier with simulators
+/// is future work and deliberately not faked here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransformExecutionMode {
     Production,

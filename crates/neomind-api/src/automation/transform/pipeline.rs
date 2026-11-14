@@ -179,9 +179,10 @@ impl TransformEngine {
     /// Used by `POST /api/automations/transforms/:id/test`. The production
     /// path (`process_device_data`) records history and auto-registers
     /// outputs — a preview must mutate neither. Extension invocations
-    /// (preprocess + `extensions.invoke`) still run: testing an
-    /// extension-backed transform IS the feature; this dry-run boundary
-    /// removes the platform-state side effects, not the computation.
+    /// (preprocess, JS `extensions.invoke`, and legacy
+    /// `TransformOperation::Extension`) are NOT executed unless the
+    /// extension id is on `NEOMIND_DRYRUN_PURE_EXTENSIONS`; non-pure
+    /// involvement surfaces as `unverified` markers.
     pub async fn process_device_data_dry(
         &self,
         transforms: &[TransformAutomation],
@@ -454,7 +455,15 @@ impl TransformEngine {
             for operation in operations {
                 let mut op_warnings = Vec::new();
                 match self
-                    .execute_operation(operation, device_id, timestamp, raw_data, &mut op_warnings)
+                    .execute_operation(
+                        operation,
+                        device_id,
+                        timestamp,
+                        raw_data,
+                        &mut op_warnings,
+                        &mut unverified,
+                        mode,
+                    )
                     .await
                 {
                     Ok(op_metrics) => {
@@ -502,7 +511,9 @@ impl TransformEngine {
     ///
     /// `warnings` collects soft signals from operations that partially
     /// failed (e.g. individual MultiOutput sub-operations); hard failures
-    /// still return `Err`.
+    /// still return `Err`. `unverified` collects dry-run refusals (legacy
+    /// Extension not on the pure allow-list). `mode` gates extension
+    /// side effects — Production runs them; DryRun only runs Pure.
     pub(crate) async fn execute_operation(
         &self,
         operation: &TransformOperation,
@@ -510,6 +521,8 @@ impl TransformEngine {
         timestamp: i64,
         raw_data: &Value,
         warnings: &mut Vec<String>,
+        unverified: &mut Vec<String>,
+        mode: TransformExecutionMode,
     ) -> Result<Vec<TransformedMetric>> {
         // Use a match with explicit async blocks to avoid recursion
         match operation {
@@ -579,6 +592,23 @@ impl TransformEngine {
                 output_metrics,
                 output_mapping,
             } => {
+                // DryRun: same Pure policy as preprocess —
+                // `NEOMIND_DRYRUN_PURE_EXTENSIONS` default-deny. Non-pure
+                // extensions are refused with an unverified marker; Pure
+                // ones fall through and execute. (JS `extensions.invoke`
+                // blocks all invocations in dry-run via a stub; legacy
+                // ops have an explicit id so they can honor the allow-list
+                // the same way preprocess does.)
+                if mode == TransformExecutionMode::DryRun {
+                    let allow_list = super::dry_run_pure_extensions();
+                    if !super::extension_allowed_in_dry_run(extension_id, &allow_list) {
+                        unverified.push(format!(
+                            "legacy Extension '{extension_id}' command '{command}' not invoked in dry-run (side-effecting); extension-dependent behavior unverified"
+                        ));
+                        return Ok(Vec::new());
+                    }
+                }
+
                 // Phase 4.2: Execute extension-based transform.
                 // Extension failures return Err: the previous zero-valued
                 // placeholder metrics (quality 0.0) were recorded as
@@ -674,10 +704,11 @@ impl TransformEngine {
             }
 
             TransformOperation::MultiOutput { operations } => {
-                // Inline the multioutput logic to avoid recursion.
-                // Sub-operation failures are captured as warnings (partial
-                // success); only ALL sub-operations failing fails the op —
-                // failures used to be dropped silently (`Err(_) => continue`).
+                // Inline non-Extension arms to avoid async recursion sizing.
+                // Nested Extension goes through execute_operation (boxed)
+                // so it inherits the DryRun Pure gate — the previous `_`
+                // skip left that path uncovered. Nested MultiOutput and
+                // expression-based ops stay skipped.
                 let mut all_metrics = Vec::new();
                 let sub_total = operations.len();
                 let mut sub_failed = 0usize;
@@ -740,9 +771,21 @@ impl TransformEngine {
                             timestamp,
                             quality: None,
                         }]),
-                        // Skip nested MultiOutput to avoid deep recursion
+                        TransformOperation::Extension { .. } => {
+                            Box::pin(self.execute_operation(
+                                op,
+                                device_id,
+                                timestamp,
+                                raw_data,
+                                warnings,
+                                unverified,
+                                mode,
+                            ))
+                            .await
+                        }
+                        // Skip nested MultiOutput / expression ops
                         TransformOperation::MultiOutput { .. } => continue,
-                        _ => continue, // Skip other types for now
+                        _ => continue,
                     };
                     match result {
                         Ok(mut m) => all_metrics.append(&mut m),

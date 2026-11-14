@@ -416,9 +416,12 @@ llama-server auto-cleaned. Still no commit/push/publish.
 SSH review's 3 must-fix + 3 fix-too items all landed: explain in-memory
 history now filters by rule_id (two-rule isolation test); dry-run gained
 TransformExecutionMode with an unverified channel — extensions (preprocess +
-extensions.invoke, including the JS pre-execution parser) are NEVER executed
-in dry-run (default-deny allow-list NEOMIND_DRYRUN_PURE_EXTENSIONS; /test,
-test-code and the chat transform tool all run DryRun); CommandDelivery
+JS extensions.invoke + legacy TransformOperation::Extension, including
+MultiOutput-nested Extension) are not executed in dry-run unless on the
+default-deny allow-list NEOMIND_DRYRUN_PURE_EXTENSIONS (preprocess + legacy
+Extension honor the Pure allow-list; JS invoke stubs all ids); non-pure
+surfaces as unverified (/test, test-code and the chat transform tool all
+run DryRun); CommandDelivery
 layered to AdapterAccepted/ExtensionAccepted/DeviceAcknowledged/
 PhysicalEffectVerified (extension Ok explicitly "not a device ACK");
 @-references dropped client labels from model context entirely + full
