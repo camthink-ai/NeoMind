@@ -183,6 +183,8 @@ export const automationApi = {
       }>
       count: number
       warnings: string[]
+      /** Dry-run blocked side effects — must not be shown as green success. */
+      unverified: string[]
     }>(`/automations/transforms/${id}/test`, {
       method: 'POST',
       body: JSON.stringify(req),
@@ -205,6 +207,8 @@ export const automationApi = {
         quality: number | null
       }>
       count: number
+      unverified?: string[]
+      warnings?: string[]
       error?: string
     }>('/automations/transforms/test-code', {
       method: 'POST',

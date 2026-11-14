@@ -41,7 +41,8 @@
   },
   "capability": {
     "tools": "Tool use",
-    "vision": "Vision"
+    "vision": "Vision",
+    "thinking": "Thinking"
   },
   "thinking": {
     "title": "Thinking process",
@@ -221,6 +222,13 @@
     "rule": "rule",
     "transform": "transform",
     "agent": "agent",
+    "invalid": "Invalid reference",
+    "invalidSend": "Some references are invalid — fix them and resend",
+    "filterTypes": "Filter by type",
+    "filterAll": "All",
+    "partialFailure": "Some types failed to load",
+    "searchFailed": "Search failed — try again",
+    "loadMore": "Load more",
     "protoTitle": "Inline @ prototype",
     "protoDesc": "Standalone editor prototype for in-sentence references; not wired into production ChatComposer.",
     "protoHint": "Inline @ prototype: type @ or use the toolbar; the same object may appear twice; chips delete atomically.",

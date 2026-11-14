@@ -263,6 +263,16 @@
   "generatedMetrics": "生成的指标",
   "noMetricsGenerated": "未生成任何指标。请检查数据处理配置",
   "testFailed": "测试失败",
+  "unverified": "未验证",
+  "unverifiedDeps": "未验证的依赖",
+  "testVerdict": {
+    "verified_success": "已验证成功",
+    "partial_success": "部分成功",
+    "unverified": "未验证（预览限制）",
+    "no_output": "无输出",
+    "failed": "失败",
+    "unverifiedHint": "预览已拦截副作用调用。下方计算结果不代表端到端已验证成功。"
+  },
   "runTest": "运行测试",
   "transformNamePlaceholder": "例如：温度平均值",
   "ruleSaved": "规则保存成功",

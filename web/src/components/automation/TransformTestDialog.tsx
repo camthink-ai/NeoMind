@@ -4,13 +4,12 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Card } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { Loader2, Play, CheckCircle2, AlertTriangle } from 'lucide-react'
+import { Loader2, Play, AlertTriangle } from 'lucide-react'
 import { FormField } from '@/components/ui/field'
 import { FormSection, FormSectionGroup } from '@/components/ui/form-section'
-import { formatTimestamp } from '@/lib/utils/format'
 import { api } from '@/lib/api'
 import { UnifiedFormDialog } from '@/components/dialog/UnifiedFormDialog'
+import { TransformTestResultPanel } from './TransformTestResultPanel'
 
 interface TransformTestDialogProps {
   open: boolean
@@ -19,23 +18,26 @@ interface TransformTestDialogProps {
   devices: Array<{ id: string; name: string; device_type?: string }>
 }
 
+type TestResult = {
+  metrics: Array<{
+    device_id: string
+    metric: string
+    value: number
+    timestamp: number
+    quality: number | null
+  }>
+  count: number
+  warnings: string[]
+  unverified: string[]
+}
+
 export function TransformTestDialog({ open, onOpenChange, transformId, devices }: TransformTestDialogProps) {
   const { t } = useTranslation(['automation', 'common'])
 
   const [selectedDevice, setSelectedDevice] = useState('')
   const [testData, setTestData] = useState('{\n  "temperature": 23.5,\n  "humidity": 65,\n  "sensors": [\n    { "id": 1, "value": 25.3 },\n    { "id": 2, "value": 22.1 }\n  ]\n}')
   const [testing, setTesting] = useState(false)
-  const [result, setResult] = useState<{
-    metrics: Array<{
-      device_id: string
-      metric: string
-      value: number
-      timestamp: number
-      quality: number | null
-    }>
-    count: number
-    warnings: string[]
-  } | null>(null)
+  const [result, setResult] = useState<TestResult | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -77,7 +79,12 @@ export function TransformTestDialog({ open, onOpenChange, transformId, devices }
         timestamp: Math.floor(Date.now() / 1000),
       })
 
-      setResult(response)
+      setResult({
+        metrics: response.metrics ?? [],
+        count: response.count ?? 0,
+        warnings: response.warnings ?? [],
+        unverified: response.unverified ?? [],
+      })
     } catch (err) {
       setError(err instanceof Error ? err.message : t('automation:testFailed', { defaultValue: 'Test failed' }))
     } finally {
@@ -143,7 +150,6 @@ export function TransformTestDialog({ open, onOpenChange, transformId, devices }
       }
     >
       <FormSectionGroup>
-        {/* Device Selection */}
         <FormSection title={t('automation:testDevice', { defaultValue: 'Test Device' })}>
           <FormField label={t('automation:selectDevice', { defaultValue: 'Select device' })}>
             <Select value={selectedDevice} onValueChange={setSelectedDevice}>
@@ -161,7 +167,6 @@ export function TransformTestDialog({ open, onOpenChange, transformId, devices }
           </FormField>
         </FormSection>
 
-        {/* Test Data */}
         <FormSection title={t('automation:testData', { defaultValue: 'Test Data (JSON)' })}>
           <div className="flex justify-end mb-2">
             <Button variant="ghost" size="sm" onClick={loadSampleData}>
@@ -177,7 +182,6 @@ export function TransformTestDialog({ open, onOpenChange, transformId, devices }
           />
         </FormSection>
 
-        {/* Error Display */}
         {error && (
           <Card className="p-4 bg-muted border-error">
             <div className="flex items-center gap-2 text-error">
@@ -187,50 +191,14 @@ export function TransformTestDialog({ open, onOpenChange, transformId, devices }
           </Card>
         )}
 
-        {/* Results */}
         {result && (
           <FormSection title={t('automation:testResults', { defaultValue: 'Test Results' })}>
-            <div className="flex items-center gap-2 mb-4">
-              <CheckCircle2 className="h-5 w-5 text-success" />
-              <span className="font-medium">
-                {t('automation:testSuccess', { defaultValue: 'Test completed successfully' })}
-              </span>
-              <Badge variant="outline">{result.count} {t('automation:metrics', { defaultValue: 'metrics' })}</Badge>
-            </div>
-            {result.metrics.length > 0 ? (
-              <div className="space-y-2">
-                <h4 className="font-medium">{t('automation:generatedMetrics', { defaultValue: 'Generated Metrics' })}</h4>
-                {result.metrics.map((metric, idx) => (
-                  <div key={idx} className="pl-4 border-l-2 border-success">
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline">{metric.metric}</Badge>
-                      <span className="font-mono text-sm">{metric.value}</span>
-                      {metric.quality !== null && (
-                        <span className="text-xs text-muted-foreground">(q: {(metric.quality * 100).toFixed(0)}%)</span>
-                      )}
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      {metric.device_id} @ {formatTimestamp(metric.timestamp)}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                {t('automation:noMetricsGenerated', { defaultValue: 'No metrics were generated. Check your transform configuration.' })}
-              </p>
-            )}
-            {result.warnings.length > 0 && (
-              <div className="mt-4 space-y-1">
-                <h4 className="font-medium text-warning">{t('automation:warnings', { defaultValue: 'Warnings' })}</h4>
-                {result.warnings.map((warning, idx) => (
-                  <div key={idx} className="text-sm text-warning flex items-start gap-2">
-                    <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                    <span>{warning}</span>
-                  </div>
-                ))}
-              </div>
-            )}
+            <TransformTestResultPanel
+              metrics={result.metrics}
+              count={result.count}
+              warnings={result.warnings}
+              unverified={result.unverified}
+            />
           </FormSection>
         )}
       </FormSectionGroup>

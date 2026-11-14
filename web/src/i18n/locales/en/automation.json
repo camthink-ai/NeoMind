@@ -264,6 +264,16 @@
   "generatedMetrics": "Generated Metrics",
   "noMetricsGenerated": "No metrics were generated. Check your transform configuration",
   "testFailed": "Test failed",
+  "unverified": "unverified",
+  "unverifiedDeps": "Unverified dependencies",
+  "testVerdict": {
+    "verified_success": "Verified success",
+    "partial_success": "Partial success",
+    "unverified": "Unverified (dry-run limits)",
+    "no_output": "No output",
+    "failed": "Failed",
+    "unverifiedHint": "Dry-run blocked side-effecting calls. Computed metrics below are not a verified end-to-end success."
+  },
   "runTest": "Run Test",
   "transformNamePlaceholder": "e.g., Temperature Average",
   "ruleSaved": "Rule saved successfully",

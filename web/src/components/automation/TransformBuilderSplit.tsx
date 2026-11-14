@@ -28,12 +28,13 @@ import {
   Play,
   Database,
   FlaskConical,
-  Check,
   Plus,
   Puzzle,
   FileCode,
   Zap,
 } from 'lucide-react'
+import { TransformTestResultPanel } from './TransformTestResultPanel'
+import type { TransformTestMetricRow } from './TransformTestResultPanel'
 import type {
   TransformAutomation,
   TransformScope,
@@ -710,11 +711,20 @@ function VariablesRail({
 // TestStrip — compact test panel
 // ============================================================================
 
+interface TestPreviewState {
+  outputText: string
+  metrics: TransformTestMetricRow[]
+  count: number
+  unverified: string[]
+  warnings: string[]
+  codeSuccess: boolean
+}
+
 interface TestStripProps {
   jsCode: string
   testInput: string
   onTestInputChange: (v: string) => void
-  testOutput: string
+  testPreview: TestPreviewState | null
   testError: string
   testRunning: boolean
   onTest: () => void
@@ -728,7 +738,7 @@ function TestStrip({
   jsCode,
   testInput,
   onTestInputChange,
-  testOutput,
+  testPreview,
   testError,
   testRunning,
   onTest,
@@ -839,24 +849,11 @@ function TestStrip({
         className="font-mono text-xs resize-none h-20 md:h-16"
       />
 
-      {/* Output / Error row */}
-      {(testOutput || testError) && (
+      {/* Output / Error — honest verdict (iter D): never green when unverified */}
+      {(testPreview || testError) && (
         <div>
           <div className="flex items-center gap-2 mb-1 justify-between">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="text-xs text-muted-foreground">{tBuilder('outputData')}</span>
-              {testError ? (
-                <span className="text-xs text-error flex items-center gap-1">
-                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-error" />
-                  {tBuilder('testFailed')}
-                </span>
-              ) : (
-                <span className="text-xs text-success flex items-center gap-1">
-                  <Check className="h-3 w-3" />
-                  {tBuilder('testSuccess')}
-                </span>
-              )}
-            </div>
+            <span className="text-xs text-muted-foreground">{tBuilder('outputData')}</span>
             <Button
               variant="ghost"
               className="h-6 px-2 text-xs shrink-0"
@@ -865,18 +862,24 @@ function TestStrip({
               {tBuilder('clear')}
             </Button>
           </div>
-          <div className="rounded-md p-2 max-h-40 overflow-auto">
-            {testError && (
-              <div className="p-1.5 bg-muted border border-error rounded text-xs text-error font-mono">
-                {testError}
-              </div>
-            )}
-            {testOutput && !testError && (
-              <pre className="text-xs font-mono text-muted-foreground whitespace-pre-wrap break-all">
-                {testOutput}
-              </pre>
-            )}
-          </div>
+          {testError && (
+            <div className="p-1.5 bg-muted border border-error rounded text-xs text-error font-mono">
+              {testError}
+            </div>
+          )}
+          {testPreview && !testError && (
+            <TransformTestResultPanel
+              compact
+              metrics={testPreview.metrics}
+              count={testPreview.count}
+              warnings={testPreview.warnings}
+              unverified={testPreview.unverified}
+              codeSuccess={testPreview.codeSuccess}
+              outputText={
+                testPreview.metrics.length === 0 ? testPreview.outputText : null
+              }
+            />
+          )}
         </div>
       )}
     </div>
@@ -900,7 +903,7 @@ interface TransformWorkspaceProps {
   // Test strip props
   testInput: string
   onTestInputChange: (v: string) => void
-  testOutput: string
+  testPreview: TestPreviewState | null
   testError: string
   testRunning: boolean
   onTest: () => void
@@ -921,7 +924,7 @@ function TransformWorkspace({
   formErrors,
   testInput,
   onTestInputChange,
-  testOutput,
+  testPreview,
   testError,
   testRunning,
   onTest,
@@ -1016,7 +1019,7 @@ function TransformWorkspace({
         jsCode={jsCode}
         testInput={testInput}
         onTestInputChange={onTestInputChange}
-        testOutput={testOutput}
+        testPreview={testPreview}
         testError={testError}
         testRunning={testRunning}
         onTest={onTest}
@@ -1059,7 +1062,7 @@ export function TransformBuilder({
 
   // Test state
   const [testInput, setTestInput] = useState('')
-  const [testOutput, setTestOutput] = useState('')
+  const [testPreview, setTestPreview] = useState<TestPreviewState | null>(null)
   const [testError, setTestError] = useState('')
   const [testRunning, setTestRunning] = useState(false)
 
@@ -1146,7 +1149,7 @@ export function TransformBuilder({
     setJsCode('')
     setSelectedExtensionSources([])
     setTestInput('')
-    setTestOutput('')
+    setTestPreview(null)
     setTestError('')
     setDeviceTypeMetrics(null)
     setFormErrors({})
@@ -1210,7 +1213,7 @@ export function TransformBuilder({
     if (!jsCode.trim()) return
 
     setTestRunning(true)
-    setTestOutput('')
+    setTestPreview(null)
     setTestError('')
 
     try {
@@ -1257,8 +1260,14 @@ export function TransformBuilder({
       })
 
       if (result.success) {
-        // Display output with prefix for clarity
-        setTestOutput(JSON.stringify(result.output_with_prefix || result.output, null, 2))
+        setTestPreview({
+          outputText: JSON.stringify(result.output_with_prefix || result.output, null, 2),
+          metrics: result.metrics ?? [],
+          count: result.count ?? (result.metrics?.length ?? 0),
+          unverified: result.unverified ?? [],
+          warnings: result.warnings ?? [],
+          codeSuccess: true,
+        })
       } else {
         setTestError(result.error || 'Unknown error')
       }
@@ -1454,11 +1463,11 @@ export function TransformBuilder({
           formErrors={formErrors}
           testInput={testInput}
           onTestInputChange={setTestInput}
-          testOutput={testOutput}
+          testPreview={testPreview}
           testError={testError}
           testRunning={testRunning}
           onTest={handleTestCode}
-          onClearTest={() => { setTestOutput(''); setTestError('') }}
+          onClearTest={() => { setTestPreview(null); setTestError('') }}
           tBuilder={tBuilder}
           t={t}
         />

@@ -41,7 +41,8 @@
   },
   "capability": {
     "tools": "工具调用",
-    "vision": "视觉"
+    "vision": "视觉",
+    "thinking": "思考"
   },
   "thinking": {
     "title": "思考过程",
@@ -216,6 +217,13 @@
     "rule": "规则",
     "transform": "转换",
     "agent": "代理",
+    "invalid": "引用无效",
+    "invalidSend": "部分引用无效，请修正后重发",
+    "filterTypes": "按类型筛选",
+    "filterAll": "全部",
+    "partialFailure": "部分类型加载失败",
+    "searchFailed": "搜索失败，请重试",
+    "loadMore": "加载更多",
     "protoTitle": "行内 @ 原型",
     "protoDesc": "独立编辑器原型：评估行内引用交互；不写入生产 ChatComposer。",
     "protoHint": "行内引用原型：@ 或工具栏插入；同一对象可出现多次；芯片整块删除。",

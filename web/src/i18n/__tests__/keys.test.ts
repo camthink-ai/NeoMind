@@ -91,6 +91,17 @@ const LOCALES = ['en', 'zh']
  */
 const DYNAMIC_KEY_FAMILIES: Array<{ ns: string; keys: string[] }> = [
   {
+    ns: 'automation',
+    keys: [
+      'testVerdict.verified_success',
+      'testVerdict.partial_success',
+      'testVerdict.unverified',
+      'testVerdict.no_output',
+      'testVerdict.failed',
+      'testVerdict.unverifiedHint',
+    ],
+  },
+  {
     ns: 'agents',
     keys: [
       'creator.notify.onFailure', 'creator.notify.onFailureDesc',
@@ -242,7 +253,9 @@ describe('translation keys referenced from source', () => {
     // defaulted-but-missing categories.active pill label.
     // 249 -> 248 (1.2.10): dashboard empty/error states moved defaulted
     // English strings into dashboard-components.json i18n keys.
-    const FROZEN = 248
+    // 248 -> 247 (1.3.0 iter D): chat mention/invalid/filter keys + capability.thinking
+    // filled in en/zh (net −1 after scanner sees remaining soft gaps).
+    const FROZEN = 247
     const soft = [...referenced.values()].filter(
       (r) => r.bare.length === 0 && resolve(bundleOf('en', r.ns) ?? {}, r.key) === undefined,
     )
