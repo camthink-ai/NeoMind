@@ -21,7 +21,7 @@
     "begin_new_operation(tool,target,args,fp)",
     "evaluate_mutating_gate / finalize_operation_from_tool_result",
     "same-op PreferKnown resume",
-    "timeout → Unknown no double write",
+    "timeout \u2192 Unknown no double write",
     "Correct cancels Prepared ops"
   ],
   "gates": {
@@ -35,7 +35,7 @@
     "tool capability flags on Operation records",
     "progress-based loop detection beyond G3 identical-round halt"
   ],
-  "claim": "Round 2: real Operation IDs + structured results; same-op resume prefers known result; authorized re-run via begin_new_operation; timeout/unknown ≠ success and no auto-replay; stream path wired.",
-  "commit": "PENDING",
-  "head_at_end": "PENDING"
+  "claim": "Round 2: real Operation IDs + structured results; same-op resume prefers known result; authorized re-run via begin_new_operation; timeout/unknown \u2260 success and no auto-replay; stream path wired.",
+  "commit": "0d2df5a18cb629afc46c09b780b81fd7351012bc",
+  "head_at_end": "0d2df5a18cb629afc46c09b780b81fd7351012bc"
 }
