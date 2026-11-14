@@ -821,17 +821,17 @@ impl Agent {
         if !self.config.enable_tools {
             return Vec::new();
         }
-        let defs = self.tools.definitions_for_llm();
-        if self.config.allowed_tools.is_empty() {
-            return defs;
-        }
-        const ALWAYS_KEEP: [&str; 3] = ["ask_user", "confirm_action", "clarify_intent"];
-        defs.into_iter()
-            .filter(|d| {
+        let mut defs = self.tools.definitions_for_llm();
+        if !self.config.allowed_tools.is_empty() {
+            const ALWAYS_KEEP: [&str; 3] = ["ask_user", "confirm_action", "clarify_intent"];
+            defs.retain(|d| {
                 ALWAYS_KEEP.contains(&d.name.as_str())
                     || self.config.allowed_tools.iter().any(|a| a == &d.name)
-            })
-            .collect()
+            });
+        }
+        // Discoverable new-execution protocol on mutating tools (schema + prompt).
+        task_continuity::inject_new_operation_protocol(&mut defs);
+        defs
     }
 }
 impl Agent {

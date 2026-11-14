@@ -33,6 +33,8 @@
 //! - **Cancel** stops the task; further writes are refused.
 //! - **Continue** resumes without replaying writes already recorded on the
 //!   current operation.
+//! - **AuthorizeNewOperation** grants a one-shot user re-run after Unknown;
+//!   the model must still set `_new_operation` via the registered tool schema.
 //!
 //! ## Transient skills vs TaskState (plan §12 P1)
 //! Each **new user turn** clears temporary skill bodies on the LLM interface
@@ -40,7 +42,7 @@
 //! the next turn. [`TaskState`] is **not** cleared by that call — it lives on
 //! `AgentInternalState` and is updated only via [`TaskDirective`] when the user
 //! message is pushed. Order of operations:
-//! 1. `push_message(user)` → note Turn; parse Continue/Correct/Cancel if any
+//! 1. `push_message(user)` → note Turn; parse Continue/Correct/Cancel/AuthorizeNewOperation if any
 //! 2. Stream entry → clear transient skills
 //! 3. Within the turn, the skill tool may reload guides under the total body budget
 //!
@@ -273,13 +275,28 @@ pub enum WriteDispatch {
 
 /// Tool-arg key for the production new-op protocol (not a phrase whitelist).
 ///
-/// When `true` on a mutating call whose latest same-args Operation is
-/// terminal, [`evaluate_mutating_gate`] calls [`TaskState::begin_new_operation`]
-/// so the same args may re-run under a fresh Operation ID. Absent / false →
-/// resume PreferKnown / block — never auto-replay.
+/// Exposed on mutating tool schemas via [`inject_new_operation_protocol`].
+/// When `true` on a mutating call whose latest same-args Operation is a
+/// **known** terminal (Succeeded/Failed), [`evaluate_mutating_gate`] calls
+/// [`TaskState::begin_new_operation_for_owner`] so the same args may re-run
+/// under a fresh Operation ID. Absent / false → resume PreferKnown / block —
+/// never auto-replay.
+///
+/// After **Unknown**, a model-added boolean alone is **not** sufficient —
+/// [`TaskState::take_user_authorized_new_op`] must also be granted (user
+/// control phrase / host grant).
 pub const NEW_OPERATION_ARG: &str = "_new_operation";
 
-/// Whether tool args authorize a fresh same-args Operation (production entry).
+/// Mutating tools that advertise [`NEW_OPERATION_ARG`] in the LLM schema.
+pub const NEW_OPERATION_PROTOCOL_TOOLS: &[&str] = &[
+    "shell",
+    "run_now",
+    "file_write",
+    "file_edit",
+    "image_edit",
+];
+
+/// Whether tool args request a fresh same-args Operation (model protocol bit).
 pub fn wants_new_operation(arguments: &serde_json::Value) -> bool {
     arguments
         .get(NEW_OPERATION_ARG)
@@ -292,6 +309,71 @@ pub fn strip_new_operation_flag(arguments: &mut serde_json::Value) {
     if let Some(obj) = arguments.as_object_mut() {
         obj.remove(NEW_OPERATION_ARG);
     }
+}
+
+/// Inject the discoverable `{NEW_OPERATION_ARG}` boolean into mutating tool
+/// schemas so models can find “run again / new execution” without a hidden
+/// manual flag. Idempotent.
+pub fn inject_new_operation_protocol(defs: &mut [crate::toolkit::tool::ToolDefinition]) {
+    let desc = format!(
+        "Set true to begin a NEW Operation with the same business args after a \
+         prior known terminal result (Succeeded/Failed). After Unknown outcome, \
+         this flag alone is not enough — the user must authorize a re-run \
+         (confirm re-run). Default false = resume PreferKnown / block; never \
+         auto-replay. Lifecycle-only; stripped before tool execution."
+    );
+    for def in defs.iter_mut() {
+        if !NEW_OPERATION_PROTOCOL_TOOLS.contains(&def.name.as_str()) {
+            continue;
+        }
+        let Some(obj) = def.parameters.as_object_mut() else {
+            continue;
+        };
+        let props = obj
+            .entry("properties")
+            .or_insert_with(|| serde_json::json!({}));
+        let Some(props) = props.as_object_mut() else {
+            continue;
+        };
+        props
+            .entry(NEW_OPERATION_ARG.to_string())
+            .or_insert_with(|| {
+                serde_json::json!({
+                    "type": "boolean",
+                    "description": desc,
+                })
+            });
+        if !def.description.contains(NEW_OPERATION_ARG) {
+            def.description.push_str(&format!(
+                " Lifecycle: optional `{NEW_OPERATION_ARG}` starts a fresh same-args \
+                 Operation after a known terminal result; after Unknown, user \
+                 authorization is required."
+            ));
+        }
+    }
+}
+
+/// Set `{NEW_OPERATION_ARG}=true` only when the registered tool schema exposes it.
+///
+/// Tests and hosts must use this (or equivalent schema lookup) instead of
+/// injecting the flag as a stand-in for model entry discovery.
+pub fn apply_new_operation_from_tool_schema(
+    def: &crate::toolkit::tool::ToolDefinition,
+    mut args: serde_json::Value,
+) -> Result<serde_json::Value, &'static str> {
+    let exposed = def
+        .parameters
+        .get("properties")
+        .and_then(|p| p.get(NEW_OPERATION_ARG))
+        .is_some();
+    if !exposed {
+        return Err("tool schema does not expose _new_operation");
+    }
+    let obj = args
+        .as_object_mut()
+        .ok_or("arguments must be a JSON object")?;
+    obj.insert(NEW_OPERATION_ARG.into(), serde_json::json!(true));
+    Ok(args)
 }
 
 /// Lightweight cross-turn task state (G2) + Round 2 operation ledger.
@@ -312,10 +394,11 @@ pub struct TaskState {
     pub write_ledger: Vec<WriteFact>,
     /// Count of user Turns observed (each user message).
     pub turn_count: u64,
-    /// Owner of the stream currently tagging new operations.
-    /// Runtime-only — not persisted across process restarts.
+    /// One-shot user authorization for a new Operation after Unknown.
+    /// Runtime-only — not persisted. Consumed by
+    /// [`Self::take_user_authorized_new_op`].
     #[serde(skip)]
-    pub current_stream_owner: Option<StreamOwnerId>,
+    pub user_authorized_new_op: bool,
 }
 
 impl Default for TaskState {
@@ -331,7 +414,7 @@ impl Default for TaskState {
             operations: Vec::new(),
             write_ledger: Vec::new(),
             turn_count: 0,
-            current_stream_owner: None,
+            user_authorized_new_op: false,
         }
     }
 }
@@ -356,6 +439,10 @@ pub enum TaskDirective {
     Cancel,
     /// Resume without replaying writes recorded on the current operation.
     Continue,
+    /// Grant one-shot user authorization for a new same-args Operation after
+    /// Unknown. Does **not** begin the Operation — the model must still set
+    /// [`NEW_OPERATION_ARG`] via the registered tool schema.
+    AuthorizeNewOperation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -371,16 +458,38 @@ impl TaskState {
         self.turn_count = self.turn_count.saturating_add(1);
     }
 
-    /// User-authorized re-run (or first attempt): open a **new** Operation
-    /// with a fresh UUID. Keeps write ledger + confirmed steps + prior
-    /// Operation records. No phrase whitelist — callers (tool/model path)
-    /// must invoke this explicitly when a re-run is authorized.
+    /// Open a **new** Operation with a fresh UUID (no stream owner).
+    ///
+    /// Prefer [`Self::begin_new_operation_for_owner`] on stream paths so the
+    /// owner is an explicit parameter — never a session-level shared hop.
     pub fn begin_new_operation(
         &mut self,
         tool_name: impl Into<String>,
         target: Option<String>,
         arguments: impl Into<String>,
         write_fingerprint: Option<String>,
+    ) -> OperationId {
+        self.begin_new_operation_for_owner(
+            tool_name,
+            target,
+            arguments,
+            write_fingerprint,
+            None,
+        )
+    }
+
+    /// Open a **new** Operation tagged with the current stream's owner.
+    ///
+    /// Keeps write ledger + confirmed steps + prior Operation records.
+    /// `owner` must come from the active stream token — do not read a
+    /// shared session variable.
+    pub fn begin_new_operation_for_owner(
+        &mut self,
+        tool_name: impl Into<String>,
+        target: Option<String>,
+        arguments: impl Into<String>,
+        write_fingerprint: Option<String>,
+        owner: Option<&str>,
     ) -> OperationId {
         let tool_name = tool_name.into();
         let arguments = arguments.into();
@@ -401,7 +510,7 @@ impl TaskState {
             evidence: Vec::new(),
             write_fingerprint,
             capability,
-            owner_id: self.current_stream_owner.clone(),
+            owner_id: owner.map(|o| o.to_string()),
         });
         if !matches!(
             self.status,
@@ -412,9 +521,16 @@ impl TaskState {
         id
     }
 
-    /// Install the stream owner used to tag newly begun operations.
-    pub fn install_stream_owner(&mut self, owner: StreamOwnerId) {
-        self.current_stream_owner = Some(owner);
+    /// Grant one-shot user authorization for a new Operation after Unknown.
+    pub fn grant_user_authorized_new_op(&mut self) {
+        self.user_authorized_new_op = true;
+    }
+
+    /// Consume one-shot user authorization (returns whether it was granted).
+    pub fn take_user_authorized_new_op(&mut self) -> bool {
+        let granted = self.user_authorized_new_op;
+        self.user_authorized_new_op = false;
+        granted
     }
 
     /// Cancel Prepared (not-yet-executed) operations; keep executed facts.
@@ -468,11 +584,6 @@ impl TaskState {
                 }
                 _ => {}
             }
-        }
-        // Clear current owner only if it still points at this stream — a newer
-        // stream may already have replaced it.
-        if self.current_stream_owner.as_deref() == Some(owner) {
-            self.current_stream_owner = None;
         }
     }
 }
@@ -802,6 +913,20 @@ impl TaskState {
                 }
                 ApplyOutcome::Applied
             }
+            TaskDirective::AuthorizeNewOperation => {
+                if matches!(self.status, TaskStatus::Cancelled) {
+                    return ApplyOutcome::Ignored {
+                        reason: "cancelled",
+                    };
+                }
+                // One-shot grant only — does not begin an Operation or wipe
+                // gates. Model must still pass `_new_operation` via schema.
+                self.grant_user_authorized_new_op();
+                if !matches!(self.status, TaskStatus::Completed { .. }) {
+                    self.status = TaskStatus::Active;
+                }
+                ApplyOutcome::Applied
+            }
         }
     }
 
@@ -892,6 +1017,18 @@ impl TaskState {
                 self.write_ledger.len(),
                 gated_here
             ));
+        }
+        out.push_str(&format!(
+            "- New execution protocol: set `{NEW_OPERATION_ARG}: true` on a mutating \
+             tool (advertised in that tool's schema) to begin a fresh Operation after \
+             a known terminal result. After Unknown, the model boolean alone is not \
+             enough — ask the user to authorize a re-run first.\n"
+        ));
+        if self.user_authorized_new_op {
+            out.push_str(
+                "- User authorized a new Operation (one-shot); combine with \
+                 `_new_operation: true` on the next mutating call.\n",
+            );
         }
         Some(out)
     }
@@ -1052,6 +1189,21 @@ pub fn parse_user_directive(text: &str) -> Option<TaskDirective> {
         "继续" | "继续吧" | "请继续" | "continue" | "go on" | "keep going" | "please continue"
     ) {
         return Some(TaskDirective::Continue);
+    }
+
+    // Authorize new Operation after Unknown (one-shot grant; model still sets
+    // `_new_operation` via schema). Distinct from ordinary 「再发送一次」 turns.
+    if matches!(
+        lower.as_str(),
+        "确认重跑"
+            | "允许重跑"
+            | "确认再执行"
+            | "authorize re-run"
+            | "confirm re-run"
+            | "yes re-run"
+            | "yes, re-run"
+    ) {
+        return Some(TaskDirective::AuthorizeNewOperation);
     }
 
     // Correction control phrases update goal fields only (do not lift gates).
@@ -1456,9 +1608,10 @@ pub fn tools_allowed_under_budget_pressure(
 
 /// Resolve a mutating write to an Operation ID ready for the execution lease.
 ///
-/// - First attempt: dispatch Execute with empty id → [`TaskState::begin_new_operation`].
-/// - User/model new-op (`_new_operation: true`) after a terminal same-args op →
-///   [`TaskState::begin_new_operation`] (production entry; not a phrase list).
+/// - First attempt: dispatch Execute with empty id →
+///   [`TaskState::begin_new_operation_for_owner`] (owner from this stream).
+/// - Known terminal + schema `_new_operation: true` → fresh Operation.
+/// - Unknown + `_new_operation` alone → still InquireStatus (need user grant).
 /// - Prepared: returns that id for lease acquire.
 /// - Running / terminal: `Err(WriteDispatch)` — InProgress / PreferKnown / inquire.
 pub fn prepare_mutating_dispatch(
@@ -1466,27 +1619,47 @@ pub fn prepare_mutating_dispatch(
     tool_name: &str,
     arguments: &serde_json::Value,
     write_fingerprint: &str,
+    stream_owner: Option<&str>,
 ) -> Result<OperationId, WriteDispatch> {
     let authorize_new = wants_new_operation(arguments);
     let dispatch = state.dispatch_mutating_write(write_fingerprint);
 
     // Production new-op entry: terminal same-args + explicit `_new_operation`
     // → begin a fresh Operation (resume without the flag never replays).
+    // Source constraints: PreferKnown/BlockedSucceeded accept the model
+    // protocol bit; InquireStatus (Unknown) also requires a consumed user grant.
     if authorize_new {
         match &dispatch {
-            WriteDispatch::PreferKnown { .. }
-            | WriteDispatch::BlockedSucceeded { .. }
-            | WriteDispatch::InquireStatus { .. } => {
+            WriteDispatch::PreferKnown { .. } | WriteDispatch::BlockedSucceeded { .. } => {
                 let mut clean = arguments.clone();
                 strip_new_operation_flag(&mut clean);
                 let args = serde_json::to_string(&clean).unwrap_or_else(|_| "{}".into());
-                let id = state.begin_new_operation(
+                let id = state.begin_new_operation_for_owner(
                     tool_name,
                     extract_operation_target(&clean),
                     args,
                     Some(write_fingerprint.to_string()),
+                    stream_owner,
                 );
                 return Ok(id);
+            }
+            WriteDispatch::InquireStatus { operation_id } => {
+                if state.take_user_authorized_new_op() {
+                    let mut clean = arguments.clone();
+                    strip_new_operation_flag(&mut clean);
+                    let args = serde_json::to_string(&clean).unwrap_or_else(|_| "{}".into());
+                    let id = state.begin_new_operation_for_owner(
+                        tool_name,
+                        extract_operation_target(&clean),
+                        args,
+                        Some(write_fingerprint.to_string()),
+                        stream_owner,
+                    );
+                    return Ok(id);
+                }
+                return Err(WriteDispatch::InquireStatus {
+                    operation_id: operation_id.clone(),
+                });
             }
             WriteDispatch::InProgress { operation_id } => {
                 return Err(WriteDispatch::InProgress {
@@ -1503,11 +1676,12 @@ pub fn prepare_mutating_dispatch(
             let mut clean = arguments.clone();
             strip_new_operation_flag(&mut clean);
             let args = serde_json::to_string(&clean).unwrap_or_else(|_| "{}".into());
-            let id = state.begin_new_operation(
+            let id = state.begin_new_operation_for_owner(
                 tool_name,
                 extract_operation_target(&clean),
                 args,
                 Some(write_fingerprint.to_string()),
+                stream_owner,
             );
             Ok(id)
         }
@@ -1536,13 +1710,23 @@ pub enum MutatingGateOutcome {
 ///
 /// Acquires the atomic Prepared→Running lease; concurrent same-args callers
 /// get [`MutatingGateOutcome::InProgress`] so the tool runs once.
+///
+/// `stream_owner` is the calling stream's immutable token — passed into
+/// create/lease, never via a shared session hop.
 pub fn evaluate_mutating_gate(
     state: &mut TaskState,
     tool_name: &str,
     arguments: &serde_json::Value,
     write_fingerprint: &str,
+    stream_owner: Option<&str>,
 ) -> MutatingGateOutcome {
-    match prepare_mutating_dispatch(state, tool_name, arguments, write_fingerprint) {
+    match prepare_mutating_dispatch(
+        state,
+        tool_name,
+        arguments,
+        write_fingerprint,
+        stream_owner,
+    ) {
         Ok(op_id) => {
             if state.try_acquire_execution_lease(&op_id) {
                 MutatingGateOutcome::Proceed {
@@ -1587,7 +1771,10 @@ pub fn evaluate_mutating_gate(
         }
         Err(WriteDispatch::InquireStatus { operation_id }) => MutatingGateOutcome::Block {
             message: format!(
-                "Write blocked: operation {operation_id} ended with unknown outcome (e.g. timeout). Inquire status; do not auto-replay; do not pretend success. Authorized re-run requires {NEW_OPERATION_ARG}=true (begin_new_operation)."
+                "Write blocked: operation {operation_id} ended with unknown outcome (e.g. timeout). \
+                 Inquire status; do not auto-replay; do not pretend success. A model-added \
+                 `{NEW_OPERATION_ARG}=true` alone is not user-authorized replay — ask the user \
+                 to confirm a re-run first, then set `{NEW_OPERATION_ARG}` from the tool schema."
             ),
         },
         Err(WriteDispatch::BlockedCancelled) => MutatingGateOutcome::Block {
@@ -1595,7 +1782,9 @@ pub fn evaluate_mutating_gate(
         },
         Err(WriteDispatch::BlockedSucceeded { operation_id }) => MutatingGateOutcome::Block {
             message: format!(
-                "Write blocked: mutation already succeeded on operation {operation_id}. Do not replay it; report status or wait for evidence. Authorized re-run requires {NEW_OPERATION_ARG}=true (begin_new_operation)."
+                "Write blocked: mutation already succeeded on operation {operation_id}. Do not \
+                 replay it; report status or wait for evidence. Authorized re-run: set \
+                 `{NEW_OPERATION_ARG}=true` (see tool schema)."
             ),
         },
         Err(WriteDispatch::Execute { .. }) => MutatingGateOutcome::Block {
@@ -2032,6 +2221,15 @@ mod tests {
         assert!(parse_user_directive("再发送一次").is_none());
         assert!(parse_user_directive("好的").is_none());
         assert!(parse_user_directive("你好").is_none());
+        // Unknown re-run grant (distinct from ordinary 「再发送一次」).
+        assert_eq!(
+            parse_user_directive("确认重跑"),
+            Some(TaskDirective::AuthorizeNewOperation)
+        );
+        assert_eq!(
+            parse_user_directive("confirm re-run"),
+            Some(TaskDirective::AuthorizeNewOperation)
+        );
     }
 
     #[test]
@@ -2902,13 +3100,13 @@ mod tests {
             "capability unify: shell mutation is not read_only"
         );
 
-        let first = evaluate_mutating_gate(&mut s, "shell", &args, &fp);
+        let first = evaluate_mutating_gate(&mut s, "shell", &args, &fp, None);
         let MutatingGateOutcome::Proceed { operation_id: op1 } = first else {
             panic!("first lease holder must Proceed, got {first:?}");
         };
         assert_eq!(s.operation(&op1).unwrap().status, OperationStatus::Running);
 
-        let second = evaluate_mutating_gate(&mut s, "shell", &args, &fp);
+        let second = evaluate_mutating_gate(&mut s, "shell", &args, &fp, None);
         match second {
             MutatingGateOutcome::InProgress { operation_id } => {
                 assert_eq!(operation_id, op1, "same op — wait, do not re-exec");
@@ -2928,7 +3126,7 @@ mod tests {
         let fp = write_fingerprint("shell", cmd);
 
         let MutatingGateOutcome::Proceed { operation_id: op1 } =
-            evaluate_mutating_gate(&mut s, "shell", &args, &fp)
+            evaluate_mutating_gate(&mut s, "shell", &args, &fp, None)
         else {
             panic!("first attempt Proceed");
         };
@@ -2951,7 +3149,7 @@ mod tests {
         );
 
         // Resume old without new-op flag → PreferKnown, no replay.
-        match evaluate_mutating_gate(&mut s, "shell", &args, &fp) {
+        match evaluate_mutating_gate(&mut s, "shell", &args, &fp, None) {
             MutatingGateOutcome::ResumeKnown {
                 operation_id,
                 output,
@@ -2976,7 +3174,7 @@ mod tests {
             .unwrap()
             .insert(NEW_OPERATION_ARG.into(), serde_json::json!(true));
         let MutatingGateOutcome::Proceed { operation_id: op2 } =
-            evaluate_mutating_gate(&mut s, "shell", &new_args, &fp)
+            evaluate_mutating_gate(&mut s, "shell", &new_args, &fp, None)
         else {
             panic!("_new_operation must authorize begin_new_operation");
         };
@@ -3151,12 +3349,12 @@ mod tests {
         );
 
         let mut s = TaskState::default();
-        let first = evaluate_mutating_gate(&mut s, "run_now", &base, &fp);
+        let first = evaluate_mutating_gate(&mut s, "run_now", &base, &fp, None);
         let MutatingGateOutcome::Proceed { operation_id: op1 } = first else {
             panic!("first must Proceed, got {first:?}");
         };
         // Concurrent same business args + flag must hit the Running lease.
-        let second = evaluate_mutating_gate(&mut s, "run_now", &with_flag, &fp);
+        let second = evaluate_mutating_gate(&mut s, "run_now", &with_flag, &fp, None);
         match second {
             MutatingGateOutcome::InProgress { operation_id } => {
                 assert_eq!(operation_id, op1);
@@ -3181,8 +3379,7 @@ mod tests {
             &mut s,
             "run_now",
             &serde_json::json!({"agent_id": "A"}),
-            &fp,
-        ) else {
+            &fp, None) else {
             panic!("Proceed");
         };
         s.complete_operation_failed(
@@ -3193,8 +3390,7 @@ mod tests {
             &mut s,
             "run_now",
             &serde_json::json!({"agent_id": "A"}),
-            &fp,
-        ) {
+            &fp, None) {
             MutatingGateOutcome::ResumeKnown { output, .. } => {
                 assert!(!output.success, "failed resume outer success must be false");
                 assert_eq!(
@@ -3213,17 +3409,21 @@ mod tests {
     fn gpt_interrupt_abandons_running_so_new_op_can_proceed() {
         let mut s = TaskState::default();
         let owner = new_stream_owner();
-        s.install_stream_owner(owner.clone());
         let fp = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
         let MutatingGateOutcome::Proceed { operation_id: op1 } = evaluate_mutating_gate(
             &mut s,
             "run_now",
             &serde_json::json!({"agent_id": "A"}),
             &fp,
+            Some(owner.as_str()),
         ) else {
             panic!("Proceed");
         };
         assert_eq!(s.operation(&op1).unwrap().status, OperationStatus::Running);
+        assert_eq!(
+            s.operation(&op1).unwrap().owner_id.as_deref(),
+            Some(owner.as_str())
+        );
 
         s.abandon_owned_operations_on_interrupt(&owner, "user interrupt during tool batch");
         assert_eq!(
@@ -3232,20 +3432,47 @@ mod tests {
             "Running must become terminal Unknown"
         );
 
-        // Without abandon, _new_operation stayed InProgress; after abandon it proceeds.
-        s.install_stream_owner(new_stream_owner());
+        // Model boolean alone after Unknown must NOT authorize replay.
         let mut new_args = serde_json::json!({"agent_id": "A"});
         new_args
             .as_object_mut()
             .unwrap()
             .insert(NEW_OPERATION_ARG.into(), serde_json::json!(true));
-        let MutatingGateOutcome::Proceed { operation_id: op2 } =
-            evaluate_mutating_gate(&mut s, "run_now", &new_args, &fp)
-        else {
-            panic!("_new_operation after interrupt must Proceed");
+        match evaluate_mutating_gate(
+            &mut s,
+            "run_now",
+            &new_args,
+            &fp,
+            Some(new_stream_owner().as_str()),
+        ) {
+            MutatingGateOutcome::Block { message } => {
+                assert!(
+                    message.contains("alone is not user-authorized")
+                        || message.contains("confirm"),
+                    "unexpected block: {message}"
+                );
+            }
+            other => panic!("model-alone after Unknown must Block, got {other:?}"),
+        }
+
+        // User grant + schema flag → Proceed.
+        s.apply_directive(TaskDirective::AuthorizeNewOperation);
+        let owner2 = new_stream_owner();
+        let MutatingGateOutcome::Proceed { operation_id: op2 } = evaluate_mutating_gate(
+            &mut s,
+            "run_now",
+            &new_args,
+            &fp,
+            Some(owner2.as_str()),
+        ) else {
+            panic!("user-authorized _new_operation after interrupt must Proceed");
         };
         assert_ne!(op2, op1);
         assert_eq!(s.operation(&op2).unwrap().status, OperationStatus::Running);
+        assert_eq!(
+            s.operation(&op2).unwrap().owner_id.as_deref(),
+            Some(owner2.as_str())
+        );
     }
 
     // ── GPT residuals on d2fbffca ───────────────────────────────────────
@@ -3275,11 +3502,11 @@ mod tests {
 
         let mut s = TaskState::default();
         let MutatingGateOutcome::Proceed { operation_id: op1 } =
-            evaluate_mutating_gate(&mut s, "device", &base, &fp1)
+            evaluate_mutating_gate(&mut s, "device", &base, &fp1, None)
         else {
             panic!("first Proceed");
         };
-        match evaluate_mutating_gate(&mut s, "device", &flagged, &fp2) {
+        match evaluate_mutating_gate(&mut s, "device", &flagged, &fp2, None) {
             MutatingGateOutcome::InProgress { operation_id } => assert_eq!(operation_id, op1),
             other => panic!("flagged concurrent alias must InProgress, got {other:?}"),
         }
@@ -3316,18 +3543,22 @@ mod tests {
         let fp = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
         {
             let mut s = state.blocking_write();
-            s.task_state.install_stream_owner(owner.clone());
             let MutatingGateOutcome::Proceed { .. } = evaluate_mutating_gate(
                 &mut s.task_state,
                 "run_now",
                 &serde_json::json!({"agent_id": "A"}),
                 &fp,
+                Some(owner.as_str()),
             ) else {
                 panic!("Proceed");
             };
             assert_eq!(
                 s.task_state.operations.last().unwrap().status,
                 OperationStatus::Running
+            );
+            assert_eq!(
+                s.task_state.operations.last().unwrap().owner_id.as_deref(),
+                Some(owner.as_str())
             );
         }
         // Guard drop (simulates consumer.abort / stream Drop) must finalize.
@@ -3340,16 +3571,27 @@ mod tests {
             s.task_state.operations.last().unwrap().status,
             OperationStatus::Unknown
         );
-        s.task_state.install_stream_owner(new_stream_owner());
+        // Unknown: model boolean alone blocked; user grant required.
         let mut new_args = serde_json::json!({"agent_id": "A"});
         new_args
             .as_object_mut()
             .unwrap()
             .insert(NEW_OPERATION_ARG.into(), serde_json::json!(true));
-        let MutatingGateOutcome::Proceed { .. } =
-            evaluate_mutating_gate(&mut s.task_state, "run_now", &new_args, &fp)
-        else {
-            panic!("new-op after drop must Proceed");
+        match evaluate_mutating_gate(&mut s.task_state, "run_now", &new_args, &fp, None) {
+            MutatingGateOutcome::Block { .. } => {}
+            other => panic!("model-alone after Unknown must Block, got {other:?}"),
+        }
+        s.task_state
+            .apply_directive(TaskDirective::AuthorizeNewOperation);
+        let owner2 = new_stream_owner();
+        let MutatingGateOutcome::Proceed { .. } = evaluate_mutating_gate(
+            &mut s.task_state,
+            "run_now",
+            &new_args,
+            &fp,
+            Some(owner2.as_str()),
+        ) else {
+            panic!("user-authorized new-op after drop must Proceed");
         };
     }
 
@@ -3367,12 +3609,12 @@ mod tests {
 
         let guard_a = {
             let mut s = state.blocking_write();
-            s.task_state.install_stream_owner(owner_a.clone());
             let MutatingGateOutcome::Proceed { operation_id } = evaluate_mutating_gate(
                 &mut s.task_state,
                 "run_now",
                 &serde_json::json!({"agent_id": "A"}),
                 &fp_a,
+                Some(owner_a.as_str()),
             ) else {
                 panic!("A Proceed");
             };
@@ -3387,12 +3629,12 @@ mod tests {
 
         let op_b = {
             let mut s = state.blocking_write();
-            s.task_state.install_stream_owner(owner_b.clone());
             let MutatingGateOutcome::Proceed { operation_id } = evaluate_mutating_gate(
                 &mut s.task_state,
                 "run_now",
                 &serde_json::json!({"agent_id": "B"}),
                 &fp_b,
+                Some(owner_b.as_str()),
             ) else {
                 panic!("B Proceed");
             };
@@ -3418,7 +3660,13 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .insert(NEW_OPERATION_ARG.into(), serde_json::json!(true));
-        match evaluate_mutating_gate(&mut s.task_state, "run_now", &retry, &fp_b) {
+        match evaluate_mutating_gate(
+            &mut s.task_state,
+            "run_now",
+            &retry,
+            &fp_b,
+            Some(owner_b.as_str()),
+        ) {
             MutatingGateOutcome::InProgress { operation_id } => {
                 assert_eq!(operation_id, op_b);
             }
@@ -3435,5 +3683,163 @@ mod tests {
             s.task_state.operation(&op_b).unwrap().owner_id.as_deref(),
             Some(owner_b.as_str())
         );
+    }
+
+    /// P1-1 e2e: interleaved dual-stream create + exit cannot cross-attribute.
+    #[test]
+    fn gpt_dual_stream_interleaved_create_exit_no_cross_attribution() {
+        let mut s = TaskState::default();
+        let owner_a = new_stream_owner();
+        let owner_b = new_stream_owner();
+        let fp_a = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
+        let fp_b = write_fingerprint("run_now", r#"{"agent_id":"B"}"#);
+
+        // Interleaved create: A then B with explicit owners (no shared hop).
+        let MutatingGateOutcome::Proceed { operation_id: op_a } = evaluate_mutating_gate(
+            &mut s,
+            "run_now",
+            &serde_json::json!({"agent_id": "A"}),
+            &fp_a,
+            Some(owner_a.as_str()),
+        ) else {
+            panic!("A Proceed");
+        };
+        let MutatingGateOutcome::Proceed { operation_id: op_b } = evaluate_mutating_gate(
+            &mut s,
+            "run_now",
+            &serde_json::json!({"agent_id": "B"}),
+            &fp_b,
+            Some(owner_b.as_str()),
+        ) else {
+            panic!("B Proceed");
+        };
+
+        assert_eq!(
+            s.operation(&op_a).unwrap().owner_id.as_deref(),
+            Some(owner_a.as_str()),
+            "A must keep its own owner even after B creates"
+        );
+        assert_eq!(
+            s.operation(&op_b).unwrap().owner_id.as_deref(),
+            Some(owner_b.as_str())
+        );
+
+        // A exit must not Unknown B; A cannot clear B's ops.
+        s.abandon_owned_operations_on_interrupt(&owner_a, "stream A exit");
+        assert_eq!(s.operation(&op_a).unwrap().status, OperationStatus::Unknown);
+        assert_eq!(
+            s.operation(&op_b).unwrap().status,
+            OperationStatus::Running,
+            "B must stay Running after A exit"
+        );
+
+        // B exit clears only B; A stays Unknown (not re-touched into a wrong state).
+        s.abandon_owned_operations_on_interrupt(&owner_b, "stream B exit");
+        assert_eq!(s.operation(&op_b).unwrap().status, OperationStatus::Unknown);
+        assert_eq!(s.operation(&op_a).unwrap().status, OperationStatus::Unknown);
+        assert_eq!(
+            s.operation(&op_a).unwrap().owner_id.as_deref(),
+            Some(owner_a.as_str())
+        );
+        assert_eq!(
+            s.operation(&op_b).unwrap().owner_id.as_deref(),
+            Some(owner_b.as_str())
+        );
+    }
+
+    /// P1-2 e2e: first run → resume → run-again via registered tool schema.
+    #[test]
+    fn gpt_run_again_via_registered_tool_schema_not_manual_inject() {
+        // Build the schema the model actually sees (inject protocol).
+        let mut defs = vec![crate::toolkit::tool::ToolDefinition {
+            name: "run_now".into(),
+            description: "Ask an agent to run now.".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "agent": { "type": "string" }
+                },
+                "required": ["agent"]
+            }),
+            example: None,
+            category: crate::toolkit::tool::ToolCategory::System,
+            scenarios: vec![],
+            relationships: Default::default(),
+            deprecated: false,
+            replaced_by: None,
+            version: "1.0.0".into(),
+            examples: vec![],
+            response_format: None,
+            namespace: None,
+        }];
+        inject_new_operation_protocol(&mut defs);
+        let def = &defs[0];
+        assert!(
+            def.parameters
+                .get("properties")
+                .and_then(|p| p.get(NEW_OPERATION_ARG))
+                .is_some(),
+            "registered schema must expose {NEW_OPERATION_ARG}"
+        );
+
+        let mut s = TaskState::default();
+        let owner = new_stream_owner();
+        let base = serde_json::json!({"agent": "cold-room"});
+        let fp = crate::agent::streaming::mutating_write_fingerprint("run_now", &base)
+            .expect("run_now write");
+
+        // First run.
+        let MutatingGateOutcome::Proceed { operation_id: op1 } =
+            evaluate_mutating_gate(&mut s, "run_now", &base, &fp, Some(owner.as_str()))
+        else {
+            panic!("first Proceed");
+        };
+        s.complete_operation_succeeded(
+            &op1,
+            StructuredResult::with_body(true, "ok", r#"{"ok":true}"#, None),
+            None::<String>,
+        );
+
+        // Resume without flag → PreferKnown.
+        match evaluate_mutating_gate(&mut s, "run_now", &base, &fp, Some(owner.as_str())) {
+            MutatingGateOutcome::ResumeKnown { operation_id, .. } => {
+                assert_eq!(operation_id, op1);
+            }
+            other => panic!("resume must ResumeKnown, got {other:?}"),
+        }
+
+        // User asks run-again: model discovers flag from schema (not hard-injected).
+        let new_args = apply_new_operation_from_tool_schema(def, base.clone())
+            .expect("schema discovery must yield args");
+        assert!(wants_new_operation(&new_args));
+        let owner2 = new_stream_owner();
+        let MutatingGateOutcome::Proceed { operation_id: op2 } =
+            evaluate_mutating_gate(&mut s, "run_now", &new_args, &fp, Some(owner2.as_str()))
+        else {
+            panic!("schema-based _new_operation must Proceed after known terminal");
+        };
+        assert_ne!(op2, op1);
+        assert_eq!(s.operation(&op2).unwrap().status, OperationStatus::Running);
+
+        // Schema helper refuses tools that never received the protocol inject.
+        let bare = crate::toolkit::tool::ToolDefinition {
+            name: "query_conclusion".into(),
+            description: "read-only".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": { "agent": { "type": "string" } }
+            }),
+            example: None,
+            category: crate::toolkit::tool::ToolCategory::System,
+            scenarios: vec![],
+            relationships: Default::default(),
+            deprecated: false,
+            replaced_by: None,
+            version: "1.0.0".into(),
+            examples: vec![],
+            response_format: None,
+            namespace: None,
+        };
+        assert!(apply_new_operation_from_tool_schema(&bare, base).is_err());
     }
 }

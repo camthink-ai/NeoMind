@@ -180,11 +180,9 @@ pub async fn process_multimodal_stream_events_with_safeguards(
     Ok(Box::pin(async_stream::stream! {
         // Owner-scoped lease teardown: only THIS stream's Prepared/Running
         // ops are abandoned on interrupt/drop/timeout — never sibling turns.
+        // Owner is passed explicitly into create/lease — never via a shared
+        // session hop (concurrent streams must not overwrite each other).
         let stream_owner = super::super::task_continuity::new_stream_owner();
-        {
-            let mut state = internal_state.write().await;
-            state.task_state.install_stream_owner(stream_owner.clone());
-        }
         let _stream_lease_guard = super::super::task_continuity::StreamLeaseGuard::new(
             internal_state.clone(),
             stream_owner.clone(),
@@ -356,10 +354,12 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                     .collect();
 
             let state_for_write_gate = internal_state.clone();
+            let stream_owner_for_tools = stream_owner.clone();
             let tool_futures = futures::stream::iter(tool_inputs.into_iter().map(|(name, arguments, cached_read)| {
                 let tools_clone = tools.clone();
                 let cache_clone = cache.clone();
                 let state_for_write_gate = state_for_write_gate.clone();
+                let stream_owner = stream_owner_for_tools.clone();
 
                 async move {
                     use super::super::task_continuity::MutatingGateOutcome;
@@ -377,6 +377,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                         &name,
                                         &arguments,
                                         &fp,
+                                        Some(stream_owner.as_str()),
                                     )
                                 };
                                 match gate {
@@ -744,10 +745,12 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                 })
                                 .collect();
                         let state_for_write_gate = internal_state.clone();
+                        let stream_owner_for_cont = stream_owner.clone();
                         let cont_futures = futures::stream::iter(cont_inputs.into_iter().map(|(name, arguments, cached_read)| {
                             let tools_clone = tools.clone();
                             let cache_clone = cache_cont.clone();
                             let state_for_write_gate = state_for_write_gate.clone();
+                            let stream_owner = stream_owner_for_cont.clone();
                             async move {
                                 use super::super::task_continuity::MutatingGateOutcome;
                                 let mut tracked_operation_id: Option<String> = None;
@@ -765,6 +768,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                                     &name,
                                                     &arguments,
                                                     &fp,
+                                                    Some(stream_owner.as_str()),
                                                 )
                                             };
                                             match gate {
@@ -1109,11 +1113,13 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                         })
                         .collect();
                     let state_for_write_gate = internal_state.clone();
+                    let stream_owner_for_nudge = stream_owner.clone();
                     let nudge_futures = futures::stream::iter(nudge_inputs.into_iter().map(
                         |(name, arguments, cached_read)| {
                             let tools_clone = tools.clone();
                             let cache_clone = cache_n.clone();
                             let state_for_write_gate = state_for_write_gate.clone();
+                            let stream_owner = stream_owner_for_nudge.clone();
                             async move {
                                 use super::super::task_continuity::MutatingGateOutcome;
                                 let mut tracked_operation_id: Option<String> = None;
@@ -1131,6 +1137,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                                     &name,
                                                     &arguments,
                                                     &fp,
+                                                    Some(stream_owner.as_str()),
                                                 )
                                             };
                                             match gate {
@@ -1428,16 +1435,28 @@ mod drop_lease_tests {
             "stream-owned op must carry owner_id"
         );
         let fp = op.write_fingerprint.clone().expect("fp");
-        st.task_state
-            .install_stream_owner(crate::agent::task_continuity::new_stream_owner());
         let mut new_args = args;
         new_args
             .as_object_mut()
             .unwrap()
             .insert(NEW_OPERATION_ARG.into(), serde_json::json!(true));
-        match evaluate_mutating_gate(&mut st.task_state, "run_now", &new_args, &fp) {
+        // Unknown: model boolean alone must Block.
+        match evaluate_mutating_gate(&mut st.task_state, "run_now", &new_args, &fp, None) {
+            MutatingGateOutcome::Block { .. } => {}
+            other => panic!("model-alone after Unknown must Block, got {other:?}"),
+        }
+        st.task_state
+            .apply_directive(crate::agent::task_continuity::TaskDirective::AuthorizeNewOperation);
+        let owner2 = crate::agent::task_continuity::new_stream_owner();
+        match evaluate_mutating_gate(
+            &mut st.task_state,
+            "run_now",
+            &new_args,
+            &fp,
+            Some(owner2.as_str()),
+        ) {
             MutatingGateOutcome::Proceed { .. } => {}
-            other => panic!("new-op after drop must Proceed, got {other:?}"),
+            other => panic!("user-authorized new-op after drop must Proceed, got {other:?}"),
         }
         assert!(calls.load(Ordering::SeqCst) >= 1);
     }
@@ -1457,12 +1476,15 @@ mod drop_lease_tests {
         let owner_a = new_stream_owner();
         let guard_a = {
             let mut st = state.write().await;
-            st.task_state.install_stream_owner(owner_a.clone());
             let fp = crate::agent::streaming::mutating_write_fingerprint("run_now", &args_a)
                 .expect("fp A");
-            let MutatingGateOutcome::Proceed { operation_id } =
-                evaluate_mutating_gate(&mut st.task_state, "run_now", &args_a, &fp)
-            else {
+            let MutatingGateOutcome::Proceed { operation_id } = evaluate_mutating_gate(
+                &mut st.task_state,
+                "run_now",
+                &args_a,
+                &fp,
+                Some(owner_a.as_str()),
+            ) else {
                 panic!("A Proceed");
             };
             st.task_state.complete_operation_succeeded(
@@ -1544,7 +1566,7 @@ mod drop_lease_tests {
                 .as_object_mut()
                 .unwrap()
                 .insert(NEW_OPERATION_ARG.into(), serde_json::json!(true));
-            match evaluate_mutating_gate(&mut st.task_state, "run_now", &retry, &fp_b) {
+            match evaluate_mutating_gate(&mut st.task_state, "run_now", &retry, &fp_b, None) {
                 MutatingGateOutcome::InProgress { operation_id } => {
                     assert_eq!(operation_id, op_b_id);
                 }
