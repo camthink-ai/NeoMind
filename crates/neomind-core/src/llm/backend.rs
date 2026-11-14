@@ -288,13 +288,31 @@ pub struct TokenUsage {
 }
 
 impl TokenUsage {
+    /// Build usage for numeric accounting. Implausible prompt meters
+    /// (`0`, `u32::MAX`) are zeroed — they must never enter `total_tokens`
+    /// (MAX+1 wraps or panics). Compact-gate invalidity lives on the
+    /// stream/`last_prompt_tokens` path, not in this struct.
     pub fn new(prompt_tokens: u32, completion_tokens: u32) -> Self {
+        let prompt = if plausible_prompt_token_meter(prompt_tokens) {
+            prompt_tokens
+        } else {
+            0
+        };
         Self {
-            prompt_tokens,
+            prompt_tokens: prompt,
             completion_tokens,
-            total_tokens: prompt_tokens + completion_tokens,
+            total_tokens: prompt.saturating_add(completion_tokens),
         }
     }
+}
+
+/// True when `prompt_tokens` is a usable billed/estimated meter.
+///
+/// Rejects the two garbage values seen on T4 production (2026-11-13):
+/// `0` (missing usage coerced to zero) and `u32::MAX` (force-sentinel /
+/// corrupt wrap). Callers must not treat those as real occupancy.
+pub fn plausible_prompt_token_meter(prompt_tokens: u32) -> bool {
+    prompt_tokens > 0 && prompt_tokens != u32::MAX
 }
 
 /// Stream chunk.
@@ -309,6 +327,11 @@ pub type StreamChunk = Result<(String, bool), LlmError>;
 ///
 /// The marker is in-band metadata streaming backends inject to surface
 /// `prompt_tokens` (completion_tokens is not available via streaming).
+///
+/// **Meter kinds are preserved**: parsed `0` / `u32::MAX` return as
+/// `Some(n)` (invalid), distinct from `None` (usage never reported). Callers
+/// that drive auto-compact must reject invalid meters via
+/// [`plausible_prompt_token_meter`]; UI rings should also skip them.
 fn strip_token_marker(content: &str) -> (String, Option<u32>) {
     const MARKER: &str = "__NEOMIND_TOKEN_PROMPT:";
     if let Some(start) = content.find(MARKER) {
@@ -678,11 +701,14 @@ pub trait LlmRuntime: Send + Sync {
 
         // Estimate completion_tokens via the trait's heuristic (~4 chars/token).
         // Includes thinking chars so reasoning-heavy models are accounted for.
-        let usage = if prompt_tokens.is_some() || !text.is_empty() || thinking.is_some() {
+        // Only plausible prompt meters enter TokenUsage — invalid (0/MAX)
+        // stay on the stream marker path for compact gating, not in sums.
+        let usable_prompt = prompt_tokens.filter(|n| plausible_prompt_token_meter(*n));
+        let usage = if usable_prompt.is_some() || !text.is_empty() || thinking.is_some() {
             let completion_chars = text.len() + thinking.as_ref().map(|s| s.len()).unwrap_or(0);
             let completion_tokens = (completion_chars / 4) as u32;
             Some(TokenUsage::new(
-                prompt_tokens.unwrap_or(0),
+                usable_prompt.unwrap_or(0),
                 completion_tokens,
             ))
         } else {
@@ -1094,6 +1120,93 @@ mod tests {
             .expect("usage populated when text/thinking exists");
         // text(12) + thinking(31) = 43 chars / 4 = 10 tokens
         assert_eq!(usage.completion_tokens, 10);
+    }
+
+    #[test]
+    fn plausible_prompt_token_meter_rejects_zero_and_u32_max() {
+        assert!(!plausible_prompt_token_meter(0));
+        assert!(!plausible_prompt_token_meter(u32::MAX));
+        assert!(plausible_prompt_token_meter(1));
+        assert!(plausible_prompt_token_meter(32_768));
+        // Invalid meters stay Some(n) after strip — not collapsed to None.
+        let (clean_zero, meter_zero) = strip_token_marker("\n__NEOMIND_TOKEN_PROMPT:0__");
+        assert!(clean_zero.is_empty());
+        assert_eq!(meter_zero, Some(0));
+        let (clean_max, meter_max) =
+            strip_token_marker(&format!("\n__NEOMIND_TOKEN_PROMPT:{}__", u32::MAX));
+        assert!(clean_max.is_empty());
+        assert_eq!(meter_max, Some(u32::MAX));
+    }
+
+    /// Stream composition: discarding 0/MAX to None used to open the
+    /// truncation auto-compact path. Preserved invalid meters must not.
+    #[test]
+    fn streamed_invalid_meters_must_not_look_like_missing_usage() {
+        // Mirrors summarization::should_auto_summarize gate kinds.
+        fn trunc_auto_compact(prompt_tokens: Option<u32>, max_ctx: usize, truncated: bool) -> bool {
+            match prompt_tokens {
+                None => truncated,
+                Some(pt) if !plausible_prompt_token_meter(pt) => false,
+                Some(pt) => {
+                    let usage_ratio = pt as f64 / max_ctx.max(1) as f64;
+                    usage_ratio > 0.6 || (truncated && usage_ratio >= 0.35)
+                }
+            }
+        }
+        for n in [0_u32, u32::MAX] {
+            let (_, meter) = strip_token_marker(&format!("__NEOMIND_TOKEN_PROMPT:{n}__"));
+            assert_eq!(meter, Some(n), "stream must preserve invalid meter {n}");
+            assert!(
+                !trunc_auto_compact(meter, 32_768, true),
+                "invalid meter {n} must not trunc-compact"
+            );
+        }
+        let (_, small) = strip_token_marker("__NEOMIND_TOKEN_PROMPT:3277__");
+        assert_eq!(small, Some(3277));
+        assert!(
+            !trunc_auto_compact(small, 32_768, true),
+            "valid but sub-35% must not trunc-compact"
+        );
+        // True missing usage (no marker) + trunc may still compact.
+        assert!(trunc_auto_compact(None, 32_768, true));
+    }
+
+    #[test]
+    fn token_usage_new_skips_invalid_prompt_in_totals() {
+        // MAX + 1 must not wrap to 0 or panic under overflow checks.
+        let u = TokenUsage::new(u32::MAX, 1);
+        assert_eq!(u.prompt_tokens, 0, "MAX must not bill as prompt");
+        assert_eq!(u.completion_tokens, 1);
+        assert_eq!(u.total_tokens, 1);
+        let z = TokenUsage::new(0, 5);
+        assert_eq!(z.prompt_tokens, 0);
+        assert_eq!(z.total_tokens, 5);
+    }
+
+    #[tokio::test]
+    async fn generate_to_completion_excludes_invalid_prompt_from_token_usage() {
+        // Marker still strips from text; strip_token_marker keeps Some(MAX)
+        // for compact-gate composition. TokenUsage must not sum MAX.
+        let runtime = MockStreamRuntime {
+            chunks: vec![
+                // ≥4 UTF-8 bytes → completion_tokens ≥ 1
+                MockChunk::Content("abcd".into()),
+                MockChunk::TokenMarker(u32::MAX),
+            ],
+        };
+        let out = runtime
+            .generate_to_completion(LlmInput::new("hi"))
+            .await
+            .unwrap();
+        assert_eq!(out.text, "abcd");
+        let usage = out.usage.expect("usage present for non-empty text");
+        assert_eq!(usage.prompt_tokens, 0, "MAX must not enter TokenUsage");
+        assert!(usage.completion_tokens >= 1);
+        assert_eq!(usage.total_tokens, usage.completion_tokens);
+        // Composition: strip still exposes invalid for the compact gate.
+        let (_, meter) = strip_token_marker(&format!("__NEOMIND_TOKEN_PROMPT:{}__", u32::MAX));
+        assert_eq!(meter, Some(u32::MAX));
+        assert!(!plausible_prompt_token_meter(meter.unwrap()));
     }
 
     #[tokio::test]

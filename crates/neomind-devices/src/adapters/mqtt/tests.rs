@@ -231,6 +231,22 @@ fn test_same_topic_different_payload_ids_distinct() {
 }
 
 #[test]
+fn test_standard_uplink_topic_has_no_metric_name() {
+    // device/{type}/{id}/uplink carries metrics in the JSON body. The topic
+    // itself must not invent a metric name — the old handler fell back to
+    // "value" and stored the whole (sometimes invalid) payload as one string.
+    assert_eq!(
+        extract_metric_name_from_topic("device/ek410_Eink/e37d627a/uplink"),
+        None
+    );
+    assert_eq!(
+        extract_metric_name_from_topic("device/ne101_camera/abc/uplink"),
+        None
+    );
+}
+
+#[cfg(test)]
+#[test]
 fn test_default_parse_value() {
     assert!(matches!(
         MqttAdapter::default_parse_value(b"25.5"),

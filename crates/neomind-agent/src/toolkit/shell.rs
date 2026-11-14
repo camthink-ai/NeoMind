@@ -1246,6 +1246,9 @@ impl ShellTool {
             if cmd.contains("--id ") {
                 return Some("ID is a positional argument, not a flag. Use: neomind <domain> <action> <ID> [options]. Example: neomind device get abc123 (not --id abc123).".to_string());
             }
+            if domain == "device" && action == "control" {
+                return Some("Device-defined command parameters are not standalone CLI flags. Use neomind device control <ID> <COMMAND> --param 'key=value' (repeat for each parameter), or --params '<JSON>'. For a text parameter, use --param 'text=your content', not --text. Use device get <ID> to check actual parameter names and types; do not invent keys. Run neomind device control --help for CLI options.".to_string());
+            }
             return Some("Command syntax error. ID is positional (not --id flag). Run 'neomind <domain> <action> --help' to see correct usage.".to_string());
         }
 
@@ -1422,7 +1425,7 @@ impl Tool for ShellTool {
 Quick reference (run `neomind <domain> --help` or load the `skill` guide for full syntax):
 - Read: `<domain> get <ID>` (one) / `<domain> list` (all). ID is positional, never `--id`.
 - Write: `<domain> create/update/delete` take flags (`--name`, `--device-type`, …). Pass `--id <id>` on create ONLY if the user gave a specific ID.
-- Control / enable / activate are explicit writes: `device control <ID> <CMD>`, `rule enable <ID>`, `llm activate <ID>`, `connector enable <ID>`, `push enable <ID>`.
+- Control / enable / activate are explicit writes: `device control <ID> <CMD> --param key=value` (repeat for each device-defined parameter; these are NOT standalone `--key` flags), `rule enable <ID>`, `llm activate <ID>`, `connector enable <ID>`, `push enable <ID>`.
 - History & conversation: `agent executions <ID>`, `agent conversation <ID>`, `agent send-message <ID>`.
 - Notification channels are a sub-family: `message channel-list` / `channel-create` / `channel-test`, NOT `message list`.
 
@@ -1597,6 +1600,56 @@ fn fabricated_tool_output(command: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn control_description_maps_device_parameters_to_param() {
+        let description = ShellTool::new(ShellConfig::default())
+            .description()
+            .to_owned();
+        assert!(description.contains("device control <ID> <CMD> --param key=value"));
+        assert!(description.contains("NOT standalone `--key` flags"));
+    }
+
+    #[test]
+    fn control_parameter_flag_error_has_targeted_recovery() {
+        let error = "error: unexpected argument '--text' found";
+        let hint = ShellTool::recovery_hint(
+            "neomind device control eink-test render_text --text 'weather'",
+            "",
+            error,
+        )
+        .unwrap();
+        assert!(hint.contains("--param 'text=your content'"));
+        assert!(hint.contains("--params '<JSON>'"));
+        assert!(hint.contains("actual parameter names and types"));
+        assert!(!hint.contains("ID is positional"));
+    }
+
+    #[test]
+    fn control_hint_does_not_shadow_id_or_other_error_contracts() {
+        let hint = |cmd, error| ShellTool::recovery_hint(cmd, "", error).unwrap();
+        let error = "error: unexpected argument '--id' found";
+        assert!(
+            hint("neomind device control --id eink-test render_text", error)
+                .starts_with("ID is a positional argument")
+        );
+        let other = hint(
+            "neomind rule create --bogus 1",
+            "error: unexpected argument '--bogus' found",
+        );
+        assert_eq!(other, "Command syntax error. ID is positional (not --id flag). Run 'neomind <domain> <action> --help' to see correct usage.");
+        assert!(!hint(
+            "neomind device control eink-test bad_command",
+            "Command not found"
+        )
+        .contains("--param"));
+        assert!(!hint(
+            "neomind device control eink-test render_text --param unknown=1",
+            "Invalid parameter: unknown"
+        )
+        .contains("--param"));
+        assert!(ShellTool::recovery_hint("echo test", "", error).is_none());
+    }
 
     #[test]
     fn parse_error_stderr_carries_exactly_one_error_prefix() {

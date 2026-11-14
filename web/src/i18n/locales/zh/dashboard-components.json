@@ -129,7 +129,7 @@
     "deviceNotFound": "未找到设备",
     "deviceNotFoundDesc": "无法找到请求的设备",
     "metricInfo": "指标信息",
-    "commandSent": "命令已发送",
+    "commandSent": "已下发到通道（非设备确认）",
     "commandFailed": "命令发送失败",
     "commandError": "命令错误",
     "metric": "指标",
@@ -252,8 +252,8 @@
     "no": "否",
     "send": "发送",
     "sending": "发送中...",
-    "commandSent": "命令已发送",
-    "commandSentDesc": "命令发送成功",
+    "commandSent": "已下发到通道",
+    "commandSentDesc": "平台已受理并发布到设备通道，不等于设备确认（ACK）",
     "commandFailed": "命令发送失败",
     "noCommandConfig": "未配置命令",
     "cancel": "取消"
@@ -515,7 +515,7 @@
     "reset": "重置",
     "exitFullscreen": "退出全屏",
     "metricValue": "指标数值",
-    "commandSent": "命令已发送",
+    "commandSent": "已下发到通道（非设备确认）",
     "commandFailed": "命令发送失败",
     "commandError": "命令错误"
   },

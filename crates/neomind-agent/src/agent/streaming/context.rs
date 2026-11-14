@@ -346,6 +346,50 @@ fn compact_tool_results_stream_with_config(
     result
 }
 
+/// Estimated ContextUsage after a conversation summary is stored.
+///
+/// Mirrors the next chat turn's history assembly (depth drain, image strip,
+/// summary filter + injection) plus system/tool overhead — without a pending
+/// user message. Used so the UI meter can refresh immediately after compact
+/// instead of waiting for the next live request measurement.
+#[derive(Debug, Clone, Copy)]
+pub struct PostSummaryContextUsage {
+    pub prompt_tokens: u32,
+    pub system_prompt_tokens: u32,
+    pub tool_tokens: u32,
+    pub max_context_tokens: u32,
+}
+
+/// Estimate the meter the next chat turn would report after summarization.
+pub async fn estimate_post_summary_context_usage(
+    history: &[AgentMessage],
+    summary: Option<&str>,
+    summary_up_to_index: Option<u64>,
+    llm: &crate::llm::LlmInterface,
+) -> PostSummaryContextUsage {
+    let mut history = history.to_vec();
+    let drained = crate::agent::apply_chat_history_depth(&mut history);
+    let up_to = crate::agent::adjust_summary_index_after_drain(summary_up_to_index, drained);
+    crate::agent::strip_stale_images(&mut history);
+
+    let max_context = llm.max_context_length().await;
+    let (system_prompt_tokens, tool_tokens) = llm.estimate_prompt_breakdown().await;
+    let overhead = system_prompt_tokens + tool_tokens;
+    // Keep the same response reserve the live stream path uses
+    // (`stream_core::RESERVE_FOR_RESPONSE`).
+    let effective_max = max_context.saturating_sub(overhead).saturating_sub(1024);
+
+    let (window, _) =
+        build_context_window_with_summary_tracked(&history, effective_max, summary, up_to);
+    let history_tokens: usize = window.iter().map(estimate_message_tokens).sum();
+    PostSummaryContextUsage {
+        prompt_tokens: (overhead + history_tokens) as u32,
+        system_prompt_tokens: system_prompt_tokens as u32,
+        tool_tokens: tool_tokens as u32,
+        max_context_tokens: max_context as u32,
+    }
+}
+
 /// Immutable summary coordinates for an entire user turn. Never insert into
 /// stored history: doing so would shift persisted summary indices.
 pub(crate) struct TurnContext {
@@ -396,6 +440,25 @@ mod tests {
             .iter()
             .any(|m| m.content.as_ref() == "old tool narration"));
         assert!(out.iter().any(|m| m.content.as_ref() == "latest result"));
+    }
+
+    #[tokio::test]
+    async fn post_summary_usage_returns_coherent_meter_fields() {
+        let llm = crate::llm::LlmInterface::default();
+        let mut history = Vec::new();
+        for i in 0..6 {
+            history.push(AgentMessage::user(format!("user turn {i}")));
+            history.push(AgentMessage::assistant(format!("assistant reply {i}")));
+        }
+        let usage =
+            estimate_post_summary_context_usage(&history, Some("early turns done"), Some(5), &llm)
+                .await;
+        assert!(usage.prompt_tokens > 0);
+        assert!(usage.max_context_tokens > 0);
+        assert!(
+            usage.prompt_tokens >= usage.system_prompt_tokens.saturating_add(usage.tool_tokens),
+            "prompt must cover system+tools overhead: {usage:?}"
+        );
     }
 
     #[test]

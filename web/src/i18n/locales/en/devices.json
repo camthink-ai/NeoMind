@@ -73,7 +73,7 @@
   "noCommands": "No commands available",
   "sendCommand": "Send Command",
   "sending": "Sending...",
-  "commandSent": "Command sent successfully",
+  "commandSent": "Dispatched to the channel (not a device ACK)",
   "loading": "Loading devices...",
   "headers": {
     "id": "Device ID",

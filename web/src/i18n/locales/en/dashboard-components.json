@@ -154,7 +154,7 @@
     "deviceNotFound": "Device Not Found",
     "deviceNotFoundDesc": "The requested device could not be found",
     "metricInfo": "Metric Information",
-    "commandSent": "Command Sent",
+    "commandSent": "Dispatched to channel (not a device ACK)",
     "commandFailed": "Command Failed",
     "commandError": "Command Error",
     "metric": "Metric",
@@ -299,8 +299,8 @@
     "no": "No",
     "send": "Send",
     "sending": "Sending...",
-    "commandSent": "Command Sent",
-    "commandSentDesc": "The command was sent successfully",
+    "commandSent": "Dispatched to channel",
+    "commandSentDesc": "Accepted by NeoMind and published to the device channel — not a device ACK",
     "commandFailed": "Command Failed",
     "noCommandConfig": "No command configured",
     "cancel": "Cancel"
@@ -515,7 +515,7 @@
     "reset": "Reset",
     "exitFullscreen": "Exit Fullscreen",
     "metricValue": "Metric Value",
-    "commandSent": "Command Sent",
+    "commandSent": "Dispatched to channel (not a device ACK)",
     "commandFailed": "Command Failed",
     "commandError": "Command Error"
   },

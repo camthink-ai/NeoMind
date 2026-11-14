@@ -480,27 +480,23 @@ export function DevicesPage() {
     await fetchTelemetryData(deviceDetailView, metricName, start, end, limit ?? 50, offset ?? 0)
   }
 
-  const handleSendCommand = async (commandName: string, paramsJson: string) => {
-    if (!deviceDetailView) return
+  const handleSendCommand = async (
+    commandName: string,
+    params: Record<string, unknown>,
+  ): Promise<boolean> => {
+    if (!deviceDetailView) return false
 
     try {
-      let params: Record<string, unknown> = {}
-      if (paramsJson.trim()) {
-        try {
-          params = JSON.parse(paramsJson)
-        } catch {
-          toast({ title: t('devices:paramsError'), variant: "destructive" })
-          return
-        }
-      }
       const success = await sendCommand(deviceDetailView, commandName, params)
       if (success) {
         toast({ title: t('devices:commandSent') })
       } else {
         toast({ title: t('devices:sendCommandFailed'), variant: "destructive" })
       }
+      return success
     } catch {
       toast({ title: t('devices:sendCommandFailed'), variant: "destructive" })
+      return false
     }
   }
 

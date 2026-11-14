@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.11] - 2026-11-14 — bill-first compact, honest device command forms, meter UI hygiene
+
+### Upgrade notes
+- Truncation-driven LLM auto-compact needs ≥35% billed prompt occupancy (soft >60% path unchanged). `prompt_tokens` of `0` / `u32::MAX` never auto-compacts; omitted usage plus real history truncation still can.
+- Invalid End meters are omitted from `tokenUsage` / the context ring; a prior valid measurement is kept instead of painting 4294967295.
+- Standard device uplink that fails JSON parse is dropped (no synthetic `value` metric); undeclared object-shaped `value` rows stay hidden on device detail.
+
+### Fixed — chat compact and meters
+- **Bill-first auto-compact + evidence-only summaries**: trunc bypass floors at 35% billed occupancy; soft >60% unchanged; garbage `0`/`u32::MAX` meters rejected for compact; missing usage (`None`) with real truncation still compacts. Streamed invalid meters stay on AgentEvent `End` for the gate but never enter UI `tokenUsage` or `TokenUsage` totals (MAX+completion no longer wraps). LLM digests that leak compressor meta, lack section headers, exceed ~720 chars, or cite none of the dialogue evidence needles fall back to the deterministic digest; summary feed caps raised to 800/500 chars.
+- **Context ring refreshes immediately after compact**: compact / `ContextCompacted` return a post-summary `tokenUsage` estimate so the UI can set `lastTokenUsage` instead of clearing to pending.
+- **Manual compact no longer uses `u32::MAX` as a sentinel** that could poison downstream meter consumers.
+
+### Fixed — devices and command forms
+- **Command dynamic forms send the typed payload**: `/devices/:id/current` returns full command defs; the UI normalizes enum / MetricValue wire shapes and validates before submit; DeviceService coerces Enum / Array / Binary so payloads no longer pick up JSON `Display` quotes.
+- **Extension / schema command types map correctly**: JSON Schema `number` → float; TitleCase and enum/array object `data_type`s normalize in the UI; `allowed_values` and `validation[]` are enforced; dispatch≠ACK copy clarified.
+- **Untyped Array params infer element types** from JSON (`[1,2]` → integers); tagged `{Array:[…]}` / `{Binary:…}` defaults unwrap recursively for the form.
+- **Command Length rules count Unicode scalars** (Rust `chars().count()` / frontend `[...s].length`); ParameterInput drops native `maxLength` (UTF-16) so emoji under `max=5` are not cut early.
+- **Bad standard uplink JSON is dropped** instead of inventing a synthetic `value` string; device detail keeps legitimate auto-extracted scalars / arrays / `"[ready]"` and hides only undeclared JSON **object** dumps.
+- **Shell device-control recovery teaches `--param`**: ShellTool description and clap hints align with the onboarding `--param` contract so flat `--key` guesses self-correct.
+
+### Fixed — web chrome
+- **Button `size=sm|icon` compact heights survive `sm:` breakpoints**: bare `h-6`/`h-7`/`h-8` no longer lose to `sm:h-9`/`h-10` via twMerge; matching `sm:h-`/`sm:w-` overrides pin the compact size on desktop.
+
+### Test
+- Bill-first trunc floor (35%) + evidence-only summary / digest-fallback unit tests in `summarization` (`auto_summarize_gate`, `trigger_meter_smoke`, meta-leak / grounded accept); unknown-usage+trunc compact; sessions first-turn pressure at 35%; End UI omits invalid meters; `TokenUsage::new` / `generate_to_completion` skip MAX in totals (MAX+`abcd`).
+- Device `is_legacy_value_dump` / Unicode Length / untyped Array + tagged Array unwrap (API/devices + vitest `commandParams` / ParameterInput); frontend `plausiblePromptTokenMeter` + End MAX does not replace a prior valid meter.
+
+---
+
 ## [1.2.10] - 2026-11-13 — context-safe tool history, truthful telemetry pages, headless VLM, and mobile chrome polish
 
 Frozen 138-case gate (Mac, Spark-1.7B): **97/138 (70.3%)**, identical to the 1.2.7 baseline and within the ±8 noise band of the R1 token+pagination arm (99/138). A withdrawn CJK/digit rate calibration that scored 88/138 is pinned out by `revert_parity`.

@@ -49,6 +49,13 @@ export const sessionsApi = {
       summarizedMessages: number
       newUpToIndex: number
       fallbackUsed: boolean
+      /** Post-compact next-turn estimate — apply to the usage ring immediately. */
+      tokenUsage?: {
+        promptTokens: number
+        systemPromptTokens?: number
+        toolTokens?: number
+        maxContextTokens?: number
+      }
     }>(`/sessions/${id}/compact`, {
       method: 'POST',
     }),

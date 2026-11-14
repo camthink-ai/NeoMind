@@ -73,7 +73,7 @@
   "noCommands": "暂无可用命令",
   "sendCommand": "发送命令",
   "sending": "发送中...",
-  "commandSent": "命令发送成功",
+  "commandSent": "已下发到通道（非设备确认）",
   "loading": "加载设备中...",
   "headers": {
     "id": "设备 ID",

@@ -387,6 +387,11 @@ pub(crate) fn match_topic_pattern_helper(topic: &str, pattern: &str) -> Option<S
 }
 
 /// Helper function to extract metric name from topic.
+///
+/// Standard `device/{type}/{id}/uplink` returns `None` (metrics are in the
+/// JSON body). Kept even though the uplink handler no longer invents a
+/// `"value"` fallback from this — unit tests lock that contract.
+#[allow(dead_code)]
 pub(crate) fn extract_metric_name_from_topic(topic: &str) -> Option<String> {
     let parts: Vec<&str> = topic.split('/').collect();
     if parts.len() >= 4 && parts[0] == "device" {
