@@ -1042,19 +1042,18 @@ impl LlmRuntime for LlamaCppRuntime {
                                         if let Ok(evt) =
                                             serde_json::from_str::<StreamChunkEvent>(json)
                                         {
-                                            // Check for usage data in final chunk (stream_options.include_usage=true)
+                                            // Emit usage even when 0/MAX so End can
+                                            // distinguish invalid meters from missing usage.
                                             if let Some(ref usage) = evt.usage {
-                                                if usage.prompt_tokens > 0 {
-                                                    let _ = tx
-                                                        .send(Ok((
-                                                            format!(
-                                                                "\n__NEOMIND_TOKEN_PROMPT:{}__",
-                                                                usage.prompt_tokens
-                                                            ),
-                                                            false,
-                                                        )))
-                                                        .await;
-                                                }
+                                                let _ = tx
+                                                    .send(Ok((
+                                                        format!(
+                                                            "\n__NEOMIND_TOKEN_PROMPT:{}__",
+                                                            usage.prompt_tokens
+                                                        ),
+                                                        false,
+                                                    )))
+                                                    .await;
                                             }
 
                                             if let Some(choice) = evt.choices.first() {

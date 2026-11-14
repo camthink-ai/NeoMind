@@ -282,8 +282,27 @@ async fn process_stream_to_channel(
                             Some(llm) => llm.take_history_truncated(),
                             None => false,
                         };
-                        if prompt_tokens.is_some() || history_truncated {
-                            let pt_val = (*prompt_tokens).unwrap_or(0);
+                        // Meter kinds:
+                        // - Some(plausible) → bill-first gate
+                        // - None (usage omitted) + truncated → still compact
+                        // - Some(0/MAX) → never compact (corrupt ≠ missing)
+                        let pt_for_summary: Option<Option<u32>> = match prompt_tokens {
+                            Some(pt) if neomind_core::plausible_prompt_token_meter(*pt) => {
+                                Some(Some(*pt))
+                            }
+                            Some(pt) => {
+                                tracing::info!(
+                                    session_id = %session_id,
+                                    prompt_tokens = pt,
+                                    truncated = history_truncated,
+                                    "Skipping summarization spawn: corrupt prompt_tokens meter"
+                                );
+                                None
+                            }
+                            None if history_truncated => Some(None),
+                            None => None,
+                        };
+                        if let Some(meter) = pt_for_summary {
                             let sum_session_id = session_id.clone();
                             let sum_state = state.clone();
                             let summary_tx = tx.clone();
@@ -291,16 +310,22 @@ async fn process_stream_to_channel(
                                 match crate::handlers::summarization::trigger_summarization(
                                     &sum_session_id,
                                     &sum_state,
-                                    pt_val,
+                                    meter,
                                     false,
                                     history_truncated,
                                 )
                                 .await
                                 {
                                     Ok(outcome) if outcome.summarized_messages > 0 => {
-                                        let event = json!({"type":"ContextCompacted", "sessionId":sum_session_id,
-                                            "summarizedMessages":outcome.summarized_messages,
-                                            "fallbackUsed":outcome.fallback_used});
+                                        let mut event = json!({
+                                            "type": "ContextCompacted",
+                                            "sessionId": sum_session_id,
+                                            "summarizedMessages": outcome.summarized_messages,
+                                            "fallbackUsed": outcome.fallback_used,
+                                        });
+                                        if let Some(usage) = outcome.token_usage {
+                                            event["tokenUsage"] = json!(usage);
+                                        }
                                         let _ = summary_tx
                                             .send(StreamEvent {
                                                 json: event.to_string(),
@@ -325,7 +350,13 @@ async fn process_stream_to_channel(
                             // the user to wonder why old facts are forgotten.
                             "historyTruncated": history_truncated,
                         });
-                        if let Some(pt) = prompt_tokens {
+                        // Compact gate above keeps invalid meters as Some(0/MAX);
+                        // the UI ring must not — omit tokenUsage for implausible.
+                        if let Some(pt) = prompt_tokens
+                            .as_ref()
+                            .copied()
+                            .filter(|pt| neomind_core::plausible_prompt_token_meter(*pt))
+                        {
                             // Context meter denominator: the session model's
                             // real window, so the UI can show usage as a
                             // ratio instead of a raw token count.
@@ -339,7 +370,7 @@ async fn process_stream_to_channel(
                                 None => 0,
                             };
                             let ratio = if max_ctx > 0 {
-                                (*pt as f64 / max_ctx as f64 * 1000.0).round() / 1000.0
+                                (pt as f64 / max_ctx as f64 * 1000.0).round() / 1000.0
                             } else {
                                 0.0
                             };
@@ -929,18 +960,24 @@ pub async fn compact_session_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
-    // Force mode: threshold and min-message gates bypassed.
+    // Force mode: threshold and min-message gates bypassed. Do NOT pass
+    // u32::MAX as a fake meter — that value poisoned auto-compact logs and
+    // was treated as a real occupancy on T4 (2026-11-13).
     let outcome =
-        crate::handlers::summarization::trigger_summarization(&id, &state, u32::MAX, true, false)
+        crate::handlers::summarization::trigger_summarization(&id, &state, None, true, false)
             .await
             .map_err(ErrorResponse::with_message)?;
 
-    Ok(Json(ApiResponse::success(json!({
+    let mut data = json!({
         "sessionId": id,
         "summarizedMessages": outcome.summarized_messages,
         "newUpToIndex": outcome.new_up_to_index,
         "fallbackUsed": outcome.fallback_used,
-    }))))
+    });
+    if let Some(usage) = outcome.token_usage {
+        data["tokenUsage"] = json!(usage);
+    }
+    Ok(Json(ApiResponse::success(data)))
 }
 
 /// Clear a session's conversation history and reset any stored summary —
@@ -2552,6 +2589,22 @@ mod history_pagination_tests {
 }
 
 #[cfg(test)]
+mod end_token_usage_ui_tests {
+    /// Mirror of the End JSON gate: only plausible meters become tokenUsage.
+    fn end_ui_prompt_tokens(prompt_tokens: Option<u32>) -> Option<u32> {
+        prompt_tokens.filter(|pt| neomind_core::plausible_prompt_token_meter(*pt))
+    }
+
+    #[test]
+    fn invalid_end_meters_omit_ui_token_usage() {
+        assert_eq!(end_ui_prompt_tokens(Some(0)), None);
+        assert_eq!(end_ui_prompt_tokens(Some(u32::MAX)), None);
+        assert_eq!(end_ui_prompt_tokens(None), None);
+        assert_eq!(end_ui_prompt_tokens(Some(4200)), Some(4200));
+    }
+}
+
+#[cfg(test)]
 mod compact_clear_tests {
     use super::*;
     use axum::body::Body;
@@ -2616,10 +2669,27 @@ mod compact_clear_tests {
             history.push(AgentMessage::assistant("tool evidence ".repeat(100)));
         }
         agent.restore_history(history).await;
-        let out =
-            crate::handlers::summarization::trigger_summarization(&sid, &state, 1, false, true)
-                .await
-                .unwrap();
+        // Truncation bypass requires a plausible meter at ≥35% of the window
+        // (bill-first; not a 1-token stand-in that looks like the T4 0.5% spam).
+        let max_ctx = state
+            .agents
+            .session_manager
+            .get_agent_llm(&sid)
+            .await
+            .expect("session llm")
+            .max_context_length()
+            .await
+            .max(1);
+        let pt = ((max_ctx as f64) * 0.35).ceil() as u32;
+        let out = crate::handlers::summarization::trigger_summarization(
+            &sid,
+            &state,
+            Some(pt),
+            false,
+            true,
+        )
+        .await
+        .unwrap();
         assert!(out.summarized_messages > 0);
         let metadata = manager.session_store().get_session_metadata(&sid).unwrap();
         assert!(metadata.conversation_summary.is_some());
@@ -2651,6 +2721,17 @@ mod compact_clear_tests {
             data["fallbackUsed"],
             serde_json::json!(true),
             "no LLM backend in the test state → deterministic fallback"
+        );
+        let usage = data["tokenUsage"]
+            .as_object()
+            .expect("compact must return post-summary tokenUsage for the meter");
+        assert!(
+            usage["promptTokens"].as_u64().unwrap_or(0) > 0,
+            "post-compact usage must be a positive estimate: {usage:?}"
+        );
+        assert!(
+            usage["maxContextTokens"].as_u64().unwrap_or(0) > 0,
+            "maxContextTokens required for the ring denominator: {usage:?}"
         );
 
         // Boundary math: 12 messages, users at 0,2,4,6,8,10. keep=3 →

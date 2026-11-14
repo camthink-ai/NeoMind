@@ -1279,15 +1279,17 @@ impl LlmRuntime for OllamaRuntime {
                                                     ollama_chunk.eval_count
                                                 );
 
-                                            // Send token usage as in-band marker before closing
+                                            // Emit usage even when 0/MAX so End can
+                                            // distinguish invalid meters from missing usage.
                                             if let Some(prompt_tokens) =
                                                 ollama_chunk.prompt_eval_count
                                             {
+                                                let pt = prompt_tokens as u32;
                                                 let _ = tx
                                                     .send(Ok((
                                                         format!(
                                                             "\n__NEOMIND_TOKEN_PROMPT:{}__",
-                                                            prompt_tokens
+                                                            pt
                                                         ),
                                                         false,
                                                     )))

@@ -168,9 +168,9 @@ export function ChatPage() {
     restore,
     restoreIfBehind,
   } = useChatStream({
-    onContextCompacted: (count, sid) => {
-      setLastTokenUsage(null)
-      persistTokenUsage(sid, null)
+    onContextCompacted: (count, _sid) => {
+      // tokenUsage (if any) already applied via onTokenUsage from the WS
+      // ContextCompacted frame — do not clear the meter to pending.
       toast({ description: t('chat:context.compactDone', { count }) })
     },
     // Drop events from other sessions — the side panel shares this socket.
@@ -939,15 +939,21 @@ export function ChatPage() {
       )
 
   // Manual context compaction — force a summary now (backend bypasses the
-  // auto threshold). Usage normalizes on the next turn.
+  // auto threshold). Prefer the response's post-compact tokenUsage so the
+  // ring updates immediately; only fall back to pending if the API omitted it.
   const handleCompact = async () => {
     if (!sessionId || isCompacting) return
     setIsCompacting(true)
     try {
       const r = await api.compactSession(sessionId)
       if (r.summarizedMessages > 0) {
-        setLastTokenUsage(null)
-        persistTokenUsage(sessionId, null)
+        if (r.tokenUsage && Number.isFinite(r.tokenUsage.promptTokens)) {
+          setLastTokenUsage(r.tokenUsage)
+          persistTokenUsage(sessionId, r.tokenUsage)
+        } else {
+          setLastTokenUsage(null)
+          persistTokenUsage(sessionId, null)
+        }
       }
       toast({
         description: r.summarizedMessages > 0

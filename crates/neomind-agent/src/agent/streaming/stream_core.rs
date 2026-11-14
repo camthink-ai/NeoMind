@@ -1268,11 +1268,18 @@ pub async fn process_stream_events_with_safeguards(
                 }
 
                 if let Some(prompt_tokens) = llm_interface.peek_last_prompt_tokens().await {
-                    let (system_prompt_tokens, tool_tokens) = llm_interface.estimate_prompt_breakdown().await;
-                    yield AgentEvent::ContextUsage {
-                        prompt_tokens, system_prompt_tokens, tool_tokens,
-                        max_context_tokens: llm_interface.max_context_length().await,
-                    };
+                    // Invalid (0/MAX) meters stay on last_prompt_tokens for End,
+                    // but must not paint the context ring as a real bill.
+                    if neomind_core::plausible_prompt_token_meter(prompt_tokens) {
+                        let (system_prompt_tokens, tool_tokens) =
+                            llm_interface.estimate_prompt_breakdown().await;
+                        yield AgentEvent::ContextUsage {
+                            prompt_tokens,
+                            system_prompt_tokens,
+                            tool_tokens,
+                            max_context_tokens: llm_interface.max_context_length().await,
+                        };
+                    }
                 }
 
                 // Release any held-back content if it turned out NOT to be a tool call.

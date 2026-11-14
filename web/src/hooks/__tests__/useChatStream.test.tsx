@@ -45,6 +45,24 @@ describe('useChatStream', () => {
     expect(latest.isStreaming).toBe(false)
   })
 
+  it('applies post-compact tokenUsage to the meter without ending the turn', () => {
+    const onTokenUsage = vi.fn()
+    const onContextCompacted = vi.fn()
+    render(<Harness sessionId="s1" onTokenUsage={onTokenUsage} onContextCompacted={onContextCompacted} />)
+    act(() => emit({
+      type: 'ContextCompacted',
+      sessionId: 's1',
+      summarizedMessages: 8,
+      tokenUsage: { promptTokens: 4200, systemPromptTokens: 1000, toolTokens: 2000, maxContextTokens: 32768 },
+    }))
+    expect(onContextCompacted).toHaveBeenCalledWith(8, 's1')
+    expect(onTokenUsage).toHaveBeenCalledWith(
+      { promptTokens: 4200, systemPromptTokens: 1000, toolTokens: 2000, maxContextTokens: 32768 },
+      's1',
+    )
+    expect(latest.isStreaming).toBe(false)
+  })
+
   it('updates measured context during a turn without ending it or accepting another session', () => {
     const onTokenUsage = vi.fn()
     render(<Harness sessionId="s1" onTokenUsage={onTokenUsage} />)
@@ -224,6 +242,41 @@ describe('useChatStream', () => {
       { promptTokens: 120, systemPromptTokens: 30, toolTokens: 10 },
       's1',
     )
+  })
+
+  it('end with u32::MAX does not replace a previously valid meter', async () => {
+    const onTokenUsage = vi.fn()
+    render(<Harness onEnd={vi.fn()} onTokenUsage={onTokenUsage} />)
+
+    act(() => latest.beginTurn())
+    await act(async () => {
+      emit({
+        type: 'end',
+        sessionId: 's1',
+        tokenUsage: {
+          promptTokens: 4200,
+          systemPromptTokens: 1000,
+          toolTokens: 200,
+          maxContextTokens: 32768,
+        },
+      } as ServerMessage)
+    })
+    expect(onTokenUsage).toHaveBeenCalledTimes(1)
+    expect(onTokenUsage.mock.calls[0][0].promptTokens).toBe(4200)
+
+    act(() => latest.beginTurn())
+    await act(async () => {
+      emit({
+        type: 'end',
+        sessionId: 's1',
+        tokenUsage: {
+          promptTokens: 0xffffffff,
+          maxContextTokens: 32768,
+        },
+      } as ServerMessage)
+    })
+    // Invalid End must not call onTokenUsage — prior valid meter stands.
+    expect(onTokenUsage).toHaveBeenCalledTimes(1)
   })
 
   // ── mid-turn interruption (session switch / detach-restore) ──

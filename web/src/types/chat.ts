@@ -117,7 +117,12 @@ export type ServerMessage =
   // Error occurred - sessionId is always included when sent from backend
   | { type: 'Error'; message: string; sessionId: string }
   // Stream ended
-  | { type: 'ContextCompacted'; sessionId: string; summarizedMessages: number; fallbackUsed?: boolean }
+  | { type: 'ContextCompacted'; sessionId: string; summarizedMessages: number; fallbackUsed?: boolean; tokenUsage?: {
+      promptTokens: number
+      systemPromptTokens?: number
+      toolTokens?: number
+      maxContextTokens?: number
+    } }
   | { type: 'ContextUsage'; sessionId: string; tokenUsage: { promptTokens: number; systemPromptTokens?: number; toolTokens?: number; maxContextTokens?: number } }
   | { type: 'end'; sessionId: string; historyTruncated?: boolean; tokenUsage?: {
       promptTokens: number

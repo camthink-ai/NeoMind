@@ -116,7 +116,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     restoreIfBehind,
   } = useChatStream({
     onContextCompacted: (count) => {
-      setContextTokens(null)
+      // Post-compact tokenUsage is applied via onTokenUsage when present.
       toast({ description: t('chat:context.compactDone', { count }) })
     },
     onTokenUsage: (usage) => setContextTokens(usage),
@@ -657,7 +657,13 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     setIsCompacting(true)
     try {
       const r = await api.compactSession(sid)
-      if (r.summarizedMessages > 0) setContextTokens(null)
+      if (r.summarizedMessages > 0) {
+        if (r.tokenUsage && Number.isFinite(r.tokenUsage.promptTokens)) {
+          setContextTokens(r.tokenUsage)
+        } else {
+          setContextTokens(null)
+        }
+      }
       toast({
         description: r.summarizedMessages > 0
           ? t("chat:context.compactDone", { count: r.summarizedMessages })

@@ -6,6 +6,10 @@ import { UnifiedFormDialog } from "@/components/dialog/UnifiedFormDialog"
 import { ParameterForm } from "@/components/devices/ParameterForm"
 import { seedCommandDefaults } from "@/components/devices/seedCommandDefaults"
 import {
+  prepareCommandParams,
+  validateCommandParams,
+} from "@/components/devices/commandParams"
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -58,7 +62,8 @@ interface DeviceDetailProps {
   onRefresh: () => void
   onMetricClick: (metricName: string, offset?: number, limit?: number) => Promise<void>
   onMetricBack: () => void
-  onSendCommand: (commandName: string, params: string) => void
+  /** Returns true when the command was accepted by the backend. */
+  onSendCommand: (commandName: string, params: Record<string, unknown>) => Promise<boolean>
 }
 
 function renderMetricValue(
@@ -217,13 +222,43 @@ export function DeviceDetail({
 
   const handleSendCommand = async () => {
     if (!selectedCommandDef) return
+
+    const validated = validateCommandParams(
+      selectedCommandDef.parameters,
+      dialogParams,
+    )
+    if (!validated.ok) {
+      setCommandResult({
+        success: false,
+        error: validated.errors.map((e) => e.message).join('\n'),
+      })
+      return
+    }
+
+    const payload = prepareCommandParams(
+      selectedCommandDef.parameters,
+      dialogParams,
+    )
+
     setCommandExecuting(true)
     setCommandResult(null)
     try {
-      await onSendCommand(selectedCommandDef.name, JSON.stringify(dialogParams))
-      setCommandResult({ success: true })
+      const ok = await onSendCommand(selectedCommandDef.name, payload)
+      if (ok) {
+        setCommandResult({ success: true })
+      } else {
+        setCommandResult({
+          success: false,
+          error: t('devices:sendCommandFailed', {
+            defaultValue: 'Failed to send command',
+          }),
+        })
+      }
     } catch (e) {
-      setCommandResult({ success: false, error: e instanceof Error ? e.message : String(e) })
+      setCommandResult({
+        success: false,
+        error: e instanceof Error ? e.message : String(e),
+      })
     } finally {
       setCommandExecuting(false)
     }

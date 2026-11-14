@@ -31,6 +31,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import { plausiblePromptTokenMeter } from "@/lib/contextUsage"
 import { generateId } from "@/lib/id"
 import { ws } from "@/lib/websocket"
 import type { ServerMessage, ToolCall } from "@/types"
@@ -395,7 +396,14 @@ export function useChatStream(options: UseChatStreamOptions) {
 
     switch (data.type) {
       case "ContextCompacted":
-        if (data.summarizedMessages > 0) optionsRef.current.onContextCompacted?.(data.summarizedMessages, data.sessionId)
+        if (data.summarizedMessages > 0) {
+          // Prefer the post-compact estimate so the meter refreshes without
+          // waiting for the next chat turn (and without flashing pending).
+          if (data.tokenUsage) {
+            optionsRef.current.onTokenUsage?.(data.tokenUsage, data.sessionId)
+          }
+          optionsRef.current.onContextCompacted?.(data.summarizedMessages, data.sessionId)
+        }
         break
 
       case "ContextUsage":
@@ -470,13 +478,16 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case "end": {
         stopWatchdog()
-        if (data.tokenUsage?.promptTokens) {
+        // Skip 0 / u32::MAX — invalid meters must not paint or persist the ring.
+        // Compact gating uses the server-side AgentEvent, not this UI payload.
+        const endUsage = data.tokenUsage
+        if (endUsage && plausiblePromptTokenMeter(endUsage.promptTokens)) {
           optionsRef.current.onTokenUsage?.(
             {
-              promptTokens: data.tokenUsage.promptTokens,
-              systemPromptTokens: data.tokenUsage.systemPromptTokens,
-              toolTokens: data.tokenUsage.toolTokens,
-              maxContextTokens: data.tokenUsage.maxContextTokens,
+              promptTokens: endUsage.promptTokens,
+              systemPromptTokens: endUsage.systemPromptTokens,
+              toolTokens: endUsage.toolTokens,
+              maxContextTokens: endUsage.maxContextTokens,
             },
             data.sessionId,
           )

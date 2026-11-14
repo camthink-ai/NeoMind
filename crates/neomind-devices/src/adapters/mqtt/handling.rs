@@ -433,102 +433,30 @@ impl MqttAdapter {
 
                                 return;
                             } else {
+                                // Standard uplink carries structured JSON; metrics live in the
+                                // payload and are extracted by UnifiedExtractor. Dumping the
+                                // raw bytes into a synthetic "value" metric (the old fallback)
+                                // polluted device detail pages — e.g. EK410 telemetry with an
+                                // unescaped quote failed serde_json, then showed up as a
+                                // phantom String metric named `value` containing the whole
+                                // packet. Drop invalid payloads instead.
                                 warn!(
-                                    "Failed to parse uplink payload as JSON for device {}",
-                                    device_id
+                                    "Failed to parse uplink payload as JSON for device {} on topic {} — dropping (not storing as 'value')",
+                                    device_id, topic
                                 );
+                                return;
                             }
+                        } else {
+                            warn!(
+                                "Standard uplink topic missing device_type segment: {}",
+                                topic
+                            );
+                            return;
                         }
+                    } else {
+                        warn!("Standard uplink topic missing device_id: {}", topic);
+                        return;
                     }
-
-                    // Fall back to simple metric extraction for non-uplink messages
-                    // This requires a device_id to be extractable from the topic
-                    let device_id_for_fallback = extract_device_id_from_topic(&topic, config);
-                    if let Some(device_id) = device_id_for_fallback {
-                        if let Ok(value) = MqttAdapter::default_parse_value(&payload) {
-                            let metric_name = extract_metric_name_from_topic(&topic)
-                                .unwrap_or_else(|| "value".to_string());
-
-                            // Convert Binary to URL before storage + event bus (fork point)
-                            let value = Self::convert_binary_to_url(
-                                &device_id,
-                                &metric_name,
-                                now.timestamp(),
-                                value,
-                                data_dir,
-                            );
-
-                            // Update metric cache
-                            {
-                                let mut cache = metric_cache.write().await;
-                                cache
-                                    .entry(device_id.clone())
-                                    .or_default()
-                                    .insert(metric_name.clone(), (value.clone(), now));
-                            }
-
-                            // Store in telemetry storage
-                            if let Some(storage) = telemetry_storage.read().await.as_ref() {
-                                let data_point = crate::telemetry::DataPoint {
-                                    timestamp: now.timestamp(),
-                                    value: value.clone(),
-                                    quality: None,
-                                    metadata: None,
-                                };
-                                if let Err(e) = storage
-                                    .write(
-                                        &format!("device:{}", device_id),
-                                        &metric_name,
-                                        data_point,
-                                    )
-                                    .await
-                                {
-                                    tracing::warn!(
-                                        device_id = %device_id,
-                                        error = %e,
-                                        "Failed to write telemetry to time-series storage"
-                                    );
-                                }
-                            }
-
-                            // Emit event to device event channel - event forwarding task will publish to EventBus
-                            if let Err(e) = event_tx.send(DeviceEvent::Metric {
-                                device_id: device_id.clone(),
-                                metric: metric_name.clone(),
-                                value: value.clone(),
-                                timestamp: now.timestamp(),
-                            }) {
-                                error!(
-                                    "Failed to send metric event to channel: {}/{} - {}",
-                                    device_id, metric_name, e
-                                );
-                            }
-
-                            // Note: Do NOT publish DeviceMetric to EventBus here - the event forwarding task
-                            // in create_mqtt_adapter handles all EventBus publishing to avoid duplicates
-
-                            // Publish device online event - extract device_type from topic if available
-                            // This is NOT duplicated by the forwarding task
-                            if let Some(bus) = event_bus {
-                                let device_type = extract_device_type_from_topic(&topic);
-                                info!(
-                                "Publishing DeviceOnline to EventBus: device_id={}, device_type={:?}",
-                                device_id, device_type
-                            );
-                                bus.publish(NeoMindEvent::DeviceOnline {
-                                    device_id: device_id.clone(),
-                                    device_type: device_type
-                                        .unwrap_or_else(|| "unknown".to_string()),
-                                    timestamp: now.timestamp(),
-                                })
-                                .await;
-                            } else {
-                                warn!(
-                                "EventBus is None in handle_mqtt_notification - cannot publish DeviceOnline"
-                            );
-                            }
-                        }
-                    } // Close: if let Some(device_id)
                 } // Close: if is_standard_uplink
 
                 // Auto-onboarding: For non-standard topics, trigger auto-discovery

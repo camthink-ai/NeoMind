@@ -16,6 +16,7 @@ Frozen 138-case gate (Mac, Spark-1.7B): **97/138 (70.3%)**, identical to the 1.2
 - Multi-metric telemetry queries omit top-level `total` / `next_cursor` (they never described every metric); read `pagination.per_metric.<name>.{total,next_cursor}` instead.
 
 ### Fixed — agent context and compaction
+- **Bill-first auto-compact + evidence-only summaries**: truncation bypass for LLM summarize now needs ≥35% billed occupancy (was 5% — still blocked T4’s 0.5% spam but allowed estimate-trunc to summarize at ~18–45%); soft >60% path unchanged; garbage `0`/`u32::MAX` meters still rejected; missing usage (`None`) with real truncation still compacts. Streamed `0`/`u32::MAX` are preserved through backends → marker extract → AgentEvent `End` for the compact gate (not discarded to `None`), but are omitted from `end.tokenUsage` / the context ring / `TokenUsage` totals (MAX+completion no longer wraps). LLM summaries that leak compressor meta, lack section headers, exceed ~720 chars, or cite none of the dialogue evidence needles fall back to the deterministic digest; summary feed caps raised to 800/500 chars so IDs and verbatim instructions reach the compressor.
 - **Tool-call results count toward the token estimate**: `tool_call.result` (including `$cached` read-back windows) was invisible to history assembly, so a prompt that “fit” could still need ~33.8K tokens on a 32K window; results are estimated with the same rates as message text.
 - **`$cached:` text is readable via `file_read`**: large tool blobs stay out of the prompt; `file_read(path="$cached:…", char_offset/char_length)` serves char windows (8K default, 64K char / 64KB byte caps) from the session cache, with explicit errors for unknown/evicted refs — resolve no longer expands the blob into the path argument.
 - **Stale cached windows are previewed before budgeting**: older `file_read` `$cached` windows shrink to a structured summary; the newest window (within 32KB serialized) stays intact so multi-window synthesis still works.
@@ -27,6 +28,9 @@ Frozen 138-case gate (Mac, Spark-1.7B): **97/138 (70.3%)**, identical to the 1.2
 - **`query_telemetry` returns the exact range total** from `query_range_rev` instead of the fetch-limited page length, so page-1 `total` matches the series.
 - **An exactly-full last page no longer emits `next_cursor`**: `has_more` requires both a full page and remaining points past `offset + page_len`.
 - **CLI image/history summaries prefer an attributable total** for `truncated` (a spurious cursor on a complete page no longer overrides `total == page_count`); timestamps are treated as Unix seconds, and “latest” is the max-timestamp point.
+- **Device detail keeps legitimate auto-extracted `value` scalars and arrays** (e.g. `{"value":23}`, `{"value":[1,2]}`, `"[ready]"`); only undeclared JSON **object** dumps (live or stringified) are hidden as legacy uplink pollution.
+- **Command Length rules count Unicode scalars** (Rust `chars().count()` / frontend `[...s].length`); ParameterInput no longer uses native `maxLength` (UTF-16) so emoji under `max=5` are not cut off early.
+- **Untyped Array params infer element types** from JSON (`[1,2]` → integers); tagged `{Array:[…]}` / `{Binary:…}` defaults unwrap recursively for the command form.
 
 ### Fixed — mobile / web chrome
 - **Chat and Settings top safe-area match page chrome** (dark header / `bg-background`) instead of leaving a mismatched strip under the notch.
@@ -49,6 +53,8 @@ Frozen 138-case gate (Mac, Spark-1.7B): **97/138 (70.3%)**, identical to the 1.2
 ### Test
 - `revert_parity` pins shipped token rates and 8K/16K/32K compaction goldens (5688 / 14038).
 - Protection-cap, `$cached` door/FIFO/dual-cap, cached-read-chain (`test-utils`), telemetry `has_more` / multi-metric pagination, and CLI summarize cursor-vs-total tests cover the gate-critical contracts.
+- Bill-first trunc floor (35%) + evidence-only summary / digest-fallback unit tests in `summarization` (`auto_summarize_gate`, `trigger_meter_smoke`, meta-leak / grounded accept); unknown-usage+trunc compact; sessions first-turn pressure at 35%.
+- Device `is_legacy_value_dump` / Unicode Length / untyped Array + tagged Array unwrap unit tests (API/devices + vitest `commandParams`).
 
 ---
 

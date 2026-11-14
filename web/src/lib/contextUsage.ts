@@ -7,12 +7,23 @@ export interface ContextTokenUsage {
 
 const positive = (value?: number) => value != null && Number.isFinite(value) && value > 0
 
+/** Mirrors Rust `plausible_prompt_token_meter` — reject 0 / u32::MAX. */
+export function plausiblePromptTokenMeter(promptTokens: number | undefined | null): boolean {
+  return (
+    promptTokens != null &&
+    Number.isFinite(promptTokens) &&
+    promptTokens > 0 &&
+    promptTokens !== 0xffffffff
+  )
+}
+
 /** A context window is one request, not the sum of a ReAct transcript. */
 export function contextUsageSnapshot(measured: ContextTokenUsage | null | undefined,
   configuredMax: number | undefined, messageCount: number) {
   const max = positive(measured?.maxContextTokens) ? measured!.maxContextTokens!
     : positive(configuredMax) ? configuredMax! : 8192
-  const known = measured != null && Number.isFinite(measured.promptTokens) && measured.promptTokens >= 0
+  // Invalid meters (0 / MAX) are not "known" measured usage — treat as pending.
+  const known = measured != null && plausiblePromptTokenMeter(measured.promptTokens)
   // The browser does not know which stored messages the server compacted.
   const pending = !known
   const used = known ? measured!.promptTokens : 0

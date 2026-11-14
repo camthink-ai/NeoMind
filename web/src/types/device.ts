@@ -132,7 +132,9 @@ export interface ParameterDefinition {
   validation?: ValidationRule[]
 }
 
-// Parameter data type matching backend MetricDataType
+// Parameter data type matching backend MetricDataType.
+// Enum may arrive as frontend shape `{ enum: string[] }` or backend serde
+// shape `{ enum: { options: string[] } }` — see getEnumOptions().
 export type ParameterDataType =
   | 'integer'
   | 'float'
@@ -141,6 +143,8 @@ export type ParameterDataType =
   | 'binary'
   | 'array'
   | { enum: string[] }
+  | { enum: { options: string[] } }
+  | { array: { element_type?: string | null } }
 
 // Validation rule for parameter values
 export type ValidationRule =
@@ -159,14 +163,12 @@ export interface ParameterGroup {
   order?: number
 }
 
-// MetricValue matches backend Rust enum serialization format
-// The backend MetricValue enum serializes to direct JSON values:
-// - MetricValue::Integer(42) -> 42
-// - MetricValue::Float(3.14) -> 3.14
-// - MetricValue::String("hello") -> "hello"
-// - MetricValue::Boolean(true) -> true
-// - MetricValue::Array([...]) -> [...]
-// - MetricValue::Null -> null
+// MetricValue — two wire shapes exist:
+// 1) ParameterDefinition fields (`default_value`, `allowed_values`) use Rust
+//    derive Serialize → externally tagged: `{ "String": "hello" }`, `{ "Integer": 42 }`.
+//    UI helpers unwrap via `unwrapMetricValue()` in parameterOptions.ts.
+// 2) Telemetry / tool JSON uses `MetricValue::to_json_value()` → plain values
+//    (42, "hello", true, [...], null). Prefer that for new API surfaces.
 export type MetricValue =
   | number    // Integer or Float (backend discriminates via JSON number type)
   | string    // String
@@ -261,12 +263,8 @@ export interface DeviceCurrentStateResponse {
     adapter_id?: string
   }
   metrics: Record<string, DeviceMetricValue>
-  commands: Array<{
-    name: string
-    display_name: string
-    parameters?: ParameterDefinition[]
-    parameter_groups?: ParameterGroup[]
-  }>
+  /** Full command defs from the device-type template (same shape as CommandDefinition). */
+  commands: CommandDefinition[]
 }
 
 export interface DeviceMetricValue {

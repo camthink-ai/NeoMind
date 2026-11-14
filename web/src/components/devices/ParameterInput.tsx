@@ -7,13 +7,14 @@
  *
  * Field coverage (vs. ParameterDefinition in `types/device.ts`):
  *   ✅ data_type: string | integer | float | boolean | binary | array
- *   ✅ data_type: { enum: [...] }  (object form)
+ *   ✅ data_type: { enum: [...] } or { enum: { options: [...] } }
+ *   ✅ data_type: { array: { element_type?: ... } } (object form)
  *   ✅ allowed_values             (preferred over enum-object when both exist)
- *   ✅ min / max / unit / step
+ *   ✅ min / max / unit
  *   ✅ default_value              (used as initial value by parent)
  *   ✅ help_text                  (rendered below)
  *   ✅ required                   (red asterisk on the label)
- *   ✅ validation: pattern | range | length  (HTML5 + onSubmit checks)
+ *   ✅ validation: pattern | range | length attrs (submit checks in commandParams)
  *
  * Non-goals:
  *   - visible_when / parameter_groups: handled by `ParameterForm`.
@@ -37,6 +38,14 @@ import type {
   ParameterDefinition,
   ValidationRule,
 } from '@/types/device'
+import {
+  getAllowedValues,
+  getEnumOptions,
+  isArrayDataType,
+  normalizeDataType,
+  scalarDataType,
+  truncateToUnicodeScalars,
+} from './parameterOptions'
 
 export interface ParameterInputProps {
   param: ParameterDefinition
@@ -81,24 +90,22 @@ export function ParameterInput({
 }: ParameterInputProps) {
   const { t } = useTranslation('devices')
 
-  // ---------------------------------------------------------------- enum
-  // Object-form enum on data_type — { enum: string[] }
-  const enumOptions = useMemo(() => {
-    if (
-      param.data_type &&
-      typeof param.data_type === 'object' &&
-      'enum' in param.data_type
-    ) {
-      return param.data_type.enum
-    }
-    return null
-  }, [param.data_type])
+  const normalizedType = useMemo(
+    () => normalizeDataType(param.data_type),
+    [param.data_type],
+  )
+  const kind = useMemo(() => scalarDataType(normalizedType), [normalizedType])
 
-  // Explicit allowed_values array — preferred over data_type.enum because
-  // it can carry non-string values (numbers, booleans).
-  const allowedValues = param.allowed_values && param.allowed_values.length > 0
-    ? param.allowed_values
-    : null
+  // ---------------------------------------------------------------- enum
+  // Backend: { enum: { options: string[] } }; frontend editor: { enum: string[] }
+  const enumOptions = useMemo(
+    () => getEnumOptions(normalizedType),
+    [normalizedType],
+  )
+
+  // Explicit allowed_values — preferred over data_type.enum (may be tagged
+  // MetricValue objects from the API; unwrap to plain values).
+  const allowedValues = useMemo(() => getAllowedValues(param), [param])
 
   // Combined list of {label, value} pairs for Select/ButtonGroup rendering.
   const options = useMemo(() => {
@@ -156,7 +163,7 @@ export function ParameterInput({
   }
 
   // ------------------------------------------------------------- boolean
-  if (param.data_type === 'boolean') {
+  if (kind === 'boolean') {
     if (variant === 'compact') {
       return (
         <div className="flex gap-2">
@@ -202,9 +209,8 @@ export function ParameterInput({
   }
 
   // ------------------------------------------------------- integer / float
-  if (param.data_type === 'integer' || param.data_type === 'float') {
-    const isFloat = param.data_type === 'float'
-    const lengthRule = findLengthRule(param.validation)
+  if (kind === 'integer' || kind === 'float') {
+    const isFloat = kind === 'float'
     return (
       <div className="flex items-center gap-2">
         <Input
@@ -221,7 +227,6 @@ export function ParameterInput({
           }}
           min={param.min}
           max={param.max}
-          maxLength={lengthRule?.max}
           step={isFloat ? 'any' : '1'}
           placeholder={
             placeholder ??
@@ -240,7 +245,7 @@ export function ParameterInput({
   }
 
   // ------------------------------------------------------------- binary
-  if (param.data_type === 'binary') {
+  if (kind === 'binary') {
     return (
       <Textarea
         value={typeof value === 'string' ? value : ''}
@@ -257,7 +262,7 @@ export function ParameterInput({
   }
 
   // ------------------------------------------------------------- array
-  if (param.data_type === 'array') {
+  if (kind === 'array' || isArrayDataType(normalizedType)) {
     return (
       <Textarea
         value={
@@ -289,9 +294,17 @@ export function ParameterInput({
     <Input
       type="text"
       value={value === undefined || value === null ? '' : String(value)}
-      onChange={(e) => onChange(e.target.value)}
+      onChange={(e) => {
+        // Native maxlength counts UTF-16 units and blocks valid emoji before
+        // scalar Length validation. Cap with Unicode scalars instead.
+        const raw = e.target.value
+        onChange(
+          lengthRule?.max !== undefined
+            ? truncateToUnicodeScalars(raw, lengthRule.max)
+            : raw,
+        )
+      }}
       pattern={pattern}
-      maxLength={lengthRule?.max}
       placeholder={placeholder ?? param.display_name ?? param.name}
     />
   )

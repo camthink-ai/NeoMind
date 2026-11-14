@@ -40,6 +40,36 @@ fn get_transform_namespaces() -> &'static [&'static str; 5] {
     })
 }
 
+/// True when an undeclared `value` reading looks like the legacy MQTT uplink
+/// whole-payload dump — a JSON **object** (or stringified object).
+///
+/// UnifiedExtractor may legitimately store scalars and top-level arrays
+/// under `value` (e.g. `{"value":23}`, `{"value":[1,2]}`). Bracketed text
+/// like `"[ready]"` is not a payload dump either. Shape alone cannot prove
+/// legacy origin for arrays / bracketed strings — only object dumps match
+/// the historical whole-uplink pollution path.
+pub(crate) fn is_legacy_value_dump(
+    metric_name: &str,
+    template_declares_value: bool,
+    value: Option<&serde_json::Value>,
+) -> bool {
+    if metric_name != "value" || template_declares_value {
+        return false;
+    }
+    match value {
+        Some(serde_json::Value::Object(_)) => true,
+        Some(serde_json::Value::String(s)) => {
+            // Only hide stringified JSON *objects* — not arrays or "[ready]".
+            matches!(
+                serde_json::from_str::<serde_json::Value>(s.trim()),
+                Ok(serde_json::Value::Object(_))
+            )
+        }
+        // Number / Bool / Null / Array / plain string / missing → keep.
+        _ => false,
+    }
+}
+
 /// Convert AdapterConnectionStatus to MdlConnectionStatus
 fn convert_status(status: AdapterConnectionStatus) -> MdlConnectionStatus {
     match status {
@@ -528,11 +558,17 @@ pub async fn get_device_current_handler(
         metrics_to_process.insert(metric.name.clone());
     }
 
-    // Add all storage metrics (this includes auto-extracted metrics like values.battery)
+    // Add all storage metrics (this includes auto-extracted metrics like
+    // values.battery and a legitimate root `value` from empty-template
+    // auto-extract, e.g. `{"value":23}`). Do NOT drop undeclared `value` by
+    // name alone — only skip proven legacy whole-payload dumps after the
+    // latest reading is fetched (see `is_legacy_value_dump` below).
+    let template_declares_value = template.metrics.iter().any(|m| m.name == "value");
     for metric_name in &all_storage_metrics {
-        if metric_name != "_raw" {
-            metrics_to_process.insert(metric_name.clone());
+        if metric_name == "_raw" {
+            continue;
         }
+        metrics_to_process.insert(metric_name.clone());
     }
 
     // Process all metrics
@@ -611,6 +647,12 @@ pub async fn get_device_current_handler(
             }
         };
 
+        // Hide only legacy uplink dumps stored under undeclared `value`
+        // (object/array / stringified JSON). Scalar auto-extract stays.
+        if is_legacy_value_dump(&metric_name, template_declares_value, value.as_ref()) {
+            continue;
+        }
+
         metrics_data.insert(
             metric_name.clone(),
             json!({
@@ -647,11 +689,9 @@ pub async fn get_device_current_handler(
             "adapter_id": config.adapter_id,
         },
         "metrics": metrics_data,
-        "commands": template.commands.iter().map(|c| json!({
-            "name": c.name,
-            "display_name": c.display_name,
-            "parameters": c.parameters,
-        })).collect::<Vec<_>>(),
+        // Pass full command defs (payload_template, description, samples, …)
+        // so the detail UI can render enums / defaults / help_text correctly.
+        "commands": template.commands,
     }))
 }
 
@@ -1263,5 +1303,64 @@ mod device_error_mapping_tests {
             DeviceError::Storage("redb: disk full".into()),
         );
         assert_eq!(resp.status, axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn legacy_value_dump_keeps_scalar_auto_extract() {
+        assert!(
+            !is_legacy_value_dump("value", false, Some(&serde_json::json!(23))),
+            "numeric auto-extract must stay visible"
+        );
+        assert!(!is_legacy_value_dump(
+            "value",
+            false,
+            Some(&serde_json::json!(23.5))
+        ));
+        assert!(!is_legacy_value_dump(
+            "value",
+            false,
+            Some(&serde_json::json!(true))
+        ));
+        assert!(!is_legacy_value_dump(
+            "value",
+            false,
+            Some(&serde_json::json!("ok"))
+        ));
+        // Legitimate array / bracketed text must stay visible.
+        assert!(
+            !is_legacy_value_dump("value", false, Some(&serde_json::json!([1, 2]))),
+            "top-level array auto-extract is valid telemetry"
+        );
+        assert!(
+            !is_legacy_value_dump("value", false, Some(&serde_json::json!("[ready]"))),
+            "bracketed plain text is not a payload dump"
+        );
+        assert!(!is_legacy_value_dump(
+            "value",
+            false,
+            Some(&serde_json::json!("[1,2]"))
+        ));
+        // Object dumps (live or stringified) are the legacy uplink path.
+        assert!(is_legacy_value_dump(
+            "value",
+            false,
+            Some(&serde_json::json!({"temp": 1}))
+        ));
+        assert!(is_legacy_value_dump(
+            "value",
+            false,
+            Some(&serde_json::json!("{\"raw\":true}"))
+        ));
+        // Template-declared `value` is never treated as legacy pollution.
+        assert!(!is_legacy_value_dump(
+            "value",
+            true,
+            Some(&serde_json::json!({"temp": 1}))
+        ));
+        assert!(!is_legacy_value_dump(
+            "temperature",
+            false,
+            Some(&serde_json::json!({"x": 1}))
+        ));
     }
 }

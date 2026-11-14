@@ -57,6 +57,7 @@ import {
   FullScreenDialogFooter,
   FullScreenDialogMain,
 } from "@/components/automation/dialog"
+import { normalizeDataType } from "@/components/devices/parameterOptions"
 
 /**
  * Helper function to safely format data_type for display
@@ -64,16 +65,25 @@ import {
  */
 function formatDataType(dataType: string | Record<string, unknown> | undefined): string {
   if (!dataType) return 'unknown'
-  if (typeof dataType === 'string') return dataType
-  // If data_type is an object (e.g., { array: true }), format it
-  if (typeof dataType === 'object') {
-    const keys = Object.keys(dataType)
-    if (keys.length === 1) {
-      return keys[0]  // e.g., "array"
-    }
-    return JSON.stringify(dataType)
+  const n = normalizeDataType(dataType)
+  if (typeof n === 'string') return n
+  if (typeof n === 'object') {
+    const keys = Object.keys(n)
+    if (keys.length === 1) return keys[0]
+    return JSON.stringify(n)
   }
   return String(dataType)
+}
+
+/** Normalize command parameters after JSON import (TitleCase / enum-object). */
+function normalizeImportedParameters(
+  parameters: ParameterDefinition[] | undefined,
+): ParameterDefinition[] {
+  if (!parameters) return []
+  return parameters.map((p) => ({
+    ...p,
+    data_type: normalizeDataType(p.data_type),
+  }))
 }
 
 // Validation result type
@@ -1002,7 +1012,7 @@ function CommandsStep({
         name: (cmd.name as string) || `cmd_${Date.now()}`,
         display_name: (cmd.display_name as string) || (cmd.name as string) || t('devices:commandsStep.importedCommand', 'Imported Command'),
         payload_template: (cmd.payload_template as string) || (cmd.payload as string) || JSON.stringify(cmd),
-        parameters: (cmd.parameters as ParameterDefinition[]) || [],
+        parameters: normalizeImportedParameters(cmd.parameters as ParameterDefinition[] | undefined),
       }))
 
       onChange({
@@ -1040,7 +1050,7 @@ function CommandsStep({
           name: (cmd.name as string) || `cmd_${Date.now()}`,
           display_name: (cmd.display_name as string) || (cmd.name as string) || t('devices:commandsStep.importedCommand', 'Imported Command'),
           payload_template: (cmd.payload_template as string) || (cmd.payload as string) || JSON.stringify(cmd),
-          parameters: (cmd.parameters as ParameterDefinition[]) || [],
+          parameters: normalizeImportedParameters(cmd.parameters as ParameterDefinition[] | undefined),
         }))
 
         onChange({

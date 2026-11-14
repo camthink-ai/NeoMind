@@ -15,6 +15,14 @@
 
 import { generateId } from '@/lib/id'
 import type { ParameterDefinition } from '@/types/device'
+import {
+  getAllowedValues,
+  getEnumOptions,
+  isArrayDataType,
+  normalizeDataType,
+  scalarDataType,
+  unwrapMetricValue,
+} from './parameterOptions'
 
 /**
  * Parameter names that should be auto-populated with a generated id.
@@ -36,7 +44,7 @@ export function isAutoIdParam(param: ParameterDefinition): boolean {
   if (param.default_value !== undefined) return false
   // Only string-typed parameters are candidates. Numbers/booleans named
   // "request_id" would be nonsensical and we shouldn't second-guess that.
-  if (param.data_type !== 'string') return false
+  if (scalarDataType(normalizeDataType(param.data_type)) !== 'string') return false
   return AUTO_ID_PATTERNS.some((re) => re.test(param.name))
 }
 
@@ -56,9 +64,9 @@ export function seedCommandDefaults(
   const values: Record<string, unknown> = {}
 
   for (const param of parameters) {
-    // 1. Explicit default
-    if (param.default_value !== undefined) {
-      values[param.name] = param.default_value
+    // 1. Explicit default (unwrap tagged MetricValue from API)
+    if (param.default_value !== undefined && param.default_value !== null) {
+      values[param.name] = unwrapMetricValue(param.default_value)
       continue
     }
 
@@ -68,34 +76,46 @@ export function seedCommandDefaults(
       continue
     }
 
-    // 3. Type-appropriate empty value
-    values[param.name] = emptyValueFor(param)
+    // 3. Type-appropriate empty value. `undefined` means leave the key
+    // absent so optional/required fields are not fake-filled with 0.
+    const empty = emptyValueFor(param)
+    if (empty !== undefined) {
+      values[param.name] = empty
+    }
   }
 
   return values
 }
 
-/** Return a sensible "empty" value based on the parameter's declared type. */
+/**
+ * Return a sensible initial value, or `undefined` to leave the key unset.
+ * Numerics prefer `min` over `0` so NE301-style `min: 1` dialogs are valid
+ * on first open.
+ */
 function emptyValueFor(param: ParameterDefinition): unknown {
-  // Object-form enum on data_type → first option
-  if (
-    param.data_type &&
-    typeof param.data_type === 'object' &&
-    'enum' in param.data_type &&
-    param.data_type.enum.length > 0
-  ) {
-    return param.data_type.enum[0]
+  const normalized = normalizeDataType(param.data_type)
+  const enumOpts = getEnumOptions(normalized)
+  if (enumOpts && enumOpts.length > 0) {
+    return enumOpts[0]
   }
 
-  // Explicit allowed_values array → first option (preserves original type)
-  if (param.allowed_values && param.allowed_values.length > 0) {
-    return param.allowed_values[0]
+  const allowed = getAllowedValues(param)
+  if (allowed && allowed.length > 0) {
+    return allowed[0]
   }
 
-  switch (param.data_type) {
+  if (isArrayDataType(normalized)) return []
+  if (normalized && typeof normalized === 'object') {
+    // Unrecognized object form (e.g. empty enum) — leave unset.
+    return undefined
+  }
+
+  switch (scalarDataType(normalized)) {
     case 'integer':
     case 'float':
-      return 0
+      if (typeof param.min === 'number') return param.min
+      // Leave unset — required validation prompts the user; optional omits.
+      return undefined
     case 'boolean':
       return false
     case 'array':
@@ -103,7 +123,6 @@ function emptyValueFor(param: ParameterDefinition): unknown {
     case 'string':
     case 'binary':
     case null:
-    case undefined:
     default:
       return ''
   }
