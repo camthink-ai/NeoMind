@@ -108,6 +108,20 @@ const DYNAMIC_KEY_FAMILIES: Array<{ ns: string; keys: string[] }> = [
     ],
   },
   {
+    ns: 'devices',
+    keys: [
+      // Command delivery ladder — dynamic tier / state rows
+      'commandDelivery.tier.adapter_received',
+      'commandDelivery.tier.extension_received',
+      'commandDelivery.tier.device_ack',
+      'commandDelivery.tier.physical_effect',
+      'commandDelivery.state.reached',
+      'commandDelivery.state.not_reached',
+      'commandDelivery.state.not_applicable',
+      'commandDelivery.state.unknown',
+    ],
+  },
+  {
     ns: 'agents',
     keys: [
       'creator.notify.onFailure', 'creator.notify.onFailureDesc',

@@ -9,6 +9,7 @@ import {
   prepareCommandParams,
   validateCommandParams,
 } from "@/components/devices/commandParams"
+import { CommandDeliveryLadderPanel } from "@/components/devices/CommandDeliveryLadderPanel"
 import {
   Dialog,
   DialogContent,
@@ -62,8 +63,14 @@ interface DeviceDetailProps {
   onRefresh: () => void
   onMetricClick: (metricName: string, offset?: number, limit?: number) => Promise<void>
   onMetricBack: () => void
-  /** Returns true when the command was accepted by the backend. */
-  onSendCommand: (commandName: string, params: Record<string, unknown>) => Promise<boolean>
+  /**
+   * Returns a delivery result when the backend accepted the send, or false.
+   * Truthy ≠ device ACK — inspect `delivery` for the ladder.
+   */
+  onSendCommand: (
+    commandName: string,
+    params: Record<string, unknown>,
+  ) => Promise<import('@/lib/commandDeliveryLadder').SendCommandDeliveryResult | false>
 }
 
 function renderMetricValue(
@@ -183,7 +190,11 @@ export function DeviceDetail({
   const [selectedCommandDef, setSelectedCommandDef] = useState<CommandDefinition | null>(null)
   const [dialogParams, setDialogParams] = useState<Record<string, unknown>>({})
   const [commandExecuting, setCommandExecuting] = useState(false)
-  const [commandResult, setCommandResult] = useState<{ success: boolean; data?: unknown; error?: string } | null>(null)
+  const [commandResult, setCommandResult] = useState<{
+    success: boolean
+    delivery?: import('@/lib/commandDeliveryLadder').SendCommandDeliveryResult
+    error?: string
+  } | null>(null)
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1)
@@ -243,9 +254,9 @@ export function DeviceDetail({
     setCommandExecuting(true)
     setCommandResult(null)
     try {
-      const ok = await onSendCommand(selectedCommandDef.name, payload)
-      if (ok) {
-        setCommandResult({ success: true })
+      const result = await onSendCommand(selectedCommandDef.name, payload)
+      if (result) {
+        setCommandResult({ success: true, delivery: result })
       } else {
         setCommandResult({
           success: false,
@@ -854,16 +865,14 @@ export function DeviceDetail({
             />
           )}
 
-          {/* Execution Result */}
-          {commandResult && (
-            <div className={cn(
-              "rounded-lg p-3 text-xs font-mono overflow-auto max-h-48",
-              commandResult.success ? "bg-success-light" : "bg-error-light"
-            )}>
+          {/* Delivery ladder — dispatch ≠ device ACK / physical effect */}
+          {commandResult?.success && commandResult.delivery && (
+            <CommandDeliveryLadderPanel result={commandResult.delivery} />
+          )}
+          {commandResult && !commandResult.success && (
+            <div className="rounded-lg border border-error bg-error-light p-3 text-xs font-mono overflow-auto max-h-48 text-error">
               <pre className="whitespace-pre-wrap break-words">
-                {commandResult.success
-                  ? t('devices:commandSent')
-                  : commandResult.error}
+                {commandResult.error}
               </pre>
             </div>
           )}

@@ -327,11 +327,13 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
 
   const _handleCommandClick = useCallback(async (deviceId: string, command: string) => {
     try {
-      const success = await sendCommand(deviceId, command)
-      if (success) {
+      const result = await sendCommand(deviceId, command)
+      if (result) {
         toast({
           title: t('visualDashboard.commandSent'),
-          description: `${t('visualDashboard.command')}: ${command}\n${t('visualDashboard.device')}: ${deviceId.slice(0, 8)}...`,
+          description:
+            result.delivery_note ||
+            `${t('visualDashboard.command')}: ${command}\n${t('visualDashboard.device')}: ${deviceId.slice(0, 8)}...`,
         })
       } else {
         toast({

@@ -172,12 +172,14 @@ export function CommandButton({
 
     try {
       if (isDeviceCommand && deviceId && commandName) {
-        await api.sendCommand(deviceId, commandName, payload)
+        const res = await api.sendCommand(deviceId, commandName, payload)
         toast({
           title: t('commandButton.commandSent'),
-          description: t('commandButton.commandSentDesc'),
+          // Prefer server delivery_note (honest ladder text); never claim device ACK.
+          description: res.delivery_note || t('commandButton.commandSentDesc'),
         })
       } else if (isExtensionCommand && extensionId && extensionCommand) {
+        // Extension invoke is not the device ACK ladder — keep dispatch-honest copy.
         await api.invokeExtension(extensionId, extensionCommand, payload)
         toast({
           title: t('commandButton.commandSent'),

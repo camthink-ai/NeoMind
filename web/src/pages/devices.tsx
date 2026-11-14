@@ -483,20 +483,21 @@ export function DevicesPage() {
   const handleSendCommand = async (
     commandName: string,
     params: Record<string, unknown>,
-  ): Promise<boolean> => {
-    if (!deviceDetailView) return false
+  ) => {
+    if (!deviceDetailView) return false as const
 
     try {
-      const success = await sendCommand(deviceDetailView, commandName, params)
-      if (success) {
+      const result = await sendCommand(deviceDetailView, commandName, params)
+      if (result) {
+        // Detail dialog shows the ladder; toast stays dispatch-honest (not ACK).
         toast({ title: t('devices:commandSent') })
       } else {
         toast({ title: t('devices:sendCommandFailed'), variant: "destructive" })
       }
-      return success
+      return result
     } catch {
       toast({ title: t('devices:sendCommandFailed'), variant: "destructive" })
-      return false
+      return false as const
     }
   }
 

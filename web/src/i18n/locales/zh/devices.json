@@ -74,6 +74,28 @@
   "sendCommand": "发送命令",
   "sending": "发送中...",
   "commandSent": "已下发到通道（非设备确认）",
+  "commandDelivery": {
+    "summaryAdapter": "适配器已接收（仅下发）",
+    "summaryExtension": "扩展已接收（非设备 ACK）",
+    "summaryDeviceAck": "设备已确认（物理效果未验证）",
+    "summaryVerified": "物理效果已验证",
+    "summaryUnknown": "已下发 — 缺少交付证据",
+    "summaryNone": "无交付证据",
+    "noElevateHint": "没有设备 ACK 或物理效果证据 — 不提升层级。",
+    "adapters": "{{count}} 个适配器",
+    "tier": {
+      "adapter_received": "适配器接收",
+      "extension_received": "扩展接收",
+      "device_ack": "设备 ACK",
+      "physical_effect": "物理效果"
+    },
+    "state": {
+      "reached": "已达到",
+      "not_reached": "未达到",
+      "not_applicable": "不适用",
+      "unknown": "未知"
+    }
+  },
   "loading": "加载设备中...",
   "headers": {
     "id": "设备 ID",

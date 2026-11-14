@@ -74,6 +74,28 @@
   "sendCommand": "Send Command",
   "sending": "Sending...",
   "commandSent": "Dispatched to the channel (not a device ACK)",
+  "commandDelivery": {
+    "summaryAdapter": "Adapter accepted (dispatch only)",
+    "summaryExtension": "Extension accepted (not a device ACK)",
+    "summaryDeviceAck": "Device acknowledged (physical effect unverified)",
+    "summaryVerified": "Physical effect verified",
+    "summaryUnknown": "Dispatched — delivery evidence missing",
+    "summaryNone": "No delivery evidence",
+    "noElevateHint": "No evidence for device ACK or physical effect — tier not elevated.",
+    "adapters": "{{count}} adapter(s)",
+    "tier": {
+      "adapter_received": "Adapter received",
+      "extension_received": "Extension received",
+      "device_ack": "Device ACK",
+      "physical_effect": "Physical effect"
+    },
+    "state": {
+      "reached": "Reached",
+      "not_reached": "Not reached",
+      "not_applicable": "N/A",
+      "unknown": "Unknown"
+    }
+  },
   "loading": "Loading devices...",
   "headers": {
     "id": "Device ID",

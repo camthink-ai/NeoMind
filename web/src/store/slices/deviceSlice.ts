@@ -44,7 +44,16 @@ export interface DeviceSlice extends DeviceState, TelemetryState {
   addDevice: (request: AddDeviceRequest) => Promise<boolean>
   updateDevice: (id: string, request: Partial<AddDeviceRequest>) => Promise<boolean>
   deleteDevice: (id: string) => Promise<boolean>
-  sendCommand: (deviceId: string, command: string, params?: Record<string, unknown>) => Promise<boolean>
+  /**
+   * Returns a truthy delivery result when the backend accepted the send,
+   * or `false` on failure. Callers must not treat truthy as device ACK —
+   * inspect `delivery` / use `deriveCommandDeliveryLadder`.
+   */
+  sendCommand: (
+    deviceId: string,
+    command: string,
+    params?: Record<string, unknown>,
+  ) => Promise<import('@/lib/commandDeliveryLadder').SendCommandDeliveryResult | false>
 
   addDeviceType: (definition: DeviceType) => Promise<boolean>
   deleteDeviceType: (id: string) => Promise<boolean>
@@ -298,11 +307,15 @@ export const createDeviceSlice: StateCreator<
   sendCommand: async (deviceId, command, params) => {
     try {
       const result = await api.sendCommand(deviceId, command, params)
-      // Backend returns { device_id, command, sent: true } after unwrap
+      // Backend returns { sent, delivery, delivery_note } after unwrap
       if (result.sent) {
         fetchCache.invalidate('devices')
         await get().fetchDevices()
-        return true
+        return {
+          sent: true,
+          delivery: result.delivery ?? null,
+          delivery_note: result.delivery_note ?? null,
+        }
       }
       return false
     } catch (error) {

@@ -205,7 +205,7 @@ timeout和判定来源。
 - [x] C：浏览器/触屏/IME/无障碍测试与5人可用性验证。
   （2026-11-14 切片：compositionend 重扫 + IME Enter 防误选/误发；listbox/option/tablist ARIA；vitest 38（Composer+InlineAt+IME guard+model）。**未做**：真浏览器 headed、真触屏、VoiceOver 实机、5 人×4 任务——缺口与协议见 `docs/development/mention-a11y-usability-checklist-2026-11-14.md`。证据 `eval/manifests/1.3.0-iter-c-mention-a11y.json`。）
 - [ ] D：Transform/Rule/命令/Agent状态界面闭环。
-  （进行中 — 2026-11-14：① Transform 测试诚实判定（证据 `eval/manifests/1.3.0-iter-d-transform-test-status.json`）。② Rule「为什么未触发」：`GET /rules/:id/explain` → `getRuleExplain` + `deriveRuleBlockingReasons` + `RuleDetailDialog` 只读面板（条件值/值龄/unknown/for_duration/cooldown/最近执行）；证据 `eval/manifests/1.3.0-iter-d-rule-why-not-triggered.json`。命令 ACK / Agent 证据未做。）
+  （进行中 — 2026-11-14：① Transform 测试诚实判定。② Rule「为什么未触发」。③ 命令 ACK 阶梯：`delivery`/`delivery_note` → `deriveCommandDeliveryLadder` + `CommandDeliveryLadderPanel`（适配器/扩展/设备ACK/物理效果；无证据不提升；仅 physical 可绿完成）；证据 `eval/manifests/1.3.0-iter-d-command-delivery-ladder.json`。Agent 执行证据面板未做。）
 - [ ] E：首个可运行方案10次预注册验收。
 - [ ] F：48场景分组冻结、基线候选配对、最终138与Appliance验收。
 - [ ] 发布前：版本统一、证据归档、未解决问题、人工复现步骤。

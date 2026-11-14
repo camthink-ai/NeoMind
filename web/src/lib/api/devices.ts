@@ -32,7 +32,14 @@ export const devicesApi = {
       method: 'DELETE',
     }),
   sendCommand: (deviceId: string, command: string, params: Record<string, unknown> = {}) =>
-    fetchAPI<{ device_id: string; command: string; sent: boolean }>(`/devices/${deviceId}/command/${command}`, {
+    fetchAPI<{
+      device_id: string
+      command: string
+      sent: boolean
+      /** CommandDelivery serde (snake_case); absent on older servers. */
+      delivery?: import('@/lib/commandDeliveryLadder').CommandDeliveryJson | null
+      delivery_note?: string | null
+    }>(`/devices/${deviceId}/command/${command}`, {
       method: 'POST',
       body: JSON.stringify({ params }),
     }),
