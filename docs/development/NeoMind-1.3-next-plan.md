@@ -218,9 +218,9 @@ timeout和判定来源。
 基线：Mac 1.3.0 @66574262，审查开始工作区干净。本节覆盖§11笼统勾选：实现、预注册不等于实际验收。
 ### 发现与优先级
 - P0 llm.rs:2330–2415：内层按单消息逆序裁剪，超预算立即break，短历史无条件插回首个user，即使预算为0；无法保证最近完整工具交互。外层context.rs保护后仍可能被二次裁剪。
-- P1 llm.rs:1032：不同Skill全文累积无总量上限；可能挤占历史，尚未证明是生产耗尽预算的主因。
+- P1 llm.rs Skill 全文累积：~~无总量上限~~ → **已修**（`skill_bodies_token_budget` = ctx/8∈[2k,6k]；transient + pinned；证据 `eval/manifests/1.3.0-p1-skill-bodies-total-budget.json`）。Live A/B 仍待 138 释放。
 - P1 stream_core.rs:157：新用户轮清除Skill；需验证“继续”、目标纠正和任务状态衔接。不能直接永久保留全部Skill。
-- P1 生产行内@、SessionMessage nodes持久化、真人UX、E live、tip138尚未完成，不能因计划打勾宣称发布验收通过。
+- P1 真人UX、E live、tip138尚未完成，不能因计划打勾宣称发布验收通过。
 生产证据：T4 1.2.11会话6621a013-0d12-43c7-ad39-6dbf6e9cb156，北京时间19:46:18/:29/:38，两项list成功返回7925/449字节；历史9→1、9→1、10→1，available_tokens=0；实际Spark请求message_count=3后重复查询。证明裁剪与循环同时发生，完整请求正文未留存，唯一根因仍需复现。DeepSeek关联成功会话仅确认render_text回执queued，非屏幕物理刷新，非受控A/B。
 ### 执行计划
 1. G0 检查实际作业，冻结源码/二进制/模型/运行时/采样/fixture哈希，不恢复旧队列、不争用推理。隔离实例记录脱敏实际序列化请求及消息ID、裁剪原因、system/Skill/tools/history/current-user/template预算、摘要fallback、实际usage和循环保护开关；禁止保存认证头/密钥。
@@ -252,8 +252,11 @@ timeout和判定来源。
   （2026-11-14：`UserMessageContent` 按有序 nodes 画 `.nm-mention`；`mergeMessagesForDisplay` 归一化 camel/snake；Chat/Panel「填回输入框」恢复 nodes+草稿；无效发送也落盘草稿。vitest TipTap+history 54/54。证据 `eval/manifests/1.3.0-c-history-content-nodes.json`。**未做**：真浏览器/触屏/VoiceOver/5人。）
 - [x] C 真浏览器 headed Playwright（触屏模拟 + axe）；5人仍人工缺口。
   （2026-11-14：`e2e/specs/mention-a11y.spec.ts` headed Chrome **6/6**；历史 chip/reuse、listbox ARIA、mobile `hasTouch` tap、axe serious/critical。证据 `eval/manifests/1.3.0-c-mention-headed-a11y.json`。**明确未通过**：物理触屏、VoiceOver/TalkBack 实听、5×4（**0/20**，禁止宣称 18/20）。138 PID 89912 / `:29431` 仍占用、未触碰、未开新长跑。）
-- [ ] C 人工：真机触屏 + VoiceOver/TalkBack + 5人×4任务>=18/20（未执行）。
+- [x] P1 Skill 全文累积总量上限（独立机制轮）。
+  （2026-11-14：`set_skill_context` + pinned 注入共用 `skill_bodies_token_budget`；超限截断/跳过；单测 4/4。证据 `eval/manifests/1.3.0-p1-skill-bodies-total-budget.json`。**未做**：T4 live A/B；不宣称单独治愈生产环。）
+- [ ] C 人工：真机触屏 + VoiceOver/TalkBack + 5人×4任务>=18/20（挂起）。
+- [ ] P1 stream_core 新轮清 Skill 与「继续」/纠正衔接验证。
 - [ ] D 桌面/移动代表流程。
 - [ ] E Spark实际10次>=9/10，多轮/故障/取消探针。
 - [ ] F 48场景可执行化、tip138与Appliance验收。
-G0–G3 离线项、C TipTap/历史 chip/headed Playwright 已勾；**C 真人 UX/5人、中英配对 live、D/E/F** 仍为缺口。最终发布准备文档必须引用本节剩余项。
+G0–G3 离线项、C TipTap/历史 chip/headed Playwright、P1 skill 总量上限已勾；**C 真人 UX/5人、stream_core skill-clear、中英配对 live、D/E/F** 仍为缺口。最终发布准备文档必须引用本节剩余项。

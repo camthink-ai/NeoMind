@@ -248,11 +248,79 @@ fn long_prompt_thinking_threshold(max_context: usize) -> usize {
 ///
 /// Tracks which skill ids have already been loaded so re-loading the same skill
 /// (a common LLM pattern when stuck in a retry loop) doesn't duplicate the body
-/// in the system prompt. The first legitimate load always preserves the full body.
+/// in the system prompt. Distinct skill ids accumulate under
+/// [`skill_bodies_token_budget`] so 15+ full guides cannot zero history budget.
 #[derive(Default)]
 struct TransientSkillContext {
     loaded_ids: std::collections::HashSet<String>,
     body: String,
+}
+
+/// Total estimated-token budget for skill bodies injected into one system
+/// prompt (transient skill-tool loads + pinned skills combined per section).
+///
+/// Scales with the model window (`ctx/8`), clamped to `[2_000, 6_000]`:
+/// - 8K → 2K, 32K → 4K, 64K+ → 6K.
+/// Enough for a few full guides; not enough for the whole builtin catalog.
+/// Independent of per-skill `token_budget` metadata and auto-match
+/// [`crate::skills::TokenBudgetConfig`].
+pub(crate) fn skill_bodies_token_budget(max_context: usize) -> usize {
+    (max_context / 8).clamp(2_000, 6_000)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SkillBodyAppendOutcome {
+    Full,
+    Truncated,
+    Skipped,
+}
+
+/// Plan the next skill-body fragment under a total token budget.
+///
+/// `existing` is the already-accumulated body (no leading separator). Returns
+/// `(outcome, piece)` where `piece` includes the `\n\n` separator when needed
+/// and is empty on [`SkillBodyAppendOutcome::Skipped`].
+pub(crate) fn plan_skill_body_append(
+    existing: &str,
+    content: &str,
+    budget_tokens: usize,
+) -> (SkillBodyAppendOutcome, String) {
+    use crate::agent::tokenizer::{estimate_tokens, truncate_to_tokens};
+
+    if content.is_empty() {
+        return (SkillBodyAppendOutcome::Skipped, String::new());
+    }
+    let used = if existing.is_empty() {
+        0
+    } else {
+        estimate_tokens(existing)
+    };
+    let sep = if existing.is_empty() { "" } else { "\n\n" };
+    let sep_tokens = if sep.is_empty() {
+        0
+    } else {
+        estimate_tokens(sep)
+    };
+    let remaining = budget_tokens.saturating_sub(used.saturating_add(sep_tokens));
+    // Keep a tiny floor so we don't inject a useless stub.
+    if remaining < 32 {
+        return (SkillBodyAppendOutcome::Skipped, String::new());
+    }
+    let need = estimate_tokens(content);
+    if need <= remaining {
+        return (SkillBodyAppendOutcome::Full, format!("{sep}{content}"));
+    }
+    let truncated = truncate_to_tokens(
+        content,
+        remaining.saturating_sub(estimate_tokens("\n…[skill truncated: total skill budget]")),
+    );
+    if truncated.trim().is_empty() {
+        return (SkillBodyAppendOutcome::Skipped, String::new());
+    }
+    (
+        SkillBodyAppendOutcome::Truncated,
+        format!("{sep}{truncated}\n…[skill truncated: total skill budget]"),
+    )
 }
 
 /// Credential-free request defaults captured from the backend selected for a session.
@@ -1061,18 +1129,39 @@ impl LlmInterface {
     /// Append transient skill context (from skill tool results).
     ///
     /// Deduplicates by `skill_id`: if the same skill is loaded again in this turn,
-    /// the call is a no-op (full body from the first load is retained unchanged).
-    /// Distinct skill ids accumulate, separated by a blank line.
+    /// the call is a no-op (first load retained). Distinct skill ids accumulate
+    /// under [`skill_bodies_token_budget`] — later loads truncate or skip when
+    /// the total would blow the fixed-prefix budget (plan §12 P1).
     pub async fn set_skill_context(&self, skill_id: String, content: String) {
+        let budget = skill_bodies_token_budget(self.max_context_length().await);
         let mut guard = self.skill_context.write().await;
-        if !guard.loaded_ids.insert(skill_id) {
+        if !guard.loaded_ids.insert(skill_id.clone()) {
             // Already loaded this turn — skip to avoid duplicate context bloat.
             return;
         }
-        if !guard.body.is_empty() {
-            guard.body.push_str("\n\n");
+        let (outcome, piece) = plan_skill_body_append(&guard.body, &content, budget);
+        match outcome {
+            SkillBodyAppendOutcome::Full => {
+                guard.body.push_str(&piece);
+            }
+            SkillBodyAppendOutcome::Truncated => {
+                tracing::warn!(
+                    skill_id = %skill_id,
+                    budget_tokens = budget,
+                    "skill context truncated to fit total skill body budget"
+                );
+                guard.body.push_str(&piece);
+            }
+            SkillBodyAppendOutcome::Skipped => {
+                tracing::warn!(
+                    skill_id = %skill_id,
+                    budget_tokens = budget,
+                    "skill context skipped: total skill body budget exhausted"
+                );
+                // Id stays in loaded_ids so the model cannot re-append the same
+                // oversized body in a retry loop.
+            }
         }
-        guard.body.push_str(&content);
     }
 
     /// Get transient skill context body (None if empty).
@@ -1176,19 +1265,47 @@ impl LlmInterface {
             }
         }
 
-        // Inject pinned skills (user-selected) as full guides
+        // Inject pinned skills (user-selected) under the same total body budget
+        // as transient loads — per-skill metadata still caps individuals via
+        // body_within_budget; the total stops a large pin set from zeroing history.
         let pinned = self.pinned_skills.read().await.clone();
         if !pinned.is_empty() {
             let registry_opt = self.skill_registry.read().await.clone();
             if let Some(registry) = registry_opt {
                 let registry_guard = registry.read().await;
+                let budget = skill_bodies_token_budget(self.max_context_length().await);
+                let mut pinned_bodies = String::new();
                 for skill_id in &pinned {
                     if let Some(skill) = registry_guard.get(skill_id) {
-                        prompt.push_str(&format!(
-                            "\n## Pinned Skill: {}\n{}\n",
-                            skill.metadata.name, skill.body
-                        ));
+                        let chunk = format!(
+                            "## Pinned Skill: {}\n{}",
+                            skill.metadata.name,
+                            skill.body_within_budget()
+                        );
+                        let (outcome, piece) =
+                            plan_skill_body_append(&pinned_bodies, &chunk, budget);
+                        if matches!(outcome, SkillBodyAppendOutcome::Skipped) {
+                            tracing::warn!(
+                                skill_id = %skill_id,
+                                budget_tokens = budget,
+                                "pinned skill skipped: total skill body budget exhausted"
+                            );
+                            break;
+                        }
+                        if matches!(outcome, SkillBodyAppendOutcome::Truncated) {
+                            tracing::warn!(
+                                skill_id = %skill_id,
+                                budget_tokens = budget,
+                                "pinned skill truncated to fit total skill body budget"
+                            );
+                        }
+                        pinned_bodies.push_str(&piece);
                     }
+                }
+                if !pinned_bodies.is_empty() {
+                    prompt.push('\n');
+                    prompt.push_str(&pinned_bodies);
+                    prompt.push('\n');
                 }
             }
         }
@@ -2676,6 +2793,89 @@ mod tests {
             .await
             .expect("body present after clear")
             .contains("RULE GUIDE"));
+    }
+
+    #[test]
+    fn skill_bodies_token_budget_scales_and_clamps() {
+        assert_eq!(skill_bodies_token_budget(4_096), 2_000);
+        assert_eq!(skill_bodies_token_budget(8_000), 2_000);
+        assert_eq!(skill_bodies_token_budget(32_768), 4_096);
+        assert_eq!(skill_bodies_token_budget(65_536), 6_000);
+        assert_eq!(skill_bodies_token_budget(128_000), 6_000);
+    }
+
+    #[test]
+    fn plan_skill_body_append_keeps_first_full_then_caps_total() {
+        use crate::agent::tokenizer::estimate_tokens;
+
+        let budget = 200;
+        let first = "ALPHA ".repeat(40); // comfortably under budget alone
+        let (o1, p1) = plan_skill_body_append("", &first, budget);
+        assert_eq!(o1, SkillBodyAppendOutcome::Full);
+        let mut body = p1;
+        assert!(estimate_tokens(&body) <= budget);
+
+        // Second body is large — must truncate or skip, never exceed budget.
+        let second = "BETA ".repeat(400);
+        let (o2, p2) = plan_skill_body_append(&body, &second, budget);
+        assert_ne!(o2, SkillBodyAppendOutcome::Full);
+        body.push_str(&p2);
+        assert!(
+            estimate_tokens(&body) <= budget + 8,
+            "accumulated skill bodies must stay near the total budget (got {})",
+            estimate_tokens(&body)
+        );
+        assert!(body.contains("ALPHA"));
+        if o2 == SkillBodyAppendOutcome::Truncated {
+            assert!(body.contains("skill truncated: total skill budget"));
+        }
+
+        // With budget already full, further appends skip.
+        let (o3, p3) = plan_skill_body_append(&body, "GAMMA leftover", budget);
+        assert_eq!(o3, SkillBodyAppendOutcome::Skipped);
+        assert!(p3.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_set_skill_context_caps_many_full_guides() {
+        use crate::agent::tokenizer::estimate_tokens;
+
+        let interface = LlmInterface::new(ChatConfig::default());
+        // Default interface has no runtime → max_context=4096 → budget=2000.
+        let budget = skill_bodies_token_budget(4_096);
+        assert_eq!(budget, 2_000);
+
+        // 15 oversized guides — without a total cap these would blow the
+        // fixed prefix (T4 production symptom with 15+ builtin skills).
+        for i in 0..15 {
+            let guide = format!("GUIDE{i} {}", "技能正文".repeat(200));
+            let payload = format!(r#"{{"id":"skill-{i}","name":"S{i}","guide":"{guide}"}}"#);
+            interface
+                .set_skill_context(format!("skill-{i}"), payload)
+                .await;
+        }
+        let body = interface
+            .get_skill_context()
+            .await
+            .expect("at least the first skill should land");
+        let tokens = estimate_tokens(&body);
+        assert!(
+            tokens <= budget + 16,
+            "15 skill loads must respect total budget {budget}, got {tokens}"
+        );
+        // First skill retained; not all 15 full bodies can fit.
+        assert!(
+            body.contains("GUIDE0")
+                || body.contains("skill-0")
+                || body.contains("\"id\":\"skill-0\"")
+        );
+        let loaded_markers = (0..15)
+            .filter(|i| body.contains(&format!("GUIDE{i}")))
+            .count();
+        assert!(
+            loaded_markers < 15,
+            "expected total cap to drop some of 15 full guides, kept {loaded_markers}"
+        );
     }
 
     #[test]
