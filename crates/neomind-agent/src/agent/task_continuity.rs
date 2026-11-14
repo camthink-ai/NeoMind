@@ -1,19 +1,28 @@
-//! Cross-turn task continuity (G2), execution-state Round 2, and loop-halt
+//! Cross-turn task continuity (G2), execution-state Round 3, and loop-halt
 //! honesty (G3).
 //!
-//! ## Execution-state Round 2
-//! - Real [`OperationRecord`]s: `operation_id`, `origin_turn_id`, `tool_name`,
-//!   `target`, `arguments`, `status`, `result`, `evidence`.
-//! - Status lifecycle: `prepared → running → succeeded | failed | unknown`
-//!   (plus `cancelled` for Correct of not-yet-executed ops). Device delivery
-//!   stages stay separate evidence — never implied by tool success alone.
-//! - Same-operation resume/retry keeps the same `operation_id` and
-//!   [`TaskState::prefer_known_result`]; user-authorized re-run calls
-//!   [`TaskState::begin_new_operation`] for a new id (no phrase whitelist).
-//! - Timeout / unknown: inquire status; do **not** auto-replay; do **not**
-//!   pretend success.
-//! - Round 1 rules kept: no utterance-guessed boundaries; full write ledger;
-//!   Continue / Correct do not lift anti-replay.
+//! ## Execution-state Round 3
+//! - Stable model context pack: current user (+ structured @ refs upstream),
+//!   relevant ops with proven status, recent complete tool call/result,
+//!   older history summary, needed skills — under
+//!   [`budget_pressure_order`].
+//! - Full tool bodies stay on [`OperationRecord`]; the model sees a
+//!   structured [`StructuredResult::summary`] plus optional
+//!   [`StructuredResult::details_ref`] for large payloads (never “first 120
+//!   chars” as fact).
+//! - Progress-based loop policy: identical no-progress → limit; status
+//!   polling with changing evidence → timed allow; write fail →
+//!   [`RetryPolicy`]; write unknown → inquire, no blind replay.
+//! - Tool capability declarations: [`ToolCapability`]
+//!   (`read_only` / `idempotent` / `retry_policy`), including CLI-derived
+//!   shell classification.
+//!
+//! ## Round 2 (kept)
+//! - Real [`OperationRecord`]s + status lifecycle
+//!   `prepared → running → succeeded | failed | unknown` (+ `cancelled`).
+//! - Same-op resume prefers known result; authorized re-run →
+//!   [`TaskState::begin_new_operation`].
+//! - Timeout / unknown ≠ success; no auto-replay.
 //!
 //! ## G2 — lightweight task state
 //! Tracks goal / object / content / confirmed steps / next action from
@@ -39,9 +48,6 @@
 //! Classifies rounds as progress vs no-progress repeat (identical tool result
 //! sets). A forced stop after repeated no-progress rounds is recorded as a
 //! halt with `counts_as_task_success = false`.
-//!
-//! Round 3 hooks (deferred): details_ref context, tool capability flags,
-//! progress-based loop detection beyond G3 identical-round halt.
 
 use serde::{Deserialize, Serialize};
 
@@ -132,17 +138,85 @@ impl OperationStatus {
     }
 }
 
-/// Structured tool/operation result (Round 2).
+/// How a tool may be retried after a terminal outcome (Round 3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RetryPolicy {
+    /// Read-only / replay-safe: interrupt retry is harmless.
+    AlwaysSafe,
+    /// Failed writes may retry up to `max_attempts` (via new Operation).
+    OnFailure { max_attempts: u32 },
+    /// Unknown / unsafe after interrupt — inquire only; never blind replay.
+    Never,
+}
+
+/// Declared tool capabilities for loop / retry policy (Round 3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolCapability {
+    pub read_only: bool,
+    pub idempotent: bool,
+    pub retry_policy: RetryPolicy,
+}
+
+impl ToolCapability {
+    pub fn read_query() -> Self {
+        Self {
+            read_only: true,
+            idempotent: true,
+            retry_policy: RetryPolicy::AlwaysSafe,
+        }
+    }
+
+    pub fn mutating_write() -> Self {
+        Self {
+            read_only: false,
+            idempotent: false,
+            // One automatic retry after a clear failure (not after Unknown).
+            retry_policy: RetryPolicy::OnFailure { max_attempts: 2 },
+        }
+    }
+
+    pub fn mutating_unknown_sensitive() -> Self {
+        Self {
+            read_only: false,
+            idempotent: false,
+            retry_policy: RetryPolicy::Never,
+        }
+    }
+}
+
+/// Structured tool/operation result (Round 2/3).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StructuredResult {
     /// Effective tool success (never true for timeout / unknown).
     pub success: bool,
+    /// Short structured summary — **not** a raw body prefix.
     pub summary: String,
-    /// Canonical body (JSON/text), length-capped at record time.
+    /// Full body kept on the execution record (length-capped).
     pub body: String,
+    /// Large-payload handle for the model (`$cached:op:<id>`). Full body
+    /// remains on the record; model must not treat a char prefix as fact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details_ref: Option<String>,
 }
 
-/// One tool invocation attempt with stable Operation ID (Round 2).
+impl StructuredResult {
+    pub fn with_body(
+        success: bool,
+        summary: impl Into<String>,
+        body: impl Into<String>,
+        details_ref: Option<String>,
+    ) -> Self {
+        Self {
+            success,
+            summary: summary.into(),
+            body: body.into(),
+            details_ref,
+        }
+    }
+}
+
+/// One tool invocation attempt with stable Operation ID (Round 2/3).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperationRecord {
     pub operation_id: OperationId,
@@ -156,6 +230,9 @@ pub struct OperationRecord {
     /// Mutating write fingerprint when applicable (ties to [`WriteFact`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub write_fingerprint: Option<String>,
+    /// Round 3 capability snapshot at begin time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability: Option<ToolCapability>,
 }
 
 /// How the stream path should treat a mutating write (Round 2).
@@ -260,18 +337,25 @@ impl TaskState {
         arguments: impl Into<String>,
         write_fingerprint: Option<String>,
     ) -> OperationId {
+        let tool_name = tool_name.into();
+        let arguments = arguments.into();
+        let capability = Some(derive_tool_capability(
+            &tool_name,
+            &serde_json::from_str(&arguments).unwrap_or(serde_json::json!({})),
+        ));
         let id = uuid::Uuid::new_v4().to_string();
         self.current_operation_id = id.clone();
         self.operations.push(OperationRecord {
             operation_id: id.clone(),
             origin_turn_id: self.turn_count,
-            tool_name: tool_name.into(),
+            tool_name,
             target,
-            arguments: arguments.into(),
+            arguments,
             status: OperationStatus::Prepared,
             result: None,
             evidence: Vec::new(),
             write_fingerprint,
+            capability,
         });
         if !matches!(
             self.status,
@@ -433,7 +517,9 @@ impl TaskState {
         op.status = OperationStatus::Failed;
         op.result = Some(StructuredResult {
             success: false,
-            ..result
+            summary: result.summary,
+            body: result.body,
+            details_ref: result.details_ref,
         });
     }
 
@@ -448,8 +534,40 @@ impl TaskState {
         op.status = OperationStatus::Unknown;
         op.result = Some(StructuredResult {
             success: false,
-            ..result
+            summary: result.summary,
+            body: result.body,
+            details_ref: result.details_ref,
         });
+    }
+
+    /// Whether a failed write may open a new Operation under its capability.
+    pub fn write_failure_may_retry(&self, write_fingerprint: &str) -> bool {
+        let Some(op) = self.latest_op_for_fingerprint(write_fingerprint) else {
+            return true;
+        };
+        if op.status != OperationStatus::Failed {
+            return false;
+        }
+        match op
+            .capability
+            .as_ref()
+            .map(|c| &c.retry_policy)
+            .unwrap_or(&RetryPolicy::Never)
+        {
+            RetryPolicy::AlwaysSafe => true,
+            RetryPolicy::OnFailure { max_attempts } => {
+                let fails = self
+                    .operations
+                    .iter()
+                    .filter(|o| {
+                        o.write_fingerprint.as_deref() == Some(write_fingerprint)
+                            && o.status == OperationStatus::Failed
+                    })
+                    .count() as u32;
+                fails < *max_attempts
+            }
+            RetryPolicy::Never => false,
+        }
     }
 
     pub fn apply_directive(&mut self, directive: TaskDirective) -> ApplyOutcome {
@@ -569,15 +687,29 @@ impl TaskState {
             ));
         }
         if !self.operations.is_empty() {
-            out.push_str("- Recent operations:\n");
+            out.push_str("- Recent operations (proven status; details_ref for large bodies):\n");
             for op in self.operations.iter().rev().take(5) {
                 let tgt = op.target.as_deref().unwrap_or("-");
-                out.push_str(&format!(
-                    "  - {} [{}] {} target={tgt}\n",
+                let status = format!("{:?}", op.status).to_ascii_lowercase();
+                let mut line = format!(
+                    "  - {} [{status}] {} target={tgt}",
                     short_op_id(&op.operation_id),
-                    format!("{:?}", op.status).to_ascii_lowercase(),
                     op.tool_name
-                ));
+                );
+                if let Some(cap) = &op.capability {
+                    line.push_str(&format!(
+                        " read_only={} idempotent={}",
+                        cap.read_only, cap.idempotent
+                    ));
+                }
+                if let Some(res) = &op.result {
+                    line.push_str(&format!(" — {}", res.summary));
+                    if let Some(r) = &res.details_ref {
+                        line.push_str(&format!(" details_ref={r}"));
+                    }
+                }
+                line.push('\n');
+                out.push_str(&line);
             }
         }
         let gated_here = self
@@ -866,6 +998,226 @@ pub fn cap_result_body(body: &str) -> String {
     }
 }
 
+/// Bodies larger than this get a `details_ref` in the model-facing summary.
+pub const DETAILS_REF_BODY_THRESHOLD: usize = 512;
+
+/// Build `$cached:op:<operation_id>` when the body is large enough that the
+/// model must not treat a truncated prefix as the fact.
+pub fn details_ref_for_body(operation_id: &str, body: &str) -> Option<String> {
+    if body.len() > DETAILS_REF_BODY_THRESHOLD {
+        Some(format!("$cached:op:{operation_id}"))
+    } else {
+        None
+    }
+}
+
+/// Extract short factual needles from a tool body (never a raw 120-char slice).
+pub fn extract_result_needles(body: &str) -> Vec<String> {
+    let mut needles = Vec::new();
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(body) {
+        for key in [
+            "exit_code",
+            "status",
+            "queued",
+            "state",
+            "device",
+            "device_id",
+            "id",
+            "error",
+            "timed_out",
+            "success",
+        ] {
+            if let Some(val) = v.get(key) {
+                let s = match val {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                if !s.is_empty() && s.len() < 80 {
+                    needles.push(format!("{key}={s}"));
+                }
+            }
+        }
+        if let Some(stdout) = v.get("stdout").and_then(|x| x.as_str()) {
+            if let Some(line) = stdout.lines().find(|l| !l.trim().is_empty()) {
+                let brief: String = line.chars().take(60).collect();
+                needles.push(format!("stdout_line={brief}"));
+            }
+        }
+    } else {
+        // Non-JSON: keep a single status-like token if present.
+        let lower = body.to_lowercase();
+        for token in ["queued", "ok", "error", "failed", "timeout", "unknown"] {
+            if lower.contains(token) {
+                needles.push(token.to_string());
+                break;
+            }
+        }
+    }
+    needles
+}
+
+/// Structured summary for ops / confirm_step — **not** `body.chars().take(120)`.
+pub fn build_structured_summary(
+    tool_name: &str,
+    status_label: &str,
+    body: &str,
+    target: Option<&str>,
+    error: Option<&str>,
+) -> String {
+    let mut parts = vec![format!("{tool_name}:{status_label}")];
+    if let Some(t) = target {
+        if !t.is_empty() {
+            parts.push(format!("target={t}"));
+        }
+    }
+    if let Some(e) = error {
+        let brief: String = e.chars().take(80).collect();
+        parts.push(format!("error={brief}"));
+    }
+    let needles = extract_result_needles(body);
+    if !needles.is_empty() {
+        parts.push(needles.join(","));
+    } else if body.is_empty() {
+        parts.push("body=empty".into());
+    } else {
+        parts.push(format!("body_len={}", body.len()));
+    }
+    parts.join(" ")
+}
+
+/// Full structured result for an Operation (body kept; details_ref when large).
+pub fn build_structured_result(
+    operation_id: &str,
+    tool_name: &str,
+    status_label: &str,
+    success: bool,
+    body: &str,
+    target: Option<&str>,
+    error: Option<&str>,
+) -> StructuredResult {
+    let summary = build_structured_summary(tool_name, status_label, body, target, error);
+    let details_ref = details_ref_for_body(operation_id, body);
+    StructuredResult::with_body(success, summary, cap_result_body(body), details_ref)
+}
+
+/// Derive [`ToolCapability`] from tool name + args (CLI mutation when shell).
+pub fn derive_tool_capability(tool_name: &str, arguments: &serde_json::Value) -> ToolCapability {
+    let real = crate::tools::resolve_tool_name(tool_name);
+    match real.as_str() {
+        "shell" => {
+            let cmd = arguments
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if crate::agent::streaming::is_mutation_command(cmd) {
+                ToolCapability::mutating_write()
+            } else {
+                ToolCapability::read_query()
+            }
+        }
+        "file_read" | "web_search" | "web_fetch" | "vision" | "skill" | "memory" => {
+            ToolCapability::read_query()
+        }
+        "file_write" | "file_edit" | "image_edit" | "run_now" => ToolCapability::mutating_write(),
+        _ => {
+            // Conservative default: treat unknown tools as non-idempotent writes.
+            ToolCapability::mutating_unknown_sensitive()
+        }
+    }
+}
+
+/// Progress-loop decision (Round 3) on top of identical-round counting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProgressDecision {
+    /// New information or allowed status-poll change.
+    Allow,
+    /// Same query + same result hit the no-progress limit.
+    HaltNoProgress { identical_rounds: usize },
+    /// Write ended unknown — inquire; do not blind replay.
+    InquireUnknown { operation_id: OperationId },
+}
+
+/// Timed allowance for status-poll rounds with **changing** evidence.
+pub const STATUS_POLL_TIMED_ALLOW_ROUNDS: usize = 6;
+
+/// Decide progress vs halt vs inquire.
+///
+/// - Identical no-progress rounds ≥ `identical_limit` → halt (unless this
+///   round looks like a status poll **and** results changed — then allow
+///   while under [`STATUS_POLL_TIMED_ALLOW_ROUNDS`]).
+/// - `write_unknown_op` set → inquire, never treat as success / auto-replay.
+pub fn progress_loop_decision(
+    identical_rounds: usize,
+    identical_limit: usize,
+    call_fingerprints: &[String],
+    results_changed: bool,
+    status_poll_rounds: usize,
+    write_unknown_op: Option<&str>,
+) -> ProgressDecision {
+    if let Some(op) = write_unknown_op {
+        return ProgressDecision::InquireUnknown {
+            operation_id: op.to_string(),
+        };
+    }
+    let all_status = !call_fingerprints.is_empty()
+        && call_fingerprints
+            .iter()
+            .all(|fp| looks_like_status_poll(fp));
+    if all_status && results_changed {
+        if status_poll_rounds < STATUS_POLL_TIMED_ALLOW_ROUNDS {
+            return ProgressDecision::Allow;
+        }
+        // Timed allow exhausted — endless status polling is still a loop.
+        return ProgressDecision::HaltNoProgress {
+            identical_rounds: status_poll_rounds.max(identical_limit),
+        };
+    }
+    if let Some(halt) = loop_halt_decision(identical_rounds, identical_limit) {
+        let _ = halt;
+        return ProgressDecision::HaltNoProgress { identical_rounds };
+    }
+    ProgressDecision::Allow
+}
+
+/// Budget pressure order under assemble constraints (Round 3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BudgetPressureStep {
+    /// Drop / truncate nonessential transient skills first.
+    CompressNonessentialSkills,
+    /// Summarize older history groups (keep refs / details_ref stubs).
+    CompressOldHistory,
+    /// Keep current user + @refs + TaskState ops + newest tool pair.
+    KeepMandatoryContext,
+    /// Still cannot fit current-op feedback → stop or compress-retry;
+    /// never continue with tools after losing feedback (ZeroBudget path).
+    StopOrCompressRetryNoTools,
+}
+
+/// Canonical Round 3 pressure order for assemble / tests.
+pub fn budget_pressure_order() -> &'static [BudgetPressureStep] {
+    &[
+        BudgetPressureStep::CompressNonessentialSkills,
+        BudgetPressureStep::CompressOldHistory,
+        BudgetPressureStep::KeepMandatoryContext,
+        BudgetPressureStep::StopOrCompressRetryNoTools,
+    ]
+}
+
+/// Whether tools may continue after budget selection (aligns with ZeroBudget).
+pub fn tools_allowed_under_budget_pressure(
+    current_op_feedback_fits: bool,
+    history_select_zero_budget: bool,
+    history_was_nonempty: bool,
+) -> bool {
+    if !current_op_feedback_fits {
+        return false;
+    }
+    if history_was_nonempty && history_select_zero_budget {
+        return false;
+    }
+    true
+}
+
 /// Resolve a mutating write to an Operation ID ready for `mark_operation_running`.
 ///
 /// - First attempt / authorized re-run path: when dispatch says Execute with
@@ -971,6 +1323,9 @@ pub fn finalize_operation_from_tool_result(
     if operation_id.is_empty() {
         return;
     }
+    let target = state
+        .operation(operation_id)
+        .and_then(|op| op.target.clone());
     if outcome_is_unknown(result) {
         let body = match result {
             Ok(out) => out.data.to_string(),
@@ -978,11 +1333,15 @@ pub fn finalize_operation_from_tool_result(
         };
         state.complete_operation_unknown(
             operation_id,
-            StructuredResult {
-                success: false,
-                summary: format!("{tool_name}: outcome unknown — inquire status, do not replay"),
-                body: cap_result_body(&body),
-            },
+            build_structured_result(
+                operation_id,
+                tool_name,
+                "unknown",
+                false,
+                &body,
+                target.as_deref(),
+                None,
+            ),
         );
         return;
     }
@@ -994,14 +1353,17 @@ pub fn finalize_operation_from_tool_result(
             ) =>
         {
             let body = out.data.to_string();
-            let brief: String = body.chars().take(120).collect();
             state.complete_operation_succeeded(
                 operation_id,
-                StructuredResult {
-                    success: true,
-                    summary: format!("{tool_name}: {brief}"),
-                    body: cap_result_body(&body),
-                },
+                build_structured_result(
+                    operation_id,
+                    tool_name,
+                    "succeeded",
+                    true,
+                    &body,
+                    target.as_deref(),
+                    None,
+                ),
                 None::<String>,
             );
         }
@@ -1013,21 +1375,30 @@ pub fn finalize_operation_from_tool_result(
                 .unwrap_or_else(|| "tool reported failure".into());
             state.complete_operation_failed(
                 operation_id,
-                StructuredResult {
-                    success: false,
-                    summary: format!("{tool_name}: {err}"),
-                    body: cap_result_body(&body),
-                },
+                build_structured_result(
+                    operation_id,
+                    tool_name,
+                    "failed",
+                    false,
+                    &body,
+                    target.as_deref(),
+                    Some(&err),
+                ),
             );
         }
         Err(e) => {
+            let err = e.to_string();
             state.complete_operation_failed(
                 operation_id,
-                StructuredResult {
-                    success: false,
-                    summary: format!("{tool_name}: {e}"),
-                    body: cap_result_body(&e.to_string()),
-                },
+                build_structured_result(
+                    operation_id,
+                    tool_name,
+                    "failed",
+                    false,
+                    &err,
+                    target.as_deref(),
+                    Some(&err),
+                ),
             );
         }
     }
@@ -1212,6 +1583,7 @@ mod tests {
                 success: true,
                 summary: "render queued".into(),
                 body: "queued".into(),
+                details_ref: None,
             },
             ["ack-queued-1".into()],
         );
@@ -1296,6 +1668,7 @@ mod tests {
                 success: true,
                 summary: "render queued".into(),
                 body: "queued-1".into(),
+                details_ref: None,
             },
             None::<String>,
         );
@@ -1342,6 +1715,7 @@ mod tests {
                 success: true,
                 summary: "render queued again".into(),
                 body: "queued-2".into(),
+                details_ref: None,
             },
             None::<String>,
         );
@@ -1375,6 +1749,7 @@ mod tests {
                 success: true,
                 summary: "render queued".into(),
                 body: "queued".into(),
+                details_ref: None,
             },
             None::<String>,
         );
@@ -1434,6 +1809,7 @@ mod tests {
                     success: true,
                     summary: format!("{label} ok"),
                     body: "ok".into(),
+                    details_ref: None,
                 },
                 None::<String>,
             );
@@ -1478,6 +1854,7 @@ mod tests {
                 success: true,
                 summary: "render queued".into(),
                 body: "ok".into(),
+                details_ref: None,
             },
             None::<String>,
         );
@@ -1605,6 +1982,7 @@ mod tests {
                 success: true,
                 summary: "queued, no physical ACK".into(),
                 body: "queued-only".into(),
+                details_ref: None,
             },
             ["queued-only".into()],
         );
@@ -1635,6 +2013,7 @@ mod tests {
                 success: false,
                 summary: "timed out — outcome unknown".into(),
                 body: r#"{"timed_out":true}"#.into(),
+                details_ref: None,
             },
         );
         let rec = s.operation(&op).unwrap();
@@ -1677,6 +2056,7 @@ mod tests {
                 success: true,
                 summary: "ok".into(),
                 body: "queued".into(),
+                details_ref: None,
             },
             None::<String>,
         );
@@ -1713,6 +2093,7 @@ mod tests {
                 success: true,
                 summary: "done".into(),
                 body: "ok".into(),
+                details_ref: None,
             },
             None::<String>,
         );
@@ -1762,6 +2143,192 @@ mod tests {
         )));
     }
 
+    #[test]
+    fn structured_summary_is_not_body_prefix_and_sets_details_ref() {
+        let op = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+        let large = format!(
+            r#"{{"exit_code":0,"status":"queued","payload":"{}"}}"#,
+            "x".repeat(600)
+        );
+        let res = build_structured_result(
+            op,
+            "shell",
+            "succeeded",
+            true,
+            &large,
+            Some("EK410"),
+            None,
+        );
+        assert!(res.summary.contains("shell:succeeded"));
+        assert!(res.summary.contains("target=EK410"));
+        assert!(res.summary.contains("exit_code=0") || res.summary.contains("status=queued"));
+        assert!(
+            !res.summary.contains(&"x".repeat(120)),
+            "summary must not be a raw body prefix"
+        );
+        assert_eq!(
+            res.details_ref.as_deref(),
+            Some("$cached:op:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        );
+        assert!(res.body.len() >= 500, "full body kept on the record");
+    }
+
+    #[test]
+    fn prompt_section_emits_details_ref_and_capability() {
+        let mut s = TaskState::default();
+        let fp = write_fingerprint(
+            "shell",
+            "neomind extension invoke weather-forecast-v2 render_text --device EK410",
+        );
+        let args = serde_json::json!({
+            "command": "neomind extension invoke weather-forecast-v2 render_text --device EK410"
+        });
+        let op = s.begin_new_operation(
+            "shell",
+            Some("EK410".into()),
+            args.to_string(),
+            Some(fp.clone()),
+        );
+        assert!(
+            s.operation(&op)
+                .unwrap()
+                .capability
+                .as_ref()
+                .is_some_and(|c| !c.read_only),
+            "render_text shell must be mutating capability"
+        );
+        s.mark_operation_running(&op);
+        let large = format!(r#"{{"exit_code":0,"status":"queued","blob":"{}"}}"#, "W".repeat(700));
+        s.complete_operation_succeeded(
+            &op,
+            build_structured_result(&op, "shell", "succeeded", true, &large, Some("EK410"), None),
+            None::<String>,
+        );
+        let section = s.to_prompt_section().unwrap();
+        assert!(section.contains("details_ref=$cached:op:"));
+        assert!(section.contains("read_only=false"));
+        assert!(section.contains("shell:succeeded"));
+        assert!(!s.may_execute_write(&fp));
+        // Authorized re-run still works (weather→screen regression).
+        s.begin_new_operation("shell", Some("EK410".into()), args.to_string(), Some(fp.clone()));
+        assert!(s.may_execute_write(&fp));
+    }
+
+    #[test]
+    fn tool_capability_distinguishes_shell_read_vs_write() {
+        let ro = derive_tool_capability(
+            "shell",
+            &serde_json::json!({"command": "neomind device status sensor-001"}),
+        );
+        assert!(ro.read_only && ro.idempotent);
+        assert_eq!(ro.retry_policy, RetryPolicy::AlwaysSafe);
+
+        let wr = derive_tool_capability(
+            "shell",
+            &serde_json::json!({
+                "command": "neomind extension invoke weather-forecast-v2 render_text --device EK410"
+            }),
+        );
+        assert!(!wr.read_only && !wr.idempotent);
+        assert!(matches!(wr.retry_policy, RetryPolicy::OnFailure { .. }));
+    }
+
+    #[test]
+    fn write_failure_retry_policy_and_unknown_inquire() {
+        let mut s = TaskState::default();
+        let fp = write_fingerprint("shell", "neomind rule create --name r1");
+        let op = s.begin_new_operation(
+            "shell",
+            Some("r1".into()),
+            r#"{"command":"neomind rule create --name r1"}"#,
+            Some(fp.clone()),
+        );
+        s.mark_operation_running(&op);
+        s.complete_operation_failed(
+            &op,
+            StructuredResult {
+                success: false,
+                summary: "shell:failed".into(),
+                body: "err".into(),
+                details_ref: None,
+            },
+        );
+        assert!(
+            s.write_failure_may_retry(&fp),
+            "OnFailure policy allows one retry after first fail"
+        );
+        assert!(matches!(
+            progress_loop_decision(0, 3, &[], false, 0, Some(&op)),
+            ProgressDecision::InquireUnknown { .. }
+        ));
+        // Unknown blocks blind replay regardless of retry policy.
+        let op_u = s.begin_new_operation(
+            "shell",
+            Some("r1".into()),
+            r#"{"command":"neomind rule create --name r1"}"#,
+            Some(fp.clone()),
+        );
+        s.mark_operation_running(&op_u);
+        s.complete_operation_unknown(
+            &op_u,
+            StructuredResult {
+                success: false,
+                summary: "shell:unknown".into(),
+                body: "timeout".into(),
+                details_ref: None,
+            },
+        );
+        assert!(!s.may_execute_write(&fp));
+        assert!(matches!(
+            s.dispatch_mutating_write(&fp),
+            WriteDispatch::InquireStatus { .. }
+        ));
+    }
+
+    #[test]
+    fn progress_status_poll_changing_evidence_timed_allow() {
+        let poll = write_fingerprint("shell", "neomind device status EK410");
+        assert!(looks_like_status_poll(&poll));
+        // Changing evidence under timed allow → Allow even if identical_rounds
+        // would otherwise look scary (caller passes results_changed=true).
+        assert_eq!(
+            progress_loop_decision(0, 3, &[poll.clone()], true, 2, None),
+            ProgressDecision::Allow
+        );
+        // Same query same result hits limit → Halt.
+        assert_eq!(
+            progress_loop_decision(3, 3, &[poll.clone()], false, 0, None),
+            ProgressDecision::HaltNoProgress {
+                identical_rounds: 3
+            }
+        );
+        // Cross-business write fingerprint is not a status poll.
+        let write_fp = write_fingerprint("shell", "neomind transform create --name t1");
+        assert!(!looks_like_status_poll(&write_fp));
+        assert_eq!(
+            progress_loop_decision(3, 3, &[write_fp], false, 0, None),
+            ProgressDecision::HaltNoProgress {
+                identical_rounds: 3
+            }
+        );
+    }
+
+    #[test]
+    fn budget_pressure_order_and_no_tools_when_feedback_lost() {
+        assert_eq!(
+            budget_pressure_order(),
+            &[
+                BudgetPressureStep::CompressNonessentialSkills,
+                BudgetPressureStep::CompressOldHistory,
+                BudgetPressureStep::KeepMandatoryContext,
+                BudgetPressureStep::StopOrCompressRetryNoTools,
+            ]
+        );
+        assert!(!tools_allowed_under_budget_pressure(false, false, true));
+        assert!(!tools_allowed_under_budget_pressure(true, true, true));
+        assert!(tools_allowed_under_budget_pressure(true, false, true));
+    }
+
     /// New-user-turn contract: skills clear; TaskState + write gate survive.
     #[tokio::test]
     async fn continue_after_write_clears_skills_keeps_write_gate() {
@@ -1789,6 +2356,7 @@ mod tests {
                 success: true,
                 summary: "render queued".into(),
                 body: "queued-1".into(),
+                details_ref: None,
             },
             None::<String>,
         );
@@ -1898,6 +2466,7 @@ mod tests {
                 success: true,
                 summary: "ok".into(),
                 body: "ok".into(),
+                details_ref: None,
             },
             None::<String>,
         );

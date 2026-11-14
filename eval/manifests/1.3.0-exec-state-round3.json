@@ -1,0 +1,42 @@
+{
+  "schema": "neomind-eval-freeze-manifest/v1",
+  "slice": "1.3.0-exec-state-round3",
+  "date": "2026-11-14",
+  "branch": "1.3.0",
+  "product_version": "1.3.0",
+  "pushed": false,
+  "head_at_start": "bcc8655c",
+  "docs": "docs/development/exec-state-round3-2026-11-14.md",
+  "spec": "internal/exec-state-round3.md",
+  "code": [
+    "crates/neomind-agent/src/agent/task_continuity.rs",
+    "crates/neomind-agent/src/agent/history_select.rs",
+    "crates/neomind-agent/src/agent/streaming/mod.rs",
+    "crates/neomind-agent/src/agent/streaming/stream_core.rs",
+    "crates/neomind-agent/src/agent/streaming/stream_multimodal.rs"
+  ],
+  "kept_added": [
+    "StructuredResult.details_ref",
+    "build_structured_summary / build_structured_result",
+    "ToolCapability read_only/idempotent/retry_policy",
+    "progress_loop_decision status-poll timed allow",
+    "budget_pressure_order + tools_allowed_under_budget_pressure",
+    "stream_core progress_loop + structured confirm_step"
+  ],
+  "gates": {
+    "task_continuity": "29/29",
+    "history_select": "7/7"
+  },
+  "eval_138": {
+    "touched": false
+  },
+  "remaining_gaps": [
+    "LargeDataCache auto-store for $cached:op: namespace still thin",
+    "Full assemble packer incremental (order helpers + ZeroBudget wired)",
+    "Live Spark / tip-138 blocked",
+    "Cross-business live + Appliance not claimed"
+  ],
+  "claim": "Round 3: details_ref + structured summaries; tool capabilities; progress-based loop policy; budget pressure order with no tools after lost feedback. Offline unit only.",
+  "commit": "PENDING",
+  "head_at_end": "PENDING"
+}

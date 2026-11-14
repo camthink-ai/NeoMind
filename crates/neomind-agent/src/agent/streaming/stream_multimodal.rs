@@ -486,10 +486,17 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                             let result_body = output.data.to_string();
                             let result_fp =
                                 super::super::task_continuity::result_fingerprint(&result_body);
-                            let summary = {
-                                let brief = result_body.chars().take(120).collect::<String>();
-                                format!("{name}: {brief}")
-                            };
+                            let target = super::super::task_continuity::extract_operation_target(
+                                &exec_arguments,
+                            );
+                            let summary =
+                                super::super::task_continuity::build_structured_summary(
+                                    &crate::tools::resolve_tool_name(&name),
+                                    "succeeded",
+                                    &result_body,
+                                    target.as_deref(),
+                                    None,
+                                );
                             let mut state = internal_state.write().await;
                             state.task_state.confirm_step_from_tool(
                                 &crate::tools::resolve_tool_name(&name),

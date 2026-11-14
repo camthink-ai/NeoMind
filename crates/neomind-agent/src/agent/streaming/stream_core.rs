@@ -479,6 +479,9 @@ pub async fn process_stream_events_with_safeguards(
             // the turn as before.
             let mut post_dead_end_read_only_rounds: u32 = 0;
             let mut explore_recovery_nudged = false;
+            // Round 3: count status-poll rounds that produced new evidence
+            // (timed allow under progress_loop_decision).
+            let mut status_poll_progress_rounds: usize = 0;
 
             // === PRE-INJECTION READ-ONLY STREAK (repetition gate) ===
             // Consecutive all-read-only rounds BEFORE any dead-end injection.
@@ -1777,10 +1780,17 @@ pub async fn process_stream_events_with_safeguards(
                                 };
                                 let result_fp =
                                     super::super::task_continuity::result_fingerprint(&result_body);
-                                let summary = {
-                                    let brief = result_body.chars().take(120).collect::<String>();
-                                    format!("{name}: {brief}")
-                                };
+                                let target = super::super::task_continuity::extract_operation_target(
+                                    &exec_arguments,
+                                );
+                                let summary =
+                                    super::super::task_continuity::build_structured_summary(
+                                        &crate::tools::resolve_tool_name(&name),
+                                        "succeeded",
+                                        &result_body,
+                                        target.as_deref(),
+                                        None,
+                                    );
                                 state.task_state.confirm_step_from_tool(
                                     &crate::tools::resolve_tool_name(&name),
                                     &call_fp,
@@ -2075,7 +2085,34 @@ pub async fn process_stream_events_with_safeguards(
                     let identical_rounds = loop_progress.observe(
                         round_new_calls, &round_progress_results,
                     );
-                    let chat_repeating = identical_rounds >= CHAT_IDENTICAL_ROUNDS_LIMIT;
+                    // Round 3: status-poll with changing evidence gets a timed
+                    // allow; identical no-progress still halts (≠ success).
+                    let call_fps: Vec<String> = round_progress_results
+                        .iter()
+                        .map(|(sig, _)| sig.clone())
+                        .collect();
+                    let results_changed = identical_rounds == 0;
+                    if results_changed
+                        && call_fps
+                            .iter()
+                            .any(|fp| crate::agent::task_continuity::looks_like_status_poll(fp))
+                    {
+                        status_poll_progress_rounds =
+                            status_poll_progress_rounds.saturating_add(1);
+                    }
+                    let progress_decision =
+                        crate::agent::task_continuity::progress_loop_decision(
+                            identical_rounds,
+                            CHAT_IDENTICAL_ROUNDS_LIMIT,
+                            &call_fps,
+                            results_changed,
+                            status_poll_progress_rounds,
+                            None,
+                        );
+                    let chat_repeating = matches!(
+                        progress_decision,
+                        crate::agent::task_continuity::ProgressDecision::HaltNoProgress { .. }
+                    );
                     if chat_repeating {
                         // G3: forced stop is a loop halt — never task success.
                         if let Some(halt) = crate::agent::task_continuity::loop_halt_decision(

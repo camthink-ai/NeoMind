@@ -41,6 +41,10 @@ pub struct HistorySelectResult {
 /// Whether the production assemble path may still attach tools after history
 /// selection. Zero soft budget with a non-empty prior history must **not**
 /// continue as a tool-enabled request (that is the re-query loop shape).
+///
+/// Round 3: same gate as
+/// [`crate::agent::task_continuity::tools_allowed_under_budget_pressure`] —
+/// never continue tool calls after losing current-op / history feedback.
 pub fn tools_allowed_after_history_select(
     reason: HistorySelectReason,
     history_was_nonempty: bool,
@@ -49,10 +53,11 @@ pub fn tools_allowed_after_history_select(
     if !requested_tools {
         return false;
     }
-    if history_was_nonempty && reason == HistorySelectReason::ZeroBudget {
-        return false;
-    }
-    true
+    crate::agent::task_continuity::tools_allowed_under_budget_pressure(
+        true, // current-op feedback already in TaskState / newest group
+        reason == HistorySelectReason::ZeroBudget,
+        history_was_nonempty,
+    )
 }
 
 /// Select history messages to fit `available_tokens`.
