@@ -4,7 +4,7 @@
   "plan_section": "12",
   "status": "preregistered_offline",
   "live_blocked_by": { "pid": 89912, "port": 29431 },
-  "unit_gate": "cargo test -p neomind-agent --lib task_continuity  # 14/14 incl. skill-clear turn tests",
+  "unit_gate": "cargo test -p neomind-agent --lib task_continuity  # 23/23 Round 2 Operation IDs",
   "scenarios": [
     { "id": "G2-01", "name": "correct_overwrites_goal", "langs": ["zh", "en"] },
     { "id": "G2-02", "name": "cancel_stops_writes", "langs": ["zh", "en"] },
@@ -14,6 +14,10 @@
     { "id": "G2-06", "name": "correct_clears_skills_overwrites_goal", "langs": ["zh", "en"] },
     { "id": "G2-07", "name": "cancel_clears_skills_blocks_writes", "langs": ["zh", "en"] },
     { "id": "G2-08", "name": "post_write_recovery_reload_skill_write_still_gated", "langs": ["zh", "en"] },
+    { "id": "R2-01", "name": "timeout_unknown_blocks_auto_replay", "langs": ["zh", "en"] },
+    { "id": "R2-02", "name": "same_op_resume_prefers_known_result", "langs": ["zh", "en"] },
+    { "id": "R2-03", "name": "correct_cancels_prepared_keeps_executed", "langs": ["zh", "en"] },
+    { "id": "R2-04", "name": "cross_business_operation_lifecycle", "langs": ["zh", "en"] },
     { "id": "G3-01", "name": "identical_rounds_halt_not_success", "langs": ["zh", "en"] },
     { "id": "G3-02", "name": "status_poll_change_is_progress", "langs": ["zh", "en"], "note": "covered by ChatLoopProgress ring tests + classify_round" }
   ],
@@ -26,7 +30,10 @@
     "complete_with_evidence required for Completed",
     "LoopHalt.counts_as_task_success == false",
     "new user turn clears transient skills",
-    "TaskState survives skill clear on continue/correct/cancel"
+    "TaskState survives skill clear on continue/correct/cancel",
+    "Operation Unknown (timeout) ≠ success and blocks auto-replay",
+    "same-op resume prefers StructuredResult",
+    "Correct cancels Prepared ops and keeps Succeeded facts"
   ],
   "claim": "Offline unit + preregister only; no live Spark score"
 }

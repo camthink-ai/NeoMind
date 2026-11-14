@@ -1415,60 +1415,125 @@ pub async fn process_stream_events_with_safeguards(
                             // `$cached:` read-back: served from the cache in
                             // full — no registry execution, no reuse bookkeeping.
                             if let Some(output) = cached_read {
-                                return (i, name.clone(), ToolExecutionResult {
-                                    _name: name.clone(),
-                                    arguments,
-                                    result: Ok(output),
-                                });
+                                return (
+                                    i,
+                                    name.clone(),
+                                    ToolExecutionResult {
+                                        _name: name.clone(),
+                                        arguments,
+                                        result: Ok(output),
+                                        operation_id: None,
+                                    },
+                                );
                             }
                             // Enforce the request-scoped exclusion even for a model
                             // that emits an unadvertised tool in plain JSON.
-                            if guide_recovery_this_round && crate::tools::resolve_tool_name(&name) == "skill" {
-                                return (i, name.clone(), ToolExecutionResult {
-                                    _name: name.clone(), arguments: arguments.clone(),
-                                    result: Err(crate::toolkit::ToolError::Execution(
-                                        "The skill tool is unavailable for this recovery request. Use another available capability or answer honestly.".to_string()
-                                    )),
-                                });
+                            if guide_recovery_this_round
+                                && crate::tools::resolve_tool_name(&name) == "skill"
+                            {
+                                return (
+                                    i,
+                                    name.clone(),
+                                    ToolExecutionResult {
+                                        _name: name.clone(),
+                                        arguments: arguments.clone(),
+                                        result: Err(crate::toolkit::ToolError::Execution(
+                                            "The skill tool is unavailable for this recovery request. Use another available capability or answer honestly.".to_string()
+                                        )),
+                                        operation_id: None,
+                                    },
+                                );
                             }
                             // Shell policy check — same deny-list as Loop A (tool_loop.rs).
                             // Blocks catastrophic commands (rm -rf /, dd, mkfs, etc.) in chat.
                             if name == "shell" {
                                 if let Some(cmd) = arguments.get("command").and_then(|v| v.as_str()) {
                                     if let Some(reason) = crate::toolkit::policy::deny_reason(cmd) {
-                                        tracing::warn!("Chat tool call blocked by safety policy: {}", reason);
-                                        return (i, name.clone(), ToolExecutionResult {
-                                            _name: name.clone(),
-                                            arguments: arguments.clone(),
-                                            result: Err(crate::toolkit::error::ToolError::Execution(
-                                                format!("Blocked by safety policy: {}", reason),
-                                            )),
-                                        });
+                                        tracing::warn!(
+                                            "Chat tool call blocked by safety policy: {}",
+                                            reason
+                                        );
+                                        return (
+                                            i,
+                                            name.clone(),
+                                            ToolExecutionResult {
+                                                _name: name.clone(),
+                                                arguments: arguments.clone(),
+                                                result: Err(
+                                                    crate::toolkit::error::ToolError::Execution(
+                                                        format!(
+                                                            "Blocked by safety policy: {}",
+                                                            reason
+                                                        ),
+                                                    ),
+                                                ),
+                                                operation_id: None,
+                                            },
+                                        );
                                     }
                                 }
                             }
-                            // G2 write gate: Continue / cancel must not replay
-                            // a mutating tool that already succeeded for this task.
+                            // Round 2 write gate / Operation lifecycle: same-op
+                            // resume prefers known result; Unknown → inquire
+                            // (no auto-replay); first attempt calls
+                            // begin_new_operation via evaluate_mutating_gate.
+                            let mut tracked_operation_id: Option<String> = None;
                             if let Some(fp) =
                                 super::intent::mutating_write_fingerprint(&name, &arguments)
                             {
-                                let allowed = {
-                                    let state = state_for_write_gate.read().await;
-                                    state.task_state.may_execute_write(&fp)
-                                };
-                                if !allowed {
-                                    tracing::info!(
-                                        tool = %name,
-                                        fingerprint = %fp,
-                                        "Write gate blocked mutating tool (already succeeded or task cancelled)"
-                                    );
-                                    return (i, name.clone(), ToolExecutionResult {
-                                        _name: name.clone(),
-                                        arguments: arguments.clone(),
-                                        result: Err(crate::toolkit::error::ToolError::Execution(
-                                            "Write blocked: this mutation already succeeded earlier in the task (or the task was cancelled). Do not replay it; report status or wait for evidence.".to_string(),
-                                        )),
-                                    });
+                                use super::super::task_continuity::MutatingGateOutcome;
+                                let mut state = state_for_write_gate.write().await;
+                                match super::super::task_continuity::evaluate_mutating_gate(
+                                    &mut state.task_state,
+                                    &name,
+                                    &arguments,
+                                    &fp,
+                                ) {
+                                    MutatingGateOutcome::Proceed { operation_id } => {
+                                        tracked_operation_id = Some(operation_id);
+                                    }
+                                    MutatingGateOutcome::ResumeKnown {
+                                        operation_id,
+                                        output,
+                                    } => {
+                                        tracing::info!(
+                                            tool = %name,
+                                            operation_id = %operation_id,
+                                            fingerprint = %fp,
+                                            "Same-op resume: preferring known Operation result"
+                                        );
+                                        return (
+                                            i,
+                                            name.clone(),
+                                            ToolExecutionResult {
+                                                _name: name.clone(),
+                                                arguments: arguments.clone(),
+                                                result: Ok(output),
+                                                operation_id: Some(operation_id),
+                                            },
+                                        );
+                                    }
+                                    MutatingGateOutcome::Block { message } => {
+                                        tracing::info!(
+                                            tool = %name,
+                                            fingerprint = %fp,
+                                            "Write gate blocked mutating tool"
+                                        );
+                                        return (
+                                            i,
+                                            name.clone(),
+                                            ToolExecutionResult {
+                                                _name: name.clone(),
+                                                arguments: arguments.clone(),
+                                                result: Err(
+                                                    crate::toolkit::error::ToolError::Execution(
+                                                        message,
+                                                    ),
+                                                ),
+                                                operation_id: None,
+                                            },
+                                        );
+                                    }
                                 }
                             }
                             // Identical-call reuse for deterministic tools.
@@ -1490,17 +1555,26 @@ pub async fn process_stream_events_with_safeguards(
                                         "Loop break: identical call already failed {}× this turn — refusing to re-execute",
                                         failures
                                     );
-                                    return (i, name.clone(), ToolExecutionResult {
-                                        _name: name.clone(),
-                                        arguments: arguments.clone(),
-                                        result: Err(crate::toolkit::error::ToolError::Execution(msg)),
-                                    });
+                                    return (
+                                        i,
+                                        name.clone(),
+                                        ToolExecutionResult {
+                                            _name: name.clone(),
+                                            arguments: arguments.clone(),
+                                            result: Err(
+                                                crate::toolkit::error::ToolError::Execution(msg),
+                                            ),
+                                            operation_id: tracked_operation_id,
+                                        },
+                                    );
                                 }
                             }
 
                             if reusable {
                                 if let Some(prev) = reuse_map.lock().unwrap().get(&sig).cloned() {
-                                    if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&prev) {
+                                    if let Ok(mut v) =
+                                        serde_json::from_str::<serde_json::Value>(&prev)
+                                    {
                                         if let Some(obj) = v.as_object_mut() {
                                             obj.insert(
                                                 "_reused".into(),
@@ -1509,23 +1583,40 @@ pub async fn process_stream_events_with_safeguards(
                                                 ),
                                             );
                                         }
-                                        tracing::info!(tool = %name, "Reusing identical tool call from earlier this turn");
-                                        return (i, name.clone(), ToolExecutionResult {
-                                            _name: name.clone(),
-                                            arguments: arguments.clone(),
-                                            result: Ok(crate::toolkit::tool::ToolOutput::success(v)),
-                                        });
+                                        tracing::info!(
+                                            tool = %name,
+                                            "Reusing identical tool call from earlier this turn"
+                                        );
+                                        return (
+                                            i,
+                                            name.clone(),
+                                            ToolExecutionResult {
+                                                _name: name.clone(),
+                                                arguments: arguments.clone(),
+                                                result: Ok(
+                                                    crate::toolkit::tool::ToolOutput::success(v),
+                                                ),
+                                                operation_id: tracked_operation_id,
+                                            },
+                                        );
                                     }
                                 }
                             }
-                            let result =
-                                execute_tool_with_retry(&tools_clone, &cache_clone, &name, arguments.clone()).await;
+                            let result = execute_tool_with_retry(
+                                &tools_clone,
+                                &cache_clone,
+                                &name,
+                                arguments.clone(),
+                            )
+                            .await;
 
                             // Strike bookkeeping: failures accumulate per
                             // signature; a success clears the strikes.
                             {
                                 let failed_now: Option<String> = match &result {
-                                    Ok(out) if crate::toolkit::tool::effective_success(&name, out) => {
+                                    Ok(out)
+                                        if crate::toolkit::tool::effective_success(&name, out) =>
+                                    {
                                         failed_map.lock().unwrap().remove(&sig);
                                         None
                                     }
@@ -1538,13 +1629,16 @@ pub async fn process_stream_events_with_safeguards(
                                                     .and_then(|v| v.as_str())
                                                     .map(str::to_string)
                                             })
-                                            .unwrap_or_else(|| "tool reported failure".to_string()),
+                                            .unwrap_or_else(|| {
+                                                "tool reported failure".to_string()
+                                            }),
                                     ),
                                     Err(e) => Some(e.to_string()),
                                 };
                                 if let Some(err) = failed_now {
                                     let mut m = failed_map.lock().unwrap();
-                                    let entry = m.entry(sig.clone()).or_insert((0, String::new()));
+                                    let entry =
+                                        m.entry(sig.clone()).or_insert((0, String::new()));
                                     entry.0 += 1;
                                     entry.1 = err;
                                 }
@@ -1558,11 +1652,16 @@ pub async fn process_stream_events_with_safeguards(
                                     }
                                 }
                             }
-                            (i, name.clone(), ToolExecutionResult {
-                                _name: name.clone(),
-                                arguments: arguments.clone(),
-                                result,
-                            })
+                            (
+                                i,
+                                name.clone(),
+                                ToolExecutionResult {
+                                    _name: name.clone(),
+                                    arguments: arguments.clone(),
+                                    result,
+                                    operation_id: tracked_operation_id,
+                                },
+                            )
                         }
                     })).buffer_unordered(MAX_TOOL_CONCURRENCY);
 
@@ -1636,48 +1735,60 @@ pub async fn process_stream_events_with_safeguards(
                                 }
                             }
                         }
-                        // Record successful tool evidence + mutating write gates
-                        // into TaskState (production path for confirm_step_from_tool).
-                        if matches!(
+                        // Round 2: finalize Operation status + confirm steps.
+                        // PreferKnown resume skips finalize (already terminal).
+                        let resumed = matches!(
                             &execution.result,
-                            Ok(out) if crate::toolkit::tool::effective_success(
-                                &crate::tools::resolve_tool_name(&name), out
-                            )
-                        ) {
-                            let args_canon =
-                                serde_json::to_string(&exec_arguments).unwrap_or_default();
-                            let call_fp = super::intent::mutating_write_fingerprint(
-                                &name,
-                                &exec_arguments,
-                            )
-                            .unwrap_or_else(|| {
-                                super::super::task_continuity::write_fingerprint(
-                                    &crate::tools::resolve_tool_name(&name),
-                                    &args_canon,
-                                )
-                            });
-                            let result_body = match &execution.result {
-                                Ok(out) => out.data.to_string(),
-                                Err(e) => e.to_string(),
-                            };
-                            let result_fp =
-                                super::super::task_continuity::result_fingerprint(&result_body);
-                            let summary = {
-                                let brief = result_body.chars().take(120).collect::<String>();
-                                format!("{name}: {brief}")
-                            };
+                            Ok(out) if out.data.get("_operation_resume").and_then(|v| v.as_bool()) == Some(true)
+                        );
+                        {
                             let mut state = internal_state.write().await;
-                            state.task_state.confirm_step_from_tool(
-                                &crate::tools::resolve_tool_name(&name),
-                                &call_fp,
-                                &result_fp,
-                                summary,
-                            );
-                            if let Some(fp) = super::intent::mutating_write_fingerprint(
-                                &name,
-                                &exec_arguments,
+                            if let Some(op_id) = execution.operation_id.as_deref() {
+                                if !resumed {
+                                    super::super::task_continuity::finalize_operation_from_tool_result(
+                                        &mut state.task_state,
+                                        op_id,
+                                        &name,
+                                        &execution.result,
+                                    );
+                                }
+                            }
+                            if matches!(
+                                &execution.result,
+                                Ok(out) if crate::toolkit::tool::effective_success(
+                                    &crate::tools::resolve_tool_name(&name), out
+                                )
                             ) {
-                                state.task_state.record_successful_write(fp);
+                                let args_canon =
+                                    serde_json::to_string(&exec_arguments).unwrap_or_default();
+                                let call_fp = super::intent::mutating_write_fingerprint(
+                                    &name,
+                                    &exec_arguments,
+                                )
+                                .unwrap_or_else(|| {
+                                    super::super::task_continuity::write_fingerprint(
+                                        &crate::tools::resolve_tool_name(&name),
+                                        &args_canon,
+                                    )
+                                });
+                                let result_body = match &execution.result {
+                                    Ok(out) => out.data.to_string(),
+                                    Err(e) => e.to_string(),
+                                };
+                                let result_fp =
+                                    super::super::task_continuity::result_fingerprint(&result_body);
+                                let summary = {
+                                    let brief = result_body.chars().take(120).collect::<String>();
+                                    format!("{name}: {brief}")
+                                };
+                                state.task_state.confirm_step_from_tool(
+                                    &crate::tools::resolve_tool_name(&name),
+                                    &call_fp,
+                                    &result_fp,
+                                    summary,
+                                );
+                                // write_ledger is filled by complete_operation_succeeded
+                                // when the Operation carries a write_fingerprint.
                             }
                         }
 

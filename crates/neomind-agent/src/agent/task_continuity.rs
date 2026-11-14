@@ -1,21 +1,26 @@
-//! Cross-turn task continuity (G2), execution-state Round 1, and loop-halt
+//! Cross-turn task continuity (G2), execution-state Round 2, and loop-halt
 //! honesty (G3).
 //!
-//! ## Execution-state Round 1
-//! - **No utterance-guessed task boundaries**: ordinary text is a Turn; the
-//!   model interprets supplement / follow-up / correct / new need from context.
-//!   Do not treat “≥4 chars” or 「再发送一次」 whitelists as write-gate control.
-//! - **Keep full write facts**: never wipe the ledger to authorize a re-run.
-//! - **Anti-replay is operation-scoped**: `Continue` / follow-up / Correct stay
-//!   on the current [`TaskState::current_operation_id`]. Explicit re-execute
-//!   calls [`TaskState::begin_new_operation`] (Round 2 will attach real
-//!   Operation IDs / structured results).
+//! ## Execution-state Round 2
+//! - Real [`OperationRecord`]s: `operation_id`, `origin_turn_id`, `tool_name`,
+//!   `target`, `arguments`, `status`, `result`, `evidence`.
+//! - Status lifecycle: `prepared → running → succeeded | failed | unknown`
+//!   (plus `cancelled` for Correct of not-yet-executed ops). Device delivery
+//!   stages stay separate evidence — never implied by tool success alone.
+//! - Same-operation resume/retry keeps the same `operation_id` and
+//!   [`TaskState::prefer_known_result`]; user-authorized re-run calls
+//!   [`TaskState::begin_new_operation`] for a new id (no phrase whitelist).
+//! - Timeout / unknown: inquire status; do **not** auto-replay; do **not**
+//!   pretend success.
+//! - Round 1 rules kept: no utterance-guessed boundaries; full write ledger;
+//!   Continue / Correct do not lift anti-replay.
 //!
 //! ## G2 — lightweight task state
 //! Tracks goal / object / content / confirmed steps / next action from
 //! **evidence** (tool results), not from assistant self-narration. User
 //! directives (explicit control words only):
-//! - **Correct** updates goal fields; does **not** lift anti-replay.
+//! - **Correct** updates goal fields; cancels Prepared ops; does **not** lift
+//!   anti-replay on executed facts.
 //! - **Cancel** stops the task; further writes are refused.
 //! - **Continue** resumes without replaying writes already recorded on the
 //!   current operation.
@@ -34,8 +39,14 @@
 //! Classifies rounds as progress vs no-progress repeat (identical tool result
 //! sets). A forced stop after repeated no-progress rounds is recorded as a
 //! halt with `counts_as_task_success = false`.
+//!
+//! Round 3 hooks (deferred): details_ref context, tool capability flags,
+//! progress-based loop detection beyond G3 identical-round halt.
 
 use serde::{Deserialize, Serialize};
+
+/// Stable Operation ID (UUID string).
+pub type OperationId = String;
 
 /// How a confirmed step was evidenced.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,14 +91,93 @@ pub enum TaskStatus {
     },
 }
 
-/// One successful mutating write kept as an execution fact (Round 1 ledger).
+/// One successful mutating write kept as an execution fact (ledger).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WriteFact {
-    pub operation_id: u64,
+    pub operation_id: OperationId,
     pub fingerprint: String,
 }
 
-/// Lightweight cross-turn task state (G2) + Round 1 execution ledger.
+/// Operation lifecycle status (Round 2).
+///
+/// Device delivery / physical ACK stay in [`OperationRecord::evidence`] and
+/// must not be inferred from `Succeeded` alone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationStatus {
+    Prepared,
+    Running,
+    Succeeded,
+    Failed,
+    /// Timeout / indeterminate outcome — not success; do not auto-replay.
+    Unknown,
+    /// Cancelled before execution (e.g. Correct of a not-yet-executed op).
+    Cancelled,
+}
+
+impl OperationStatus {
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            Self::Succeeded | Self::Failed | Self::Unknown | Self::Cancelled
+        )
+    }
+
+    /// Terminal outcomes that must not be auto-replayed.
+    pub fn blocks_auto_replay(&self) -> bool {
+        matches!(
+            self,
+            Self::Succeeded | Self::Failed | Self::Unknown | Self::Cancelled
+        )
+    }
+}
+
+/// Structured tool/operation result (Round 2).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StructuredResult {
+    /// Effective tool success (never true for timeout / unknown).
+    pub success: bool,
+    pub summary: String,
+    /// Canonical body (JSON/text), length-capped at record time.
+    pub body: String,
+}
+
+/// One tool invocation attempt with stable Operation ID (Round 2).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperationRecord {
+    pub operation_id: OperationId,
+    pub origin_turn_id: u64,
+    pub tool_name: String,
+    pub target: Option<String>,
+    pub arguments: String,
+    pub status: OperationStatus,
+    pub result: Option<StructuredResult>,
+    pub evidence: Vec<String>,
+    /// Mutating write fingerprint when applicable (ties to [`WriteFact`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write_fingerprint: Option<String>,
+}
+
+/// How the stream path should treat a mutating write (Round 2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WriteDispatch {
+    /// Execute (or continue) this operation — mark running if still Prepared.
+    Execute { operation_id: OperationId },
+    /// Same-op resume: return the known structured result; do not re-exec.
+    PreferKnown {
+        operation_id: OperationId,
+        result: StructuredResult,
+    },
+    /// Outcome unknown (e.g. timeout): inquire status; do not auto-replay;
+    /// do not pretend success.
+    InquireStatus { operation_id: OperationId },
+    /// Task cancelled — all writes refused.
+    BlockedCancelled,
+    /// Prior success on this fingerprint without a reusable body — blocked.
+    BlockedSucceeded { operation_id: OperationId },
+}
+
+/// Lightweight cross-turn task state (G2) + Round 2 operation ledger.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskState {
     pub goal: Option<String>,
@@ -96,8 +186,11 @@ pub struct TaskState {
     pub confirmed_steps: Vec<ConfirmedStep>,
     pub next_action: Option<NextAction>,
     pub status: TaskStatus,
-    /// Current operation scope for anti-replay (Round 2 → real Operation ID).
-    pub current_operation_id: u64,
+    /// Active Operation ID (UUID). Empty until the first
+    /// [`Self::begin_new_operation`].
+    pub current_operation_id: OperationId,
+    /// Full Operation history — never wiped to authorize re-run.
+    pub operations: Vec<OperationRecord>,
     /// Full write ledger — never wiped to authorize re-run.
     pub write_ledger: Vec<WriteFact>,
     /// Count of user Turns observed (each user message).
@@ -113,7 +206,8 @@ impl Default for TaskState {
             confirmed_steps: Vec::new(),
             next_action: None,
             status: TaskStatus::Idle,
-            current_operation_id: 1,
+            current_operation_id: String::new(),
+            operations: Vec::new(),
             write_ledger: Vec::new(),
             turn_count: 0,
         }
@@ -155,17 +249,207 @@ impl TaskState {
         self.turn_count = self.turn_count.saturating_add(1);
     }
 
-    /// Explicit authorized re-execute: open a new operation scope without
-    /// wiping the write ledger or confirmed steps (Round 1 hook for Round 2
-    /// Operation IDs). Same fingerprint may run again on the new operation.
-    pub fn begin_new_operation(&mut self) {
-        self.current_operation_id = self.current_operation_id.saturating_add(1);
+    /// User-authorized re-run (or first attempt): open a **new** Operation
+    /// with a fresh UUID. Keeps write ledger + confirmed steps + prior
+    /// Operation records. No phrase whitelist — callers (tool/model path)
+    /// must invoke this explicitly when a re-run is authorized.
+    pub fn begin_new_operation(
+        &mut self,
+        tool_name: impl Into<String>,
+        target: Option<String>,
+        arguments: impl Into<String>,
+        write_fingerprint: Option<String>,
+    ) -> OperationId {
+        let id = uuid::Uuid::new_v4().to_string();
+        self.current_operation_id = id.clone();
+        self.operations.push(OperationRecord {
+            operation_id: id.clone(),
+            origin_turn_id: self.turn_count,
+            tool_name: tool_name.into(),
+            target,
+            arguments: arguments.into(),
+            status: OperationStatus::Prepared,
+            result: None,
+            evidence: Vec::new(),
+            write_fingerprint,
+        });
         if !matches!(
             self.status,
             TaskStatus::Cancelled | TaskStatus::Completed { .. }
         ) {
             self.status = TaskStatus::Active;
         }
+        id
+    }
+
+    /// Cancel Prepared (not-yet-executed) operations; keep executed facts.
+    pub fn cancel_prepared_operations(&mut self) {
+        for op in &mut self.operations {
+            if op.status == OperationStatus::Prepared {
+                op.status = OperationStatus::Cancelled;
+            }
+        }
+    }
+
+    /// Latest operation whose write fingerprint matches (if any).
+    pub fn latest_op_for_fingerprint(&self, write_fingerprint: &str) -> Option<&OperationRecord> {
+        self.operations
+            .iter()
+            .rev()
+            .find(|op| op.write_fingerprint.as_deref() == Some(write_fingerprint))
+    }
+
+    pub fn operation(&self, operation_id: &str) -> Option<&OperationRecord> {
+        self.operations
+            .iter()
+            .find(|op| op.operation_id == operation_id)
+    }
+
+    pub fn operation_mut(&mut self, operation_id: &str) -> Option<&mut OperationRecord> {
+        self.operations
+            .iter_mut()
+            .find(|op| op.operation_id == operation_id)
+    }
+
+    /// Same-op resume: prefer a known structured result when the latest op
+    /// for this fingerprint already terminated (incl. Unknown).
+    pub fn prefer_known_result(&self, write_fingerprint: &str) -> Option<&StructuredResult> {
+        let op = self.latest_op_for_fingerprint(write_fingerprint)?;
+        if op.status.blocks_auto_replay() {
+            op.result.as_ref()
+        } else {
+            None
+        }
+    }
+
+    /// Decide how the tool path should treat a mutating write.
+    pub fn dispatch_mutating_write(&self, write_fingerprint: &str) -> WriteDispatch {
+        if matches!(self.status, TaskStatus::Cancelled) {
+            return WriteDispatch::BlockedCancelled;
+        }
+        match self.latest_op_for_fingerprint(write_fingerprint) {
+            None => {
+                // No op yet — caller should begin_new_operation then Execute.
+                // Without an id we cannot Execute; treat as blocked-succeeded
+                // only if ledger has a fact on the current scope (legacy).
+                if !self.current_operation_id.is_empty()
+                    && self.write_ledger.iter().any(|w| {
+                        w.operation_id == self.current_operation_id
+                            && w.fingerprint == write_fingerprint
+                    })
+                {
+                    WriteDispatch::BlockedSucceeded {
+                        operation_id: self.current_operation_id.clone(),
+                    }
+                } else {
+                    // Signal: need begin_new_operation. Use empty Execute id
+                    // is wrong — return BlockedSucceeded with empty only as
+                    // "caller must begin". Prefer a dedicated path in stream:
+                    // if may_execute_write, begin then mark_running.
+                    WriteDispatch::Execute {
+                        operation_id: String::new(),
+                    }
+                }
+            }
+            Some(op) => match op.status {
+                OperationStatus::Prepared | OperationStatus::Running => WriteDispatch::Execute {
+                    operation_id: op.operation_id.clone(),
+                },
+                OperationStatus::Unknown => WriteDispatch::InquireStatus {
+                    operation_id: op.operation_id.clone(),
+                },
+                OperationStatus::Succeeded | OperationStatus::Cancelled => {
+                    if let Some(result) = op.result.clone() {
+                        WriteDispatch::PreferKnown {
+                            operation_id: op.operation_id.clone(),
+                            result,
+                        }
+                    } else {
+                        WriteDispatch::BlockedSucceeded {
+                            operation_id: op.operation_id.clone(),
+                        }
+                    }
+                }
+                OperationStatus::Failed => {
+                    if let Some(result) = op.result.clone() {
+                        WriteDispatch::PreferKnown {
+                            operation_id: op.operation_id.clone(),
+                            result,
+                        }
+                    } else {
+                        WriteDispatch::BlockedSucceeded {
+                            operation_id: op.operation_id.clone(),
+                        }
+                    }
+                }
+            },
+        }
+    }
+
+    /// Mark Prepared → Running. No-op if missing or already terminal.
+    pub fn mark_operation_running(&mut self, operation_id: &str) -> bool {
+        let Some(op) = self.operation_mut(operation_id) else {
+            return false;
+        };
+        if op.status == OperationStatus::Prepared || op.status == OperationStatus::Running {
+            op.status = OperationStatus::Running;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Record Succeeded + structured result; append write ledger when fingerprint set.
+    pub fn complete_operation_succeeded(
+        &mut self,
+        operation_id: &str,
+        result: StructuredResult,
+        evidence: impl IntoIterator<Item = String>,
+    ) {
+        let fp = {
+            let Some(op) = self.operation_mut(operation_id) else {
+                return;
+            };
+            if op.status.is_terminal() {
+                return;
+            }
+            op.status = OperationStatus::Succeeded;
+            op.result = Some(result);
+            op.evidence.extend(evidence);
+            op.write_fingerprint.clone()
+        };
+        if let Some(fp) = fp {
+            self.record_successful_write(fp);
+        }
+    }
+
+    pub fn complete_operation_failed(&mut self, operation_id: &str, result: StructuredResult) {
+        let Some(op) = self.operation_mut(operation_id) else {
+            return;
+        };
+        if op.status.is_terminal() {
+            return;
+        }
+        op.status = OperationStatus::Failed;
+        op.result = Some(StructuredResult {
+            success: false,
+            ..result
+        });
+    }
+
+    /// Timeout / indeterminate — not success; do not ledger a write fact.
+    pub fn complete_operation_unknown(&mut self, operation_id: &str, result: StructuredResult) {
+        let Some(op) = self.operation_mut(operation_id) else {
+            return;
+        };
+        if op.status.is_terminal() {
+            return;
+        }
+        op.status = OperationStatus::Unknown;
+        op.result = Some(StructuredResult {
+            success: false,
+            ..result
+        });
     }
 
     pub fn apply_directive(&mut self, directive: TaskDirective) -> ApplyOutcome {
@@ -191,8 +475,8 @@ impl TaskState {
                 object,
                 content,
             } => {
-                // Correction updates the charter; write ledger + current
-                // operation anti-replay stay (follow-up/correct must not lift).
+                // Correction updates the charter; write ledger + executed
+                // operation anti-replay stay. Cancel not-yet-executed ops.
                 self.goal = Some(goal);
                 if let Some(o) = object {
                     self.object = Some(o);
@@ -201,6 +485,7 @@ impl TaskState {
                     self.content = Some(c);
                 }
                 self.next_action = None;
+                self.cancel_prepared_operations();
                 if !matches!(self.status, TaskStatus::Cancelled) {
                     self.status = TaskStatus::Active;
                 }
@@ -243,6 +528,7 @@ impl TaskState {
             && self.confirmed_steps.is_empty()
             && self.next_action.is_none()
             && self.write_ledger.is_empty()
+            && self.operations.is_empty()
             && !matches!(
                 self.status,
                 TaskStatus::Halted { .. } | TaskStatus::Completed { .. }
@@ -252,9 +538,14 @@ impl TaskState {
         }
         let mut out = String::from("## Active Task State\n");
         out.push_str(&format!("- Status: {:?}\n", self.status));
+        let op_label = if self.current_operation_id.is_empty() {
+            "(none)".to_string()
+        } else {
+            self.current_operation_id.clone()
+        };
         out.push_str(&format!(
-            "- Operation: {} (turn {})\n",
-            self.current_operation_id, self.turn_count
+            "- Operation: {op_label} (turn {})\n",
+            self.turn_count
         ));
         if let Some(g) = &self.goal {
             out.push_str(&format!("- Goal: {g}\n"));
@@ -276,6 +567,18 @@ impl TaskState {
                 "- Next: {} (source: {})\n",
                 next.description, next.source
             ));
+        }
+        if !self.operations.is_empty() {
+            out.push_str("- Recent operations:\n");
+            for op in self.operations.iter().rev().take(5) {
+                let tgt = op.target.as_deref().unwrap_or("-");
+                out.push_str(&format!(
+                    "  - {} [{}] {} target={tgt}\n",
+                    short_op_id(&op.operation_id),
+                    format!("{:?}", op.status).to_ascii_lowercase(),
+                    op.tool_name
+                ));
+            }
         }
         let gated_here = self
             .write_ledger
@@ -325,22 +628,41 @@ impl TaskState {
     /// Facts are appended to the ledger and never wiped for re-authorization.
     pub fn record_successful_write(&mut self, write_fingerprint: impl Into<String>) {
         let fingerprint = write_fingerprint.into();
+        if self.current_operation_id.is_empty() {
+            return;
+        }
         if self.write_ledger.iter().any(|w| {
             w.operation_id == self.current_operation_id && w.fingerprint == fingerprint
         }) {
             return;
         }
         self.write_ledger.push(WriteFact {
-            operation_id: self.current_operation_id,
+            operation_id: self.current_operation_id.clone(),
             fingerprint,
         });
     }
 
-    /// Whether a write with this fingerprint may still be executed on the
-    /// **current** operation. Historical facts on prior operations remain.
+    /// Whether a write with this fingerprint may still be executed.
+    ///
+    /// Blocked when the task is cancelled, when the latest Operation for the
+    /// fingerprint already terminated (Succeeded / Failed / Unknown /
+    /// Cancelled — Unknown must inquire, never auto-replay), or when the
+    /// current-scope write ledger already recorded the fingerprint.
     pub fn may_execute_write(&self, write_fingerprint: &str) -> bool {
         if matches!(self.status, TaskStatus::Cancelled) {
             return false;
+        }
+        if let Some(op) = self.latest_op_for_fingerprint(write_fingerprint) {
+            match op.status {
+                OperationStatus::Prepared | OperationStatus::Running => return true,
+                OperationStatus::Succeeded
+                | OperationStatus::Failed
+                | OperationStatus::Unknown
+                | OperationStatus::Cancelled => return false,
+            }
+        }
+        if self.current_operation_id.is_empty() {
+            return true;
         }
         !self.write_ledger.iter().any(|w| {
             w.operation_id == self.current_operation_id && w.fingerprint == write_fingerprint
@@ -491,6 +813,259 @@ pub fn result_fingerprint(result: &str) -> String {
     format!("{:x}", h.finish())
 }
 
+fn short_op_id(id: &str) -> &str {
+    if id.len() > 8 {
+        &id[..8]
+    } else {
+        id
+    }
+}
+
+/// Best-effort target extraction from tool arguments (device / name / channel…).
+pub fn extract_operation_target(arguments: &serde_json::Value) -> Option<String> {
+    for key in [
+        "device",
+        "device_id",
+        "deviceId",
+        "target",
+        "name",
+        "channel",
+        "agent",
+        "id",
+    ] {
+        if let Some(s) = arguments.get(key).and_then(|v| v.as_str()) {
+            let t = s.trim();
+            if !t.is_empty() {
+                return Some(t.to_string());
+            }
+        }
+    }
+    // Shell command: look for `--device VALUE`
+    if let Some(cmd) = arguments.get("command").and_then(|v| v.as_str()) {
+        let parts: Vec<&str> = cmd.split_whitespace().collect();
+        for i in 0..parts.len() {
+            if parts[i] == "--device" || parts[i] == "--name" || parts[i] == "--channel" {
+                if let Some(v) = parts.get(i + 1) {
+                    return Some((*v).to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Cap a result body for storage on [`StructuredResult`].
+pub fn cap_result_body(body: &str) -> String {
+    const MAX: usize = 4_096;
+    if body.len() <= MAX {
+        body.to_string()
+    } else {
+        let mut out = body.chars().take(MAX).collect::<String>();
+        out.push('…');
+        out
+    }
+}
+
+/// Resolve a mutating write to an Operation ID ready for `mark_operation_running`.
+///
+/// - First attempt / authorized re-run path: when dispatch says Execute with
+///   no open op, calls [`TaskState::begin_new_operation`] (tool/model path wire).
+/// - Same-op Prepared/Running: returns that id (resume).
+/// - Terminal outcomes: returns `Err(WriteDispatch)` so the caller can prefer
+///   known results or inquire — never auto-replay.
+pub fn prepare_mutating_dispatch(
+    state: &mut TaskState,
+    tool_name: &str,
+    arguments: &serde_json::Value,
+    write_fingerprint: &str,
+) -> Result<OperationId, WriteDispatch> {
+    match state.dispatch_mutating_write(write_fingerprint) {
+        WriteDispatch::Execute { operation_id } if operation_id.is_empty() => {
+            let args = serde_json::to_string(arguments).unwrap_or_else(|_| "{}".into());
+            let id = state.begin_new_operation(
+                tool_name,
+                extract_operation_target(arguments),
+                args,
+                Some(write_fingerprint.to_string()),
+            );
+            Ok(id)
+        }
+        WriteDispatch::Execute { operation_id } => Ok(operation_id),
+        other => Err(other),
+    }
+}
+
+/// Stream-path outcome for a mutating write gate (Round 2).
+#[derive(Debug)]
+pub enum MutatingGateOutcome {
+    /// Proceed to execute; Operation is Running.
+    Proceed { operation_id: OperationId },
+    /// Same-op resume — return known structured result without re-exec.
+    ResumeKnown {
+        operation_id: OperationId,
+        output: crate::toolkit::tool::ToolOutput,
+    },
+    /// Blocked (cancelled / unknown / succeeded without body).
+    Block { message: String },
+}
+
+/// Evaluate + prepare the mutating write gate for stream_core / multimodal.
+pub fn evaluate_mutating_gate(
+    state: &mut TaskState,
+    tool_name: &str,
+    arguments: &serde_json::Value,
+    write_fingerprint: &str,
+) -> MutatingGateOutcome {
+    match prepare_mutating_dispatch(state, tool_name, arguments, write_fingerprint) {
+        Ok(op_id) => {
+            state.mark_operation_running(&op_id);
+            MutatingGateOutcome::Proceed {
+                operation_id: op_id,
+            }
+        }
+        Err(WriteDispatch::PreferKnown {
+            operation_id,
+            result,
+        }) => {
+            let body =
+                serde_json::from_str::<serde_json::Value>(&result.body).unwrap_or_else(|_| {
+                    serde_json::json!({ "body": result.body })
+                });
+            MutatingGateOutcome::ResumeKnown {
+                operation_id: operation_id.clone(),
+                output: crate::toolkit::tool::ToolOutput::success(serde_json::json!({
+                    "_operation_resume": true,
+                    "operation_id": operation_id,
+                    "success": result.success,
+                    "summary": result.summary,
+                    "data": body,
+                })),
+            }
+        }
+        Err(WriteDispatch::InquireStatus { operation_id }) => MutatingGateOutcome::Block {
+            message: format!(
+                "Write blocked: operation {operation_id} ended with unknown outcome (e.g. timeout). Inquire status; do not auto-replay; do not pretend success. Authorized re-run requires begin_new_operation."
+            ),
+        },
+        Err(WriteDispatch::BlockedCancelled) => MutatingGateOutcome::Block {
+            message: "Write blocked: the task was cancelled. Do not replay mutations.".into(),
+        },
+        Err(WriteDispatch::BlockedSucceeded { operation_id }) => MutatingGateOutcome::Block {
+            message: format!(
+                "Write blocked: mutation already succeeded on operation {operation_id}. Do not replay it; report status or wait for evidence. Authorized re-run requires begin_new_operation."
+            ),
+        },
+        Err(WriteDispatch::Execute { .. }) => MutatingGateOutcome::Block {
+            message: "Write blocked: unable to prepare operation.".into(),
+        },
+    }
+}
+
+/// Apply a tool execution outcome onto the Operation record.
+pub fn finalize_operation_from_tool_result(
+    state: &mut TaskState,
+    operation_id: &str,
+    tool_name: &str,
+    result: &Result<crate::toolkit::tool::ToolOutput, crate::toolkit::error::ToolError>,
+) {
+    if operation_id.is_empty() {
+        return;
+    }
+    if outcome_is_unknown(result) {
+        let body = match result {
+            Ok(out) => out.data.to_string(),
+            Err(e) => e.to_string(),
+        };
+        state.complete_operation_unknown(
+            operation_id,
+            StructuredResult {
+                success: false,
+                summary: format!("{tool_name}: outcome unknown — inquire status, do not replay"),
+                body: cap_result_body(&body),
+            },
+        );
+        return;
+    }
+    match result {
+        Ok(out)
+            if crate::toolkit::tool::effective_success(
+                &crate::tools::resolve_tool_name(tool_name),
+                out,
+            ) =>
+        {
+            let body = out.data.to_string();
+            let brief: String = body.chars().take(120).collect();
+            state.complete_operation_succeeded(
+                operation_id,
+                StructuredResult {
+                    success: true,
+                    summary: format!("{tool_name}: {brief}"),
+                    body: cap_result_body(&body),
+                },
+                None::<String>,
+            );
+        }
+        Ok(out) => {
+            let body = out.data.to_string();
+            let err = out
+                .error
+                .clone()
+                .unwrap_or_else(|| "tool reported failure".into());
+            state.complete_operation_failed(
+                operation_id,
+                StructuredResult {
+                    success: false,
+                    summary: format!("{tool_name}: {err}"),
+                    body: cap_result_body(&body),
+                },
+            );
+        }
+        Err(e) => {
+            state.complete_operation_failed(
+                operation_id,
+                StructuredResult {
+                    success: false,
+                    summary: format!("{tool_name}: {e}"),
+                    body: cap_result_body(&e.to_string()),
+                },
+            );
+        }
+    }
+}
+
+/// True when a tool outcome is timeout / indeterminate (→ Operation Unknown).
+pub fn outcome_is_unknown(
+    result: &Result<crate::toolkit::tool::ToolOutput, crate::toolkit::error::ToolError>,
+) -> bool {
+    match result {
+        Ok(out) => {
+            if out
+                .data
+                .get("timed_out")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                return true;
+            }
+            out.error
+                .as_deref()
+                .map(|e| {
+                    let l = e.to_lowercase();
+                    l.contains("timed out")
+                        || l.contains("timeout")
+                        || l.contains("outcome unknown")
+                })
+                .unwrap_or(false)
+        }
+        Err(e) => {
+            let l = e.to_string().to_lowercase();
+            matches!(e, crate::toolkit::error::ToolError::Timeout)
+                || l.contains("timed out")
+                || l.contains("timeout")
+        }
+    }
+}
+
 // ─── G3: loop classification / halt honesty ───────────────────────────────
 
 /// Classification of one tool round relative to recent fingerprints.
@@ -604,6 +1179,10 @@ mod tests {
         assert_eq!(s.status, TaskStatus::Cancelled);
         assert!(!s.may_execute_write(&fp));
         assert_eq!(
+            s.dispatch_mutating_write(&fp),
+            WriteDispatch::BlockedCancelled
+        );
+        assert_eq!(
             s.apply_directive(TaskDirective::Continue),
             ApplyOutcome::Ignored {
                 reason: "cancelled"
@@ -620,7 +1199,22 @@ mod tests {
             content: None,
         });
         let fp = write_fingerprint("shell", "render_text EK410");
-        s.record_successful_write(fp.clone());
+        let op = s.begin_new_operation(
+            "shell",
+            Some("EK410".into()),
+            r#"{"command":"render_text EK410"}"#,
+            Some(fp.clone()),
+        );
+        s.mark_operation_running(&op);
+        s.complete_operation_succeeded(
+            &op,
+            StructuredResult {
+                success: true,
+                summary: "render queued".into(),
+                body: "queued".into(),
+            },
+            ["ack-queued-1".into()],
+        );
         // Evidence-only confirm
         s.confirm_step_from_tool("shell", &fp, "ack-queued-1", "render queued");
         s.apply_directive(TaskDirective::Continue);
@@ -629,6 +1223,10 @@ mod tests {
             !s.may_execute_write(&fp),
             "continue must not replay a write that already succeeded"
         );
+        assert!(matches!(
+            s.dispatch_mutating_write(&fp),
+            WriteDispatch::PreferKnown { .. }
+        ));
         assert_eq!(s.confirmed_steps.len(), 1);
         assert!(matches!(
             s.confirmed_steps[0].source,
@@ -685,11 +1283,26 @@ mod tests {
             content: None,
         });
         let fp = write_fingerprint("shell", "neomind ext invoke render --device EK410");
-        s.record_successful_write(fp.clone());
+        let op1 = s.begin_new_operation(
+            "shell",
+            Some("EK410".into()),
+            r#"{"command":"neomind ext invoke render --device EK410"}"#,
+            Some(fp.clone()),
+        );
+        s.mark_operation_running(&op1);
+        s.complete_operation_succeeded(
+            &op1,
+            StructuredResult {
+                success: true,
+                summary: "render queued".into(),
+                body: "queued-1".into(),
+            },
+            None::<String>,
+        );
         s.confirm_step_from_tool("shell", &fp, "queued-1", "render queued");
         assert!(!s.may_execute_write(&fp));
         assert_eq!(s.write_ledger.len(), 1);
-        assert_eq!(s.current_operation_id, 1);
+        assert_eq!(s.current_operation_id, op1);
 
         // Follow-up turn + Continue: still gated; ledger kept.
         s.note_user_turn();
@@ -709,14 +1322,29 @@ mod tests {
         assert_eq!(s.write_ledger.len(), 1);
 
         // Explicit re-execute = new operation (no wipe).
-        s.begin_new_operation();
-        assert_eq!(s.current_operation_id, 2);
+        let op2 = s.begin_new_operation(
+            "shell",
+            Some("EK410".into()),
+            r#"{"command":"neomind ext invoke render --device EK410"}"#,
+            Some(fp.clone()),
+        );
+        assert_ne!(op2, op1);
+        assert_eq!(s.current_operation_id, op2);
         assert_eq!(s.write_ledger.len(), 1, "ledger must survive re-execute");
         assert!(
             s.may_execute_write(&fp),
             "new operation may re-run the same fingerprint"
         );
-        s.record_successful_write(fp.clone());
+        s.mark_operation_running(&op2);
+        s.complete_operation_succeeded(
+            &op2,
+            StructuredResult {
+                success: true,
+                summary: "render queued again".into(),
+                body: "queued-2".into(),
+            },
+            None::<String>,
+        );
         assert_eq!(s.write_ledger.len(), 2);
         assert!(!s.may_execute_write(&fp));
     }
@@ -734,44 +1362,98 @@ mod tests {
             "shell",
             "neomind extension invoke weather-forecast-v2 render_text --device EK410",
         );
-        s.record_successful_write(fp.clone());
+        let op = s.begin_new_operation(
+            "shell",
+            Some("EK410".into()),
+            r#"{"command":"neomind extension invoke weather-forecast-v2 render_text --device EK410"}"#,
+            Some(fp.clone()),
+        );
+        s.mark_operation_running(&op);
+        s.complete_operation_succeeded(
+            &op,
+            StructuredResult {
+                success: true,
+                summary: "render queued".into(),
+                body: "queued".into(),
+            },
+            None::<String>,
+        );
         s.confirm_step_from_tool("shell", &fp, "queued", "render queued");
         s.note_user_turn();
         s.apply_directive(TaskDirective::Continue);
         assert!(!s.may_execute_write(&fp));
-        s.begin_new_operation();
+        s.begin_new_operation(
+            "shell",
+            Some("EK410".into()),
+            r#"{"command":"neomind extension invoke weather-forecast-v2 render_text --device EK410"}"#,
+            Some(fp.clone()),
+        );
         assert!(s.may_execute_write(&fp));
         assert!(s.to_prompt_section().unwrap().contains("Write ledger"));
+        assert!(s.to_prompt_section().unwrap().contains("Recent operations"));
     }
 
     #[test]
     fn cross_business_write_fingerprints_share_operation_scope() {
-        // device / notify / rule / transform / agent — same gate mechanics.
+        // device / notify / rule / transform / agent — same lifecycle mechanics.
         let mut s = TaskState::default();
-        let fps = [
-            write_fingerprint("shell", "neomind device control sensor-001 --action reboot"),
-            write_fingerprint("shell", "neomind message send --channel local --text hi"),
-            write_fingerprint("shell", "neomind rule create --name r1"),
-            write_fingerprint("shell", "neomind transform create --name t1"),
-            write_fingerprint("shell", "neomind agent invoke inspect-agent"),
+        let cases = [
+            (
+                "device",
+                write_fingerprint("shell", "neomind device control sensor-001 --action reboot"),
+                Some("sensor-001".into()),
+            ),
+            (
+                "notify",
+                write_fingerprint("shell", "neomind message send --channel local --text hi"),
+                Some("local".into()),
+            ),
+            (
+                "rule",
+                write_fingerprint("shell", "neomind rule create --name r1"),
+                Some("r1".into()),
+            ),
+            (
+                "transform",
+                write_fingerprint("shell", "neomind transform create --name t1"),
+                Some("t1".into()),
+            ),
+            (
+                "agent",
+                write_fingerprint("shell", "neomind agent invoke inspect-agent"),
+                Some("inspect-agent".into()),
+            ),
         ];
-        for fp in &fps {
-            assert!(s.may_execute_write(fp));
-            s.record_successful_write(fp.clone());
-            assert!(!s.may_execute_write(fp));
+        for (label, fp, target) in &cases {
+            assert!(s.may_execute_write(fp), "{label} first attempt");
+            let op = s.begin_new_operation("shell", target.clone(), format!("{{{label}}}"), Some(fp.clone()));
+            s.mark_operation_running(&op);
+            s.complete_operation_succeeded(
+                &op,
+                StructuredResult {
+                    success: true,
+                    summary: format!("{label} ok"),
+                    body: "ok".into(),
+                },
+                None::<String>,
+            );
+            assert!(!s.may_execute_write(fp), "{label} gated after success");
         }
         assert_eq!(s.write_ledger.len(), 5);
+        assert_eq!(s.operations.len(), 5);
         // Follow-up does not lift any of them.
         s.note_user_turn();
         s.apply_directive(TaskDirective::Continue);
-        for fp in &fps {
+        for (_, fp, _) in &cases {
             assert!(!s.may_execute_write(fp));
         }
-        s.begin_new_operation();
-        for fp in &fps {
-            assert!(s.may_execute_write(fp));
+        // Authorized re-run per business: new op each.
+        for (label, fp, target) in &cases {
+            s.begin_new_operation("shell", target.clone(), format!("{{{label}-rerun}}"), Some(fp.clone()));
+            assert!(s.may_execute_write(fp), "{label} re-run after begin_new_operation");
         }
         assert_eq!(s.write_ledger.len(), 5, "facts kept across businesses");
+        assert_eq!(s.operations.len(), 10);
     }
 
     #[test]
@@ -783,7 +1465,22 @@ mod tests {
             content: None,
         });
         let fp = write_fingerprint("shell", "render");
-        s.record_successful_write(fp);
+        let op = s.begin_new_operation(
+            "shell",
+            Some("EK410".into()),
+            r#"{"command":"render"}"#,
+            Some(fp.clone()),
+        );
+        s.mark_operation_running(&op);
+        s.complete_operation_succeeded(
+            &op,
+            StructuredResult {
+                success: true,
+                summary: "render queued".into(),
+                body: "ok".into(),
+            },
+            None::<String>,
+        );
         s.confirm_step_from_tool("shell", "shell|render", "abc", "render queued");
         s.apply_directive(TaskDirective::Continue);
         let section = s.to_prompt_section().expect("active task section");
@@ -791,7 +1488,8 @@ mod tests {
         assert!(section.contains("EK410"));
         assert!(section.contains("render queued"));
         assert!(section.contains("Write ledger"));
-        assert!(section.contains("Operation: 1"));
+        assert!(section.contains(&format!("Operation: {op}")));
+        assert!(section.contains("succeeded"));
     }
 
     #[test]
@@ -806,7 +1504,11 @@ mod tests {
         );
         state.push_message(AgentMessage::user("再发送一次"));
         assert_eq!(state.task_state.turn_count, 2);
-        assert_eq!(state.task_state.current_operation_id, 1);
+        assert!(
+            state.task_state.current_operation_id.is_empty(),
+            "phrase whitelist must not begin_new_operation"
+        );
+        assert!(state.task_state.operations.is_empty());
     }
 
     #[test]
@@ -890,10 +1592,174 @@ mod tests {
             content: None,
         });
         let fp = write_fingerprint("shell", "render");
-        s.record_successful_write(fp.clone());
+        let op = s.begin_new_operation(
+            "shell",
+            Some("EK410".into()),
+            r#"{"command":"render"}"#,
+            Some(fp.clone()),
+        );
+        s.mark_operation_running(&op);
+        s.complete_operation_succeeded(
+            &op,
+            StructuredResult {
+                success: true,
+                summary: "queued, no physical ACK".into(),
+                body: "queued-only".into(),
+            },
+            ["queued-only".into()],
+        );
         s.confirm_step_from_tool("shell", &fp, "queued-only", "queued, no physical ACK");
         assert_eq!(s.status, TaskStatus::Active);
         assert!(!matches!(s.status, TaskStatus::Completed { .. }));
+        // Device delivery remains separate evidence — Succeeded ≠ physical ACK.
+        assert_eq!(
+            s.operation(&op).unwrap().evidence,
+            vec!["queued-only".to_string()]
+        );
+    }
+
+    #[test]
+    fn timeout_unknown_blocks_auto_replay_and_is_not_success() {
+        let mut s = TaskState::default();
+        let fp = write_fingerprint("shell", "neomind ext invoke render --device EK410");
+        let op = s.begin_new_operation(
+            "shell",
+            Some("EK410".into()),
+            r#"{"command":"neomind ext invoke render --device EK410"}"#,
+            Some(fp.clone()),
+        );
+        s.mark_operation_running(&op);
+        s.complete_operation_unknown(
+            &op,
+            StructuredResult {
+                success: false,
+                summary: "timed out — outcome unknown".into(),
+                body: r#"{"timed_out":true}"#.into(),
+            },
+        );
+        let rec = s.operation(&op).unwrap();
+        assert_eq!(rec.status, OperationStatus::Unknown);
+        assert!(!rec.result.as_ref().unwrap().success);
+        assert!(
+            !s.may_execute_write(&fp),
+            "timeout recovery must not auto-replay / double-write"
+        );
+        assert!(matches!(
+            s.dispatch_mutating_write(&fp),
+            WriteDispatch::InquireStatus { .. }
+        ));
+        assert!(s.write_ledger.is_empty(), "unknown must not ledger a write");
+        // Authorized re-run only via begin_new_operation.
+        let op2 = s.begin_new_operation(
+            "shell",
+            Some("EK410".into()),
+            r#"{"command":"neomind ext invoke render --device EK410"}"#,
+            Some(fp.clone()),
+        );
+        assert_ne!(op2, op);
+        assert!(s.may_execute_write(&fp));
+    }
+
+    #[test]
+    fn same_op_resume_prefers_known_result() {
+        let mut s = TaskState::default();
+        let fp = write_fingerprint("shell", "render_text EK410");
+        let op = s.begin_new_operation(
+            "shell",
+            Some("EK410".into()),
+            r#"{"command":"render_text EK410"}"#,
+            Some(fp.clone()),
+        );
+        s.mark_operation_running(&op);
+        s.complete_operation_succeeded(
+            &op,
+            StructuredResult {
+                success: true,
+                summary: "ok".into(),
+                body: "queued".into(),
+            },
+            None::<String>,
+        );
+        let known = s.prefer_known_result(&fp).expect("known result");
+        assert!(known.success);
+        assert_eq!(known.body, "queued");
+        match s.dispatch_mutating_write(&fp) {
+            WriteDispatch::PreferKnown {
+                operation_id,
+                result,
+            } => {
+                assert_eq!(operation_id, op);
+                assert_eq!(result.body, "queued");
+            }
+            other => panic!("expected PreferKnown, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn correct_cancels_prepared_keeps_executed_facts() {
+        let mut s = TaskState::default();
+        let fp_done = write_fingerprint("shell", "done-write");
+        let fp_pending = write_fingerprint("shell", "pending-write");
+        let done = s.begin_new_operation(
+            "shell",
+            Some("EK410".into()),
+            "{}",
+            Some(fp_done.clone()),
+        );
+        s.mark_operation_running(&done);
+        s.complete_operation_succeeded(
+            &done,
+            StructuredResult {
+                success: true,
+                summary: "done".into(),
+                body: "ok".into(),
+            },
+            None::<String>,
+        );
+        let pending = s.begin_new_operation(
+            "shell",
+            Some("EK410".into()),
+            "{}",
+            Some(fp_pending.clone()),
+        );
+        assert_eq!(
+            s.operation(&pending).unwrap().status,
+            OperationStatus::Prepared
+        );
+        s.apply_directive(TaskDirective::Correct {
+            goal: "写到更大字号".into(),
+            object: Some("EK410".into()),
+            content: None,
+        });
+        assert_eq!(
+            s.operation(&pending).unwrap().status,
+            OperationStatus::Cancelled
+        );
+        assert_eq!(
+            s.operation(&done).unwrap().status,
+            OperationStatus::Succeeded,
+            "executed facts kept"
+        );
+        assert!(!s.may_execute_write(&fp_done));
+        assert!(
+            !s.may_execute_write(&fp_pending),
+            "cancelled prepared still blocks until begin_new_operation"
+        );
+    }
+
+    #[test]
+    fn outcome_is_unknown_detects_timeout_flags() {
+        use crate::toolkit::tool::ToolOutput;
+        let timed = ToolOutput::success(serde_json::json!({"timed_out": true, "exit_code": null}));
+        assert!(outcome_is_unknown(&Ok(timed)));
+        let ok = ToolOutput::success(serde_json::json!({"exit_code": 0, "stdout": "fine"}));
+        assert!(!outcome_is_unknown(&Ok(ok)));
+        assert!(outcome_is_unknown(&Err(
+            crate::toolkit::error::ToolError::Timeout
+        )));
+        assert!(outcome_is_unknown(&Err(
+            crate::toolkit::error::ToolError::Execution("Tool 'shell' timed out after 30s".into())
+        )));
     }
 
     /// New-user-turn contract: skills clear; TaskState + write gate survive.
@@ -910,7 +1776,22 @@ mod tests {
             content: None,
         });
         let fp = write_fingerprint("shell", "render_text EK410");
-        state.task_state.record_successful_write(fp.clone());
+        let op = state.task_state.begin_new_operation(
+            "shell",
+            Some("EK410".into()),
+            r#"{"command":"render_text EK410"}"#,
+            Some(fp.clone()),
+        );
+        state.task_state.mark_operation_running(&op);
+        state.task_state.complete_operation_succeeded(
+            &op,
+            StructuredResult {
+                success: true,
+                summary: "render queued".into(),
+                body: "queued-1".into(),
+            },
+            None::<String>,
+        );
         state
             .task_state
             .confirm_step_from_tool("shell", &fp, "queued-1", "render queued");
@@ -1004,7 +1885,22 @@ mod tests {
             content: None,
         });
         let fp = write_fingerprint("shell", "render_text EK410");
-        state.task_state.record_successful_write(fp.clone());
+        let op = state.task_state.begin_new_operation(
+            "shell",
+            Some("EK410".into()),
+            r#"{"command":"render_text EK410"}"#,
+            Some(fp.clone()),
+        );
+        state.task_state.mark_operation_running(&op);
+        state.task_state.complete_operation_succeeded(
+            &op,
+            StructuredResult {
+                success: true,
+                summary: "ok".into(),
+                body: "ok".into(),
+            },
+            None::<String>,
+        );
 
         // Turn N ends with a skill still loaded; turn N+1 clears then Continues.
         llm.set_skill_context("weather".into(), "GUIDE".into())

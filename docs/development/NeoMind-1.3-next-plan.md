@@ -222,7 +222,8 @@ timeout和判定来源。
 - P1 stream_core 新用户轮清 Skill：~~待验证~~ → **已对齐**（`begin_user_turn_clear_transient_skills` + Continue/Correct/Cancel/写入后恢复单测；multimodal 改为 LLM 前 push）。证据 `eval/manifests/1.3.0-p1-skill-clear-turn-continuity.json`。
 - P1 生产路径预算缺口：~~pin/transient 各用满额 + executor 无上限~~ → **已修**（`build_skill_injection_block` 真共享；executor `skill_reference` 同 cap）。证据 `eval/manifests/1.3.0-p1-skill-budget-production-path.json`。（保留；**不是** GPT 点名的四项。）
 - P1 GPT 生产路径四项：~~零预算仍挂 tools / 写入指纹不换界 / TaskState 未进生产 / shell 指纹全小写~~ → **已修**（zero-budget degrade；TaskState 注入+confirm_step；shell 大小写）。证据 `eval/manifests/1.3.0-p1-gpt-production-path-four.json`。其中「话术 SetGoal / 再发送一次清门」已被 **execution-state Round 1** 取代。
-- Execution-state Round 1：~~话术猜边界 / 清账放行~~ → **已修**（Turn + write_ledger；operation 作用域防重放；`begin_new_operation` 显式重跑）。证据 `eval/manifests/1.3.0-exec-state-round1.json`。Round 2 Operation ID / 结构化结果 deferred。
+- Execution-state Round 1：~~话术猜边界 / 清账放行~~ → **已修**（Turn + write_ledger；operation 作用域防重放；`begin_new_operation` 显式重跑）。证据 `eval/manifests/1.3.0-exec-state-round1.json`。
+- Execution-state Round 2：~~Operation ID / 结构化结果 deferred~~ → **已修**（UUID `OperationRecord`；`prepared→running→succeeded|failed|unknown`；同 op resume 优先已知结果；超时 Unknown 不自动重放；`begin_new_operation` 接 stream）。证据 `eval/manifests/1.3.0-exec-state-round2.json`。Round 3（details_ref / capability flags / progress loops）deferred。
 - P1 真人UX、E live、tip138尚未完成，不能因计划打勾宣称发布验收通过。
 生产证据：T4 1.2.11会话6621a013-0d12-43c7-ad39-6dbf6e9cb156，北京时间19:46:18/:29/:38，两项list成功返回7925/449字节；历史9→1、9→1、10→1，available_tokens=0；实际Spark请求message_count=3后重复查询。证明裁剪与循环同时发生，完整请求正文未留存，唯一根因仍需复现。DeepSeek关联成功会话仅确认render_text回执queued，非屏幕物理刷新，非受控A/B。
 ### 执行计划
@@ -264,7 +265,9 @@ timeout和判定来源。
 - [x] P1 GPT 生产路径四项（零预算降级 / 写指纹换界 / TaskState 生产注入 / shell 指纹大小写）。
   （2026-11-14：见 `docs/development/p1-gpt-production-path-four-2026-11-14.md`；request-path zero-budget / TaskState inject。话术清门部分由 Round 1 取代。Live 仍被 138 阻塞。）
 - [x] Execution-state Round 1（去话术猜边界；写账本；operation 防重放；显式 `begin_new_operation`）。
-  （2026-11-14：`task_continuity` **19/19**；天气→屏回归 + 跨业务指纹；证据 `eval/manifests/1.3.0-exec-state-round1.json` / `docs/development/exec-state-round1-2026-11-14.md`。Round 2/3 deferred。）
+  （2026-11-14：`task_continuity` **19/19**；天气→屏回归 + 跨业务指纹；证据 `eval/manifests/1.3.0-exec-state-round1.json` / `docs/development/exec-state-round1-2026-11-14.md`。）
+- [x] Execution-state Round 2（Operation ID + 结构化结果；同 op resume vs `begin_new_operation` 重跑；超时 Unknown）。
+  （2026-11-14：`task_continuity` **23/23**；stream_core/multimodal 接线；证据 `eval/manifests/1.3.0-exec-state-round2.json` / `docs/development/exec-state-round2-2026-11-14.md`。Round 3 deferred。）
 - [ ] C 人工：真机触屏 + VoiceOver/TalkBack + 5人×4任务>=18/20（挂起）。
 - [ ] D 桌面/移动代表流程。
 - [ ] E Spark实际10次>=9/10，多轮/故障/取消探针。

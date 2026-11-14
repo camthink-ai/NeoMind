@@ -343,33 +343,65 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                 let state_for_write_gate = state_for_write_gate.clone();
 
                 async move {
+                    use super::super::task_continuity::MutatingGateOutcome;
+                    let mut tracked_operation_id: Option<String> = None;
                     let result = match cached_read {
                         Some(output) => Ok(output),
                         None => {
                             if let Some(fp) =
                                 super::intent::mutating_write_fingerprint(&name, &arguments)
                             {
-                                let allowed = {
-                                    let state = state_for_write_gate.read().await;
-                                    state.task_state.may_execute_write(&fp)
+                                let gate = {
+                                    let mut state = state_for_write_gate.write().await;
+                                    super::super::task_continuity::evaluate_mutating_gate(
+                                        &mut state.task_state,
+                                        &name,
+                                        &arguments,
+                                        &fp,
+                                    )
                                 };
-                                if !allowed {
-                                    Err(crate::toolkit::error::ToolError::Execution(
-                                        "Write blocked: this mutation already succeeded earlier in the task (or the task was cancelled). Do not replay it; report status or wait for evidence.".to_string(),
-                                    ))
-                                } else {
-                                    execute_tool_with_retry(&tools_clone, &cache_clone, &name, arguments.clone()).await
+                                match gate {
+                                    MutatingGateOutcome::Proceed { operation_id } => {
+                                        tracked_operation_id = Some(operation_id);
+                                        execute_tool_with_retry(
+                                            &tools_clone,
+                                            &cache_clone,
+                                            &name,
+                                            arguments.clone(),
+                                        )
+                                        .await
+                                    }
+                                    MutatingGateOutcome::ResumeKnown {
+                                        operation_id,
+                                        output,
+                                    } => {
+                                        tracked_operation_id = Some(operation_id);
+                                        Ok(output)
+                                    }
+                                    MutatingGateOutcome::Block { message } => {
+                                        Err(crate::toolkit::error::ToolError::Execution(message))
+                                    }
                                 }
                             } else {
-                                execute_tool_with_retry(&tools_clone, &cache_clone, &name, arguments.clone()).await
+                                execute_tool_with_retry(
+                                    &tools_clone,
+                                    &cache_clone,
+                                    &name,
+                                    arguments.clone(),
+                                )
+                                .await
                             }
                         }
                     };
-                    (name.clone(), ToolExecutionResult {
-                        _name: name.clone(),
-                        arguments: arguments.clone(),
-                        result,
-                    })
+                    (
+                        name.clone(),
+                        ToolExecutionResult {
+                            _name: name.clone(),
+                            arguments: arguments.clone(),
+                            result,
+                            operation_id: tracked_operation_id,
+                        },
+                    )
                 }
             })).buffer_unordered(6);
 
@@ -416,6 +448,23 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                 // all collapsed to round 1, mismatching the persisted turn.
                 yield AgentEvent::tool_call_start_round(&name, exec_arguments.clone(), 1);
 
+                let resumed = matches!(
+                    &execution.result,
+                    Ok(out) if out.data.get("_operation_resume").and_then(|v| v.as_bool()) == Some(true)
+                );
+                {
+                    let mut state = internal_state.write().await;
+                    if let Some(op_id) = execution.operation_id.as_deref() {
+                        if !resumed {
+                            super::super::task_continuity::finalize_operation_from_tool_result(
+                                &mut state.task_state,
+                                op_id,
+                                &name,
+                                &execution.result,
+                            );
+                        }
+                    }
+                }
                 match execution.result {
                     Ok(output) => {
                         if crate::toolkit::tool::effective_success(
@@ -448,12 +497,6 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                 &result_fp,
                                 summary,
                             );
-                            if let Some(fp) = super::intent::mutating_write_fingerprint(
-                                &name,
-                                &exec_arguments,
-                            ) {
-                                state.task_state.record_successful_write(fp);
-                            }
                         }
                         let result_value = output.prompt_value();
                         let result_str = output.prompt_value().to_string();
@@ -637,33 +680,68 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                             let cache_clone = cache_cont.clone();
                             let state_for_write_gate = state_for_write_gate.clone();
                             async move {
+                                use super::super::task_continuity::MutatingGateOutcome;
+                                let mut tracked_operation_id: Option<String> = None;
                                 let result = match cached_read {
                                     Some(output) => Ok(output),
                                     None => {
-                                        if let Some(fp) =
-                                            super::intent::mutating_write_fingerprint(&name, &arguments)
-                                        {
-                                            let allowed = {
-                                                let state = state_for_write_gate.read().await;
-                                                state.task_state.may_execute_write(&fp)
+                                        if let Some(fp) = super::intent::mutating_write_fingerprint(
+                                            &name,
+                                            &arguments,
+                                        ) {
+                                            let gate = {
+                                                let mut state = state_for_write_gate.write().await;
+                                                super::super::task_continuity::evaluate_mutating_gate(
+                                                    &mut state.task_state,
+                                                    &name,
+                                                    &arguments,
+                                                    &fp,
+                                                )
                                             };
-                                            if !allowed {
-                                                Err(crate::toolkit::error::ToolError::Execution(
-                                                    "Write blocked: this mutation already succeeded earlier in the task (or the task was cancelled). Do not replay it; report status or wait for evidence.".to_string(),
-                                                ))
-                                            } else {
-                                                execute_tool_with_retry(&tools_clone, &cache_clone, &name, arguments.clone()).await
+                                            match gate {
+                                                MutatingGateOutcome::Proceed { operation_id } => {
+                                                    tracked_operation_id = Some(operation_id);
+                                                    execute_tool_with_retry(
+                                                        &tools_clone,
+                                                        &cache_clone,
+                                                        &name,
+                                                        arguments.clone(),
+                                                    )
+                                                    .await
+                                                }
+                                                MutatingGateOutcome::ResumeKnown {
+                                                    operation_id,
+                                                    output,
+                                                } => {
+                                                    tracked_operation_id = Some(operation_id);
+                                                    Ok(output)
+                                                }
+                                                MutatingGateOutcome::Block { message } => Err(
+                                                    crate::toolkit::error::ToolError::Execution(
+                                                        message,
+                                                    ),
+                                                ),
                                             }
                                         } else {
-                                            execute_tool_with_retry(&tools_clone, &cache_clone, &name, arguments.clone()).await
+                                            execute_tool_with_retry(
+                                                &tools_clone,
+                                                &cache_clone,
+                                                &name,
+                                                arguments.clone(),
+                                            )
+                                            .await
                                         }
                                     }
                                 };
-                                (name.clone(), ToolExecutionResult {
-                                    _name: name.clone(),
-                                    arguments: arguments.clone(),
-                                    result,
-                                })
+                                (
+                                    name.clone(),
+                                    ToolExecutionResult {
+                                        _name: name.clone(),
+                                        arguments: arguments.clone(),
+                                        result,
+                                        operation_id: tracked_operation_id,
+                                    },
+                                )
                             }
                         })).buffer_unordered(6);
                         let cont_results: Vec<_> = cont_futures.collect().await;
@@ -956,6 +1034,8 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                             let cache_clone = cache_n.clone();
                             let state_for_write_gate = state_for_write_gate.clone();
                             async move {
+                                use super::super::task_continuity::MutatingGateOutcome;
+                                let mut tracked_operation_id: Option<String> = None;
                                 let result = match cached_read {
                                     Some(output) => Ok(output),
                                     None => {
@@ -963,22 +1043,38 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                             &name,
                                             &arguments,
                                         ) {
-                                            let allowed = {
-                                                let state = state_for_write_gate.read().await;
-                                                state.task_state.may_execute_write(&fp)
-                                            };
-                                            if !allowed {
-                                                Err(crate::toolkit::error::ToolError::Execution(
-                                                    "Write blocked: this mutation already succeeded earlier in the task (or the task was cancelled). Do not replay it; report status or wait for evidence.".to_string(),
-                                                ))
-                                            } else {
-                                                execute_tool_with_retry(
-                                                    &tools_clone,
-                                                    &cache_clone,
+                                            let gate = {
+                                                let mut state = state_for_write_gate.write().await;
+                                                super::super::task_continuity::evaluate_mutating_gate(
+                                                    &mut state.task_state,
                                                     &name,
-                                                    arguments.clone(),
+                                                    &arguments,
+                                                    &fp,
                                                 )
-                                                .await
+                                            };
+                                            match gate {
+                                                MutatingGateOutcome::Proceed { operation_id } => {
+                                                    tracked_operation_id = Some(operation_id);
+                                                    execute_tool_with_retry(
+                                                        &tools_clone,
+                                                        &cache_clone,
+                                                        &name,
+                                                        arguments.clone(),
+                                                    )
+                                                    .await
+                                                }
+                                                MutatingGateOutcome::ResumeKnown {
+                                                    operation_id,
+                                                    output,
+                                                } => {
+                                                    tracked_operation_id = Some(operation_id);
+                                                    Ok(output)
+                                                }
+                                                MutatingGateOutcome::Block { message } => Err(
+                                                    crate::toolkit::error::ToolError::Execution(
+                                                        message,
+                                                    ),
+                                                ),
                                             }
                                         } else {
                                             execute_tool_with_retry(
@@ -997,6 +1093,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                         _name: name.clone(),
                                         arguments: arguments.clone(),
                                         result,
+                                        operation_id: tracked_operation_id,
                                     },
                                 )
                             }

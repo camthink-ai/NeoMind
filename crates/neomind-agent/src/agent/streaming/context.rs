@@ -6,6 +6,8 @@ pub(crate) struct ToolExecutionResult {
     pub(crate) _name: String,
     pub(crate) arguments: serde_json::Value,
     pub(crate) result: std::result::Result<crate::toolkit::ToolOutput, crate::toolkit::ToolError>,
+    /// Round 2 Operation ID when this call was tracked as a mutating write.
+    pub(crate) operation_id: Option<String>,
 }
 
 /// Build context window with optional conversation summary injection.
