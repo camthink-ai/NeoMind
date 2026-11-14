@@ -925,15 +925,21 @@ impl Agent {
         &self.session_id
     }
 
-    /// Abandon in-flight mutating leases (HTTP outer timeout / forced teardown).
+    /// Abandon in-flight mutating leases owned by `owner` (forced teardown).
     ///
-    /// Running → Unknown; Prepared → Cancelled. Idempotent on terminal ops.
-    pub async fn abandon_running_operations_on_interrupt(&self, reason: impl Into<String>) {
+    /// Running → Unknown; Prepared → Cancelled. Does **not** touch sibling
+    /// streams. Prefer stream Drop / interrupt paths that already carry the
+    /// owner token; HTTP outer timeout relies on stream lease-guard Drop.
+    pub async fn abandon_owned_operations_on_interrupt(
+        &self,
+        owner: &str,
+        reason: impl Into<String>,
+    ) {
         self.internal_state
             .write()
             .await
             .task_state
-            .abandon_running_operations_on_interrupt(reason);
+            .abandon_owned_operations_on_interrupt(owner, reason);
     }
 }
 impl Agent {

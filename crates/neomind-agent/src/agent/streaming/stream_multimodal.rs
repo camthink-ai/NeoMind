@@ -178,10 +178,16 @@ pub async fn process_multimodal_stream_events_with_safeguards(
     let has_images = !images.is_empty();
 
     Ok(Box::pin(async_stream::stream! {
-        // Drop/abort/timeout must abandon Running leases even without an
-        // explicit interrupt watch signal (consumer.abort / HTTP outer timeout).
+        // Owner-scoped lease teardown: only THIS stream's Prepared/Running
+        // ops are abandoned on interrupt/drop/timeout — never sibling turns.
+        let stream_owner = super::super::task_continuity::new_stream_owner();
+        {
+            let mut state = internal_state.write().await;
+            state.task_state.install_stream_owner(stream_owner.clone());
+        }
         let _stream_lease_guard = super::super::task_continuity::StreamLeaseGuard::new(
             internal_state.clone(),
+            stream_owner.clone(),
             "stream dropped or timed out (multimodal)",
         );
         let mut stream = stream;
@@ -217,9 +223,10 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                 tracing::info!("Multimodal stream interrupted by user");
                 {
                     let mut state = internal_state.write().await;
-                    state
-                        .task_state
-                        .abandon_running_operations_on_interrupt("user interrupt");
+                    state.task_state.abandon_owned_operations_on_interrupt(
+                        &stream_owner,
+                        "user interrupt",
+                    );
                 }
                 yield AgentEvent::content("\n\n[Interrupted]");
                 yield AgentEvent::end();
@@ -452,7 +459,8 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                             tracing::info!("Multimodal stream interrupted during tool batch");
                             {
                                 let mut state = internal_state.write().await;
-                                state.task_state.abandon_running_operations_on_interrupt(
+                                state.task_state.abandon_owned_operations_on_interrupt(
+                                    &stream_owner,
                                     "user interrupt during multimodal tool batch",
                                 );
                             }
@@ -1415,7 +1423,13 @@ mod drop_lease_tests {
             OperationStatus::Unknown,
             "abort/drop must finalize Running"
         );
+        assert!(
+            op.owner_id.is_some(),
+            "stream-owned op must carry owner_id"
+        );
         let fp = op.write_fingerprint.clone().expect("fp");
+        st.task_state
+            .install_stream_owner(crate::agent::task_continuity::new_stream_owner());
         let mut new_args = args;
         new_args
             .as_object_mut()
@@ -1425,6 +1439,121 @@ mod drop_lease_tests {
             MutatingGateOutcome::Proceed { .. } => {}
             other => panic!("new-op after drop must Proceed, got {other:?}"),
         }
+        assert!(calls.load(Ordering::SeqCst) >= 1);
+    }
+
+    /// Delayed Drop of stream A must not clear stream B's Running lease.
+    #[tokio::test]
+    async fn delayed_old_stream_drop_preserves_sibling_running() {
+        use crate::agent::task_continuity::{new_stream_owner, StreamLeaseGuard};
+
+        let state = Arc::new(tokio::sync::RwLock::new(AgentInternalState::new(
+            "handover-mm".into(),
+        )));
+        let args_a = serde_json::json!({"agent_id": "stream-A"});
+        let args_b = serde_json::json!({"agent_id": "stream-B"});
+
+        // Stream A: acquire lease, complete tool, keep guard for delayed Drop.
+        let owner_a = new_stream_owner();
+        let guard_a = {
+            let mut st = state.write().await;
+            st.task_state.install_stream_owner(owner_a.clone());
+            let fp = crate::agent::streaming::mutating_write_fingerprint("run_now", &args_a)
+                .expect("fp A");
+            let MutatingGateOutcome::Proceed { operation_id } =
+                evaluate_mutating_gate(&mut st.task_state, "run_now", &args_a, &fp)
+            else {
+                panic!("A Proceed");
+            };
+            st.task_state.complete_operation_succeeded(
+                &operation_id,
+                crate::agent::task_continuity::StructuredResult::with_body(
+                    true, "ok", "{}", None,
+                ),
+                None::<String>,
+            );
+            StreamLeaseGuard::new(state.clone(), owner_a, "delayed A")
+        };
+
+        // Stream B: Running on same session.
+        let started = Arc::new(tokio::sync::Notify::new());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(WaitingTool {
+            started: started.clone(),
+            calls: calls.clone(),
+        }));
+        let rt = MockLlmRuntime::new(vec![MockResponse::tool_call("run_now", args_b.clone())])
+            .with_max_context(32768);
+        let iface = Arc::new(crate::llm::LlmInterface::default());
+        iface.set_llm(Arc::new(rt) as Arc<dyn LlmRuntime>).await;
+        let mut safeguards = StreamSafeguards::default();
+        safeguards.heartbeat_interval = std::time::Duration::from_millis(10);
+        let mut stream_b = process_multimodal_stream_events_with_safeguards(
+            iface,
+            state.clone(),
+            Arc::new(registry),
+            "run B",
+            vec![],
+            safeguards,
+            None,
+            None,
+        )
+        .await
+        .expect("stream B");
+        let consumer_b = tokio::spawn(async move {
+            while stream_b.next().await.is_some() {}
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
+            .await
+            .expect("B tool start");
+
+        let op_b_id = {
+            let st = state.read().await;
+            let op = st
+                .task_state
+                .operations
+                .iter()
+                .rev()
+                .find(|o| o.status == OperationStatus::Running)
+                .expect("B Running");
+            assert_eq!(op.status, OperationStatus::Running);
+            op.operation_id.clone()
+        };
+
+        // Delayed Drop of A — must not touch B.
+        drop(guard_a);
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+
+        {
+            let mut st = state.write().await;
+            assert_eq!(
+                st.task_state.operation(&op_b_id).unwrap().status,
+                OperationStatus::Running,
+                "B must remain Running after delayed A Drop"
+            );
+            let fp_b = st
+                .task_state
+                .operation(&op_b_id)
+                .unwrap()
+                .write_fingerprint
+                .clone()
+                .expect("fp B");
+            let mut retry = args_b.clone();
+            retry
+                .as_object_mut()
+                .unwrap()
+                .insert(NEW_OPERATION_ARG.into(), serde_json::json!(true));
+            match evaluate_mutating_gate(&mut st.task_state, "run_now", &retry, &fp_b) {
+                MutatingGateOutcome::InProgress { operation_id } => {
+                    assert_eq!(operation_id, op_b_id);
+                }
+                other => panic!("expected InProgress, got {other:?}"),
+            }
+        }
+
+        consumer_b.abort();
+        let _ = consumer_b.await;
         assert!(calls.load(Ordering::SeqCst) >= 1);
     }
 }

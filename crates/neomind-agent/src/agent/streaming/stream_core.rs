@@ -325,10 +325,16 @@ pub async fn process_stream_events_with_safeguards(
     let stream = stream_result.map_err(|e| NeoMindError::Llm(e.to_string()))?;
 
     Ok(Box::pin(async_stream::stream! {
-            // Drop/abort/timeout must abandon Running leases even without an
-            // explicit interrupt watch signal (consumer.abort / HTTP outer timeout).
+            // Owner-scoped lease teardown: only THIS stream's Prepared/Running
+            // ops are abandoned on interrupt/drop/timeout — never sibling turns.
+            let stream_owner = super::super::task_continuity::new_stream_owner();
+            {
+                let mut state = internal_state.write().await;
+                state.task_state.install_stream_owner(stream_owner.clone());
+            }
             let _stream_lease_guard = super::super::task_continuity::StreamLeaseGuard::new(
                 internal_state.clone(),
+                stream_owner.clone(),
                 "stream dropped or timed out",
             );
             let mut stream = stream;
@@ -908,7 +914,8 @@ pub async fn process_stream_events_with_safeguards(
                             tracing::info!("Stream interrupted by user");
                             {
                                 let mut state = internal_state.write().await;
-                                state.task_state.abandon_running_operations_on_interrupt(
+                                state.task_state.abandon_owned_operations_on_interrupt(
+                                    &stream_owner,
                                     "user interrupt during stream wait",
                                 );
                             }
@@ -966,9 +973,10 @@ pub async fn process_stream_events_with_safeguards(
                         tracing::info!("Stream interrupted by user");
                         {
                             let mut state = internal_state.write().await;
-                            state
-                                .task_state
-                                .abandon_running_operations_on_interrupt("user interrupt");
+                            state.task_state.abandon_owned_operations_on_interrupt(
+                                &stream_owner,
+                                "user interrupt",
+                            );
                         }
                         yield AgentEvent::content("\n\n[Interrupted]");
                         yield AgentEvent::end();
@@ -1741,7 +1749,8 @@ pub async fn process_stream_events_with_safeguards(
                                     tracing::info!("Stream interrupted during tool batch");
                                     {
                                         let mut state = internal_state.write().await;
-                                        state.task_state.abandon_running_operations_on_interrupt(
+                                        state.task_state.abandon_owned_operations_on_interrupt(
+                                            &stream_owner,
                                             "user interrupt during tool batch",
                                         );
                                     }

@@ -216,6 +216,17 @@ impl StructuredResult {
     }
 }
 
+/// Immutable owner of a stream/batch that acquires mutating leases.
+///
+/// Interrupt / timeout / Drop cleanup must only abandon operations tagged
+/// with this id — never sibling streams or newer turns on the same session.
+pub type StreamOwnerId = String;
+
+/// Allocate a fresh stream owner token.
+pub fn new_stream_owner() -> StreamOwnerId {
+    uuid::Uuid::new_v4().to_string()
+}
+
 /// One tool invocation attempt with stable Operation ID (Round 2/3).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperationRecord {
@@ -233,6 +244,9 @@ pub struct OperationRecord {
     /// Round 3 capability snapshot at begin time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capability: Option<ToolCapability>,
+    /// Stream/batch that began this operation (owner-scoped teardown).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_id: Option<StreamOwnerId>,
 }
 
 /// How the stream path should treat a mutating write (Round 2 + prod lease).
@@ -298,6 +312,10 @@ pub struct TaskState {
     pub write_ledger: Vec<WriteFact>,
     /// Count of user Turns observed (each user message).
     pub turn_count: u64,
+    /// Owner of the stream currently tagging new operations.
+    /// Runtime-only — not persisted across process restarts.
+    #[serde(skip)]
+    pub current_stream_owner: Option<StreamOwnerId>,
 }
 
 impl Default for TaskState {
@@ -313,6 +331,7 @@ impl Default for TaskState {
             operations: Vec::new(),
             write_ledger: Vec::new(),
             turn_count: 0,
+            current_stream_owner: None,
         }
     }
 }
@@ -382,6 +401,7 @@ impl TaskState {
             evidence: Vec::new(),
             write_fingerprint,
             capability,
+            owner_id: self.current_stream_owner.clone(),
         });
         if !matches!(
             self.status,
@@ -392,7 +412,15 @@ impl TaskState {
         id
     }
 
+    /// Install the stream owner used to tag newly begun operations.
+    pub fn install_stream_owner(&mut self, owner: StreamOwnerId) {
+        self.current_stream_owner = Some(owner);
+    }
+
     /// Cancel Prepared (not-yet-executed) operations; keep executed facts.
+    ///
+    /// Session-wide (Correct / Cancel directives). Stream teardown must use
+    /// [`Self::abandon_owned_operations_on_interrupt`] instead.
     pub fn cancel_prepared_operations(&mut self) {
         for op in &mut self.operations {
             if op.status == OperationStatus::Prepared {
@@ -403,76 +431,102 @@ impl TaskState {
 
     /// Owner-scoped cleanup when a stream/batch is interrupted mid-flight.
     ///
-    /// Running leases become [`OperationStatus::Unknown`] (honest terminal —
-    /// effect may already have applied; do not auto-replay). Available
-    /// evidence is preserved. Prepared ops are cancelled. After this, an
-    /// authorized `_new_operation` can begin a fresh lease instead of
-    /// staying stuck on [`WriteDispatch::InProgress`].
-    pub fn abandon_running_operations_on_interrupt(&mut self, reason: impl Into<String>) {
+    /// Only Prepared/Running operations tagged with `owner` are touched.
+    /// Sibling streams / newer turns keep their leases. Running → Unknown
+    /// (honest terminal — effect may already have applied; do not auto-replay).
+    pub fn abandon_owned_operations_on_interrupt(
+        &mut self,
+        owner: &str,
+        reason: impl Into<String>,
+    ) {
         let reason = reason.into();
-        self.cancel_prepared_operations();
         for op in &mut self.operations {
-            if op.status != OperationStatus::Running {
+            if op.owner_id.as_deref() != Some(owner) {
                 continue;
             }
-            let prior = op.evidence.clone();
-            op.status = OperationStatus::Unknown;
-            op.result = Some(StructuredResult {
-                success: false,
-                summary: format!("interrupted — outcome unknown ({reason})"),
-                body: reason.clone(),
-                details_ref: None,
-            });
-            op.evidence = prior;
-            if !op
-                .evidence
-                .iter()
-                .any(|e| e.contains("interrupted") || e.contains("OUTCOME UNKNOWN"))
-            {
-                op.evidence.push(format!("interrupted: {reason}"));
+            match op.status {
+                OperationStatus::Prepared => {
+                    op.status = OperationStatus::Cancelled;
+                }
+                OperationStatus::Running => {
+                    let prior = op.evidence.clone();
+                    op.status = OperationStatus::Unknown;
+                    op.result = Some(StructuredResult {
+                        success: false,
+                        summary: format!("interrupted — outcome unknown ({reason})"),
+                        body: reason.clone(),
+                        details_ref: None,
+                    });
+                    op.evidence = prior;
+                    if !op
+                        .evidence
+                        .iter()
+                        .any(|e| e.contains("interrupted") || e.contains("OUTCOME UNKNOWN"))
+                    {
+                        op.evidence.push(format!("interrupted: {reason}"));
+                    }
+                }
+                _ => {}
             }
+        }
+        // Clear current owner only if it still points at this stream — a newer
+        // stream may already have replaced it.
+        if self.current_stream_owner.as_deref() == Some(owner) {
+            self.current_stream_owner = None;
         }
     }
 }
 
 /// RAII guard: when a stream consumer aborts / drops / times out without an
-/// explicit interrupt signal, Running leases must still become Unknown so a
-/// later `_new_operation` is not stuck on InProgress.
+/// explicit interrupt signal, **this stream's** Running leases become Unknown
+/// so a later `_new_operation` is not stuck on InProgress — without touching
+/// sibling streams' leases.
 ///
 /// Held inside `async_stream::stream!` so generator Drop (consumer.abort,
 /// HTTP outer-timeout dropping the stream) triggers cleanup. `Drop` cannot
-/// await `RwLock`, so cleanup is spawned (same pattern as CancelSenderGuard).
+/// await `RwLock`, so cleanup is spawned when try_write contends.
 pub struct StreamLeaseGuard {
     state: std::sync::Arc<tokio::sync::RwLock<crate::agent::types::AgentInternalState>>,
+    owner_id: StreamOwnerId,
     reason: &'static str,
 }
 
 impl StreamLeaseGuard {
     pub fn new(
         state: std::sync::Arc<tokio::sync::RwLock<crate::agent::types::AgentInternalState>>,
+        owner_id: StreamOwnerId,
         reason: &'static str,
     ) -> Self {
-        Self { state, reason }
+        Self {
+            state,
+            owner_id,
+            reason,
+        }
+    }
+
+    pub fn owner_id(&self) -> &str {
+        &self.owner_id
     }
 }
 
 impl Drop for StreamLeaseGuard {
     fn drop(&mut self) {
         let state = self.state.clone();
+        let owner = self.owner_id.clone();
         let reason = self.reason;
         // Prefer synchronous try_write so probes that abort then immediately
         // inspect task_state see Unknown without waiting on a spawned task.
         if let Ok(mut guard) = state.try_write() {
             guard
                 .task_state
-                .abandon_running_operations_on_interrupt(reason);
+                .abandon_owned_operations_on_interrupt(&owner, reason);
             return;
         }
         tokio::spawn(async move {
             let mut guard = state.write().await;
             guard
                 .task_state
-                .abandon_running_operations_on_interrupt(reason);
+                .abandon_owned_operations_on_interrupt(&owner, reason);
         });
     }
 }
@@ -3158,6 +3212,8 @@ mod tests {
     #[test]
     fn gpt_interrupt_abandons_running_so_new_op_can_proceed() {
         let mut s = TaskState::default();
+        let owner = new_stream_owner();
+        s.install_stream_owner(owner.clone());
         let fp = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
         let MutatingGateOutcome::Proceed { operation_id: op1 } = evaluate_mutating_gate(
             &mut s,
@@ -3169,7 +3225,7 @@ mod tests {
         };
         assert_eq!(s.operation(&op1).unwrap().status, OperationStatus::Running);
 
-        s.abandon_running_operations_on_interrupt("user interrupt during tool batch");
+        s.abandon_owned_operations_on_interrupt(&owner, "user interrupt during tool batch");
         assert_eq!(
             s.operation(&op1).unwrap().status,
             OperationStatus::Unknown,
@@ -3177,6 +3233,7 @@ mod tests {
         );
 
         // Without abandon, _new_operation stayed InProgress; after abandon it proceeds.
+        s.install_stream_owner(new_stream_owner());
         let mut new_args = serde_json::json!({"agent_id": "A"});
         new_args
             .as_object_mut()
@@ -3255,9 +3312,11 @@ mod tests {
         let state = std::sync::Arc::new(tokio::sync::RwLock::new(
             crate::agent::types::AgentInternalState::new("drop-guard".into()),
         ));
+        let owner = new_stream_owner();
         let fp = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
         {
             let mut s = state.blocking_write();
+            s.task_state.install_stream_owner(owner.clone());
             let MutatingGateOutcome::Proceed { .. } = evaluate_mutating_gate(
                 &mut s.task_state,
                 "run_now",
@@ -3273,13 +3332,15 @@ mod tests {
         }
         // Guard drop (simulates consumer.abort / stream Drop) must finalize.
         {
-            let _guard = StreamLeaseGuard::new(state.clone(), "unit-test stream drop");
+            let _guard =
+                StreamLeaseGuard::new(state.clone(), owner, "unit-test stream drop");
         }
         let mut s = state.blocking_write();
         assert_eq!(
             s.task_state.operations.last().unwrap().status,
             OperationStatus::Unknown
         );
+        s.task_state.install_stream_owner(new_stream_owner());
         let mut new_args = serde_json::json!({"agent_id": "A"});
         new_args
             .as_object_mut()
@@ -3290,5 +3351,89 @@ mod tests {
         else {
             panic!("new-op after drop must Proceed");
         };
+    }
+
+    #[test]
+    fn gpt_old_stream_drop_must_not_clear_sibling_running() {
+        // A/B handover: delayed Drop of stream A must not mark B Unknown or
+        // allow a duplicate Proceed while B's executor is still active.
+        let state = std::sync::Arc::new(tokio::sync::RwLock::new(
+            crate::agent::types::AgentInternalState::new("handover".into()),
+        ));
+        let owner_a = new_stream_owner();
+        let owner_b = new_stream_owner();
+        let fp_a = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
+        let fp_b = write_fingerprint("run_now", r#"{"agent_id":"B"}"#);
+
+        let guard_a = {
+            let mut s = state.blocking_write();
+            s.task_state.install_stream_owner(owner_a.clone());
+            let MutatingGateOutcome::Proceed { operation_id } = evaluate_mutating_gate(
+                &mut s.task_state,
+                "run_now",
+                &serde_json::json!({"agent_id": "A"}),
+                &fp_a,
+            ) else {
+                panic!("A Proceed");
+            };
+            // Simulate A finishing its tool then going idle while stream lives.
+            s.task_state.complete_operation_succeeded(
+                &operation_id,
+                StructuredResult::with_body(true, "done", "{}", None),
+                None::<String>,
+            );
+            StreamLeaseGuard::new(state.clone(), owner_a, "old stream A")
+        };
+
+        let op_b = {
+            let mut s = state.blocking_write();
+            s.task_state.install_stream_owner(owner_b.clone());
+            let MutatingGateOutcome::Proceed { operation_id } = evaluate_mutating_gate(
+                &mut s.task_state,
+                "run_now",
+                &serde_json::json!({"agent_id": "B"}),
+                &fp_b,
+            ) else {
+                panic!("B Proceed");
+            };
+            assert_eq!(
+                s.task_state.operation(&operation_id).unwrap().status,
+                OperationStatus::Running
+            );
+            operation_id
+        };
+
+        // Delayed teardown of A (cancel_session / contended Drop spawn).
+        drop(guard_a);
+
+        let mut s = state.blocking_write();
+        assert_eq!(
+            s.task_state.operation(&op_b).unwrap().status,
+            OperationStatus::Running,
+            "sibling B must stay Running after A's Drop"
+        );
+        // Same-business re-call while B still Running → InProgress, not Proceed.
+        let mut retry = serde_json::json!({"agent_id": "B"});
+        retry
+            .as_object_mut()
+            .unwrap()
+            .insert(NEW_OPERATION_ARG.into(), serde_json::json!(true));
+        match evaluate_mutating_gate(&mut s.task_state, "run_now", &retry, &fp_b) {
+            MutatingGateOutcome::InProgress { operation_id } => {
+                assert_eq!(operation_id, op_b);
+            }
+            other => panic!("B re-call must InProgress while Running, got {other:?}"),
+        }
+        // Late/spawned cleanup for an unrelated owner must not touch B.
+        s.task_state
+            .abandon_owned_operations_on_interrupt("unrelated-owner", "late spawn");
+        assert_eq!(
+            s.task_state.operation(&op_b).unwrap().status,
+            OperationStatus::Running
+        );
+        assert_eq!(
+            s.task_state.operation(&op_b).unwrap().owner_id.as_deref(),
+            Some(owner_b.as_str())
+        );
     }
 }
