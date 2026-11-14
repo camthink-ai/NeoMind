@@ -213,6 +213,35 @@
     "actionsExecuted": "Actions Executed",
     "moreFields": "{{count}} more fields"
   },
+  "evidence": {
+    "title": "Execution evidence",
+    "tokens": "{{count}} tokens",
+    "inputs": "Inputs",
+    "inputsUnknown": "Input evidence unknown",
+    "inputsEmpty": "No inputs recorded",
+    "output": "Output",
+    "outputUnknown": "Output evidence unknown",
+    "outputEmpty": "No output recorded",
+    "actions": "Action results",
+    "actionsUnknown": "Action evidence unknown",
+    "actionsEmpty": "No actions recorded",
+    "resultUnknown": "Result unknown",
+    "timeUnknown": "Time unknown",
+    "unknownDetail": "Failure detail unknown",
+    "stopReason": "Stop reason",
+    "presence": {
+      "known": "Known",
+      "empty": "Empty",
+      "unknown": "Unknown"
+    },
+    "failure": {
+      "none": "No failure node",
+      "error": "Failed — execution error",
+      "failed_action": "Failed — action error",
+      "stop_reason": "Failed — stop reason",
+      "unknown": "Failure node unknown"
+    }
+  },
   "thinking": {
     "executing": "Executing...",
     "completed": "Completed",

@@ -23,6 +23,7 @@ import { textMicro, badgeSize, textNano } from "@/design-system/tokens/typograph
 import type { AgentExecutionDetail, DataCollected } from "@/types"
 import { FormSection, FormSectionGroup } from "@/components/ui/form-section"
 import { UnifiedFormDialog } from "@/components/dialog/UnifiedFormDialog"
+import { AgentExecutionEvidencePanel } from "@/components/agents/AgentExecutionEvidencePanel"
 
 // ============================================================================
 // Pure helper functions (extracted from component for stable reference)
@@ -215,6 +216,9 @@ export function ExecutionDetailDialog({
             </div>
           </div>
 
+          {/* Evidence: inputs/times, output, actions, failure — missing = unknown */}
+          <AgentExecutionEvidencePanel detail={execution} />
+
           {execution.error && (
             <Card className="p-2 border-error bg-muted">
               <div className="flex items-start gap-1.5 text-error">
@@ -257,6 +261,11 @@ export function ExecutionDetailDialog({
                               {hasImage && <ImageIcon className="h-4 w-4 text-accent-purple shrink-0" />}
                               <span className={cn(textNano, "font-medium truncate")}>{data.source}</span>
                               <Badge variant="outline" className={cn(badgeSize.micro, "h-4 px-1 shrink-0")}>{data.data_type}</Badge>
+                              <span className={cn(textNano, "text-muted-foreground shrink-0")}>
+                                {data.timestamp > 0
+                                  ? formatTimestamp(data.timestamp, false)
+                                  : t('agents:evidence.timeUnknown')}
+                              </span>
                             </div>
                             {dataPairs.length > 0 && (
                               isExpanded ? (

@@ -402,6 +402,18 @@ struct DecisionProcessDto {
     conclusion: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     confidence: Option<f32>,
+    /// Why the run stopped (storage already has this; empty when unset).
+    /// Surfaced for the execution evidence panel — missing evidence must read
+    /// as unknown on the UI, not as inventing a success path.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    stop_reason: String,
+    /// Summed LLM tokens for the run when reported; 0 means unreported.
+    #[serde(skip_serializing_if = "is_zero_u64")]
+    tokens_used: u64,
+}
+
+fn is_zero_u64(v: &u64) -> bool {
+    *v == 0
 }
 
 /// Execution result for API responses.
@@ -837,6 +849,8 @@ impl From<AgentExecutionRecord> for AgentExecutionDetailDto {
                     .collect(),
                 conclusion: record.decision_process.conclusion,
                 confidence: record.decision_process.confidence,
+                stop_reason: record.decision_process.stop_reason,
+                tokens_used: record.decision_process.tokens_used,
             }),
             result: record.result.map(|r| ExecutionResultDto {
                 actions_executed: r

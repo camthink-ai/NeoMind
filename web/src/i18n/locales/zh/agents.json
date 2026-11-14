@@ -213,6 +213,35 @@
     "actionsExecuted": "执行动作",
     "moreFields": "还有 {{count}} 个字段"
   },
+  "evidence": {
+    "title": "执行证据",
+    "tokens": "{{count}} tokens",
+    "inputs": "输入",
+    "inputsUnknown": "输入证据未知",
+    "inputsEmpty": "未记录输入",
+    "output": "输出",
+    "outputUnknown": "输出证据未知",
+    "outputEmpty": "未记录输出",
+    "actions": "动作结果",
+    "actionsUnknown": "动作证据未知",
+    "actionsEmpty": "未记录动作",
+    "resultUnknown": "结果未知",
+    "timeUnknown": "时间未知",
+    "unknownDetail": "失败细节未知",
+    "stopReason": "停止原因",
+    "presence": {
+      "known": "已知",
+      "empty": "空",
+      "unknown": "未知"
+    },
+    "failure": {
+      "none": "无失败节点",
+      "error": "失败 — 执行错误",
+      "failed_action": "失败 — 动作错误",
+      "stop_reason": "失败 — 停止原因",
+      "unknown": "失败节点未知"
+    }
+  },
   "thinking": {
     "executing": "执行中...",
     "completed": "已完成",

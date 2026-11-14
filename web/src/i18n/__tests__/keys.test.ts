@@ -131,6 +131,15 @@ const DYNAMIC_KEY_FAMILIES: Array<{ ns: string; keys: string[] }> = [
       'card.memory.tool', 'card.memory.assistant',
       'detail.memoryModeNote.tool', 'detail.memoryModeNote.assistant',
       'detail.fieldType.text', 'detail.fieldType.number', 'detail.fieldType.boolean',
+      // Execution evidence panel — dynamic failure kinds
+      'evidence.failure.none',
+      'evidence.failure.error',
+      'evidence.failure.failed_action',
+      'evidence.failure.stop_reason',
+      'evidence.failure.unknown',
+      'evidence.presence.known',
+      'evidence.presence.empty',
+      'evidence.presence.unknown',
     ],
   },
   {

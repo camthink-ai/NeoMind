@@ -31,6 +31,7 @@ import { textNano, textMini } from "@/design-system/tokens/typography"
 import { formatTimestamp } from "@/lib/utils/format"
 import { api } from "@/lib/api"
 import { ConclusionContent } from "./ConclusionContent"
+import { AgentExecutionEvidencePanel } from "@/components/agents/AgentExecutionEvidencePanel"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import type { AgentExecution, AgentExecutionDetail, DataCollected, ReasoningStep, Decision } from "@/types"
 
@@ -300,6 +301,7 @@ export function AgentExecutionTimeline({
                               </div>
                             ) : detail ? (
                               <>
+                                <AgentExecutionEvidencePanel detail={detail} compact />
                                 {/* ⓪ Input Data — images & metrics from data_collected */}
                                 {(() => {
                                   const dc = detail.decision_process?.data_collected || []

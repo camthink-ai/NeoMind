@@ -508,6 +508,10 @@ export interface DecisionProcess {
    * guard on `undefined` and `null * 100` would render as "0%".
    */
   confidence?: number
+  /** Why the run stopped; omitted when empty. */
+  stop_reason?: string
+  /** Summed LLM tokens when reported; omitted when 0/unreported. */
+  tokens_used?: number
 }
 
 /**
