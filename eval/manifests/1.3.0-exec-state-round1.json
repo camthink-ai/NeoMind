@@ -37,5 +37,7 @@
     "structured tool results",
     "tool/model path calls begin_new_operation"
   ],
-  "claim": "Round 1 only: no utterance-guessed boundaries; ledger kept; operation-scoped anti-replay; explicit re-execute via begin_new_operation."
+  "claim": "Round 1 only: no utterance-guessed boundaries; ledger kept; operation-scoped anti-replay; explicit re-execute via begin_new_operation.",
+  "commit": "ab7289e3c737eaf9da92a38f0d5f0b485ac70a2a",
+  "head_at_end": "ab7289e3c737eaf9da92a38f0d5f0b485ac70a2a"
 }
