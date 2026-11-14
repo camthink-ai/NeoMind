@@ -21,7 +21,7 @@ cd web && HEADED=1 npx playwright test e2e/specs/mention-a11y.spec.ts --project=
 | mobile viewport touch: prototype panel + tap select | pass |
 | mobile viewport: history chips visible / ≥16px tall | pass |
 
-**Gates: 6/6 headed** (~22s). Log (tracked): `docs/development/artifacts/c-mention-headed-a11y-playwright-2026-11-14.log`.
+**Gates: 6/6 headed** (~22s). Local log (gitignored `work/`): `work/mention-a11y/playwright-headed-final.log` — last line `6 passed (21.9s)`.
 
 ## Explicit human gaps (not claimed)
 | Item | Status |
