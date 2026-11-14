@@ -1,0 +1,54 @@
+{
+  "schema": "neomind-eval-freeze-manifest/v1",
+  "slice": "1.3.0-release-prep",
+  "date": "2026-11-14",
+  "branch": "1.3.0",
+  "product_version": "1.3.0",
+  "version_bumped": true,
+  "pushed": false,
+  "tagged": false,
+  "head_at_start": "806f6ef6",
+  "docs": "docs/development/1.3.0-release-prep-2026-11-14.md",
+  "changelog": "CHANGELOG.md##[1.3.0]",
+  "version_surfaces": [
+    "Cargo.toml[workspace.package]",
+    "Cargo.lock",
+    "web/package.json",
+    "web/package-lock.json",
+    "web/src-tauri/Cargo.toml",
+    "web/src-tauri/tauri.conf.json",
+    "web/src-tauri/Cargo.lock"
+  ],
+  "sdk_version_unchanged": "neomind-extension-sdk@0.8.1",
+  "evidence_index": [
+    "eval/manifests/1.3.0-iter-a-foundation.json",
+    "eval/manifests/1.3.0-iter-b-inline-at.json",
+    "eval/manifests/1.3.0-iter-c-content-nodes.json",
+    "eval/manifests/1.3.0-iter-c-mentions-search.json",
+    "eval/manifests/1.3.0-iter-c-mention-a11y.json",
+    "eval/manifests/1.3.0-iter-d-transform-test-status.json",
+    "eval/manifests/1.3.0-iter-d-rule-why-not-triggered.json",
+    "eval/manifests/1.3.0-iter-d-command-delivery-ladder.json",
+    "eval/manifests/1.3.0-iter-d-agent-execution-evidence.json",
+    "eval/manifests/1.3.0-iter-e-detection-chain-preregister.json",
+    "eval/manifests/1.3.0-iter-f-48-freeze-pairing.json"
+  ],
+  "open_issues": [
+    "E_live_10_ge_9_of_10",
+    "tip_live_138",
+    "appliance_6_tasks",
+    "five_person_usability",
+    "touch_playwright_voiceover",
+    "f_stub_case_authoring",
+    "e_multi_turn_behavior_probes",
+    "session_message_content_nodes_persist",
+    "production_tiptap_inline_editor",
+    "d_desktop_mobile_human_acceptance",
+    "push_tag_held"
+  ],
+  "avoided": {
+    "eval_138": { "pid": 89912, "llama_port": 29431, "touched": false }
+  },
+  "claim": "Product version unified to 1.3.0; evidence index + open issues + manual repro archived. No push/tag. No E live / tip-138 / Appliance claim.",
+  "next": "F remainder after 138 exits: E live 9/10 + tip 138 + Appliance; human a11y/touch/5-person; push/tag on user go"
+}

@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.0] - 2026-11-14 — chat @-references, honest Transform/Rule/cmd/Agent evidence, eval foundation
+
+Edge-AI capability iteration on branch `1.3.0`: inline @ mentions through contentNodes, honest automation/device/agent status surfaces, and offline eval freezes (Plan E/F). Product version is now **1.3.0** across Cargo/Web/Tauri/locks. Live Plan E 9/10, tip 138, Appliance, and 5-person usability remain open — see `docs/development/1.3.0-release-prep-2026-11-14.md`.
+
+### Upgrade notes
+- Chat composer can attach typed `@` mentions via server search (`GET /api/mentions/search`) and send-time resolve (`POST /api/mentions/resolve`); invalid refs stay in the draft marked invalid instead of silently dropping.
+- Messages may carry ordered `contentNodes` (v1); old `references` preamble path still works for prior clients/sessions.
+- Transform **Test** is honest: failure / no-output / partial / unverified are distinct; a non-empty unverified set is never a plain green success.
+- Rule detail adds a read-only **why not triggered** explain panel (condition values, age, duration, cooldown, last run, unknown).
+- Device command UI shows a delivery ladder (adapter received → extension received → device ACK → physical effect); tiers never advance without evidence.
+- Agent execution detail shows evidence panel (input time / output / action results / failure node); missing fields render as unknown, not guessed success.
+- Dry-run Transform policy: legacy Extension ops stay gated; caught dry-run invoke is host-flagged; MultiOutput Production nested Extension tests do not pretend Production ran.
+
+### Added
+- Inline-@ editor prototype at `/dev/inline-at` (`InlineDoc` model) plus production ChatComposer mention search, type filters, load-more, IME Enter guards, and listbox/option/tablist ARIA.
+- `contentNodes` v1 in-place protocol on HTTP/WS/image paths; draft persistence in localStorage; hard 400/Error on oversize.
+- Rule explain API/UI (`GET /rules/:id/explain` surface in Rule detail).
+- Command delivery ladder UI + Agent execution evidence panel (`stop_reason` / `tokens_used` DTO plumbing + `deriveAgentExecutionEvidence`).
+- Eval foundation: fixture `case_precheck`, `seed-main-objective`, Plan E detection-chain preregister (5×zh+5×en, ≥9/10 gate), Plan F 48-scenario catalog + 24/12/12 splits + pairing gates (`test_business_capability_48`).
+
+### Fixed — transforms
+- Host flag for caught dry-run invoke; MultiOutput Production nested Extension tests report nested outcomes honestly.
+- Legacy Extension ops gated behind dry-run Pure policy (no silent Production side effects from Test).
+
+### Test
+- Mentions search/resolve + ChatComposer/IME/InlineAt vitest; Transform test-status; Rule explain; command delivery ladder; Agent evidence derive; Plan E acceptance units; Plan F `test_business_capability_48` 7/7.
+- Offline only for E live 10-run and F tip-138 / Appliance — not claimed in this release entry.
+
+---
+
 ## [1.2.11] - 2026-11-14 — bill-first compact, honest device command forms, meter UI hygiene
 
 ### Upgrade notes

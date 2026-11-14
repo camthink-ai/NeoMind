@@ -43,4 +43,4 @@ python3 eval/lib/test_iter_e_acceptance.py   # E2E01 link still green
 
 ## Next
 
-**发布前：版本统一、证据归档、未解决问题、人工复现步骤** — or resume F remainder (live 138 / Appliance / E 9/10) once 138 exits.
+发布前切片已完成（`docs/development/1.3.0-release-prep-2026-11-14.md`，产品版本 **1.3.0**）。Resume **F remainder** after 138 exits: tip live 138 / Appliance / E live 9/10 / stub authoring.
