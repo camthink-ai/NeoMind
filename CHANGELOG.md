@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.11] - 2026-11-14 — bill-first compact, honest device command forms, meter UI hygiene
+
+### Upgrade notes
+- Truncation-driven LLM auto-compact needs ≥35% billed prompt occupancy (soft >60% path unchanged). `prompt_tokens` of `0` / `u32::MAX` never auto-compacts; omitted usage plus real history truncation still can.
+- Invalid End meters are omitted from `tokenUsage` / the context ring; a prior valid measurement is kept instead of painting 4294967295.
+- Standard device uplink that fails JSON parse is dropped (no synthetic `value` metric); undeclared object-shaped `value` rows stay hidden on device detail.
+
+### Fixed — chat compact and meters
+- **Bill-first auto-compact + evidence-only summaries**: trunc bypass floors at 35% billed occupancy; soft >60% unchanged; garbage `0`/`u32::MAX` meters rejected for compact; missing usage (`None`) with real truncation still compacts. Streamed invalid meters stay on AgentEvent `End` for the gate but never enter UI `tokenUsage` or `TokenUsage` totals (MAX+completion no longer wraps). LLM digests that leak compressor meta, lack section headers, exceed ~720 chars, or cite none of the dialogue evidence needles fall back to the deterministic digest; summary feed caps raised to 800/500 chars.
+- **Context ring refreshes immediately after compact**: compact / `ContextCompacted` return a post-summary `tokenUsage` estimate so the UI can set `lastTokenUsage` instead of clearing to pending.
+- **Manual compact no longer uses `u32::MAX` as a sentinel** that could poison downstream meter consumers.
+
+### Fixed — devices and command forms
+- **Command dynamic forms send the typed payload**: `/devices/:id/current` returns full command defs; the UI normalizes enum / MetricValue wire shapes and validates before submit; DeviceService coerces Enum / Array / Binary so payloads no longer pick up JSON `Display` quotes.
+- **Extension / schema command types map correctly**: JSON Schema `number` → float; TitleCase and enum/array object `data_type`s normalize in the UI; `allowed_values` and `validation[]` are enforced; dispatch≠ACK copy clarified.
+- **Untyped Array params infer element types** from JSON (`[1,2]` → integers); tagged `{Array:[…]}` / `{Binary:…}` defaults unwrap recursively for the form.
+- **Command Length rules count Unicode scalars** (Rust `chars().count()` / frontend `[...s].length`); ParameterInput drops native `maxLength` (UTF-16) so emoji under `max=5` are not cut early.
+- **Bad standard uplink JSON is dropped** instead of inventing a synthetic `value` string; device detail keeps legitimate auto-extracted scalars / arrays / `"[ready]"` and hides only undeclared JSON **object** dumps.
+- **Shell device-control recovery teaches `--param`**: ShellTool description and clap hints align with the onboarding `--param` contract so flat `--key` guesses self-correct.
+
+### Fixed — web chrome
+- **Button `size=sm|icon` compact heights survive `sm:` breakpoints**: bare `h-6`/`h-7`/`h-8` no longer lose to `sm:h-9`/`h-10` via twMerge; matching `sm:h-`/`sm:w-` overrides pin the compact size on desktop.
+
+### Test
+- Bill-first trunc floor (35%) + evidence-only summary / digest-fallback unit tests in `summarization` (`auto_summarize_gate`, `trigger_meter_smoke`, meta-leak / grounded accept); unknown-usage+trunc compact; sessions first-turn pressure at 35%; End UI omits invalid meters; `TokenUsage::new` / `generate_to_completion` skip MAX in totals (MAX+`abcd`).
+- Device `is_legacy_value_dump` / Unicode Length / untyped Array + tagged Array unwrap (API/devices + vitest `commandParams` / ParameterInput); frontend `plausiblePromptTokenMeter` + End MAX does not replace a prior valid meter.
+
+---
+
 ## [1.2.10] - 2026-11-13 — context-safe tool history, truthful telemetry pages, headless VLM, and mobile chrome polish
 
 Frozen 138-case gate (Mac, Spark-1.7B): **97/138 (70.3%)**, identical to the 1.2.7 baseline and within the ±8 noise band of the R1 token+pagination arm (99/138). A withdrawn CJK/digit rate calibration that scored 88/138 is pinned out by `revert_parity`.
@@ -16,7 +45,6 @@ Frozen 138-case gate (Mac, Spark-1.7B): **97/138 (70.3%)**, identical to the 1.2
 - Multi-metric telemetry queries omit top-level `total` / `next_cursor` (they never described every metric); read `pagination.per_metric.<name>.{total,next_cursor}` instead.
 
 ### Fixed — agent context and compaction
-- **Bill-first auto-compact + evidence-only summaries**: truncation bypass for LLM summarize now needs ≥35% billed occupancy (was 5% — still blocked T4’s 0.5% spam but allowed estimate-trunc to summarize at ~18–45%); soft >60% path unchanged; garbage `0`/`u32::MAX` meters still rejected; missing usage (`None`) with real truncation still compacts. Streamed `0`/`u32::MAX` are preserved through backends → marker extract → AgentEvent `End` for the compact gate (not discarded to `None`), but are omitted from `end.tokenUsage` / the context ring / `TokenUsage` totals (MAX+completion no longer wraps). LLM summaries that leak compressor meta, lack section headers, exceed ~720 chars, or cite none of the dialogue evidence needles fall back to the deterministic digest; summary feed caps raised to 800/500 chars so IDs and verbatim instructions reach the compressor.
 - **Tool-call results count toward the token estimate**: `tool_call.result` (including `$cached` read-back windows) was invisible to history assembly, so a prompt that “fit” could still need ~33.8K tokens on a 32K window; results are estimated with the same rates as message text.
 - **`$cached:` text is readable via `file_read`**: large tool blobs stay out of the prompt; `file_read(path="$cached:…", char_offset/char_length)` serves char windows (8K default, 64K char / 64KB byte caps) from the session cache, with explicit errors for unknown/evicted refs — resolve no longer expands the blob into the path argument.
 - **Stale cached windows are previewed before budgeting**: older `file_read` `$cached` windows shrink to a structured summary; the newest window (within 32KB serialized) stays intact so multi-window synthesis still works.
@@ -28,9 +56,6 @@ Frozen 138-case gate (Mac, Spark-1.7B): **97/138 (70.3%)**, identical to the 1.2
 - **`query_telemetry` returns the exact range total** from `query_range_rev` instead of the fetch-limited page length, so page-1 `total` matches the series.
 - **An exactly-full last page no longer emits `next_cursor`**: `has_more` requires both a full page and remaining points past `offset + page_len`.
 - **CLI image/history summaries prefer an attributable total** for `truncated` (a spurious cursor on a complete page no longer overrides `total == page_count`); timestamps are treated as Unix seconds, and “latest” is the max-timestamp point.
-- **Device detail keeps legitimate auto-extracted `value` scalars and arrays** (e.g. `{"value":23}`, `{"value":[1,2]}`, `"[ready]"`); only undeclared JSON **object** dumps (live or stringified) are hidden as legacy uplink pollution.
-- **Command Length rules count Unicode scalars** (Rust `chars().count()` / frontend `[...s].length`); ParameterInput no longer uses native `maxLength` (UTF-16) so emoji under `max=5` are not cut off early.
-- **Untyped Array params infer element types** from JSON (`[1,2]` → integers); tagged `{Array:[…]}` / `{Binary:…}` defaults unwrap recursively for the command form.
 
 ### Fixed — mobile / web chrome
 - **Chat and Settings top safe-area match page chrome** (dark header / `bg-background`) instead of leaving a mismatched strip under the notch.
@@ -53,8 +78,6 @@ Frozen 138-case gate (Mac, Spark-1.7B): **97/138 (70.3%)**, identical to the 1.2
 ### Test
 - `revert_parity` pins shipped token rates and 8K/16K/32K compaction goldens (5688 / 14038).
 - Protection-cap, `$cached` door/FIFO/dual-cap, cached-read-chain (`test-utils`), telemetry `has_more` / multi-metric pagination, and CLI summarize cursor-vs-total tests cover the gate-critical contracts.
-- Bill-first trunc floor (35%) + evidence-only summary / digest-fallback unit tests in `summarization` (`auto_summarize_gate`, `trigger_meter_smoke`, meta-leak / grounded accept); unknown-usage+trunc compact; sessions first-turn pressure at 35%.
-- Device `is_legacy_value_dump` / Unicode Length / untyped Array + tagged Array unwrap unit tests (API/devices + vitest `commandParams`).
 
 ---
 
