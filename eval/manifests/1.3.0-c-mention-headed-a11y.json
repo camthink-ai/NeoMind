@@ -37,5 +37,6 @@
     "5 users x 4 tasks (0/20 executed; 18/20 threshold not claimed)"
   ],
   "next": "Human phone+VoiceOver+5x4 when available; live after 138 frees :29431; D/E/F",
-  "head_at_end": "PENDING_COMMIT"
+  "head_at_end": "4dc8288844a0d6f29bdfdfddd212a9172cbeddda",
+  "commit": "4dc8288844a0d6f29bdfdfddd212a9172cbeddda"
 }
