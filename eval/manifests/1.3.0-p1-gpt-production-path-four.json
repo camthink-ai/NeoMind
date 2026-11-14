@@ -31,5 +31,7 @@
     "touched": false
   },
   "claim": "Four GPT P1 production-path items implemented with deterministic + request-path tests. No live A/B claim. Skill-budget tip retained separately.",
-  "note": "Earlier tip 2a7a2a6f (skill budget share) is NOT these four items; kept but not counted as GPT P1 completion."
+  "note": "Earlier tip 2a7a2a6f (skill budget share) is NOT these four items; kept but not counted as GPT P1 completion.",
+  "commit": "26db0d813e2422a7549df60984f803ab0d13698f",
+  "head_at_end": "26db0d813e2422a7549df60984f803ab0d13698f"
 }
