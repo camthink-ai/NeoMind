@@ -1,0 +1,24 @@
+{
+  "schema": "neomind-eval-acceptance/v1",
+  "id": "g2-g3-task-continuity",
+  "plan_section": "12",
+  "status": "preregistered_offline",
+  "live_blocked_by": { "pid": 89912, "port": 29431 },
+  "unit_gate": "cargo test -p neomind-agent --lib task_continuity",
+  "scenarios": [
+    { "id": "G2-01", "name": "correct_overwrites_goal", "langs": ["zh", "en"] },
+    { "id": "G2-02", "name": "cancel_stops_writes", "langs": ["zh", "en"] },
+    { "id": "G2-03", "name": "continue_no_replay_successful_write", "langs": ["zh", "en"] },
+    { "id": "G2-04", "name": "unknown_receipt_not_complete", "langs": ["zh", "en"] },
+    { "id": "G3-01", "name": "identical_rounds_halt_not_success", "langs": ["zh", "en"] },
+    { "id": "G3-02", "name": "status_poll_change_is_progress", "langs": ["zh", "en"], "note": "covered by ChatLoopProgress ring tests + classify_round" }
+  ],
+  "assertions": [
+    "correction clears next_action",
+    "cancel blocks may_execute_write",
+    "continue keeps completed_write_fingerprints",
+    "complete_with_evidence required for Completed",
+    "LoopHalt.counts_as_task_success == false"
+  ],
+  "claim": "Offline unit + preregister only; no live Spark score"
+}

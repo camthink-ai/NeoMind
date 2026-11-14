@@ -1,0 +1,27 @@
+{
+  "schema": "neomind-eval-freeze-manifest/v1",
+  "slice": "1.3.0-g2-g3-task-continuity",
+  "date": "2026-11-14",
+  "branch": "1.3.0",
+  "product_version": "1.3.0",
+  "pushed": false,
+  "head_at_start": "1f7b4ba3",
+  "plan_section": "12",
+  "item": "G2/G3",
+  "docs": "docs/development/g2-g3-task-continuity-2026-11-14.md",
+  "code": [
+    "crates/neomind-agent/src/agent/task_continuity.rs",
+    "crates/neomind-agent/src/agent/types.rs",
+    "crates/neomind-agent/src/agent/streaming/stream_core.rs"
+  ],
+  "acceptance": "eval/acceptance/g2-g3-continuity-scenarios.json",
+  "gates": {
+    "task_continuity_unit": "9/9",
+    "live_spark": "blocked_by_138"
+  },
+  "claim": "G2 TaskState (correct/cancel/continue/evidence-only complete) + G3 loop halt marks Halted with counts_as_task_success=false. Wired into AgentInternalState and chat identical-round stop. No live score.",
+  "avoided": {
+    "eval_138": { "pid": 89912, "llama_port": 29431, "touched": false }
+  },
+  "next": "Live pairing + wire may_execute_write at mutating tool dispatch; then C/D/E/F"
+}

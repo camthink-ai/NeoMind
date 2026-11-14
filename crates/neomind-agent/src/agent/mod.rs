@@ -27,6 +27,7 @@ pub mod semantic_mapper;
 pub mod smart_followup;
 pub mod staged;
 pub mod streaming;
+pub mod task_continuity;
 pub mod tokenizer;
 pub mod tool_parser;
 pub mod types;

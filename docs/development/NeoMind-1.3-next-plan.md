@@ -240,10 +240,11 @@ timeout和判定来源。
   （2026-11-14 离线：`prompt_capture` 脱敏归档 schema + T4 形态 tip 装配捕获；根因对照 legacy `message_count≈3` vs tip `ZeroBudget`→2；fixture `eval/fixtures/history-budget-p0/g0-desensitized-prompt-archive.json`；单测 3/3 + test-utils 4/4。证据 `eval/manifests/1.3.0-g0-desensitized-prompt-capture.json`。**生产原文请求体仍不可得**；Spark 实捕被 138 阻塞。）
 - [x] G1 修复、协议/证据保留测试及独立配对验收。
   （代码/单测已落地；配对矩阵已离线预注册 `eval/acceptance/context-reliability-weather-ek410.json`（8×zh/en×2=32/arm）。**Live 64 trial 被 138 阻塞，未跑、无分数宣称。**）
-- [ ] G2/G3 按证据逐轮验证衔接和循环兜底。
+- [x] G2/G3 按证据逐轮验证衔接和循环兜底。
+  （2026-11-14 离线：`task_continuity` — 纠正覆盖目标、取消停写、继续不重放成功写入、完成只认证据；G3 identical-rounds 止损 `halt` 且 `counts_as_task_success=false`；挂到 `AgentInternalState` + stream 止损路径。单测 9/9；预注册 `eval/acceptance/g2-g3-continuity-scenarios.json`。证据 `eval/manifests/1.3.0-g2-g3-task-continuity.json`。**Live 探针仍被 138 阻塞；`may_execute_write` 尚未接到具体 tool 分发。**）
 - [ ] C 生产行内@、nodes持久化、历史重发及失败恢复。
 - [ ] C 真浏览器/触屏/IME/读屏与5人×4任务>=18/20。
 - [ ] D 桌面/移动代表流程。
 - [ ] E Spark实际10次>=9/10，多轮/故障/取消探针。
 - [ ] F 48场景可执行化、tip138与Appliance验收。
-G0/G1 离线项已勾；**中英配对 live、G2/G3、C/D/E/F** 仍为缺口。最终发布准备文档必须引用本节剩余项。
+G0–G3 离线项已勾；**中英配对 live、mutating write 闸门接线、C/D/E/F** 仍为缺口。最终发布准备文档必须引用本节剩余项。

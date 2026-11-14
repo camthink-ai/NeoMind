@@ -1891,12 +1891,22 @@ pub async fn process_stream_events_with_safeguards(
                     );
                     let chat_repeating = identical_rounds >= CHAT_IDENTICAL_ROUNDS_LIMIT;
                     if chat_repeating {
+                        // G3: forced stop is a loop halt — never task success.
+                        if let Some(halt) = crate::agent::task_continuity::loop_halt_decision(
+                            identical_rounds,
+                            CHAT_IDENTICAL_ROUNDS_LIMIT,
+                        ) {
+                            let mut state = internal_state.write().await;
+                            let _ = state.task_state.halt(halt.detail.clone());
+                            debug_assert!(!halt.counts_as_task_success);
+                        }
                         tracing::warn!(
                             rounds = tool_iteration_count + 1,
                             identical_rounds,
                             new_calls = round_new_calls,
+                            counts_as_task_success = false,
                             "Chat tool loop detected — same calls AND identical results across \
-                             rounds; forcing the final summary"
+                             rounds; forcing the final summary (halt ≠ success)"
                         );
                         yield AgentEvent::progress(
                             "Repeated the same calls with no new information — generating final response..."

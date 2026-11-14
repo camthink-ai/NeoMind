@@ -1957,6 +1957,9 @@ pub struct AgentInternalState {
     /// Cached compaction: (message_count_at_cache_time, max_tokens, compacted_messages)
     /// Invalidated when messages change or max_tokens differs.
     pub compaction_cache: Option<(usize, usize, Vec<AgentMessage>)>,
+    /// Cross-turn task continuity (G2): goal/object/evidence steps; Continue
+    /// must not replay completed writes. Loop halts (G3) mark Halted, never Completed.
+    pub task_state: super::task_continuity::TaskState,
 }
 
 impl AgentInternalState {
@@ -1974,6 +1977,7 @@ impl AgentInternalState {
                 super::streaming::ToolResultCache::new(std::time::Duration::from_secs(300)),
             )),
             compaction_cache: None,
+            task_state: super::task_continuity::TaskState::default(),
         }
     }
 
@@ -2020,6 +2024,13 @@ impl AgentInternalState {
 
     /// Push a message to the memory.
     pub fn push_message(&mut self, message: AgentMessage) {
+        if message.role == "user" {
+            if let Some(directive) =
+                super::task_continuity::parse_user_directive(message.content.as_ref())
+            {
+                let _ = self.task_state.apply_directive(directive);
+            }
+        }
         self.memory.push(message);
         self.session.increment_messages();
     }
@@ -2032,6 +2043,7 @@ impl AgentInternalState {
     /// Clear the memory.
     pub fn clear_memory(&mut self) {
         self.memory.clear();
+        self.task_state = super::task_continuity::TaskState::default();
     }
 }
 
