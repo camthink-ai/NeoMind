@@ -57,8 +57,17 @@ pub struct TransformResult {
 /// everything is treated as side-effecting). Pure allow-listed ids may
 /// still run for preprocess and legacy Extension (same helper:
 /// `extension_allowed_in_dry_run`); JS `extensions.invoke` installs a
-/// blocking stub for all ids in dry-run. A Mockable tier with simulators
-/// is future work and deliberately not faked here.
+/// blocking stub for all ids in dry-run. The stub sets a **host-side
+/// flag** on each blocked call; after the script finishes the host reads
+/// that flag independently of uncaught exceptions, so a user `catch`
+/// that still returns a value cannot clear `unverified`.
+///
+/// **Production MultiOutput:** nested `TransformOperation::Extension`
+/// runs (same Pure/execute semantics as a top-level Extension). Before
+/// 1.3.0 that arm was silently skipped (`_ => continue`); that was a
+/// dry-run hole and also meant Production never executed nested
+/// Extensions. A Mockable tier with simulators is future work and
+/// deliberately not faked here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransformExecutionMode {
     Production,

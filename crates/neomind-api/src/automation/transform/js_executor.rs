@@ -7,6 +7,7 @@ use crate::automation::error::{AutomationError, Result};
 
 use serde_json::Value;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use neomind_core::event::MetricValue;
@@ -14,6 +15,18 @@ use neomind_core::event::MetricValue;
 use neomind_core::extension::registry::ExtensionRegistry;
 
 pub struct JsTransformExecutor;
+
+/// Outcome of a JavaScript transform run.
+///
+/// `extension_invoke_blocked` is a host-side signal: the dry-run stub sets
+/// it when `extensions.invoke` is called, whether or not user JS catches
+/// the throw. Callers must treat a true flag as `unverified` even when
+/// metrics were produced.
+#[derive(Debug, Clone)]
+pub struct JsTransformOutput {
+    pub metrics: Vec<TransformedMetric>,
+    pub extension_invoke_blocked: bool,
+}
 
 impl JsTransformExecutor {
     /// Create a new JS executor
@@ -72,9 +85,10 @@ impl JsTransformExecutor {
         timestamp: i64,
         extension_registry: Option<&Arc<ExtensionRegistry>>,
         mode: crate::automation::transform::TransformExecutionMode,
-    ) -> Result<Vec<TransformedMetric>> {
+    ) -> Result<JsTransformOutput> {
         use boa_engine::{
-            context::Context, js_string, object::FunctionObjectBuilder, JsValue, Source,
+            context::Context, js_string, object::FunctionObjectBuilder, JsNativeError, JsValue,
+            Source,
         };
 
         // Create Boa context
@@ -179,17 +193,45 @@ impl JsTransformExecutor {
 
         // DRY-RUN: extensions must NOT execute — an extension may perform
         // HTTP calls, device writes, message sends or file writes, which
-        // would make a "test" side-effecting. Install a stub so explicit
-        // `extensions.invoke()` calls throw a catchable marker; the engine
-        // converts that marker into an "unverified" result instead of
-        // pretending the test succeeded.
+        // would make a "test" side-effecting. Install a host-backed stub
+        // that (1) sets a Rust AtomicBool when invoke is called and
+        // (2) throws a catchable marker. The flag is read after the
+        // script finishes so a user `catch` that returns a value cannot
+        // hide the blocked invoke as a clean verified success.
+        let extension_invoke_blocked = Arc::new(AtomicBool::new(false));
         if matches!(
             mode,
             crate::automation::transform::TransformExecutionMode::DryRun
         ) {
+            let flag = extension_invoke_blocked.clone();
+            // SAFETY: captures are Arc<AtomicBool> only — not GC-traceable.
+            let invoke_fn = unsafe {
+                boa_engine::NativeFunction::from_closure(move |_this, _args, _ctx| {
+                    flag.store(true, Ordering::SeqCst);
+                    Err(JsNativeError::error()
+                        .with_message(
+                            "NEOMIND_DRYRUN_EXTENSION_BLOCKED: extension invocation is blocked in dry-run",
+                        )
+                        .into())
+                })
+            };
+            let invoke_fn_obj = FunctionObjectBuilder::new(context.realm(), invoke_fn)
+                .name("invoke")
+                .length(3)
+                .build();
+            context
+                .register_global_property(
+                    js_string!("__neomind_dryrun_invoke__"),
+                    invoke_fn_obj,
+                    boa_engine::property::Attribute::default(),
+                )
+                .map_err(|e| AutomationError::TransformError {
+                    operation: "JsTransform".to_string(),
+                    message: format!("Failed to register dry-run extension stub: {}", e),
+                })?;
             context
                 .eval(Source::from_bytes(
-                    b"const extensions = { invoke: function() { throw new Error('NEOMIND_DRYRUN_EXTENSION_BLOCKED: extension invocation is blocked in dry-run') } };",
+                    b"const extensions = { invoke: __neomind_dryrun_invoke__ };",
                 ))
                 .map_err(|e| AutomationError::TransformError {
                     operation: "JsTransform".to_string(),
@@ -592,7 +634,10 @@ impl JsTransformExecutor {
             metric_count = metrics.len(),
             "Transform produced metrics"
         );
-        Ok(metrics)
+        Ok(JsTransformOutput {
+            metrics,
+            extension_invoke_blocked: extension_invoke_blocked.load(Ordering::SeqCst),
+        })
     }
 }
 impl JsTransformExecutor {

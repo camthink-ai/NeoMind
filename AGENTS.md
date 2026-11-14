@@ -419,9 +419,11 @@ TransformExecutionMode with an unverified channel — extensions (preprocess +
 JS extensions.invoke + legacy TransformOperation::Extension, including
 MultiOutput-nested Extension) are not executed in dry-run unless on the
 default-deny allow-list NEOMIND_DRYRUN_PURE_EXTENSIONS (preprocess + legacy
-Extension honor the Pure allow-list; JS invoke stubs all ids); non-pure
-surfaces as unverified (/test, test-code and the chat transform tool all
-run DryRun); CommandDelivery
+Extension honor the Pure allow-list; JS invoke stubs all ids via a host-side
+blocked flag read after the script finishes, so a user catch+return cannot
+clear unverified); non-pure surfaces as unverified (/test, test-code and the
+chat transform tool all run DryRun). Intentional Production change: nested
+Extension under MultiOutput now executes (was silently skipped). CommandDelivery
 layered to AdapterAccepted/ExtensionAccepted/DeviceAcknowledged/
 PhysicalEffectVerified (extension Ok explicitly "not a device ACK");
 @-references dropped client labels from model context entirely + full

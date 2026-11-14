@@ -404,9 +404,9 @@ impl TransformEngine {
                     ext_ref,
                     mode,
                 ) {
-                    Ok(js_metrics) => {
+                    Ok(js_out) => {
                         // Set transform_id on each metric
-                        for mut m in js_metrics {
+                        for mut m in js_out.metrics {
                             m.transform_id = Some(transform.metadata.id.clone());
                             metrics.push(m);
                         }
@@ -416,10 +416,18 @@ impl TransformEngine {
                                 .to_string(),
                         );
                         }
+                        // Host flag is authoritative: a caught invoke that
+                        // still returns a value must not look fully verified.
+                        if js_out.extension_invoke_blocked {
+                            unverified.push(
+                                "extension invocation blocked in dry-run; extension-dependent behavior unverified"
+                                    .to_string(),
+                            );
+                        }
                     }
-                    // Dry-run extension blocking is NOT a failure and NOT a
-                    // success: the tested behavior depends on an extension
-                    // that was refused, so the result is explicitly unverified.
+                    // Uncaught dry-run stub throw (flag set, but execute
+                    // returned Err before packing the output): same unverified
+                    // channel as the flag path above.
                     Err(e)
                         if mode == TransformExecutionMode::DryRun
                             && e.to_string().contains("NEOMIND_DRYRUN_EXTENSION_BLOCKED") =>
@@ -705,9 +713,10 @@ impl TransformEngine {
 
             TransformOperation::MultiOutput { operations } => {
                 // Inline non-Extension arms to avoid async recursion sizing.
-                // Nested Extension goes through execute_operation (boxed)
-                // so it inherits the DryRun Pure gate — the previous `_`
-                // skip left that path uncovered. Nested MultiOutput and
+                // Nested Extension goes through execute_operation (boxed):
+                // DryRun inherits the Pure gate; Production executes
+                // (intentional: the previous `_ => continue` skipped nested
+                // Extension entirely). Nested MultiOutput and
                 // expression-based ops stay skipped.
                 let mut all_metrics = Vec::new();
                 let sub_total = operations.len();

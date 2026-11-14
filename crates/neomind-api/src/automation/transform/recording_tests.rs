@@ -310,6 +310,48 @@ async fn dry_run_blocks_extension_invocation_as_unverified() {
 }
 
 #[tokio::test]
+async fn dry_run_caught_invoke_still_marks_unverified() {
+    // Host flag must survive a user catch that returns a value — otherwise
+    // the run looks fully verified despite a blocked extension call.
+    let (engine, store) = engine_with_store();
+    let t = js_transform(
+        "dry-catch",
+        "try { extensions.invoke('weather', 'get', {}); } catch (e) { return {v: 1}; } return {v: 0}",
+    );
+    let result = engine
+        .process_device_data_dry(
+            std::slice::from_ref(&t),
+            "sensor-1",
+            None,
+            &json!({"temperature": 25.5}),
+        )
+        .await
+        .expect("caught blocked invoke is not a hard error");
+
+    assert!(
+        result
+            .unverified
+            .iter()
+            .any(|u| u.contains("blocked in dry-run")),
+        "caught invoke must still be unverified: {:?}",
+        result.unverified
+    );
+    assert_eq!(
+        result.metrics.len(),
+        1,
+        "returned value still produces a metric"
+    );
+    assert!(
+        store
+            .get_executions("dry-catch", 10)
+            .await
+            .unwrap()
+            .is_empty(),
+        "dry-run must not write execution history"
+    );
+}
+
+#[tokio::test]
 async fn production_mode_still_runs_extension_path_as_before() {
     // Production keeps the original semantics: no stub is installed and the
     // registry-less invoke fails as an ordinary JS error (ReferenceError),
@@ -526,6 +568,175 @@ async fn multioutput_nested_extension_dry_run_cannot_bypass() {
     );
     // The Single branch still computes.
     assert_eq!(dry.metrics.len(), 1, "non-extension sub-op still runs");
+}
+
+// ---------- MultiOutput nested Extension in Production ----------
+// Intentional behavior change: nested Extension under MultiOutput now
+// executes in Production (was silently skipped). Cover success / failure /
+// partial-success status + outputs.
+
+fn multioutput_with_nested_extension(
+    id: &str,
+    extension_id: &str,
+    include_single: bool,
+) -> TransformAutomation {
+    let mut ops = Vec::new();
+    if include_single {
+        ops.push(TransformOperation::Single {
+            json_path: "$.temperature".to_string(),
+            output_metric: "temp".to_string(),
+        });
+    }
+    ops.push(TransformOperation::Extension {
+        extension_id: extension_id.to_string(),
+        command: "analyze".to_string(),
+        parameters: HashMap::new(),
+        output_metrics: vec!["out".to_string()],
+        output_mapping: None,
+    });
+    let mut t = TransformAutomation::new(id, id, TransformScope::Global);
+    t.operations = Some(vec![TransformOperation::MultiOutput { operations: ops }]);
+    t
+}
+
+/// Extension mock that always fails (for nested failure / partial paths).
+struct FailingExt {
+    meta: neomind_core::extension::system::ExtensionMetadata,
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[async_trait::async_trait]
+impl neomind_core::extension::system::Extension for FailingExt {
+    fn metadata(&self) -> &neomind_core::extension::system::ExtensionMetadata {
+        &self.meta
+    }
+
+    fn metrics(&self) -> Vec<neomind_core::extension::system::MetricDefinition> {
+        vec![]
+    }
+
+    fn commands(&self) -> Vec<neomind_core::extension::system::ExtensionCommand> {
+        vec![]
+    }
+
+    async fn execute_command(
+        &self,
+        _command: &str,
+        _args: &serde_json::Value,
+    ) -> neomind_core::extension::system::Result<serde_json::Value> {
+        self.calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err(
+            neomind_core::extension::system::ExtensionError::ExecutionFailed(
+                "nested fail".to_string(),
+            ),
+        )
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+async fn engine_with_failing_ext(
+    id: &str,
+) -> (
+    TransformEngine,
+    Arc<SharedAutomationStore>,
+    Arc<std::sync::atomic::AtomicUsize>,
+) {
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let registry = Arc::new(neomind_core::extension::registry::ExtensionRegistry::new());
+    let ext: neomind_core::extension::system::DynExtension =
+        Arc::new(tokio::sync::RwLock::new(Box::new(FailingExt {
+            meta: neomind_core::extension::system::ExtensionMetadata::new(id, id, "1.0.0"),
+            calls: calls.clone(),
+        })));
+    registry.register(id.to_string(), ext).await.unwrap();
+
+    let store = Arc::new(SharedAutomationStore::memory().unwrap());
+    let engine = TransformEngine::with_extension_registry(registry)
+        .with_automation_store(store.clone());
+    (engine, store, calls)
+}
+
+#[tokio::test]
+async fn multioutput_nested_extension_production_success() {
+    let (engine, store, calls) = engine_with_counting_ext("nested-ok").await;
+    let t = multioutput_with_nested_extension("mo-ok", "nested-ok", true);
+    let data = json!({"temperature": 25.5});
+
+    let prod = engine
+        .process_device_data(&[t], "sensor-1", None, &data)
+        .await
+        .expect("production nested Extension runs");
+
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "nested Extension must execute in Production"
+    );
+    assert!(
+        prod.metrics.len() >= 2,
+        "Single + Extension outputs: {:?}",
+        prod.metrics
+            .iter()
+            .map(|m| &m.metric)
+            .collect::<Vec<_>>()
+    );
+    assert!(prod.unverified.is_empty());
+    let records = store.get_executions("mo-ok", 10).await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].status, ExecutionStatus::Completed);
+    assert_eq!(counts(&records[0]).1, 0, "no warnings on full success");
+}
+
+#[tokio::test]
+async fn multioutput_nested_extension_production_all_fail() {
+    let (engine, store, calls) = engine_with_failing_ext("nested-fail").await;
+    // Extension-only MultiOutput: the sole sub-op fails → hard failure.
+    // Use execute_transform (not process_device_data) so Err is not folded
+    // into a warning at the aggregator boundary.
+    let t = multioutput_with_nested_extension("mo-fail", "nested-fail", false);
+    let (result, records) = run_and_fetch(&engine, &store, &t).await;
+
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "failing nested Extension was still invoked"
+    );
+    assert!(result.is_err(), "all sub-ops failed → transform Err");
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].status, ExecutionStatus::Failed);
+}
+
+#[tokio::test]
+async fn multioutput_nested_extension_production_partial_success() {
+    let (engine, store, calls) = engine_with_failing_ext("nested-partial").await;
+    let t = multioutput_with_nested_extension("mo-partial", "nested-partial", true);
+    let data = json!({"temperature": 25.5});
+
+    let prod = engine
+        .process_device_data(&[t], "sensor-1", None, &data)
+        .await
+        .expect("partial MultiOutput success is not a hard failure");
+
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "nested Extension was invoked (and failed)"
+    );
+    assert_eq!(prod.metrics.len(), 1, "Single branch still emits");
+    assert!(
+        prod.warnings
+            .iter()
+            .any(|w| w.contains("sub-operation failed")),
+        "failed nested Extension is a warning: {:?}",
+        prod.warnings
+    );
+    let records = store.get_executions("mo-partial", 10).await.unwrap();
+    assert_eq!(records[0].status, ExecutionStatus::Completed);
+    assert_eq!(counts(&records[0]), (1, 1));
 }
 
 // ---------- old records stay deserializable ----------

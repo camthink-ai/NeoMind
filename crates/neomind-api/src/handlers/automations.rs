@@ -1249,7 +1249,8 @@ pub async fn test_transform_code_handler(
         // blocked (unverified) rather than really executed.
         crate::automation::transform::TransformExecutionMode::DryRun,
     ) {
-        Ok(metrics) => {
+        Ok(js_out) => {
+            let metrics = js_out.metrics;
             // Convert metrics to a more readable format
             let result_obj: serde_json::Map<String, Value> = metrics
                 .iter()
@@ -1264,11 +1265,21 @@ pub async fn test_transform_code_handler(
                 })
                 .collect();
 
+            let unverified = if js_out.extension_invoke_blocked {
+                vec![
+                    "extension invocation blocked in dry-run; extension-dependent behavior unverified"
+                        .to_string(),
+                ]
+            } else {
+                Vec::new()
+            };
+
             ok(json!({
                 "success": true,
                 "output": result_obj,
                 "metrics": metrics,
                 "count": metrics.len(),
+                "unverified": unverified,
                 "output_with_prefix": serde_json::to_value(&result_obj).unwrap_or_else(|_| json!({}))
             }))
         }

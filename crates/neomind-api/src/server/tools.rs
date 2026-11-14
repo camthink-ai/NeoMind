@@ -541,8 +541,15 @@ impl TransformTool {
 
                 Ok(ToolOutput::success(serde_json::json!({
                     "input": input_data,
-                    "output": result,
-                    "metrics_count": result.len()
+                    "output": result.metrics,
+                    "metrics_count": result.metrics.len(),
+                    "unverified": if result.extension_invoke_blocked {
+                        serde_json::json!([
+                            "extension invocation blocked in dry-run; extension-dependent behavior unverified"
+                        ])
+                    } else {
+                        serde_json::json!([])
+                    },
                 })))
             }
             None => Err(ToolError::Execution(format!(
