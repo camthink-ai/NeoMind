@@ -1,0 +1,37 @@
+{
+  "schema": "neomind-eval-freeze-manifest/v1",
+  "slice": "1.3.0-c-tiptap-inline-mention",
+  "date": "2026-11-14",
+  "branch": "1.3.0",
+  "product_version": "1.3.0",
+  "pushed": false,
+  "head_at_start": "367e455d",
+  "plan_section": "12",
+  "item": "C production TipTap inline @",
+  "docs": "docs/development/c-tiptap-inline-mention-2026-11-14.md",
+  "code": [
+    "web/src/components/chat/inline-mention/",
+    "web/src/components/chat/ChatComposer.tsx",
+    "web/src/pages/chat.tsx",
+    "web/src/components/chat/PanelChatView.tsx",
+    "web/package.json",
+    "web/package-lock.json"
+  ],
+  "deps": {
+    "@tiptap/react": "3.34.0",
+    "@tiptap/starter-kit": "3.34.0",
+    "@tiptap/extension-mention": "3.34.0",
+    "@tiptap/extension-placeholder": "3.34.0",
+    "@tiptap/suggestion": "3.34.0"
+  },
+  "gates": {
+    "vitest_tiptap_suite": "35/35",
+    "tsc": "pass",
+    "live_spark": "blocked_by_138"
+  },
+  "claim": "Production ChatComposer uses TipTap Mention for in-sentence @ with ordered contentNodes; duplicates allowed; legacy textarea retained when mentions disabled. No headed/touch/5-person claim; no live score.",
+  "avoided": {
+    "eval_138": { "pid": 89912, "llama_port": 29431, "touched": false }
+  },
+  "next": "History contentNodes display; C headed a11y + 5-person; live after 138; D/E/F"
+}

@@ -19,8 +19,7 @@ import { ConnectionStatus } from "@/components/chat/ConnectionStatus"
 import { ws, type ConnectionState } from "@/lib/websocket"
 import { api } from "@/lib/api"
 import { mentionKey, resolveMentions } from "@/lib/api/mentions"
-import { chipsAndTextToContentNodes } from "@/lib/chat/contentProtocol"
-import type { Message, ChatImage, ChatReference } from "@/types"
+import type { Message, ChatImage, ChatReference, ChatContentNode } from "@/types"
 import { cn } from "@/lib/utils"
 import { getSessionDisplayTitle } from "@/lib/utils/sessionTitle"
 import { normalizeTimestampMs } from "@/lib/utils/format"
@@ -148,6 +147,8 @@ export function ChatPage() {
   const [attachedImages, setAttachedImages] = useState<ChatImage[]>([])
   // Structured @-references for the next message (ids authoritative).
   const [chatReferences, setChatReferences] = useState<ChatReference[]>([])
+  const [chatContentNodes, setChatContentNodes] = useState<ChatContentNode[]>([])
+  const editorHostRef = useRef<HTMLElement | null>(null)
   /** Preflight failures: `type:id` → detail. Cleared on successful resolve / chip edit. */
   const [invalidRefs, setInvalidRefs] = useState<Record<string, string>>({})
 
@@ -756,10 +757,8 @@ export function ChatPage() {
     // Prepare message content
     const messageContent = trimmedInput || (attachedImages.length > 0 ? "[Image]" : "")
     const sentReferences = chatReferences.length > 0 ? [...chatReferences] : undefined
-    const sentContentNodes =
-      sentReferences && sentReferences.length > 0
-        ? chipsAndTextToContentNodes(trimmedInput, sentReferences)
-        : undefined
+    const hasInlineRefs = chatContentNodes.some((n) => n.kind === "reference")
+    const sentContentNodes = hasInlineRefs ? [...chatContentNodes] : undefined
     const userMessage: Message = {
       id: generateId(),
       role: "user",
@@ -779,9 +778,10 @@ export function ChatPage() {
     setInput("")
     setAttachedImages([])
     setChatReferences([])
+    setChatContentNodes([])
     setInvalidRefs({})
 
-    // Reset textarea height to initial state
+    // Reset textarea height when the legacy host is active.
     if (inputRef.current) {
       inputRef.current.style.height = "40px"
     }
@@ -806,7 +806,9 @@ export function ChatPage() {
     )
 
     requestAnimationFrame(() => {
-      inputRef.current?.focus()
+      const pm = editorHostRef.current?.querySelector<HTMLElement>(".ProseMirror")
+      if (pm) pm.focus()
+      else inputRef.current?.focus()
     })
   }
 
@@ -1045,15 +1047,17 @@ export function ChatPage() {
       onSend={() => handleSend()}
       onKeyDown={handleKeyDown}
       textareaRef={inputRef}
+      editorHostRef={editorHostRef}
       placeholder={t('chat:input.placeholder')}
       isStreaming={isStreaming}
       onCancel={handleCancelRequest}
       attachments={attachedImages}
       onAttachmentsChange={setAttachedImages}
       references={chatReferences}
+      contentNodes={chatContentNodes}
       onReferencesChange={(refs) => {
         setChatReferences(refs)
-        // Drop invalid marks for removed chips; keep marks that still apply.
+        // Drop invalid marks for removed entities; keep marks that still apply.
         setInvalidRefs((prev) => {
           const keep: Record<string, string> = {}
           for (const r of refs) {
@@ -1063,6 +1067,7 @@ export function ChatPage() {
           return keep
         })
       }}
+      onContentNodesChange={setChatContentNodes}
       invalidRefs={invalidRefs}
       supportsMultimodal={imagesAllowed}
       visionDelegate={visionDelegate}

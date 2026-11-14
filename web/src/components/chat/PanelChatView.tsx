@@ -29,8 +29,7 @@ import { pickPageAssistant, panelSessionKey, profileFingerprint, readStoredPanel
 import { useLocation } from "react-router-dom"
 import { ChatMessages } from "./ChatMessages"
 import { ChatComposer } from "./ChatComposer"
-import type { ChatReference } from "@/types"
-import { chipsAndTextToContentNodes } from "@/lib/chat/contentProtocol"
+import type { ChatContentNode, ChatReference } from "@/types"
 import { ChatScrollPill } from "./ChatScrollPill"
 import { X, Minimize2, Bot, Plus, Settings, Cpu, Download } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -192,7 +191,9 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
 
   const [input, setInput] = useState("")
   const [panelReferences, setPanelReferences] = useState<ChatReference[]>([])
+  const [panelContentNodes, setPanelContentNodes] = useState<ChatContentNode[]>([])
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const editorHostRef = useRef<HTMLElement | null>(null)
   const [sendPhase, setSendPhase] = useState<"idle" | "preparing" | "waiting">("idle")
   const [sendElapsedSeconds, setSendElapsedSeconds] = useState(0)
   const sendInProgressRef = useRef(false)
@@ -607,10 +608,8 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     setSendElapsedSeconds(0)
     setSendPhase("preparing")
     const sentReferences = panelReferences.length > 0 ? [...panelReferences] : undefined
-    const sentContentNodes =
-      sentReferences && sentReferences.length > 0
-        ? chipsAndTextToContentNodes(text, sentReferences)
-        : undefined
+    const hasInlineRefs = panelContentNodes.some((n) => n.kind === "reference")
+    const sentContentNodes = hasInlineRefs ? [...panelContentNodes] : undefined
     addPanelMessage({
       id: pendingUserMessageId,
       role: "user",
@@ -623,6 +622,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     setAttachedImages([])
     setInput("")
     setPanelReferences([])
+    setPanelContentNodes([])
     if (inputRef.current) inputRef.current.style.height = "auto"
 
     // Ensure we have a session before sending. This await used to happen
@@ -646,8 +646,12 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     // the page's system focus already lives in the session's system prompt.
     const skillIds = matchedSkillIdsRef.current.length > 0 ? [...matchedSkillIdsRef.current] : undefined
     ws.sendMessage(text, sentImages, skillIds, undefined, sentReferences, sentContentNodes)
-    requestAnimationFrame(() => inputRef.current?.focus())
-  }, [input, attachedImages, panelReferences, isStreaming, isHistoryLoading, addPanelMessage, createPanelSession, imagesAllowed, toast, t, beginTurn])
+    requestAnimationFrame(() => {
+      const pm = editorHostRef.current?.querySelector<HTMLElement>(".ProseMirror")
+      if (pm) pm.focus()
+      else inputRef.current?.focus()
+    })
+  }, [input, attachedImages, panelReferences, panelContentNodes, isStreaming, isHistoryLoading, addPanelMessage, createPanelSession, imagesAllowed, toast, t, beginTurn])
 
   const filteredMessages = useMemo(() => filterPartialMessages(panelMessages), [panelMessages])
 
@@ -913,6 +917,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
             if (e.key === "Escape") onClose()
           }}
           textareaRef={inputRef}
+          editorHostRef={editorHostRef}
           placeholder={t("input.placeholder")}
           isStreaming={isStreaming}
           disabled={isHistoryLoading || sendPhase !== "idle"}
@@ -921,6 +926,8 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
           onAttachmentsChange={setAttachedImages}
           references={panelReferences}
           onReferencesChange={setPanelReferences}
+          contentNodes={panelContentNodes}
+          onContentNodesChange={setPanelContentNodes}
           supportsMultimodal={imagesAllowed}
           visionDelegate={visionDelegate}
           backends={llmBackends}

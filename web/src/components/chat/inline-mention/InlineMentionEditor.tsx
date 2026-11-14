@@ -1,0 +1,359 @@
+/**
+ * Production TipTap inline-@ editor (plan §12 C).
+ *
+ * Owns the ProseMirror surface + mention atoms. Suggestion search UI stays in
+ * ChatComposer (listbox / type filters / pagination / IME guards).
+ */
+import { useEffect, useMemo, useRef } from "react"
+import { EditorContent, useEditor } from "@tiptap/react"
+import StarterKit from "@tiptap/starter-kit"
+import Placeholder from "@tiptap/extension-placeholder"
+import type { SuggestionKeyDownProps, SuggestionProps } from "@tiptap/suggestion"
+import { cn } from "@/lib/utils"
+import type { ChatContentNode, ChatReference } from "@/types"
+import type { InlineDoc } from "@/prototypes/inline-at/model"
+import { emptyDoc } from "@/prototypes/inline-at/model"
+import {
+  EntityMention,
+  type EntityMentionAttrs,
+  type EntityMentionItem,
+} from "./entityMention"
+import {
+  contentNodesToInlineDoc,
+  inlineDocToChatPayload,
+  inlineDocToTipTapJson,
+  tipTapJsonToInlineDoc,
+} from "./docBridge"
+
+export type MentionSuggestionApi = {
+  query: string
+  command: (item: EntityMentionItem) => void
+}
+
+export interface InlineMentionEditorProps {
+  value: string
+  contentNodes?: ChatContentNode[]
+  placeholder?: string
+  disabled?: boolean
+  className?: string
+  minHeight?: number
+  maxHeight?: number
+  listboxId?: string
+  mentionOpen?: boolean
+  invalidRefs?: Record<string, string>
+  /** Focus / host handle — ProseMirror root is assigned here. */
+  editorHostRef?: React.RefObject<HTMLElement | null>
+  onPayloadChange: (payload: {
+    message: string
+    references: ChatReference[]
+    contentNodes: ChatContentNode[]
+    doc: InlineDoc
+  }) => void
+  onSuggestionStart: (api: MentionSuggestionApi) => void
+  onSuggestionUpdate: (api: MentionSuggestionApi) => void
+  onSuggestionExit: () => void
+  onSuggestionKeyDown?: (props: SuggestionKeyDownProps) => boolean
+  /** Return true to claim the key (e.g. Enter-to-send). */
+  onKeyDown?: (event: KeyboardEvent) => boolean | void
+  onFocus?: () => void
+  onBlur?: () => void
+  /** Bump to insert `@` at the caret (toolbar). */
+  openMentionRequest?: number
+}
+
+function toSuggestionApi(
+  props: SuggestionProps<EntityMentionItem, EntityMentionAttrs>,
+): MentionSuggestionApi {
+  return {
+    query: props.query,
+    command: (item) => {
+      props.command({
+        id: item.id,
+        label: item.label,
+        entityType: item.entityType,
+      })
+    },
+  }
+}
+
+export function InlineMentionEditor({
+  value,
+  contentNodes,
+  placeholder,
+  disabled = false,
+  className,
+  minHeight = 44,
+  maxHeight = 160,
+  listboxId,
+  mentionOpen = false,
+  invalidRefs = {},
+  editorHostRef,
+  onPayloadChange,
+  onSuggestionStart,
+  onSuggestionUpdate,
+  onSuggestionExit,
+  onSuggestionKeyDown,
+  onKeyDown,
+  onFocus,
+  onBlur,
+  openMentionRequest = 0,
+}: InlineMentionEditorProps) {
+  const suggestionKeyDownRef = useRef(onSuggestionKeyDown)
+  const onSuggestionStartRef = useRef(onSuggestionStart)
+  const onSuggestionUpdateRef = useRef(onSuggestionUpdate)
+  const onSuggestionExitRef = useRef(onSuggestionExit)
+  const onPayloadChangeRef = useRef(onPayloadChange)
+  const onKeyDownRef = useRef(onKeyDown)
+  const skipEmit = useRef(false)
+  const lastPlain = useRef(value)
+  const lastNodesKey = useRef("")
+  const lastOpenMention = useRef(openMentionRequest)
+  const hostDivRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    suggestionKeyDownRef.current = onSuggestionKeyDown
+    onSuggestionStartRef.current = onSuggestionStart
+    onSuggestionUpdateRef.current = onSuggestionUpdate
+    onSuggestionExitRef.current = onSuggestionExit
+    onPayloadChangeRef.current = onPayloadChange
+    onKeyDownRef.current = onKeyDown
+  })
+
+  const mentionExtension = useMemo(
+    () =>
+      EntityMention.configure({
+        deleteTriggerWithBackspace: true,
+        HTMLAttributes: { class: "nm-mention" },
+        renderText({ node }) {
+          return `@${node.attrs.label ?? node.attrs.id ?? ""}`
+        },
+        suggestion: {
+          char: "@",
+          allowSpaces: false,
+          // Space / punctuation / CJK ideographic space — not word chars
+          // (blocks a@b.com). Start-of-block is allowed by TipTap match.
+          allowedPrefixes: [" ", "\n", "(", "[", "{", "\u3000", '"', "'"],
+          items: async () =>
+            // Host owns the real option list; a non-empty stub keeps the
+            // suggestion lifecycle alive for onStart/onUpdate/onExit.
+            [{ id: "__host__", label: "", entityType: "device" as const }],
+          render: () => ({
+            onStart: (props) => {
+              onSuggestionStartRef.current(toSuggestionApi(props))
+            },
+            onUpdate: (props) => {
+              onSuggestionUpdateRef.current(toSuggestionApi(props))
+            },
+            onExit: () => {
+              onSuggestionExitRef.current()
+            },
+            onKeyDown: (props) => {
+              if (suggestionKeyDownRef.current) {
+                return suggestionKeyDownRef.current(props)
+              }
+              return false
+            },
+          }),
+          command: ({ editor, range, props }) => {
+            const attrs = props as EntityMentionAttrs
+            if (!attrs.id || attrs.id === "__host__") return
+            editor
+              .chain()
+              .focus()
+              .insertContentAt(range, [
+                {
+                  type: "mention",
+                  attrs: {
+                    id: attrs.id,
+                    label: attrs.label,
+                    entityType: attrs.entityType,
+                    mentionSuggestionChar: "@",
+                  },
+                },
+                { type: "text", text: " " },
+              ])
+              .run()
+          },
+        },
+      }),
+    [],
+  )
+
+  const editor = useEditor({
+    immediatelyRender: false,
+    extensions: [
+      StarterKit.configure({
+        heading: false,
+        bold: false,
+        italic: false,
+        strike: false,
+        code: false,
+        codeBlock: false,
+        blockquote: false,
+        horizontalRule: false,
+        bulletList: false,
+        orderedList: false,
+        listItem: false,
+        dropcursor: false,
+        gapcursor: false,
+      }),
+      Placeholder.configure({
+        placeholder: placeholder ?? "",
+        emptyEditorClass: "is-editor-empty",
+      }),
+      mentionExtension,
+    ],
+    editable: !disabled,
+    editorProps: {
+      attributes: {
+        role: "textbox",
+        "aria-multiline": "true",
+        class: cn(
+          "nm-inline-mention-editor outline-none max-w-full break-words",
+          "text-base leading-5 sm:text-sm caret-foreground",
+        ),
+      },
+      handleKeyDown: (_view, event) => {
+        return onKeyDownRef.current?.(event) === true
+      },
+    },
+    onUpdate: ({ editor: ed }) => {
+      if (skipEmit.current) return
+      const doc = tipTapJsonToInlineDoc(ed.getJSON())
+      const payload = inlineDocToChatPayload(doc)
+      lastPlain.current = payload.message
+      onPayloadChangeRef.current({ ...payload, doc })
+    },
+    onFocus: () => onFocus?.(),
+    onBlur: () => onBlur?.(),
+  })
+
+  // aria-controls / expanded follow the host listbox.
+  useEffect(() => {
+    if (!editor) return
+    const dom = editor.view.dom
+    if (listboxId && mentionOpen) {
+      dom.setAttribute("aria-controls", listboxId)
+      dom.setAttribute("aria-expanded", "true")
+      dom.setAttribute("aria-autocomplete", "list")
+    } else {
+      dom.removeAttribute("aria-controls")
+      dom.setAttribute("aria-expanded", "false")
+      if (listboxId) dom.setAttribute("aria-autocomplete", "list")
+    }
+  }, [editor, listboxId, mentionOpen])
+
+  // Sync external clear / welcome prompt / draft restore.
+  useEffect(() => {
+    if (!editor) return
+    const nodesKey = contentNodes?.length
+      ? JSON.stringify(contentNodes)
+      : ""
+    if (contentNodes && contentNodes.length > 0 && nodesKey !== lastNodesKey.current) {
+      const fromNodes = contentNodesToInlineDoc(contentNodes)
+      const fromPayload = inlineDocToChatPayload(fromNodes)
+      skipEmit.current = true
+      editor.commands.setContent(inlineDocToTipTapJson(fromNodes), {
+        emitUpdate: false,
+      })
+      skipEmit.current = false
+      lastPlain.current = fromPayload.message
+      lastNodesKey.current = nodesKey
+      return
+    }
+    if (value !== lastPlain.current) {
+      const current = inlineDocToChatPayload(tipTapJsonToInlineDoc(editor.getJSON()))
+      if (value !== current.message) {
+        skipEmit.current = true
+        if (!value.trim()) {
+          editor.commands.clearContent(true)
+        } else {
+          editor.commands.setContent(
+            inlineDocToTipTapJson({
+              nodes: [{ kind: "text", text: value }],
+            }),
+            { emitUpdate: false },
+          )
+        }
+        skipEmit.current = false
+      }
+      lastPlain.current = value
+      if (!value) lastNodesKey.current = ""
+    }
+  }, [editor, value, contentNodes])
+
+  useEffect(() => {
+    if (!editor) return
+    // Avoid emitUpdate → onPayloadChange → parent rerender loops in tests.
+    editor.setEditable(!disabled, false)
+  }, [editor, disabled])
+
+  useEffect(() => {
+    if (!editor || openMentionRequest === lastOpenMention.current) return
+    lastOpenMention.current = openMentionRequest
+    if (openMentionRequest <= 0) return
+    editor.chain().focus().insertContent("@").run()
+  }, [editor, openMentionRequest])
+
+  useEffect(() => {
+    const root = hostDivRef.current
+    if (!root) return
+    root.querySelectorAll<HTMLElement>("span.nm-mention[data-id]").forEach((el) => {
+      const id = el.getAttribute("data-id") || ""
+      const type = el.getAttribute("data-entity-type") || ""
+      const key = `${type}:${id}`
+      const invalid = !!invalidRefs[key]
+      el.dataset.invalid = invalid ? "true" : "false"
+      if (invalid) el.setAttribute("title", invalidRefs[key])
+      else el.removeAttribute("title")
+    })
+  }, [invalidRefs, value, contentNodes, editor])
+
+  useEffect(() => {
+    if (!editorHostRef) return
+    const assign = (node: HTMLElement | null) => {
+      ;(editorHostRef as React.MutableRefObject<HTMLElement | null>).current = node
+    }
+    assign(hostDivRef.current)
+    return () => assign(null)
+  }, [editorHostRef, editor])
+
+  if (!editor) return null
+
+  return (
+    <div
+      ref={hostDivRef}
+      data-inline-mention-host
+      className={cn(
+        "nm-inline-mention-host w-full overflow-y-auto px-4 pb-1 pt-3",
+        "[&_.ProseMirror]:min-h-[inherit] [&_.ProseMirror]:outline-none",
+        "[&_.ProseMirror_p]:m-0 [&_.ProseMirror_p]:leading-5",
+        "[&_.is-editor-empty:first-child::before]:pointer-events-none",
+        "[&_.is-editor-empty:first-child::before]:float-left",
+        "[&_.is-editor-empty:first-child::before]:h-0",
+        "[&_.is-editor-empty:first-child::before]:text-muted-foreground",
+        "[&_.is-editor-empty:first-child::before]:content-[attr(data-placeholder)]",
+        "[&_.nm-mention]:inline-flex [&_.nm-mention]:items-center",
+        "[&_.nm-mention]:rounded-full [&_.nm-mention]:border [&_.nm-mention]:border-border",
+        "[&_.nm-mention]:bg-muted [&_.nm-mention]:px-1.5 [&_.nm-mention]:py-px",
+        "[&_.nm-mention]:text-xs [&_.nm-mention]:align-baseline",
+        "[&_.nm-mention[data-invalid=true]]:border-error",
+        "[&_.nm-mention[data-invalid=true]]:bg-error-light",
+        "[&_.nm-mention[data-invalid=true]]:text-error",
+        disabled && "opacity-60",
+        className,
+      )}
+      style={{ minHeight: `${minHeight}px`, maxHeight: `${maxHeight}px` }}
+      onClick={() => {
+        if (!disabled) editor.commands.focus("end")
+      }}
+    >
+      <EditorContent editor={editor} />
+    </div>
+  )
+}
+
+export function emptyMentionPayload() {
+  const doc = emptyDoc()
+  return { ...inlineDocToChatPayload(doc), doc }
+}

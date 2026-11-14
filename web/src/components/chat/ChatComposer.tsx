@@ -23,7 +23,7 @@ import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useToast } from "@/hooks/use-toast"
 import { useIsMobile } from "@/hooks/useMobile"
-import type { ChatImage, ChatReference, LlmBackendInstance } from "@/types"
+import type { ChatContentNode, ChatImage, ChatReference, LlmBackendInstance } from "@/types"
 import { cn } from "@/lib/utils"
 import {
   MAX_REFERENCES,
@@ -33,6 +33,10 @@ import {
   type MentionType,
 } from "@/lib/api/mentions"
 import { compressImage, MAX_ORIGINAL_IMAGE_MB, COMPRESSED_IMAGE_MB } from "@/lib/image"
+import {
+  InlineMentionEditor,
+  type MentionSuggestionApi,
+} from "@/components/chat/inline-mention"
 
 interface ChatComposerProps {
   value: string
@@ -51,13 +55,20 @@ interface ChatComposerProps {
   // Attachments — pass onAttachmentsChange to enable the upload button.
   attachments?: ChatImage[]
   onAttachmentsChange?: (images: ChatImage[]) => void
-  // Structured @-references — pass onReferencesChange to enable mentions.
-  // Chips render above the textarea; the ids ride along with the next send
-  // and are re-resolved server-side (labels are display-only).
+  // Structured @-references — pass onReferencesChange to enable TipTap
+  // inline mentions. Ordered contentNodes preserve in-sentence position;
+  // references stay as the unique legacy projection for preflight.
   references?: ChatReference[]
   onReferencesChange?: (refs: ChatReference[]) => void
+  contentNodes?: ChatContentNode[]
+  onContentNodesChange?: (nodes: ChatContentNode[]) => void
   /** `type:id` → error detail for invalid/stale references (preflight). */
   invalidRefs?: Record<string, string>
+  /**
+   * Focus host for TipTap (contenteditable). When mentions are enabled the
+   * classic textareaRef is unused; parents may still pass either.
+   */
+  editorHostRef?: RefObject<HTMLElement | null>
   supportsMultimodal?: boolean
   /** Image support comes from the vision companion, not the active model. */
   visionDelegate?: boolean
@@ -105,7 +116,10 @@ export function ChatComposer({
   onAttachmentsChange,
   references = [],
   onReferencesChange,
+  contentNodes,
+  onContentNodesChange,
   invalidRefs = {},
+  editorHostRef,
   supportsMultimodal = false,
   visionDelegate,
   backends,
@@ -125,6 +139,8 @@ export function ChatComposer({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const internalTextareaRef = useRef<HTMLTextAreaElement>(null)
   const activeTextareaRef = textareaRef ?? internalTextareaRef
+  const internalEditorHostRef = useRef<HTMLElement | null>(null)
+  const activeEditorHostRef = editorHostRef ?? internalEditorHostRef
   const [isUploadingImage, setIsUploadingImage] = useState(false)
   const [modelSheetOpen, setModelSheetOpen] = useState(false)
   const [mobileExpanded, setMobileExpanded] = useState(false)
@@ -139,11 +155,21 @@ export function ChatComposer({
   const [mentionNextOffset, setMentionNextOffset] = useState<number | null>(null)
   const [mentionTypeErrors, setMentionTypeErrors] = useState<string[]>([])
   const [mentionSearchFailed, setMentionSearchFailed] = useState(false)
+  const [openMentionRequest, setOpenMentionRequest] = useState(0)
+  const mentionCommandRef = useRef<MentionSuggestionApi["command"] | null>(null)
+  /** Legacy textarea path only (hosts without onReferencesChange). */
   const mentionTrigger = useRef<{ start: number } | null>(null)
   const canMention = !!onReferencesChange
+  const canAttach = !!onAttachmentsChange
+  const inputDisabled = disabled || isStreaming
   // IME composition (Chinese/Japanese input): intermediate text must not
   // open the picker — only post-composition changes count.
   const isComposing = useRef(false)
+  const mentionOpenRef = useRef(false)
+
+  useEffect(() => {
+    mentionOpenRef.current = mentionQuery !== null
+  }, [mentionQuery])
 
   useEffect(() => {
     if (mentionQuery === null) return
@@ -224,6 +250,7 @@ export function ChatComposer({
 
   const closeMention = () => {
     mentionTrigger.current = null
+    mentionCommandRef.current = null
     setMentionQuery(null)
     setMentionOptions([])
     setMentionHasMore(false)
@@ -232,8 +259,33 @@ export function ChatComposer({
     setMentionSearchFailed(false)
   }
 
-  /** Scan caret-left text for an @ trigger. Used after ordinary edits and
-   *  after IME compositionend (intermediate composition must not open). */
+  const handleSuggestionStart = (api: MentionSuggestionApi) => {
+    if (inputDisabled) return
+    if (references.length >= MAX_REFERENCES) return
+    mentionCommandRef.current = api.command
+    setMentionQuery(api.query)
+  }
+
+  const handleSuggestionUpdate = (api: MentionSuggestionApi) => {
+    if (inputDisabled) {
+      closeMention()
+      return
+    }
+    mentionCommandRef.current = api.command
+    setMentionQuery(api.query)
+  }
+
+  const handleTipTapPayload = (payload: {
+    message: string
+    references: ChatReference[]
+    contentNodes: ChatContentNode[]
+  }) => {
+    onChange(payload.message)
+    onReferencesChange?.(payload.references)
+    onContentNodesChange?.(payload.contentNodes)
+  }
+
+  /** Scan caret-left text for an @ trigger — legacy textarea hosts only. */
   const scanMentionTrigger = (next: string, caretOverride?: number) => {
     if (!canMention || inputDisabled) return
     if (references.length >= MAX_REFERENCES) return
@@ -245,8 +297,6 @@ export function ChatComposer({
           ? ta.selectionStart
           : next.length
     const before = next.slice(0, caret)
-    // '@' must start a token (string start, or after a non-word character)
-    // so ordinary emails like a@b.com do not open the picker.
     const m = /(^|[^@\w])@([^@\n]{0,40})$/.exec(before)
     if (m) {
       mentionTrigger.current = { start: caret - m[2].length - 1 }
@@ -258,21 +308,32 @@ export function ChatComposer({
 
   const handleChange = (next: string) => {
     onChange(next)
-    // While an IME composition is in flight the text is intermediate —
-    // detection waits for compositionend.
     if (isComposing.current) return
     scanMentionTrigger(next)
   }
 
   const selectMention = (opt: MentionOption) => {
+    // TipTap path: insert an in-sentence mention atom (duplicates allowed).
+    if (mentionCommandRef.current) {
+      if (references.length >= MAX_REFERENCES) {
+        closeMention()
+        return
+      }
+      mentionCommandRef.current({
+        id: opt.id,
+        label: opt.label,
+        entityType: opt.type,
+      })
+      closeMention()
+      return
+    }
+    // Legacy textarea + chip path (no TipTap).
     const trig = mentionTrigger.current
     const ta = activeTextareaRef.current
     if (!trig) return
     const caret = ta ? ta.selectionStart : value.length
     const next = value.slice(0, trig.start) + value.slice(caret)
     onChange(next)
-    // Dedupe by type+id (chips are keyed that way) and enforce the cap —
-    // selecting an existing reference again is a no-op, not a duplicate.
     if (references.some((r) => r.type === opt.type && r.id === opt.id)) {
       closeMention()
       requestAnimationFrame(() => {
@@ -308,9 +369,35 @@ export function ChatComposer({
     onReferencesChange?.(references.filter((_, i) => i !== index))
   }
 
+  const handleMentionNavKeys = (e: {
+    key: string
+    preventDefault: () => void
+  }): boolean => {
+    if (mentionQuery === null) return false
+    if (e.key === "ArrowDown") {
+      e.preventDefault()
+      setMentionActive((i) => Math.min(i + 1, Math.max(mentionOptions.length - 1, 0)))
+      return true
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault()
+      setMentionActive((i) => Math.max(i - 1, 0))
+      return true
+    }
+    if ((e.key === "Enter" || e.key === "Tab") && mentionOptions[mentionActive]) {
+      e.preventDefault()
+      selectMention(mentionOptions[mentionActive])
+      return true
+    }
+    if (e.key === "Escape") {
+      e.preventDefault()
+      closeMention()
+      return true
+    }
+    return false
+  }
+
   const handleKeyDownInternal = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // IME confirmation (Enter/数字键) reports keyCode 229 / isComposing —
-    // never select a mention or forward to send handlers mid-composition.
     const ime =
       isComposing.current ||
       e.nativeEvent.isComposing ||
@@ -318,35 +405,13 @@ export function ChatComposer({
     if (ime) {
       return
     }
-    if (mentionQuery !== null) {
-      if (e.key === "ArrowDown") {
-        e.preventDefault()
-        setMentionActive((i) => Math.min(i + 1, Math.max(mentionOptions.length - 1, 0)))
-        return
-      }
-      if (e.key === "ArrowUp") {
-        e.preventDefault()
-        setMentionActive((i) => Math.max(i - 1, 0))
-        return
-      }
-      if ((e.key === "Enter" || e.key === "Tab") && mentionOptions[mentionActive]) {
-        e.preventDefault()
-        selectMention(mentionOptions[mentionActive])
-        return
-      }
-      if (e.key === "Escape") {
-        e.preventDefault()
-        closeMention()
-        return
-      }
-    } else if (
+    if (handleMentionNavKeys(e)) return
+    if (
       e.key === "Backspace" &&
       value === "" &&
       references.length > 0 &&
       canMention
     ) {
-      // Delete the last chip when backspacing on an empty input — the
-      // standard chips interaction users expect.
       e.preventDefault()
       removeReference(references.length - 1)
       return
@@ -354,8 +419,39 @@ export function ChatComposer({
     onKeyDown?.(e)
   }
 
-  const canAttach = !!onAttachmentsChange
-  const inputDisabled = disabled || isStreaming
+  /** TipTap Enter/IME: claim keys so ProseMirror does not insert a paragraph. */
+  const handleTipTapKeyDown = (event: KeyboardEvent): boolean => {
+    const ime =
+      isComposing.current ||
+      event.isComposing ||
+      event.keyCode === 229
+    // While the picker is open, IME Enter must not select a mention or send.
+    if (ime) {
+      if (
+        mentionOpenRef.current &&
+        (event.key === "Enter" || event.key === "Tab")
+      ) {
+        event.preventDefault()
+        return true
+      }
+      return false
+    }
+    if (handleMentionNavKeys(event)) return true
+    if (event.key === "Enter" && !event.shiftKey) {
+      // Let the host send handler run via a synthetic React key path.
+      const synthetic = {
+        key: "Enter",
+        shiftKey: false,
+        preventDefault: () => event.preventDefault(),
+        nativeEvent: event,
+        stopPropagation: () => event.stopPropagation(),
+      } as unknown as React.KeyboardEvent<HTMLTextAreaElement>
+      onKeyDown?.(synthetic)
+      event.preventDefault()
+      return true
+    }
+    return false
+  }
 
   // Both actions rewrite what the session remembers (compact swaps older
   // history for a summary, clear deletes it outright) — guard them with the
@@ -455,46 +551,6 @@ export function ChatComposer({
               </button>
             </div>
           ))}
-        </div>
-      )}
-
-      {/* Structured @-reference chips */}
-      {references.length > 0 && (
-        <div className="mb-1 flex flex-wrap gap-1.5" aria-label={t("chat:mention.referencesLabel", "引用的对象")}>
-          {references.map((ref, i) => {
-            const key = mentionKey(ref.type, ref.id)
-            const invalidDetail = invalidRefs[key]
-            return (
-              <span
-                key={key}
-                title={invalidDetail || undefined}
-                className={cn(
-                  "inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-xs",
-                  invalidDetail
-                    ? "border-error bg-error-light text-error"
-                    : "border-border bg-muted",
-                )}
-                data-invalid={invalidDetail ? "true" : undefined}
-              >
-                <AtSign className="h-3 w-3 shrink-0 opacity-70" aria-hidden="true" />
-                <span className="shrink-0 opacity-80">{t(`chat:mention.${ref.type}`, ref.type)}</span>
-                <span className="max-w-40 truncate">{ref.label || ref.id}</span>
-                {invalidDetail && (
-                  <span className="sr-only">
-                    {t("chat:mention.invalid", "引用无效")}: {invalidDetail}
-                  </span>
-                )}
-                <button
-                  type="button"
-                  aria-label={t("chat:mention.remove", { defaultValue: "移除引用" })}
-                  className="rounded-full p-0.5 opacity-70 hover:opacity-100"
-                  onClick={() => removeReference(i)}
-                >
-                  <X className="h-3 w-3" aria-hidden="true" />
-                </button>
-              </span>
-            )
-          })}
         </div>
       )}
 
@@ -632,65 +688,109 @@ export function ChatComposer({
       onClick={(event) => {
         if (!isMobile || inputDisabled) return
         const target = event.target as HTMLElement
-        if (target.closest('button, input, textarea, [role="button"]')) return
-        activeTextareaRef.current?.focus({ preventScroll: true })
+        if (target.closest('button, input, textarea, [role="button"], .ProseMirror')) return
+        if (canMention) {
+          activeEditorHostRef.current
+            ?.querySelector<HTMLElement>(".ProseMirror")
+            ?.focus({ preventScroll: true })
+        } else {
+          activeTextareaRef.current?.focus({ preventScroll: true })
+        }
       }}
       onBlur={(event) => {
         if (!isMobile) return
         const next = event.relatedTarget as Node | null
         if (!next || !event.currentTarget.contains(next)) setMobileExpanded(false)
       }}>
-        {/* Textarea — fills the top, borderless */}
-        <textarea
-          ref={activeTextareaRef}
-          value={value}
-          onChange={(e) => handleChange(e.target.value)}
-          onCompositionStart={() => { isComposing.current = true }}
-          onCompositionEnd={(e) => {
-            isComposing.current = false
-            // Plan §4.4: after IME commits, open/update the picker without
-            // requiring another keystroke. IME places the caret at the end of
-            // the committed text; jsdom often reports selectionStart=0, so
-            // prefer an explicit end caret when the DOM reports 0 on a
-            // non-empty value.
-            const el = e.currentTarget
-            const caret =
-              typeof el.selectionStart === "number" && el.selectionStart > 0
-                ? el.selectionStart
-                : el.value.length
-            scanMentionTrigger(el.value, caret)
-          }}
-          onFocus={() => { if (isMobile) setMobileExpanded(true) }}
-          onKeyDown={handleKeyDownInternal}
-          aria-controls={mentionQuery !== null ? "chat-mention-listbox" : undefined}
-          aria-expanded={mentionQuery !== null ? true : undefined}
-          aria-autocomplete={canMention ? "list" : undefined}
-          role="textbox"
-          placeholder={isStreaming && streamingPlaceholder ? streamingPlaceholder : placeholder}
-          rows={1}
-          disabled={inputDisabled}
-          className={cn(
-            "block w-full resize-none bg-transparent px-4 pb-1 pt-3 text-base leading-5 sm:text-sm",
-            isMobile && mobileExpanded && "min-w-0 px-3 pb-1.5 pt-2.5",
-            isMobile && !mobileExpanded && "min-w-0 flex-1 px-2 py-3",
-            "placeholder:text-muted-foreground",
-            "cursor-text caret-foreground focus:outline-none",
-            "max-h-[100px] scroll-mb-32",
-            "disabled:opacity-60"
-          )}
-          style={{ minHeight: `${isMobile ? 44 : minHeight}px` }}
-          onInput={(e) => {
-            const target = e.target as HTMLTextAreaElement
-            target.style.height = "auto"
-            target.style.height = Math.max(minHeight, Math.min(target.scrollHeight, maxHeight)) + "px"
-          }}
-        />
+        {canMention ? (
+          <InlineMentionEditor
+            value={value}
+            contentNodes={contentNodes}
+            placeholder={isStreaming && streamingPlaceholder ? streamingPlaceholder : placeholder}
+            disabled={inputDisabled}
+            minHeight={isMobile ? 44 : minHeight}
+            maxHeight={maxHeight}
+            listboxId="chat-mention-listbox"
+            mentionOpen={mentionQuery !== null}
+            invalidRefs={invalidRefs}
+            editorHostRef={activeEditorHostRef}
+            openMentionRequest={openMentionRequest}
+            onPayloadChange={handleTipTapPayload}
+            onSuggestionStart={handleSuggestionStart}
+            onSuggestionUpdate={handleSuggestionUpdate}
+            onSuggestionExit={closeMention}
+            onSuggestionKeyDown={(props) => handleMentionNavKeys(props.event)}
+            onKeyDown={handleTipTapKeyDown}
+            onFocus={() => {
+              if (isMobile) setMobileExpanded(true)
+            }}
+            className={cn(
+              isMobile && mobileExpanded && "min-w-0 px-3 pb-1.5 pt-2.5",
+              isMobile && !mobileExpanded && "min-w-0 flex-1 px-2 py-3",
+            )}
+          />
+        ) : (
+          <textarea
+            ref={activeTextareaRef}
+            value={value}
+            onChange={(e) => handleChange(e.target.value)}
+            onCompositionStart={() => { isComposing.current = true }}
+            onCompositionEnd={(e) => {
+              isComposing.current = false
+              const el = e.currentTarget
+              const caret =
+                typeof el.selectionStart === "number" && el.selectionStart > 0
+                  ? el.selectionStart
+                  : el.value.length
+              scanMentionTrigger(el.value, caret)
+            }}
+            onFocus={() => { if (isMobile) setMobileExpanded(true) }}
+            onKeyDown={handleKeyDownInternal}
+            role="textbox"
+            placeholder={isStreaming && streamingPlaceholder ? streamingPlaceholder : placeholder}
+            rows={1}
+            disabled={inputDisabled}
+            className={cn(
+              "block w-full resize-none bg-transparent px-4 pb-1 pt-3 text-base leading-5 sm:text-sm",
+              isMobile && mobileExpanded && "min-w-0 px-3 pb-1.5 pt-2.5",
+              isMobile && !mobileExpanded && "min-w-0 flex-1 px-2 py-3",
+              "placeholder:text-muted-foreground",
+              "cursor-text caret-foreground focus:outline-none",
+              "max-h-[100px] scroll-mb-32",
+              "disabled:opacity-60"
+            )}
+            style={{ minHeight: `${isMobile ? 44 : minHeight}px` }}
+            onInput={(e) => {
+              const target = e.target as HTMLTextAreaElement
+              target.style.height = "auto"
+              target.style.height = Math.max(minHeight, Math.min(target.scrollHeight, maxHeight)) + "px"
+            }}
+          />
+        )}
 
         {/* Bottom toolbar — left: image + model + context, right: send */}
         <div className={isMobile
           ? (mobileExpanded ? "flex w-full items-center gap-0.5 px-0.5 pb-0.5" : "contents")
           : "flex items-center gap-1 px-2 pb-2"
         }>
+          {/* @ mention toolbar — TipTap inserts trigger at caret */}
+          {canMention && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              disabled={inputDisabled || references.length >= MAX_REFERENCES}
+              className={cn(
+                "rounded-lg flex-shrink-0 text-muted-foreground hover:text-foreground",
+                isMobile && "h-10 w-10 rounded-full p-0",
+              )}
+              title={t("chat:mention.insert", "插入引用")}
+              aria-label={t("chat:mention.insert", "插入引用")}
+              onClick={() => setOpenMentionRequest((n) => n + 1)}
+            >
+              <AtSign className="h-4 w-4" aria-hidden="true" />
+            </Button>
+          )}
           {/* Image upload */}
           {canAttach && (
             <>

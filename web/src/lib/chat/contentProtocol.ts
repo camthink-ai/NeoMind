@@ -124,9 +124,9 @@ export function buildChatRequestFromDoc(
 }
 
 /**
- * Production chip composer → contentNodes (text + trailing reference nodes).
- * Not true in-sentence position yet (TipTap slice deferred); still persists
- * structured mentions for history reload / resend.
+ * Legacy chip composer → contentNodes (text + trailing reference nodes).
+ * Production ChatComposer now prefers TipTap in-sentence nodes; keep this
+ * helper for drafts / older send paths that only have chips + plain text.
  */
 export function chipsAndTextToContentNodes(
   message: string,

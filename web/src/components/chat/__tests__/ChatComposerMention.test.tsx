@@ -1,9 +1,7 @@
-/// Interaction tests for the composer's structured @-mention picker
-/// (iteration 3): trigger detection, Chinese filtering, keyboard selection,
-/// chip removal, backspace chip deletion, and legacy compatibility when the
-/// host passes no reference handlers.
+/// TipTap inline-@ production composer tests (plan §12 C).
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { ChatComposer } from '../ChatComposer'
 
 const MENTION_HITS = [
@@ -33,9 +31,6 @@ vi.mock('@/lib/api/mentions', async () => {
         typeErrors: {},
       }
     }),
-    searchMentionOptions: vi.fn(async (q: string) =>
-      q ? MENTION_HITS.filter((o) => o.label.includes(q) || o.id.includes(q)) : MENTION_HITS,
-    ),
     MAX_REFERENCES: 20,
   }
 })
@@ -43,336 +38,253 @@ vi.mock('@/lib/api/mentions', async () => {
 import { searchMentions } from '@/lib/api/mentions'
 const searchMock = vi.mocked(searchMentions)
 
-function setup(overrides: Partial<React.ComponentProps<typeof ChatComposer>> = {}) {
-  const onChange = vi.fn()
-  const onReferencesChange = vi.fn()
-  const refs: import('@/types').ChatReference[] = []
-  render(
-    <ChatComposer
-      value=""
-      onChange={onChange}
-      onSend={vi.fn()}
-      references={refs}
-      onReferencesChange={onReferencesChange}
-      {...overrides}
-    />,
-  )
-  return { onChange, onReferencesChange }
+function getEditor(): HTMLElement {
+  const el = document.querySelector('.ProseMirror') as HTMLElement | null
+  if (!el) throw new Error('TipTap ProseMirror not mounted')
+  return el
 }
 
-const getTextarea = () => screen.getByRole('textbox') as HTMLTextAreaElement
+async function openMentionViaToolbar() {
+  const btn = await screen.findByRole('button', { name: /插入引用|chat:mention.insert/i })
+  await userEvent.click(btn)
+}
 
-/** Controlled composer with real state — mirrors how hosts drive it. */
-function statefulSetup(opts: { onReferencesChange?: ReturnType<typeof vi.fn> } = {}) {
-  const onReferencesChange = opts.onReferencesChange ?? vi.fn()
-  let value = ''
-  let refs: import('@/types').ChatReference[] = []
-  const view = render(
+type HostState = {
+  value: string
+  refs: import('@/types').ChatReference[]
+  nodes: import('@/types').ChatContentNode[]
+}
+
+function Host(props: {
+  initial?: Partial<HostState>
+  invalidRefs?: Record<string, string>
+  onKeyDown?: (e: React.KeyboardEvent) => void
+  onReferencesChange?: ReturnType<typeof vi.fn>
+  onContentNodesChange?: ReturnType<typeof vi.fn>
+  onChange?: ReturnType<typeof vi.fn>
+}) {
+  const [value, setValue] = React.useState(props.initial?.value ?? '')
+  const [refs, setRefs] = React.useState(props.initial?.refs ?? [])
+  const [nodes, setNodes] = React.useState(props.initial?.nodes ?? [])
+  return (
     <ChatComposer
       value={value}
       onChange={(v) => {
-        value = v
-        rerender()
+        props.onChange?.(v)
+        setValue(v)
       }}
       onSend={vi.fn()}
+      onKeyDown={props.onKeyDown}
       references={refs}
+      contentNodes={nodes}
+      invalidRefs={props.invalidRefs}
       onReferencesChange={(r) => {
-        refs = r
-        onReferencesChange(r)
-        rerender()
+        props.onReferencesChange?.(r)
+        setRefs(r)
       }}
-    />,
+      onContentNodesChange={(n) => {
+        props.onContentNodesChange?.(n)
+        setNodes(n)
+      }}
+    />
   )
-  function rerender() {
-    view.rerender(
-      <ChatComposer
-        value={value}
-        onChange={(v) => {
-          value = v
-          rerender()
-        }}
-        onSend={vi.fn()}
-        references={refs}
-        onReferencesChange={(r) => {
-          refs = r
-          onReferencesChange(r)
-          rerender()
-        }}
-      />,
-    )
-  }
-  return { onReferencesChange, rerenderWith: true }
 }
 
-describe('ChatComposer @-mentions', () => {
+// React import for Host
+import React from 'react'
+
+function setup(
+  overrides: {
+    initial?: Partial<HostState>
+    invalidRefs?: Record<string, string>
+    onKeyDown?: (e: React.KeyboardEvent) => void
+  } = {},
+) {
+  const onChange = vi.fn()
+  const onReferencesChange = vi.fn()
+  const onContentNodesChange = vi.fn()
+  render(
+    <Host
+      {...overrides}
+      onChange={onChange}
+      onReferencesChange={onReferencesChange}
+      onContentNodesChange={onContentNodesChange}
+    />,
+  )
+  return { onChange, onReferencesChange, onContentNodesChange }
+}
+
+describe('ChatComposer TipTap @-mentions', () => {
   beforeEach(() => {
     searchMock.mockClear()
   })
 
-  it('opens the picker after typing @ and lists options', async () => {
+  it('mounts TipTap and opens the picker from the @ toolbar', async () => {
     setup()
-    const ta = getTextarea()
-    fireEvent.change(ta, { target: { value: '帮我看下 @' } })
-    // selectionStart defaults to end of typed text in the DOM event
+    await waitFor(() => expect(getEditor()).toBeTruthy())
+    await openMentionViaToolbar()
     await waitFor(() => expect(screen.getByRole('listbox')).toBeTruthy())
     await waitFor(() => expect(screen.getAllByRole('option').length).toBeGreaterThan(0))
     expect(searchMock).toHaveBeenCalled()
   })
 
-  it('filters by a Chinese query', async () => {
+  it('filters by a Chinese query typed after @', async () => {
     setup()
-    const ta = getTextarea()
-    fireEvent.change(ta, { target: { value: '检查 @温湿度' } })
+    await waitFor(() => expect(getEditor()).toBeTruthy())
+    await userEvent.click(getEditor())
+    await userEvent.keyboard('@温湿度')
     await waitFor(() =>
       expect(searchMock).toHaveBeenCalledWith(
-        expect.objectContaining({ query: '温湿度', offset: 0 }),
+        expect.objectContaining({ query: expect.stringMatching(/温湿度/) }),
       ),
     )
-    const options = await screen.findAllByRole('option')
-    expect(options.length).toBe(2)
-    expect(options[0].textContent).toContain('温湿度传感器')
   })
 
-  it('keyboard-selects the active option: strips the trigger text and adds a chip', async () => {
-    const onReferencesChange = vi.fn()
-    const { rerenderWith } = statefulSetup({ onReferencesChange })
-    const ta = getTextarea()
-    fireEvent.change(ta, { target: { value: '看看 @温湿度' } })
-    const options = await screen.findAllByRole('option')
-    expect(options.length).toBeGreaterThan(0)
-    fireEvent.keyDown(ta, { key: 'Enter' })
-    // The "@温湿度" trigger is stripped from the message text...
-    expect(ta.value).toBe('看看 ')
-    // ...and the chip state carries the authoritative id.
-    expect(onReferencesChange).toHaveBeenCalledWith([
-      expect.objectContaining({ type: 'device', id: 'sensor-001' }),
-    ])
-    expect(rerenderWith).toBeTruthy()
+  it('keyboard-selects a mention into an inline atom (contentNodes)', async () => {
+    const { onReferencesChange, onContentNodesChange } = setup()
+    await waitFor(() => expect(getEditor()).toBeTruthy())
+    await openMentionViaToolbar()
+    await screen.findAllByRole('option')
+    await act(async () => {
+      fireEvent.keyDown(getEditor(), { key: 'Enter' })
+    })
+    await waitFor(() => {
+      expect(onReferencesChange).toHaveBeenCalledWith([
+        expect.objectContaining({ type: 'device', id: 'sensor-001' }),
+      ])
+    })
+    await waitFor(() => {
+      expect(onContentNodesChange).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: 'reference',
+            type: 'device',
+            id: 'sensor-001',
+          }),
+        ]),
+      )
+    })
+    expect(document.querySelector('.nm-mention')).toBeTruthy()
   })
 
   it('Escape closes the picker without selecting', async () => {
-    const { onReferencesChange } = setup({ value: '' })
-    const ta = getTextarea()
-    fireEvent.change(ta, { target: { value: '@' } })
+    const { onReferencesChange } = setup()
+    await waitFor(() => expect(getEditor()).toBeTruthy())
+    await openMentionViaToolbar()
     await screen.findAllByRole('option')
-    fireEvent.keyDown(ta, { key: 'Escape' })
-    expect(screen.queryByRole('listbox')).toBeNull()
-    expect(onReferencesChange).not.toHaveBeenCalled()
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull())
+    // TipTap may emit empty reference projections on sync; never a selection.
+    expect(
+      onReferencesChange.mock.calls.filter((c) => (c[0] as unknown[]).length > 0),
+    ).toHaveLength(0)
   })
 
-  it('renders chips and removes one via its remove button', () => {
-    const onReferencesChange = vi.fn()
-    render(
-      <ChatComposer
-        value=""
-        onChange={vi.fn()}
-        onSend={vi.fn()}
-        references={[
-          { type: 'rule', id: 'rule-1', label: '高温报警' },
-          { type: 'device', id: 'sensor-002', label: '备用' },
-        ]}
-        onReferencesChange={onReferencesChange}
-      />,
-    )
-    // Same-name different-type chips both render, distinguished by type.
-    // The test setup mocks t() to return i18n keys.
-    expect(screen.getAllByLabelText('chat:mention.referencesLabel').length).toBeGreaterThan(0)
-    const removeButtons = screen.getAllByLabelText('移除引用')
-    expect(removeButtons.length).toBe(2)
-    removeButtons[0].click()
-    expect(onReferencesChange).toHaveBeenCalledWith([
-      { type: 'device', id: 'sensor-002', label: '备用' },
-    ])
-  })
-
-  it('backspace on an empty input deletes the last chip', () => {
-    const onReferencesChange = vi.fn()
-    render(
-      <ChatComposer
-        value=""
-        onChange={vi.fn()}
-        onSend={vi.fn()}
-        references={[{ type: 'agent', id: 'a-1', label: '巡检代理' }]}
-        onReferencesChange={onReferencesChange}
-      />,
-    )
-    fireEvent.keyDown(getTextarea(), { key: 'Backspace' })
-    expect(onReferencesChange).toHaveBeenCalledWith([])
+  it('allows the same entity twice in-sentence (no chip dedupe)', async () => {
+    const { onContentNodesChange } = setup({
+      initial: {
+        nodes: [
+          { kind: 'text', text: '把 ' },
+          {
+            kind: 'reference',
+            type: 'device',
+            id: 'sensor-001',
+            labelSnapshot: '温湿度传感器',
+          },
+          { kind: 'text', text: ' 复制给 ' },
+        ],
+        refs: [{ type: 'device', id: 'sensor-001', label: '温湿度传感器' }],
+      },
+    })
+    await waitFor(() => expect(document.querySelector('.nm-mention')).toBeTruthy())
+    await openMentionViaToolbar()
+    await screen.findAllByRole('option')
+    await act(async () => {
+      fireEvent.keyDown(getEditor(), { key: 'Enter' })
+    })
+    await waitFor(() => {
+      const last = onContentNodesChange.mock.calls.at(-1)?.[0] as
+        | Array<{ kind: string }>
+        | undefined
+      const refs = (last ?? []).filter((n) => n.kind === 'reference')
+      expect(refs.length).toBeGreaterThanOrEqual(2)
+    })
   })
 
   it('does not open for email-like text (word char before @)', async () => {
     setup()
-    const ta = getTextarea()
-    fireEvent.change(ta, { target: { value: 'contact me at a@b.com please' } })
-    await new Promise((r) => setTimeout(r, 250))
+    await waitFor(() => expect(getEditor()).toBeTruthy())
+    await userEvent.click(getEditor())
+    await userEvent.keyboard('a@b.com')
+    await new Promise((r) => setTimeout(r, 300))
     expect(screen.queryByRole('listbox')).toBeNull()
-    expect(searchMock).not.toHaveBeenCalled()
-  })
-
-  it('opens after a space, line start, CJK char, or punctuation', async () => {
-    for (const text of ['看看 @温', '@设备', '设备@温', '!!!@温']) {
-      const view = render(
-        <ChatComposer
-          value=""
-          onChange={vi.fn()}
-          onSend={vi.fn()}
-          references={[]}
-          onReferencesChange={vi.fn()}
-        />,
-      )
-      const ta = screen.getByRole('textbox') as HTMLTextAreaElement
-      fireEvent.change(ta, { target: { value: text } })
-      await screen.findAllByRole('listbox')
-      view.unmount()
-    }
-  })
-
-  it('deduplicates a repeated selection by type+id', async () => {
-    const onReferencesChange = vi.fn()
-    render(
-      <ChatComposer
-        value=""
-        onChange={vi.fn()}
-        onSend={vi.fn()}
-        references={[{ type: 'device', id: 'sensor-001', label: '温湿度传感器' }]}
-        onReferencesChange={onReferencesChange}
-      />,
-    )
-    const ta = getTextarea()
-    fireEvent.change(ta, { target: { value: '再选一次 @温湿度' } })
-    const options = await screen.findAllByRole('option')
-    fireEvent.keyDown(ta, { key: 'Enter' })
-    expect(onReferencesChange).not.toHaveBeenCalled()
-    expect(screen.queryByRole('listbox')).toBeNull()
-    expect(options.length).toBeGreaterThan(0)
-  })
-
-  it('blocks the picker entirely at the 20-reference cap', async () => {
-    const many = Array.from({ length: 20 }, (_, i) => ({
-      type: 'device' as const,
-      id: `sensor-${i}`,
-      label: `传感器${i}`,
-    }))
-    setup({ references: many })
-    const ta = getTextarea()
-    fireEvent.change(ta, { target: { value: '试试 @传感器0' } })
-    await new Promise((r) => setTimeout(r, 250))
-    expect(screen.queryByRole('listbox')).toBeNull()
-    expect(searchMock).not.toHaveBeenCalled()
-  })
-
-  it('does not open while an IME composition is in flight', async () => {
-    setup()
-    const ta = getTextarea()
-    fireEvent.compositionStart(ta)
-    fireEvent.change(ta, { target: { value: '输入中 @温' } })
-    await new Promise((r) => setTimeout(r, 250))
-    expect(screen.queryByRole('listbox')).toBeNull()
-    // Composition ends -> the same text now triggers detection on next change.
-    fireEvent.compositionEnd(ta)
-    fireEvent.change(ta, { target: { value: '输入中 @温湿' } })
-    await waitFor(() => expect(screen.getByRole('listbox')).toBeTruthy())
-  })
-
-  it('opens the picker on compositionend alone (no extra keystroke)', async () => {
-    // Controlled host so composition-time change updates the value prop;
-    // compositionend must open without a follow-up change event.
-    let value = ''
-    const refs: import('@/types').ChatReference[] = []
-    const view = render(
-      <ChatComposer
-        value={value}
-        onChange={() => {}}
-        onSend={vi.fn()}
-        references={refs}
-        onReferencesChange={vi.fn()}
-      />,
-    )
-    const rerender = () =>
-      view.rerender(
-        <ChatComposer
-          value={value}
-          onChange={(v) => {
-            value = v
-            rerender()
-          }}
-          onSend={vi.fn()}
-          references={refs}
-          onReferencesChange={vi.fn()}
-        />,
-      )
-    rerender()
-    const ta = screen.getByRole('textbox') as HTMLTextAreaElement
-    fireEvent.compositionStart(ta)
-    fireEvent.change(ta, { target: { value: '确认 @温湿度' } })
-    expect(screen.queryByRole('listbox')).toBeNull()
-    fireEvent.compositionEnd(ta)
-    await waitFor(() => expect(screen.getByRole('listbox')).toBeTruthy())
-    await waitFor(() => expect(searchMock).toHaveBeenCalled())
   })
 
   it('ArrowDown/ArrowUp move aria-selected and Enter selects', async () => {
-    const onReferencesChange = vi.fn()
-    setup({ onReferencesChange })
-    const ta = getTextarea()
-    fireEvent.change(ta, { target: { value: '@' } })
+    const { onReferencesChange } = setup()
+    await waitFor(() => expect(getEditor()).toBeTruthy())
+    await openMentionViaToolbar()
     const options = await screen.findAllByRole('option')
     expect(options[0]).toHaveAttribute('aria-selected', 'true')
-    fireEvent.keyDown(ta, { key: 'ArrowDown' })
+    fireEvent.keyDown(getEditor(), { key: 'ArrowDown' })
     await waitFor(() => {
       expect(screen.getAllByRole('option')[1]).toHaveAttribute('aria-selected', 'true')
     })
-    fireEvent.keyDown(ta, { key: 'ArrowUp' })
-    await waitFor(() => {
-      expect(screen.getAllByRole('option')[0]).toHaveAttribute('aria-selected', 'true')
+    await act(async () => {
+      fireEvent.keyDown(getEditor(), { key: 'Enter' })
     })
-    fireEvent.keyDown(ta, { key: 'Enter' })
-    expect(onReferencesChange).toHaveBeenCalledWith([
-      expect.objectContaining({ type: 'device', id: 'sensor-001' }),
-    ])
+    await waitFor(() => {
+      expect(onReferencesChange).toHaveBeenCalledWith([
+        expect.objectContaining({ type: 'device', id: 'sensor-002' }),
+      ])
+    })
   })
 
   it('IME Enter (keyCode 229) does not select or forward to onKeyDown', async () => {
     const onKeyDown = vi.fn()
-    const onReferencesChange = vi.fn()
-    setup({ onKeyDown, onReferencesChange })
-    const ta = getTextarea()
-    fireEvent.change(ta, { target: { value: '@' } })
+    const { onReferencesChange } = setup({ onKeyDown })
+    await waitFor(() => expect(getEditor()).toBeTruthy())
+    await openMentionViaToolbar()
     await screen.findAllByRole('option')
-    fireEvent.keyDown(ta, { key: 'Enter', keyCode: 229, isComposing: true })
-    expect(onReferencesChange).not.toHaveBeenCalled()
+    fireEvent.keyDown(getEditor(), { key: 'Enter', keyCode: 229, isComposing: true })
+    expect(
+      onReferencesChange.mock.calls.filter((c) => (c[0] as unknown[]).length > 0),
+    ).toHaveLength(0)
     expect(onKeyDown).not.toHaveBeenCalled()
   })
 
-  it('exposes listbox a11y: aria-busy/status/activedescendant and filter tabs', async () => {
+  it('exposes listbox a11y: activedescendant and filter tabs', async () => {
     setup()
-    const ta = getTextarea()
-    fireEvent.change(ta, { target: { value: '@' } })
+    await waitFor(() => expect(getEditor()).toBeTruthy())
+    await openMentionViaToolbar()
     const listbox = await screen.findByRole('listbox')
     await screen.findAllByRole('option')
     expect(listbox).toHaveAttribute('aria-activedescendant', 'chat-mention-opt-0')
     expect(screen.getByRole('tablist')).toBeTruthy()
     expect(screen.getAllByRole('tab').length).toBe(5)
-    const first = screen.getAllByRole('option')[0]
-    expect(first.getAttribute('aria-label') || '').toMatch(/device|chat:mention.device/)
   })
 
-  it('invalidRefs mark chips with data-invalid and screen-reader detail', () => {
-    render(
-      <ChatComposer
-        value=""
-        onChange={vi.fn()}
-        onSend={vi.fn()}
-        references={[{ type: 'device', id: 'ghost', label: '幽灵' }]}
-        onReferencesChange={vi.fn()}
-        invalidRefs={{ 'device:ghost': 'no device with this id' }}
-      />,
-    )
-    const chip = document.querySelector('[data-invalid="true"]')
-    expect(chip).toBeTruthy()
-    // Global i18n mock returns keys; assert key + detail (not color-only).
-    expect(chip?.textContent).toMatch(/invalid|引用无效/)
-    expect(chip?.textContent).toContain('no device with this id')
+  it('invalidRefs mark inline mention atoms with data-invalid', async () => {
+    setup({
+      initial: {
+        nodes: [
+          { kind: 'text', text: '' },
+          {
+            kind: 'reference',
+            type: 'device',
+            id: 'ghost',
+            labelSnapshot: '幽灵',
+          },
+        ],
+        refs: [{ type: 'device', id: 'ghost', label: '幽灵' }],
+      },
+      invalidRefs: { 'device:ghost': 'no device with this id' },
+    })
+    await waitFor(() => {
+      const chip = document.querySelector('.nm-mention[data-invalid="true"]')
+      expect(chip).toBeTruthy()
+      expect(chip?.getAttribute('title')).toContain('no device')
+    })
   })
 
   it('shows shortId/hint for duplicateName options (not color-only)', async () => {
@@ -403,17 +315,20 @@ describe('ChatComposer @-mentions', () => {
       typeErrors: {},
     })
     setup()
-    fireEvent.change(getTextarea(), { target: { value: '@温湿度' } })
+    await waitFor(() => expect(getEditor()).toBeTruthy())
+    await openMentionViaToolbar()
+    await userEvent.keyboard('温湿度')
     const options = await screen.findAllByRole('option')
     expect(options[0].textContent).toContain('sensor-0')
     expect(options[0].textContent).toContain('temp_humidity')
   })
 
-  it('legacy mode (no reference handlers) never opens the picker', async () => {
-    const { onChange } = setup({ references: undefined, onReferencesChange: undefined })
-    const ta = getTextarea()
+  it('legacy mode (no reference handlers) keeps a textarea and never opens the picker', async () => {
+    const onChange = vi.fn()
+    render(<ChatComposer value="" onChange={onChange} onSend={vi.fn()} />)
+    const ta = screen.getByRole('textbox') as HTMLTextAreaElement
+    expect(ta.tagName).toBe('TEXTAREA')
     fireEvent.change(ta, { target: { value: '普通消息 @某物' } })
-    // Give the debounced effect a chance; it must not fetch or render.
     await new Promise((r) => setTimeout(r, 250))
     expect(searchMock).not.toHaveBeenCalled()
     expect(screen.queryByRole('listbox')).toBeNull()

@@ -246,8 +246,10 @@ timeout和判定来源。
   （2026-11-14：`mutating_write_fingerprint` + stream_core/multimodal 分发前闸门；成功写入 `record_successful_write`。单测 fingerprint + task_continuity 10/10。证据并入 `eval/manifests/1.3.0-c-nodes-persist-write-gate.json`。Live 仍被 138 阻塞。）
 - [x] C 生产 chip→contentNodes 发送 + SessionMessage nodes 持久化（历史可回读）。
   （2026-11-14：`SessionMessage`/`AgentMessage` `contentNodes`+`contentVersion` 往返；HTTP/WS 在 process 前 `attach_pending_content_nodes`；生产 Chat/Panel 用 `chipsAndTextToContentNodes` 发送。legacy chips 亦可合成 nodes。单测 storage/api/agent + vitest contentProtocol 4/4。**未做**：TipTap 真行内编辑器、真浏览器/触屏/5人、历史 chip UI 重绘。）
+- [x] C 生产 TipTap 真行内 `@`（替换 trailing chips）。
+  （2026-11-14：ChatComposer 在 `onReferencesChange` 时用 TipTap Mention；同实体可句内重复；toolbar `@`；contentNodes 原位发送；无 mention 宿主仍走 textarea。vitest TipTap+docBridge+Composer 35/35。证据 `eval/manifests/1.3.0-c-tiptap-inline-mention.json`。**未做**：真浏览器/触屏/VoiceOver/5人、历史消息 inline chip 重绘。）
 - [ ] C 真浏览器/触屏/IME/读屏与5人×4任务>=18/20。
 - [ ] D 桌面/移动代表流程。
 - [ ] E Spark实际10次>=9/10，多轮/故障/取消探针。
 - [ ] F 48场景可执行化、tip138与Appliance验收。
-G0–G3 离线项（含 write 闸门）已勾；**中英配对 live、C TipTap/真人 UX、D/E/F** 仍为缺口。最终发布准备文档必须引用本节剩余项。
+G0–G3 离线项（含 write 闸门）与 C TipTap 生产行内已勾；**中英配对 live、C 真人 UX/5人、D/E/F** 仍为缺口。最终发布准备文档必须引用本节剩余项。
