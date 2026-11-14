@@ -31,7 +31,13 @@
   },
   "claim": "Production ChatComposer uses TipTap Mention for in-sentence @ with ordered contentNodes; duplicates allowed; legacy textarea retained when mentions disabled. No headed/touch/5-person claim; no live score.",
   "avoided": {
-    "eval_138": { "pid": 89912, "llama_port": 29431, "touched": false }
+    "eval_138": {
+      "pid": 89912,
+      "llama_port": 29431,
+      "touched": false
+    }
   },
-  "next": "History contentNodes display; C headed a11y + 5-person; live after 138; D/E/F"
+  "next": "History contentNodes display; C headed a11y + 5-person; live after 138; D/E/F",
+  "head_at_end": "24a7c3d5",
+  "commit": "24a7c3d50a6fb1b45e651c34bd53043b1fa31051"
 }
