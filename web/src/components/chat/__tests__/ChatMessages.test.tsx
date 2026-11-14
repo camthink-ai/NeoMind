@@ -177,4 +177,106 @@ describe('ChatMessages', () => {
     rerender(<ChatMessages {...props} isStreaming={false} />)
     expect(screen.getByText('a11y.answerReady')).toBeTruthy()
   })
+
+  it('redraws history user messages as inline chips from contentNodes', () => {
+    const messages: Message[] = [
+      {
+        id: 'u1',
+        role: 'user',
+        content: '把 @温室A 复制给 @温室B',
+        timestamp: 1,
+        contentNodes: [
+          { kind: 'text', text: '把 ' },
+          { kind: 'reference', type: 'device', id: 'green-01', labelSnapshot: '温室A' },
+          { kind: 'text', text: ' 复制给 ' },
+          { kind: 'reference', type: 'device', id: 'green-02', labelSnapshot: '温室B' },
+        ],
+      },
+    ]
+    render(
+      <ChatMessages
+        messages={messages}
+        user={null}
+        isStreaming={false}
+        streamingContent=""
+        streamingThinking=""
+        streamingRoundThinking={{}}
+        streamingToolCalls={[]}
+        roundContents={{}}
+        currentRound={1}
+      />,
+    )
+    const root = document.querySelector('[data-user-content-nodes]')
+    expect(root).toBeTruthy()
+    const chips = root!.querySelectorAll('.nm-mention')
+    expect(chips).toHaveLength(2)
+    expect(chips[0].getAttribute('data-id')).toBe('green-01')
+    expect(chips[1].getAttribute('data-id')).toBe('green-02')
+    expect(chips[0].textContent).toContain('温室A')
+    // Plain markdown path must not swallow the ordered nodes.
+    expect(screen.queryByText('把 @温室A 复制给 @温室B')).toBeNull()
+  })
+
+  it('reuse button fills the composer via onReuseUserMessage', () => {
+    const onReuse = vi.fn()
+    const message: Message = {
+      id: 'u1',
+      role: 'user',
+      content: '检查 @温湿度',
+      timestamp: 1,
+      contentNodes: [
+        { kind: 'text', text: '检查 ' },
+        { kind: 'reference', type: 'device', id: 'sensor-001', labelSnapshot: '温湿度' },
+      ],
+    }
+    render(
+      <ChatMessages
+        messages={[message]}
+        user={null}
+        isStreaming={false}
+        streamingContent=""
+        streamingThinking=""
+        streamingRoundThinking={{}}
+        streamingToolCalls={[]}
+        roundContents={{}}
+        currentRound={1}
+        onReuseUserMessage={onReuse}
+      />,
+    )
+    const btn = screen.getByRole('button', { name: /reuseInComposer|填回输入框/i })
+    btn.click()
+    expect(onReuse).toHaveBeenCalledTimes(1)
+    expect(onReuse.mock.calls[0][0].contentNodes).toHaveLength(2)
+  })
+
+  it('normalizes snake_case content_nodes from history into chips', () => {
+    const messages = [
+      {
+        id: 'u1',
+        role: 'user',
+        content: '看设备',
+        timestamp: 1,
+        content_nodes: [
+          { kind: 'text', text: '看 ' },
+          { kind: 'reference', type: 'device', id: 'd1', label_snapshot: '摄像头' },
+        ],
+      },
+    ] as unknown as Message[]
+    render(
+      <ChatMessages
+        messages={messages}
+        user={null}
+        isStreaming={false}
+        streamingContent=""
+        streamingThinking=""
+        streamingRoundThinking={{}}
+        streamingToolCalls={[]}
+        roundContents={{}}
+        currentRound={1}
+      />,
+    )
+    const chip = document.querySelector('.nm-mention[data-id="d1"]')
+    expect(chip).toBeTruthy()
+    expect(chip!.textContent).toContain('摄像头')
+  })
 })

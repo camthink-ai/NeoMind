@@ -6,8 +6,11 @@ import {
   buildChatRequestFromDoc,
   chipsAndTextToContentNodes,
   clearSessionDraft,
+  contentNodesHaveReferences,
+  contentNodesToComposerFields,
   loadSessionDraft,
   markDraftForRetry,
+  normalizeContentNodes,
   saveSessionDraft,
   validateContentNodes,
 } from "../contentProtocol"
@@ -105,5 +108,41 @@ describe("contentProtocol", () => {
     const restored = markDraftForRetry("s1", { message: "hello @A (retry)" })
     expect(restored.message).toContain("retry")
     expect(loadSessionDraft("s1")?.contentNodes?.length).toBe(2)
+  })
+
+  it("normalizeContentNodes accepts camelCase and snake_case aliases", () => {
+    const nodes = normalizeContentNodes([
+      { kind: "text", text: "把 " },
+      {
+        kind: "reference",
+        type: "device",
+        id: "green-01",
+        label_snapshot: "温室A",
+      },
+      { kind: "text", text: " 的规则复制给 " },
+      {
+        kind: "reference",
+        type: "device",
+        id: "green-02",
+        labelSnapshot: "温室B",
+      },
+    ])
+    expect(nodes).toHaveLength(4)
+    expect(contentNodesHaveReferences(nodes)).toBe(true)
+    expect(nodes![1]).toMatchObject({
+      kind: "reference",
+      id: "green-01",
+      labelSnapshot: "温室A",
+    })
+    const fields = contentNodesToComposerFields(nodes!)
+    expect(fields.message).toBe("把 @温室A 的规则复制给 @温室B")
+    expect(fields.references).toHaveLength(2)
+    expect(fields.contentNodes).toEqual(nodes)
+  })
+
+  it("normalizeContentNodes drops junk and empty arrays", () => {
+    expect(normalizeContentNodes([])).toBeUndefined()
+    expect(normalizeContentNodes([{ kind: "reference", type: "nope", id: "x" }])).toBeUndefined()
+    expect(normalizeContentNodes(null)).toBeUndefined()
   })
 })

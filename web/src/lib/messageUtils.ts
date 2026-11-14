@@ -7,6 +7,7 @@
 
 import type { Message } from "@/types"
 import { normalizeTimestampMs } from "@/lib/utils/format"
+import { normalizeContentNodes } from "@/lib/chat/contentProtocol"
 
 /**
  * Normalize a history batch to the store's canonical ms timestamps.
@@ -59,9 +60,13 @@ export function mergeMessagesForDisplay(rawMessages: Message[]): Message[] {
     // Skip tool messages (internal use)
     if ((msg as any).role === "tool") continue
 
-    // User messages and system messages are kept as-is
+    // User / system: keep as-is, but normalize contentNodes aliases so
+    // history reload (camelCase wire or snake_case leftovers) redraws chips.
     if (msg.role !== "assistant") {
-      result.push(msg)
+      const nodes =
+        normalizeContentNodes(msg.contentNodes) ??
+        normalizeContentNodes((msg as { content_nodes?: unknown }).content_nodes)
+      result.push(nodes ? { ...msg, contentNodes: nodes } : msg)
       continue
     }
 

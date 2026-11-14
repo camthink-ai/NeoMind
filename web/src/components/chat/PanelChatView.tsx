@@ -30,6 +30,11 @@ import { useLocation } from "react-router-dom"
 import { ChatMessages } from "./ChatMessages"
 import { ChatComposer } from "./ChatComposer"
 import type { ChatContentNode, ChatReference } from "@/types"
+import {
+  contentNodesToComposerFields,
+  normalizeContentNodes,
+  saveSessionDraft,
+} from "@/lib/chat/contentProtocol"
 import { ChatScrollPill } from "./ChatScrollPill"
 import { X, Minimize2, Bot, Plus, Settings, Cpu, Download } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -890,6 +895,28 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
               streamingMessageId={pendingAssistantMessageIdRef.current || streamingMessageId}
               streamingPlaceholder={sendPhase === "preparing" ? t("panelStatus.preparing") : undefined}
               endRef={messagesEndRef}
+              onReuseUserMessage={(message) => {
+                const nodes =
+                  normalizeContentNodes(message.contentNodes) ??
+                  (message.content ? [{ kind: "text" as const, text: message.content }] : [])
+                const fields = contentNodesToComposerFields(nodes)
+                setInput(fields.message)
+                setPanelReferences(fields.references)
+                setPanelContentNodes(fields.contentNodes)
+                const draftSession = panelSessionIdRef.current || "new"
+                saveSessionDraft({
+                  sessionId: draftSession,
+                  message: fields.message,
+                  references: fields.references,
+                  contentNodes: fields.contentNodes,
+                  updatedAt: Date.now(),
+                })
+                requestAnimationFrame(() => {
+                  const pm = editorHostRef.current?.querySelector<HTMLElement>(".ProseMirror")
+                  if (pm) pm.focus()
+                  else inputRef.current?.focus()
+                })
+              }}
             />
           )}
 

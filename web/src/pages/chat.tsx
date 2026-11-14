@@ -20,6 +20,11 @@ import { ws, type ConnectionState } from "@/lib/websocket"
 import { api } from "@/lib/api"
 import { mentionKey, resolveMentions } from "@/lib/api/mentions"
 import type { Message, ChatImage, ChatReference, ChatContentNode } from "@/types"
+import {
+  contentNodesToComposerFields,
+  normalizeContentNodes,
+  saveSessionDraft,
+} from "@/lib/chat/contentProtocol"
 import { cn } from "@/lib/utils"
 import { getSessionDisplayTitle } from "@/lib/utils/sessionTitle"
 import { normalizeTimestampMs } from "@/lib/utils/format"
@@ -721,6 +726,14 @@ export function ChatPage() {
             if (!r.ok) next[mentionKey(r.type, r.id)] = r.detail
           }
           setInvalidRefs(next)
+          // Keep editable draft (nodes + chips) for fix-and-resend after refresh.
+          saveSessionDraft({
+            sessionId: sessionId || "new",
+            message: input,
+            references: chatReferences,
+            contentNodes: chatContentNodes.length > 0 ? chatContentNodes : undefined,
+            updatedAt: Date.now(),
+          })
           toast({
             title: t('chat:mention.invalidSend', '部分引用无效，请修正后重发'),
             variant: "destructive",
@@ -1022,6 +1035,32 @@ export function ChatPage() {
       setIsCompacting(false)
     }
   }
+
+  /** History “fill composer” — restores ordered contentNodes for resend. */
+  const handleReuseUserMessage = useCallback((message: Message) => {
+    const nodes =
+      normalizeContentNodes(message.contentNodes) ??
+      (message.content ? [{ kind: "text" as const, text: message.content }] : [])
+    const fields = contentNodesToComposerFields(nodes)
+    setInput(fields.message)
+    setChatReferences(fields.references)
+    setChatContentNodes(fields.contentNodes)
+    setInvalidRefs({})
+    const draftSession = sessionId || "new"
+    saveSessionDraft({
+      sessionId: draftSession,
+      message: fields.message,
+      references: fields.references,
+      contentNodes: fields.contentNodes,
+      updatedAt: Date.now(),
+    })
+    // Focus TipTap ProseMirror when present; fall back to legacy textarea.
+    requestAnimationFrame(() => {
+      const pm = editorHostRef.current?.querySelector<HTMLElement>(".ProseMirror")
+      if (pm) pm.focus()
+      else inputRef.current?.focus()
+    })
+  }, [sessionId])
 
   // Clear this session's history (server + local view), keep the session.
   const handleClearContext = async () => {
@@ -1358,6 +1397,7 @@ export function ChatPage() {
                 loadingEarlier={loadingEarlier}
                 onLoadEarlier={handleLoadEarlier}
                 endRef={messagesEndRef}
+                onReuseUserMessage={handleReuseUserMessage}
               />
             </div>
             <ChatScrollPill

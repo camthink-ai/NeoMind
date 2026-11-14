@@ -1,0 +1,35 @@
+{
+  "schema": "neomind-eval-freeze-manifest/v1",
+  "slice": "1.3.0-c-history-content-nodes",
+  "date": "2026-11-14",
+  "branch": "1.3.0",
+  "product_version": "1.3.0",
+  "pushed": false,
+  "head_at_start": "20ba6ca6",
+  "plan_section": "12",
+  "item": "C history contentNodes inline chip redraw + resend",
+  "docs": "docs/development/c-history-content-nodes-2026-11-14.md",
+  "code": [
+    "web/src/components/chat/UserMessageContent.tsx",
+    "web/src/components/chat/ChatMessages.tsx",
+    "web/src/pages/chat.tsx",
+    "web/src/components/chat/PanelChatView.tsx",
+    "web/src/lib/chat/contentProtocol.ts",
+    "web/src/lib/messageUtils.ts",
+    "web/src/i18n/locales/en/chat.json",
+    "web/src/i18n/locales/zh/chat.json"
+  ],
+  "gates": {
+    "vitest_tiptap_history_suite": "54/54",
+    "tsc": "pass_preexisting_ChatComposerMention_at_lib_noise",
+    "live_spark": "blocked_by_138"
+  },
+  "claim": "History and optimistic user bubbles redraw inline chips from contentNodes; reuse-in-composer restores ordered nodes; invalid-send persists draft. No headed/touch/5-person claim; no live score.",
+  "avoided": {
+    "eval_138": {
+      "touched": false
+    }
+  },
+  "next": "C headed a11y + 5-person; live after 138; D/E/F",
+  "head_at_end": "PENDING_COMMIT"
+}

@@ -12,15 +12,17 @@
 
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react"
 import { useTranslation } from "react-i18next"
-import { Loader2, Info } from "lucide-react"
+import { Loader2, Info, Pencil } from "lucide-react"
 import type { ChatImage, Message, UserInfo } from "@/types"
 import { cn } from "@/lib/utils"
 import { textMini } from "@/design-system/tokens/typography"
 import { formatTimestamp, formatElapsedMs } from "@/lib/utils/format"
 import { cleanToolCallJson, mergeMessagesForDisplay, dropInFlightTurn } from "@/lib/messageUtils"
+import { contentNodesHaveReferences } from "@/lib/chat/contentProtocol"
 import { getServerOrigin } from "@/lib/api"
 import { isThinkingDuplicate } from "./toolCallUtils"
 import { MarkdownMessage } from "./MarkdownMessage"
+import { UserMessageContent } from "./UserMessageContent"
 import { ThinkingBlock } from "./ThinkingBlock"
 import { TurnTimeline } from "./TurnTimeline"
 import { CopyMessageButton } from "./CopyMessageButton"
@@ -50,6 +52,11 @@ interface ChatMessagesProps {
   hasEarlierHistory?: boolean
   loadingEarlier?: boolean
   onLoadEarlier?: () => void
+  /**
+   * Fill the composer from a past user message (contentNodes + plain text).
+   * Used for “edit again / resend” after history redraws inline chips.
+   */
+  onReuseUserMessage?: (message: Message) => void
 }
 
 /** Image gallery for user messages */
@@ -94,6 +101,7 @@ export function ChatMessages({
   hasEarlierHistory,
   loadingEarlier,
   onLoadEarlier,
+  onReuseUserMessage,
 }: ChatMessagesProps) {
   const { t } = useTranslation("chat")
 
@@ -243,9 +251,12 @@ export function ChatMessages({
                   {message.role === "user" && message.images && message.images.length > 0 && (
                     <MessageImages images={message.images} />
                   )}
-                  {/* User messages: just content */}
-                  {message.role === "user" && message.content && (
-                    <MarkdownMessage content={message.content} variant="user" />
+                  {/* User: contentNodes → inline chips; else markdown */}
+                  {message.role === "user" && (message.content || contentNodesHaveReferences(message.contentNodes)) && (
+                    <UserMessageContent
+                      content={message.content || ""}
+                      contentNodes={message.contentNodes}
+                    />
                   )}
                   {/* Assistant messages: tool process + final content */}
                   {message.role === "assistant" && (() => {
@@ -376,6 +387,21 @@ export function ChatMessages({
                       "pointer-events-none group-hover:pointer-events-auto group-focus-within:pointer-events-auto max-md:pointer-events-auto"
                     )}
                   >
+                    {message.role === "user" && onReuseUserMessage && (
+                      <button
+                        type="button"
+                        onClick={() => onReuseUserMessage(message)}
+                        className={cn(
+                          "inline-flex h-8 w-8 sm:h-7 sm:w-7 items-center justify-center rounded text-muted-foreground transition-colors",
+                          "hover:bg-muted hover:text-foreground",
+                          "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                        )}
+                        aria-label={t("mention.reuseInComposer", "填回输入框")}
+                        title={t("mention.reuseInComposer", "填回输入框")}
+                      >
+                        <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                      </button>
+                    )}
                     <CopyMessageButton content={copyContent} />
                   </div>
                 )}

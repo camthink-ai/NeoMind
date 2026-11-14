@@ -1,7 +1,8 @@
 /// Tests for chat message utilities — tool-call JSON stripping must remove
 /// embedded CALLS without eating DATA the model quoted for the user.
 import { describe, it, expect } from 'vitest'
-import { cleanToolCallJson } from '../messageUtils'
+import { cleanToolCallJson, mergeMessagesForDisplay } from '../messageUtils'
+import type { Message } from '@/types'
 
 describe('cleanToolCallJson', () => {
   it('strips fenced tool-call arrays (name + arguments)', () => {
@@ -43,5 +44,29 @@ describe('cleanToolCallJson', () => {
   it('leaves plain prose untouched', () => {
     const content = '设备在线，温度 23.5°C。'
     expect(cleanToolCallJson(content)).toBe(content)
+  })
+})
+
+describe('mergeMessagesForDisplay contentNodes', () => {
+  it('keeps and normalizes user contentNodes for history chip redraw', () => {
+    const raw = [
+      {
+        id: 'u1',
+        role: 'user',
+        content: '检查设备',
+        timestamp: 1_700_000_000, // seconds — also exercises ms normalize
+        content_nodes: [
+          { kind: 'text', text: '检查 ' },
+          { kind: 'reference', type: 'device', id: 's1', label_snapshot: '传感器' },
+        ],
+      },
+    ] as unknown as Message[]
+    const merged = mergeMessagesForDisplay(raw)
+    expect(merged).toHaveLength(1)
+    expect(merged[0].contentNodes).toEqual([
+      { kind: 'text', text: '检查 ' },
+      { kind: 'reference', type: 'device', id: 's1', labelSnapshot: '传感器' },
+    ])
+    expect(merged[0].timestamp).toBe(1_700_000_000_000)
   })
 })

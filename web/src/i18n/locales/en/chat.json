@@ -224,6 +224,7 @@
     "agent": "agent",
     "invalid": "Invalid reference",
     "invalidSend": "Some references are invalid — fix them and resend",
+    "reuseInComposer": "Reuse in composer",
     "filterTypes": "Filter by type",
     "filterAll": "All",
     "partialFailure": "Some types failed to load",

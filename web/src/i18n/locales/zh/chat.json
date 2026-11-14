@@ -219,6 +219,7 @@
     "agent": "代理",
     "invalid": "引用无效",
     "invalidSend": "部分引用无效，请修正后重发",
+    "reuseInComposer": "填回输入框",
     "filterTypes": "按类型筛选",
     "filterAll": "全部",
     "partialFailure": "部分类型加载失败",

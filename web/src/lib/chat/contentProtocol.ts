@@ -47,6 +47,75 @@ export function inlineDocToContentNodes(doc: InlineDoc): ChatContentNode[] {
   })
 }
 
+const REF_TYPES = new Set(["device", "rule", "transform", "agent"])
+
+/**
+ * Coerce API / optimistic / draft payloads into typed ChatContentNode[].
+ * Accepts camelCase wire (`labelSnapshot`) and snake_case aliases.
+ */
+export function normalizeContentNodes(raw: unknown): ChatContentNode[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined
+  const out: ChatContentNode[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue
+    const n = item as Record<string, unknown>
+    if (n.kind === "text" && typeof n.text === "string") {
+      out.push({ kind: "text", text: n.text })
+      continue
+    }
+    if (n.kind === "reference") {
+      const type = n.type
+      const id = n.id
+      const labelRaw =
+        (typeof n.labelSnapshot === "string" && n.labelSnapshot) ||
+        (typeof n.label_snapshot === "string" && n.label_snapshot) ||
+        (typeof n.label === "string" && n.label) ||
+        ""
+      if (typeof type === "string" && REF_TYPES.has(type) && typeof id === "string" && id) {
+        out.push({
+          kind: "reference",
+          type: type as "device" | "rule" | "transform" | "agent",
+          id,
+          labelSnapshot: labelRaw.slice(0, MAX_LABEL_CHARS),
+        })
+      }
+    }
+  }
+  return out.length > 0 ? out : undefined
+}
+
+export function contentNodesHaveReferences(nodes: ChatContentNode[] | undefined): boolean {
+  return !!nodes?.some((n) => n.kind === "reference")
+}
+
+/** Restore composer fields from persisted / history contentNodes (resend UX). */
+export function contentNodesToComposerFields(nodes: ChatContentNode[]): {
+  message: string
+  references: ChatReference[]
+  contentNodes: ChatContentNode[]
+} {
+  const parts: string[] = []
+  const seen = new Set<string>()
+  const references: ChatReference[] = []
+  for (const n of nodes) {
+    if (n.kind === "text") {
+      parts.push(n.text)
+    } else {
+      parts.push(`@${n.labelSnapshot || n.id}`)
+      const key = `${n.type}:${n.id}`
+      if (!seen.has(key)) {
+        seen.add(key)
+        references.push({ type: n.type, id: n.id, label: n.labelSnapshot })
+      }
+    }
+  }
+  return {
+    message: parts.join(""),
+    references,
+    contentNodes: nodes,
+  }
+}
+
 export function validateContentNodes(nodes: ChatContentNode[]): void {
   if (nodes.length > MAX_CONTENT_NODES) {
     throw new ContentProtocolError(
