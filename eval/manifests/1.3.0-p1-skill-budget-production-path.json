@@ -1,0 +1,36 @@
+{
+  "schema": "neomind-eval-freeze-manifest/v1",
+  "slice": "1.3.0-p1-skill-budget-production-path",
+  "date": "2026-11-14",
+  "branch": "1.3.0",
+  "product_version": "1.3.0",
+  "pushed": false,
+  "head_at_start": "1be81451",
+  "plan_section": "12",
+  "item": "GPT P1 skill budget production-path fixes (shared pin+transient; executor skill_reference)",
+  "docs": "docs/development/p1-skill-budget-production-path-2026-11-14.md",
+  "code": [
+    "crates/neomind-agent/src/llm.rs",
+    "crates/neomind-agent/src/ai_agent/executor/tool_result.rs"
+  ],
+  "gaps_fixed": [
+    "pinned and transient each used a full skill_bodies_token_budget on assemble",
+    "scheduled-agent tool_loop skill_reference accumulated unbound"
+  ],
+  "gates": {
+    "build_skill_injection_block": "1/1",
+    "assemble_system_prompt_pin_plus_transient": "1/1",
+    "executor_skill_reference_respects": "1/1",
+    "set_skill_context_suite": "pass",
+    "live_spark": "not_run_138_busy"
+  },
+  "eval_138": {
+    "controller_pid": 89912,
+    "llama_port": 29431,
+    "status": "still_running",
+    "touched": false,
+    "new_long_run_started": false
+  },
+  "claim": "Production chat assemble and scheduled-agent skill_reference share one skill body token cap for pin+transient. No live A/B claim.",
+  "next": "Optional T4 skill A/B after 138; human C UX; D/E/F"
+}

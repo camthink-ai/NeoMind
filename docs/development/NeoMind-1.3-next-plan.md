@@ -220,6 +220,7 @@ timeout和判定来源。
 - P0 llm.rs:2330–2415：内层按单消息逆序裁剪，超预算立即break，短历史无条件插回首个user，即使预算为0；无法保证最近完整工具交互。外层context.rs保护后仍可能被二次裁剪。
 - P1 llm.rs Skill 全文累积：~~无总量上限~~ → **已修**（`skill_bodies_token_budget` = ctx/8∈[2k,6k]；transient + pinned；证据 `eval/manifests/1.3.0-p1-skill-bodies-total-budget.json`）。Live A/B 仍待 138 释放。
 - P1 stream_core 新用户轮清 Skill：~~待验证~~ → **已对齐**（`begin_user_turn_clear_transient_skills` + Continue/Correct/Cancel/写入后恢复单测；multimodal 改为 LLM 前 push）。证据 `eval/manifests/1.3.0-p1-skill-clear-turn-continuity.json`。
+- P1 生产路径预算缺口：~~pin/transient 各用满额 + executor 无上限~~ → **已修**（`build_skill_injection_block` 真共享；executor `skill_reference` 同 cap）。证据 `eval/manifests/1.3.0-p1-skill-budget-production-path.json`。
 - P1 真人UX、E live、tip138尚未完成，不能因计划打勾宣称发布验收通过。
 生产证据：T4 1.2.11会话6621a013-0d12-43c7-ad39-6dbf6e9cb156，北京时间19:46:18/:29/:38，两项list成功返回7925/449字节；历史9→1、9→1、10→1，available_tokens=0；实际Spark请求message_count=3后重复查询。证明裁剪与循环同时发生，完整请求正文未留存，唯一根因仍需复现。DeepSeek关联成功会话仅确认render_text回执queued，非屏幕物理刷新，非受控A/B。
 ### 执行计划
@@ -256,8 +257,10 @@ timeout和判定来源。
   （2026-11-14：`set_skill_context` + pinned 注入共用 `skill_bodies_token_budget`；超限截断/跳过；单测 4/4。证据 `eval/manifests/1.3.0-p1-skill-bodies-total-budget.json`。**未做**：T4 live A/B；不宣称单独治愈生产环。）
 - [x] P1 stream_core 新轮清 Skill 与「继续」/纠正/取消/写入后恢复衔接。
   （2026-11-14：`begin_user_turn_clear_transient_skills`；TaskState 跨轮保留；multimodal 指令先于首轮 LLM；`task_continuity` **14/14**。证据 `eval/manifests/1.3.0-p1-skill-clear-turn-continuity.json`。Live 仍被 138 阻塞。）
+- [x] P1 Skill 预算接到生产路径（pin+transient 真共享；executor `skill_reference`）。
+  （2026-11-14：`build_skill_injection_block` 单预算；`set_skill_context` 预留 pin；`process_tool_results` 同 cap。单测 assemble/block/executor。证据 `eval/manifests/1.3.0-p1-skill-budget-production-path.json`。Live 仍被 138 阻塞。）
 - [ ] C 人工：真机触屏 + VoiceOver/TalkBack + 5人×4任务>=18/20（挂起）。
 - [ ] D 桌面/移动代表流程。
 - [ ] E Spark实际10次>=9/10，多轮/故障/取消探针。
 - [ ] F 48场景可执行化、tip138与Appliance验收。
-G0–G3 离线项、C TipTap/历史 chip/headed Playwright、P1 skill 总量上限与新轮清 Skill 衔接已勾；**C 真人 UX/5人、中英配对 live、D/E/F** 仍为缺口。最终发布准备文档必须引用本节剩余项。
+G0–G3 离线项、C TipTap/历史 chip/headed Playwright、P1 skill 总量上限/新轮清/生产路径共享预算已勾；**C 真人 UX/5人、中英配对 live、D/E/F** 仍为缺口。最终发布准备文档必须引用本节剩余项。

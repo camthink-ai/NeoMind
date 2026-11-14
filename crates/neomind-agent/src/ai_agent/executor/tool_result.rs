@@ -243,12 +243,34 @@ impl AgentExecutor {
                 }
             };
 
-            // Skill tool results go to separate reference buffer, not messages history
+            // Skill tool results go to separate reference buffer, not messages history.
+            // Cap under the same shared skill-body budget as chat (`skill_bodies_token_budget`)
+            // so scheduled-agent production runs cannot accumulate 15+ full guides.
             if result.name == "skill" {
-                if !skill_reference.is_empty() {
-                    skill_reference.push_str("\n\n");
+                let budget = crate::llm::skill_bodies_token_budget(context_window);
+                let (outcome, piece) = crate::llm::plan_skill_body_append(
+                    skill_reference,
+                    &result_text,
+                    budget,
+                );
+                match outcome {
+                    crate::llm::SkillBodyAppendOutcome::Skipped => {
+                        tracing::warn!(
+                            budget_tokens = budget,
+                            "executor skill reference skipped: total skill body budget exhausted"
+                        );
+                    }
+                    crate::llm::SkillBodyAppendOutcome::Truncated => {
+                        tracing::warn!(
+                            budget_tokens = budget,
+                            "executor skill reference truncated to fit total skill body budget"
+                        );
+                        skill_reference.push_str(&piece);
+                    }
+                    crate::llm::SkillBodyAppendOutcome::Full => {
+                        skill_reference.push_str(&piece);
+                    }
                 }
-                skill_reference.push_str(&result_text);
                 // Add a concise acknowledgment to messages so LLM knows the skill was retrieved
                 messages.push(Message::new(
                     MessageRole::User,
@@ -719,6 +741,37 @@ mod tests {
         assert_eq!(
             out,
             "a ![image](/api/images/one.png) b ![image](/api/images/two.png) c ![ok](/api/images/three.png)"
+        );
+    }
+
+    #[test]
+    fn executor_skill_reference_respects_shared_skill_body_budget() {
+        use crate::agent::tokenizer::estimate_tokens;
+        use crate::llm::{plan_skill_body_append, skill_bodies_token_budget, SkillBodyAppendOutcome};
+
+        // Same loop shape as process_tool_results skill branch (production
+        // scheduled-agent path) — 15 full guides must not accumulate unbound.
+        let context_window = 4_096;
+        let budget = skill_bodies_token_budget(context_window);
+        let mut skill_reference = String::new();
+        for i in 0..15 {
+            let result_text = format!("GUIDE{i} {}", "技能正文".repeat(200));
+            let (outcome, piece) =
+                plan_skill_body_append(&skill_reference, &result_text, budget);
+            match outcome {
+                SkillBodyAppendOutcome::Skipped => {}
+                SkillBodyAppendOutcome::Truncated | SkillBodyAppendOutcome::Full => {
+                    skill_reference.push_str(&piece);
+                }
+            }
+        }
+        assert!(
+            estimate_tokens(&skill_reference) <= budget + 16,
+            "executor skill_reference must stay under shared budget {budget}"
+        );
+        assert!(
+            skill_reference.contains("GUIDE0"),
+            "first skill body should be retained"
         );
     }
 

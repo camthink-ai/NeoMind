@@ -257,7 +257,10 @@ struct TransientSkillContext {
 }
 
 /// Total estimated-token budget for skill bodies injected into one system
-/// prompt (transient skill-tool loads + pinned skills combined per section).
+/// prompt. **Pinned + transient share this single cap** on the production
+/// assemble path ([`build_skill_injection_block`]) — they must not each get a
+/// full budget or a large pin set plus a mid-turn skill load can still zero
+/// history (plan §12 P1 / T4 production symptom).
 ///
 /// Scales with the model window (`ctx/8`), clamped to `[2_000, 6_000]`:
 /// - 8K → 2K, 32K → 4K, 64K+ → 6K.
@@ -321,6 +324,67 @@ pub(crate) fn plan_skill_body_append(
         SkillBodyAppendOutcome::Truncated,
         format!("{sep}{truncated}\n…[skill truncated: total skill budget]"),
     )
+}
+
+/// Production-path skill injection: pinned guides first, then transient
+/// skill-tool bodies, under **one** [`skill_bodies_token_budget`].
+///
+/// Earlier P1 capped each source independently, so a large pin set plus a
+/// mid-turn load could still inject ~2× the budget into the system prompt.
+pub(crate) fn build_skill_injection_block(
+    pinned_chunks: &[(String, String)],
+    transient_body: Option<&str>,
+    budget_tokens: usize,
+) -> String {
+    let mut combined = String::new();
+    for (skill_id, chunk) in pinned_chunks {
+        let (outcome, piece) = plan_skill_body_append(&combined, chunk, budget_tokens);
+        match outcome {
+            SkillBodyAppendOutcome::Skipped => {
+                tracing::warn!(
+                    skill_id = %skill_id,
+                    budget_tokens,
+                    "pinned skill skipped: shared skill body budget exhausted"
+                );
+                break;
+            }
+            SkillBodyAppendOutcome::Truncated => {
+                tracing::warn!(
+                    skill_id = %skill_id,
+                    budget_tokens,
+                    "pinned skill truncated to fit shared skill body budget"
+                );
+                combined.push_str(&piece);
+                break;
+            }
+            SkillBodyAppendOutcome::Full => combined.push_str(&piece),
+        }
+    }
+    if let Some(body) = transient_body {
+        if !body.trim().is_empty() {
+            let chunk = format!(
+                "## Skill Reference\nCommands in this skill are canonical — use them exactly; don't guess subcommand names.\n\n{body}"
+            );
+            let (outcome, piece) = plan_skill_body_append(&combined, &chunk, budget_tokens);
+            match outcome {
+                SkillBodyAppendOutcome::Skipped => {
+                    tracing::warn!(
+                        budget_tokens,
+                        "transient skill reference skipped: shared skill body budget exhausted"
+                    );
+                }
+                SkillBodyAppendOutcome::Truncated => {
+                    tracing::warn!(
+                        budget_tokens,
+                        "transient skill reference truncated to fit shared skill body budget"
+                    );
+                    combined.push_str(&piece);
+                }
+                SkillBodyAppendOutcome::Full => combined.push_str(&piece),
+            }
+        }
+    }
+    combined
 }
 
 /// Credential-free request defaults captured from the backend selected for a session.
@@ -1133,7 +1197,11 @@ impl LlmInterface {
     /// under [`skill_bodies_token_budget`] — later loads truncate or skip when
     /// the total would blow the fixed-prefix budget (plan §12 P1).
     pub async fn set_skill_context(&self, skill_id: String, content: String) {
-        let budget = skill_bodies_token_budget(self.max_context_length().await);
+        // Reserve tokens already committed to pinned skills so mid-turn loads
+        // cannot fill the whole shared budget before assemble merges both.
+        let pinned_reserved = self.estimate_pinned_skill_tokens().await;
+        let total = skill_bodies_token_budget(self.max_context_length().await);
+        let budget = total.saturating_sub(pinned_reserved);
         let mut guard = self.skill_context.write().await;
         if !guard.loaded_ids.insert(skill_id.clone()) {
             // Already loaded this turn — skip to avoid duplicate context bloat.
@@ -1182,6 +1250,42 @@ impl LlmInterface {
     /// Get pinned skill IDs for this session.
     pub async fn get_pinned_skills(&self) -> Vec<String> {
         self.pinned_skills.read().await.clone()
+    }
+
+    /// Estimated tokens already committed to pinned skill chunks (same shape
+    /// as the production assemble path). Used to reserve shared budget for
+    /// mid-turn [`set_skill_context`] loads.
+    async fn estimate_pinned_skill_tokens(&self) -> usize {
+        use crate::agent::tokenizer::estimate_tokens;
+
+        let pinned = self.pinned_skills.read().await.clone();
+        if pinned.is_empty() {
+            return 0;
+        }
+        let Some(registry) = self.skill_registry.read().await.clone() else {
+            return 0;
+        };
+        let registry_guard = registry.read().await;
+        let mut body = String::new();
+        let budget = skill_bodies_token_budget(self.max_context_length().await);
+        for skill_id in &pinned {
+            if let Some(skill) = registry_guard.get(skill_id) {
+                let chunk = format!(
+                    "## Pinned Skill: {}\n{}",
+                    skill.metadata.name,
+                    skill.body_within_budget()
+                );
+                let (outcome, piece) = plan_skill_body_append(&body, &chunk, budget);
+                if matches!(outcome, SkillBodyAppendOutcome::Skipped) {
+                    break;
+                }
+                body.push_str(&piece);
+                if matches!(outcome, SkillBodyAppendOutcome::Truncated) {
+                    break;
+                }
+            }
+        }
+        estimate_tokens(&body)
     }
 
     /// Invalidate the system prompt cache.
@@ -1265,64 +1369,41 @@ impl LlmInterface {
             }
         }
 
-        // Inject pinned skills (user-selected) under the same total body budget
-        // as transient loads — per-skill metadata still caps individuals via
-        // body_within_budget; the total stops a large pin set from zeroing history.
+        // Pinned (user-selected) + transient skill-tool bodies share one total
+        // budget on this production assemble path. Per-skill metadata still
+        // caps individuals via body_within_budget.
         let pinned = self.pinned_skills.read().await.clone();
+        let mut pinned_chunks: Vec<(String, String)> = Vec::new();
         if !pinned.is_empty() {
-            let registry_opt = self.skill_registry.read().await.clone();
-            if let Some(registry) = registry_opt {
+            if let Some(registry) = self.skill_registry.read().await.clone() {
                 let registry_guard = registry.read().await;
-                let budget = skill_bodies_token_budget(self.max_context_length().await);
-                let mut pinned_bodies = String::new();
                 for skill_id in &pinned {
                     if let Some(skill) = registry_guard.get(skill_id) {
-                        let chunk = format!(
-                            "## Pinned Skill: {}\n{}",
-                            skill.metadata.name,
-                            skill.body_within_budget()
-                        );
-                        let (outcome, piece) =
-                            plan_skill_body_append(&pinned_bodies, &chunk, budget);
-                        if matches!(outcome, SkillBodyAppendOutcome::Skipped) {
-                            tracing::warn!(
-                                skill_id = %skill_id,
-                                budget_tokens = budget,
-                                "pinned skill skipped: total skill body budget exhausted"
-                            );
-                            break;
-                        }
-                        if matches!(outcome, SkillBodyAppendOutcome::Truncated) {
-                            tracing::warn!(
-                                skill_id = %skill_id,
-                                budget_tokens = budget,
-                                "pinned skill truncated to fit total skill body budget"
-                            );
-                        }
-                        pinned_bodies.push_str(&piece);
+                        pinned_chunks.push((
+                            skill_id.clone(),
+                            format!(
+                                "## Pinned Skill: {}\n{}",
+                                skill.metadata.name,
+                                skill.body_within_budget()
+                            ),
+                        ));
                     }
-                }
-                if !pinned_bodies.is_empty() {
-                    prompt.push('\n');
-                    prompt.push_str(&pinned_bodies);
-                    prompt.push('\n');
                 }
             }
         }
-
         // Auto-load skill guides — DISABLED: the slim prompt (default) dropped the
         // full CLI reference table, and the shell tool's Command Choice covers only
         // a subset of domains. Skills are loaded on-demand via the skill tool
         // (search/load) when the LLM needs domain-specific guidance beyond the
         // always-present Command Choice (complex workflows, error troubleshooting).
         // Re-enabling auto-load would re-add ~3000 tokens per turn.
-
-        // Inject transient skill context (from skill tool calls in current turn's multi-round loop)
-        // This content is NOT in session history — only available during the current turn.
-        if let Some(skill_content) = self.get_skill_context().await {
-            prompt.push_str("\n## Skill Reference\n");
-            prompt.push_str("Commands in this skill are canonical — use them exactly; don't guess subcommand names.\n\n");
-            prompt.push_str(&skill_content);
+        let transient = self.get_skill_context().await;
+        let budget = skill_bodies_token_budget(self.max_context_length().await);
+        let skill_block =
+            build_skill_injection_block(&pinned_chunks, transient.as_deref(), budget);
+        if !skill_block.is_empty() {
+            prompt.push('\n');
+            prompt.push_str(&skill_block);
             prompt.push('\n');
         }
 
@@ -2875,6 +2956,80 @@ mod tests {
         assert!(
             loaded_markers < 15,
             "expected total cap to drop some of 15 full guides, kept {loaded_markers}"
+        );
+    }
+
+    #[test]
+    fn build_skill_injection_block_shares_budget_across_pin_and_transient() {
+        use crate::agent::tokenizer::estimate_tokens;
+
+        let budget = 200;
+        let pin = format!("## Pinned Skill: Weather\n{}", "PIN ".repeat(80));
+        let transient = format!("TRANSIENT {}", "导 ".repeat(200));
+        let block = build_skill_injection_block(
+            &[("weather".into(), pin.clone())],
+            Some(&transient),
+            budget,
+        );
+        assert!(
+            estimate_tokens(&block) <= budget + 8,
+            "pin+transient must share one budget, got {}",
+            estimate_tokens(&block)
+        );
+        assert!(block.contains("Pinned Skill: Weather"));
+        // Independent budgets would keep both full bodies (~2×); shared cap
+        // must truncate or drop the later transient section.
+        let both_full = block.contains("PIN ")
+            && block.contains("TRANSIENT")
+            && !block.contains("skill truncated");
+        assert!(
+            !both_full || estimate_tokens(&block) <= budget + 8,
+            "must not inject full pin and full transient beyond shared budget"
+        );
+    }
+
+    #[tokio::test]
+    async fn assemble_system_prompt_pin_plus_transient_respects_shared_budget() {
+        use crate::agent::tokenizer::estimate_tokens;
+        use crate::skills::SkillRegistry;
+
+        let interface = LlmInterface::new(ChatConfig::default());
+        let budget = skill_bodies_token_budget(4_096);
+        assert_eq!(budget, 2_000);
+
+        // Register an oversized pin (high per-skill metadata budget so
+        // body_within_budget does not hide the total-cap bug).
+        let mut registry = SkillRegistry::new();
+        let pin_body = "PINBODY ".repeat(800);
+        let yaml = format!(
+            "---\nid: pin-big\nname: PinBig\ncategory: general\norigin: user\ntoken_budget: 8000\n---\n{pin_body}"
+        );
+        registry
+            .add_user_skill(&yaml)
+            .expect("parse pin skill");
+        interface
+            .set_skill_registry(std::sync::Arc::new(tokio::sync::RwLock::new(registry)))
+            .await;
+        interface.set_pinned_skills(vec!["pin-big".into()]).await;
+
+        // Transient load also oversized — previously each path used a full
+        // budget, so assemble could inject ~4k tokens of skill bodies.
+        let transient = format!("TRANS {}", "正文".repeat(800));
+        interface
+            .set_skill_context("transient-1".into(), transient)
+            .await;
+
+        let prompt = interface.assemble_system_prompt(None).await;
+        // Extract skill region roughly: from first "## Pinned" / "## Skill".
+        let skill_start = prompt
+            .find("## Pinned Skill:")
+            .or_else(|| prompt.find("## Skill Reference"))
+            .expect("skill injection present");
+        let skill_region = &prompt[skill_start..];
+        let tokens = estimate_tokens(skill_region);
+        assert!(
+            tokens <= budget + 32,
+            "production assemble must keep pin+transient under shared budget {budget}, got {tokens}"
         );
     }
 
