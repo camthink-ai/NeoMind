@@ -32,5 +32,7 @@
     "new_long_run_started": false
   },
   "claim": "Production chat assemble and scheduled-agent skill_reference share one skill body token cap for pin+transient. No live A/B claim.",
-  "next": "Optional T4 skill A/B after 138; human C UX; D/E/F"
+  "next": "Optional T4 skill A/B after 138; human C UX; D/E/F",
+  "commit": "6e27d7cb8f47eafc2e198c5fac1011056d7879cb",
+  "head_at_end": "6e27d7cb8f47eafc2e198c5fac1011056d7879cb"
 }
