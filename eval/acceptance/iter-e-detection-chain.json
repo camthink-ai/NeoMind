@@ -1,0 +1,77 @@
+{
+  "schema": "neomind-plan-e-acceptance/v1",
+  "slice": "1.3.0-iter-E-detection-chain-preregister",
+  "plan_ref": "docs/development/NeoMind-1.3-next-plan.md §6",
+  "scenario": {
+    "id": "main-objective-e2e-detection-chain",
+    "alias": "E2E01-draft",
+    "chain": "camera detections → person-count Transform → threshold Rule → notify",
+    "fixture": "seed-main-objective",
+    "case_paths": {
+      "zh": "eval/cases/zh/main-objective/main-objective-e2e-detection-chain.json",
+      "en": "eval/cases/en/main-objective/main-objective-e2e-detection-chain.json"
+    }
+  },
+  "pass_rule": {
+    "trials": 10,
+    "min_full_success": 9,
+    "full_success": "cmd_ok AND sq_all_pass AND no forbidden ambient edits (rule-battery-low still exists) AND reply cites evidence (manual checklist until forbidden_claims is runner-native)",
+    "scope_note": "This gate proves ONLY this scheme — not overall model success rate (plan §6)."
+  },
+  "frozen_sampling": {
+    "context": 32768,
+    "parallel_slots": 1,
+    "temperature": 0.3,
+    "top_p": 0.75,
+    "top_k": 20,
+    "thinking": true,
+    "case_timeout_secs": 600,
+    "model_alias": "sparkx2.6-1.7b",
+    "model_sha256": "7abd9859c10924be3c583945456fa9b25d0569484876105a7b7376f7938fffb7",
+    "runtime_build": "b12024"
+  },
+  "trials": [
+    { "trial": 1, "lang": "zh", "case_id": "main-objective-e2e-detection-chain", "seed": 2026111401 },
+    { "trial": 2, "lang": "zh", "case_id": "main-objective-e2e-detection-chain", "seed": 2026111402 },
+    { "trial": 3, "lang": "zh", "case_id": "main-objective-e2e-detection-chain", "seed": 2026111403 },
+    { "trial": 4, "lang": "zh", "case_id": "main-objective-e2e-detection-chain", "seed": 2026111404 },
+    { "trial": 5, "lang": "zh", "case_id": "main-objective-e2e-detection-chain", "seed": 2026111405 },
+    { "trial": 6, "lang": "en", "case_id": "main-objective-e2e-detection-chain", "seed": 2026111406 },
+    { "trial": 7, "lang": "en", "case_id": "main-objective-e2e-detection-chain", "seed": 2026111407 },
+    { "trial": 8, "lang": "en", "case_id": "main-objective-e2e-detection-chain", "seed": 2026111408 },
+    { "trial": 9, "lang": "en", "case_id": "main-objective-e2e-detection-chain", "seed": 2026111409 },
+    { "trial": 10, "lang": "en", "case_id": "main-objective-e2e-detection-chain", "seed": 2026111410 }
+  ],
+  "coverage_v1": [
+    "discover+create chain links",
+    "enable as needed",
+    "explain evidence per link",
+    "forbidden side effect: must not remove rule-battery-low"
+  ],
+  "coverage_deferred_to_multi_turn": [
+    "test transform before enable",
+    "change threshold / notify target",
+    "fault diagnosis",
+    "cancel before enable",
+    "repeat execution / interrupt-recover",
+    "behavior probes: normal / over-threshold / recovery / cooldown"
+  ],
+  "contention": {
+    "eval_138": {
+      "pid": 89912,
+      "llama_port": 29431,
+      "run_dir": "/tmp/neomind-iter-main-20261113/eval-138",
+      "touched": false,
+      "policy": "Do NOT start Plan E LLM trials while 89912 holds 29431; use a separate llama port (e.g. 29432) and eval/runs/1.3.0-iter-e-* only after capacity is free."
+    }
+  },
+  "launch_after_138": {
+    "run_dir_template": "eval/runs/1.3.0-iter-e-detection-chain-{YYYYMMDD}",
+    "command_template": "AGENT_LLM_API_KEY=local-eval AGENT_LLM_ENDPOINT=http://127.0.0.1:29432/v1 AGENT_LLM_MODEL=sparkx2.6-1.7b AGENT_LLM_BACKEND_TYPE=openai AGENT_LLM_THINKING=1 python3 eval/run_eval.py run --workflow main-objective --case-id main-objective-e2e-detection-chain --lang {zh|en} --case-timeout 600 --run-dir {run_dir}/trial-{N}",
+    "note": "run_eval.py has no --rounds; execute the 10 trials as separate run-dirs per this matrix, then score ≥9/10."
+  },
+  "platform_chain_gate": {
+    "command": "cargo test -p neomind-api --test integration scenario_a_detections_to_transform_rule_notification --locked",
+    "meaning": "Deterministic API-level proof of detections→transform→rule→notify(+cooldown); not a Chat/LLM Plan E score."
+  }
+}

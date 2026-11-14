@@ -1,0 +1,36 @@
+{
+  "schema": "neomind-eval-freeze-manifest/v1",
+  "slice": "1.3.0-iter-E-detection-chain-preregister",
+  "date": "2026-11-14",
+  "branch": "1.3.0",
+  "version": "1.2.11",
+  "pushed": false,
+  "version_bumped": false,
+  "head_at_start": "18f858db7021585b0f5e55e60f31b9c51085faec",
+  "acceptance": "eval/acceptance/iter-e-detection-chain.json",
+  "docs": "docs/development/iter-e-acceptance-2026-11-14.md",
+  "hashes": {
+    "acceptance_sha256": "eb2131824240edc8224987d4ca8a8889bf93351925394c33f99171b5b688901f",
+    "case_en_sha256": "8a78d51eb2f1cd5955f47cddc886fabc505b3f1b1f199db843498b727623973f",
+    "case_zh_sha256": "377621858d552b318f4e0940f553a7ea77d825208cf0e3cb92a5f2720dc19c77",
+    "seed_main_objective_sha256": "0cb7584dc3cd1bbb4c3225b01dacdf643325f64d85274ebdca4078948933eb30"
+  },
+  "gates": {
+    "validate_hardened_cases": "2/2 OK (PYTHONPATH=eval/lib validate_case)",
+    "test_case_precheck": "8/8",
+    "test_iter_e_acceptance": "3/3",
+    "platform_scenario_a": "scenario_a_detections_to_transform_rule_notification PASS",
+    "live_llm_10x": "deferred — contending 138"
+  },
+  "avoided": {
+    "eval_138": {
+      "pid": 89912,
+      "llama_port": 29431,
+      "scores_jsonl_lines_at_freeze": 137,
+      "touched": false,
+      "contention_risk": "Sharing :29431 or the same single-slot llama would starve/serialize both jobs; Plan E LLM must wait or use a separate port/binary."
+    }
+  },
+  "claim": "Preregister complete for Plan E detection-chain (10 frozen trials, ≥9/10 rule, hardened SQ contract, platform chain green). NOT a ≥9/10 Chat verdict.",
+  "next": "F：48场景分组冻结、基线候选配对、最终138与Appliance验收（含 E live 9/10 若 138 已结束）"
+}

@@ -206,7 +206,8 @@ timeout和判定来源。
   （2026-11-14 切片：compositionend 重扫 + IME Enter 防误选/误发；listbox/option/tablist ARIA；vitest 38（Composer+InlineAt+IME guard+model）。**未做**：真浏览器 headed、真触屏、VoiceOver 实机、5 人×4 任务——缺口与协议见 `docs/development/mention-a11y-usability-checklist-2026-11-14.md`。证据 `eval/manifests/1.3.0-iter-c-mention-a11y.json`。）
 - [x] D：Transform/Rule/命令/Agent状态界面闭环。
   （2026-11-14 完成：① Transform 测试诚实判定。② Rule「为什么未触发」。③ 命令 ACK 阶梯。④ Agent 执行证据：`stop_reason`/`tokens_used` DTO 透出 + `deriveAgentExecutionEvidence` + `AgentExecutionEvidencePanel`（输入时间/输出/动作结果/失败节点；缺证据标未知）；证据 `eval/manifests/1.3.0-iter-d-agent-execution-evidence.json`。验收桌面/移动代表流程与 5 人未做。）
-- [ ] E：首个可运行方案10次预注册验收。
+- [x] E：首个可运行方案10次预注册验收。
+  （2026-11-14 切片：**预注册完成** — `eval/acceptance/iter-e-detection-chain.json` 冻结 5×zh+5×en、采样 .3/.75/20、≥9/10；硬化 `main-objective-e2e-detection-chain`（transform≥1、rule≥2、保留 `rule-battery-low`）；平台 `scenario_a_detections…` PASS。**未做**：Spark 10 次 live（PID 89912 占 `:29431`，争用风险已记）；多轮测试/改阈值/故障/取消/中断与行为探针 deferred。证据 `eval/manifests/1.3.0-iter-e-detection-chain-preregister.json`。）
 - [ ] F：48场景分组冻结、基线候选配对、最终138与Appliance验收。
 - [ ] 发布前：版本统一、证据归档、未解决问题、人工复现步骤。
 

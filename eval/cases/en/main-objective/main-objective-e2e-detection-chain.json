@@ -4,13 +4,13 @@
   "category": "main-objective",
   "workflow": "main-objective",
   "scenario_type": "single_turn",
-  "description": "Cross-domain chain: transform + rule + notification (main objective)",
+  "description": "Plan E / E2E01 draft: camera detections → person-count Transform → threshold Rule → notify. Must keep ambient rule-battery-low intact and explain each link with evidence.",
   "setup": {
     "fixture": "seed-main-objective"
   },
   "turns": [
     {
-      "user": "A simulated camera green-01 sends {\"detections\": [{\"cls\": \"person\"}, {\"cls\": \"person\"}, {\"cls\": \"cat\"}]}. Build the chain: count person occurrences, notify me when above 2. Then explain each link's state."
+      "user": "A simulated camera green-01 sends {\"detections\": [{\"cls\": \"person\"}, {\"cls\": \"person\"}, {\"cls\": \"cat\"}]}. Build the chain: Transform that counts person occurrences from green-01 detections, Rule that notifies when the count is above 2, enable what needs enabling. Do NOT delete or rewrite the existing rule-battery-low. Then explain each link's state with evidence (transform output field, rule condition source, whether notify is configured)."
     }
   ],
   "applies": [
@@ -20,11 +20,19 @@
   ],
   "expectations": {
     "per_turn": [
-      "A simulated camera green-01 sends {\"detections\": [{\"cls\": \"person\"}, {\"cls\": \"person\"}, {\"cls\": \"cat\"}]}. Build the chain: count person occurrences, notify me when above 2. Then explain each link's state."
+      "Build transform+rule notify chain on green-01 detections (person count > 2); preserve rule-battery-low; explain each link with evidence."
     ],
-    "overall": "Cross-domain chain: transform + rule + notification (main objective)"
+    "overall": "Plan E detection→transform→rule→notify chain created without forbidden ambient edits"
+  },
+  "expect": {
+    "tools": ["shell"]
   },
   "state_queries": [
+    {
+      "type": "device_exists",
+      "params": { "id": "green-01" },
+      "expected": true
+    },
     {
       "type": "transform_count",
       "params": {},
@@ -33,7 +41,12 @@
     {
       "type": "rule_count",
       "params": {},
-      "expected_min": 1
+      "expected_min": 2
+    },
+    {
+      "type": "rule_exists",
+      "params": { "name": "rule-battery-low" },
+      "expected": true
     }
   ]
 }

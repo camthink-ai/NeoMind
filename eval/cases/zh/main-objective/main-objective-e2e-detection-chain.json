@@ -4,13 +4,13 @@
   "category": "main-objective",
   "workflow": "main-objective",
   "scenario_type": "single_turn",
-  "description": "Cross-domain chain: transform + rule + notification (main objective)",
+  "description": "Plan E / E2E01 draft: camera detections → person-count Transform → threshold Rule → notify. Must keep ambient rule-battery-low intact and explain each link with evidence.",
   "setup": {
     "fixture": "seed-main-objective"
   },
   "turns": [
     {
-      "user": "模拟摄像头 green-01 会发 {\"detections\": [{\"cls\": \"person\"}, {\"cls\": \"person\"}, {\"cls\": \"cat\"}]} 这样的数据。帮我搭一条链路:统计其中 person 的数量,超过 2 就通知我。搭完解释每个环节的状态。"
+      "user": "模拟摄像头 green-01 会发 {\"detections\": [{\"cls\": \"person\"}, {\"cls\": \"person\"}, {\"cls\": \"cat\"}]} 这样的数据。帮我搭一条链路：用 Transform 统计其中 person 的数量，用 Rule 在数量超过 2 时通知我，该启用的启用。不要删除或改写已有的 rule-battery-low。搭完用证据说明每个环节的状态（Transform 输出字段、Rule 条件数据源、通知是否已配置）。"
     }
   ],
   "applies": [
@@ -20,11 +20,19 @@
   ],
   "expectations": {
     "per_turn": [
-      "模拟摄像头 green-01 会发 {\"detections\": [{\"cls\": \"person\"}, {\"cls\": \"person\"}, {\"cls\": \"cat\"}]} 这样的数据。帮我搭一条链路:统计其中 person 的数量,超过 2 就通知我。搭完解释每个环节的状态。"
+      "在 green-01 detections 上搭建 transform+rule 通知链路（person 数>2）；保留 rule-battery-low；用证据解释各环节。"
     ],
-    "overall": "Cross-domain chain: transform + rule + notification (main objective)"
+    "overall": "Plan E 检测→transform→rule→notify 链路已创建且未破坏环境规则"
+  },
+  "expect": {
+    "tools": ["shell"]
   },
   "state_queries": [
+    {
+      "type": "device_exists",
+      "params": { "id": "green-01" },
+      "expected": true
+    },
     {
       "type": "transform_count",
       "params": {},
@@ -33,7 +41,12 @@
     {
       "type": "rule_count",
       "params": {},
-      "expected_min": 1
+      "expected_min": 2
+    },
+    {
+      "type": "rule_exists",
+      "params": { "name": "rule-battery-low" },
+      "expected": true
     }
   ]
 }
