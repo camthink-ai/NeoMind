@@ -22,6 +22,7 @@
 pub mod conversation_context;
 pub mod fallback;
 pub mod history_select;
+pub mod prompt_capture;
 pub mod semantic_mapper;
 pub mod smart_followup;
 pub mod staged;

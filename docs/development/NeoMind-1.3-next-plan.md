@@ -236,14 +236,14 @@ timeout和判定来源。
 - 每trial归档请求、裁剪、工具原始结果、状态、回复、时间、结束原因；保留超时/失败，报告gained/lost及回归原因、重复调用、P50/P95耗时和token。
 - queued只算排队，物理成功要求对应设备证据；不按预设命令路径评分。
 ### 待完成清单（覆盖§11相关勾选）
-- [ ] G0 实际请求复现与根因定位。
-  （部分：生产未留全文；本片用 T4 形态重构 fixture 做 before/after。完整脱敏实请求仍缺。）
+- [x] G0 实际请求复现与根因定位。
+  （2026-11-14 离线：`prompt_capture` 脱敏归档 schema + T4 形态 tip 装配捕获；根因对照 legacy `message_count≈3` vs tip `ZeroBudget`→2；fixture `eval/fixtures/history-budget-p0/g0-desensitized-prompt-archive.json`；单测 3/3 + test-utils 4/4。证据 `eval/manifests/1.3.0-g0-desensitized-prompt-capture.json`。**生产原文请求体仍不可得**；Spark 实捕被 138 阻塞。）
 - [x] G1 修复、协议/证据保留测试及独立配对验收。
-  （2026-11-14 P0 切片：`history_select` 成组保留 + 零预算空历史；llm 四路径 + 外层按组选择/驱逐；单测 6+4；回放 `eval/fixtures/history-budget-p0/t4-shaped-zero-budget-replay.json`。证据 `eval/manifests/1.3.0-p0-history-budget-trim.json` / `docs/development/p0-history-budget-trim-2026-11-14.md`。**中英配对 32×2 标 next，本片未跑。**）
+  （代码/单测已落地；配对矩阵已离线预注册 `eval/acceptance/context-reliability-weather-ek410.json`（8×zh/en×2=32/arm）。**Live 64 trial 被 138 阻塞，未跑、无分数宣称。**）
 - [ ] G2/G3 按证据逐轮验证衔接和循环兜底。
 - [ ] C 生产行内@、nodes持久化、历史重发及失败恢复。
 - [ ] C 真浏览器/触屏/IME/读屏与5人×4任务>=18/20。
 - [ ] D 桌面/移动代表流程。
 - [ ] E Spark实际10次>=9/10，多轮/故障/取消探针。
 - [ ] F 48场景可执行化、tip138与Appliance验收。
-P0 代码修复已落地（见 G1 勾选）；中英配对与 G0 全文归档、G2/G3 仍为缺口。最终发布准备文档必须引用本节剩余项。
+G0/G1 离线项已勾；**中英配对 live、G2/G3、C/D/E/F** 仍为缺口。最终发布准备文档必须引用本节剩余项。

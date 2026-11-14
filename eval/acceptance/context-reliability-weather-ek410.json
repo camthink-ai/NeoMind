@@ -1,0 +1,75 @@
+{
+  "schema": "neomind-eval-acceptance/v1",
+  "id": "context-reliability-weather-ek410",
+  "plan_section": "12",
+  "status": "preregistered_offline",
+  "live_blocked_by": {
+    "pid": 89912,
+    "port": 29431
+  },
+  "model": "Spark-1.7B",
+  "sampling": {
+    "temperature": 0.3,
+    "top_p": 0.75,
+    "top_k": 20,
+    "thinking": true,
+    "case_timeout_s": 600
+  },
+  "mock_hardware": true,
+  "scenarios": [
+    {
+      "id": "S1",
+      "name": "short_session"
+    },
+    {
+      "id": "S2",
+      "name": "unrelated_long_history"
+    },
+    {
+      "id": "S3",
+      "name": "multi_skill"
+    },
+    {
+      "id": "S4",
+      "name": "screen_correct_to_eink"
+    },
+    {
+      "id": "S5",
+      "name": "continue"
+    },
+    {
+      "id": "S6",
+      "name": "tool_fail_recover"
+    },
+    {
+      "id": "S7",
+      "name": "write_success_receipt_unknown"
+    },
+    {
+      "id": "S8",
+      "name": "cancel"
+    }
+  ],
+  "languages": [
+    "zh",
+    "en"
+  ],
+  "repeats_per_scenario_lang": 2,
+  "trials_per_arm": 32,
+  "arms": 2,
+  "total_trials_when_live": 64,
+  "pass_rule": {
+    "candidate_min": "28/32",
+    "not_below_paired_baseline": true,
+    "wrong_device_write": 0,
+    "duplicate_side_effect": 0,
+    "false_success": 0,
+    "no_progress_loop_trials": 0,
+    "stop_loop_without_goal_counts_fail": true
+  },
+  "report_separately": [
+    "new_session",
+    "history_replay"
+  ],
+  "claim": "Preregister only — no live trials this slice"
+}

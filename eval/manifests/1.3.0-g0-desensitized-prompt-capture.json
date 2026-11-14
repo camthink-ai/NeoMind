@@ -1,0 +1,30 @@
+{
+  "schema": "neomind-eval-freeze-manifest/v1",
+  "slice": "1.3.0-g0-desensitized-prompt-capture",
+  "date": "2026-11-14",
+  "branch": "1.3.0",
+  "product_version": "1.3.0",
+  "pushed": false,
+  "head_at_start": "77be53f8",
+  "plan_section": "12",
+  "item": "G0",
+  "docs": "docs/development/g0-desensitized-prompt-capture-2026-11-14.md",
+  "code": [
+    "crates/neomind-agent/src/agent/prompt_capture.rs",
+    "crates/neomind-agent/Cargo.toml"
+  ],
+  "archive": "eval/fixtures/history-budget-p0/g0-desensitized-prompt-archive.json",
+  "pairing_preregister": "eval/acceptance/context-reliability-weather-ek410.json",
+  "gates": {
+    "prompt_capture_unit": "3/3",
+    "prompt_capture_test_utils": "4/4",
+    "live_spark_capture": "blocked_by_138",
+    "zh_en_paired_32x2": "preregistered_offline_live_blocked"
+  },
+  "root_cause": "legacy zero-budget preserve-first-user → message_count≈3 without tool groups; tip ZeroBudget → message_count=2",
+  "claim": "Offline G0: desensitized prompt archive schema + T4-shaped tip-path capture + root-cause contrast vs legacy. Production wire body still missing. Pairing matrix preregistered; live 64 trials blocked by 138.",
+  "avoided": {
+    "eval_138": { "pid": 89912, "llama_port": 29431, "touched": false }
+  },
+  "next": "After 138 exits: live weather→EK410 32×2 paired arms; then G2/G3"
+}

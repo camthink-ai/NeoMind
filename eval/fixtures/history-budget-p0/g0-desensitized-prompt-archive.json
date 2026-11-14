@@ -1,0 +1,76 @@
+{
+  "schema": "neomind-desensitized-prompt/v1",
+  "slice": "1.3.0-g0-prompt-capture",
+  "tip_sha": "77be53f8b3f81ec74f50522bf0ae12f973a9c6a4",
+  "message_count": 2,
+  "roles": [
+    "system",
+    "user"
+  ],
+  "messages": [
+    {
+      "index": 0,
+      "role": "system",
+      "content_chars": 54,
+      "content_sha256": "96175fa721bd638c1d07a620355bb0f317e6e0d25898e793fa7747e51b1c3758",
+      "content_preview": "You are NeoMind. api_key=[REDACTED]",
+      "is_tool_result": false,
+      "redaction_hits": 1
+    },
+    {
+      "index": 1,
+      "role": "user",
+      "content_chars": 6,
+      "content_sha256": "182353bf797a895dc8cc80d34eb9bfa0c4096ab139506be72a2d7894d21cf9e1",
+      "content_preview": "继续写到屏幕",
+      "is_tool_result": false,
+      "redaction_hits": 0
+    }
+  ],
+  "tools_count": 2,
+  "tool_names": [
+    "shell",
+    "skill"
+  ],
+  "budget": {
+    "available_tokens": 0,
+    "history_in": 9,
+    "history_kept": 0,
+    "truncated": true,
+    "select_reason": "ZeroBudget",
+    "used_tokens": 0
+  },
+  "history_truncated_flag": true,
+  "notes": [
+    "T4-shaped reconstruction; production wire body was not retained",
+    "legacy would keep early user only → message_count≈3 with system+current",
+    "tip ZeroBudget keeps empty history → message_count=2 (system+current)",
+    "no Authorization/api_key header fields in archive schema"
+  ],
+  "root_cause": {
+    "production_session": "6621a013-0d12-43c7-ad39-6dbf6e9cb156",
+    "observed": "history 9→1, available_tokens=0, message_count≈3, re-query loop",
+    "mechanism": "legacy preserve-first-user at zero soft budget dropped tool groups",
+    "tip_fix": "history_select ZeroBudget + group keep (77be53f8)"
+  },
+  "legacy_contrast": {
+    "message_count_with_system_and_current_user": 3,
+    "kept_history_roles": [
+      "user"
+    ]
+  },
+  "freeze": {
+    "source_files_sha256": {
+      "crates/neomind-agent/src/agent/history_select.rs": "007d7ccd2a51098f8265c551336a3bab1e9125f944d17aaf2d92f08701caa369",
+      "crates/neomind-agent/src/agent/prompt_capture.rs": "44a28458a8b52b74444a50fe8f6a3805e3d6f00874c4a85d187130539c5d3b6b",
+      "crates/neomind-agent/src/llm.rs": "1b012214fa543aed83860cbf20b04e1da48e31f7c374760079956fb2a942805f"
+    },
+    "git_head": "77be53f8b3f81ec74f50522bf0ae12f973a9c6a4",
+    "branch": "1.3.0",
+    "git_head_at_slice_start": "77be53f8b3f81ec74f50522bf0ae12f973a9c6a4"
+  },
+  "live_spark_capture": {
+    "status": "blocked",
+    "reason": "PID 89912 owns llama :29431 (138 regression); no contention this slice"
+  }
+}
